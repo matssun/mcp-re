@@ -1,0 +1,20 @@
+[package]
+name = "mcps-host"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-S client-side ambassador: request envelope injection/signing and response verification (the model never holds keys)."
+
+[dependencies]
+# MCPS-014: client-side signing + response verification. Pure — depends only on
+# mcps-core plus serde_json for building the request object. No networking/async.
+mcps-core = { path = "../mcps-core" }
+serde_json = { workspace = true }
+# MCPS-033 (ADR-MCPS-015): production nonce entropy for HostSession's default
+# NonceSource. OS CSPRNG wrapper only — no networking/async; transport-free.
+getrandom = { workspace = true }
+
+[lib]
+name = "mcps_host"
+path = "src/lib.rs"

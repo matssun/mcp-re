@@ -1,0 +1,108 @@
+# MCP-S supply-chain policy — cargo-deny (audit gap G-4, MCPS-077, issue #3980)
+#
+# This is the authoritative supply-chain policy for the firewalled MCP-S module.
+# It is enforced by the CI gate `.github/workflows/mcps-supply-chain.yml`
+# (`cargo deny check {licenses,bans,sources,advisories}`), NOT by Bazel:
+# cargo-deny needs network (advisory-DB fetch) and a prebuilt binary, so it is a
+# CI policy gate by design, not a hermetic Bazel test (per the G-4 remediation
+# decision — Option 1). It is deliberately NOT added to any Cargo.toml and NOT
+# pulled into the `crates_mcps` crate universe.
+#
+# The policy travels WITH the module: this repository is self-contained
+# (ADR-MCPS-001/012) and intended for future standalone extraction to a public
+# repository, where this same `deny.toml` runs unchanged from the repo root.
+#
+# Validate locally (cargo-deny pinned to the SAME version as the CI workflow):
+#   cargo deny --manifest-path Cargo.toml check licenses
+#   cargo deny --manifest-path Cargo.toml check bans
+#   cargo deny --manifest-path Cargo.toml check sources
+#   cargo deny --manifest-path Cargo.toml check advisories
+
+# ---------------------------------------------------------------------------
+# [graph] — the dependency surface that every check below is evaluated against.
+# ---------------------------------------------------------------------------
+[graph]
+# Restrict evaluation to the platforms MCP-S actually ships/runs on. This PRUNES
+# target-conditional crates that are pulled in only for other targets (in this
+# tree: the `wasi` crate and the whole `windows-*` family, and transitively any
+# wasm32 wit-bindgen/wasm-encoder crates) so they are not assessed for licenses
+# or advisories. Verified: with this filter `cargo deny ... list` shows no
+# wasi/windows/wit-bindgen crates; without it, they all appear.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+
+# ---------------------------------------------------------------------------
+# [advisories] — RustSec advisory DB enforcement (vulns / unmaintained /
+# unsound / yanked). DB is fetched from GitHub at check time (network needed —
+# fine in CI and locally). Uses the current schema (`version = 2`); the old
+# `vulnerability`/`unmaintained`/`unsound` severity keys are deprecated and
+# removed — under v2 every advisory class is denied unless explicitly listed in
+# `ignore`, and yanked crates are controlled by `yanked` below.
+# ACCEPTANCE: this gate FAILS on any RUSTSEC vulnerability, unmaintained/unsound
+# advisory, or yanked crate. We do NOT pre-populate `ignore` — genuine findings
+# must surface and be triaged, never silently suppressed.
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+# Treat a crate version pulled from the registry that was later yanked as a hard
+# failure (a yanked dep is a supply-chain integrity signal).
+yanked = "deny"
+# ignore = []  # intentionally empty — do not suppress real advisories here.
+
+# ---------------------------------------------------------------------------
+# [licenses] — explicit allow-list, derived from the ACTUAL resolved tree under
+# the targets above (discovered via `cargo deny ... list`). The workspace itself
+# is Apache-2.0. No "allow everything", no copyleft slipping through.
+# ---------------------------------------------------------------------------
+[licenses]
+version = 2
+# Require reasonably high textual confidence when matching a LICENSE file to an
+# SPDX id (cargo-deny default is 0.8); below this it is reported, not guessed.
+confidence-threshold = 0.8
+allow = [
+    "Apache-2.0",   # workspace license + most of the RustCrypto/rustls tree
+    "MIT",          # dual-licensed crates (serde, libc, syn, ...) + memchr's "Unlicense OR MIT"
+    "BSD-3-Clause", # curve25519-dalek, ed25519-dalek, subtle
+    "ISC",          # rustls, rustls-webpki, untrusted, and part of ring
+    "Unicode-3.0",  # unicode-ident
+    "Unlicense",    # memchr (offered as "Unlicense OR MIT")
+]
+# `ring` is the well-known non-trivial case: its SPDX expression resolves to
+# "Apache-2.0 AND ISC" (Apache-2.0 for ring's own code, ISC/BoringSSL for the
+# vendored crypto). Both ids are in `allow` above, so ring passes HONESTLY with
+# no blanket allow-all and no per-crate license override / clarify needed —
+# verified: `check licenses` reports `licenses ok` with ring present.
+
+# ---------------------------------------------------------------------------
+# [bans] — duplicate-version and wildcard-dependency hygiene.
+# ---------------------------------------------------------------------------
+[bans]
+# This tree currently has a single version of every crate (no duplicates). Keep
+# duplicates at "warn" rather than "deny": a future transitive bump that pulls a
+# second major of e.g. getrandom should surface a warning, not block the gate
+# on a non-security issue. Promote to "deny" with a documented skip-list if/when
+# duplicate-version policy is tightened.
+multiple-versions = "warn"
+# Allow `path = "../x"` intra-workspace dependencies (which Cargo records as a
+# `*` version requirement). These are local path links, not registry wildcards,
+# so they carry no supply-chain risk. `allow-wildcard-paths` does NOT exempt them
+# here because the workspace member crates are not marked `publish = false`
+# (and this is a policy/config-only change that does not edit crate manifests),
+# so a real `*` registry dependency and these benign path wildcards are both
+# surfaced at "warn": loud enough to notice a genuine registry `*`, without
+# failing the gate on intra-workspace path deps. Tighten to "deny" if the member
+# crates ever gain `publish = false`.
+wildcards = "warn"
+allow-wildcard-paths = true
+
+# ---------------------------------------------------------------------------
+# [sources] — only crates.io is a trusted origin. Any crate from an unknown
+# registry or any git source is a hard failure (no vendored git deps allowed).
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

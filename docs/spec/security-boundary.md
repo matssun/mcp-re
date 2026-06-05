@@ -1,0 +1,253 @@
+# MCP-S Security Boundary
+
+**Status: SIGNED OFF by the owner — Mats Sundvall, 2026-05-30 (release gate satisfied for the single-node profile). See Section 7.**
+
+This document is the project's **honesty gate**. It states exactly what MCP-S
+protects and — equally important — what it does **not** protect, so that a
+security reviewer cannot over-trust the system. It is a **merge/release gate**:
+release of any MCP-S production-claim artifact is blocked until this document
+exists and has been signed off by the human owner. It is **type:HITL** — it is
+authored by an agent but requires the human owner's explicit approval; the
+author does **not** self-approve it.
+
+Tracking issue: MCPS-039.
+
+The authorities for the claim boundary are:
+
+- [ADR-MCPS-017 — Single-Node Production Claim Ceiling and Deferred Enterprise
+  Capabilities](../adr/adr-mcps-017.md) — the
+  authority for the **allowed claim** vs the **forbidden claims** and the
+  deferred-capability list.
+- [ADR-MCPS-016 — Inner-Server Isolation Boundary
+](../adr/adr-mcps-016.md) — the
+  **non-containment** boundary between the proxy and the inner MCP server.
+- [ADR-MCPS-018 — CI Reproducibility Posture and Conformance-Manifest Authority
+](../adr/adr-mcps-018.md) — the
+  reproducibility posture.
+
+Where this document and any older planning brief disagree, this document and the
+cited ADRs win.
+
+---
+
+## 1. The allowed claim
+
+MCP-S MAY be described as:
+
+> **"production-hardened for single-node Rust-native deployments."**
+
+That is the entire claim. Anything stated beyond this single-node ceiling is a
+**forbidden claim** (Section 2) until the named follow-up lands. The claim is
+bounded to a single node for exactly **one** reason: the durable replay
+protection MCP-S ships is a **local, file-backed** cache, so replay safety holds
+only within a single proxy instance — see
+[ADR-MCPS-017](../adr/adr-mcps-017.md). Key
+custody (file/env vs HSM/KMS) is a **separate, independent** hardening axis and
+is **not** a reason for the single-node ceiling — see "Two independent
+boundaries" below.
+
+### Two independent hardening boundaries
+
+MCP-S has two distinct hardening axes. They are **orthogonal**: moving along one
+does not require moving along the other, and neither is required for MCP-S's core
+object-signature verification.
+
+- **Scale boundary — this is what bounds the claim to a single node.** Replay
+  protection uses a local, file-backed `ReplayCache`, so it is safe only within
+  one proxy instance. A horizontally-scaled / multi-node deployment requires a
+  **shared, atomic `ReplayCache`** across proxy instances
+. This — and only this —
+  is why the production claim is single-node.
+- **Key-custody boundary — independent of scale.** Signing keys are loaded from a
+  **file/env `KeySource`**. Claiming non-exporting / hardware-backed /
+  enterprise-grade signing keys requires an **HSM / KMS / remote-signer
+  `KeySource`**. HSM/KMS is
+  **not** required for signature verification, and **not** required to move from
+  single-node to horizontally-scaled deployment: once the shared `ReplayCache`
+  lands, a multi-node deployment using file/env keys is possible. HSM/KMS is a
+  separate, additive key-custody hardening, claimed only when hardware-backed key
+  custody itself is the requirement.
+
+---
+
+## 2. Forbidden claims (NOT provided)
+
+The system MUST NOT be described as providing any of the following. Each is a
+deferred, named follow-up. Asserting any of these as delivered is a release-gate
+violation (Section 6).
+
+| Forbidden claim                                                            | Status                | Follow-up                                                       |
+| -------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------- |
+| Horizontal-scale replay protection (multi-node) — **scale boundary**       | NOT provided — single-node only (local file ReplayCache) | (shared atomic ReplayCache) |
+| Full certificate revocation (online CRL / OCSP)                            | NOT provided          |           |
+| Hardware-backed / non-exporting signing keys (HSM / KMS) — **key-custody boundary**, independent of scale | NOT provided (file/env KeySource only) |           |
+| Reverse-proxy mTLS / enterprise ingress                                    | NOT provided          |           |
+| Kernel / filesystem / network containment of the inner server             | NOT provided — OS sandbox profile |           |
+| Signed-tool-manifest protection (tool identity / rug-pull detection)       | NOT provided          |           |
+| Offline-hermetic / air-gapped / vendored build reproducibility            | NOT provided (network-reproducible only) | future supply-chain item                            |
+| Client-side remote (non-local) transport                                   | NOT provided          | future seam                                                    |
+| Committed production rollout / SLA / monitoring ownership                  | NOT provided          | future seam                                                    |
+
+None of these is partially delivered. "Deferred future seam" means the interface
+may exist to make the capability addable later — it does **not** mean the
+capability is present.
+
+---
+
+## 3. Inner-server non-containment boundary
+
+Authority: [ADR-MCPS-016
+](../adr/adr-mcps-016.md).
+
+The proxy (`mcps-proxy`) controls the inner MCP server's **launch hygiene** and
+propagates verified context. It does **not** contain a malicious or compromised
+inner server.
+
+**What the proxy DOES do (launch hygiene + context propagation):**
+
+- environment minimization (the inner server runs with a minimal, explicit
+  environment, not the proxy's full environment);
+- explicit working directory;
+- stdout/stderr separation;
+- process-lifecycle logging;
+- best-effort resource limits (`setrlimit`);
+- verified-context propagation (the proxy strips any caller-supplied verified
+  context and injects its own, so the inner server sees only proxy-asserted
+  identity).
+
+**What the proxy does NOT do (the boundary):**
+
+- It does **not** contain the inner server at the kernel, filesystem, or network
+  level. There is no seccomp / Landlock / container / eBPF enforcement in this
+  release.
+
+**Consequence — stated plainly:** a compromised or malicious inner MCP server can
+still access whatever its OS user can access (files, network, processes), within
+only the best-effort `setrlimit` bounds, until a separate OS sandbox profile
+lands. Launch hygiene
+reduces accidental blast radius; it is **not** a containment guarantee against a
+hostile inner server.
+
+---
+
+## 4. What IS protected (the positive claim surface)
+
+The following are delivered and may be claimed within the single-node ceiling.
+This is the complete positive surface; nothing outside it should be implied.
+
+- **Object-signature verification of every JSON-RPC request and response.** Every
+  protected message is verified through the canonical 12-step request pipeline
+  (and the response pipeline) defined in
+  [mcps-core-spec.md §9](./mcps-core-spec.md). Ed25519-over-JCS signs the
+  **complete JSON-RPC object**, not just an envelope
+  ([ADR-MCPS-004](../adr/adr-mcps-004.md),
+  [ADR-MCPS-003](../adr/adr-mcps-003.md)).
+- **Fail-closed message constraints.** Batches, security-relevant
+  notifications, and unknown envelope fields are rejected; the pipeline fails
+  closed at the first failing step
+  ([ADR-MCPS-009](../adr/adr-mcps-009.md)).
+- **Freshness + single-node durable replay protection.** A freshness window
+  (`issued_at`/`expires_at` ± skew) plus a replay cache keyed by
+  `(signer, audience, nonce)`, checked only **after** signature verification so
+  invalid-signature traffic cannot burn nonces. Cache failure fails closed,
+  distinct from a replay verdict
+  ([ADR-MCPS-006](../adr/adr-mcps-006.md)). The
+  durable replay cache is **single-node** — multi-node replay protection is
+  forbidden (Section 2).
+- **Delegated authorization** (Phase 5, reference signed-authorization profile).
+  The proxy enforces the authorization profile **deny-before-dispatch** — an
+  unauthorized request never reaches the inner server
+  ([ADR-MCPS-013](../adr/adr-mcps-013.md)).
+- **Rust-native mTLS transport termination + transport binding + v1 revocation
+  posture** (Phase 6 / 6.1). `mcps-proxy` terminates TLS itself
+  (`RustlsDirectProvider`, rustls + ring), binds the verified transport peer to
+  the object signer (transport binding), and enforces a maximum client-cert
+  lifetime as its v1 revocation posture. This is **not** online revocation —
+  full CRL/OCSP is forbidden (Section 2,
+  #3839)
+  ([ADR-MCPS-014](../adr/adr-mcps-014.md)).
+- **Transport-free, key-custody-safe host layer (HostSession).** The host /
+  ambassador signs requests and verifies responses without exposing any key
+  accessor; the model never touches a private key
+  ([ADR-MCPS-015](../adr/adr-mcps-015.md)).
+- **Signing-key loading via a file/env `KeySource`.** Signing keys load from a
+  file or (hard-guarded) environment `KeySource`; the proxy and host sign without
+  exposing private-key material through public APIs. This is the delivered
+  key-custody level — hardware-backed / non-exporting keys (HSM/KMS) are a
+  **separate, additive** boundary (Section 1,
+  #3838) and are **not** required
+  for signature verification or for horizontal scale.
+
+### Three separate checks — none replaces another
+
+These are independent proofs and must not be conflated:
+
+- **mTLS** proves the **transport peer** (who holds the TLS client cert).
+- **The object signature** proves the **JSON-RPC signer** (who signed this exact
+  request/response object).
+- **Delegated authorization** proves **whether the signer may act** (is this
+  signer authorized for this method/tool/argument scope).
+
+A valid mTLS peer is not automatically a valid signer; a valid signer is not
+automatically authorized. All three checks are required and none substitutes for
+another.
+
+---
+
+## 5. Reproducibility honesty
+
+Authority: [ADR-MCPS-018
+](../adr/adr-mcps-018.md).
+
+- **CI-enforced on every relevant PR.** The Core conformance and transport tests
+  run in CI on every PR that touches MCP-S, building the self-contained module
+  (`bazel test //...`).
+- **Lockfile-reproducible WITH network access — NOT offline-hermetic.** The build
+  is reproducible from the committed lockfiles **provided crates.io network
+  access is available**. It is **not** offline-hermetic / air-gapped, and vendored
+  build reproducibility is **not** claimed (Section 2).
+- **Submodule-free cold clone — achieved.** This repository is a self-contained
+  Bazel module (`MODULE.bazel`); it builds from a fresh clone with
+  **no submodules** and no parent module graph. A scheduled cold-clone
+  (no-submodule, cold-cache) CI job validates this. Tracked work is done:
+  (no-submodule reproducibility)
+  and (module isolation) are
+  both closed.
+- **Granian is fully removed from the MCP-S build.** MCP-S is not a Granian
+  plugin and does not depend on Granian or any Granian ASGI-TLS fork.
+
+---
+
+## 6. How to use this gate
+
+- **Release is blocked until this document is signed off** by the human owner.
+  This document existing is not sufficient; owner approval is required because it
+  is type:HITL.
+- **Reviewers reject deferred-capability claims.** Code review rejects any PR,
+  README, marketing line, doc, commit message, or comment that asserts a
+  capability listed in Section 2 as delivered, or that describes MCP-S beyond the
+  single-node ceiling in Section 1.
+- **The only sanctioned positive claim is Section 1's exact wording** plus the
+  surface enumerated in Section 4. If a desired claim is not in Section 4, it is
+  forbidden until the corresponding follow-up lands and this document is updated
+  and re-signed.
+- **When in doubt, under-claim.** This document is the honesty artifact; partial
+  compliance is not compliance.
+
+---
+
+## 7. Owner sign-off
+
+| Field          | Value                                            |
+| -------------- | ------------------------------------------------ |
+| Document       | `documents/mcps/security-boundary.md`            |
+| Gate type      | HITL release gate (release blocked until signed) |
+| Author         | _(agent — does not self-approve)_                |
+| Owner sign-off | **Mats Sundvall — 2026-05-30** (signed)          |
+
+**Scope of approval:** Approval of the MCP-S security boundary and claim ceiling
+for the current single-node Rust-native deployment profile. This approval does
+**not** cover future enterprise / horizontal-scale claims until the named
+follow-up issues (Section 2) are implemented and tested.
+
+The single-node release gate is satisfied as of 2026-05-30.

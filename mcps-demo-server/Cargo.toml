@@ -1,0 +1,30 @@
+[package]
+name = "mcps-demo-server"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Ordinary, MCP-S-unaware, LONG-LIVED stdio MCP server (demo target for the MCP-S sidecar)."
+
+# MCPS-062 (MCPS-EPIC-P6.6B): an ORDINARY MCP server that knows nothing about
+# MCP-S signing/envelopes/verified-context. Unlike the one-shot-friendly
+# `mcps-demo-fileserver`, this one models the full MCP lifecycle and is
+# LONG-LIVED: a single process serves an `initialize` handshake followed by
+# many `tools/list` / `tools/call` requests, staying alive until stdin EOF (or
+# a modelled `shutdown`). It depends only on the pure serde subset plus
+# thiserror — no other in-repo crate, no async runtime, no fs/network/DB.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+mcps-test-paths = { path = "../mcps-test-paths" }
+
+[lib]
+name = "mcps_demo_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcps-demo-server"
+path = "src/main.rs"

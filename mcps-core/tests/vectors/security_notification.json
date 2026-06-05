@@ -1,0 +1,16 @@
+{
+  "expected": "mcps.notification_forbidden",
+  "kind": "request",
+  "message": {
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "text": "hello"
+      },
+      "name": "echo"
+    }
+  },
+  "name": "security_notification",
+  "requires_pipeline": true
+}

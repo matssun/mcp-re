@@ -1,0 +1,593 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-046 (MCPS-EPIC-P6.5, Child Issue 2): the demo HostSession client. A thin
+# harness over the EXISTING mcps-host HostSession — it signs MCP-S requests
+# (injected clock + RNG), correlates request_hash by JSON-RPC id, and verifies
+# the bound response against the STORED hash. Depends only on sibling in-
+# workspace crates (mcps-host, mcps-core) plus serde_json from the isolated
+# crates_mcps hub — no crate outside the workspace, no networking/async.
+nt_rust_library(
+    name = "mcps_demo",
+    srcs = [
+        "src/client.rs",
+        "src/demo_authorization.rs",
+        "src/demo_fixtures.rs",
+        "src/demo_proxy.rs",
+        "src/e2e_flow.rs",
+        "src/e2e_persistent_flow.rs",
+        "src/lib.rs",
+        "src/mtls_client.rs",
+    ],
+    crate_name = "mcps_demo",
+    edition = "2021",
+    deps = [
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:serde_json",
+        "@crates_mcps//:thiserror",
+    ],
+)
+
+# Demo client behaviour: signs with injected clock+RNG, verifies a bound response
+# against the stored hash, and fails closed on a wrong hash, an unknown response
+# id, and a duplicate in-flight request id.
+nt_rust_test(
+    name = "demo_client_test",
+    srcs = ["tests/demo_client_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-055 (MCPS-EPIC-P6.6, Child Issue 3): the shared demo fixtures helper. Proves
+# the ONE-source-of-truth material set is internally consistent — the positive
+# client identity drives a REAL mcps_proxy::serve_once mTLS round trip wired
+# entirely from the fixture PEM and equals the signer; the mismatched identity
+# chains to the same client CA yet differs (T3); the server leaf does not chain to
+# the client CA; write_files materializes every proxy/client input and cleans up.
+nt_rust_test(
+    name = "demo_fixtures_test",
+    srcs = ["tests/demo_fixtures_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_demo",
+        "//mcps-proxy:mcps_proxy",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-054 (MCPS-EPIC-P6.6, Child Issue 2): the runnable mTLS client orchestration.
+# Drives the EXPORTED mcps-transport verifying mTLS client + the EXISTING
+# mcps-host HostSession against a REAL mcps_proxy::serve_once server on a thread,
+# with certs minted in-process via rcgen. Proves the client path: HostSession
+# signs -> mTLS POST (server-auth in the handshake) -> HostSession verifies the
+# signed response against the STORED request hash. Untrusted server cert, wrong
+# response hash, and a corrupted response signature each fail closed. Full multi-
+# process wiring against mcps_proxy_cli is #3943.
+nt_rust_test(
+    name = "demo_mtls_client_test",
+    srcs = ["tests/demo_mtls_client_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-proxy:mcps_proxy",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-047 (MCPS-EPIC-P6 Child Issue 3): the demo proxy wiring + isolation /
+# verified-context-injection proofs. Drives the EXISTING mcps-proxy serving path
+# in-process while it launches the REAL mcps-demo-fileserver binary as its inner
+# stdio subprocess. The binary AND the demo_root fixture are delivered via
+# runfiles (data deps); the test resolves them via $(rlocationpath ...) — no
+# hardcoded absolute path, no cargo.
+nt_rust_test(
+    name = "demo_proxy_test",
+    srcs = ["tests/demo_proxy_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-048 (MCPS-EPIC-P6 Child Issue 4): the demo delegated-authorization layer.
+# Drives the EXISTING mcps-proxy serving path WITH Phase 5 policy enforcement
+# (ADR-MCPS-013) turned on, while it launches the REAL mcps-demo-fileserver as its
+# inner stdio subprocess. Proves allow-vs-deny BEFORE inner dispatch: an
+# authorized list_files on the granted path succeeds; a signed-but-unauthorized
+# path, a demo-root-escaping path, an authorization_hash mismatch, and an expired
+# grant are each denied and the inner fileserver is never spawned. The binary AND
+# the demo_root fixture are delivered via runfiles (data deps); the test resolves
+# them via $(rlocationpath ...) — no hardcoded absolute path, no cargo.
+nt_rust_test(
+    name = "demo_authorization_test",
+    srcs = ["tests/demo_authorization_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-049 (MCPS-EPIC-P6 Child Issue 5): the COHESIVE positive happy-path,
+# end-to-end. The demo HostSession CLIENT signs ONE authorized list_files; the
+# policy-enabled demo proxy verifies the Core envelope, checks freshness/replay,
+# evaluates Phase 5 authorization (allow), strips the external MCP-S request
+# envelope, injects the sidecar verified context, forwards to the REAL
+# mcps-demo-fileserver inner subprocess, and signs the result; the CLIENT then
+# verifies the signed response against the request hash it STORED at sign time
+# and the pending count returns to 0. Inner binary + demo_root fixture delivered
+# via runfiles (data deps); resolved via $(rlocationpath ...) — no hardcoded
+# absolute path, no cargo.
+nt_rust_test(
+    name = "demo_positive_test",
+    srcs = ["tests/demo_positive_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-050 (MCPS-EPIC-P6 Child Issue 6): the NEGATIVE / security-path suite. The
+# fail-closed counterpart to the positive happy path: a validly signed request is
+# MUTATED after signing (tamper body / id), a nonce is reused (replay), the
+# freshness window is skewed (expiry), a different audience is signed for (wrong
+# audience), the MCP-S envelope is removed (missing envelope), a caller-owned
+# .verified block is smuggled (sole-writer strip+replace), the granted path is
+# violated (Phase 5 deny), and the signed RESPONSE is corrupted (wrong hash / bad
+# signature) so the HostSession client refuses to bind it. Pre-dispatch cases
+# (1-8) assert the inner fileserver is NEVER reached; response-side cases (9-10)
+# run the authorized path then assert the client rejects the binding. Each case
+# asserts the SPECIFIC frozen mcps.* reason code. Inner binary + demo_root fixture
+# delivered via runfiles (data deps); resolved via $(rlocationpath ...) — no
+# hardcoded absolute path, no cargo.
+nt_rust_test(
+    name = "demo_negative_test",
+    srcs = ["tests/demo_negative_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-049: the runnable positive demo. Run with `bazel run //mcps-demo:demo_positive`
+# from components/mcps. It signs ONE authorized list_files via the HostSession
+# client, prints a structured allow-decision line (signer, audience, request
+# hash, authorization hash, policy result), runs the full policy-enabled proxy
+# round-trip to the REAL inner fileserver, verifies the signed response against
+# the stored request hash, and prints the returned fixture entries. The inner
+# binary + demo_root fixture are delivered via runfiles (data deps); the bin
+# resolves them via the $(rlocationpath ...) env vars — no hardcoded path, no
+# cargo. The full written guide is the subject of #3929.
+nt_rust_binary(
+    name = "demo_positive",
+    srcs = ["src/bin/demo_positive.rs"],
+    crate_name = "demo_positive",
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-050: the runnable negative demo. Run with `bazel run //mcps-demo:demo_negative`
+# from components/mcps. It drives each of the 10 rejected security-path cases end
+# to end and prints ONE structured denial line per case carrying the frozen mcps.*
+# reason code (pre-dispatch cases also report inner_reached=false). It fails LOUDLY
+# (non-zero exit) if ANY case is not rejected with the EXPECTED reason. The inner
+# binary + demo_root fixture are delivered via runfiles (data deps); the bin
+# resolves them via the $(rlocationpath ...) env vars — no hardcoded path, no cargo.
+nt_rust_binary(
+    name = "demo_negative",
+    srcs = ["src/bin/demo_negative.rs"],
+    crate_name = "demo_negative",
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-054 (MCPS-EPIC-P6.6, Child Issue 2): the runnable mTLS client — the LLM
+# caller. Run with `bazel run //mcps-demo:demo_mtls_client -- <flags>` from
+# components/mcps. It signs ONE tools/call via the HostSession, presents its mTLS
+# client cert + verifies the proxy's server cert against the configured server CA,
+# POSTs over mTLS via the reusable mcps-transport client, and verifies the signed
+# response against the STORED request hash — printing a structured result line
+# (signer, audience, request hash, tool/path, server signer, outcome). Keys/certs/
+# trust come from flags; transport logic is entirely in mcps-transport and the bin
+# exposes no private-key accessor. Multi-process wiring against mcps_proxy_cli is
+# #3943.
+nt_rust_binary(
+    name = "demo_mtls_client",
+    srcs = ["src/bin/demo_mtls_client.rs"],
+    crate_name = "demo_mtls_client",
+    edition = "2021",
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-056 (MCPS-EPIC-P6.6, Child Issue 4 — the keystone): the multi-process
+# positive-path E2E over REAL mTLS. Spawns the real //mcps-proxy:mcps_proxy_cli
+# as its OWN OS process (mTLS, --authz reference, --replay-cache file,
+# --transport-binding exact) wrapping //mcps-demo-fileserver:mcps_demo_fileserver_bin
+# as the inner stdio server, then drives the DemoHostClient (HostSession) +
+# mcps-transport verifying mTLS client against it for ONE authorized list_files
+# (matrix P1). Asserts: the signed response verifies vs the STORED request hash;
+# the mTLS client identity == the request signer (transport-binding exact
+# SATISFIED, not bypassed); and the returned reports/ fixture entries prove the
+# inner fileserver executed. Proxy binary + inner binary + demo_root fixture are
+# delivered via runfiles (data deps); resolved via $(rlocationpath ...) — no
+# hardcoded path, no cargo. The proxy subprocess is killed on test end (Drop
+# guard); readiness is a TCP port probe (no sleep-only sync).
+nt_rust_test(
+    name = "demo_e2e_test",
+    srcs = ["tests/demo_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-066 (MCPS-EPIC-P6.6B): the multi-process mTLS E2E over the LONG-LIVED
+# mcps-demo-server. Spawns the real //mcps-proxy:mcps_proxy_cli as its OWN OS
+# process in --inner-mode persistent (mTLS, --authz reference, durable
+# --replay-cache file, --transport-binding exact) wrapping
+# //mcps-demo-server:mcps_demo_server_bin as the PERSISTENT inner (spawned +
+# initialized ONCE), then drives the DemoHostClient (HostSession) + mcps-transport
+# verifying mTLS client for THREE authorized tools/call (echo, list_items, echo)
+# over ONE inner session plus ONE authorization-denied admin reset_items. Asserts:
+# every signed response verifies vs the STORED request hash and is signed by the
+# proxy's server signer (transport-binding exact SATISFIED); the persistent inner
+# served all three over one process; the denied call is rejected with
+# mcps.authorization_scope_denied before dispatch and the session keeps serving.
+# Proxy binary + demo-server binary delivered via runfiles (data deps); resolved
+# via $(rlocationpath ...) — no hardcoded path, no cargo. The proxy subprocess
+# (and its persistent child) are killed on test end (Drop guard); readiness is a
+# TCP port probe (no sleep-only sync).
+nt_rust_test(
+    name = "demo_e2e_persistent_test",
+    srcs = ["tests/demo_e2e_persistent_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-server:mcps_demo_server_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-057 (MCPS-EPIC-P6.6, Child Issue 5): the application-layer NEGATIVE suite
+# over REAL mTLS — the over-the-wire counterpart of the in-process P6.5 negative
+# suite (demo_negative_test). Spawns the real //mcps-proxy:mcps_proxy_cli as its
+# OWN OS process (mTLS, --authz reference, durable --replay-cache file,
+# --transport-binding exact) wrapping //mcps-demo-fileserver:mcps_demo_fileserver_bin,
+# captures the proxy's diagnostic stderr, and drives the DemoHostClient
+# (HostSession) + mcps-transport verifying mTLS client through the ten fail-closed
+# cases (A1 tampered body, A2 tampered id, A3 replay on a FRESH connection, A4
+# expired, A5 wrong audience, A6 missing envelope, A7 smuggled .verified strip +
+# replace, A8 unauthorized path, A9 wrong response hash, A10 bad response
+# signature). Each case asserts the SPECIFIC frozen mcps.* reason code; for every
+# pre-dispatch failure (A1–A6, A8) the proxy never emits an `inner_spawned`
+# diagnostic, proving the inner fileserver is NOT reached. A fresh proxy per case
+# isolates the stderr capture + durable replay state. Proxy binary + inner binary
+# + demo_root fixture are delivered via runfiles (data deps); resolved via
+# $(rlocationpath ...) — no hardcoded path, no cargo. The proxy subprocess is
+# killed on test end (Drop guard); readiness is a TCP port probe (no sleep-only
+# sync).
+nt_rust_test(
+    name = "demo_negative_e2e_test",
+    srcs = ["tests/demo_negative_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-059 (MCPS-EPIC-P6.6, Child Issue 7): the multi-process DEPLOYMENT-POSTURE
+# proofs over the REAL //mcps-proxy:mcps_proxy_cli binary (C1, C2). C1 launches
+# the binary with --key-source env (key material supplied via env vars) WITHOUT
+# --allow-env-keysource and proves it FAILS CLOSED at startup — non-zero exit, a
+# diagnostic naming the refused opt-in, and NO listening socket (the refusal is in
+# parse_args, before TcpListener::bind); the positive control re-runs the SAME
+# env-key config WITH --allow-env-keysource and proves it then listens, so the
+# gate is proven, not a broken binary. This is the anchor for Phase 7 #3842
+# strict-mode. C2 sends a valid request to a FIRST proxy process (durable
+# --replay-cache file --replay-path), STOPS it, STARTS a NEW proxy process sharing
+# the SAME --replay-path, and replays the IDENTICAL signed bytes — still
+# replay_detected, proving the durable cache survives a full restart. Proxy +
+# inner binary + demo_root fixture delivered via runfiles (data deps); resolved
+# via $(rlocationpath ...) — no hardcoded path, no cargo. Every spawned proxy is
+# killed + reaped on Drop; readiness is a TCP port probe; the C1 "never listens"
+# case bounds its wait and asserts the process EXITED.
+nt_rust_test(
+    name = "demo_posture_e2e_test",
+    srcs = ["tests/demo_posture_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-058 (MCPS-EPIC-P6.6, Child Issue 6): the multi-process TRANSPORT-tier
+# NEGATIVE suite over REAL mTLS — the transport counterpart of the application-
+# layer negative suite (demo_negative_e2e_test). Spawns the real
+# //mcps-proxy:mcps_proxy_cli as its OWN OS process (mTLS, --authz reference,
+# durable --replay-cache file, --transport-binding exact) wrapping
+# //mcps-demo-fileserver:mcps_demo_fileserver_bin, captures the proxy's
+# diagnostic stderr, and drives five transport-tier rejections: T1 no client cert
+# (handshake rejected), T2 untrusted client CA (handshake rejected), T3 mTLS
+# identity != request signer (transport_binding_failed, deny-before-dispatch), T4
+# over-lifetime client cert (rejected by a tiny --max-client-cert-lifetime), and
+# T5 untrusted server cert (the verifying mcps-transport client refuses the proxy
+# at the handshake — server authentication). For every TLS/binding failure the
+# proxy emits no `inner_spawned` diagnostic, proving the inner fileserver is NOT
+# reached. T1/T2 use a raw rustls client (to vary client-auth presentation the
+# production MtlsClient cannot); T3/T4/T5 use the exported verifying mcps-transport
+# client. A fresh proxy per case isolates stderr capture + durable replay. Proxy +
+# inner binary + demo_root fixture delivered via runfiles (data deps); resolved
+# via $(rlocationpath ...) — no hardcoded path, no cargo. Proxy killed on test end
+# (Drop guard); readiness is a TCP port probe (no sleep-only sync). rcgen mints
+# the T2 rogue client CA in-process (no committed key fixtures).
+nt_rust_test(
+    name = "demo_transport_e2e_test",
+    srcs = ["tests/demo_transport_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-transport:mcps_transport",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-056: the runnable multi-process mTLS positive demonstration. Run with
+# `bazel run //mcps-demo:demo_e2e` from components/mcps. It GENERATES the demo
+# material at runtime via DemoFixtures (bazel run has no test fixtures), spawns
+# the real mcps_proxy_cli as a separate process wrapping the demo fileserver,
+# drives the authorized list_files over real mTLS, verifies the signed response
+# against the stored request hash, and prints a clear success line. The proxy
+# binary + inner binary + demo_root fixture are delivered via runfiles (data
+# deps); the bin resolves them via the $(rlocationpath ...) env vars — no
+# hardcoded path, no cargo.
+nt_rust_binary(
+    name = "demo_e2e",
+    srcs = ["src/bin/demo_e2e.rs"],
+    crate_name = "demo_e2e",
+    data = [
+        "//mcps-demo-fileserver:demo_root_fixture",
+        "//mcps-demo-fileserver:demo_root/readme.txt",
+        "//mcps-demo-fileserver:mcps_demo_fileserver_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_ROOT_README": "$(rlocationpath //mcps-demo-fileserver:demo_root/readme.txt)",
+        "INNER_FILESERVER_BIN": "$(rlocationpath //mcps-demo-fileserver:mcps_demo_fileserver_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+    ],
+)
+
+# MCPS-066: the runnable multi-process mTLS persistent demonstration. Run with
+# `bazel run //mcps-demo:demo_e2e_persistent` from components/mcps. It GENERATES
+# the demo material at runtime via DemoFixtures (bazel run has no test fixtures),
+# spawns the real mcps_proxy_cli --inner-mode persistent as a separate process
+# wrapping the LONG-LIVED mcps-demo-server (spawned + initialized ONCE), drives
+# THREE authorized tools/call (echo, list_items, echo) over the one persistent
+# inner plus ONE authorization-denied admin reset_items, verifies each signed
+# response against the stored request hash, and prints a clear success line. The
+# proxy binary + demo-server binary are delivered via runfiles (data deps); the
+# bin resolves them via the $(rlocationpath ...) env vars — no hardcoded path, no
+# cargo.
+nt_rust_binary(
+    name = "demo_e2e_persistent",
+    srcs = ["src/bin/demo_e2e_persistent.rs"],
+    crate_name = "demo_e2e_persistent",
+    data = [
+        "//mcps-demo-server:mcps_demo_server_bin",
+        "//mcps-proxy:mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
+        "MCPS_PROXY_CLI": "$(rlocationpath //mcps-proxy:mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_demo",
+        "@crates_mcps//:serde_json",
+    ],
+)

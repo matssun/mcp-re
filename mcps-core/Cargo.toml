@@ -1,0 +1,22 @@
+[package]
+name = "mcps-core"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-S Core — pure cryptographic verification for the MCP-S security profile."
+
+# ADR-MCPS-011 / ADR-MCPS-012: mcps-core stays free of networking, async
+# runtimes, and filesystem access. Only the pure crypto/serialization subset
+# is permitted here — no tokio/reqwest/axum/std::fs/std::net.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
+proptest = { workspace = true }

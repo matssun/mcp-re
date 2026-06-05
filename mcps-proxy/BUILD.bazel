@@ -1,0 +1,669 @@
+load("@aspect_bazel_lib//lib:transitions.bzl", "platform_transition_filegroup")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Single source of truth for the mcps_proxy library sources. The default
+# `:mcps_proxy` library and the feature-flavored `:mcps_proxy_fault` /
+# `:mcps_proxy_dev_env` instances (each a full rebuild of the same crate under a
+# `#[cfg(feature = ...)]` fault/dev gate) ALL compile this exact file set — sharing
+# the list here prevents the instances from silently drifting apart.
+_PROXY_LIB_SRCS = [
+    "src/cli.rs",
+    # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
+    # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
+    "src/delegated_response_signer.rs",
+    "src/durable_replay.rs",
+    "src/inner_launch.rs",
+    "src/key_source.rs",
+    "src/lib.rs",
+    "src/persistent_inner.rs",
+    "src/proxy.rs",
+    # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
+    # "pkcs11_keysource")]; cfg'd out of the default build).
+    "src/pkcs11_keysource.rs",
+    # Issue #4034 supply-chain follow-up: the OWNED safe wrapper over the raw
+    # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
+    # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
+    "src/pkcs11_native.rs",
+    # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
+    # "online_ocsp")]; cfg'd out of the default build).
+    "src/ocsp.rs",
+    # Issue #4028: Redis-backed shared atomic ReplayCache (behind #[cfg(feature =
+    # "redis_replay")]; cfg'd out of the default build).
+    "src/redis_store.rs",
+    "src/rlimits.rs",
+    # Issue #3865 / #4039: OS sandbox profile + fail-closed platform gate, plus the
+    # Linux Landlock/seccomp ENFORCEMENT backend (sandbox_linux.rs is
+    # #[cfg(target_os = "linux")] — excluded from the Mac build entirely).
+    "src/sandbox.rs",
+    "src/sandbox_linux.rs",
+    # Issue #3837: shared, server-side-atomic replay cache (backend-agnostic core +
+    # in-memory reference store). Always compiled; default-build, Bazel-tested.
+    "src/shared_replay.rs",
+    "src/tls.rs",
+    "src/transport.rs",
+]
+
+# Single source of truth for the mcps_proxy library deps. All three library
+# instances compile the SAME `_PROXY_LIB_SRCS`, so they MUST link the same crates —
+# they differ ONLY by `crate_features`. Sharing the list here prevents per-instance
+# dep drift (which previously left `:mcps_proxy_fault` / `:mcps_proxy_dev_env`
+# pointing at a removed `rustls-pemfile` and missing `zeroize`).
+_PROXY_LIB_DEPS = [
+    "//mcps-core:mcps_core",
+    "//mcps-policy:mcps_policy",
+    "@crates_mcps//:libc",
+    "@crates_mcps//:rustls",
+    "@crates_mcps//:rustls-pki-types",
+    "@crates_mcps//:serde_json",
+    "@crates_mcps//:thiserror",
+    "@crates_mcps//:x509-parser",
+    # MCPS-076 (audit gap G-3): scrub raw-seed temporaries in key_source.
+    "@crates_mcps//:zeroize",
+]
+
+# Issue #4039: the Linux kernel-sandbox crates are TARGET-gated. sandbox_linux.rs
+# (in _PROXY_LIB_SRCS) is #[cfg(target_os = "linux")], so EVERY library instance
+# needs landlock+seccompiler when built for Linux and NONE of them on Mac — the
+# select() resolves to [] off-Linux, keeping the Mac build's closure unchanged.
+_PROXY_LINUX_SANDBOX_DEPS = select({
+    "@platforms//os:linux": [
+        "@crates_mcps//:landlock",
+        "@crates_mcps//:seccompiler",
+    ],
+    "//conditions:default": [],
+})
+
+# Issue #4028/#4030/#4034: deps for the all-external-backends library flavor.
+# _PROXY_LIB_DEPS + the optional backend crates (enabled together by the three
+# feature flags) + the Linux sandbox select. The default `:mcps_proxy` does NOT
+# use this — only `:mcps_proxy_ext` and its tests do, so the default closure
+# stays lean (ADR-MCPS-018).
+# The optional backend crates as a PLAIN list (no select) — nt_rust_test's `deps`
+# cannot contain a select(), so test targets reuse this and inherit the
+# target-gated sandbox crates transitively via the linked `:mcps_proxy_ext`.
+_PROXY_EXT_CRATES = [
+    # #4034 supply-chain fix: the raw PKCS#11 FFI bindings (libloading only, no
+    # transitive `paste`). The high-level `cryptoki` crate is replaced by the
+    # owned safe wrapper in src/pkcs11_native.rs.
+    "@crates_mcps//:cryptoki-sys",
+    "@crates_mcps//:redis",
+    "@crates_mcps//:ureq",
+    "@crates_mcps//:x509-ocsp",
+    "@crates_mcps//:der",
+    "@crates_mcps//:spki",
+    "@crates_mcps//:x509-cert",
+    "@crates_mcps//:sha2",
+    # #4063 (MCPS-088): OS CSPRNG for the per-request OCSP nonce.
+    "@crates_mcps//:getrandom",
+    # #4063 (MCPS-088): asn1-rs BitString for the responder-signature verify path
+    # (part of the online_ocsp module; linked by every ext flavor).
+    "@crates_mcps//:asn1-rs",
+]
+
+_PROXY_EXT_DEPS = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + _PROXY_LINUX_SANDBOX_DEPS
+
+# The three Mac-buildable external-backend features, enabled together by the
+# `:mcps_proxy_ext` flavor and its tests. (Sandbox enforcement is target-gated,
+# not feature-gated, so it is NOT in this list.)
+_PROXY_EXT_FEATURES = [
+    "pkcs11_keysource",
+    "redis_replay",
+    "online_ocsp",
+]
+
+# MCPS-029 (folds in MCPS-018 #3807): the production sidecar CLI. Terminates TLS,
+# verifies object signatures + (optional) authz + transport binding, forwards to
+# an inner MCP server subprocess, signs responses. Blocking; no async runtime.
+nt_rust_binary(
+    name = "mcps_proxy_cli",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-policy:mcps_policy",
+    ],
+)
+
+# Phase 6.1: a plain (MCP-S-unaware) inner MCP echo server used as the inner
+# subprocess in the full-stack CLI smoke test. Echoes back params._meta so the
+# test can prove the proxy injected a fresh verified-context block.
+nt_rust_binary(
+    name = "echo_inner",
+    srcs = ["tests/fixtures/echo_inner.rs"],
+    edition = "2021",
+    deps = [
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-015/016: server-side sidecar library. Pure — depends only on the
+# verification crate plus serde_json. Transport is layered on by the conformance
+# harnesses (MCPS-017); the stdio-first binary entry arrives there too.
+nt_rust_library(
+    name = "mcps_proxy",
+    srcs = _PROXY_LIB_SRCS,
+    crate_name = "mcps_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+)
+
+# MCPS-079 — a SEPARATE library instance of mcps-proxy built WITH the fault
+# feature, so the faulted CLIENT verifier is compiled into the fault-injection
+# test. The default `:mcps_proxy` above is never built with this feature;
+# production and the default `bazel test //...` link only the verifying instance.
+nt_rust_library(
+    name = "mcps_proxy_fault",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = ["fault_accept_any_client"],
+    crate_name = "mcps_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+)
+
+# MCPS-079 — fault injection ("test of the tests"), the symmetric mirror of
+# mcps-transport's fault_injection_test. Runs on EVERY `bazel test //...` (NOT
+# `manual`) so the control can never silently rot. It DELIBERATELY breaks the
+# CLIENT-authentication control by compiling both the library dep AND this test
+# with `--features fault_accept_any_client`, then drives the SAME scenarios as
+# tls_test's T1 (missing client cert) and T2 (untrusted client cert) and asserts
+# the OPPOSITE outcome — the handshake now COMPLETES and the inner handler is
+# reached — proving those rejection guards are load-bearing. The feature is off by
+# default and only this separate `:mcps_proxy_fault` instance turns it on; the
+# production `:mcps_proxy` / CLI are never built with it.
+nt_rust_test(
+    name = "fault_injection_test",
+    srcs = ["tests/fault_injection_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["fault_accept_any_client"],
+    edition = "2021",
+    deps = [
+        ":mcps_proxy_fault",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+    ],
+)
+
+# MCPS-024: in-crate unit tests (transport-binding abstraction: identity, provider
+# seam, ExactMatch/Mapped binding policies). MCPS-076 adds the default-build
+# fail-closed proof for build_key_source(KeySourceKind::Env).
+nt_rust_test(
+    name = "proxy_unit_test",
+    crate = ":mcps_proxy",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcps-core:mcps_core",
+        "//mcps-policy:mcps_policy",
+        "@crates_mcps//:libc",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+        "@crates_mcps//:zeroize",
+    ],
+)
+
+# MCPS-063: the proxy fronts a LONG-LIVED inner MCP server. Spawns the REAL
+# mcps-demo-server binary as the persistent inner, does the initialize handshake
+# once, and forwards N verified host-signed requests over the SAME process —
+# asserting one inner_spawned and N inner_request_forwarded, plus fail-closed on
+# inner crash / malformed line / handshake failure. The demo binary is delivered
+# via runfiles (data dep) and resolved via $(rlocationpath ...) — no cargo.
+nt_rust_test(
+    name = "persistent_inner_test",
+    srcs = ["tests/persistent_inner_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-server:mcps_demo_server_bin",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
+    },
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-064: per-request strip/inject over a LONG-LIVED inner session. Fronts the
+# REAL mcps-demo-server binary as the persistent inner behind a real Proxy, drives
+# N (>= 3) distinct host-signed requests over the SINGLE session, and asserts the
+# verified-context strip+inject fires FRESH on every request — a forged caller
+# .verified is stripped and a sidecar-owned context (verifier = this proxy, signer
+# = the verified inbound signer) is injected each time — with one inner_spawned, N
+# inner_request_forwarded, and a clean teardown. The demo binary is delivered via
+# runfiles (data dep) and resolved via $(rlocationpath ...) — no cargo.
+nt_rust_test(
+    name = "persistent_session_test",
+    srcs = ["tests/persistent_session_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-server:mcps_demo_server_bin",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
+    },
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-065: Phase-5 scopes (public/protected/admin) over the LONG-LIVED
+# mcps-demo-server. A real Proxy with policy enforcement fronts the single
+# PersistentSubprocessInner: the public `echo` baseline grant succeeds, the
+# protected `list_items` succeeds with its matching grant and is denied without
+# one, and the admin `reset_items` is denied (no grant covers it). Each denial is
+# proven by zero added `inner_request_forwarded` AND the persistent session
+# staying alive (a later authorized call on the SAME session still succeeds). The
+# demo binary is delivered via runfiles (data dep) and resolved via
+# $(rlocationpath ...) — no cargo.
+nt_rust_test(
+    name = "persistent_scope_test",
+    srcs = ["tests/persistent_scope_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-demo-server:mcps_demo_server_bin",
+    ],
+    edition = "2021",
+    env = {
+        "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
+    },
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# Verify-before-dispatch + verified-context propagation. The host signs the
+# requests (real client/server pairing); the inner server records whether it was
+# reached so the fail-closed guarantee is observable.
+nt_rust_test(
+    name = "proxy_test",
+    srcs = ["tests/proxy_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-027: KeySource (File + Env) — signing key + TLS cert/key + client-CA.
+nt_rust_test(
+    name = "key_source_test",
+    srcs = ["tests/key_source_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls-pki-types",
+    ],
+)
+
+# MCPS-076 (audit gap G-3): a SEPARATE library instance of mcps-proxy built WITH
+# the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
+# build_key_source) is compiled into the dev test below. The default `:mcps_proxy`
+# above is NEVER built with this feature; production and the production CLI link
+# only the env-LESS instance. This instance is built on every `bazel test //...`
+# (NOT `manual`) so it can never silently fail to compile.
+nt_rust_library(
+    name = "mcps_proxy_dev_env",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = ["dev_env_key_source"],
+    crate_name = "mcps_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+)
+
+# MCPS-076 (audit gap G-3): the dev-only EnvKeySource + secret-hygiene proofs. Built
+# WITH the `dev_env_key_source` feature (so EnvKeySource exists) and linked against
+# the matching `:mcps_proxy_dev_env` instance. Runs on EVERY `bazel test //...`
+# (NOT `manual`) so the dev-feature path can never silently rot.
+# Proves: the env source signs + REMOVES the env var after read; KeyError never
+# leaks the seed; and the canonical zeroize-on-drop heap-scrub check.
+nt_rust_test(
+    name = "dev_env_key_source_test",
+    srcs = ["tests/dev_env_key_source_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["dev_env_key_source"],
+    edition = "2021",
+    deps = [
+        ":mcps_proxy_dev_env",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:zeroize",
+    ],
+)
+
+# MCPS-026: transport binding wired into the proxy serving path — bound/mismatch/
+# absent identity, and opt-in (no-binding) parity.
+nt_rust_test(
+    name = "proxy_transport_test",
+    srcs = ["tests/proxy_transport_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-025: RustlsDirectProvider — identity extraction (URI/DNS/CN priority) +
+# a full blocking mTLS round-trip (certs minted in-process via rcgen).
+nt_rust_test(
+    name = "tls_test",
+    srcs = ["tests/tls_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-023: opt-in policy enforcement — deny-before-dispatch (fail closed),
+# allow-flows-through, and opt-in (no-evaluator) parity.
+nt_rust_test(
+    name = "proxy_policy_test",
+    srcs = ["tests/proxy_policy_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-080 (audit §11 G-7): NEGATIVE secret-in-logs test. Drives a known
+# sentinel secret (signing seed, authorization artifact, request argument)
+# through every proxy error / denial / log path and asserts the sentinel never
+# appears in captured proxy logs/stderr, the returned JSON-RPC error object, or
+# (for seed/artifact) the bytes forwarded to the inner server.
+nt_rust_test(
+    name = "secret_in_logs_test",
+    srcs = ["tests/secret_in_logs_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "//mcps-policy:mcps_policy",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# Phase 6.1: full-stack CI smoke test for the mcps_proxy_cli EXECUTABLE — spawns
+# the real CLI process + a real inner echo subprocess, drives real mTLS with real
+# client certs, and asserts the security matrix end to end: verified-context
+# injection + signed response, plus rejection of no-cert / untrusted-cert /
+# tampered-signature / wrong-binding. Both binaries delivered via runfiles.
+nt_rust_test(
+    name = "full_stack_test",
+    srcs = ["tests/full_stack_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        ":echo_inner",
+        ":mcps_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_ECHO_INNER": "$(rlocationpath :echo_inner)",
+        "MCPS_PROXY_CLI": "$(rlocationpath :mcps_proxy_cli)",
+    },
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# ===========================================================================
+# Phase 7 external backends (#4028 Redis, #4030 OCSP, #4034 PKCS#11, #4039
+# Linux sandbox). A SINGLE library flavor builds all three Mac-buildable
+# optional features together so the adapters are Bazel-built on every run; the
+# default `:mcps_proxy` links none of them. The Linux sandbox enforcement is
+# target-gated (compiled into ALL flavors on Linux via _PROXY_LINUX_SANDBOX_DEPS,
+# excluded on Mac), so it needs no feature flavor.
+# ===========================================================================
+nt_rust_library(
+    name = "mcps_proxy_ext",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = _PROXY_EXT_FEATURES,
+    crate_name = "mcps_proxy",
+    edition = "2021",
+    deps = _PROXY_EXT_DEPS,
+)
+
+# Inline #[cfg(feature = ...)] unit tests for the external backends (ocsp.rs
+# network-free codec/policy tests + the RFC 6960 §3.2 responder-SIGNATURE
+# acceptance tests, cli.rs feature-gated flag tests, redis/pkcs11 inline tests).
+# Built WITH the production external-backend features against the ext flavor so
+# they actually compile + run on every `bazel test //...` (Mac included).
+#
+# #4063 (MCPS-088, closes #4030): the OCSP responder-SIGNATURE verifier
+# (x509-parser/verify, the ring-backed algorithm-agnostic RSA+ECDSA verifier) is
+# part of the `online_ocsp` module itself — `x509-parser/verify` is enabled
+# unconditionally at the workspace level — so the SHIPPING `online_ocsp` build
+# performs the real §3.2 trust chain. These acceptance tests (real signed Good →
+# ADMIT; forged/wrong-key/unsigned → DENY) therefore exercise the SAME production
+# code path the `online_ocsp` build ships, NOT a separate flavor. The in-tree
+# Ed25519 signer (ed25519-dalek) only mints the signed fixtures.
+nt_rust_test(
+    name = "proxy_ext_unit_test",
+    crate = ":mcps_proxy_ext",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [
+        "@crates_mcps//:rcgen",
+        # #4063 (MCPS-088): the in-tree Ed25519 signer used to mint a genuinely
+        # signed OCSP response fixture for the admit/forge acceptance tests.
+        "@crates_mcps//:ed25519-dalek",
+    ],
+)
+
+# #4028: cross-node replay rejection over a SHARED Redis. Self-skips (prints +
+# passes) unless MCPS_TEST_REDIS_URL is set, so it is green without a live Redis
+# yet proves multi-node safety when one is provided (Mac: `brew install redis`).
+nt_rust_test(
+    name = "redis_replay_e2e_test",
+    srcs = ["tests/redis_replay_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_REDIS_URL",
+        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+        # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
+        # inserted, to confirm the bounded-window TTL (not the now=0 epoch TTL).
+        "@crates_mcps//:redis",
+    ],
+)
+
+# #4034: PKCS#11 sign+verify against an INDEPENDENT SoftHSM2 token. Self-skips
+# unless MCPS_TEST_PKCS11_MODULE (+ PIN/TOKEN_LABEL/KEY_LABEL) is set.
+nt_rust_test(
+    name = "pkcs11_keysource_e2e_test",
+    srcs = ["tests/pkcs11_keysource_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_PKCS11_MODULE",
+        "MCPS_TEST_PKCS11_PIN",
+        "MCPS_TEST_PKCS11_TOKEN_LABEL",
+        "MCPS_TEST_PKCS11_KEY_LABEL",
+        # SoftHSM2 reads its token store location from SOFTHSM2_CONF; inherited so
+        # the e2e can be pointed at a SCRATCH token directory (never a host store).
+        "SOFTHSM2_CONF",
+        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# #4030: online OCSP Good/Revoked against an `openssl ocsp` test responder.
+# Self-skips unless MCPS_TEST_OCSP_RESPONDER_URL (+ DER paths) is set.
+nt_rust_test(
+    name = "ocsp_e2e_test",
+    srcs = ["tests/ocsp_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_OCSP_RESPONDER_URL",
+        "MCPS_TEST_OCSP_ISSUER_DER",
+        "MCPS_TEST_OCSP_GOOD_DER",
+        "MCPS_TEST_OCSP_REVOKED_DER",
+        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+        "@crates_mcps//:rcgen",
+    ],
+)
+
+# #4039: Landlock+seccomp ENFORCEMENT effect tests. The file is
+# #![cfg(target_os = "linux")], so on Mac it compiles to an empty (passing) test
+# crate and the real fs/network-denial assertions run only on the Linux runner.
+nt_rust_test(
+    name = "sandbox_linux_e2e_test",
+    srcs = ["tests/sandbox_linux_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_proxy",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# ===========================================================================
+# Phase 1 OCI packaging of the PRODUCTION proxy artifact (mcps_proxy_ext).
+#
+# The lean `:mcps_proxy_cli` binary (src/main.rs + the default `:mcps_proxy`
+# library) is unchanged. This is the SAME main.rs compiled against the
+# external-backends `:mcps_proxy_ext` library flavor (the three Mac-buildable
+# optional features), then cross-compiled to linux/amd64 and packaged into a
+# single-arch distroless image. linux/amd64 ONLY for v1 (no arm64, no
+# oci_image_index).
+# ===========================================================================
+
+# The production binary: same src/main.rs the lean CLI uses, but linked against
+# the ext library flavor and built with the external-backend features (mirrors
+# `:mcps_proxy_cli`, swapping `:mcps_proxy` -> `:mcps_proxy_ext` and adding the
+# ext features).
+nt_rust_binary(
+    name = "mcps_proxy_ext_bin",
+    srcs = ["src/main.rs"],
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    # _PROXY_EXT_DEPS already includes //mcps-policy:mcps_policy (via
+    # _PROXY_LIB_DEPS), so it is NOT relisted here — the lean CLI lists it
+    # explicitly only because its lean dep set (`:mcps_proxy`) does not.
+    deps = [":mcps_proxy_ext"] + _PROXY_EXT_DEPS,
+)
+
+# Cross-compile the ext binary to the linux/amd64 image platform (from darwin).
+platform_transition_filegroup(
+    name = "mcps_proxy_ext_linux_x86_64",
+    srcs = [":mcps_proxy_ext_bin"],
+    target_platform = "//platforms:linux_x86_64",
+)
+
+# Package the cross-compiled binary (+ its runfiles) under /app in the image.
+pkg_tar(
+    name = "mcps_proxy_ext_layer_x86_64",
+    srcs = [":mcps_proxy_ext_linux_x86_64"],
+    include_runfiles = True,
+    package_dir = "/app",
+)
+
+# The single-arch linux/amd64 distroless image.
+oci_image(
+    name = "mcps_proxy_ext_image",
+    # Single-arch: reference the platform-specific base repo directly (the
+    # multi-platform `@distroless_cc_base` alias only resolves under a matching
+    # incoming platform transition; this image is unconditionally linux/amd64).
+    base = "@distroless_cc_base_linux_amd64",
+    entrypoint = ["/app/mcps_proxy_ext_bin"],
+    tars = [":mcps_proxy_ext_layer_x86_64"],
+    workdir = "/app",
+)
+
+# Load the image into the local Docker daemon for verification.
+oci_load(
+    name = "mcps_proxy_ext_load",
+    image = ":mcps_proxy_ext_image",
+    repo_tags = ["mcps-proxy-ext:latest"],
+)
+
+# Push to the container registry. Defined only — DO NOT run without creds.
+oci_push(
+    name = "mcps_proxy_ext_push",
+    image = ":mcps_proxy_ext_image",
+    remote_tags = ["latest"],
+    repository = "ghcr.io/matssun/code/mcps-proxy-ext",
+)

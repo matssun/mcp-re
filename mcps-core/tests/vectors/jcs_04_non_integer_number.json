@@ -1,0 +1,7 @@
+{
+  "expected": "mcps.canonicalization_failed",
+  "kind": "raw",
+  "name": "jcs_04_non_integer_number",
+  "raw_text": "{\"v\":1.5}",
+  "requires_pipeline": false
+}

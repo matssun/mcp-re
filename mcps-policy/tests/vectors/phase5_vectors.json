@@ -1,0 +1,658 @@
+[
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Valid reference grant: signer/subject/audience bound, live window, in scope.",
+    "expected": "allow",
+    "name": "allow",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:PSgnGMolj3tya1WoXuqUjYLwD7Qn8MXBMTmdAhl4G6g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-allow-0001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "dTFUevJPeJV24IAJwR66RAWhOHwa2dezEBL3RWvHe1n1vh9jpWavc9H-7GJgN6pENR3_8I4iE6YaMR7LC9o7DA"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Core verifies but no .authorization sibling block is present.",
+    "expected": "mcps.authorization_block_missing",
+    "name": "authorization_block_missing",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:PSgnGMolj3tya1WoXuqUjYLwD7Qn8MXBMTmdAhl4G6g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-noblock-001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "V1720Fz3JJg0-a5jq3mQO5OD6fcSbJvb-2FI-z7gPeQMkN_yGDVLuda8uLpcL4PMrV44ZUKbsGvvyGUQ3GmFDw"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Block names a profile not registered with the verifier.",
+    "expected": "mcps.authorization_profile_unsupported",
+    "name": "authorization_profile_unsupported",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-biscuit-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:PSgnGMolj3tya1WoXuqUjYLwD7Qn8MXBMTmdAhl4G6g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-unsupp-001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "fnpPSX_hKzNcaSLf7DC8AgV_4l6H1G2f2-tQKoyH3RiZJJI8RIxRpXdIRTIKRXRBO1QwChWfAXWBeE2CqhO6Cw"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Artifact decodes but does not parse as a canonical JSON object.",
+    "expected": "mcps.authorization_malformed",
+    "name": "authorization_malformed",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "dGhpcyBpcyBub3QganNvbg",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:XS-aLR_tJ0LFJ_Lr5mi2yYqx-6PK-NQUj4FxZJOx5y0",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-malf-0001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "VfqTUdMFHWQA9Yu9HE-BJfKt3zqA1kdGEJHO8BvbB0Wts09hv_EBGqwY38uiA28l0Uyeu9cNpIKB61FjsBK3Bg"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "sha256(attached artifact) != the signed authorization_hash.",
+    "expected": "mcps.authorization_hash_mismatch",
+    "name": "authorization_hash_mismatch",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:U4p0HGInM6_hR4Gek52CzAce376z60ntcBpVl1rCiLM",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-hashmm-01",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "38miVpIOX2vQyf0Aig-T_wtvHFU3Q7wKyGHSKCihpsBy-IMkypQfu4L5YbNm7usL9xY7U8v-ULT-QMuXHORcAQ"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Artifact content changed after issuer signing; hash binds the tampered bytes.",
+    "expected": "mcps.authorization_signature_invalid",
+    "name": "authorization_signature_invalid",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV2aWw6aW1wb3N0b3IifQ",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:ETpT9lpFk6QmhqyeT3ZoUG8mrNBph7U4z4Ggtl7CBfQ",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-siginv-01",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "YUMii3eul9opJGypmmohVUcqvc6v8zmzdJ9ynEMXl-dH4dVKUDwiwfUERrdbbC4J0SFvpuE0kjT123JZacIUAw"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Grant grantee differs from the Core-verified request signer.",
+    "expected": "mcps.authorization_signer_mismatch",
+    "name": "authorization_signer_mismatch",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOm90aGVyLWFnZW50IiwiZ3JhbnRzIjpbeyJtZXRob2QiOiJ0b29scy9jYWxsIiwidG9vbCI6ImVjaG8ifV0sImlzc3VlciI6ImRpZDpleGFtcGxlOmF1dGhvcml0eS0xIiwibm90X2JlZm9yZSI6IjIwMjYtMDUtMjhUMjA6MDA6MDBaIiwicHJvZmlsZSI6Im5hbWUuc3VuZHZhbGwvbWNwcy1hdXRoei1yZWZlcmVuY2UtdjEiLCJyZXZvY2F0aW9uX2lkIjoicmV2LTEiLCJzaWduYXR1cmUiOnsiYWxnIjoiRWQyNTUxOSIsImtleV9pZCI6ImF1dGhvcml0eS1rZXktMSIsInZhbHVlIjoiSDZtd1F3UG5tSWJRX05EWDl3dFh5QmhOek5ObkJlZlNmY056Mk16UTc2RDB5X1BKOGZCbzIzVHB2c0REWE5kVU9VU0NGQnJlNGRITWN3eGZKVEVVRHcifSwic3ViamVjdCI6ImRpZDpleGFtcGxlOnVzZXItMSJ9",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:_75n93smWQ5Mo9ClhZbv8dncgOWblMSLMm-JlvrI4po",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-signmm-01",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "MDsr9QSIhDAv8JVu8SEFMUfFavpe0E3xQGJ_6i3ueKwF10e3RRYHKR3ChUYnS5k4KFMc0zVNHAmU-z4DWFP5Cg"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Grant subject differs from the verified on_behalf_of.",
+    "expected": "mcps.authorization_subject_mismatch",
+    "name": "authorization_subject_mismatch",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJDYlF1R0xUa2VrUVRNX0Y5QlVMZnBZTFFyb1pHYmJKTVpiRDJGbFpvTWhxTzNkcGwwT1hfX3VQRlZnV3NORzNwVF9NejRDNS1TLUVQazlhNWw4Q1FCZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6b3RoZXItdXNlciJ9",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:L_ISGWkiG02ZFCB7KozrmCIyHJ4AmEXPGNt9qsE4o7U",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-subjmm-01",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "kvbd9YUDLPFPbNDdq8oNEvLPH65Foo-CeZ7I35k7JJ5ftJ3TOZ2q0Vcw28LgwjqHWO8JlbqZtu-sCFFpq_9dAA"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Grant audience differs from the verified audience.",
+    "expected": "mcps.authorization_audience_mismatch",
+    "name": "authorization_audience_mismatch",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOm90aGVyLXNlcnZlciIsImV4cGlyZXNfYXQiOiIyMDI2LTA1LTI4VDIxOjAwOjAwWiIsImdyYW50ZWUiOiJkaWQ6ZXhhbXBsZTphZ2VudC0xIiwiZ3JhbnRzIjpbeyJtZXRob2QiOiJ0b29scy9jYWxsIiwidG9vbCI6ImVjaG8ifV0sImlzc3VlciI6ImRpZDpleGFtcGxlOmF1dGhvcml0eS0xIiwibm90X2JlZm9yZSI6IjIwMjYtMDUtMjhUMjA6MDA6MDBaIiwicHJvZmlsZSI6Im5hbWUuc3VuZHZhbGwvbWNwcy1hdXRoei1yZWZlcmVuY2UtdjEiLCJyZXZvY2F0aW9uX2lkIjoicmV2LTEiLCJzaWduYXR1cmUiOnsiYWxnIjoiRWQyNTUxOSIsImtleV9pZCI6ImF1dGhvcml0eS1rZXktMSIsInZhbHVlIjoiYjBRT0dUOXc4Q2VLbzFiVGdsS1ZOcDY0X0hvdVdoZk4zTkNRWFBSRXRFb1g3RFUwdW9PTmctSWNpT01oWEVPTm5Db0tkbHUxUXZyWjBoRWhHbFhRQkEifSwic3ViamVjdCI6ImRpZDpleGFtcGxlOnVzZXItMSJ9",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:CYMXYYAYMWqLXJzeihrsf6h2kg9whUun3QawNWcTb0g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-audmm-001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "f4Ac2IddlTwM-QnB9CXdFvbsTaPvJdyQeA0KewZ22nsVM_BiU9mEcusWnxBnkVjrbo8WG2wFiFW_1LOtPZyOBQ"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "now precedes the grant not_before (Core request window still fresh).",
+    "expected": "mcps.authorization_expired",
+    "name": "authorization_expired",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjlUMDA6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMzowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJTRFhBYVRWZFVQaWZnTVBzanl6T2l3ZnhDN2x5QW1tbHNlY1ZjYVZxMkVHN3AwZkZhVnEtczBzQ3NkWHJwdXhzSFFFbnhadlo3MDJfQXB6TUViVEhCQSJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:6Uu29JopwGSDFZzskF2PpPxYX-RVTY0QkhRLPKdODuM",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-expired-1",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "5VSpQFU9UIbWECMQtDRlKkQbkGXKrW4ZcE8ruk0Yrlnj9rISeAqujvR2KPus7d7Y7BMPaxqewVzmmpnir2-XBQ"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Grant revocation_id is present in the revocation source.",
+    "expected": "mcps.authorization_revoked",
+    "name": "authorization_revoked",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:PSgnGMolj3tya1WoXuqUjYLwD7Qn8MXBMTmdAhl4G6g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-revoked-1",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "B1T7Gh-OjcIUGlh7D9y1GsmnV34VcPf2psqJGA3UAfwM4Ifr-ddP57Ioxnri5yJLVdrs5Gj3prbcWE2j5_oGDQ"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {
+          "text": "hello"
+        },
+        "name": "echo"
+      }
+    },
+    "revoked": [
+      "rev-1"
+    ],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  },
+  {
+    "config": {
+      "expected_audience": "did:example:server-1",
+      "max_clock_skew_secs": 300
+    },
+    "description": "Requested tool is outside the granted scope.",
+    "expected": "mcps.authorization_scope_denied",
+    "name": "authorization_scope_denied",
+    "now_unix": 1779998460,
+    "request": {
+      "id": "req-1",
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "_meta": {
+          "name.sundvall/mcps-security.authorization": {
+            "artifact": "eyJhdWRpZW5jZSI6ImRpZDpleGFtcGxlOnNlcnZlci0xIiwiZXhwaXJlc19hdCI6IjIwMjYtMDUtMjhUMjE6MDA6MDBaIiwiZ3JhbnRlZSI6ImRpZDpleGFtcGxlOmFnZW50LTEiLCJncmFudHMiOlt7Im1ldGhvZCI6InRvb2xzL2NhbGwiLCJ0b29sIjoiZWNobyJ9XSwiaXNzdWVyIjoiZGlkOmV4YW1wbGU6YXV0aG9yaXR5LTEiLCJub3RfYmVmb3JlIjoiMjAyNi0wNS0yOFQyMDowMDowMFoiLCJwcm9maWxlIjoibmFtZS5zdW5kdmFsbC9tY3BzLWF1dGh6LXJlZmVyZW5jZS12MSIsInJldm9jYXRpb25faWQiOiJyZXYtMSIsInNpZ25hdHVyZSI6eyJhbGciOiJFZDI1NTE5Iiwia2V5X2lkIjoiYXV0aG9yaXR5LWtleS0xIiwidmFsdWUiOiJjdjNJMC0xN3ZRa25Pb3pQWHVrMExjODFsM3RycjhPbkp0Tm55M3U4WlhKcWVhamh0SXpXVUhyN1FHZmVVWGtDUHROamNXcGQxcnNWRXplR0plUnlEZyJ9LCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6dXNlci0xIn0",
+            "profile": "name.sundvall/mcps-authz-reference-v1"
+          },
+          "name.sundvall/mcps-security.request": {
+            "audience": "did:example:server-1",
+            "authorization_hash": "sha256:PSgnGMolj3tya1WoXuqUjYLwD7Qn8MXBMTmdAhl4G6g",
+            "expires_at": "2026-05-28T20:05:00Z",
+            "issued_at": "2026-05-28T20:00:00Z",
+            "nonce": "nonce-scope-001",
+            "on_behalf_of": "did:example:user-1",
+            "signature": {
+              "alg": "Ed25519",
+              "key_id": "key-1",
+              "value": "pKhhlP4VrYvceL7lCl7DGqcPtrPVfb2ingfLcLjRyt_3wcmxemEjMWFh0ChS0fVftUjQ8zQSJYn0FOfdjWnqCQ"
+            },
+            "signer": "did:example:agent-1",
+            "version": "draft-01"
+          }
+        },
+        "arguments": {},
+        "name": "delete_everything"
+      }
+    },
+    "revoked": [],
+    "trust": [
+      {
+        "key_id": "key-1",
+        "public_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+        "signer": "did:example:agent-1"
+      },
+      {
+        "key_id": "authority-key-1",
+        "public_key": "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+        "signer": "did:example:authority-1"
+      }
+    ]
+  }
+]

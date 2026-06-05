@@ -1,0 +1,269 @@
+load("@crates_mcps//:defs.bzl", "all_crate_deps")
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-010 object conformance runner library: vector model + Target trait +
+# in-process ObjectTarget + RunReport. Depends on the pure mcps-core crate
+# (cross-crate label) plus serde/serde_json from the isolated crates_mcps hub.
+# mcps-conformance MAY use std::fs (loader); mcps-core stays pure (ADR-011/012).
+nt_rust_library(
+    name = "mcps_conformance_lib",
+    srcs = [
+        "src/echo_server.rs",
+        "src/fixtures.rs",
+        "src/http.rs",
+        "src/http_target.rs",
+        "src/lib.rs",
+        "src/loader.rs",
+        "src/runner.rs",
+        "src/server.rs",
+        "src/stdio.rs",
+        "src/stdio_target.rs",
+        "src/target.rs",
+        "src/vector.rs",
+    ],
+    crate_name = "mcps_conformance",
+    edition = "2021",
+    deps = [
+        "//mcps-core:mcps_core",
+        "//mcps-proxy:mcps_proxy",
+        "@crates_mcps//:serde",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+nt_rust_binary(
+    name = "mcps_conformance",
+    srcs = ["src/main.rs"],
+    crate_name = "mcps_conformance_bin",
+    edition = "2021",
+    deps = [
+        ":mcps_conformance_lib",
+    ],
+)
+
+# MCPS-012: the documented MCP-S echo server over stdio. The stdio harness test
+# launches this binary as a child process and drives signed JSON-RPC over its
+# stdin/stdout.
+nt_rust_binary(
+    name = "mcps_stdio_server",
+    srcs = ["src/stdio_server_main.rs"],
+    crate_name = "mcps_stdio_server_bin",
+    edition = "2021",
+    deps = [
+        ":mcps_conformance_lib",
+    ],
+)
+
+# Object suite test: loads the committed vectors (SINGLE SOURCE OF TRUTH in the
+# mcps-core package) via include_str! of the //mcps-core:vectors
+# filegroup placed in compile_data — no runfiles, no duplication, no abs paths.
+nt_rust_test(
+    name = "object_suite_test",
+    srcs = ["tests/object_suite_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcps-core:vectors"],
+    edition = "2021",
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-011: native MCP-S echo server round-trip tests (in-process; no transport).
+nt_rust_test(
+    name = "echo_server_test",
+    srcs = ["tests/echo_server_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-013: Streamable HTTP harness — runs the documented echo server on a
+# loopback socket and drives the same outcome matrix over HTTP, then asserts
+# HTTP == stdio == object for every shared request vector (the transport-
+# agnostic headline claim). Needs the stdio server binary for the cross-
+# transport comparison, delivered via runfiles (same MCPS_STDIO_SERVER scheme).
+nt_rust_test(
+    name = "http_harness_test",
+    srcs = ["tests/http_harness_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcps-core:vectors"],
+    data = [":mcps_stdio_server"],
+    edition = "2021",
+    env = {"MCPS_STDIO_SERVER": "$(rlocationpath :mcps_stdio_server)"},
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-017: acceptance — a sidecar-wrapped ordinary server AND a native MCP-S
+# server run the SAME outcome matrix over BOTH transports (stdio + HTTP) and must
+# produce identical Core outcomes. The host (which holds the key, not the model)
+# signs the requests. Needs the stdio server binary (native + proxy modes).
+nt_rust_test(
+    name = "acceptance_test",
+    srcs = ["tests/acceptance_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcps-core:vectors"],
+    data = [":mcps_stdio_server"],
+    edition = "2021",
+    env = {"MCPS_STDIO_SERVER": "$(rlocationpath :mcps_stdio_server)"},
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-031: drift-guarded conformance manifest. The committed
+# conformance_manifest.json is the SINGLE SOURCE OF TRUTH for the conformance
+# corpus (every vector + every //... rust_test target). This
+# guard reads the manifest, the Core vector fixtures, the Phase 5 vectors, and
+# every BUILD.bazel from DISK (via runfiles) and FAILS on any drift: a vector on
+# disk missing from the manifest, a manifest entry with no vector, a stale
+# (hardcoded-and-rotted) count, or a rust_test target added/removed without a
+# manifest update. Counts are derived from reality, never trusted as written.
+nt_rust_test(
+    name = "drift_guard_test",
+    srcs = ["tests/drift_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "conformance_manifest.json",
+        "BUILD.bazel",
+        "//mcps-core:vectors",
+        "//mcps-core:tests/vectors/manifest.json",
+        "//mcps-core:BUILD.bazel",
+        "//mcps-host:BUILD.bazel",
+        "//mcps-policy:BUILD.bazel",
+        "//mcps-policy:tests/vectors/phase5_vectors.json",
+        "//mcps-proxy:BUILD.bazel",
+        "//mcps-demo:BUILD.bazel",
+        "//mcps-demo-server:BUILD.bazel",
+        "//mcps-transport:BUILD.bazel",
+        "//mcps-demo-fileserver:BUILD.bazel",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_MANIFEST": "$(rlocationpath conformance_manifest.json)",
+        "MCPS_CORE_MANIFEST": "$(rlocationpath //mcps-core:tests/vectors/manifest.json)",
+        "MCPS_PHASE5": "$(rlocationpath //mcps-policy:tests/vectors/phase5_vectors.json)",
+        "MCPS_BUILD_CONFORMANCE": "$(rlocationpath BUILD.bazel)",
+        "MCPS_BUILD_CORE": "$(rlocationpath //mcps-core:BUILD.bazel)",
+        "MCPS_BUILD_HOST": "$(rlocationpath //mcps-host:BUILD.bazel)",
+        "MCPS_BUILD_POLICY": "$(rlocationpath //mcps-policy:BUILD.bazel)",
+        "MCPS_BUILD_PROXY": "$(rlocationpath //mcps-proxy:BUILD.bazel)",
+        # MCPS-082: the four previously-unscanned packages.
+        "MCPS_BUILD_DEMO": "$(rlocationpath //mcps-demo:BUILD.bazel)",
+        "MCPS_BUILD_DEMO_SERVER": "$(rlocationpath //mcps-demo-server:BUILD.bazel)",
+        "MCPS_BUILD_TRANSPORT": "$(rlocationpath //mcps-transport:BUILD.bazel)",
+        "MCPS_BUILD_FILESERVER": "$(rlocationpath //mcps-demo-fileserver:BUILD.bazel)",
+    },
+    deps = [
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-070: security traceability manifest drift guard. The committed
+# security_traceability_manifest.json maps each MCP-S security property
+# (P6.6A + P6.6B) to the Bazel test target + test fn that proves it. This guard
+# reads the manifest, every relevant BUILD.bazel, and every referenced test
+# source from DISK (via runfiles) and FAILS on drift: a manifest target no
+# BUILD.bazel declares as nt_rust_test, a manifest test_fn absent from its source
+# file, a source/target package mismatch, a stale recorded count, or a missing
+# server-auth case. Renames/removals are caught by re-reading reality.
+nt_rust_test(
+    name = "security_traceability_guard_test",
+    srcs = ["tests/security_traceability_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "security_traceability_manifest.json",
+        "BUILD.bazel",
+        "tests/object_suite_test.rs",
+        "//mcps-core:BUILD.bazel",
+        "//mcps-host:BUILD.bazel",
+        "//mcps-host:tests/host_session_test.rs",
+        "//mcps-policy:BUILD.bazel",
+        "//mcps-proxy:BUILD.bazel",
+        "//mcps-proxy:tests/persistent_scope_test.rs",
+        "//mcps-proxy:tests/persistent_inner_test.rs",
+        "//mcps-proxy:tests/persistent_session_test.rs",
+        "//mcps-proxy:tests/proxy_test.rs",
+        "//mcps-proxy:tests/key_source_test.rs",
+        "//mcps-proxy:tests/dev_env_key_source_test.rs",
+        "//mcps-demo:BUILD.bazel",
+        "//mcps-demo:tests/demo_negative_e2e_test.rs",
+        "//mcps-demo:tests/demo_transport_e2e_test.rs",
+        "//mcps-demo:tests/demo_e2e_persistent_test.rs",
+        "//mcps-demo:tests/demo_posture_e2e_test.rs",
+        "//mcps-demo-server:BUILD.bazel",
+        "//mcps-demo-server:tests/received_log_test.rs",
+        "//mcps-transport:BUILD.bazel",
+        "//mcps-transport:tests/mtls_client_test.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_SECURITY_MANIFEST": "$(rlocationpath security_traceability_manifest.json)",
+        "MCPS_BUILD_CONFORMANCE": "$(rlocationpath BUILD.bazel)",
+        "MCPS_BUILD_CORE": "$(rlocationpath //mcps-core:BUILD.bazel)",
+        "MCPS_BUILD_HOST": "$(rlocationpath //mcps-host:BUILD.bazel)",
+        "MCPS_BUILD_POLICY": "$(rlocationpath //mcps-policy:BUILD.bazel)",
+        "MCPS_BUILD_PROXY": "$(rlocationpath //mcps-proxy:BUILD.bazel)",
+        "MCPS_BUILD_DEMO": "$(rlocationpath //mcps-demo:BUILD.bazel)",
+        "MCPS_BUILD_DEMO_SERVER": "$(rlocationpath //mcps-demo-server:BUILD.bazel)",
+        "MCPS_BUILD_TRANSPORT": "$(rlocationpath //mcps-transport:BUILD.bazel)",
+        "MCPS_SRC_OBJECT_SUITE": "$(rlocationpath tests/object_suite_test.rs)",
+        "MCPS_SRC_HOST_SESSION": "$(rlocationpath //mcps-host:tests/host_session_test.rs)",
+        "MCPS_SRC_PERSISTENT_SCOPE": "$(rlocationpath //mcps-proxy:tests/persistent_scope_test.rs)",
+        "MCPS_SRC_PERSISTENT_INNER": "$(rlocationpath //mcps-proxy:tests/persistent_inner_test.rs)",
+        "MCPS_SRC_PERSISTENT_SESSION": "$(rlocationpath //mcps-proxy:tests/persistent_session_test.rs)",
+        "MCPS_SRC_PROXY": "$(rlocationpath //mcps-proxy:tests/proxy_test.rs)",
+        "MCPS_SRC_KEY_SOURCE": "$(rlocationpath //mcps-proxy:tests/key_source_test.rs)",
+        "MCPS_SRC_DEV_ENV_KEY_SOURCE": "$(rlocationpath //mcps-proxy:tests/dev_env_key_source_test.rs)",
+        "MCPS_SRC_DEMO_NEGATIVE_E2E": "$(rlocationpath //mcps-demo:tests/demo_negative_e2e_test.rs)",
+        "MCPS_SRC_DEMO_TRANSPORT_E2E": "$(rlocationpath //mcps-demo:tests/demo_transport_e2e_test.rs)",
+        "MCPS_SRC_DEMO_E2E_PERSISTENT": "$(rlocationpath //mcps-demo:tests/demo_e2e_persistent_test.rs)",
+        "MCPS_SRC_DEMO_POSTURE_E2E": "$(rlocationpath //mcps-demo:tests/demo_posture_e2e_test.rs)",
+        "MCPS_SRC_RECEIVED_LOG": "$(rlocationpath //mcps-demo-server:tests/received_log_test.rs)",
+        "MCPS_SRC_MTLS_CLIENT": "$(rlocationpath //mcps-transport:tests/mtls_client_test.rs)",
+    },
+    deps = [
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-012: stdio harness — launches the mcps_stdio_server child process and
+# drives the full outcome matrix over real stdin/stdout, asserting identical
+# Core outcomes to the in-process object target. The server binary is delivered
+# via runfiles; its path is passed through MCPS_STDIO_SERVER ($(rlocationpath))
+# and resolved against TEST_SRCDIR in the test (no runfiles-crate dependency).
+nt_rust_test(
+    name = "stdio_harness_test",
+    srcs = ["tests/stdio_harness_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcps-core:vectors"],
+    data = [":mcps_stdio_server"],
+    edition = "2021",
+    env = {"MCPS_STDIO_SERVER": "$(rlocationpath :mcps_stdio_server)"},
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)

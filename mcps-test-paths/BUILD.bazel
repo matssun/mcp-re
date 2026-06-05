@@ -1,0 +1,15 @@
+load("//bazel:defs.bzl", "nt_rust_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Test-only helper: resolve child-process binaries and data fixtures under
+# Bazel runfiles OR a plain Cargo build. The Bazel branch is a no-op pass-
+# through (env vars are already set by the test target); the cargo-fallback
+# branches activate only under `cargo test`. Pure std-only library.
+nt_rust_library(
+    name = "mcps_test_paths",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcps_test_paths",
+    edition = "2021",
+    deps = [],
+)

@@ -1,0 +1,234 @@
+{
+  "schema": "mcps-security-traceability-manifest/v1",
+  "description": "MCPS-070 (MCPS-EPIC-P6.6C). The checked-in, machine-checkable map from each MCP-S security property (P6.6A + P6.6B) to the Bazel test target AND the named test function that PROVES it. Docs reference this manifest ('see the manifest') instead of stale literal counts. Guarded by //mcps-conformance:security_traceability_guard_test (MCPS-070): every entry's bazel_target must be declared by a real BUILD.bazel rule and every test_fn must appear in the referenced test source on disk. A renamed or removed target/fn makes that guard FAIL. Each entry's source is read from DISK at test time via runfiles (the same $(rlocationpath) scheme as the conformance drift_guard); nothing is trusted as written.",
+  "entries": [
+    {
+      "property": "request object signature verified; tampered request body rejected over the wire",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a1_tampered_request_body_rejected_over_wire",
+      "notes": "demo_negative A1. Mutating a signed param byte breaks the request-object signature; the proxy rejects before any forward. Mirrors mcps-core vector v2_tampered_argument.json."
+    },
+    {
+      "property": "tampered JSON-RPC id rejected over the wire",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a2_tampered_jsonrpc_id_rejected_over_wire",
+      "notes": "demo_negative A2. The signed id binding is broken by editing the id; rejected. Mirrors mcps-core vector tampered_id.json."
+    },
+    {
+      "property": "core conformance vectors: tampered body/id + replay/expiry/audience/envelope (object == stdio == http parity)",
+      "bazel_target": "//mcps-conformance:object_suite_test",
+      "source": "mcps-conformance/tests/object_suite_test.rs",
+      "test_fn": "object_runner_every_case_actual_equals_expected",
+      "notes": "The committed mcps-core vectors (tampered_id.json, v2_tampered_argument.json, replay_request.json, expired_request.json, wrong_audience_request.json, missing_envelope_request.json) are replayed in-process. Cross-transport parity is in http_harness_test / stdio_harness_test. The vector corpus itself is drift-guarded by conformance_manifest.json + drift_guard_test."
+    },
+    {
+      "property": "freshness + replay rejected on a fresh connection (replay across connection)",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a3_replayed_request_rejected_on_fresh_connection",
+      "notes": "demo_negative A3. A previously-accepted signed request replayed on a NEW mTLS connection is rejected by the proxy's nonce/freshness cache — replay protection spans connections, not just one socket."
+    },
+    {
+      "property": "freshness: expired request rejected over the wire",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a4_expired_request_rejected_over_wire",
+      "notes": "demo_negative A4. A request whose signed expiry is in the past is rejected (freshness window enforced)."
+    },
+    {
+      "property": "replay detected across a proxy RESTART via the shared durable nonce cache",
+      "bazel_target": "//mcps-demo:demo_posture_e2e_test",
+      "source": "mcps-demo/tests/demo_posture_e2e_test.rs",
+      "test_fn": "c2_replay_detected_after_proxy_restart_with_shared_durable_cache",
+      "notes": "P6.6B C2. A request accepted by one proxy process is replayed after the proxy is killed and a fresh process starts against the SAME durable cache; the replay is still rejected. Durable, not in-memory-only."
+    },
+    {
+      "property": "response signing + request_hash binding, independently verified by the client",
+      "bazel_target": "//mcps-demo:demo_e2e_persistent_test",
+      "source": "mcps-demo/tests/demo_e2e_persistent_test.rs",
+      "test_fn": "persistent_multi_call_multi_process_mtls",
+      "notes": "demo_e2e_persistent. Each signed response is verified against the request hash the HostSession STORED at sign time, and independently re-verified via mcps_demo::independently_verify_response against the server signer's public key (a path independent of the client's own session state)."
+    },
+    {
+      "property": "wrong response hash rejected by the client over the wire",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a9_wrong_response_hash_rejected_by_client_over_wire",
+      "notes": "demo_negative A9. A response bound to the wrong request hash fails client-side verification. Mirrors mcps-core vector v4b_signed_wrong_hash_response.json."
+    },
+    {
+      "property": "bad response signature rejected by the client over the wire",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a10_bad_response_signature_rejected_by_client_over_wire",
+      "notes": "demo_negative A10. A response with a garbage/forged signature fails client-side verification. Mirrors mcps-core vector v4_wrong_hash_garbage_sig_response.json."
+    },
+    {
+      "property": "HostSession sign produces a request the verifier accepts (round trip)",
+      "bazel_target": "//mcps-host:host_session_test",
+      "source": "mcps-host/tests/host_session_test.rs",
+      "test_fn": "signed_request_is_accepted_by_the_verifier",
+      "notes": "HostSession sign/verify foundation: the session signs with the injected clock + RNG and the verifier accepts."
+    },
+    {
+      "property": "HostSession verifies a response against the STORED request hash, not a caller-supplied value",
+      "bazel_target": "//mcps-host:host_session_test",
+      "source": "mcps-host/tests/host_session_test.rs",
+      "test_fn": "verify_response_uses_stored_hash_not_a_caller_value",
+      "notes": "HostSession sign/verify: response correlation uses the hash the session itself stored at sign time; a caller cannot inject the binding hash."
+    },
+    {
+      "property": "HostSession rejects a response bound to the wrong request hash",
+      "bazel_target": "//mcps-host:host_session_test",
+      "source": "mcps-host/tests/host_session_test.rs",
+      "test_fn": "verify_response_rejects_wrong_binding",
+      "notes": "HostSession sign/verify: a response whose bound hash does not match the stored request hash is rejected."
+    },
+    {
+      "property": "mTLS client/server happy path: trusted server + client round-trip succeeds",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "trusted_server_and_client_round_trip_succeeds",
+      "notes": "mTLS transport happy path: trusted server cert + trusted client cert complete a mutual-auth round trip."
+    },
+    {
+      "property": "server-cert verification: untrusted server cert REJECTED by the client",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "untrusted_server_cert_is_rejected",
+      "notes": "Server-auth case 1 of 4. A server cert from a CA the client does not trust is rejected during the handshake."
+    },
+    {
+      "property": "server-cert verification: trusted server cert ACCEPTED",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "trusted_server_and_client_round_trip_succeeds",
+      "notes": "Server-auth case 2 of 4 (trusted-accepted). A server cert chaining to the client's trusted server CA is accepted (same fn as the happy path)."
+    },
+    {
+      "property": "server-cert verification: wrong server identity REJECTED",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "wrong_server_identity_is_rejected",
+      "notes": "Server-auth case 3 of 4. A trusted-CA server cert presenting the WRONG identity (SAN) is rejected — chain validity alone is not sufficient."
+    },
+    {
+      "property": "server-cert verification: expired server cert REJECTED",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "expired_server_cert_is_rejected",
+      "notes": "Server-auth case 4 of 4. A server cert past its validity window is rejected."
+    },
+    {
+      "property": "server-cert verification: empty server CA fails closed (no implicit trust)",
+      "bazel_target": "//mcps-transport:mtls_client_test",
+      "source": "mcps-transport/tests/mtls_client_test.rs",
+      "test_fn": "empty_server_ca_is_rejected_fail_closed",
+      "notes": "Defense-in-depth for the four server-auth cases: an empty server trust anchor set does not silently accept any server — it fails closed."
+    },
+    {
+      "property": "transport-binding EXACT: identity (mTLS client cert URI SAN) must equal the request signer",
+      "bazel_target": "//mcps-demo:demo_transport_e2e_test",
+      "source": "mcps-demo/tests/demo_transport_e2e_test.rs",
+      "test_fn": "t3_identity_not_signer_transport_binding_failed",
+      "notes": "demo_transport T3. A valid mTLS client whose cert SAN identity does NOT equal the request signer is rejected: the transport identity is bound exactly to the signer."
+    },
+    {
+      "property": "valid mTLS does NOT rescue an invalid request signature (transport != authn of the object)",
+      "bazel_target": "//mcps-demo:demo_negative_e2e_test",
+      "source": "mcps-demo/tests/demo_negative_e2e_test.rs",
+      "test_fn": "a1_tampered_request_body_rejected_over_wire",
+      "notes": "Every demo_negative A* case runs over a fully VALID mTLS connection, yet the tampered/forged request object is still rejected — a valid transport channel never rescues a broken object signature. A1 is the canonical witness."
+    },
+    {
+      "property": "transport: untrusted server cert refused by the client in the demo end-to-end path",
+      "bazel_target": "//mcps-demo:demo_transport_e2e_test",
+      "source": "mcps-demo/tests/demo_transport_e2e_test.rs",
+      "test_fn": "t5_untrusted_server_cert_refused_by_client",
+      "notes": "demo_transport T5. End-to-end echo of the server-auth property: the demo host client refuses an untrusted proxy server cert."
+    },
+    {
+      "property": "Phase-5 allow/deny over a persistent session; admin tool DENIED before dispatch",
+      "bazel_target": "//mcps-proxy:persistent_scope_test",
+      "source": "mcps-proxy/tests/persistent_scope_test.rs",
+      "test_fn": "phase5_scopes_over_one_persistent_session",
+      "notes": "Per-scope grants over one persistent inner session; the admin tool (reset_items) has NO grant and is scope-denied. inner_request_forwarded (emitted inside dispatch_and_sign) is the deny-before-dispatch probe — a denied call shows zero forwards."
+    },
+    {
+      "property": "admin tool denied before dispatch, end-to-end (denied call never forwarded to the persistent inner)",
+      "bazel_target": "//mcps-demo:demo_e2e_persistent_test",
+      "source": "mcps-demo/tests/demo_e2e_persistent_test.rs",
+      "test_fn": "persistent_multi_call_multi_process_mtls",
+      "notes": "demo_e2e_persistent. The admin reset_items call (no grant) is denied with mcps.authorization_scope_denied; the inner's own received-log (an INDEPENDENT signal) shows it was never forwarded."
+    },
+    {
+      "property": "persistent inner reused: one spawn, multiple forwards (single process serves N calls)",
+      "bazel_target": "//mcps-proxy:persistent_inner_test",
+      "source": "mcps-proxy/tests/persistent_inner_test.rs",
+      "test_fn": "n_requests_over_one_persistent_inner_process",
+      "notes": "P6.6B. N authorized requests are served over ONE long-lived inner process (one spawn, many forwards)."
+    },
+    {
+      "property": "deny-not-reached via the inner received-log: a pre-dispatch denial yields zero forwards while the inner stays alive",
+      "bazel_target": "//mcps-proxy:persistent_inner_test",
+      "source": "mcps-proxy/tests/persistent_inner_test.rs",
+      "test_fn": "pre_dispatch_denial_yields_zero_forwards_while_inner_stays_alive",
+      "notes": "The anti-gaming oracle for 'denied never reached': the inner's forward count stays at zero for a denied call and the inner process is NOT torn down."
+    },
+    {
+      "property": "demo server received-log lists ONLY calls the inner actually served (independent oracle)",
+      "bazel_target": "//mcps-demo-server:received_log_test",
+      "source": "mcps-demo-server/tests/received_log_test.rs",
+      "test_fn": "received_log_omits_unknown_tool_calls_that_were_not_executed",
+      "notes": "Validates the received-log oracle itself: it records only executed calls, so 'denied never reached' assertions built on it are sound."
+    },
+    {
+      "property": "per-request strip/inject: the proxy is the SOLE writer of .verified, fresh on every request of a persistent session",
+      "bazel_target": "//mcps-proxy:persistent_session_test",
+      "source": "mcps-proxy/tests/persistent_session_test.rs",
+      "test_fn": "per_request_strip_inject_over_one_persistent_session",
+      "notes": "MCPS-064. A forged caller-owned .verified block (inside the signed params) is stripped on EVERY request across one long-lived session and the sidecar-owned context for request K is injected fresh — the proxy is the sole writer (ADR-MCPS-008)."
+    },
+    {
+      "property": "caller-supplied .verified is stripped and replaced even when it is part of the signed payload (in-process)",
+      "bazel_target": "//mcps-proxy:proxy_test",
+      "source": "mcps-proxy/tests/proxy_test.rs",
+      "test_fn": "caller_supplied_verified_context_is_stripped_even_when_signed",
+      "notes": "In-process unit witness of the strip/replace property: a signed-in .verified block is still stripped before forwarding."
+    },
+    {
+      "property": "env-keysource fail-closed: production binary refuses --key-source env without --allow-env-keysource (no listener bound)",
+      "bazel_target": "//mcps-demo:demo_posture_e2e_test",
+      "source": "mcps-demo/tests/demo_posture_e2e_test.rs",
+      "test_fn": "c1_env_keysource_without_opt_in_fails_closed_no_listener",
+      "notes": "P6.6B C1. The production CLI exits non-zero and binds NO listener when env key material is offered without the explicit opt-in flag (parse-time gate)."
+    },
+    {
+      "property": "env-keysource compile-time gate (MCPS-076): production binary fails closed on --key-source env EVEN WITH --allow-env-keysource (EnvKeySource not compiled)",
+      "bazel_target": "//mcps-demo:demo_posture_e2e_test",
+      "source": "mcps-demo/tests/demo_posture_e2e_test.rs",
+      "test_fn": "c1_env_keysource_fails_closed_even_with_opt_in_in_production_build",
+      "notes": "MCPS-076 (audit gap G-3): EnvKeySource is gated behind the non-default dev_env_key_source feature, so the production binary refuses env key material at construction even with the runtime opt-in; the diagnostic names the required feature rebuild."
+    },
+    {
+      "property": "env key source loads + scrubs (MCPS-076): dev-feature build reads the seed, removes the env var after read, and signs correctly",
+      "bazel_target": "//mcps-proxy:dev_env_key_source_test",
+      "source": "mcps-proxy/tests/dev_env_key_source_test.rs",
+      "test_fn": "env_source_signs_and_removes_var_after_read",
+      "notes": "MCPS-076 (audit gap G-3): the dev/CI-only EnvKeySource (feature dev_env_key_source) loads all material, signs, AND removes the seed env var after reading it (defense in depth). This is the positive control for the env-keysource posture, now in a feature-gated unit test rather than the production binary."
+    },
+    {
+      "property": "key-source errors never leak secret material",
+      "bazel_target": "//mcps-proxy:key_source_test",
+      "source": "mcps-proxy/tests/key_source_test.rs",
+      "test_fn": "key_errors_never_leak_secret_material",
+      "notes": "Defense-in-depth for the env-keysource path: error messages from the key source never echo the secret seed."
+    }
+  ],
+  "counts": {
+    "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
+    "entries": 32
+  }
+}

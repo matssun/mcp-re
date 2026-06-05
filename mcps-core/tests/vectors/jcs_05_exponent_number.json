@@ -1,0 +1,7 @@
+{
+  "expected": "mcps.canonicalization_failed",
+  "kind": "raw",
+  "name": "jcs_05_exponent_number",
+  "raw_text": "{\"v\":1e3}",
+  "requires_pipeline": false
+}

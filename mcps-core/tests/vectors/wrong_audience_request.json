@@ -1,0 +1,38 @@
+{
+  "expected": "mcps.invalid_audience",
+  "kind": "request",
+  "message": {
+    "id": "req-wrong-aud",
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "_meta": {
+        "name.sundvall/mcps-security.request": {
+          "audience": "did:example:someone-else",
+          "authorization_hash": "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+          "expires_at": "2026-05-28T20:05:00Z",
+          "issued_at": "2026-05-28T20:00:00Z",
+          "nonce": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+          "on_behalf_of": "did:example:user-1",
+          "signature": {
+            "alg": "Ed25519",
+            "key_id": "key-1",
+            "value": "1pkb-HXtSPdYDDxxmAV5A3x7F640zACE2-rvWAJmqbzLeLyOuByWlIgYgBYW4jW-UDM9qoEri_sjVdUB6PF9BA"
+          },
+          "signer": "did:example:agent-1",
+          "version": "draft-01"
+        }
+      },
+      "arguments": {
+        "text": "hello"
+      },
+      "name": "echo"
+    }
+  },
+  "name": "wrong_audience_request",
+  "requires_pipeline": true,
+  "resolver": {
+    "public_key_b64url": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signer_key": "did:example:agent-1#key-1"
+  }
+}

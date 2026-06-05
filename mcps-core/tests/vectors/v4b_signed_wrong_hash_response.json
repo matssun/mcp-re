@@ -1,0 +1,34 @@
+{
+  "expected": "mcps.response_hash_mismatch",
+  "kind": "response",
+  "message": {
+    "id": "req-1",
+    "jsonrpc": "2.0",
+    "result": {
+      "_meta": {
+        "name.sundvall/mcps-security.response": {
+          "issued_at": "2026-05-28T20:00:01Z",
+          "request_hash": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "server_signer": "did:example:server-1",
+          "signature": {
+            "alg": "Ed25519",
+            "key_id": "server-key-1",
+            "value": "d_OVqD7jRA6UvWgAygs7XPev7rx9_7tHMN2OeA4PUo0ENt0QEYtW9264SAj9Fm0Q9OvIDmDCxTAhleyTU5YtCQ"
+          }
+        }
+      },
+      "content": [
+        {
+          "text": "hello",
+          "type": "text"
+        }
+      ]
+    }
+  },
+  "name": "v4b_signed_wrong_hash_response",
+  "requires_pipeline": true,
+  "resolver": {
+    "public_key_b64url": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "signer_key": "did:example:server-1#server-key-1"
+  }
+}

@@ -1,0 +1,91 @@
+//! MCP-S Core — pure, dependency-free cryptographic verification crate for the
+//! MCP-S security profile (a clean-room Zero Trust profile for MCP).
+//!
+//! Scope and invariants are fixed by the MCP-S ADRs:
+//! - ADR-MCPS-001: clean-room; no monorepo trust concepts.
+//! - ADR-MCPS-011 / ADR-MCPS-012: no networking, async runtime, or filesystem
+//!   access. Callers inject `TrustResolver` and `ReplayCache` implementations.
+//!
+//! MCPS-003 lands the envelope data structures, the frozen string-constant
+//! vocabulary (`ids`), and the frozen error taxonomy (`error`). MCPS-004 lands
+//! JCS canonicalization (`canonical`). MCPS-005 lands the cryptographic
+//! primitives: Base64URL encoding (`encoding`), SHA-256 hash identifiers
+//! (`hash`), Ed25519 sign/verify (`crypto`), and signing-preimage / `request_hash`
+//! construction (`signing`). MCPS-006/007 add trust resolution (`resolver`),
+//! replay detection (`replay`), and freshness (`time`); MCPS-009 adds the
+//! fail-closed message constraints (`constraints`). MCPS-008 composes them all
+//! into the full verification pipeline (`pipeline`): `verify_request` and
+//! `verify_response`.
+
+pub mod canonical;
+pub mod constraints;
+pub mod crypto;
+pub mod encoding;
+pub mod envelope;
+pub mod error;
+pub mod hash;
+pub mod ids;
+pub mod pipeline;
+pub mod replay;
+pub mod resolver;
+pub mod signing;
+pub mod time;
+pub mod unwrap;
+pub mod wire;
+
+// Re-export the public surface at the crate root for ergonomic use.
+pub use canonical::canonicalize;
+pub use canonical::canonicalize_json_value;
+pub use canonical::canonicalize_value;
+pub use canonical::parse;
+pub use canonical::JcsValue;
+pub use constraints::extract_request_envelope;
+pub use constraints::extract_response_envelope;
+pub use constraints::reject_batch;
+pub use constraints::reject_notification;
+pub use crypto::verify_ed25519;
+pub use crypto::verify_ed25519_with;
+pub use crypto::SigningKey;
+pub use crypto::VerificationKey;
+pub use encoding::b64url_decode;
+pub use encoding::b64url_encode;
+pub use hash::parse_hash_id;
+pub use hash::sha256_hash_id;
+pub use replay::InMemoryReplayCache;
+pub use replay::ReplayCache;
+pub use replay::ReplayCacheError;
+pub use replay::ReplayDecision;
+pub use resolver::InMemoryTrustResolver;
+pub use resolver::TrustResolver;
+pub use resolver::TrustResolverError;
+pub use time::check_freshness;
+pub use time::parse_rfc3339_utc;
+pub use time::unix_to_rfc3339_utc;
+pub use wire::json_rpc_error_object;
+pub use wire::MCPS_JSON_RPC_ERROR_CODE;
+pub use signing::request_hash;
+pub use signing::request_signing_preimage;
+pub use signing::response_signing_preimage;
+pub use signing::signing_preimage;
+pub use signing::EnvelopeLocation;
+pub use envelope::RequestEnvelope;
+pub use envelope::ResponseEnvelope;
+pub use envelope::SignatureBlock;
+pub use envelope::VerifiedContext;
+pub use error::McpsError;
+pub use error::McpsResult;
+pub use pipeline::verify_request;
+pub use pipeline::verify_response;
+pub use pipeline::VerificationConfig;
+pub use pipeline::VerifiedRequest;
+pub use pipeline::VerifiedResponse;
+pub use ids::EXTENSION_ID;
+pub use ids::REQUEST_META_KEY;
+pub use ids::RESPONSE_META_KEY;
+pub use ids::RESPONSE_WRAP_INNER_ERROR_KEY;
+pub use ids::RESPONSE_WRAP_VALUE_KEY;
+pub use ids::SIG_ALG_ED25519;
+pub use ids::VERIFIED_META_KEY;
+pub use ids::VERSION_DRAFT_01;
+pub use unwrap::unwrap_verified_result;
+pub use unwrap::UnwrappedResult;

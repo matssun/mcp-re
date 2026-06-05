@@ -1,0 +1,16 @@
+# platforms/BUILD.bazel
+#
+# Cross-compilation platform definitions for the mcps module's OCI image
+# packaging. Mirrors the root monorepo //platforms package; the OCI image build
+# transitions the proxy binary onto linux_x86_64 (linux/amd64) here.
+
+package(default_visibility = ["//visibility:public"])
+
+# Linux x86_64 (AMD64) — the production container target platform.
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)

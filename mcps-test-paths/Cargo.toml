@@ -1,0 +1,22 @@
+[package]
+name = "mcps-test-paths"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Test-only helper: resolve child-process binaries and data fixtures under Bazel runfiles OR a plain Cargo build."
+
+# This crate is dev-only — it is depended on as a `[dev-dependencies]` from each
+# integration-test crate so the same resolver works in both environments:
+#
+# * Under `bazel test`, the env vars MCPS_PROXY_CLI / DEMO_SERVER_BIN /
+#   MCPS_STDIO_SERVER / ... are runfile-relative paths injected by the
+#   `nt_rust_test` target; the resolver finds them under TEST_SRCDIR or
+#   RUNFILES_DIR.
+#
+# * Under `cargo test --workspace`, those env vars are unset; the resolver falls
+#   back to the canonical Cargo layout `<workspace-root>/target/<profile>/<bin>`.
+#   The user must have built the workspace first (`cargo build --workspace --bins`)
+#   for cross-crate binaries to exist.
+
+[dependencies]

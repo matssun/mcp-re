@@ -1,0 +1,129 @@
+# MCP-S (MCP Secure) — Cargo workspace root
+#
+# A clean-room, public Zero Trust security profile for the Model Context Protocol.
+# See ADR-MCPS-001..012.
+#
+# This workspace is self-contained and firewalled from the rest of the monorepo
+# (ADR-MCPS-001): it depends on no other in-repo crate and no Python component.
+# Canonical hermetic build/test is `bazel test //...`
+# (ADR-MCPS-012); these Cargo manifests are authoritative for rust-analyzer,
+# local dev, and future standalone extraction to a public repository.
+
+[workspace]
+resolver = "2"
+members = [
+    "mcps-core",        # Pure verification crate — no networking/async/fs (ADR-MCPS-011)
+    "mcps-conformance", # Black-box conformance runner (object + stdio + HTTP harnesses)
+    "mcps-proxy",       # Server-side sidecar (stdio-first)
+    "mcps-host",        # Client-side ambassador (request signing, response verification)
+    "mcps-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
+    "mcps-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
+    "mcps-demo-fileserver", # Phase 6.5 demo target — ordinary MCP-S-unaware stdio server
+    "mcps-demo-server", # Phase 6.6B demo target — ordinary MCP-S-unaware LONG-LIVED stdio server
+    "mcps-demo",        # Phase 6.5 demo harness — host-side HostSession demo client
+    "mcps-test-paths",  # Test-only: resolve binaries + data fixtures under Bazel runfiles OR Cargo
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.2.0"
+license = "Apache-2.0"
+authors = ["Mats Sundvall"]
+repository = "https://github.com/matssun/mcps"
+
+# Shared dependency versions across the workspace. mcps-core uses only the
+# pure subset (serde / serde_json / ed25519-dalek / sha2 / base64 / thiserror);
+# networking/async crates (tokio/axum/...) are reserved for mcps-proxy /
+# mcps-host / mcps-conformance and MUST NOT be referenced by mcps-core
+# (ADR-MCPS-011/012 purity rule). RustCrypto ecosystem — no custom crypto.
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# MCPS-076 (audit gap G-3): enable the `zeroize` feature so dalek's `SigningKey`
+# (the in-memory expanded private key) is `ZeroizeOnDrop` — its secret scalar is
+# scrubbed when the key drops. `zeroize` is already a transitive dep of dalek;
+# this only turns on dalek's own zeroizing wrapper.
+# (MCPS-088): `pkcs8` lets the OCSP responder-signature TESTS import an
+# rcgen-minted issuer key into a dalek signer to sign a response fixture (the only
+# in-tree, Bazel-addressable signer). Production code does not use it.
+ed25519-dalek = { version = "2.1", features = ["zeroize", "pkcs8"] }
+sha2 = "0.10"
+base64 = "0.22"
+thiserror = "1.0"
+hex = "0.4"
+# MCPS-076 (audit gap G-3): scrub raw-seed-bearing OWNED temporaries (the
+# Base64URL-decoded `Vec<u8>`, the `[u8;32]` seed, the env/file seed text) via
+# `zeroize::Zeroizing` so the private seed is wiped from the heap/stack the moment
+# those temporaries drop. A pure crate (no networking/async) — used only by
+# mcps-proxy's `key_source`; mcps-core relies on the dalek `zeroize` FEATURE only.
+zeroize = "1"
+# MCPS-075 (audit gap G-1): property-based testing of the JCS canonicalizer.
+# Dev-only — used solely by mcps-core's `canonicalizer_proptest` integration test
+# to fuzz the idempotence / dual-path / collision-resistance / order-independence
+# invariants. mcps-core's production deps stay the pure crypto subset.
+proptest = "1"
+# MCPS-033 (ADR-MCPS-015): OS CSPRNG for the host session's production nonce
+# source. Used ONLY by mcps-host (the injected NonceSource trait keeps tests
+# deterministic). A thin OS-entropy wrapper — NO networking/async runtime, so
+# mcps-host stays transport-free. mcps-core MUST NOT reference it.
+getrandom = "0.2"
+# MCPS-037 (ADR-MCPS-016): Unix setrlimit(2) + RLIMIT_* constants for inner-server
+# resource hardening (NOT sandboxing). Used ONLY by mcps-proxy's inner-launch
+# layer, behind #[cfg(unix)], inside a pre_exec hook (async-signal-safe:
+# setrlimit-only). mcps-core stays pure and MUST NOT reference it.
+libc = "0.2"
+
+# Phase 6 (ADR-MCPS-014) transport hardening — used ONLY by mcps-proxy's transport
+# layer (blocking std::net + rustls; NO async runtime). mcps-core stays pure and
+# MUST NOT reference these. `ring` provider (not aws-lc) keeps the isolated
+# crates_mcps hub lean; x509-parser extracts the verified client identity.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+# (MCPS-088): the `verify` feature pulls x509-parser's
+# `ring`-backed, algorithm-agnostic signature verifier (RSA PKCS#1 SHA-256/384/512
+# + ECDSA P-256/P-384), used by the OCSP responder-signature trust check. `ring` is
+# already in the closure (rustls' provider), so this barely grows it. The verify
+# CODE ships in the proxy's `online_ocsp` module (it is no longer behind a
+# separate feature); enabling `verify` here makes the API available to it.
+x509-parser = { version = "0.16", features = ["verify"] }
+# (MCPS-088): asn1-rs BitString type for the OCSP responder-signature verify
+# path (re-exported by x509-parser; same version it resolves).
+asn1-rs = "0.6"
+# Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
+# tests (no committed private-key fixtures, no secret-scanner exposure).
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+
+# Phase 7 external backends (ADR-MCPS-019). All used ONLY by mcps-proxy, all
+# OPTIONAL/feature- or target-gated so the DEFAULT (Mac dev) closure is unchanged
+# and stays lean (ADR-MCPS-018). All SYNC — the proxy is a blocking serve loop
+# (ADR-MCPS-014), so no async runtime is pulled in.
+# HSM/KMS key custody via standard PKCS#11 (vendor-neutral; tested against
+# an INDEPENDENT SoftHSM2 token — never the host security system). We bind the
+# RAW FFI crate `cryptoki-sys` (libloading only) and own a small safe wrapper in
+# mcps-proxy/src/pkcs11_native.rs, rather than the high-level `cryptoki` crate
+# which transitively pulls the UNMAINTAINED `paste` (RUSTSEC-2024-0436) and fails
+# the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
+cryptoki-sys = "0.1.8"
+# Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
+redis = { version = "0.27", default-features = false }
+# Online OCSP/CRL revocation: x509-ocsp = pure-Rust ASN.1 OCSP req/resp
+# (`builder` for CertId/request construction); ureq = blocking HTTP client (OCSP
+# nominal transport is HTTP), no tokio. der/spki/x509-cert/sha2 are the codec +
+# SHA-256 CertID companions — ALL already pinned transitively (via x509-parser),
+# so declaring them direct pulls ZERO new crates. SHA-256 CertIDs (no SHA-1 dep).
+x509-ocsp = { version = "0.2", features = ["builder"] }
+ureq = { version = "2", default-features = false }
+der = "0.7"
+spki = "0.7"
+x509-cert = "0.2"
+# (sha2 is already a workspace dependency — reused via `workspace = true`.)
+# Linux kernel sandbox (Landlock fs ruleset + seccomp egress). Linux-only;
+# referenced ONLY under mcps-proxy's [target.'cfg(target_os="linux")'.dependencies]
+# so the Mac build excludes them entirely.
+landlock = "0.4"
+seccompiler = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

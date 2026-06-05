@@ -1,0 +1,66 @@
+load("@crates_mcps//:defs.bzl", "all_crate_deps")
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ADR-MCPS-011/012: mcps-core stays pure (no networking / async / filesystem).
+# Crate deps come from the isolated `crates_mcps` crate_universe hub
+# (serde, serde_json, ed25519-dalek, sha2, base64, thiserror; dev: hex).
+nt_rust_library(
+    name = "mcps_core",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcps_core",
+    edition = "2021",
+    deps = all_crate_deps(normal = True),
+)
+
+nt_rust_test(
+    name = "mcps_core_test",
+    crate = ":mcps_core",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = all_crate_deps(normal_dev = True),
+)
+
+# MCPS-002: conformance-vector generator + golden + Phase-1 primitive assertions.
+# The committed JSON fixtures are embedded at compile time via include_str!
+# (no runtime filesystem / runfiles), so they go in compile_data. The #[ignore]d
+# `write_fixtures` test is the only writer and is skipped here.
+# Committed conformance vectors (manifest + per-vector fixtures). Exposed so the
+# mcps-conformance object runner can embed them (compile_data + include_str!) as
+# the SINGLE SOURCE OF TRUTH — no duplication into the conformance crate.
+filegroup(
+    name = "vectors",
+    srcs = glob(["tests/vectors/**"]),
+)
+
+nt_rust_test(
+    name = "vectors_test",
+    srcs = ["tests/vectors_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = glob(["tests/vectors/**"]),
+    edition = "2021",
+    deps = [
+        ":mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-075 (audit gap G-1): property-based testing of the JCS canonicalizer.
+# Black-box — drives only the crate-root public API. Pinned 4096-case proptest
+# config with failure_persistence disabled (read-only sandbox); the durable
+# corpus is the committed inline SEED_CORPUS asserted with plain #[test]s.
+nt_rust_test(
+    name = "canonicalizer_proptest",
+    srcs = ["tests/canonicalizer_proptest.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_core",
+        "@crates_mcps//:proptest",
+        "@crates_mcps//:serde_json",
+    ],
+)

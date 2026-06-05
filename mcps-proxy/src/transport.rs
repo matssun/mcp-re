@@ -1,0 +1,992 @@
+//! Transport-binding abstraction (MCPS-024, ADR-MCPS-014).
+//!
+//! Phase 6 binds the MCP-S signing identity to the transport channel: an mTLS
+//! client certificate proves *which channel* a request arrived on, and the
+//! transport-binding policy asserts that channel identity is consistent with the
+//! request's verified `signer`. A mismatch — or a required-but-absent verified
+//! client identity — fails closed with `mcps.transport_binding_failed`.
+//!
+//! This module is std-only: it defines the identity type, the provider seam
+//! (`RustlsDirectProvider` produces identity functionally in MCPS-025;
+//! [`ReverseProxyMtlsProvider`] reads it from a trusted upstream header), and the
+//! binding policy. `mcps-core` stays pure — the `transport_binding_failed` code
+//! lives in its taxonomy but is emitted here, at the proxy, which is the only
+//! component holding the connection.
+
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+
+use mcps_core::McpsError;
+
+/// Where a verified transport identity was read from in the client certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentitySource {
+    /// A URI Subject Alternative Name (SPIFFE-style).
+    UriSan,
+    /// A DNS Subject Alternative Name.
+    DnsSan,
+    /// The subject Common Name (last resort).
+    CommonName,
+}
+
+/// Which certificate field is the AUTHORITATIVE source of the transport identity.
+///
+/// This is a deployment policy, not a heuristic: the proxy reads exactly the
+/// configured field and NEVER silently falls through to a weaker one. If the
+/// selected field is absent from the client certificate, identity extraction
+/// returns `None` and the (required) transport binding fails closed — a missing
+/// URI SAN must never be quietly downgraded to a DNS SAN or a Common Name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IdentityPolicy {
+    /// URI Subject Alternative Name (SPIFFE-style). The recommended default:
+    /// URI SANs are unambiguous, namespaced, and the SPIFFE/workload-identity
+    /// convention.
+    #[default]
+    UriSan,
+    /// DNS Subject Alternative Name. Use only when the deployment's client
+    /// identities are genuinely DNS names and this is an explicit choice.
+    DnsSan,
+    /// Subject Common Name. LEGACY ONLY — the CN is unstructured and deprecated
+    /// for identity by the CA/Browser Forum. Selecting it emits a startup
+    /// warning; prefer a URI or DNS SAN.
+    CnLegacy,
+}
+
+/// A verified client identity extracted from a successfully-verified mTLS client
+/// certificate (the leaf of the chain).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransportIdentity {
+    /// The identity string (e.g. `spiffe://example.org/agent-1`).
+    pub value: String,
+    /// Which certificate field it came from.
+    pub source: IdentitySource,
+}
+
+impl TransportIdentity {
+    /// Construct a transport identity.
+    pub fn new(value: impl Into<String>, source: IdentitySource) -> Self {
+        TransportIdentity {
+            value: value.into(),
+            source,
+        }
+    }
+}
+
+/// The parsed HTTP request headers of an inbound connection, the only request
+/// context a [`TransportBindingProvider`] is given. This is a thin, case-
+/// insensitive view over the already-parsed header block — providers never see
+/// the socket, the body, or the TLS connection, so a header-reading provider
+/// cannot accidentally reach for connection state it must not trust.
+///
+/// Header names compare ASCII-case-insensitively (per RFC 7230). The FIRST
+/// occurrence of a name wins; this is deliberate for the reverse-proxy trust
+/// model — a trusted upstream sets the forwarded header, and a duplicate injected
+/// further downstream cannot override the first (the provider additionally fails
+/// closed on a header whose own value is internally ambiguous, see
+/// [`ReverseProxyMtlsProvider`]).
+#[derive(Debug, Clone, Default)]
+pub struct RequestHeaders {
+    /// `(lowercased-name, raw-value)` pairs in wire order.
+    headers: Vec<(String, String)>,
+}
+
+impl RequestHeaders {
+    /// Parse an HTTP/1.1 header block (the bytes up to and including the
+    /// terminating `\r\n\r\n`, or any prefix of it) into a header view. The
+    /// request line (first line) is skipped; malformed lines without a `:` are
+    /// ignored. Values are trimmed of surrounding whitespace.
+    pub fn parse(header_block: &str) -> Self {
+        let mut headers = Vec::new();
+        for (index, line) in header_block.lines().enumerate() {
+            // Skip the request line (`POST / HTTP/1.1`) and blank lines.
+            if index == 0 || line.trim().is_empty() {
+                continue;
+            }
+            if let Some((name, value)) = line.split_once(':') {
+                headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+            }
+        }
+        RequestHeaders { headers }
+    }
+
+    /// Construct directly from `(name, value)` pairs (used in tests). Names are
+    /// lowercased so lookup stays case-insensitive.
+    pub fn from_pairs<I, N, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (N, V)>,
+        N: Into<String>,
+        V: Into<String>,
+    {
+        let headers = pairs
+            .into_iter()
+            .map(|(name, value)| (name.into().to_ascii_lowercase(), value.into()))
+            .collect();
+        RequestHeaders { headers }
+    }
+
+    /// The first value for `name` (case-insensitive), or `None` if absent.
+    pub fn first(&self, name: &str) -> Option<&str> {
+        let lowered = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(header_name, _)| *header_name == lowered)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// The number of values present for `name` (case-insensitive). Used to fail
+    /// closed on a duplicated trust header.
+    pub fn count(&self, name: &str) -> usize {
+        let lowered = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .filter(|(header_name, _)| *header_name == lowered)
+            .count()
+    }
+}
+
+/// Produces the verified client identity for an inbound request, or `None` when
+/// no identity is available (fail closed: a binding that requires identity then
+/// rejects). The request headers are the ONLY context — direct-TLS identity is
+/// extracted functionally by the serve loop (see `tls::connection_identity`) and
+/// does not go through this trait, so the request-bearing signature exists for
+/// the header-reading [`ReverseProxyMtlsProvider`]. `StaticIdentityProvider`
+/// ignores the request and is used in tests.
+pub trait TransportBindingProvider {
+    /// The verified client identity for this request, if any.
+    fn verified_identity(&self, request: &RequestHeaders) -> Option<TransportIdentity>;
+}
+
+/// A fixed identity (or none). Useful in tests and as a degenerate provider; it
+/// ignores the request entirely and always yields the identity it was built with.
+#[derive(Debug, Clone, Default)]
+pub struct StaticIdentityProvider {
+    identity: Option<TransportIdentity>,
+}
+
+impl StaticIdentityProvider {
+    /// A provider that yields `identity` (or `None`).
+    pub fn new(identity: Option<TransportIdentity>) -> Self {
+        StaticIdentityProvider { identity }
+    }
+}
+
+impl TransportBindingProvider for StaticIdentityProvider {
+    fn verified_identity(&self, _request: &RequestHeaders) -> Option<TransportIdentity> {
+        self.identity.clone()
+    }
+}
+
+/// A [`TransportBindingProvider`] that reads the verified client identity from a
+/// TRUSTED header set by an upstream mTLS-terminating reverse proxy (e.g. Envoy /
+/// nginx forwarding `X-Forwarded-Client-Cert`). This lets MCP-S run behind
+/// enterprise ingress that already terminates mTLS, instead of terminating mTLS
+/// itself.
+///
+/// # SECURITY — trust assumption (operator-asserted)
+///
+/// Trusting a forwarded header is ONLY safe if the link from the upstream proxy
+/// is itself trusted. A naive header read lets anyone who can reach the listening
+/// socket spoof any identity. Enabling this provider is therefore an explicit
+/// operator assertion that **the listening socket is reachable ONLY by the
+/// trusted upstream** (loopback, a private network segment, or the upstream's own
+/// mTLS link) and that the upstream STRIPS any inbound copy of the trusted header
+/// from external clients before re-setting its own. The CLI gates this behind an
+/// opt-in flag and emits a loud startup notice. When this provider is in use the
+/// proxy MUST NOT also do local client-cert mTLS identity extraction for the same
+/// connection — the two identity sources are mutually exclusive (the serve path
+/// chooses one).
+///
+/// # Fail-closed parsing
+///
+/// Every defect maps to `None` (no identity), which the downstream
+/// [`TransportBindingPolicy`] turns into a closed rejection when a binding
+/// requires identity. Specifically `None` is returned when the header is:
+/// absent, empty/whitespace, present more than once, or (for XFCC) malformed,
+/// missing the field selected by the [`IdentityPolicy`], or carrying conflicting
+/// values for that field across multiple cert elements. Identity is NEVER
+/// defaulted to an attacker-influenceable value.
+#[derive(Debug, Clone)]
+pub struct ReverseProxyMtlsProvider {
+    /// The trusted header name to read (case-insensitive), e.g.
+    /// `x-forwarded-client-cert` or a plain `x-client-identity`.
+    header_name: String,
+    /// Header wire format: a plain identity string or Envoy XFCC.
+    format: ReverseProxyHeaderFormat,
+    /// Which identity field is authoritative — mirrors the direct-TLS
+    /// [`IdentityPolicy`] so the downstream binding policy is unchanged.
+    policy: IdentityPolicy,
+}
+
+/// The wire format of the trusted reverse-proxy identity header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReverseProxyHeaderFormat {
+    /// The header value IS the identity string verbatim (e.g. a single SPIFFE
+    /// URI in a custom `X-Client-Identity` header). The configured
+    /// [`IdentityPolicy`] names the [`IdentitySource`] this value is reported as.
+    Plain,
+    /// Envoy `X-Forwarded-Client-Cert` (XFCC): a comma-separated list of cert
+    /// elements, each a semicolon-separated list of `Key=Value` pairs
+    /// (`By=`, `Hash=`, `Subject=`, `URI=`, `DNS=`, …). The field selected by the
+    /// [`IdentityPolicy`] (`URI`/`DNS`/`Subject`→CN) is extracted.
+    Xfcc,
+}
+
+impl ReverseProxyMtlsProvider {
+    /// Build a provider reading `header_name` in `format`, reporting the field
+    /// chosen by `policy` as the transport identity.
+    pub fn new(
+        header_name: impl Into<String>,
+        format: ReverseProxyHeaderFormat,
+        policy: IdentityPolicy,
+    ) -> Self {
+        ReverseProxyMtlsProvider {
+            header_name: header_name.into(),
+            format,
+            policy,
+        }
+    }
+
+    /// The [`IdentitySource`] that the configured [`IdentityPolicy`] resolves to.
+    fn source(&self) -> IdentitySource {
+        match self.policy {
+            IdentityPolicy::UriSan => IdentitySource::UriSan,
+            IdentityPolicy::DnsSan => IdentitySource::DnsSan,
+            IdentityPolicy::CnLegacy => IdentitySource::CommonName,
+        }
+    }
+
+    /// Parse a PLAIN identity header value into an identity, or `None`. A value
+    /// that is empty after trimming fails closed.
+    fn parse_plain(&self, value: &str) -> Option<TransportIdentity> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(TransportIdentity::new(trimmed.to_string(), self.source()))
+    }
+
+    /// Parse an Envoy XFCC header value, extracting the field named by the policy.
+    ///
+    /// XFCC is a comma-separated list of cert elements; each element is a
+    /// semicolon-separated list of `Key=Value` pairs. We extract the configured
+    /// field (`URI`/`DNS`/`Subject`/`CN`) from EVERY element and fail closed if
+    /// the elements disagree (more than one distinct value), if the field is
+    /// absent everywhere, or if the extracted value is empty. A single
+    /// consistent value (the field repeated identically, or present once) is
+    /// accepted. Quoted values (`Subject="..."`) have their surrounding double
+    /// quotes stripped.
+    ///
+    /// # Cross-strategy identity parity (M23, audit 0.2 / #4080)
+    ///
+    /// Under [`IdentityPolicy::CnLegacy`] the extracted component must be the SAME
+    /// one the direct-TLS path ([`crate::tls::extract_identity`]) extracts: the
+    /// bare Common Name. Envoy forwards the leaf subject as a FULL RFC2253 DN in
+    /// the `Subject=` field (`Subject="CN=agent-1,OU=agents,O=example"`), whereas
+    /// the direct-TLS path reads ONLY the CN attribute (`agent-1`). Returning the
+    /// whole DN here would make the SAME client certificate resolve to a DIFFERENT
+    /// identity string depending solely on the transport strategy, so one
+    /// `IdentityPolicy` would resolve two identities for one cert and the binding
+    /// policy could not be configured to admit both. We therefore parse the CN out
+    /// of a `Subject=` DN; an explicit `CN=` pair is used verbatim (it is already
+    /// the bare CN).
+    fn parse_xfcc(&self, value: &str) -> Option<TransportIdentity> {
+        // The XFCC field keys for each policy. CommonName accepts either
+        // `Subject=` (a full RFC2253 DN, from which we extract the CN to match the
+        // direct-TLS path) or an explicit `CN=` pair (already the bare CN).
+        let wanted: &[&str] = match self.policy {
+            IdentityPolicy::UriSan => &["uri"],
+            IdentityPolicy::DnsSan => &["dns"],
+            IdentityPolicy::CnLegacy => &["subject", "cn"],
+        };
+
+        let mut found: Option<String> = None;
+        // Tokenize honouring double quotes: `,` and `;` only delimit pairs when
+        // OUTSIDE a quoted value, since Envoy quotes any value containing those
+        // reserved characters (a Subject DN is `Subject="CN=a,OU=b"`). Splitting
+        // on the raw bytes would wrongly cut a quoted DN at its internal commas.
+        for pair in split_xfcc_pairs(value) {
+            let Some((key, raw_value)) = pair.split_once('=') else {
+                continue;
+            };
+            let key = key.trim().to_ascii_lowercase();
+            if !wanted.contains(&key.as_str()) {
+                continue;
+            }
+            let stripped = strip_optional_quotes(raw_value.trim());
+            // M23 parity: under CnLegacy a `Subject=` DN is reduced to its CN so it
+            // equals the direct-TLS extraction; a `CN=` pair (and URI/DNS fields)
+            // are taken verbatim. A `Subject=` DN that carries NO CN attribute
+            // fails closed (None) rather than yielding a weaker/whole-DN identity.
+            let extracted: Option<String> = if key == "subject" {
+                common_name_from_rfc2253(stripped)
+            } else {
+                Some(stripped.to_string())
+            };
+            let Some(extracted) = extracted else {
+                // The selected field is present but carries no usable component
+                // (e.g. a Subject DN with no CN): fail closed.
+                return None;
+            };
+            if extracted.is_empty() {
+                // A present-but-empty selected field is a malformed element:
+                // fail closed rather than yield an empty identity.
+                return None;
+            }
+            match &found {
+                // Conflicting values across elements → fail closed.
+                Some(existing) if *existing != extracted => return None,
+                Some(_) => {}
+                None => found = Some(extracted),
+            }
+        }
+
+        found.map(|value| TransportIdentity::new(value, self.source()))
+    }
+}
+
+impl TransportBindingProvider for ReverseProxyMtlsProvider {
+    fn verified_identity(&self, request: &RequestHeaders) -> Option<TransportIdentity> {
+        // Fail closed on a duplicated trust header: an upstream sets it exactly
+        // once, so two copies signal a downstream injection attempt.
+        if request.count(&self.header_name) != 1 {
+            return None;
+        }
+        let value = request.first(&self.header_name)?;
+        match self.format {
+            ReverseProxyHeaderFormat::Plain => self.parse_plain(value),
+            ReverseProxyHeaderFormat::Xfcc => self.parse_xfcc(value),
+        }
+    }
+}
+
+/// Split an XFCC header value into its `Key=Value` pairs, treating BOTH `,`
+/// (between cert elements) and `;` (between pairs within an element) as pair
+/// separators, but ONLY when they occur outside a double-quoted value. Envoy
+/// quotes any value containing a reserved character (`,`, `;`, `=`), so a quoted
+/// Subject DN such as `Subject="CN=a,OU=b"` is returned as a single pair rather
+/// than being cut at its internal comma. Flattening elements and pairs together
+/// is intentional: the extractor cares about a field's value, not which cert
+/// element it sat in, and disagreement across elements is caught by the
+/// fail-closed conflict check in the caller.
+fn split_xfcc_pairs(value: &str) -> Vec<&str> {
+    let mut pairs = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0;
+    for (index, ch) in value.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ',' | ';' if !in_quotes => {
+                pairs.push(&value[start..index]);
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    pairs.push(&value[start..]);
+    pairs
+}
+
+/// Strip a single pair of surrounding ASCII double quotes from `value`, if both
+/// are present; otherwise return `value` unchanged. Envoy quotes XFCC values that
+/// contain reserved characters (`,`, `;`, `=`), e.g. `Subject="CN=a,OU=b"`.
+fn strip_optional_quotes(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(value)
+}
+
+/// Extract the Common Name (`CN`) attribute value from an RFC2253 Distinguished
+/// Name string, or `None` if the DN carries no `CN` attribute (M23, #4080).
+///
+/// This is the reverse-proxy mirror of the direct-TLS path's CN extraction
+/// ([`crate::tls::extract_identity`] under [`IdentityPolicy::CnLegacy`], which
+/// reads the leaf subject's CN attribute): an upstream proxy forwards the leaf
+/// subject as a full RFC2253 DN in the XFCC `Subject=` field
+/// (`CN=agent-1,OU=agents,O=example`), and to keep the SAME certificate resolving
+/// to the SAME identity across strategies we must reduce that DN to the SAME bare
+/// CN the direct path yields.
+///
+/// RFC2253 parsing scope (sufficient for the CN component): the DN is a sequence
+/// of `Type=Value` Relative Distinguished Names separated by unescaped commas. A
+/// value may be escaped (`\,` `\=` `\+` `\"` `\\` `\<hex>`-style) or surrounded by
+/// double quotes; commas/plus signs inside a quoted value or after a backslash do
+/// NOT separate RDNs. The FIRST `CN` attribute (case-insensitive type) wins,
+/// matching the direct-TLS path's `iter_common_name().next()`. Multi-valued RDNs
+/// (`CN=a+OU=b`) are split on unescaped `+`. A `CN` with an empty value yields
+/// `Some("")`, which the caller treats as a malformed (fail-closed) element.
+fn common_name_from_rfc2253(dn: &str) -> Option<String> {
+    for rdn in split_unescaped(dn, ',') {
+        for attr in split_unescaped(rdn, '+') {
+            let Some((attr_type, attr_value)) = attr.split_once('=') else {
+                continue;
+            };
+            if attr_type.trim().eq_ignore_ascii_case("cn") {
+                return Some(unescape_rfc2253_value(attr_value.trim()));
+            }
+        }
+    }
+    None
+}
+
+/// Split `input` on occurrences of `sep` that are neither backslash-escaped nor
+/// inside a double-quoted span (RFC2253 quoting). Returns the raw (still-escaped,
+/// still-quoted) segments; value unescaping happens in [`unescape_rfc2253_value`].
+fn split_unescaped(input: &str, sep: char) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, ch) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            c if c == sep && !in_quotes => {
+                segments.push(&input[start..index]);
+                start = index + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    segments.push(&input[start..]);
+    segments
+}
+
+/// Unescape an RFC2253 attribute value: drop surrounding double quotes (if the
+/// whole value is quoted) and resolve `\<char>` backslash escapes to the literal
+/// character. `\<hexpair>` byte escapes are passed through best-effort by dropping
+/// the backslash; CN values in practice are printable strings, and the parity
+/// requirement is only that this matches the direct-TLS CN for the same cert.
+fn unescape_rfc2253_value(value: &str) -> String {
+    let inner = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value);
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Decides whether a request's verified `signer` is bound to the transport
+/// identity. A failure is always [`McpsError::TransportBindingFailed`].
+pub trait TransportBindingPolicy {
+    /// `Ok(())` iff `signer` is bound to `identity`; otherwise
+    /// [`McpsError::TransportBindingFailed`].
+    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpsError>;
+}
+
+/// The strongest default: the request `signer` must equal the verified transport
+/// identity (the key-holder is the cert-holder). A required identity that is
+/// absent fails closed.
+#[derive(Debug, Clone, Default)]
+pub struct ExactMatchBinding;
+
+impl ExactMatchBinding {
+    /// Construct the exact-match policy.
+    pub fn new() -> Self {
+        ExactMatchBinding
+    }
+}
+
+impl TransportBindingPolicy for ExactMatchBinding {
+    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpsError> {
+        match identity {
+            Some(identity) if identity.value == signer => Ok(()),
+            _ => Err(McpsError::TransportBindingFailed),
+        }
+    }
+}
+
+/// Cross-namespace binding: each `signer` maps to a set of allowed transport
+/// identities (e.g. a DID signer permitted over one or more SPIFFE IDs). A signer
+/// with no mapping, or an identity outside its set (or absent), fails closed.
+///
+/// This is a STRICT, EXPLICIT allowlist: matches are by exact string equality
+/// only. There are deliberately no wildcards, no globs, and no regular
+/// expressions — every permitted `(signer, identity)` pair is enumerated and
+/// auditable, and any pair not enumerated is denied. A literal `"*"` is just an
+/// ordinary string with no special meaning.
+#[derive(Debug, Clone, Default)]
+pub struct MappedBinding {
+    allowed: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl MappedBinding {
+    /// An empty mapping (every signer fails closed until permitted).
+    pub fn new() -> Self {
+        MappedBinding {
+            allowed: BTreeMap::new(),
+        }
+    }
+
+    /// Permit `signer` to arrive over the transport identity `identity`.
+    pub fn permit(&mut self, signer: impl Into<String>, identity: impl Into<String>) {
+        self.allowed
+            .entry(signer.into())
+            .or_default()
+            .insert(identity.into());
+    }
+}
+
+impl TransportBindingPolicy for MappedBinding {
+    fn check(&self, signer: &str, identity: Option<&TransportIdentity>) -> Result<(), McpsError> {
+        let identity = identity.ok_or(McpsError::TransportBindingFailed)?;
+        match self.allowed.get(signer) {
+            Some(set) if set.contains(&identity.value) => Ok(()),
+            _ => Err(McpsError::TransportBindingFailed),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExactMatchBinding;
+    use super::IdentityPolicy;
+    use super::IdentitySource;
+    use super::MappedBinding;
+    use super::RequestHeaders;
+    use super::ReverseProxyHeaderFormat;
+    use super::ReverseProxyMtlsProvider;
+    use super::StaticIdentityProvider;
+    use super::TransportBindingPolicy;
+    use super::TransportBindingProvider;
+    use super::TransportIdentity;
+    use mcps_core::McpsError;
+
+    fn spiffe(value: &str) -> TransportIdentity {
+        TransportIdentity::new(value, IdentitySource::UriSan)
+    }
+
+    /// A request carrying a single header (the common reverse-proxy fixture).
+    fn req_with(name: &str, value: &str) -> RequestHeaders {
+        RequestHeaders::from_pairs([(name, value)])
+    }
+
+    #[test]
+    fn static_provider_yields_its_identity_ignoring_request() {
+        let id = spiffe("spiffe://example.org/agent-1");
+        let provider = StaticIdentityProvider::new(Some(id.clone()));
+        // The request argument is ignored: same identity regardless of headers.
+        let empty = RequestHeaders::default();
+        let populated = req_with("x-forwarded-client-cert", "URI=spiffe://other");
+        assert_eq!(provider.verified_identity(&empty), Some(id.clone()));
+        assert_eq!(provider.verified_identity(&populated), Some(id));
+        assert_eq!(
+            StaticIdentityProvider::new(None).verified_identity(&empty),
+            None
+        );
+    }
+
+    // --- MCPS-3840 reverse-proxy header identity extraction -------------------
+
+    #[test]
+    fn plain_header_yields_identity_with_configured_source() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-client-identity",
+            ReverseProxyHeaderFormat::Plain,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with("x-client-identity", "spiffe://example.org/agent-1");
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new(
+                "spiffe://example.org/agent-1",
+                IdentitySource::UriSan
+            ))
+        );
+    }
+
+    #[test]
+    fn plain_header_lookup_is_case_insensitive_and_trims() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "X-Client-Identity",
+            ReverseProxyHeaderFormat::Plain,
+            IdentityPolicy::DnsSan,
+        );
+        // Mixed-case header name on the wire, surrounding whitespace in value.
+        let req = req_with("x-CLIENT-identity", "  agent-1.example.org  ");
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent-1.example.org", IdentitySource::DnsSan))
+        );
+    }
+
+    #[test]
+    fn xfcc_uri_field_yields_uri_san() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "By=spiffe://example.org/ingress;Hash=abc123;URI=spiffe://example.org/agent-1",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new(
+                "spiffe://example.org/agent-1",
+                IdentitySource::UriSan
+            ))
+        );
+    }
+
+    #[test]
+    fn xfcc_dns_field_yields_dns_san() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::DnsSan,
+        );
+        let req = req_with("x-forwarded-client-cert", "Hash=abc;DNS=agent-1.example.org");
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent-1.example.org", IdentitySource::DnsSan))
+        );
+    }
+
+    #[test]
+    fn xfcc_subject_field_yields_common_name() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        // Envoy quotes the Subject DN because it contains commas.
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"CN=agent-1,OU=agents,O=example\"",
+        );
+        // M23 (#4080): the CN is extracted from the Subject DN so it equals the
+        // direct-TLS CnLegacy extraction (the bare CN), NOT the whole RFC2253 DN.
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+        );
+    }
+
+    #[test]
+    fn xfcc_subject_cn_is_extracted_regardless_of_attribute_order() {
+        // The CN may appear after other RDNs; it is still the extracted component.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"O=example,OU=agents,CN=agent-1\"",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+        );
+    }
+
+    #[test]
+    fn xfcc_subject_with_escaped_comma_in_cn_is_extracted() {
+        // An RFC2253-escaped comma inside the CN value must not split the RDN; the
+        // unescaped CN is returned (parity with how a real cert's CN reads).
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"CN=agent\\,one,OU=agents\"",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent,one", IdentitySource::CommonName))
+        );
+    }
+
+    #[test]
+    fn xfcc_subject_without_cn_yields_none() {
+        // A Subject DN that carries no CN attribute has no CN to bind to: fail
+        // closed rather than fall back to the whole DN or another attribute.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"OU=agents,O=example\"",
+        );
+        assert_eq!(provider.verified_identity(&req), None);
+    }
+
+    #[test]
+    fn xfcc_explicit_cn_field_yields_common_name() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with("x-forwarded-client-cert", "Hash=abc;CN=agent-1");
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+        );
+    }
+
+    #[test]
+    fn absent_header_yields_none() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        // A different header is present, but not the trusted one.
+        let req = req_with("content-type", "application/json");
+        assert_eq!(provider.verified_identity(&req), None);
+        assert_eq!(provider.verified_identity(&RequestHeaders::default()), None);
+    }
+
+    #[test]
+    fn empty_header_yields_none() {
+        let plain = ReverseProxyMtlsProvider::new(
+            "x-client-identity",
+            ReverseProxyHeaderFormat::Plain,
+            IdentityPolicy::UriSan,
+        );
+        assert_eq!(
+            plain.verified_identity(&req_with("x-client-identity", "   ")),
+            None
+        );
+        let xfcc = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        assert_eq!(
+            xfcc.verified_identity(&req_with("x-forwarded-client-cert", "")),
+            None
+        );
+    }
+
+    #[test]
+    fn xfcc_missing_selected_field_yields_none() {
+        // The policy wants a URI SAN, but the header carries only DNS/Subject.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;DNS=agent-1.example.org;Subject=\"CN=agent-1\"",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            None,
+            "a missing URI SAN must NOT silently downgrade to DNS or Subject"
+        );
+    }
+
+    #[test]
+    fn xfcc_malformed_value_yields_none() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        // No key=value pairs at all.
+        assert_eq!(
+            provider.verified_identity(&req_with("x-forwarded-client-cert", "garbage-not-xfcc")),
+            None
+        );
+        // The selected field is present but empty.
+        assert_eq!(
+            provider.verified_identity(&req_with("x-forwarded-client-cert", "Hash=abc;URI=")),
+            None
+        );
+    }
+
+    #[test]
+    fn xfcc_conflicting_entries_yield_none() {
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        // Two cert elements present DIFFERENT URI SANs: ambiguous → fail closed.
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "URI=spiffe://example.org/agent-1,URI=spiffe://example.org/agent-2",
+        );
+        assert_eq!(provider.verified_identity(&req), None);
+    }
+
+    #[test]
+    fn xfcc_repeated_identical_field_is_accepted() {
+        // The SAME value repeated across elements is not a conflict.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "URI=spiffe://example.org/agent-1,URI=spiffe://example.org/agent-1",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new(
+                "spiffe://example.org/agent-1",
+                IdentitySource::UriSan
+            ))
+        );
+    }
+
+    #[test]
+    fn duplicated_trust_header_yields_none() {
+        // A second copy of the trusted header (e.g. injected downstream) is a
+        // spoofing signal: fail closed rather than pick one.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = RequestHeaders::from_pairs([
+            ("x-forwarded-client-cert", "URI=spiffe://example.org/agent-1"),
+            ("x-forwarded-client-cert", "URI=spiffe://example.org/evil"),
+        ]);
+        assert_eq!(provider.verified_identity(&req), None);
+    }
+
+    #[test]
+    fn request_headers_parse_skips_request_line_and_is_case_insensitive() {
+        let block = "POST /mcp HTTP/1.1\r\nHost: proxy\r\nX-Forwarded-Client-Cert: URI=spiffe://x\r\n\r\n";
+        let headers = RequestHeaders::parse(block);
+        assert_eq!(headers.first("host"), Some("proxy"));
+        assert_eq!(headers.first("X-Forwarded-Client-Cert"), Some("URI=spiffe://x"));
+        assert_eq!(headers.first("POST"), None, "the request line is not a header");
+        assert_eq!(headers.count("x-forwarded-client-cert"), 1);
+    }
+
+    #[test]
+    fn reverse_proxy_identity_feeds_the_binding_policy_unchanged() {
+        // End-to-end intent: the extracted identity flows into the SAME
+        // ExactMatchBinding the direct-TLS path uses — the policy is unaware of
+        // where the identity came from.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with("x-forwarded-client-cert", "URI=spiffe://example.org/agent-1");
+        let identity = provider.verified_identity(&req);
+        let policy = ExactMatchBinding::new();
+        assert!(policy
+            .check("spiffe://example.org/agent-1", identity.as_ref())
+            .is_ok());
+        // A signer that does not match the header-derived identity is rejected.
+        assert_eq!(
+            policy
+                .check("spiffe://example.org/other", identity.as_ref())
+                .unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+    }
+
+    #[test]
+    fn exact_match_binds_equal_signer_and_identity() {
+        let policy = ExactMatchBinding::new();
+        let id = spiffe("did:example:agent-1");
+        assert!(policy.check("did:example:agent-1", Some(&id)).is_ok());
+    }
+
+    #[test]
+    fn exact_match_rejects_mismatch_and_absence() {
+        let policy = ExactMatchBinding::new();
+        let id = spiffe("did:example:other");
+        assert_eq!(
+            policy.check("did:example:agent-1", Some(&id)).unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+        assert_eq!(
+            policy.check("did:example:agent-1", None).unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+    }
+
+    #[test]
+    fn mapped_binding_honours_the_allow_set() {
+        let mut policy = MappedBinding::new();
+        policy.permit("did:example:agent-1", "spiffe://example.org/agent-1");
+        let ok = spiffe("spiffe://example.org/agent-1");
+        assert!(policy.check("did:example:agent-1", Some(&ok)).is_ok());
+
+        // Identity outside the set.
+        let bad = spiffe("spiffe://example.org/evil");
+        assert_eq!(
+            policy.check("did:example:agent-1", Some(&bad)).unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+        // Signer with no mapping.
+        assert_eq!(
+            policy.check("did:example:unmapped", Some(&ok)).unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+        // Absent identity.
+        assert_eq!(
+            policy.check("did:example:agent-1", None).unwrap_err(),
+            McpsError::TransportBindingFailed
+        );
+    }
+
+    #[test]
+    fn mapped_binding_has_no_wildcard_semantics() {
+        // A literal "*" is an ordinary string, not a wildcard: permitting "*"
+        // for a signer must NOT permit some other concrete identity.
+        let mut policy = MappedBinding::new();
+        policy.permit("did:example:agent-1", "*");
+        let star = spiffe("*");
+        assert!(
+            policy.check("did:example:agent-1", Some(&star)).is_ok(),
+            "the literal '*' identity matches the literal '*' entry"
+        );
+        let concrete = spiffe("spiffe://example.org/agent-1");
+        assert_eq!(
+            policy.check("did:example:agent-1", Some(&concrete)).unwrap_err(),
+            McpsError::TransportBindingFailed,
+            "'*' must NOT act as a wildcard over concrete identities"
+        );
+    }
+
+    #[test]
+    fn mapped_binding_matches_are_exact_and_case_sensitive() {
+        // Matching is byte-exact: no case folding, no trimming, no normalization.
+        let mut policy = MappedBinding::new();
+        policy.permit("did:example:agent-1", "spiffe://example.org/agent-1");
+        let differing_case = spiffe("spiffe://example.org/AGENT-1");
+        assert_eq!(
+            policy.check("did:example:agent-1", Some(&differing_case)).unwrap_err(),
+            McpsError::TransportBindingFailed,
+            "identity match is case-sensitive"
+        );
+        // Signer is matched exactly too.
+        let ok = spiffe("spiffe://example.org/agent-1");
+        assert_eq!(
+            policy.check("DID:EXAMPLE:AGENT-1", Some(&ok)).unwrap_err(),
+            McpsError::TransportBindingFailed,
+            "signer match is case-sensitive"
+        );
+    }
+}

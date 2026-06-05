@@ -1,0 +1,66 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-045 (MCPS-EPIC-P6.5): the minimal, MCP-S-UNAWARE demo MCP server the
+# sidecar protects. Plain MCP JSON-RPC over stdio (initialize / tools/list /
+# tools/call) with one tool, `list_files`, confined to a demo root. Self-
+# contained (ADR-MCPS-001): depends only on the pure serde subset + thiserror
+# from the isolated crates_mcps hub — no other in-repo crate, no async runtime.
+# MAY use std::fs / std::io (it is a file server); mcps-core stays pure.
+nt_rust_library(
+    name = "mcps_demo_fileserver",
+    srcs = [
+        "src/error.rs",
+        "src/lib.rs",
+        "src/server.rs",
+        "src/stdio.rs",
+    ],
+    crate_name = "mcps_demo_fileserver",
+    edition = "2021",
+    deps = [
+        "@crates_mcps//:serde",
+        "@crates_mcps//:serde_json",
+        "@crates_mcps//:thiserror",
+    ],
+)
+
+# The stdio entrypoint: `mcps-demo-fileserver --demo-root <DIR>`. Later wrapped
+# by mcps-proxy as the inner subprocess (Child Issue 3).
+nt_rust_binary(
+    name = "mcps_demo_fileserver_bin",
+    srcs = ["src/main.rs"],
+    crate_name = "mcps_demo_fileserver_bin",
+    edition = "2021",
+    deps = [
+        ":mcps_demo_fileserver",
+    ],
+)
+
+# Committed deterministic fixture root: a few sample files + one subdirectory.
+# Exposed as a filegroup so the test can receive it via runfiles.
+filegroup(
+    name = "demo_root_fixture",
+    srcs = glob(["demo_root/**"]),
+)
+
+# Black-box server tests: initialize / tools/list / tools/call(list_files),
+# positive listing, and the demo-root escape refusals. The demo_root fixture is
+# delivered via runfiles; the test resolves DEMO_ROOT_README ($(rlocationpath))
+# against TEST_SRCDIR and lists its parent (no runfiles-crate dependency).
+nt_rust_test(
+    name = "server_test",
+    srcs = ["tests/server_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        ":demo_root_fixture",
+        "demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {"DEMO_ROOT_README": "$(rlocationpath demo_root/readme.txt)"},
+    deps = [
+        ":mcps_demo_fileserver",
+        "@crates_mcps//:serde_json",
+    ],
+)

@@ -1,0 +1,38 @@
+[package]
+name = "mcps-conformance"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-S black-box conformance runner (object, stdio, and Streamable HTTP harnesses)."
+
+[dependencies]
+# Object/stdio/HTTP harnesses depend on mcps-core plus the serde subset. The
+# acceptance milestone (MCPS-017) also drives the sidecar, so the harness
+# library depends on mcps-proxy to build the documented proxy target.
+mcps-core = { path = "../mcps-core" }
+mcps-proxy = { path = "../mcps-proxy" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The acceptance test drives the harness end-to-end via the host-side signer.
+[dev-dependencies]
+mcps-host = { path = "../mcps-host" }
+mcps-test-paths = { path = "../mcps-test-paths" }
+
+[lib]
+name = "mcps_conformance"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcps-conformance"
+path = "src/main.rs"
+
+# A documented stdio MCP-S server (MCPS-012/017) used as a child process by the
+# stdio + acceptance conformance tests. In Bazel this is built as a separate
+# rust_binary and delivered to tests via runfiles; under Cargo we surface it as
+# a normal `[[bin]]` so the build.rs fallback can find it at
+# `target/<profile>/mcps-stdio-server` and the tests don't depend on Bazel.
+[[bin]]
+name = "mcps-stdio-server"
+path = "src/stdio_server_main.rs"

@@ -1,0 +1,18 @@
+{
+  "package": "mcps_repository_docs_package",
+  "created": "2026-06-01",
+  "license_policy": "Apache-2.0 for all included files unless otherwise stated",
+  "files": [
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "NOTICE.md",
+    "README.md",
+    "SECURITY.md",
+    "THIRD_PARTY.md",
+    "docs/LICENSING.md",
+    "docs/PROJECT_STATUS.md",
+    "docs/RELEASE_CHECKLIST.md",
+    "docs/SECURITY_BOUNDARY.md",
+    "docs/UPSTREAM_PROPOSAL_PROCESS.md"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "expected": "mcps.canonicalization_failed",
+  "kind": "raw",
+  "name": "jcs_01_duplicate_key",
+  "raw_text": "{\"a\":1,\"a\":2}",
+  "requires_pipeline": false
+}

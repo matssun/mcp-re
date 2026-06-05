@@ -1,0 +1,7 @@
+{
+  "expected": "mcps.canonicalization_failed",
+  "kind": "raw",
+  "name": "jcs_07_invalid_utf8",
+  "raw_bytes_b64url": "Iv8i",
+  "requires_pipeline": false
+}
