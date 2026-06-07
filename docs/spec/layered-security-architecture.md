@@ -304,7 +304,7 @@ Reading the table:
 - No proposal currently covers ALL five layers. This is the intended state — single-proposal completeness is an anti-pattern (§6.1).
 - Layers 1 and 5 each have a clear specialist (ATSA, ACTA respectively). Layer 4 has an institutional home (Interceptors WG).
 - Layers 2, 3, and 4 are currently most-fully realized in MCP-S.
-- SEAL / SMCP overlaps with MCP-S at layers 2-4 with different design choices (JWT-based session tokens vs. per-call signing); the two are competing implementations of the same architectural slot rather than complementary layers.
+- SEAL / SMCP and MCP-S occupy the same architectural slot at layers 2-4 with different design choices (JWT-based session tokens vs. per-call signing); they are alternative implementations of the same layers rather than complementary ones.
 
 ---
 
