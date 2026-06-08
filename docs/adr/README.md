@@ -22,7 +22,7 @@ maintainable as the project evolves.
 | [ADR-MCPS-007](adr-mcps-007.md) | Trust Resolution, Key Rotation, and Revocation Model |
 | [ADR-MCPS-008](adr-mcps-008.md) | Verified-Context Propagation to Inner MCP Servers |
 | [ADR-MCPS-009](adr-mcps-009.md) | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection |
-| [ADR-MCPS-010](adr-mcps-010.md) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule |
+| [ADR-MCPS-010](adr-mcps-010.md) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule (identifier superseded by ADR-MCPS-027) |
 | [ADR-MCPS-011](adr-mcps-011.md) | Workspace Structure, Phased Delivery, and Conformance-as-Specification |
 | [ADR-MCPS-012](adr-mcps-012.md) | Project Placement & Build Integration |
 | [ADR-MCPS-013](adr-mcps-013.md) | Delegated Authorization — AuthorizationProfile Abstraction (Phase 5) |
@@ -39,6 +39,7 @@ maintainable as the project evolves.
 | [ADR-MCPS-024](adr-mcps-024.md) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) — v0.3 RC delta |
 | [ADR-MCPS-025](adr-mcps-025.md) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 — v0.3 RC delta |
 | [ADR-MCPS-026](adr-mcps-026.md) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) — v0.3 RC delta |
+| [ADR-MCPS-027](adr-mcps-027.md) | Extension Identifier Reassignment to `se.syncom/mcps` (supersedes ADR-MCPS-010 identifier) |
 
 ## Provenance
 
