@@ -104,6 +104,19 @@ impl ReplayDurabilityTier {
         }
     }
 
+    /// The structured startup/audit line ADR-MCPS-020 requires the proxy to log
+    /// for the configured replay store: the backend label, the declared tier wire
+    /// name, and the honest surfaced guarantee. Carries NO nonce material (nonces
+    /// are sensitive correlation data); `backend` is an operator-facing label such
+    /// as `"redis"`, `"etcd"`, or `"in-memory"`.
+    pub fn startup_audit_line(&self, backend: &str) -> String {
+        format!(
+            "replay-store backend={backend} tier={} guarantee=\"{}\"",
+            self.wire_name(),
+            self.guarantee()
+        )
+    }
+
     /// Whether this tier meets the strict-production minimum of ADR-MCPS-020's
     /// second open question: a strict/production deployment refuses to start
     /// unless the declared tier is `REDIS_WAIT_QUORUM` or stronger.
@@ -196,6 +209,20 @@ mod tests {
         assert!(ReplayDurabilityTier::RedisAsyncBounded
             .guarantee()
             .contains("bounded by the freshness window"));
+    }
+
+    #[test]
+    fn startup_audit_line_carries_backend_tier_and_guarantee_no_nonce() {
+        let line = ReplayDurabilityTier::RedisWaitQuorum {
+            quorum: 2,
+            timeout_ms: 500,
+        }
+        .startup_audit_line("redis");
+        assert!(line.contains("backend=redis"));
+        assert!(line.contains("tier=REDIS_WAIT_QUORUM"));
+        assert!(line.contains("guarantee="));
+        // No nonce/correlation material may leak into the startup line.
+        assert!(!line.to_lowercase().contains("nonce"));
     }
 
     #[test]
