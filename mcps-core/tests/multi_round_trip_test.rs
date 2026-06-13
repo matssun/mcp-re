@@ -14,11 +14,11 @@
 //! JSON-RPC object (ADR-004 signs the whole object) and is never consulted for any
 //! security decision.
 
+use mcps_core::error::McpsError;
 use mcps_core::ids::REQUEST_META_KEY;
 use mcps_core::request_signing_preimage;
 use mcps_core::verify_request;
 use mcps_core::InMemoryReplayCache;
-use mcps_core::error::McpsError;
 use mcps_core::InMemoryTrustResolver;
 use mcps_core::SigningKey;
 use mcps_core::VerificationConfig;
@@ -134,7 +134,13 @@ fn request_state_does_not_purchase_replay_exemption() {
 
     let resumed_same_nonce = signed_leg("req-2", NONCE_LEG_1, Some("identical-resume-state"));
     assert_eq!(
-        verify_request(&resumed_same_nonce, &resolver(), &mut replay, &config(), now()),
+        verify_request(
+            &resumed_same_nonce,
+            &resolver(),
+            &mut replay,
+            &config(),
+            now()
+        ),
         Err(McpsError::ReplayDetected),
         "a reused nonce is a replay regardless of the requestState payload"
     );
