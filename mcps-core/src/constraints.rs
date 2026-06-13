@@ -167,19 +167,26 @@ fn locate_envelope<'a>(
 /// Deserialize an already-located envelope value into `T`, mapping serde errors
 /// to the frozen taxonomy.
 ///
-/// Discrimination rule: `serde_json` reports structural failures with stable
-/// message prefixes, which we map to the frozen taxonomy:
+/// Discrimination rule:
 ///   * `unknown field \`<name>\``  -> [`McpsError::UnknownEnvelopeField`]
 ///     (the `deny_unknown_fields` violation);
-///   * `missing field \`on_behalf_of\``       -> [`McpsError::OnBehalfOfMissing`] (P005);
-///   * `missing field \`authorization_hash\`` -> [`McpsError::AuthorizationHashMissing`] (P007);
-///   * every other failure (type mismatch, any OTHER missing required field) ->
+///   * every other failure (type mismatch, any missing required field) ->
 ///     [`McpsError::CanonicalizationFailed`] — a structural rejection that fails
 ///     closed without claiming a more specific verdict.
-/// serde_json does not expose dedicated error categories, so message-prefix
-/// classification is the supported discriminator; the prefixes are stable across
-/// serde_json's deserialization path and the tests below prove the mapping does
-/// not over-match (a wrong-type field still maps to `CanonicalizationFailed`).
+///
+/// The dedicated absence tokens P005 ([`McpsError::OnBehalfOfMissing`]) and P007
+/// ([`McpsError::AuthorizationHashMissing`]) are **NOT** classified here from
+/// serde's message wording (M-01 / M-02). A structurally absent `on_behalf_of` or
+/// `authorization_hash` lands on the generic [`McpsError::CanonicalizationFailed`]
+/// branch and is then upgraded to its dedicated token by an explicit
+/// presence check in [`classify_request_envelope_error`]. That keeps the
+/// security-relevant taxonomy independent of serde_json's human-readable
+/// phrasing, and also fixes the co-omission case serde's first-missing-field
+/// ordering cannot express.
+///
+/// The one remaining reliance on serde wording is the `unknown field` prefix;
+/// the `serde_unknown_field_wording_is_pinned` test fails CI if a serde_json bump
+/// ever rephrases it, rather than letting the mapping silently degrade.
 fn deserialize_envelope<T>(raw: &Value) -> Result<T, McpsError>
 where
     T: serde::de::DeserializeOwned,
@@ -187,16 +194,8 @@ where
     match serde_json::from_value::<T>(raw.clone()) {
         Ok(envelope) => Ok(envelope),
         Err(err) => {
-            let msg = err.to_string();
-            if msg.starts_with("unknown field") {
+            if err.to_string().starts_with("unknown field") {
                 Err(McpsError::UnknownEnvelopeField)
-            } else if msg.starts_with("missing field `on_behalf_of`") {
-                // P005: a STRUCTURALLY ABSENT on_behalf_of must surface its
-                // dedicated token, not the generic canonicalization failure.
-                Err(McpsError::OnBehalfOfMissing)
-            } else if msg.starts_with("missing field `authorization_hash`") {
-                // P007: likewise a structurally absent authorization_hash.
-                Err(McpsError::AuthorizationHashMissing)
             } else {
                 Err(McpsError::CanonicalizationFailed)
             }
@@ -498,6 +497,46 @@ mod tests {
         assert_eq!(
             extract_request_envelope(&msg),
             Err(McpsError::OnBehalfOfMissing)
+        );
+    }
+
+    #[test]
+    fn serde_wording_pins_guard_against_silent_taxonomy_drift() {
+        // M-01 / M-02 guard. The P005/P007 absence tokens no longer depend on
+        // serde_json's phrasing — they are resolved by an explicit presence check
+        // in `classify_request_envelope_error`. The `unknown field` ->
+        // UnknownEnvelopeField mapping in `deserialize_envelope` IS still wording-
+        // dependent. Pin both wordings so a serde_json bump that rephrases either
+        // fails CI loudly instead of silently degrading the taxonomy.
+        use crate::envelope::RequestEnvelope;
+
+        // (a) The `unknown field` wording `deserialize_envelope` still relies on.
+        let mut unknown = valid_request_envelope();
+        unknown
+            .as_object_mut()
+            .expect("envelope is an object")
+            .insert("rogue_field".to_string(), Value::String("x".to_string()));
+        let unknown_err =
+            serde_json::from_value::<RequestEnvelope>(unknown).expect_err("unknown field fails");
+        assert!(
+            unknown_err.to_string().starts_with("unknown field"),
+            "serde_json `unknown field` wording changed: {unknown_err}"
+        );
+
+        // (b) The `missing field` wording we DELIBERATELY no longer rely on for
+        // P005/P007. Pinned as a tripwire so a maintainer re-checking this path
+        // notices if serde's phrasing — and thus the rationale for the presence-
+        // check — ever shifts.
+        let mut missing = valid_request_envelope();
+        missing
+            .as_object_mut()
+            .expect("envelope is an object")
+            .remove("on_behalf_of");
+        let missing_err =
+            serde_json::from_value::<RequestEnvelope>(missing).expect_err("missing field fails");
+        assert!(
+            missing_err.to_string().starts_with("missing field"),
+            "serde_json `missing field` wording changed: {missing_err}"
         );
     }
 
