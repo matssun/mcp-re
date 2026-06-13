@@ -1,9 +1,19 @@
 //! Signing-preimage and `request_hash` construction (MCPS_SPEC §3 / ADR-004).
 //!
 //! The MCP-S signing rule signs the COMPLETE JSON-RPC object, not just the
-//! envelope. The preimage is the object with the envelope's `signature.value`
-//! REMOVED (but `signature.alg` and `signature.key_id` RETAINED), canonicalized
-//! with RFC 8785 (JCS). We operate on a `serde_json::Value` here and reuse
+//! envelope. The preimage is the object with two explicitly-excluded sets removed
+//! (ADR-MCPS-026 signed/unsigned `_meta` partition), canonicalized with RFC 8785
+//! (JCS):
+//!
+//! 1. the envelope's `signature.value` (but `signature.alg` and `signature.key_id`
+//!    are RETAINED); and
+//! 2. the W3C Trace Context observability keys
+//!    ([`crate::ids::OBSERVABILITY_META_KEYS`]) under the located container's
+//!    `_meta` — mutated by tracing middle boxes, so out of signing scope.
+//!
+//! Everything else — including a per-request `protocolVersion` and any unknown
+//! `_meta` key — is IN scope and integrity-protected. We operate on a
+//! `serde_json::Value` here and reuse
 //! [`crate::canonical::canonicalize_json_value`] for the canonical bytes.
 //!
 //! Envelope placement (frozen, from §2 / the brief's unchanged JSON shape):
@@ -23,6 +33,7 @@ use serde_json::Value;
 use crate::canonical::canonicalize_json_value;
 use crate::error::McpsError;
 use crate::hash::sha256_hash_id;
+use crate::ids::OBSERVABILITY_META_KEYS;
 use crate::ids::REQUEST_META_KEY;
 use crate::ids::RESPONSE_META_KEY;
 
@@ -67,15 +78,29 @@ impl EnvelopeLocation {
 
 /// Produce the canonical signing preimage for the given envelope location.
 ///
-/// Clones the object, removes `signature.value` from the located envelope while
-/// retaining `signature.alg`/`signature.key_id`, and canonicalizes via RFC 8785.
-/// Missing envelope or signature block → [`McpsError::MissingEnvelope`].
+/// The MCP-S signed region is the COMPLETE JSON-RPC object MINUS exactly two
+/// explicitly-excluded sets (ADR-MCPS-026, the signed/unsigned `_meta`
+/// partition):
+///
+/// 1. `signature.value` of the located envelope (always — a signature cannot
+///    cover itself), with `signature.alg`/`signature.key_id` retained; and
+/// 2. the W3C Trace Context observability keys ([`OBSERVABILITY_META_KEYS`]) under
+///    the located container's `_meta` — they are rewritten by legitimate tracing
+///    middle boxes and MUST NOT be in scope or influence any security decision.
+///
+/// EVERYTHING ELSE is in scope and therefore integrity-protected: a per-request
+/// `protocolVersion` (rule 2) and any unknown `_meta` key (rule 6) are signed, so
+/// tampering them fails verification. The exclusion is applied identically here
+/// for both signing and verification (one shared function), so a middle box that
+/// mutates only a trace field cannot break the signature. Missing envelope or
+/// signature block → [`McpsError::MissingEnvelope`].
 pub fn signing_preimage(
     object: &Value,
     location: EnvelopeLocation,
 ) -> Result<Vec<u8>, McpsError> {
     let mut cloned = object.clone();
     strip_signature_value(&mut cloned, location)?;
+    strip_observability_meta(&mut cloned, location);
     canonicalize_json_value(&cloned)
 }
 
@@ -112,6 +137,25 @@ fn strip_signature_value(
     // signature.value removed", whether or not it was present.
     signature_obj.remove("value");
     Ok(())
+}
+
+/// Remove the excluded W3C Trace Context observability keys
+/// ([`OBSERVABILITY_META_KEYS`]) from the located container's `_meta`, in place
+/// (ADR-MCPS-026 rule 5). Best-effort and infallible: any absent segment (or a
+/// `_meta` that is not an object) simply means there is nothing to exclude — the
+/// caller has already validated envelope presence via [`strip_signature_value`].
+/// Stripping an absent key is a no-op, so an object with no trace fields produces
+/// exactly the same preimage as before this rule existed.
+fn strip_observability_meta(object: &mut Value, location: EnvelopeLocation) {
+    if let Some(meta) = object
+        .get_mut(location.container_key())
+        .and_then(|container| container.get_mut("_meta"))
+        .and_then(|meta| meta.as_object_mut())
+    {
+        for key in OBSERVABILITY_META_KEYS {
+            meta.remove(key);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -255,5 +299,75 @@ mod tests {
         other_value["params"]["_meta"]["se.syncom/mcps.request"]["signature"]
             ["value"] = Value::String("ZGlmZmVyZW50".to_string());
         assert_eq!(baseline, request_hash(&other_value).expect("hash"));
+    }
+
+    // ---- ADR-MCPS-026 signed/unsigned `_meta` partition -----------------------
+
+    /// Add a string-valued peer `_meta` member alongside the request envelope.
+    fn add_peer(object: &mut Value, key: &str, value: &str) {
+        object["params"]["_meta"]
+            .as_object_mut()
+            .expect("params._meta object")
+            .insert(key.to_string(), Value::String(value.to_string()));
+    }
+
+    #[test]
+    fn trace_context_keys_are_excluded_from_the_preimage() {
+        // A request WITHOUT trace fields and one WITH them (any values) must
+        // produce the SAME preimage — trace context is out of signing scope.
+        let baseline = request_signing_preimage(&request_object()).expect("preimage");
+
+        let mut traced = request_object();
+        add_peer(&mut traced, "traceparent", "00-abc-def-01");
+        add_peer(&mut traced, "tracestate", "vendor=xyz");
+        add_peer(&mut traced, "baggage", "k=v");
+        let with_trace = request_signing_preimage(&traced).expect("preimage");
+
+        assert_eq!(
+            baseline, with_trace,
+            "trace-context _meta keys must not affect the signing preimage"
+        );
+    }
+
+    #[test]
+    fn mutating_a_trace_field_does_not_change_the_preimage() {
+        let mut a = request_object();
+        add_peer(&mut a, "traceparent", "00-aaaa-1");
+        let mut b = request_object();
+        add_peer(&mut b, "traceparent", "00-bbbb-2");
+        assert_eq!(
+            request_signing_preimage(&a).expect("preimage"),
+            request_signing_preimage(&b).expect("preimage"),
+            "rewriting traceparent (as a middle box would) must not change the preimage"
+        );
+    }
+
+    #[test]
+    fn protocol_version_is_in_signing_scope() {
+        // A per-request protocolVersion peer key is NOT excluded, so changing it
+        // MUST change the preimage (it is integrity-protected, ADR-026 rule 2).
+        let mut base = request_object();
+        add_peer(&mut base, "protocolVersion", "2026-07-28");
+        let mut altered = request_object();
+        add_peer(&mut altered, "protocolVersion", "2025-06-18");
+        assert_ne!(
+            request_signing_preimage(&base).expect("preimage"),
+            request_signing_preimage(&altered).expect("preimage"),
+            "protocolVersion is in signing scope; altering it must change the preimage"
+        );
+    }
+
+    #[test]
+    fn unknown_signed_region_key_is_integrity_protected() {
+        // Any unknown _meta peer key (not a trace key) is in scope, so tampering
+        // it changes the preimage (rule 6: it cannot be silently altered).
+        let mut base = request_object();
+        add_peer(&mut base, "io.example/capability", "a");
+        let mut altered = request_object();
+        add_peer(&mut altered, "io.example/capability", "b");
+        assert_ne!(
+            request_signing_preimage(&base).expect("preimage"),
+            request_signing_preimage(&altered).expect("preimage"),
+        );
     }
 }

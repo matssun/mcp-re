@@ -4,11 +4,23 @@
 
 ## Status
 
-Proposed — **conditional on the MCP 2026-07-28 release candidate**; revisit if
-the referenced SEP schema changes materially (v0.3 delta sketch). SEP-2575's
-`_meta` key set is "proposed but not locked" upstream; this ADR binds to the
-*category* of fields (per-request protocol context) and names the minimum that
-must be in MCP-S signing scope.
+Accepted (targets v0.3). Implemented as an explicit signed/unsigned `_meta`
+partition in the shared `signing_preimage` (`mcps-core`): the preimage is the
+whole canonical object MINUS `signature.value` MINUS the W3C Trace Context keys
+(`mcps_core::ids::OBSERVABILITY_META_KEYS` = `traceparent` / `tracestate` /
+`baggage`); everything else — a per-request `protocolVersion` and any unknown
+`_meta` key — is in scope and integrity-protected. The exclusion is applied
+identically on the signer and verifier, so a tracing middle box that rewrites a
+trace field does not break the signature, while altering `protocolVersion` fails
+verification. Documented in `docs/spec/mcps-core-spec.md` §3 and proven by
+`mcps-core/tests/signing_scope_test.rs` plus the `signing` / `ids` unit vectors.
+
+**Conditional on the MCP 2026-07-28 release candidate.** SEP-2575's `_meta` key
+set is "proposed but not locked" upstream and SEP-414's trace-field placement is
+not final, so this binds to the *category* (per-request protocol context in
+scope, trace context excluded) rather than a frozen key list. If the upstream
+schema changes materially, only `OBSERVABILITY_META_KEYS` and the
+`protocolVersion` key name need revisiting — the partition mechanism is stable.
 
 ## Context
 

@@ -83,8 +83,9 @@ signature    : { alg: "Ed25519", key_id: string, value: string(b64url-no-pad) }
 Cites: [ADR-MCPS-004](../adr/adr-mcps-004.md) (Ed25519-over-JCS over the whole JSON-RPC object), [ADR-MCPS-003](../adr/adr-mcps-003.md) (signing locus).
 
 - Sign the COMPLETE JSON-RPC object, not just the envelope.
-- Preimage construction: take the full object with `signature.value` REMOVED but `signature.alg` and `signature.key_id` RETAINED; canonicalize with RFC 8785 / JCS to UTF-8 bytes; sign those bytes DIRECTLY with Ed25519 (NO pre-hash — Ed25519ph is forbidden). Insert the Base64URL-no-pad signature into `signature.value`.
-- Verification: remove `signature.value`, canonicalize, resolve key, verify Ed25519 over the bytes.
+- Preimage construction: take the full object, remove the two explicitly-excluded sets below, canonicalize with RFC 8785 / JCS to UTF-8 bytes; sign those bytes DIRECTLY with Ed25519 (NO pre-hash — Ed25519ph is forbidden). Insert the Base64URL-no-pad signature into `signature.value`.
+- Explicit signed/unsigned `_meta` partition ([ADR-MCPS-026](../adr/adr-mcps-026.md)). EXCLUDED from the preimage: (1) the envelope's `signature.value` (`signature.alg` and `signature.key_id` are RETAINED); and (2) the W3C Trace Context observability keys `traceparent` / `tracestate` / `baggage` under the located container's `_meta` (`mcps_core::ids::OBSERVABILITY_META_KEYS`) — they are rewritten by legitimate tracing middle boxes and MUST NOT influence any security decision. IN scope (signed, integrity-protected): everything else, including a per-request `protocolVersion` and any unknown `_meta` key. Decision-influencing `_meta` is therefore either signed or it is not consulted — there is no third state.
+- Verification: remove `signature.value` and the excluded observability keys (identically to signing — one shared `signing_preimage`), canonicalize, resolve key, verify Ed25519 over the bytes.
 - Response signing is symmetric (response envelope's `signature`).
 - Encoding: Base64URL WITHOUT padding for all signature and hash values.
 - Hash identifier format: `sha256:<base64url-no-pad>` (the digest is over the relevant canonical bytes).
