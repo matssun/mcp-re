@@ -43,9 +43,23 @@ pub const RESPONSE_WRAP_VALUE_KEY: &str = "value";
 /// the caller. The two sides MUST agree on this exact key.
 pub const RESPONSE_WRAP_INNER_ERROR_KEY: &str = "inner_error";
 
+/// W3C Trace Context `_meta` keys that are EXCLUDED from the MCP-S signing
+/// preimage (ADR-MCPS-026, the explicit signed/unsigned `_meta` partition).
+///
+/// These observability fields (`traceparent` / `tracestate` / `baggage`) are
+/// legitimately rewritten by middle boxes between signing and verification, so
+/// including them in the preimage would break the signature on every tracing hop.
+/// They are stripped from the canonical preimage exactly like `signature.value`,
+/// on BOTH the signer and verifier side (one shared `signing_preimage`), and MUST
+/// NOT influence any security decision. Everything else under `_meta` — including
+/// a per-request `protocolVersion` (ADR-MCPS-026 rule 2) and any unknown key — is
+/// IN scope and therefore integrity-protected: tampering it fails verification.
+pub const OBSERVABILITY_META_KEYS: [&str; 3] = ["traceparent", "tracestate", "baggage"];
+
 #[cfg(test)]
 mod tests {
     use super::EXTENSION_ID;
+    use super::OBSERVABILITY_META_KEYS;
     use super::REQUEST_META_KEY;
     use super::RESPONSE_META_KEY;
     use super::SIG_ALG_ED25519;
@@ -71,5 +85,20 @@ mod tests {
     fn frozen_scalar_constants() {
         assert_eq!(VERSION_DRAFT_01, "draft-01");
         assert_eq!(SIG_ALG_ED25519, "Ed25519");
+    }
+
+    #[test]
+    fn observability_keys_are_the_w3c_trace_context_set() {
+        assert_eq!(
+            OBSERVABILITY_META_KEYS,
+            ["traceparent", "tracestate", "baggage"]
+        );
+        // None of the excluded observability keys may collide with the MCP-S
+        // envelope keys (which ARE signed).
+        for key in OBSERVABILITY_META_KEYS {
+            assert_ne!(key, REQUEST_META_KEY);
+            assert_ne!(key, RESPONSE_META_KEY);
+            assert_ne!(key, VERIFIED_META_KEY);
+        }
     }
 }
