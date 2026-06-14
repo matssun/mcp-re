@@ -289,6 +289,48 @@ fn wait_quorum_satisfied(acked_replicas: i64, quorum: u32) -> bool {
     acked_replicas >= i64::from(quorum)
 }
 
+/// Decide the outcome for a freshly-inserted nonce given the Redis `WAIT` ack
+/// count `acked` (ADR-MCPS-020, Tier `REDIS_WAIT_QUORUM`). Pure, so the
+/// fail-closed shortfall mapping is unit-testable without a live multi-replica
+/// Redis (issue #23/F4); the SET+WAIT command path is proven by the gated e2e.
+///
+/// - `acked >= quorum` ⇒ durably replicated ⇒ [`ReplayDecision::Fresh`].
+/// - `acked < quorum` ⇒ **fail closed** with [`ReplayStoreError::Unavailable`] as
+///   `OpAttempt::Fatal` (NOT `Transient`), so [`run_with_reconnect`] does NOT
+///   re-run the op — a re-run would find the just-written key (the `SET NX`
+///   already landed on the primary before `WAIT`) and wrongly report `Replay`
+///   (the SET+WAIT op is not idempotent under retry).
+///
+/// ## Retry semantics (the F4 contract, ADR-MCPS-020)
+///
+/// On a quorum shortfall the nonce IS present on the primary but is not durably
+/// replicated, and the proxy surfaces the distinct, retryable
+/// `mcps.replay_cache_unavailable`. We deliberately do **NOT** compensating-
+/// `DEL`/`UNLINK` the primary key: the write may already have reached some
+/// replicas, and dropping it under that uncertainty could reopen a replay window —
+/// the durability-over-availability tradeoff this tier exists for. The cost is an
+/// availability edge: re-submitting the SAME signed request/nonce may be rejected
+/// as `Replay` until the `PX` window elapses. The contract is therefore that a
+/// client treats `replay_cache_unavailable` as **retry-with-a-fresh-nonce** — it
+/// re-signs (a new nonce ⇒ a new key ⇒ `Fresh`), never replays the same envelope.
+fn classify_fresh_insert_wait(
+    acked: i64,
+    quorum: u32,
+    timeout_ms: u64,
+) -> OpAttempt<ReplayDecision> {
+    if wait_quorum_satisfied(acked, quorum) {
+        OpAttempt::Done(ReplayDecision::Fresh)
+    } else {
+        OpAttempt::Fatal(ReplayStoreError::Unavailable {
+            details: format!(
+                "redis WAIT got {acked} replica ack(s), need {quorum} within {timeout_ms}ms \
+                 (fail closed; nonce not durably replicated; retry with a FRESH nonce — the \
+                 same signed request may be rejected as replay until the TTL window elapses)"
+            ),
+        })
+    }
+}
+
 /// `true` when a Redis error means the connection itself is broken and must be
 /// REPLACED — an IO failure or any error redis-rs classifies as requiring a
 /// reconnect. This is the M19 trigger: such an error gets ONE reconnect-and-retry.
@@ -409,22 +451,7 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
                                     .arg(timeout_ms)
                                     .query(conn);
                                 match acked {
-                                    Ok(n) if wait_quorum_satisfied(n, quorum) => {
-                                        OpAttempt::Done(ReplayDecision::Fresh)
-                                    }
-                                    // Insufficient acks within the timeout: the nonce
-                                    // is NOT durably replicated → fail closed. Fatal
-                                    // (not Transient) so the op is NOT re-run, which
-                                    // would see the just-written key and wrongly
-                                    // report Replay (the SET+WAIT op is not
-                                    // idempotent under retry).
-                                    Ok(n) => OpAttempt::Fatal(ReplayStoreError::Unavailable {
-                                        details: format!(
-                                            "redis WAIT got {n} replica ack(s), need {quorum} \
-                                             within {timeout_ms}ms (fail closed; nonce not \
-                                             durably replicated)"
-                                        ),
-                                    }),
+                                    Ok(n) => classify_fresh_insert_wait(n, quorum, timeout_ms),
                                     // A WAIT error is also fail-closed-Fatal, for the
                                     // same non-idempotency reason.
                                     Err(e) => OpAttempt::Fatal(ReplayStoreError::Unavailable {
@@ -465,9 +492,11 @@ mod tests {
     use super::compute_ttl_ms;
     use super::run_with_reconnect;
     use super::ttl_ms_via_clock;
+    use super::classify_fresh_insert_wait;
     use super::wait_quorum_satisfied;
     use super::OpAttempt;
     use super::RedisAtomicReplayStore;
+    use super::ReplayDecision;
     use super::ReplayStoreError;
     use super::UnixClock;
 
@@ -481,6 +510,51 @@ mod tests {
         assert!(wait_quorum_satisfied(3, 2), "more than quorum is satisfied");
         assert!(!wait_quorum_satisfied(1, 2), "fewer than quorum fails closed");
         assert!(!wait_quorum_satisfied(0, 1), "zero acks fails closed");
+    }
+
+    /// Issue #23/F4 — PURE, no-Redis proof of the WAIT-quorum-shortfall retry
+    /// semantics (ADR-MCPS-020). Enough acks ⇒ Fresh; a shortfall ⇒ Fatal (fail
+    /// closed, NOT a transient that would be retried into a wrong Replay), and the
+    /// error message states the contract: the nonce is not durably replicated and
+    /// the client must retry with a FRESH nonce (the same signed request may be
+    /// rejected as replay until the TTL window elapses). We do NOT compensating-DEL
+    /// the primary key (it may have replicated; dropping it could reopen a replay
+    /// window).
+    #[test]
+    fn wait_quorum_shortfall_fails_closed_with_fresh_nonce_contract() {
+        // Enough acks → durably replicated → Fresh.
+        assert!(
+            matches!(
+                classify_fresh_insert_wait(2, 2, 100),
+                OpAttempt::Done(ReplayDecision::Fresh)
+            ),
+            "meeting quorum must report Fresh"
+        );
+
+        // Shortfall → Fatal/Unavailable (fail closed, not retried), with the
+        // documented retry-with-fresh-nonce contract in the message.
+        match classify_fresh_insert_wait(1, 2, 100) {
+            OpAttempt::Fatal(ReplayStoreError::Unavailable { details }) => {
+                assert!(
+                    details.contains("not durably replicated"),
+                    "message must explain the durability shortfall: {details}"
+                );
+                assert!(
+                    details.contains("FRESH nonce"),
+                    "message must state the retry-with-fresh-nonce contract: {details}"
+                );
+            }
+            OpAttempt::Done(_) => panic!("a WAIT shortfall must NOT report Fresh"),
+            OpAttempt::Transient(_) => {
+                panic!("a WAIT shortfall must be Fatal (not retried), never Transient")
+            }
+        }
+
+        // Zero acks is also a shortfall → fail closed.
+        assert!(matches!(
+            classify_fresh_insert_wait(0, 1, 100),
+            OpAttempt::Fatal(ReplayStoreError::Unavailable { .. })
+        ));
     }
 
     /// PURE, no-Redis proof that the H-8/H-9 `now = 0` bug is gone: with a real

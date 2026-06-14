@@ -219,6 +219,35 @@ Normative requirements:
 - The proxy MUST log backend + tier at startup and on every replay-store error,
   without plaintext nonce material by default.
 
+### WAIT-quorum shortfall: retry semantics (Tier `REDIS_WAIT_QUORUM`)
+
+The `REDIS_WAIT_QUORUM` insert is a `SET … NX PX` on the primary **followed by**
+`WAIT <quorum> <timeout>`. The `SET NX` lands on the primary *before* `WAIT` runs,
+so the two steps are not a single atomic unit. When `WAIT` reports fewer than
+`quorum` acknowledgements (or errors), the nonce IS present on the primary but is
+NOT durably replicated. The proxy MUST:
+
+- **fail closed** for that request with `mcps.replay_cache_unavailable`
+  (`OpAttempt::Fatal` — it MUST NOT be retried internally, because re-running the
+  non-idempotent `SET NX` would find the just-written key and wrongly report
+  `Replay`); and
+- **NOT** issue a compensating `DEL`/`UNLINK` of the primary key. The write may
+  already have reached one or more replicas; deleting it under that uncertainty
+  could reopen a replay window — which would violate the durability-over-
+  availability guarantee this tier exists to provide.
+
+The consequence is a bounded **availability** cost, never a replay-safety hole:
+re-submitting the *same signed request / same nonce* may be rejected as `Replay`
+until the `PX` window elapses. The **client contract** is therefore that a
+`replay_cache_unavailable` outcome is *retryable by re-signing with a FRESH
+nonce* — a new nonce is a new key and inserts `Fresh`. Clients MUST NOT replay
+the identical envelope after this error.
+
+A compensating cleanup that trades this availability edge for added complexity
+(and a carefully-modelled, replica-state-aware delete) is a possible FUTURE
+amendment to this ADR; it is intentionally deferred beyond v0.3 and must be
+verified against a real multi-replica topology before adoption.
+
 ## Related
 
 - ADR-MCPS-006 (Freshness and Replay Model)
