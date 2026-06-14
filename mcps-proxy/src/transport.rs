@@ -391,48 +391,70 @@ impl ReverseProxyMtlsProvider {
             IdentityPolicy::CnLegacy => &["subject", "cn"],
         };
 
+        // Explicit element-selection policy (ADR-MCPS-023, issue #21 cluster 2).
+        // XFCC is a comma-separated list of cert ELEMENTS, each a semicolon-
+        // separated list of `Key=Value` pairs. We parse element-by-element (NOT
+        // flattened): the asserted identity may ONLY come from an element that
+        // itself carries the selected field, and the value MUST be consistent
+        // across every element that carries it (any disagreement fails closed).
+        //
+        // v0.3's trusted-ingress posture expects the configured ingress to emit
+        // sanitized single-hop XFCC — i.e. exactly one usable identity element.
+        // Identical repetition of the same value across hops is tolerated as a
+        // benign artifact; a non-selected element (one without the field) is never
+        // a source of identity. We deliberately do NOT assume "first element ==
+        // leaf": XFCC element ordering is not a guaranteed invariant across
+        // deployments, so positional leaf selection would be its own footgun.
         let mut found: Option<String> = None;
-        // Tokenize honouring double quotes: `,` and `;` only delimit pairs when
-        // OUTSIDE a quoted value, since Envoy quotes any value containing those
-        // reserved characters (a Subject DN is `Subject="CN=a,OU=b"`). Splitting
-        // on the raw bytes would wrongly cut a quoted DN at its internal commas.
-        for pair in split_xfcc_pairs(value) {
-            let Some((key, raw_value)) = pair.split_once('=') else {
-                continue;
-            };
-            let key = key.trim().to_ascii_lowercase();
-            if !wanted.contains(&key.as_str()) {
-                continue;
-            }
-            let stripped = strip_optional_quotes(raw_value.trim());
-            // M23 parity: under CnLegacy a `Subject=` DN is reduced to its CN so it
-            // equals the direct-TLS extraction; a `CN=` pair (and URI/DNS fields)
-            // are taken verbatim. A `Subject=` DN that carries NO CN attribute
-            // fails closed (None) rather than yielding a weaker/whole-DN identity.
-            let extracted: Option<String> = if key == "subject" {
-                common_name_from_rfc2253(stripped)
-            } else {
-                Some(stripped.to_string())
-            };
-            let Some(extracted) = extracted else {
-                // The selected field is present but carries no usable component
-                // (e.g. a Subject DN with no CN): fail closed.
-                return None;
-            };
-            if extracted.is_empty() {
-                // A present-but-empty selected field is a malformed element:
-                // fail closed rather than yield an empty identity.
-                return None;
-            }
-            match &found {
-                // Conflicting values across elements → fail closed.
-                Some(existing) if *existing != extracted => return None,
-                Some(_) => {}
-                None => found = Some(extracted),
+        for element in split_xfcc_elements(value) {
+            // Within an element, `;` delimits pairs (outside quotes). Envoy quotes
+            // any value containing a reserved character (`,`, `;`, `=`), so a
+            // quoted Subject DN such as `Subject="CN=a,OU=b"` stays a single pair.
+            for pair in split_xfcc_element_pairs(element) {
+                let Some((key, raw_value)) = pair.split_once('=') else {
+                    continue;
+                };
+                let key = key.trim().to_ascii_lowercase();
+                if !wanted.contains(&key.as_str()) {
+                    continue;
+                }
+                let stripped = strip_optional_quotes(raw_value.trim());
+                // M23 parity: under CnLegacy a `Subject=` DN is reduced to its CN
+                // so it equals the direct-TLS extraction; a `CN=` pair (and URI/DNS
+                // fields) are taken verbatim. A `Subject=` DN that carries NO CN
+                // attribute fails closed rather than yielding a weaker/whole-DN
+                // identity.
+                let extracted: Option<String> = if key == "subject" {
+                    common_name_from_rfc2253(stripped)
+                } else {
+                    Some(stripped.to_string())
+                };
+                let Some(extracted) = extracted else {
+                    // The selected field is present but carries no usable component
+                    // (e.g. a Subject DN with no CN): fail closed.
+                    return None;
+                };
+                if extracted.is_empty() {
+                    // A present-but-empty selected field is a malformed element:
+                    // fail closed rather than yield an empty identity.
+                    return None;
+                }
+                match &found {
+                    // Conflicting values across elements → fail closed.
+                    Some(existing) if *existing != extracted => return None,
+                    Some(_) => {}
+                    None => found = Some(extracted),
+                }
             }
         }
 
-        found.map(|value| TransportIdentity::new(value, self.source()))
+        // ADR-MCPS-023 strict value rules on the SELECTED identity — length-bound
+        // and no control characters — mirroring the plain path. This is the gap
+        // closed by issue #21: the XFCC-derived value was previously returned
+        // without these checks. Fail closed (`None`) on any violation, and on
+        // zero usable identity elements (`found == None`).
+        let identity = validate_asserted_identity_value(found.as_deref()?).ok()?;
+        Some(TransportIdentity::new(identity.to_string(), self.source()))
     }
 }
 
@@ -451,31 +473,41 @@ impl TransportBindingProvider for ReverseProxyMtlsProvider {
     }
 }
 
-/// Split an XFCC header value into its `Key=Value` pairs, treating BOTH `,`
-/// (between cert elements) and `;` (between pairs within an element) as pair
-/// separators, but ONLY when they occur outside a double-quoted value. Envoy
-/// quotes any value containing a reserved character (`,`, `;`, `=`), so a quoted
-/// Subject DN such as `Subject="CN=a,OU=b"` is returned as a single pair rather
-/// than being cut at its internal comma. Flattening elements and pairs together
-/// is intentional: the extractor cares about a field's value, not which cert
-/// element it sat in, and disagreement across elements is caught by the
-/// fail-closed conflict check in the caller.
-fn split_xfcc_pairs(value: &str) -> Vec<&str> {
-    let mut pairs = Vec::new();
+/// Split an XFCC header value into its cert ELEMENTS on `,` occurring outside a
+/// double-quoted value (issue #21 cluster 2: element-aware, not flattened).
+/// Envoy quotes any value containing a reserved character (`,`, `;`, `=`), so a
+/// quoted Subject DN such as `Subject="CN=a,OU=b"` is NOT split at its internal
+/// comma. Each returned element is then split into its `Key=Value` pairs by
+/// [`split_xfcc_element_pairs`].
+fn split_xfcc_elements(value: &str) -> Vec<&str> {
+    split_outside_quotes(value, ',')
+}
+
+/// Split a single XFCC cert element into its `Key=Value` pairs on `;` occurring
+/// outside a double-quoted value (a quoted Subject DN stays one pair).
+fn split_xfcc_element_pairs(element: &str) -> Vec<&str> {
+    split_outside_quotes(element, ';')
+}
+
+/// Split `value` on every occurrence of `sep` that falls OUTSIDE a double-quoted
+/// span. Shared by the XFCC element and pair splitters so both honour Envoy's
+/// quoting rule identically.
+fn split_outside_quotes(value: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
     let mut in_quotes = false;
     let mut start = 0;
     for (index, ch) in value.char_indices() {
         match ch {
             '"' => in_quotes = !in_quotes,
-            ',' | ';' if !in_quotes => {
-                pairs.push(&value[start..index]);
-                start = index + ch.len_utf8();
+            c if c == sep && !in_quotes => {
+                parts.push(&value[start..index]);
+                start = index + c.len_utf8();
             }
             _ => {}
         }
     }
-    pairs.push(&value[start..]);
-    pairs
+    parts.push(&value[start..]);
+    parts
 }
 
 /// Strip a single pair of surrounding ASCII double quotes from `value`, if both
@@ -514,7 +546,10 @@ fn common_name_from_rfc2253(dn: &str) -> Option<String> {
                 continue;
             };
             if attr_type.trim().eq_ignore_ascii_case("cn") {
-                return Some(unescape_rfc2253_value(attr_value.trim()));
+                // First CN wins (matches the direct-TLS `iter_common_name().next()`).
+                // A CN whose value is a malformed escape / non-UTF-8 yields `None`
+                // here, which the caller treats as fail-closed (no usable CN).
+                return unescape_rfc2253_value(attr_value.trim());
             }
         }
     }
@@ -549,27 +584,49 @@ fn split_unescaped(input: &str, sep: char) -> Vec<&str> {
 }
 
 /// Unescape an RFC2253 attribute value: drop surrounding double quotes (if the
-/// whole value is quoted) and resolve `\<char>` backslash escapes to the literal
-/// character. `\<hexpair>` byte escapes are passed through best-effort by dropping
-/// the backslash; CN values in practice are printable strings, and the parity
-/// requirement is only that this matches the direct-TLS CN for the same cert.
-fn unescape_rfc2253_value(value: &str) -> String {
+/// whole value is quoted) and resolve `\` backslash escapes. A backslash followed
+/// by exactly two hex digits is a `\<hexpair>` BYTE escape and is decoded to that
+/// byte (per RFC2253 §2.4); any other `\<char>` is a literal-character escape and
+/// resolves to that character. Returns `None` (fail closed) on a dangling trailing
+/// backslash or when the decoded bytes are not valid UTF-8 — never silently drops
+/// a backslash or yields a corrupted identity (issue #21, cluster 2).
+fn unescape_rfc2253_value(value: &str) -> Option<String> {
     let inner = value
         .strip_prefix('"')
         .and_then(|v| v.strip_suffix('"'))
         .unwrap_or(value);
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
+    // Operate on bytes: `\` (0x5C) and ASCII hex digits are never UTF-8
+    // continuation bytes, so byte indexing across them is sound; non-escaped
+    // multi-byte characters are copied through verbatim.
+    let bytes = inner.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        // `\` must be followed by at least one character.
+        let Some(&next) = bytes.get(i + 1) else {
+            return None; // dangling backslash → malformed, fail closed
+        };
+        match bytes.get(i + 2) {
+            // `\<hexpair>` byte escape: decode the two hex digits to one byte.
+            Some(&after) if next.is_ascii_hexdigit() && after.is_ascii_hexdigit() => {
+                let hi = (next as char).to_digit(16)?;
+                let lo = (after as char).to_digit(16)?;
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
             }
-        } else {
-            out.push(ch);
+            // `\<char>` literal-character escape: keep the literal following byte.
+            _ => {
+                out.push(next);
+                i += 2;
+            }
         }
     }
-    out
+    String::from_utf8(out).ok()
 }
 
 /// Decides whether a request's verified `signer` is bound to the transport
@@ -936,6 +993,116 @@ mod tests {
         let req = req_with(
             "x-forwarded-client-cert",
             "URI=spiffe://example.org/agent-1,URI=spiffe://example.org/agent-1",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new(
+                "spiffe://example.org/agent-1",
+                IdentitySource::UriSan
+            ))
+        );
+    }
+
+    // --- Issue #21 (cluster 2): ADR-MCPS-023 strict rules on the XFCC value -----
+
+    #[test]
+    fn xfcc_oversized_value_yields_none() {
+        // ADR-MCPS-023: the XFCC-derived identity must be length-bounded, exactly
+        // as the plain path is. An over-long URI SAN must fail closed (the gap
+        // before #21: only parse_plain validated length).
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let huge = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN + 1);
+        let req = req_with("x-forwarded-client-cert", &format!("Hash=abc;URI={huge}"));
+        assert_eq!(
+            provider.verified_identity(&req),
+            None,
+            "an oversized XFCC identity must fail closed, not be returned unbounded"
+        );
+        // The inclusive boundary is still accepted (proves it's a bound, not a
+        // blanket rejection).
+        let at_bound = "a".repeat(super::MAX_ASSERTED_IDENTITY_LEN);
+        let ok = req_with("x-forwarded-client-cert", &format!("URI={at_bound}"));
+        assert_eq!(
+            provider.verified_identity(&ok),
+            Some(TransportIdentity::new(at_bound, IdentitySource::UriSan))
+        );
+    }
+
+    #[test]
+    fn xfcc_control_character_value_yields_none() {
+        // A control character in the XFCC-derived identity (header-smuggling /
+        // log-injection risk) must fail closed — previously only parse_plain ran
+        // this check.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;URI=spiffe://example.org/age\x07nt-1",
+        );
+        assert_eq!(provider.verified_identity(&req), None);
+    }
+
+    #[test]
+    fn xfcc_subject_cn_rfc2253_hex_byte_escape_is_decoded() {
+        // RFC2253 §2.4 `\<hexpair>` byte escape: `\41` is the byte 0x41 = 'A'.
+        // It must be DECODED (not silently backslash-dropped to "41").
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"CN=\\41gent-1,OU=agents\"",
+        );
+        assert_eq!(
+            provider.verified_identity(&req),
+            Some(TransportIdentity::new(
+                "Agent-1",
+                IdentitySource::CommonName
+            )),
+            "\\41 must decode to the byte 'A', not collapse to literal '41'"
+        );
+    }
+
+    #[test]
+    fn xfcc_subject_cn_invalid_utf8_byte_escape_yields_none() {
+        // A lone continuation byte (`\80`) cannot start a valid UTF-8 sequence;
+        // decoding it yields invalid UTF-8 → fail closed rather than emit a
+        // corrupted identity.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::CnLegacy,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;Subject=\"CN=\\80,OU=agents\"",
+        );
+        assert_eq!(provider.verified_identity(&req), None);
+    }
+
+    #[test]
+    fn xfcc_identity_sourced_only_from_element_carrying_the_field() {
+        // Element-aware selection: one cert element lacks the URI field entirely,
+        // a second element carries it. The single usable element supplies the
+        // identity; a non-selected element is never the source of a conflict.
+        let provider = ReverseProxyMtlsProvider::new(
+            "x-forwarded-client-cert",
+            ReverseProxyHeaderFormat::Xfcc,
+            IdentityPolicy::UriSan,
+        );
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "By=spiffe://example.org/ingress;Hash=deadbeef,\
+             Hash=abc123;URI=spiffe://example.org/agent-1",
         );
         assert_eq!(
             provider.verified_identity(&req),
