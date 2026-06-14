@@ -77,27 +77,43 @@ fn allowlisted_read_succeeds_under_enforce() {
         println!("SKIP: kernel lacks Landlock at the required ABI (#4039 effect test)");
         return;
     }
-    // /bin and its contents must be readable for /bin/sh to even exec; allow a
-    // read root that covers the shell + the file we read. We read /etc/hostname,
-    // which lives under an allowlisted read path.
+    // The positive-allow target is a file this test CREATES under a private
+    // temp directory, NOT a system path like /etc/hostname. On hosted CI runners
+    // the rootfs is layered (overlay / bind mounts) and a system file can be a
+    // separate bind mount that a rule on its parent dir does not cover — making
+    // "allow /etc, read /etc/hostname" a test of runner filesystem topology, not
+    // of Landlock. A test-owned file on an ordinary mount, with its OWN directory
+    // allowlisted, exercises the real security property: an explicitly allowed
+    // path is readable under enforce.
+    let dir = std::env::temp_dir().join(format!("mcps-sandbox-allow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create the test-owned allow dir");
+    let file = dir.join("allowed.txt");
+    std::fs::write(&file, b"allowed").expect("write the allowlisted file");
+
+    // /bin + libs let /bin/sh and cat exec; the test-owned dir is the allow root
+    // under which the read must succeed.
     let read = vec![
         "/bin".to_string(),
         "/lib".to_string(),
         "/lib64".to_string(),
         "/usr".to_string(),
-        "/etc".to_string(),
+        dir.to_string_lossy().into_owned(),
     ];
-    // Reading an allowlisted path must SUCCEED (exit 0).
+    // Reading the allowlisted, test-created path must SUCCEED (exit 0).
     let status = run_under_sandbox(
-        "cat /etc/hostname >/dev/null 2>&1",
+        &format!("cat {} >/dev/null 2>&1", file.to_string_lossy()),
         read,
         Vec::new(),
         NetworkPolicy::Allow,
     )
     .expect("spawn under enforce should succeed");
+
+    // Clean up before asserting so a failure does not leak the temp dir.
+    let _ = std::fs::remove_dir_all(&dir);
+
     assert!(
         status.success(),
-        "reading an allowlisted path must succeed under enforce, got {status:?}"
+        "reading an allowlisted (test-owned) path must succeed under enforce, got {status:?}"
     );
 }
 
