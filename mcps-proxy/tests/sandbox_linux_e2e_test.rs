@@ -78,13 +78,21 @@ fn allowlisted_read_succeeds_under_enforce() {
         return;
     }
     // The positive-allow target is a file this test CREATES under a private
-    // temp directory, NOT a system path like /etc/hostname. On hosted CI runners
-    // the rootfs is layered (overlay / bind mounts) and a system file can be a
-    // separate bind mount that a rule on its parent dir does not cover — making
-    // "allow /etc, read /etc/hostname" a test of runner filesystem topology, not
-    // of Landlock. A test-owned file on an ordinary mount, with its OWN directory
-    // allowlisted, exercises the real security property: an explicitly allowed
-    // path is readable under enforce.
+    // temp directory whose OWN directory is allowlisted, exercising the real
+    // security property: an explicitly allowed path is readable under enforce.
+    //
+    // TWO fixture hazards this test deliberately avoids — both previously made it
+    // fail on the Linux runner while Landlock was behaving correctly:
+    //   1. Do NOT read a system path like /etc/hostname: on hosted runners it can
+    //      be a separate bind mount that a `path_beneath` rule on /etc does not
+    //      cover, so the read is denied for filesystem-topology reasons, not the
+    //      property under test.
+    //   2. Do NOT redirect the child's stdout with a shell `>/dev/null`: that
+    //      makes the shell OPEN /dev/null for WRITING, which the Enforce profile
+    //      (empty write allowlist) correctly denies — failing the child for a
+    //      reason unrelated to the allowlisted READ. We capture stdout through a
+    //      Rust pipe (an already-open inherited fd, no file open) instead, and
+    //      surface the child's combined output if the kernel denies the read.
     let dir = std::env::temp_dir().join(format!("mcps-sandbox-allow-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create the test-owned allow dir");
     let file = dir.join("allowed.txt");
