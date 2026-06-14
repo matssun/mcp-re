@@ -1930,8 +1930,18 @@ mod tests {
 
     /// An inner command (`[cmd, arg...]`) that prints `${name}` (or empty if
     /// unset) to stdout. Uses `sh -c`; portable on the (unix) CI hosts.
+    ///
+    /// It first drains its request stdin (`cat >/dev/null`), mirroring a real
+    /// inner MCP server that reads the dispatched request before responding.
+    /// Without this drain the child can exit (after `printf`) before the proxy
+    /// finishes writing the request to its stdin, and the write fails closed with
+    /// EPIPE — a harness race that is benign on macOS but deterministic on Linux.
     fn dump_var_command(name: &str) -> Vec<String> {
-        args(&["/bin/sh", "-c", &format!("printf '%s' \"${{{name}}}\"")])
+        args(&[
+            "/bin/sh",
+            "-c",
+            &format!("cat >/dev/null; printf '%s' \"${{{name}}}\""),
+        ])
     }
 
     fn run_inner(inner: &SubprocessInner) -> String {
