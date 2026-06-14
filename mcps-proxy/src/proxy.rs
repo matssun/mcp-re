@@ -253,6 +253,18 @@ impl Proxy {
                         return json_rpc_error_object(&err, &id_value);
                     }
                 }
+                // Response `id` provenance (issue #24): on THIS branch the request
+                // has been cryptographically verified, and the JSON-RPC top-level
+                // `id` is inside the signing preimage (the preimage canonicalizes
+                // the whole object minus `signature.value` and the container trace
+                // keys), so the request signature COVERS `id` — a tampered `id`
+                // fails verification and never reaches here. A duplicate top-level
+                // `id` is likewise rejected at verify step 3 (raw-bytes JCS
+                // duplicate-key check). `id_value` is parsed from the same bytes
+                // `verify_request` validated, so on success it IS the verified
+                // request's id — not unchecked inbound data. (The error branches
+                // above use `id_value` only for best-effort correlation, where no
+                // verified request exists.) Pinned by the #24 tests.
                 match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
                     Ok(bytes) => bytes,
                     Err(err) => json_rpc_error_object(&err, &id_value),
@@ -842,6 +854,78 @@ mod tests {
             value["result"]["_meta"][RESPONSE_META_KEY]["server_signer"],
             Value::String(SERVER.to_string()),
             "the canonical response block is the proxy-authored one"
+        );
+    }
+
+    // ---- Issue #24: response `id` provenance — only a verified id is signed ----
+
+    #[test]
+    fn signed_response_id_is_the_verified_request_id() {
+        let nonce = "nonce-id-happy-1";
+        let proxy = proxy_returning(json!({
+            "jsonrpc": "2.0",
+            "id": REQUEST_ID,
+            "result": { "ok": true },
+        }));
+        let out = proxy.handle(&signed_request(nonce), now());
+        // The response verifies AND its correlation id is exactly the request id.
+        verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
+            .expect("happy-path response must be signed and request-bound");
+        assert_eq!(
+            out_value(&out)["id"],
+            Value::String(REQUEST_ID.to_string()),
+            "the signed response id must echo the verified request id"
+        );
+    }
+
+    #[test]
+    fn tampered_top_level_id_fails_verification_and_is_not_signed() {
+        let nonce = "nonce-id-tamper-1";
+        // Take a validly signed request and change ONLY the top-level id, WITHOUT
+        // re-signing. The id is inside the signing preimage, so the request
+        // signature no longer matches → verification fails → no signed response.
+        let mut request: Value =
+            serde_json::from_slice(&signed_request(nonce)).expect("parse signed request");
+        request["id"] = Value::String("did:evil:swapped-id".to_string());
+        let tampered = serde_json::to_vec(&request).expect("serialize");
+
+        let proxy = proxy_returning(json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }));
+        let out = proxy.handle(&tampered, now());
+
+        // It is an unsigned JSON-RPC error, NOT a verifiable signed response.
+        assert!(
+            verify_response(&out, &server_resolver(), &expected_request_hash(nonce)).is_err(),
+            "a tampered-id request must never yield a verifiable signed response"
+        );
+        assert!(
+            out_value(&out).get("error").is_some(),
+            "a tampered-id request must fail closed with a JSON-RPC error"
+        );
+    }
+
+    #[test]
+    fn duplicate_top_level_id_is_rejected_and_is_not_signed() {
+        let nonce = "nonce-id-dup-1";
+        // Inject a DUPLICATE top-level `id` member into otherwise-signed bytes. The
+        // raw-bytes JCS duplicate-key check (verify step 3) rejects it before any
+        // signed response can be produced, so a last-wins duplicate id can never
+        // propagate to a signed response.
+        let signed = signed_request(nonce);
+        let text = String::from_utf8(signed).expect("utf8");
+        // Serialized object begins with `{` then the first member; inject a second
+        // `id` right after the opening brace to create a duplicate key.
+        let duped = format!("{{\"id\":\"did:evil:dup\",{}", &text[1..]);
+
+        let proxy = proxy_returning(json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }));
+        let out = proxy.handle(duped.as_bytes(), now());
+
+        assert!(
+            verify_response(&out, &server_resolver(), &expected_request_hash(nonce)).is_err(),
+            "a duplicate-id request must never yield a verifiable signed response"
+        );
+        assert!(
+            out_value(&out).get("error").is_some(),
+            "a duplicate-id request must fail closed with a JSON-RPC error"
         );
     }
 
