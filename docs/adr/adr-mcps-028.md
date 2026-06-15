@@ -33,7 +33,7 @@ signature over raw bytes** — byte-identical to what `SigningKey::sign` /
 | Provider | Native Ed25519 signing | MCP-S-compatible mode | Native adapter |
 |---|---|---|---|
 | **AWS KMS** | **Yes** (since 2025-11-07) | key spec `ECC_NIST_EDWARDS25519`, alg `ED25519_SHA_512`, **`MessageType: RAW`** (PureEdDSA) — **not** `ED25519_PH_SHA_512`/`DIGEST` (that is Ed25519ph, forbidden) | **In scope** |
-| **GCP Cloud KMS** | **Yes** | purpose `ASYMMETRIC_SIGN`, algorithm `EC_SIGN_ED25519` (PureEdDSA on Curve25519, raw data input) | **In scope** |
+| **GCP Cloud KMS** | **Yes** | purpose `ASYMMETRIC_SIGN`, algorithm `EC_SIGN_ED25519` (PureEdDSA on Edwards25519, raw data input) | **In scope** |
 | **PKCS#11 HSM** (incl. AWS CloudHSM, Azure Managed HSM) | Yes (`CKM_EDDSA`) | already implemented (`Pkcs11KeySource`) | **Done** |
 | **Azure Key Vault / Managed HSM (native REST)** | **No** (RSA + EC NIST P-curves/secp256k1 only as of current docs) | — | **Unsupported** (see Decision E) |
 
