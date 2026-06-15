@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Live-infrastructure e2e lane (issue #39). The feature-gated *_e2e_test suites
+# self-skip unless their MCPS_TEST_* vars are set, and only HARD-FAIL under
+# MCPS_REQUIRE_LIVE_INFRA. The default CI never provisions backends, so the Redis
+# replay store and the PKCS#11 keysource otherwise have unit coverage but no live
+# verification. This lane provisions real backends and sets
+# MCPS_REQUIRE_LIVE_INFRA=1 so a missing backend FAILS the build (never a silent
+# green skip).
+#
+# Cadence (per #39): NIGHTLY + manual dispatch, non-blocking — it is NOT in the
+# branch ruleset's required checks, so it never gates a PR merge. The path-filtered
+# pull_request trigger runs the lane only when this workflow file itself changes,
+# so a change to the lane is self-verified without burdening unrelated PRs.
+#
+# Scope: Redis (single-node replay e2e) + SoftHSM2 (PKCS#11 signer e2e). The OCSP
+# responder lane and the F4 multi-replica Redis topology (#41) are follow-ups; a
+# single Redis node here does NOT prove the F4 WAIT-quorum-under-replica-lag path.
+name: live-infra e2e
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly 03:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/live-infra-e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  redis-softhsm2:
+    name: redis + softhsm2 e2e (1.94.1)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      MCPS_REQUIRE_LIVE_INFRA: "1"
+      MCPS_TEST_REDIS_URL: "redis://127.0.0.1:6379"
+    steps:
+      - uses: actions/checkout@v4
+
+      # libclang for cryptoki-sys FFI bindings; softhsm2 (the token) + opensc
+      # (pkcs11-tool, to generate the on-token Ed25519 key pair).
+      - name: System dependencies
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libclang-dev softhsm2 opensc
+
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      # Provision an INDEPENDENT SoftHSM2 token + a non-extractable Ed25519 key,
+      # mirroring the recipe documented in tests/pkcs11_keysource_e2e_test.rs. The
+      # token directory is scratch ($PWD), so this never touches a host token store.
+      - name: Provision SoftHSM2 token + Ed25519 key
+        run: |
+          set -euo pipefail
+          export SOFTHSM2_CONF="$PWD/softhsm2.conf"
+          mkdir -p "$PWD/softhsm-tokens"
+          printf 'directories.tokendir = %s/softhsm-tokens\n' "$PWD" > "$SOFTHSM2_CONF"
+          softhsm2-util --init-token --free --label mcps-test --so-pin 0000 --pin 1234
+          MODULE="$(dpkg -L softhsm2 | grep -m1 'libsofthsm2\.so')"
+          test -n "$MODULE" && test -e "$MODULE"
+          # Address the token by label (robust; no slot-id parsing).
+          pkcs11-tool --module "$MODULE" --token-label mcps-test \
+            --login --pin 1234 \
+            --keypairgen --key-type EC:edwards25519 \
+            --label mcps-response-signing --id 01
+          # Export for the test step (the test reads these MCPS_TEST_PKCS11_* vars).
+          {
+            echo "SOFTHSM2_CONF=$SOFTHSM2_CONF"
+            echo "MCPS_TEST_PKCS11_MODULE=$MODULE"
+            echo "MCPS_TEST_PKCS11_PIN=1234"
+            echo "MCPS_TEST_PKCS11_TOKEN_LABEL=mcps-test"
+            echo "MCPS_TEST_PKCS11_KEY_LABEL=mcps-response-signing"
+          } >> "$GITHUB_ENV"
+
+      # Run ONLY the two live-infra e2e binaries (avoids building cross-crate demo
+      # fixtures). MCPS_REQUIRE_LIVE_INFRA=1 turns a missing backend into a failure.
+      - name: Run live-infra e2e (Redis replay + PKCS#11 signer)
+        run: >-
+          cargo test -p mcps-proxy
+          --features redis_replay,pkcs11_keysource
+          --test redis_replay_e2e_test
+          --test pkcs11_keysource_e2e_test
