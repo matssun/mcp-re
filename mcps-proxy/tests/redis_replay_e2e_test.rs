@@ -317,6 +317,32 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     let mut replica = raw_conn(&replica_url);
     let (master_host, master_port) = host_port(&primary_url);
 
+    struct ReattachOnDrop {
+        replica_url: String,
+        master_host: String,
+        master_port: u16,
+    }
+
+    impl Drop for ReattachOnDrop {
+        fn drop(&mut self) {
+            let Ok(mut conn) = redis::Client::open(self.replica_url.as_str())
+                .and_then(|c| c.get_connection())
+            else {
+                return;
+            };
+            let _ = redis::cmd("REPLICAOF")
+                .arg(self.master_host.as_str())
+                .arg(self.master_port)
+                .query::<()>(&mut conn);
+        }
+    }
+
+    let _reattach_guard = ReattachOnDrop {
+        replica_url: replica_url.clone(),
+        master_host: master_host.clone(),
+        master_port,
+    };
+
     // A future expiry so the inserted key carries a real multi-second TTL window
     // and persists across the phases below (a past expiry would clamp to ~1ms and
     // vanish between calls). Test-name-derived signer for a unique key space.
