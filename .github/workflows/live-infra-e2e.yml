@@ -121,10 +121,10 @@ jobs:
           } >> "$GITHUB_ENV"
 
       # Provision an INDEPENDENT OpenSSL test OCSP responder + a good/revoked leaf
-      # pair, per the recipe in tests/ocsp_e2e_test.rs. Throwaway CA in a scratch
-      # dir; the responder answers SHA-256 CertIDs (what the checker sends). The
-      # ca.cnf is built with printf-style echoes (not a heredoc) to avoid YAML
-      # block-scalar indentation surprises. Readiness is polled (no blind sleep)
+      # pair. This follows the recipe documented in mcps-proxy/tests/ocsp_e2e_test.rs,
+      # with CI-oriented adjustments for OpenSSL 3.x and GitHub Actions YAML (no heredoc).
+      # Readiness is polled (no blind sleep) and the responder is kept alive for the
+      # subsequent test step.
       # and the responder is nohup'd so it survives into the test step.
       - name: Provision OpenSSL OCSP responder
         run: |
