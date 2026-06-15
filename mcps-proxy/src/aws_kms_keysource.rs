@@ -67,7 +67,7 @@ impl AwsCredentials {
         Ok(AwsCredentials {
             access_key_id,
             secret_access_key: Zeroizing::new(secret_access_key),
-            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok().filter(|s| !s.is_empty()),
         })
     }
 }
