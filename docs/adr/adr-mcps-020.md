@@ -245,8 +245,64 @@ the identical envelope after this error.
 
 A compensating cleanup that trades this availability edge for added complexity
 (and a carefully-modelled, replica-state-aware delete) is a possible FUTURE
-amendment to this ADR; it is intentionally deferred beyond v0.3 and must be
-verified against a real multi-replica topology before adoption.
+amendment to this ADR; the v0.3 decision is recorded in **Amendment 1** below.
+
+## Amendment 1 (2026-06-15): WAIT-quorum shortfall contract ratified — no compensating `DEL`/`UNLINK` in v0.3
+
+Amendment status: **Accepted (v0.3)** (this ratifies only the v0.3
+WAIT-quorum shortfall contract point; the ADR overall remains Proposed / under
+review). Supersedes the "possible future / deferred" framing of the preceding
+section for the purpose of the v0.3 contract: the keep-the-nonce / fail-closed
+behavior is the **ratified v0.3 default**, and a compensating `DEL`/`UNLINK` is
+**rejected for v0.3** (not merely deferred). This amendment makes the contract
+explicit so its distributed proof (issue #41) tests a settled behavior rather
+than an incidental one.
+
+### Ratified contract (Tier `REDIS_WAIT_QUORUM`)
+
+On a Redis WAIT-quorum shortfall (fewer than `quorum` acknowledgements — including due
+to timeout — or a `WAIT` error), the durable replication state of the just-written
+nonce is **unknown** to the proxy. Under that uncertainty the proxy MUST:
+
+1. **Fail closed** for that request with `mcps.replay_cache_unavailable`
+   (`OpAttempt::Fatal`); the outcome is a distinct, *retryable* error, **never** a
+   silent admit.
+2. **Never report `Fresh`** for the request after a shortfall. A shortfall is not a
+   successful insert.
+3. **Not** attempt a compensating `DEL`/`UNLINK` of the primary key.
+   The nonce **may be burned** on the primary (and may already have reached one or
+   more replicas).
+4. Accept that the **same signed request with the same nonce is NOT guaranteed
+   retryable** — it may be rejected as `Replay` until the `PX` window elapses.
+5. Require the **client to re-sign with a FRESH nonce**; a new nonce is a new key
+   and inserts `Fresh` once the store is healthy. Clients MUST NOT replay the
+   identical envelope after this error.
+
+### Rationale
+
+A WAIT shortfall means the system does **not** know whether the `SET NX` replicated.
+A compensating delete is an *availability* improvement, but under unknown
+replication state it can delete a nonce that already reached a replica and thereby
+**reopen a replay window** — converting an availability nuisance into a replay-safety
+defect. The security-honest default is therefore to keep the nonce and surface a
+retryable error. The bounded cost is availability (a same-nonce retry may be
+refused), never replay safety.
+
+### Conditions to revisit (post-v0.3)
+
+A future amendment MAY introduce a compensating cleanup **only** if it is a
+replica-state-aware delete that provably never removes a nonce that reached any
+replica, and only after it is verified against a real multi-replica topology under
+induced replica lag. Absent that proof, the v0.3 contract above stands.
+
+### Proof obligation (issue #41)
+
+The ratified contract is verified on a real multi-replica Redis in the live-infra
+lane: induce a WAIT shortfall / replica lag, then assert (a) the insert fails closed
+as `mcps.replay_cache_unavailable`, (b) the request is never treated as `Fresh`
+after the shortfall, (c) a same-nonce retry behaves as the contract states (may be
+rejected as `Replay`), and (d) a fresh-nonce retry succeeds once the cluster is
+healthy.
 
 ## Related
 
