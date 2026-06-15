@@ -15,7 +15,7 @@ MCP-S signs every response with Ed25519 over the canonical JCS preimage, **direc
 — no pre-hash** (`mcps-core/src/crypto.rs`; Ed25519ph is forbidden). The
 `ResponseSigner` seam (`mcps-proxy/src/key_source.rs`) already lets a non-exporting
 backend drive the full response-signing path without ever surrendering the private
-key: `sign_response(preimage) -> base64url(sig)` + `response_public_key() ->
+key: `sign_response(preimage) -> Base64URL-no-pad(sig)` + `response_public_key() ->
 VerificationKey`. `Pkcs11KeySource` implements this against any PKCS#11 token
 (SoftHSM2 in CI; equally AWS CloudHSM, GCP via its PKCS#11 library, Azure Managed
 HSM, Luna/Thales, YubiHSM). So HSM custody — the response-signing key never leaving
