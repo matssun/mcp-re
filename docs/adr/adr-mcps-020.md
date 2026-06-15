@@ -260,8 +260,9 @@ than an incidental one.
 
 ### Ratified contract (Tier `REDIS_WAIT_QUORUM`)
 
-On a Redis WAIT-quorum shortfall (fewer than `quorum` acknowledgements — including due to timeout — or a `WAIT` error), the durable replication state of the just-written nonce is
-**unknown** to the proxy. Under that uncertainty the proxy MUST:
+On a Redis WAIT-quorum shortfall (fewer than `quorum` acknowledgements — including due
+to timeout — or a `WAIT` error), the durable replication state of the just-written
+nonce is **unknown** to the proxy. Under that uncertainty the proxy MUST:
 
 1. **Fail closed** for that request with `mcps.replay_cache_unavailable`
    (`OpAttempt::Fatal`); the outcome is a distinct, *retryable* error, **never** a
