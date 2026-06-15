@@ -112,7 +112,7 @@ impl SigV4Signer {
     /// Derive the SigV4 signing key (the HMAC chain kSecret→kDate→kRegion→
     /// kService→kSigning).
     fn signing_key(&self, amz_date: &str) -> [u8; 32] {
-        let k_secret = format!("AWS4{}", self.credentials.secret_access_key.as_str());
+        let k_secret = Zeroizing::new(format!("AWS4{}", self.credentials.secret_access_key.as_str()));
         let k_date = hmac_sha256(k_secret.as_bytes(), Self::datestamp(amz_date).as_bytes());
         let k_region = hmac_sha256(&k_date, self.region.as_bytes());
         let k_service = hmac_sha256(&k_region, self.service.as_bytes());
