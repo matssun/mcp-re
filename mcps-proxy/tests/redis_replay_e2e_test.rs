@@ -13,9 +13,13 @@
 //! node A is rejected as a replay on node B.
 #![cfg(feature = "redis_replay")]
 
+use std::time::Duration;
+use std::time::Instant;
+
 use mcps_proxy::RedisAtomicReplayStore;
 use mcps_proxy::SharedReplayCache;
 use mcps_core::ReplayCache;
+use mcps_core::ReplayCacheError;
 use mcps_core::ReplayDecision;
 
 const AUD: &str = "did:example:verifier";
@@ -199,4 +203,197 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
         "PTTL ({pttl_ms} ms) must be vastly below the now=0 absolute-epoch TTL \
          ({absolute_epoch_ms} ms ≈ 56 years)"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Issue #41 — distributed proof of the ADR-MCPS-020 Amendment-1 WAIT-quorum
+// shortfall contract against a REAL primary + replica Redis.
+//
+// The lane (#39 workflow) provisions a primary on 6379 and a replica on 6380
+// (`--replicaof 127.0.0.1 6379`). MCPS_TEST_REDIS_URL points at the primary;
+// MCPS_TEST_REDIS_REPLICA_URL is the replica's own connection, used ONLY to
+// drive `REPLICAOF` so the test can induce a real WAIT-quorum shortfall and a
+// recovery deterministically (no container stop/start, no blind sleeps).
+// ---------------------------------------------------------------------------
+
+/// The replica's admin connection URL, or `None` to skip. Hard-fails under
+/// MCPS_REQUIRE_LIVE_INFRA so CI cannot score the multi-replica proof as a green
+/// skip.
+fn replica_admin_url() -> Option<String> {
+    let url = std::env::var("MCPS_TEST_REDIS_REPLICA_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty());
+    if url.is_none() && require_live_infra() {
+        panic!(
+            "MCPS_REQUIRE_LIVE_INFRA is set but MCPS_TEST_REDIS_REPLICA_URL is unavailable \
+             — the WAIT-quorum multi-replica proof MUST run under CI, not skip"
+        );
+    }
+    url
+}
+
+/// WAIT timeout for the quorum insert: short enough to keep the test snappy, long
+/// enough not to flake under CI load (a shortfall costs exactly this once).
+const WAIT_TIMEOUT_MS: u64 = 1_500;
+
+/// A `WAIT 1`-quorum node over a fresh primary connection: a fresh insert must be
+/// acknowledged by at least one replica within `WAIT_TIMEOUT_MS` or it fails closed.
+fn wait_quorum_node(primary_url: &str) -> SharedReplayCache {
+    let store = RedisAtomicReplayStore::connect(primary_url)
+        .expect("connect to the primary Redis")
+        .with_wait_quorum(1, WAIT_TIMEOUT_MS);
+    SharedReplayCache::new(Box::new(store), SKEW)
+}
+
+fn raw_conn(url: &str) -> redis::Connection {
+    redis::Client::open(url)
+        .expect("open redis client")
+        .get_connection()
+        .expect("redis connection")
+}
+
+/// `(host, port)` parsed from a `redis://host:port[/db]` URL — the REPLICAOF target.
+fn host_port(url: &str) -> (String, u16) {
+    let s = url.strip_prefix("redis://").unwrap_or(url);
+    let s = s.split('/').next().unwrap_or(s);
+    let (host, port) = s.rsplit_once(':').expect("redis url is host:port");
+    (host.to_string(), port.parse().expect("redis port is numeric"))
+}
+
+/// `connected_slaves:N` from the primary's `INFO replication`, or -1 if absent.
+fn primary_connected_slaves(primary: &mut redis::Connection) -> i64 {
+    let info: String = redis::cmd("INFO")
+        .arg("replication")
+        .query(primary)
+        .expect("INFO replication on primary");
+    info.lines()
+        .find_map(|l| l.trim().strip_prefix("connected_slaves:"))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(-1)
+}
+
+/// True when the replica reports it is a slave with its master link up.
+fn replica_link_up(replica: &mut redis::Connection) -> bool {
+    let info: String = redis::cmd("INFO")
+        .arg("replication")
+        .query(replica)
+        .expect("INFO replication on replica");
+    let role_slave = info.lines().any(|l| l.trim() == "role:slave");
+    let link_up = info
+        .lines()
+        .any(|l| l.trim() == "master_link_status:up");
+    role_slave && link_up
+}
+
+/// Poll `cond` until true or a 20s deadline, then panic — never a blind sleep.
+fn poll_until<F: FnMut() -> bool>(what: &str, mut cond: F) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if cond() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    panic!("timed out after 20s waiting for: {what}");
+}
+
+/// The Amendment-1 distributed proof: against a real primary+replica Redis, prove
+/// (1) a healthy replica-acked WAIT-quorum insert is `Fresh`; (2) detaching the
+/// replica induces a genuine WAIT shortfall that fails closed as
+/// `ReplayCacheError::Unavailable`, never `Fresh`; (3) a same-nonce retry after the
+/// shortfall is NOT `Fresh` (keep-the-nonce); (4) reattaching + resyncing the
+/// replica restores `Fresh` for a new nonce.
+#[test]
+fn wait_quorum_shortfall_and_recovery_against_a_replica() {
+    let (Some(primary_url), Some(replica_url)) = (redis_url(), replica_admin_url()) else {
+        eprintln!(
+            "SKIP wait_quorum_shortfall_and_recovery_against_a_replica: \
+             MCPS_TEST_REDIS_URL / MCPS_TEST_REDIS_REPLICA_URL unset (no replica topology)"
+        );
+        return;
+    };
+
+    let mut primary = raw_conn(&primary_url);
+    let mut replica = raw_conn(&replica_url);
+    let (master_host, master_port) = host_port(&primary_url);
+
+    // A future expiry so the inserted key carries a real multi-second TTL window
+    // and persists across the phases below (a past expiry would clamp to ~1ms and
+    // vanish between calls). Test-name-derived signer for a unique key space.
+    let signer = "did:example:host#wait_quorum_shortfall_and_recovery";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_secs() as i64;
+    let expires_at = now + 600;
+
+    // Ensure a clean starting topology: replica attached + link up + visible.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg(&master_host)
+        .arg(master_port)
+        .query(&mut replica)
+        .expect("attach replica to primary");
+    poll_until("replica master_link_status:up", || replica_link_up(&mut replica));
+    poll_until("primary connected_slaves>=1", || {
+        primary_connected_slaves(&mut primary) >= 1
+    });
+
+    let mut store = wait_quorum_node(&primary_url);
+
+    // (1) Healthy: WAIT 1 is satisfied by the attached replica → Fresh.
+    assert_eq!(
+        store.check_and_insert(signer, AUD, "nonce-41-healthy", expires_at),
+        Ok(ReplayDecision::Fresh),
+        "a replica-acked WAIT-quorum insert must be Fresh"
+    );
+
+    // (2) Shortfall: detach the replica, confirm the primary sees zero replicas,
+    //     then a fresh insert's WAIT 1 cannot be met → fail closed, never Fresh.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg("NO")
+        .arg("ONE")
+        .query(&mut replica)
+        .expect("detach replica (REPLICAOF NO ONE)");
+    poll_until("primary connected_slaves==0", || {
+        primary_connected_slaves(&mut primary) == 0
+    });
+
+    let shortfall = store.check_and_insert(signer, AUD, "nonce-41-shortfall", expires_at);
+    assert!(
+        matches!(shortfall, Err(ReplayCacheError::Unavailable { .. })),
+        "a WAIT-quorum shortfall must fail closed as ReplayCacheError::Unavailable, got {shortfall:?}"
+    );
+    assert_ne!(
+        shortfall,
+        Ok(ReplayDecision::Fresh),
+        "a WAIT-quorum shortfall must NEVER be reported as Fresh"
+    );
+
+    // (3) Same-nonce retry after the shortfall: the SET NX landed on the primary,
+    //     so the nonce is burned — the retry must NOT be Fresh (Replay or another
+    //     fail-closed are both acceptable per Amendment 1; Fresh is not).
+    let retry = store.check_and_insert(signer, AUD, "nonce-41-shortfall", expires_at);
+    assert_ne!(
+        retry,
+        Ok(ReplayDecision::Fresh),
+        "the same nonce after a shortfall must not be retryable as Fresh (keep-the-nonce contract); got {retry:?}"
+    );
+
+    // (4) Recovery: reattach + resync the replica, then a NEW nonce is Fresh again.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg(&master_host)
+        .arg(master_port)
+        .query(&mut replica)
+        .expect("reattach replica to primary");
+    poll_until("replica link up after reattach", || replica_link_up(&mut replica));
+    poll_until("primary connected_slaves>=1 after reattach", || {
+        primary_connected_slaves(&mut primary) >= 1
+    });
+    assert_eq!(
+        store.check_and_insert(signer, AUD, "nonce-41-recovered", expires_at),
+        Ok(ReplayDecision::Fresh),
+        "after replica reattach + resync, a fresh nonce must be Fresh again"
+    );
+
+    // Cleanup: leave the topology attached for any subsequent test in the lane.
 }
