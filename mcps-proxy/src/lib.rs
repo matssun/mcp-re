@@ -44,6 +44,10 @@ pub mod delegated_response_signer;
 pub mod durable_replay;
 pub mod inner_launch;
 pub mod key_source;
+// ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
+// mapping behind the #3838 delegation seam). Dependency-free — the per-provider
+// network backends (AWS KMS / GCP Cloud KMS) are the feature-gated follow-ups.
+pub mod kms_keysource;
 // Issue #4030: ONLINE client-cert revocation via OCSP (RFC 6960) checked at
 // connection time, the online sibling of #3839's offline CRL revocation.
 // Compiled ONLY under the non-default `online_ocsp` feature so the default build
@@ -117,6 +121,9 @@ pub use key_source::KeySource;
 // Issue #3838: the response-signing delegation seam (a non-exporting HSM/KMS can
 // implement this without surrendering its private key).
 pub use key_source::ResponseSigner;
+pub use kms_keysource::KmsEd25519Backend;
+pub use kms_keysource::KmsKeySource;
+pub use kms_keysource::KmsResponseSigner;
 // Issue #4030: the online OCSP revocation checker (feature-gated).
 #[cfg(feature = "online_ocsp")]
 pub use ocsp::CertRevocationStatus;
