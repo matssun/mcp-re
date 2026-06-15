@@ -13,9 +13,9 @@
 # pull_request trigger runs the lane only when this workflow file itself changes,
 # so a change to the lane is self-verified without burdening unrelated PRs.
 #
-# Scope: Redis (single-node replay e2e) + SoftHSM2 (PKCS#11 signer e2e). The OCSP
-# responder lane and the F4 multi-replica Redis topology (#41) are follow-ups; a
-# single Redis node here does NOT prove the F4 WAIT-quorum-under-replica-lag path.
+# Scope: Redis primary+replica (replay e2e + the #41 WAIT-quorum shortfall/recovery
+# proof of ADR-MCPS-020 Amendment 1) + SoftHSM2 (PKCS#11 signer e2e). The OCSP
+# responder lane is the remaining follow-up.
 name: live-infra e2e
 
 on:
@@ -37,29 +37,50 @@ jobs:
   redis-softhsm2:
     name: redis + softhsm2 e2e (1.94.1)
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    # A primary (6379) + replica (6380) topology is required for the #41
+    # WAIT-quorum proof, which a single `services:` Redis container cannot express
+    # (it cannot be started as a replica of another). Both are launched on
+    # localhost in a step below instead.
     env:
       MCPS_REQUIRE_LIVE_INFRA: "1"
       MCPS_TEST_REDIS_URL: "redis://127.0.0.1:6379"
+      MCPS_TEST_REDIS_REPLICA_URL: "redis://127.0.0.1:6380"
+      RUST_TEST_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
 
       # libclang for cryptoki-sys FFI bindings; softhsm2 (the token) + opensc
-      # (pkcs11-tool, to generate the on-token Ed25519 key pair).
+      # (pkcs11-tool, to generate the on-token Ed25519 key pair); redis-server
+      # (the primary + replica instances, started below).
       - name: System dependencies
         run: >-
           sudo apt-get update &&
           sudo apt-get install -y --no-install-recommends
-          libclang-dev softhsm2 opensc
+          libclang-dev softhsm2 opensc redis-server
+
+      # Primary on 6379 + replica on 6380 (initially replicaof the primary). The
+      # #41 test drives REPLICAOF on the replica to induce a WAIT-quorum shortfall
+      # and recovery. Persistence is disabled (scratch instances). Wait for both to
+      # answer PING and for the replica's master link to come up before the tests.
+      - name: Start primary + replica Redis
+        run: |
+          set -euo pipefail
+          sudo systemctl stop redis-server 2>/dev/null || true
+          redis-server --port 6379 --daemonize yes --save '' --appendonly no
+          redis-server --port 6380 --daemonize yes --save '' --appendonly no \
+            --replicaof 127.0.0.1 6379
+          for port in 6379 6380; do
+            for _ in $(seq 1 40); do
+              if redis-cli -p "$port" ping 2>/dev/null | grep -q PONG; then break; fi
+              sleep 0.25
+            done
+            redis-cli -p "$port" ping | grep -q PONG
+          done
+          for _ in $(seq 1 40); do
+            if redis-cli -p 6380 info replication | grep -q 'master_link_status:up'; then break; fi
+            sleep 0.25
+          done
+          redis-cli -p 6380 info replication | grep -q 'master_link_status:up'
 
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
