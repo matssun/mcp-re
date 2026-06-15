@@ -627,6 +627,44 @@ struct HttpRequest {
 /// SSE. Bounded by `limits`: the header block may not exceed `max_header_bytes`
 /// and the body may not exceed `max_body_bytes` (either overflow fails closed
 /// with an error rather than allocating without bound).
+/// Reject malformed HTTP/1.1 header framing (issue #38) before the header block is
+/// handed to the line-based parser. Enforces strict CRLF and bans obs-fold:
+///   * a bare CR (not immediately followed by LF) — `str::lines()` would embed it
+///     verbatim in a header value;
+///   * a bare LF (not immediately preceded by CR) — `str::lines()` splits on it, so
+///     it would smuggle an extra header line;
+///   * an obs-fold continuation line (a line beginning with SP/HTAB after a CRLF) —
+///     RFC 7230 §3.2.4 requires rejection, and the downstream parser would silently
+///     drop it (a colon-less line) rather than fold it.
+/// Fails closed with `InvalidData` so the connection is dropped, consistent with the
+/// other framing guards here (oversized header / body).
+fn reject_malformed_header_framing(header_bytes: &[u8]) -> io::Result<()> {
+    for (i, &byte) in header_bytes.iter().enumerate() {
+        match byte {
+            b'\r' if header_bytes.get(i + 1) != Some(&b'\n') => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed HTTP header framing: bare CR (not part of a CRLF)",
+                ));
+            }
+            b'\n' if i == 0 || header_bytes[i - 1] != b'\r' => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed HTTP header framing: bare LF (not part of a CRLF)",
+                ));
+            }
+            b'\n' if matches!(header_bytes.get(i + 1), Some(b' ') | Some(b'\t')) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed HTTP header framing: obs-fold continuation line",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn read_http_request<S: Read>(stream: &mut S, limits: &ServerLimits) -> io::Result<HttpRequest> {
     let mut buf: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
@@ -652,7 +690,9 @@ fn read_http_request<S: Read>(stream: &mut S, limits: &ServerLimits) -> io::Resu
         buf.extend_from_slice(&chunk[..n]);
     };
 
-    let header_block = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let header_bytes = &buf[..header_end];
+    reject_malformed_header_framing(header_bytes)?;
+    let header_block = String::from_utf8_lossy(header_bytes).into_owned();
     let content_length = parse_content_length(&header_block).unwrap_or(0);
     if content_length > limits.max_body_bytes {
         return Err(io::Error::new(
@@ -927,6 +967,52 @@ mod identity_parity_tests {
             .expect("explicit CN pair")
             .value;
         assert_eq!(direct, xfcc, "explicit XFCC CN must equal the direct-TLS CN");
+    }
+
+    // --- issue #38: obs-fold / bare-CR / bare-LF header framing must fail closed ---
+
+    fn read_req(bytes: &[u8]) -> std::io::Result<super::HttpRequest> {
+        super::read_http_request(
+            &mut std::io::Cursor::new(bytes.to_vec()),
+            &super::ServerLimits::default(),
+        )
+    }
+
+    #[test]
+    fn obs_fold_continuation_line_is_rejected() {
+        // RFC 7230 §3.2.4: an obs-fold continuation (line starting with SP/HTAB)
+        // must be rejected, not silently dropped by the downstream line parser.
+        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\n\tinjected\r\n\r\n";
+        assert!(
+            read_req(block).is_err(),
+            "an obs-fold continuation line must fail closed"
+        );
+    }
+
+    #[test]
+    fn bare_cr_in_header_section_is_rejected() {
+        // A bare CR (not part of a CRLF) must be rejected rather than embedded
+        // verbatim in a header value by `str::lines()`.
+        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\rinjected\r\n\r\n";
+        assert!(read_req(block).is_err(), "a bare CR must fail closed");
+    }
+
+    #[test]
+    fn bare_lf_line_ending_is_rejected() {
+        // A bare LF line ending (not CRLF) must be rejected — `str::lines()` splits
+        // on it, so a bare LF would otherwise smuggle an extra header line.
+        let block = b"POST /mcp HTTP/1.1\nMcp-Name: good\r\n\r\n";
+        assert!(read_req(block).is_err(), "a bare LF line ending must fail closed");
+    }
+
+    #[test]
+    fn well_formed_strict_crlf_request_is_accepted() {
+        // Regression: a clean CRLF-framed request still parses, and its headers are
+        // intact (the framing guard must not reject well-formed input).
+        let block = b"POST /mcp HTTP/1.1\r\nMcp-Name: good\r\n\r\n";
+        let req = read_req(block).expect("a well-formed CRLF request must be accepted");
+        let headers = crate::transport::RequestHeaders::parse(&req.header_block);
+        assert_eq!(headers.first("mcp-name"), Some("good"));
     }
 }
 
