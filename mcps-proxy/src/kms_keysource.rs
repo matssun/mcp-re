@@ -223,8 +223,8 @@ mod tests {
         );
     }
 
-    /// A backend that returns a wrong-length signature (the symptom of a prehash/
-    /// DIGEST mode or a non-Ed25519 key) fails closed — the signer never emits it.
+    /// A backend that returns a wrong-length signature (i.e. not a raw 64-byte Ed25519
+    /// signature) fails closed — the signer never emits it.
     #[test]
     fn wrong_length_signature_fails_closed() {
         struct ShortSig;
