@@ -45,6 +45,7 @@ jobs:
       MCPS_REQUIRE_LIVE_INFRA: "1"
       MCPS_TEST_REDIS_URL: "redis://127.0.0.1:6379"
       MCPS_TEST_REDIS_REPLICA_URL: "redis://127.0.0.1:6380"
+      RUST_TEST_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
 
