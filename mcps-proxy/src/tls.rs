@@ -169,6 +169,13 @@ pub enum TlsError {
     /// The server certificate/key or protocol configuration was rejected.
     #[error("server TLS config failed: {0}")]
     Config(String),
+    /// Delegated TLS (ADR-MCPS-028 §G, issue #58): the leaf certificate's
+    /// `SubjectPublicKeyInfo` is not an RFC 8410 Ed25519 key (delegated TLS is
+    /// Ed25519-only), OR the delegated signer's public key does not match the leaf
+    /// certificate's public key. Either is a deployment error and FAILS CLOSED at
+    /// config construction — no server is started.
+    #[error("delegated TLS credential mismatch: {0}")]
+    DelegatedKeyMismatch(String),
 }
 
 /// Marker for the production direct-TLS transport-binding provider. The verified
@@ -320,6 +327,90 @@ pub fn build_server_config_delegated_with_crls(
         .with_client_cert_verifier(verifier)
         .with_cert_resolver(cert_resolver);
     Ok(server_config)
+}
+
+/// Extract the 32 raw Ed25519 public-key bytes from a leaf certificate's
+/// `SubjectPublicKeyInfo` (issue #58, ADR-MCPS-028 §G). Reuses the RFC 8410 SPKI
+/// parser shared with the KMS public-key path ([`ed25519_raw_point_from_spki`]),
+/// so a non-Ed25519 leaf (RSA / NIST P-curve / malformed) is rejected with the
+/// same fail-closed posture. The DER SPKI bytes are taken verbatim from the parsed
+/// certificate (`x509-parser`), not re-encoded.
+fn leaf_ed25519_raw_point(leaf_der: &[u8]) -> Result<[u8; 32], TlsError> {
+    let (_, cert) = X509Certificate::from_der(leaf_der).map_err(|e| {
+        TlsError::DelegatedKeyMismatch(format!("leaf certificate is not parseable DER: {e}"))
+    })?;
+    let spki_der = cert.public_key().raw;
+    crate::kms_keysource::ed25519_raw_point_from_spki(spki_der).map_err(|e| {
+        TlsError::DelegatedKeyMismatch(format!(
+            "delegated TLS is Ed25519-only; leaf certificate public key is not an RFC 8410 \
+             Ed25519 SubjectPublicKeyInfo: {e}"
+        ))
+    })
+}
+
+/// Build a delegated mTLS [`ServerConfig`] (ADR-MCPS-028 §G, issue #58) with the
+/// security preconditions VALIDATED at config construction — a wrapper around the
+/// FROZEN [`build_server_config_delegated_with_crls`] that fails closed BEFORE any
+/// server starts when the credential is unsafe:
+///
+///   * **Ed25519-only** — the leaf certificate's `SubjectPublicKeyInfo` MUST be an
+///     RFC 8410 Ed25519 key (the only scheme the delegated signer can produce).
+///   * **cert ↔ signer key match** — the delegated signer's Ed25519 public key MUST
+///     equal the leaf certificate's public key, so the handshake the signer signs
+///     verifies against the cert it presents. A mismatch is rejected here rather
+///     than surfacing as an opaque handshake failure at runtime.
+///
+/// The client-cert verifier posture is identical to every other path (shared
+/// [`build_client_verifier`], via the wrapped frozen builder). The server's TLS
+/// private key never leaves the device/KMS.
+pub fn build_server_config_delegated_validated(
+    server_chain: Vec<CertificateDer<'static>>,
+    signer: Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+    allow_unknown_revocation_status: bool,
+) -> Result<ServerConfig, TlsError> {
+    let leaf = server_chain.first().ok_or_else(|| {
+        TlsError::DelegatedKeyMismatch(
+            "delegated TLS server certificate chain is empty".to_string(),
+        )
+    })?;
+    // Ed25519-only (fail closed) + extract the leaf's raw public point.
+    let leaf_point = leaf_ed25519_raw_point(leaf.as_ref())?;
+
+    // The signer's public key, parsed through the SAME RFC 8410 Ed25519 SPKI guard.
+    let signer_spki = signer.tls_public_key_spki_der().map_err(|e| {
+        TlsError::DelegatedKeyMismatch(format!(
+            "delegated TLS signer did not yield an exportable public key: {e}"
+        ))
+    })?;
+    let signer_point =
+        crate::kms_keysource::ed25519_raw_point_from_spki(&signer_spki).map_err(|e| {
+            TlsError::DelegatedKeyMismatch(format!(
+                "delegated TLS signer public key is not an RFC 8410 Ed25519 \
+                 SubjectPublicKeyInfo: {e}"
+            ))
+        })?;
+
+    // cert ↔ signer key match (fail closed). Without this, rustls would present a
+    // certificate the signer cannot match, and the handshake would fail with an
+    // opaque error every time — reject at construction instead.
+    if signer_point != leaf_point {
+        return Err(TlsError::DelegatedKeyMismatch(
+            "the delegated TLS signer's Ed25519 public key does not match the leaf \
+             certificate's SubjectPublicKeyInfo; the signer signs for a different key than \
+             the certificate presents"
+                .to_string(),
+        ));
+    }
+
+    let resolver = crate::delegated_tls::DelegatedCertResolver::new(server_chain, signer);
+    build_server_config_delegated_with_crls(
+        resolver,
+        client_ca,
+        crls,
+        allow_unknown_revocation_status,
+    )
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the

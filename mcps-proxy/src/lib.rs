@@ -182,6 +182,7 @@ pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
 pub use shared_replay::SharedReplayCache;
+pub use tls::build_server_config_delegated_validated;
 pub use tls::build_server_config_delegated_with_crls;
 pub use tls::extract_identity;
 pub use tls::IdentityStrategy;
