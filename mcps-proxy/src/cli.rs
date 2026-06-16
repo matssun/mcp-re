@@ -51,6 +51,20 @@ pub enum KeySourceKind {
     /// build. Honored ONLY in a build with the `pkcs11_keysource` feature; a
     /// default build parses it but FAILS CLOSED at construction (mirrors `Env`).
     Pkcs11,
+    /// AWS KMS (ADR-MCPS-028 §B): the Ed25519 response-signing key lives in AWS KMS
+    /// and is exercised only via `Sign` — it never leaves KMS. The TLS cert/key/CA
+    /// still come from files in this build (`--signing-key-seed` is accepted but
+    /// UNUSED, as with `Pkcs11`). Credentials come from the standard AWS env vars.
+    /// Honored ONLY in a build with the `aws_kms_keysource` feature; a default build
+    /// parses it but FAILS CLOSED at construction (mirrors `Pkcs11`).
+    AwsKms,
+    /// GCP Cloud KMS (ADR-MCPS-028 §C): the Ed25519 response-signing key lives in
+    /// Cloud KMS and is exercised only via `asymmetricSign`. TLS material is from
+    /// files (`--signing-key-seed` accepted but UNUSED). The OAuth2 bearer comes
+    /// from `MCPS_GCP_ACCESS_TOKEN` or the metadata server (`--gcp-kms-use-metadata`).
+    /// Honored ONLY in a build with the `gcp_kms_keysource` feature; a default build
+    /// parses it but FAILS CLOSED at construction.
+    GcpKms,
 }
 
 /// Replay-cache backend.
@@ -212,6 +226,22 @@ pub struct Config {
     /// CKA_LABEL of the Ed25519 signing-key object on the token. Required when
     /// `key_source == Pkcs11`.
     pub pkcs11_key_label: Option<String>,
+    /// AWS region for the AWS KMS key source. Required when `key_source == AwsKms`
+    /// (ADR-MCPS-028 §B).
+    pub aws_kms_region: Option<String>,
+    /// AWS KMS key id / ARN / alias. Required when `key_source == AwsKms`.
+    pub aws_kms_key_id: Option<String>,
+    /// Optional AWS KMS endpoint override (emulator/test endpoint).
+    pub aws_kms_endpoint: Option<String>,
+    /// GCP Cloud KMS key-version resource path
+    /// (`projects/.../cryptoKeyVersions/N`). Required when `key_source == GcpKms`
+    /// (ADR-MCPS-028 §C).
+    pub gcp_kms_key_version: Option<String>,
+    /// Optional GCP Cloud KMS endpoint override (emulator/test endpoint).
+    pub gcp_kms_endpoint: Option<String>,
+    /// Use the GCE/GKE metadata server (workload identity) for the GCP KMS OAuth2
+    /// token instead of an operator-supplied `MCPS_GCP_ACCESS_TOKEN`.
+    pub gcp_kms_use_metadata: bool,
     /// Connection resource limits (DoS defense).
     pub limits: ServerLimits,
     /// Maximum client-certificate lifetime (v1 revocation posture). Defaults to
@@ -254,6 +284,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--allow-env-keysource",
     "--crl-allow-unknown-status",
     "--ocsp-soft-fail",
+    "--gcp-kms-use-metadata",
     "--strict",
     "--production",
     // Value-taking flags.
@@ -267,6 +298,12 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--pkcs11-pin",
     "--pkcs11-token-label",
     "--pkcs11-key-label",
+    // ADR-MCPS-028 §B/§C: cloud-KMS response-signing key sources.
+    "--aws-kms-region",
+    "--aws-kms-key-id",
+    "--aws-kms-endpoint",
+    "--gcp-kms-key-version",
+    "--gcp-kms-endpoint",
     "--signing-key-seed",
     "--tls-cert",
     "--tls-key",
@@ -353,6 +390,17 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut pkcs11_pin: Option<String> = None;
     let mut pkcs11_token_label: Option<String> = None;
     let mut pkcs11_key_label: Option<String> = None;
+    // ADR-MCPS-028 §B AWS KMS: region + key id required when `--key-source aws-kms`;
+    // endpoint optional (emulator). Credentials come from AWS_* env vars.
+    let mut aws_kms_region: Option<String> = None;
+    let mut aws_kms_key_id: Option<String> = None;
+    let mut aws_kms_endpoint: Option<String> = None;
+    // ADR-MCPS-028 §C GCP Cloud KMS: key-version resource path required when
+    // `--key-source gcp-kms`; endpoint optional; metadata-server token off by default
+    // (operator MCPS_GCP_ACCESS_TOKEN), opt in with `--gcp-kms-use-metadata`.
+    let mut gcp_kms_key_version: Option<String> = None;
+    let mut gcp_kms_endpoint: Option<String> = None;
+    let mut gcp_kms_use_metadata = false;
     let mut limits = ServerLimits::default();
     // v1 revocation posture: short-lived client certs, proxy-enforced, default 1h.
     let mut max_client_cert_lifetime = Some(Duration::from_secs(3600));
@@ -407,6 +455,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             i += 1;
             continue;
         }
+        // Valueless boolean flag (ADR-MCPS-028 §C): use the GCE/GKE metadata server
+        // (workload identity) for the GCP Cloud KMS OAuth2 token instead of an
+        // operator-supplied `MCPS_GCP_ACCESS_TOKEN`.
+        if flag == "--gcp-kms-use-metadata" {
+            gcp_kms_use_metadata = true;
+            i += 1;
+            continue;
+        }
         // Valueless boolean flag (#3842): strict/production mode — reject (not
         // warn) unsafe configs. `--production` is an alias. Without this arm the
         // `strict` flag was never set, so `strict_violations` below was dead.
@@ -431,8 +487,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     "file" => KeySourceKind::File,
                     "env" => KeySourceKind::Env,
                     "pkcs11" => KeySourceKind::Pkcs11,
+                    "aws-kms" => KeySourceKind::AwsKms,
+                    "gcp-kms" => KeySourceKind::GcpKms,
                     other => {
-                        return Err(format!("unknown --key-source '{other}' (file|env|pkcs11)"))
+                        return Err(format!(
+                            "unknown --key-source '{other}' (file|env|pkcs11|aws-kms|gcp-kms)"
+                        ))
                     }
                 }
             }
@@ -442,6 +502,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--pkcs11-pin" => pkcs11_pin = Some(value.clone()),
             "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
             "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
+            // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
+            "--aws-kms-region" => aws_kms_region = Some(value.clone()),
+            "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
+            "--aws-kms-endpoint" => aws_kms_endpoint = Some(value.clone()),
+            "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
+            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(value.clone()),
             "--signing-key-seed" => signing_key_seed = Some(value.clone()),
             "--tls-cert" => tls_cert = Some(value.clone()),
             "--tls-key" => tls_key = Some(value.clone()),
@@ -747,6 +813,34 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             return Err("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
         }
     }
+    // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
+    // selected (credentials come from AWS_* env vars; the endpoint is optional).
+    // Checked here so a missing flag is a clear parse error regardless of feature.
+    if key_source == KeySourceKind::AwsKms {
+        if aws_kms_region.is_none() {
+            return Err("--key-source aws-kms requires --aws-kms-region <region>".to_string());
+        }
+        if aws_kms_key_id.is_none() {
+            return Err(
+                "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>".to_string(),
+            );
+        }
+    }
+    // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
+    if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
+        return Err(
+            "--key-source gcp-kms requires --gcp-kms-key-version \
+             <projects/.../cryptoKeyVersions/N>"
+                .to_string(),
+        );
+    }
+    // The metadata-server flag only has meaning for the GCP KMS source; a dangling
+    // `--gcp-kms-use-metadata` would silently do nothing, so reject it.
+    if gcp_kms_use_metadata && key_source != KeySourceKind::GcpKms {
+        return Err(
+            "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
+        );
+    }
     if inner_command.is_empty() {
         return Err("missing required --inner-command <cmd> [args...]".to_string());
     }
@@ -849,6 +943,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         pkcs11_pin,
         pkcs11_token_label,
         pkcs11_key_label,
+        aws_kms_region,
+        aws_kms_key_id,
+        aws_kms_endpoint,
+        gcp_kms_key_version,
+        gcp_kms_endpoint,
+        gcp_kms_use_metadata,
         limits,
         max_client_cert_lifetime,
         inner_command,
@@ -1177,6 +1277,69 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError>
         KeySourceKind::Pkcs11 => Err(KeyError::NotFound(
             "pkcs11 key source requires the pkcs11_keysource feature (build with \
              --features pkcs11_keysource); not available in this build"
+                .to_string(),
+        )),
+        // ADR-MCPS-028 §B: AWS KMS object-signing key, TLS material from files. The
+        // response-signing key never leaves KMS. `parse_args` guaranteed region +
+        // key id are present; surface a clear error rather than panic if not.
+        #[cfg(feature = "aws_kms_keysource")]
+        KeySourceKind::AwsKms => {
+            let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
+                opt.clone()
+                    .ok_or_else(|| KeyError::NotFound(format!("--key-source aws-kms requires {flag}")))
+            };
+            let kms_config = crate::aws_kms_keysource::AwsKmsConfig {
+                region: require(&config.aws_kms_region, "--aws-kms-region")?,
+                key_id: require(&config.aws_kms_key_id, "--aws-kms-key-id")?,
+                endpoint: config.aws_kms_endpoint.clone(),
+            };
+            let backend = crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?;
+            Ok(Box::new(crate::kms_keysource::KmsKeySource::new(
+                Box::new(backend),
+                FileKeySource {
+                    signing_key_seed_path: config.signing_key_seed.clone(),
+                    tls_cert_path: config.tls_cert.clone(),
+                    tls_key_path: config.tls_key.clone(),
+                    client_ca_path: config.client_ca.clone(),
+                },
+            )))
+        }
+        // Default build: the AWS KMS backend is not compiled, so `--key-source
+        // aws-kms` FAILS CLOSED here (mirrors the pkcs11 gate). The flag still PARSES.
+        #[cfg(not(feature = "aws_kms_keysource"))]
+        KeySourceKind::AwsKms => Err(KeyError::NotFound(
+            "aws-kms key source requires the aws_kms_keysource feature (build with \
+             --features aws_kms_keysource); not available in this build"
+                .to_string(),
+        )),
+        // ADR-MCPS-028 §C: GCP Cloud KMS object-signing key, TLS material from files.
+        #[cfg(feature = "gcp_kms_keysource")]
+        KeySourceKind::GcpKms => {
+            let key_version = config.gcp_kms_key_version.clone().ok_or_else(|| {
+                KeyError::NotFound("--key-source gcp-kms requires --gcp-kms-key-version".to_string())
+            })?;
+            let kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
+                key_version_name: key_version,
+                endpoint: config.gcp_kms_endpoint.clone(),
+            };
+            let backend = crate::gcp_kms_keysource::GcpKmsEd25519Backend::new(
+                &kms_config,
+                config.gcp_kms_use_metadata,
+            )?;
+            Ok(Box::new(crate::kms_keysource::KmsKeySource::new(
+                Box::new(backend),
+                FileKeySource {
+                    signing_key_seed_path: config.signing_key_seed.clone(),
+                    tls_cert_path: config.tls_cert.clone(),
+                    tls_key_path: config.tls_key.clone(),
+                    client_ca_path: config.client_ca.clone(),
+                },
+            )))
+        }
+        #[cfg(not(feature = "gcp_kms_keysource"))]
+        KeySourceKind::GcpKms => Err(KeyError::NotFound(
+            "gcp-kms key source requires the gcp_kms_keysource feature (build with \
+             --features gcp_kms_keysource); not available in this build"
                 .to_string(),
         )),
     }
@@ -2578,6 +2741,124 @@ mod tests {
         let config = parse_args(&minimal()).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::File);
         assert!(super::build_key_source(&config).is_ok());
+    }
+
+    // ADR-MCPS-028 §B/§C: cloud-KMS key-source CLI wiring.
+    fn aws_kms_flags() -> Vec<String> {
+        args(&[
+            "--key-source", "aws-kms",
+            "--aws-kms-region", "us-east-1",
+            "--aws-kms-key-id", "alias/mcps-response-signing",
+        ])
+    }
+
+    fn gcp_kms_flags() -> Vec<String> {
+        args(&[
+            "--key-source", "gcp-kms",
+            "--gcp-kms-key-version",
+            "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+        ])
+    }
+
+    #[test]
+    fn parses_aws_kms_key_source_flags() {
+        let mut a = minimal();
+        a.splice(0..0, aws_kms_flags());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.key_source, KeySourceKind::AwsKms);
+        assert_eq!(config.aws_kms_region.as_deref(), Some("us-east-1"));
+        assert_eq!(
+            config.aws_kms_key_id.as_deref(),
+            Some("alias/mcps-response-signing")
+        );
+    }
+
+    #[test]
+    fn aws_kms_requires_region_and_key_id() {
+        for missing in ["--aws-kms-region", "--aws-kms-key-id"] {
+            let mut flags = aws_kms_flags();
+            let idx = flags.iter().position(|f| f == missing).expect("flag present");
+            flags.drain(idx..idx + 2);
+            let mut a = minimal();
+            a.splice(0..0, flags);
+            let err = parse_args(&a).unwrap_err();
+            assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
+        }
+    }
+
+    #[test]
+    fn parses_gcp_kms_key_source_flags() {
+        let mut a = minimal();
+        a.splice(0..0, gcp_kms_flags());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.key_source, KeySourceKind::GcpKms);
+        assert!(config
+            .gcp_kms_key_version
+            .as_deref()
+            .unwrap()
+            .ends_with("cryptoKeyVersions/1"));
+        assert!(!config.gcp_kms_use_metadata);
+    }
+
+    #[test]
+    fn gcp_kms_requires_key_version() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--key-source", "gcp-kms"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--gcp-kms-key-version"), "got: {err}");
+    }
+
+    #[test]
+    fn gcp_use_metadata_only_with_gcp_kms() {
+        // The metadata flag without --key-source gcp-kms must fail (no silent no-op).
+        let mut a = minimal();
+        a.splice(0..0, args(&["--gcp-kms-use-metadata"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--gcp-kms-use-metadata"), "got: {err}");
+    }
+
+    #[test]
+    fn unknown_key_source_lists_cloud_kms() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--key-source", "azure-kv"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("aws-kms") && err.contains("gcp-kms"), "got: {err}");
+    }
+
+    // Default build (no cloud-KMS feature): the flags PARSE so the message is
+    // precise, but `build_key_source` FAILS CLOSED — mirrors the pkcs11 gate.
+    #[cfg(not(feature = "aws_kms_keysource"))]
+    #[test]
+    fn default_build_rejects_aws_kms_key_source() {
+        let mut a = minimal();
+        a.splice(0..0, aws_kms_flags());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.key_source, KeySourceKind::AwsKms);
+        let err = super::build_key_source(&config)
+            .err()
+            .expect("default build must refuse an aws-kms key source");
+        assert!(
+            err.to_string().contains("aws_kms_keysource")
+                && err.to_string().contains("not available in this build"),
+            "got: {err}"
+        );
+    }
+
+    #[cfg(not(feature = "gcp_kms_keysource"))]
+    #[test]
+    fn default_build_rejects_gcp_kms_key_source() {
+        let mut a = minimal();
+        a.splice(0..0, gcp_kms_flags());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.key_source, KeySourceKind::GcpKms);
+        let err = super::build_key_source(&config)
+            .err()
+            .expect("default build must refuse a gcp-kms key source");
+        assert!(
+            err.to_string().contains("gcp_kms_keysource")
+                && err.to_string().contains("not available in this build"),
+            "got: {err}"
+        );
     }
 
     // MCPS-076: in a build WITH the dev feature, `build_key_source` honors the env
