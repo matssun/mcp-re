@@ -414,6 +414,77 @@ impl ServerCertVerifier for AcceptAnyServer {
     }
 }
 
+/// A client verifier that accepts the (test-CA-issued, self-presented) server cert
+/// chain BUT performs REAL handshake-signature verification — unlike
+/// [`AcceptAnyServer`], which asserts the signature valid. The handshake therefore
+/// completes ONLY if the server's TLS 1.3 `CertificateVerify` is a cryptographically
+/// valid Ed25519 signature over the transcript. The delegated-TLS test uses this so
+/// a bogus delegated signature would FAIL the handshake (the permissive verifier
+/// would have masked it), making the test genuinely load-bearing.
+#[derive(Debug)]
+struct VerifyServerHandshakeSig {
+    algs: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl VerifyServerHandshakeSig {
+    fn new() -> Self {
+        VerifyServerHandshakeSig {
+            algs: ring::default_provider().signature_verification_algorithms,
+        }
+    }
+}
+
+impl ServerCertVerifier for VerifyServerHandshakeSig {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algs)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algs)
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algs.supported_schemes()
+    }
+}
+
+/// A client config that REALLY verifies the server's handshake signature (see
+/// [`VerifyServerHandshakeSig`]); used by the delegated-TLS test.
+fn client_config_verify_server_sig(
+    client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
+) -> ClientConfig {
+    let provider = Arc::new(ring::default_provider());
+    let builder = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("client protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(VerifyServerHandshakeSig::new()));
+    match client_auth {
+        Some((chain, key)) => builder
+            .with_client_auth_cert(chain, key)
+            .expect("client auth cert"),
+        None => builder.with_no_client_auth(),
+    }
+}
+
 fn client_config(
     client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
 ) -> ClientConfig {
@@ -654,9 +725,14 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         )
     });
 
+    // Use a client that performs REAL handshake-signature verification: the
+    // handshake completes only if the delegated signer produced a cryptographically
+    // valid Ed25519 CertificateVerify over the transcript (a permissive verifier
+    // would mask a bogus delegated signature, so this is what makes the test prove
+    // delegated-signing correctness).
     let response = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config_verify_server_sig(Some((vec![client_cert], client_key))),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip over a delegated-signed handshake");
