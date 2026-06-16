@@ -21,6 +21,8 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
+use crate::delegated_tls::RawEd25519TlsSigner;
+
 /// Errors loading key material.
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
@@ -110,6 +112,25 @@ pub trait KeySource: ResponseSigner {
     fn tls_server_key(&self) -> Result<PrivateKeyDer<'static>, KeyError>;
     /// The client-CA trust anchors used to verify mTLS client certificates.
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError>;
+
+    /// Optional DELEGATED TLS handshake signer (issue #58, ADR-MCPS-028 §G).
+    ///
+    /// When `Some(signer)`, the proxy terminates TLS via the DELEGATED path: the TLS
+    /// server private key never leaves the device/KMS — rustls drives the handshake
+    /// signature through `signer` (a [`RawEd25519TlsSigner`]) paired with the
+    /// (public) [`tls_server_cert_chain`](Self::tls_server_cert_chain), and
+    /// [`tls_server_key`](Self::tls_server_key) is NOT consulted. The TLS key is a
+    /// SEPARATE credential from the response-signing key, and delegated TLS is
+    /// Ed25519-only.
+    ///
+    /// The DEFAULT is `None` (no delegation): the proxy uses the existing
+    /// exported-key TLS path verbatim. `FileKeySource` / `EnvKeySource` keep the
+    /// default, so the default build is byte-unchanged. A non-exporting backend
+    /// (#59–#61: PKCS#11 / AWS-KMS / GCP-KMS) overrides this to return its TLS
+    /// signer.
+    fn tls_delegated_signer(&self) -> Option<std::sync::Arc<dyn RawEd25519TlsSigner>> {
+        None
+    }
 }
 
 /// A boxed `dyn KeySource` is itself a [`ResponseSigner`] (issue #3838): it forwards

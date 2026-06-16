@@ -39,6 +39,15 @@ use crate::key_source::KeyError;
 /// signing, but keyed by the TLS certificate's key.
 pub trait RawEd25519TlsSigner: Send + Sync {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError>;
+
+    /// The DER `SubjectPublicKeyInfo` (RFC 8410) of the Ed25519 public key paired
+    /// with the delegated signing key. This is exportable even from a non-exporting
+    /// device/KMS (it is what relying parties verify against). The validated
+    /// delegated build path (issue #58, ADR-MCPS-028 §G) uses it to FAIL CLOSED at
+    /// config construction when the signer's key does not match the leaf TLS
+    /// certificate's `SubjectPublicKeyInfo` — so a key/cert mismatch is rejected
+    /// before any server starts, never left to a failed handshake at runtime.
+    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError>;
 }
 
 const ED25519_SIGNATURE_LEN: usize = 64;
@@ -154,6 +163,11 @@ mod tests {
         fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
             Ok(b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
         }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
+            let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
+            der.extend_from_slice(&self.0.public_key().to_bytes());
+            Ok(der)
+        }
     }
 
     #[test]
@@ -190,6 +204,9 @@ mod tests {
         impl RawEd25519TlsSigner for ShortSig {
             fn sign_tls_ed25519(&self, _m: &[u8]) -> Result<Vec<u8>, KeyError> {
                 Ok(vec![0u8; 63])
+            }
+            fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
+                Ok(crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec())
             }
         }
         let key = DelegatedEd25519SigningKey::new(Arc::new(ShortSig));

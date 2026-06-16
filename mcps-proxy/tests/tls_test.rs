@@ -589,6 +589,23 @@ impl mcps_proxy::RawEd25519TlsSigner for LocalEd25519Tls {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcps_proxy::KeyError> {
         Ok(mcps_core::b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
     }
+    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcps_proxy::KeyError> {
+        Ok(ed25519_spki_from_raw(&self.0.public_key().to_bytes()))
+    }
+}
+
+/// The fixed 12-byte RFC 8410 Ed25519 `SubjectPublicKeyInfo` prefix, the same one
+/// the production SPKI parser anchors on. Building an SPKI from a raw point here
+/// (mirroring what AWS/GCP KMS return) keeps the test signer's exported public key
+/// in the exact wire form the validated build path parses.
+const ED25519_TEST_SPKI_PREFIX: [u8; 12] = [
+    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+];
+
+fn ed25519_spki_from_raw(raw: &[u8; 32]) -> Vec<u8> {
+    let mut der = ED25519_TEST_SPKI_PREFIX.to_vec();
+    der.extend_from_slice(raw);
+    der
 }
 
 /// Mint an Ed25519 server leaf signed by `ca`, returning the cert plus the local
@@ -699,6 +716,210 @@ fn delegated_ed25519_tls_handshake_round_trip() {
     assert_eq!(
         identity.expect("verified client identity").value,
         "spiffe://example.org/agent-1"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ADR-MCPS-028 §G / issue #58: the VALIDATED delegated build path. It wraps the
+// frozen `build_server_config_delegated_with_crls` with two fail-closed checks at
+// CONFIG CONSTRUCTION (before any server starts): Ed25519-only leaf, and the
+// signer's public key must match the leaf certificate's public key.
+// ---------------------------------------------------------------------------
+
+/// A delegated signer whose public key is INDEPENDENT of (and so cannot match) any
+/// given leaf certificate — used to drive the cert↔signer mismatch fail-closed
+/// path. Backed by a distinct local Ed25519 key.
+#[derive(Debug)]
+struct MismatchedEd25519Tls(mcps_core::SigningKey);
+impl mcps_proxy::RawEd25519TlsSigner for MismatchedEd25519Tls {
+    fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcps_proxy::KeyError> {
+        Ok(mcps_core::b64url_decode(&self.0.sign(message)).expect("local sig is valid b64url"))
+    }
+    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcps_proxy::KeyError> {
+        Ok(ed25519_spki_from_raw(&self.0.public_key().to_bytes()))
+    }
+}
+
+/// Mint an ECDSA (NIST P-256) server leaf signed by `ca` — a NON-Ed25519 leaf used
+/// to drive the Ed25519-only fail-closed path of the validated delegated builder.
+fn make_ecdsa_server_leaf(ca: &Ca) -> CertificateDer<'static> {
+    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("ecdsa key");
+    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+    params.subject_alt_names = vec![dns("localhost")];
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "localhost");
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("ecdsa leaf signed");
+    cert.der().clone()
+}
+
+#[test]
+fn validated_delegated_build_round_trip_and_corrupted_sig_fails() {
+    // (b) The validated builder accepts a signer whose pubkey MATCHES the leaf cert,
+    // and a real full-WebPKI client completes the mTLS handshake — proving the
+    // delegated Ed25519 signature is wire-correct. Then a CORRUPTED signature breaks
+    // the handshake (load-bearing).
+    let client_ca = make_ca();
+    let server_ca = make_ca();
+    let (server_cert, delegated_signer) = make_ed25519_server_leaf(&server_ca);
+
+    let config = std::sync::Arc::new(
+        mcps_proxy::build_server_config_delegated_validated(
+            vec![server_cert],
+            std::sync::Arc::new(delegated_signer),
+            vec![client_ca.cert.der().clone()],
+            Vec::new(),
+            false,
+        )
+        .expect("validated delegated server config (matching key) must build"),
+    );
+
+    let (client_cert, client_key) = make_leaf(
+        &client_ca,
+        vec![uri("spiffe://example.org/agent-1")],
+        None,
+        true,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = thread::spawn(move || {
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::default(),
+            |request, _identity| {
+                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
+                b"{\"ok\":true}".to_vec()
+            },
+        )
+    });
+
+    let response = client_round_trip(
+        addr,
+        client_config_validating(
+            server_ca.cert.der().clone(),
+            (vec![client_cert], client_key),
+        ),
+        b"{\"jsonrpc\":\"2.0\"}",
+    )
+    .expect("client round trip over the validated delegated handshake");
+    assert_eq!(response, b"{\"ok\":true}");
+    let _ = server.join().expect("join").expect("serve ok");
+
+    // Corrupting the delegated signature must break the handshake (the validating
+    // client verifies CertificateVerify). A signer that flips a bit of every raw
+    // signature drives this.
+    #[derive(Debug)]
+    struct CorruptingEd25519Tls(LocalEd25519Tls);
+    impl mcps_proxy::RawEd25519TlsSigner for CorruptingEd25519Tls {
+        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, mcps_proxy::KeyError> {
+            let mut sig = self.0.sign_tls_ed25519(message)?;
+            sig[0] ^= 0x01; // corrupt one bit — the signature no longer verifies
+            Ok(sig)
+        }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, mcps_proxy::KeyError> {
+            // Same public key as the honest signer: the cert↔signer check still
+            // passes, so the build succeeds and the BREAK is at the handshake.
+            self.0.tls_public_key_spki_der()
+        }
+    }
+
+    let client_ca2 = make_ca();
+    let server_ca2 = make_ca();
+    let (server_cert2, honest_signer) = make_ed25519_server_leaf(&server_ca2);
+    let corrupting = CorruptingEd25519Tls(honest_signer);
+    let config2 = std::sync::Arc::new(
+        mcps_proxy::build_server_config_delegated_validated(
+            vec![server_cert2],
+            std::sync::Arc::new(corrupting),
+            vec![client_ca2.cert.der().clone()],
+            Vec::new(),
+            false,
+        )
+        .expect("build still succeeds: the public key matches; the BREAK is the bad signature"),
+    );
+
+    let (client_cert2, client_key2) = make_leaf(
+        &client_ca2,
+        vec![uri("spiffe://example.org/agent-1")],
+        None,
+        true,
+    );
+    let listener2 = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr2 = listener2.local_addr().expect("addr");
+    let server2 = thread::spawn(move || {
+        serve_once(
+            &listener2,
+            config2,
+            &ServerOptions::default(),
+            |_req, _id| b"{\"ok\":true}".to_vec(),
+        )
+    });
+    let result = client_round_trip(
+        addr2,
+        client_config_validating(
+            server_ca2.cert.der().clone(),
+            (vec![client_cert2], client_key2),
+        ),
+        b"{\"jsonrpc\":\"2.0\"}",
+    );
+    assert!(
+        result.is_err(),
+        "a corrupted delegated signature MUST fail the validating handshake"
+    );
+    let _ = server2.join();
+}
+
+#[test]
+fn validated_delegated_build_rejects_cert_signer_key_mismatch() {
+    // (c) The signer signs for a DIFFERENT key than the leaf certificate presents.
+    // The validated builder must FAIL CLOSED at construction — no server.
+    let client_ca = make_ca();
+    let server_ca = make_ca();
+    let (server_cert, _matching_signer) = make_ed25519_server_leaf(&server_ca);
+    // A signer with an unrelated key (seed 0xAA..) — its pubkey cannot equal the
+    // leaf's.
+    let mismatched = MismatchedEd25519Tls(mcps_core::SigningKey::from_seed_bytes(&[0xAAu8; 32]));
+
+    let err = mcps_proxy::build_server_config_delegated_validated(
+        vec![server_cert],
+        std::sync::Arc::new(mismatched),
+        vec![client_ca.cert.der().clone()],
+        Vec::new(),
+        false,
+    )
+    .expect_err("a cert↔signer key mismatch must fail closed at config construction");
+    assert!(
+        matches!(err, mcps_proxy::TlsError::DelegatedKeyMismatch(_)),
+        "expected DelegatedKeyMismatch, got {err:?}"
+    );
+}
+
+#[test]
+fn validated_delegated_build_rejects_non_ed25519_leaf() {
+    // (d) A non-Ed25519 (ECDSA P-256) leaf under delegated mode must FAIL CLOSED:
+    // delegated TLS is Ed25519-only. The signer's own key is irrelevant — the leaf
+    // SPKI is rejected first.
+    let client_ca = make_ca();
+    let server_ca = make_ca();
+    let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
+    let signer = LocalEd25519Tls(mcps_core::SigningKey::from_seed_bytes(&[3u8; 32]));
+
+    let err = mcps_proxy::build_server_config_delegated_validated(
+        vec![ecdsa_leaf],
+        std::sync::Arc::new(signer),
+        vec![client_ca.cert.der().clone()],
+        Vec::new(),
+        false,
+    )
+    .expect_err("a non-Ed25519 leaf must fail closed under delegated mode");
+    assert!(
+        matches!(err, mcps_proxy::TlsError::DelegatedKeyMismatch(_)),
+        "expected DelegatedKeyMismatch (Ed25519-only), got {err:?}"
     );
 }
 

@@ -147,8 +147,17 @@ fn run() -> Result<(), String> {
     // `signing_key()` export call on the wiring path anymore.
     let key_source = cli::build_key_source(&config).map_err(|e| e.to_string())?;
     let server_chain = key_source.tls_server_cert_chain().map_err(|e| e.to_string())?;
-    let server_key = key_source.tls_server_key().map_err(|e| e.to_string())?;
     let client_ca = key_source.client_ca_roots().map_err(|e| e.to_string())?;
+    // ADR-MCPS-028 §G / issue #58: TLS signing is DELEGATED xor EXPORTED. When the
+    // source offers a delegated TLS signer the server private key never leaves the
+    // device — we never call `tls_server_key()`. The exported key is loaded ONLY on
+    // the non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already
+    // rejected a config that asks for both.
+    let tls_delegated_signer = key_source.tls_delegated_signer();
+    let server_key = match &tls_delegated_signer {
+        Some(_) => None,
+        None => Some(key_source.tls_server_key().map_err(|e| e.to_string())?),
+    };
     let trust_bytes = std::fs::read(&config.trust_path)
         .map_err(|e| format!("{}: {e}", config.trust_path))?;
     let resolver = cli::load_trust(&trust_bytes)?;
@@ -351,15 +360,34 @@ fn run() -> Result<(), String> {
         );
     }
 
-    // TLS server.
-    let server_config = tls::RustlsDirectProvider::build_server_config_with_crls(
-        server_chain,
-        server_key,
-        client_ca,
-        client_crls,
-        config.crl_allow_unknown_status,
-    )
-    .map_err(|e| e.to_string())?;
+    // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
+    // the handshake signature through the device/KMS signer (TLS private key never
+    // exported); the validated builder fails closed at construction if the leaf cert
+    // is not Ed25519 or its key does not match the signer. Otherwise the exported-key
+    // path is used verbatim.
+    let server_config = match tls_delegated_signer {
+        Some(signer) => tls::build_server_config_delegated_validated(
+            server_chain,
+            signer,
+            client_ca,
+            client_crls,
+            config.crl_allow_unknown_status,
+        )
+        .map_err(|e| e.to_string())?,
+        None => {
+            let server_key = server_key.ok_or_else(|| {
+                "internal error: exported TLS key missing on the non-delegated path".to_string()
+            })?;
+            tls::RustlsDirectProvider::build_server_config_with_crls(
+                server_chain,
+                server_key,
+                client_ca,
+                client_crls,
+                config.crl_allow_unknown_status,
+            )
+            .map_err(|e| e.to_string())?
+        }
+    };
     let server_config = Arc::new(server_config);
     // Select the identity strategy (MCPS-3840): direct mTLS (default) extracts the
     // identity from the verified peer certificate; reverse-proxy mode reads it from

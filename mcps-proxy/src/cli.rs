@@ -911,6 +911,16 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         );
     }
 
+    // ADR-MCPS-028 §G / issue #58: a source's TLS key is EITHER delegated to a
+    // non-exporting device/KMS XOR exported from a file — never both. There is no
+    // delegated-TLS CLI flag yet (the backend issues #59–#61 add one and will set
+    // `has_delegated_tls` from it); for now an exported `--tls-key` is always
+    // present, so this asserts the seam is wired (not dead code) with the current
+    // values. It fails closed the moment both selectors are set.
+    let has_delegated_tls = false;
+    let has_exported_tls_key = tls_key.is_some();
+    validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key)?;
+
     let config = Config {
         bind: require(bind, "--bind")?,
         audience: require(audience, "--audience")?,
@@ -974,6 +984,31 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     }
 
     Ok(config)
+}
+
+/// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue
+/// #58): a source's TLS handshake key is EITHER delegated to a non-exporting
+/// device/KMS (`has_delegated_tls`) OR exported from a file (`has_exported_tls_key`),
+/// never both. A source that asserts both is contradictory — the operator could
+/// believe the key never leaves the device while a file copy also exists — so this
+/// FAILS CLOSED at parse time, before the proxy is constructed.
+///
+/// Pure and black-box-testable (no `Config`, no IO). The backend issues (#59–#61)
+/// drive `has_delegated_tls` from their CLI flag; #58 wires the call with the
+/// current values so the seam is exercised, not dead code.
+pub fn validate_tls_signing_exclusivity(
+    has_delegated_tls: bool,
+    has_exported_tls_key: bool,
+) -> Result<(), String> {
+    if has_delegated_tls && has_exported_tls_key {
+        return Err(
+            "TLS signing is delegated XOR exported (ADR-MCPS-028 §G): a delegated-TLS \
+             key source must not also be given an exported --tls-key. Remove --tls-key \
+             when using a delegated (non-exporting device/KMS) TLS signer."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Collect the parse-time strict-posture violations for `config` (MCPS-3842).
@@ -3973,5 +4008,24 @@ mod tests {
         assert!(super::key_file_mode_is_insecure(0o604), "world-readable is insecure");
         assert!(super::key_file_mode_is_insecure(0o660), "group-writable is insecure");
         assert!(super::key_file_mode_is_insecure(0o777), "world-everything is insecure");
+    }
+
+    #[test]
+    fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
+        // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
+        // Exported only — the current default path — is fine.
+        assert!(super::validate_tls_signing_exclusivity(false, true).is_ok());
+        // Delegated only — what #59–#61 will configure — is fine.
+        assert!(super::validate_tls_signing_exclusivity(true, false).is_ok());
+        // Neither set — degenerate, not contradictory — is fine (the require()
+        // checks elsewhere catch a genuinely missing credential).
+        assert!(super::validate_tls_signing_exclusivity(false, false).is_ok());
+        // BOTH set — contradictory — fails closed.
+        let err = super::validate_tls_signing_exclusivity(true, true)
+            .expect_err("delegated AND exported TLS signing must be rejected");
+        assert!(
+            err.contains("delegated XOR exported"),
+            "the rejection must name the XOR rule, got: {err}"
+        );
     }
 }
