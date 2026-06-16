@@ -152,7 +152,7 @@ issues; design recorded here):
    `--pkcs11-tls-key-label`. The PKCS#11 path signs locally on the token (no
    per-handshake network call, unlike KMS).
 
-Each path is proven by a real in-process mTLS handshake under FULL WebPKI server
+Each path is proven by a real in-process mTLS handshake under full WebPKI server
 validation (chain + validity + hostname + `CertificateVerify` signature) — a
 corrupted delegated signature must fail the handshake. The internal-platform TLS
 key (§F) is wired privately in the monorepo against the same `RawEd25519TlsSigner`
