@@ -44,6 +44,7 @@ use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
 use rustls::DigitallySignedStruct;
+use rustls::RootCertStore;
 use rustls::SignatureScheme;
 use rustls::StreamOwned;
 use rustls_pki_types::CertificateDer;
@@ -414,6 +415,30 @@ impl ServerCertVerifier for AcceptAnyServer {
     }
 }
 
+/// A client config that FULLY validates the server: rustls's stock WebPKI server
+/// verifier anchored at `server_ca_root` performs real chain building, validity,
+/// hostname (SAN), AND `CertificateVerify` signature verification — nothing is
+/// asserted. The delegated-TLS test uses this so the handshake completes only if
+/// the server cert chains to the test CA, matches `localhost`, AND the delegated
+/// Ed25519 signature over the transcript is cryptographically valid; a bogus
+/// delegated signature (or an untrusted/mismatched cert) FAILS the handshake,
+/// making the test genuinely load-bearing.
+fn client_config_validating(
+    server_ca_root: CertificateDer<'static>,
+    client_auth: (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
+) -> ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.add(server_ca_root).expect("add server CA root");
+    let provider = Arc::new(ring::default_provider());
+    let (chain, key) = client_auth;
+    ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("client protocol versions")
+        .with_root_certificates(roots)
+        .with_client_auth_cert(chain, key)
+        .expect("client auth cert")
+}
+
 fn client_config(
     client_auth: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
 ) -> ClientConfig {
@@ -654,9 +679,17 @@ fn delegated_ed25519_tls_handshake_round_trip() {
         )
     });
 
+    // Use a client that FULLY validates the server (chain to the test CA, hostname,
+    // AND CertificateVerify signature): the handshake completes only if the delegated
+    // signer produced a cryptographically valid Ed25519 CertificateVerify over the
+    // transcript. Nothing is asserted/bypassed, so this proves delegated-signing
+    // correctness end to end.
     let response = client_round_trip(
         addr,
-        client_config(Some((vec![client_cert], client_key))),
+        client_config_validating(
+            server_ca.cert.der().clone(),
+            (vec![client_cert], client_key),
+        ),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip over a delegated-signed handshake");
