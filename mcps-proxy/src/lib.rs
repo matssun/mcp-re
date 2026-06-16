@@ -50,6 +50,11 @@ pub mod cli;
 // the proxy's full signing path.
 pub mod delegated_response_signer;
 pub mod durable_replay;
+// ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
+// (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
+// non-default `gcp_kms_keysource` feature.
+#[cfg(feature = "gcp_kms_keysource")]
+pub mod gcp_kms_keysource;
 pub mod inner_launch;
 pub mod key_source;
 // ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
@@ -119,6 +124,11 @@ pub use aws_kms_keysource::AwsKmsConfig;
 #[cfg(feature = "aws_kms_keysource")]
 pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
+// ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsConfig;
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
 pub use inner_launch::BoundedStderr;
 pub use inner_launch::InnerLaunchConfig;

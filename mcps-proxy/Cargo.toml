@@ -97,6 +97,11 @@ pkcs11_keysource = []
 # `Sign` (ED25519_SHA_512 / MessageType RAW). OFF by default; the default
 # `:mcps_proxy` Bazel target neither sets the flag nor links the adapter.
 aws_kms_keysource = []
+# ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer. Blocking HTTPS via
+# ureq + OAuth2 bearer (operator token or metadata-server workload identity) — NO
+# google-cloud SDK/tokio. Narrow surface: only getPublicKey + asymmetricSign over an
+# EC_SIGN_ED25519 key. Reuses the same crates as aws_kms_keysource; OFF by default.
+gcp_kms_keysource = []
 # #4028 Redis-backed shared atomic ReplayCache (horizontal-scale replay safety).
 redis_replay = []
 # #4030 online OCSP / CRL-distribution-point client-cert revocation.

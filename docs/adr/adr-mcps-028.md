@@ -78,6 +78,17 @@ the unmodified `mcps-core` verifier) before it is emitted.
 version (raw `data`, not `digest`); same raw-64-byte → base64url contract.
 `response_public_key()` parses the version's PEM public key to the raw point.
 
+**C.1 Transport — blocking `ureq` + OAuth2 bearer; NOT the google-cloud SDK.**
+Mirrors §B.1: Cloud KMS is reached over blocking HTTPS (`ureq`), and the async
+google-cloud SDK / tokio stack is **forbidden** (ADR-MCPS-018 lean-sync firewall).
+The surface is the two operations only — `getPublicKey` + `asymmetricSign`. The
+bearer token comes from a NARROW, explicit set of sources — an operator-supplied
+`MCPS_GCP_ACCESS_TOKEN` or the GCE/GKE metadata server (workload identity) — never a
+silent application-default-credentials chain; the service-account JWT-file→token
+exchange (which needs RSA) is a deliberately deferred follow-up. As in §B, every
+KMS-returned signature is verified locally against the advertised public key before
+it is emitted.
+
 **D. Non-exporting invariant + fail-closed.** Both adapters implement only the
 `ResponseSigner` operations; the private key never crosses the trait boundary
 (it never leaves the KMS). A wrong key spec, a prehash/digest mode, a wrong-length
