@@ -147,8 +147,8 @@ issues; design recorded here):
    by a SECOND KMS key (the TLS key, distinct from the object-signing key), reusing
    the existing RAW-Ed25519 `Sign`/`asymmetricSign` path. CLI: `--aws-kms-tls-key-id`
    / `--gcp-kms-tls-key-version`, with `--tls-key` relaxed when set.
-3. *PKCS#11.* A second token object (TLS key label) with a `CKM_EDDSA`
-   `sign_tls_ed25519`, implementing `RawEd25519TlsSigner`. CLI:
+3. *PKCS#11.* A second token object (TLS key label) using a `CKM_EDDSA` signing
+   operation (`sign_tls_ed25519`), implementing `RawEd25519TlsSigner`. CLI:
    `--pkcs11-tls-key-label`. The PKCS#11 path signs locally on the token (no
    per-handshake network call, unlike KMS).
 
