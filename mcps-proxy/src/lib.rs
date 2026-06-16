@@ -49,7 +49,17 @@ pub mod cli;
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.
 pub mod delegated_response_signer;
+// ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that
+// forwards the handshake transcript to a non-exporting device/KMS so the TLS
+// server key never leaves it. Generic mechanism (always compiled); the per-backend
+// raw signers are wired under their own feature gates.
+pub mod delegated_tls;
 pub mod durable_replay;
+// ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
+// (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
+// non-default `gcp_kms_keysource` feature.
+#[cfg(feature = "gcp_kms_keysource")]
+pub mod gcp_kms_keysource;
 pub mod inner_launch;
 pub mod key_source;
 // ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
@@ -119,6 +129,15 @@ pub use aws_kms_keysource::AwsKmsConfig;
 #[cfg(feature = "aws_kms_keysource")]
 pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
+// ADR-MCPS-028 §G: delegated TLS signing (generic mechanism).
+pub use delegated_tls::DelegatedCertResolver;
+pub use delegated_tls::DelegatedEd25519SigningKey;
+pub use delegated_tls::RawEd25519TlsSigner;
+// ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsConfig;
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
 pub use inner_launch::BoundedStderr;
 pub use inner_launch::InnerLaunchConfig;
@@ -163,6 +182,7 @@ pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
 pub use shared_replay::SharedReplayCache;
+pub use tls::build_server_config_delegated_with_crls;
 pub use tls::extract_identity;
 pub use tls::IdentityStrategy;
 pub use tls::serve;

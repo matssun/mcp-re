@@ -1007,7 +1007,7 @@
           "FILE:@@//Cargo.toml b7b88db610e8cb1c82ca8d017c2de14907abaa0e8b719fb91c1f5b064572093d",
           "FILE:@@//mcps-core/Cargo.toml b9f21bbabc8f4197698ddc7726826bda40a1e1ddb8e9803e939e9589be2afa9b",
           "FILE:@@//mcps-conformance/Cargo.toml 06f4a78f30dd53bfa4a487476ba69c627a6341cb20d0cd208617453ec0a32793",
-          "FILE:@@//mcps-proxy/Cargo.toml 32f076ec0912323b112ee00c1e12f7b994c16710856ff9157df5e9c2497e8a46",
+          "FILE:@@//mcps-proxy/Cargo.toml c1cc994dffcbc93d11efd4175b9fcce4255588d0eb8b0df97bd4269b57153feb",
           "FILE:@@//mcps-policy/Cargo.toml 50ec9ca6e28f0c69a423a0b783351a61048d6f0549d986249e28ee1ef4b9dfff",
           "FILE:@@//mcps-host/Cargo.toml 370aeb69dec52d84959fb09b2433e8df85aac4207b510285e2c68a25a71e340f",
           "FILE:@@//mcps-test-paths/Cargo.toml 3afd2982b8d9631962a311308a45ed23322eb12ad4151b2ab363ac5b6e375a79",

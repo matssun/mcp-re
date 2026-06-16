@@ -92,9 +92,9 @@ jobs:
       - name: Build (workspace, all feature gates)
         run: >-
           cargo build --workspace --all-targets
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource
+          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
 
       - name: Test (mcps-proxy, all feature gates; e2e self-skip without live infra)
         run: >-
           cargo test -p mcps-proxy
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource
+          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource

@@ -190,13 +190,7 @@ impl RustlsDirectProvider {
         server_key: PrivateKeyDer<'static>,
         client_ca: Vec<CertificateDer<'static>>,
     ) -> Result<ServerConfig, TlsError> {
-        Self::build_server_config_with_crls(
-            server_chain,
-            server_key,
-            client_ca,
-            Vec::new(),
-            false,
-        )
+        Self::build_server_config_with_crls(server_chain, server_key, client_ca, Vec::new(), false)
     }
 
     /// As [`build_server_config`](Self::build_server_config), additionally checking
@@ -226,23 +220,12 @@ impl RustlsDirectProvider {
         allow_unknown_revocation_status: bool,
     ) -> Result<ServerConfig, TlsError> {
         let provider = Arc::new(ring::default_provider());
-
-        let mut roots = RootCertStore::empty();
-        for ca in client_ca {
-            roots.add(ca).map_err(|_| TlsError::BadClientCa)?;
-        }
-        let mut builder =
-            WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
-                .with_crls(crls);
-        // Default is the strict fail-closed posture (unknown status → reject); only
-        // an explicit operator opt-out relaxes it. A malformed CRL surfaces from
-        // `.build()` below as a startup `TlsError::Verifier` (fail closed).
-        if allow_unknown_revocation_status {
-            builder = builder.allow_unknown_revocation_status();
-        }
-        let verifier = builder
-            .build()
-            .map_err(|e| TlsError::Verifier(e.to_string()))?;
+        let verifier = build_client_verifier(
+            client_ca,
+            crls,
+            allow_unknown_revocation_status,
+            provider.clone(),
+        )?;
 
         // MCPS-079 fault injection ("test of the tests"), the symmetric mirror of
         // mcps-transport's `fault_accept_any_server`. When — and ONLY when — the
@@ -278,6 +261,65 @@ impl RustlsDirectProvider {
 
         server_config
     }
+}
+
+/// Build the fail-closed WebPKI client-certificate verifier shared by the
+/// exported-key ([`RustlsDirectProvider::build_server_config_with_crls`]) and delegated-key
+/// ([`build_server_config_delegated_with_crls`]) server-config paths. Sharing it
+/// keeps the security-critical verifier posture identical across both: strict
+/// unknown-status rejection by default, full-chain revocation, operator opt-out
+/// only via `allow_unknown_revocation_status`, and a malformed CRL → startup
+/// `TlsError::Verifier` (fail closed).
+fn build_client_verifier(
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+    allow_unknown_revocation_status: bool,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+) -> Result<Arc<dyn rustls::server::danger::ClientCertVerifier>, TlsError> {
+    let mut roots = RootCertStore::empty();
+    for ca in client_ca {
+        roots.add(ca).map_err(|_| TlsError::BadClientCa)?;
+    }
+    let mut builder =
+        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider).with_crls(crls);
+    if allow_unknown_revocation_status {
+        builder = builder.allow_unknown_revocation_status();
+    }
+    builder
+        .build()
+        .map_err(|e| TlsError::Verifier(e.to_string()))
+}
+
+/// Build a mutual-TLS [`ServerConfig`] whose server certificate is signed by a
+/// non-exporting device/KMS via a [`ResolvesServerCert`] (ADR-MCPS-028 §G), rather
+/// than from an exported private key. The TLS server private key never leaves the
+/// device; rustls drives the handshake signature through the resolver's
+/// [`SigningKey`](rustls::sign::SigningKey).
+///
+/// The client-cert verifier posture is IDENTICAL to the exported-key path (shared
+/// [`build_client_verifier`]). The `fault_accept_any_client` test bypass is NOT
+/// wired here: it exercises the standard exported-key serving path, and weakening
+/// client auth is orthogonal to (and must not be conflated with) server-key
+/// delegation — the delegated path always uses the real verifier.
+pub fn build_server_config_delegated_with_crls(
+    cert_resolver: Arc<dyn rustls::server::ResolvesServerCert>,
+    client_ca: Vec<CertificateDer<'static>>,
+    crls: Vec<CertificateRevocationListDer<'static>>,
+    allow_unknown_revocation_status: bool,
+) -> Result<ServerConfig, TlsError> {
+    let provider = Arc::new(ring::default_provider());
+    let verifier = build_client_verifier(
+        client_ca,
+        crls,
+        allow_unknown_revocation_status,
+        provider.clone(),
+    )?;
+    let server_config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| TlsError::Config(e.to_string()))?
+        .with_client_cert_verifier(verifier)
+        .with_cert_resolver(cert_resolver);
+    Ok(server_config)
 }
 
 /// Extract the verified client identity from a leaf certificate (DER) using the
@@ -321,7 +363,10 @@ pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<Trans
 /// The verified client identity for an established server connection (the leaf of
 /// the peer certificate chain) under `policy`, or `None` if no peer certificate
 /// is present or it lacks the selected identity field.
-fn connection_identity(conn: &ServerConnection, policy: IdentityPolicy) -> Option<TransportIdentity> {
+fn connection_identity(
+    conn: &ServerConnection,
+    policy: IdentityPolicy,
+) -> Option<TransportIdentity> {
     let certs = conn.peer_certificates()?;
     let leaf = certs.first()?;
     extract_identity(leaf.as_ref(), policy)
@@ -394,7 +439,10 @@ fn cert_lifetime_rejection(
         .ok()
         .and_then(|value| value.get("id").cloned())
         .unwrap_or(serde_json::Value::Null);
-    Some(json_rpc_error_object(&McpsError::TransportBindingFailed, &id))
+    Some(json_rpc_error_object(
+        &McpsError::TransportBindingFailed,
+        &id,
+    ))
 }
 
 /// ADR-MCPS-025 routing-header hygiene rejection — runs at the SAME per-connection
@@ -446,7 +494,10 @@ fn ocsp_rejection(
             .ok()
             .and_then(|value| value.get("id").cloned())
             .unwrap_or(serde_json::Value::Null);
-        Some(json_rpc_error_object(&McpsError::TransportBindingFailed, &id))
+        Some(json_rpc_error_object(
+            &McpsError::TransportBindingFailed,
+            &id,
+        ))
     };
 
     let certs = conn.peer_certificates()?;
@@ -455,7 +506,11 @@ fn ocsp_rejection(
     // build a CertID; treat as an indeterminate (Unknown) result and apply the
     // fail-closed policy (reject unless soft-fail).
     let Some(issuer) = certs.get(1) else {
-        return if checker.allows_on_error() { None } else { reject() };
+        return if checker.allows_on_error() {
+            None
+        } else {
+            reject()
+        };
     };
 
     match checker.check(leaf.as_ref(), issuer.as_ref()) {
@@ -546,8 +601,12 @@ where
 /// connections beyond the cap are accepted and immediately dropped (fail closed
 /// against connection exhaustion) rather than queued without bound. Runs until
 /// `listener` errors.
-pub fn serve<H>(listener: TcpListener, config: Arc<ServerConfig>, options: ServerOptions, handler: H)
-where
+pub fn serve<H>(
+    listener: TcpListener,
+    config: Arc<ServerConfig>,
+    options: ServerOptions,
+    handler: H,
+) where
     H: Fn(&[u8], Option<TransportIdentity>) -> Vec<u8> + Send + Sync + 'static,
 {
     let handler = Arc::new(handler);
@@ -826,11 +885,14 @@ mod lifetime_tests {
         let clean = RequestHeaders::from_pairs([("Mcp-Method", "tools/call")]);
         assert!(super::routing_header_rejection(&clean, req).is_none());
 
-        let duplicate =
-            RequestHeaders::from_pairs([("Mcp-Method", "tools/call"), ("mcp-method", "tools/list")]);
+        let duplicate = RequestHeaders::from_pairs([
+            ("Mcp-Method", "tools/call"),
+            ("mcp-method", "tools/list"),
+        ]);
         let rejected =
             super::routing_header_rejection(&duplicate, req).expect("duplicate must reject");
-        let value: serde_json::Value = serde_json::from_slice(&rejected).expect("json error object");
+        let value: serde_json::Value =
+            serde_json::from_slice(&rejected).expect("json error object");
         assert_eq!(value["error"]["message"], "mcps.transport_binding_failed");
         assert_eq!(value["id"], "req-1");
 
@@ -894,7 +956,9 @@ mod identity_parity_tests {
         let key = KeyPair::generate().expect("leaf key");
         let mut params =
             CertificateParams::new(vec!["agent-1.example.org".to_string()]).expect("leaf params");
-        params.distinguished_name.push(DnType::CommonName, "agent-1");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "agent-1");
         params
             .distinguished_name
             .push(DnType::OrganizationalUnitName, "agents");
@@ -966,7 +1030,10 @@ mod identity_parity_tests {
             .verified_identity(&req)
             .expect("explicit CN pair")
             .value;
-        assert_eq!(direct, xfcc, "explicit XFCC CN must equal the direct-TLS CN");
+        assert_eq!(
+            direct, xfcc,
+            "explicit XFCC CN must equal the direct-TLS CN"
+        );
     }
 
     // --- issue #38: obs-fold / bare-CR / bare-LF header framing must fail closed ---
@@ -1002,7 +1069,10 @@ mod identity_parity_tests {
         // A bare LF line ending (not CRLF) must be rejected — `str::lines()` splits
         // on it, so a bare LF would otherwise smuggle an extra header line.
         let block = b"POST /mcp HTTP/1.1\nMcp-Name: good\r\n\r\n";
-        assert!(read_req(block).is_err(), "a bare LF line ending must fail closed");
+        assert!(
+            read_req(block).is_err(),
+            "a bare LF line ending must fail closed"
+        );
     }
 
     #[test]
@@ -1028,12 +1098,12 @@ mod identity_parity_tests {
 mod fault_accept_any {
     use std::sync::Arc;
 
-    use rustls::server::danger::ClientCertVerified;
-    use rustls::server::danger::ClientCertVerifier;
     use rustls::client::danger::HandshakeSignatureValid;
     use rustls::crypto::verify_tls12_signature;
     use rustls::crypto::verify_tls13_signature;
     use rustls::crypto::CryptoProvider;
+    use rustls::server::danger::ClientCertVerified;
+    use rustls::server::danger::ClientCertVerifier;
     use rustls::DigitallySignedStruct;
     use rustls::DistinguishedName;
     use rustls::Error as RustlsError;

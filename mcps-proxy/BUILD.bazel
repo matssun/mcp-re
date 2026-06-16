@@ -20,9 +20,16 @@ _PROXY_LIB_SRCS = [
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
     "src/cli.rs",
+    # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
+    # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
+    # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).
+    "src/gcp_kms_keysource.rs",
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
+    # ADR-MCPS-028 §G: delegated TLS handshake signing (rustls SigningKey fronting a
+    # non-exporting device/KMS). Generic mechanism, always compiled.
+    "src/delegated_tls.rs",
     "src/durable_replay.rs",
     "src/inner_launch.rs",
     "src/key_source.rs",
@@ -134,6 +141,8 @@ _PROXY_EXT_FEATURES = [
     "online_ocsp",
     # ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer.
     "aws_kms_keysource",
+    # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer.
+    "gcp_kms_keysource",
 ]
 
 # MCPS-029 (folds in MCPS-018 #3807): the production sidecar CLI. Terminates TLS,
@@ -424,6 +433,9 @@ nt_rust_test(
     edition = "2021",
     deps = [
         ":mcps_proxy",
+        # ADR-MCPS-028 §G: the delegated-TLS handshake test signs with a local
+        # mcps-core Ed25519 key standing in for the device/KMS.
+        "//mcps-core:mcps_core",
         "@crates_mcps//:rcgen",
         "@crates_mcps//:rustls",
         "@crates_mcps//:rustls-pki-types",
