@@ -226,6 +226,14 @@ pub struct Config {
     /// CKA_LABEL of the Ed25519 signing-key object on the token. Required when
     /// `key_source == Pkcs11`.
     pub pkcs11_key_label: Option<String>,
+    /// CKA_LABEL of the Ed25519 TLS-key object on the token (issue #59,
+    /// ADR-MCPS-028 §G). OPTIONAL and independent of `pkcs11_key_label` — a separate
+    /// security principal. When `Some`, the TLS handshake is DELEGATED to the
+    /// token-resident TLS key (the TLS private key never leaves the device) and an
+    /// exported `--tls-key` is rejected by [`validate_tls_signing_exclusivity`].
+    /// `None` keeps the file-backed TLS path (issue #4034). Only meaningful when
+    /// `key_source == Pkcs11`.
+    pub pkcs11_tls_key_label: Option<String>,
     /// AWS region for the AWS KMS key source. Required when `key_source == AwsKms`
     /// (ADR-MCPS-028 §B).
     pub aws_kms_region: Option<String>,
@@ -298,6 +306,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--pkcs11-pin",
     "--pkcs11-token-label",
     "--pkcs11-key-label",
+    "--pkcs11-tls-key-label",
     // ADR-MCPS-028 §B/§C: cloud-KMS response-signing key sources.
     "--aws-kms-region",
     "--aws-kms-key-id",
@@ -390,6 +399,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut pkcs11_pin: Option<String> = None;
     let mut pkcs11_token_label: Option<String> = None;
     let mut pkcs11_key_label: Option<String> = None;
+    // #59 PKCS#11 delegated TLS: optional SECOND token object holding the Ed25519
+    // TLS key. When set, TLS signing is delegated to the token (no exported key).
+    let mut pkcs11_tls_key_label: Option<String> = None;
     // ADR-MCPS-028 §B AWS KMS: region + key id required when `--key-source aws-kms`;
     // endpoint optional (emulator). Credentials come from AWS_* env vars.
     let mut aws_kms_region: Option<String> = None;
@@ -502,6 +514,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--pkcs11-pin" => pkcs11_pin = Some(value.clone()),
             "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
             "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
+            "--pkcs11-tls-key-label" => pkcs11_tls_key_label = Some(value.clone()),
             // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
             "--aws-kms-region" => aws_kms_region = Some(value.clone()),
             "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
@@ -813,6 +826,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             return Err("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
         }
     }
+    // #59: the TLS-key label selects the SEPARATE token object that custodies the
+    // TLS key. It only has meaning for the PKCS#11 source; a dangling label on any
+    // other source would silently do nothing (a false belief that the TLS key is
+    // token-resident), so reject it (fail closed).
+    if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
+        return Err(
+            "--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string(),
+        );
+    }
     // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
     // selected (credentials come from AWS_* env vars; the endpoint is optional).
     // Checked here so a missing flag is a clear parse error regardless of feature.
@@ -911,13 +933,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         );
     }
 
-    // ADR-MCPS-028 §G / issue #58: a source's TLS key is EITHER delegated to a
-    // non-exporting device/KMS XOR exported from a file — never both. There is no
-    // delegated-TLS CLI flag yet (the backend issues #59–#61 add one and will set
-    // `has_delegated_tls` from it); for now an exported `--tls-key` is always
-    // present, so this asserts the seam is wired (not dead code) with the current
-    // values. It fails closed the moment both selectors are set.
-    let has_delegated_tls = false;
+    // ADR-MCPS-028 §G / issue #58+#59: a source's TLS key is EITHER delegated to a
+    // non-exporting device/KMS XOR exported from a file — never both. Issue #59
+    // wires the FIRST delegated-TLS selector: `--pkcs11-tls-key-label` makes the TLS
+    // key token-resident, so an exported `--tls-key` alongside it is contradictory
+    // (the operator would believe the key never leaves the token while a file copy
+    // also exists) and fails closed here, before the proxy is constructed.
+    let has_delegated_tls = pkcs11_tls_key_label.is_some();
     let has_exported_tls_key = tls_key.is_some();
     validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key)?;
 
@@ -930,7 +952,16 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         key_source,
         signing_key_seed: require(signing_key_seed, "--signing-key-seed")?,
         tls_cert: require(tls_cert, "--tls-cert")?,
-        tls_key: require(tls_key, "--tls-key")?,
+        // #59: on the DELEGATED TLS path the TLS key is token-resident and never
+        // read from disk, so an exported `--tls-key` is not merely optional — it is
+        // forbidden (the exclusivity guard above rejected it). The path is therefore
+        // unused; default it to empty rather than requiring a file that must not be
+        // consulted. On the non-delegated path `--tls-key` stays required.
+        tls_key: if has_delegated_tls {
+            tls_key.unwrap_or_default()
+        } else {
+            require(tls_key, "--tls-key")?
+        },
         client_ca: require(client_ca, "--client-ca")?,
         client_crl_paths,
         crl_allow_unknown_status,
@@ -953,6 +984,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         pkcs11_pin,
         pkcs11_token_label,
         pkcs11_key_label,
+        pkcs11_tls_key_label,
         aws_kms_region,
         aws_kms_key_id,
         aws_kms_endpoint,
@@ -1295,6 +1327,9 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError>
             let pin = require(&config.pkcs11_pin, "--pkcs11-pin")?;
             let token_label = require(&config.pkcs11_token_label, "--pkcs11-token-label")?;
             let key_label = require(&config.pkcs11_key_label, "--pkcs11-key-label")?;
+            // #59: an optional SECOND token object holds the Ed25519 TLS key. When
+            // present, `open` builds the delegated TLS signer and the proxy never
+            // reads `--tls-key` from disk (the exclusivity guard already forbade it).
             Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
                 &module,
                 &pin,
@@ -1303,6 +1338,7 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError>
                 &config.tls_cert,
                 &config.tls_key,
                 &config.client_ca,
+                config.pkcs11_tls_key_label.as_deref(),
             )?))
         }
         // Default build: the PKCS#11 backend is not compiled, so `--key-source
@@ -4026,6 +4062,130 @@ mod tests {
         assert!(
             err.contains("delegated XOR exported"),
             "the rejection must name the XOR rule, got: {err}"
+        );
+    }
+
+    /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no
+    /// `--inner-command`). Tests append the #59 toggles and then `--inner-command`
+    /// LAST, so any proxy flag lands BEFORE the inner-command tail (the tail scan
+    /// would otherwise — correctly — reject a proxy flag placed after it).
+    fn pkcs11_lead_no_tls_key() -> Vec<String> {
+        args(&[
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--key-source", "pkcs11",
+            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
+            "--pkcs11-pin", "1234",
+            "--pkcs11-token-label", "mcps-test",
+            "--pkcs11-key-label", "mcps-response-signing",
+            "--signing-key-seed", "/unused-seed",
+            "--tls-cert", "/cert",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+        ])
+    }
+
+    fn with_inner_command(mut a: Vec<String>) -> Vec<String> {
+        a.push("--inner-command".to_string());
+        a.push("my-server".to_string());
+        a
+    }
+
+    /// #59: with `--pkcs11-tls-key-label`, the TLS handshake is DELEGATED to the
+    /// token, so `--tls-key` is NOT required (it must not be read from disk) — the
+    /// config parses and carries the TLS label.
+    #[test]
+    fn pkcs11_tls_label_makes_tls_key_optional() {
+        let mut a = pkcs11_lead_no_tls_key();
+        a.push("--pkcs11-tls-key-label".to_string());
+        a.push("mcps-tls".to_string());
+        let config = parse_args(&with_inner_command(a))
+            .expect("delegated TLS path parses without --tls-key");
+        assert_eq!(config.pkcs11_tls_key_label.as_deref(), Some("mcps-tls"));
+        assert_eq!(config.key_source, super::KeySourceKind::Pkcs11);
+    }
+
+    /// #59 / #58: `--pkcs11-tls-key-label` (delegated) PLUS an exported `--tls-key`
+    /// is contradictory and fails closed via the XOR exclusivity guard.
+    #[test]
+    fn pkcs11_tls_label_with_exported_tls_key_is_rejected() {
+        let mut a = pkcs11_lead_no_tls_key();
+        a.push("--pkcs11-tls-key-label".to_string());
+        a.push("mcps-tls".to_string());
+        a.push("--tls-key".to_string());
+        a.push("/exported-key".to_string());
+        let err = parse_args(&with_inner_command(a))
+            .expect_err("delegated + exported TLS key must be rejected");
+        assert!(
+            err.contains("delegated XOR exported"),
+            "the rejection must name the XOR rule, got: {err}"
+        );
+    }
+
+    /// #59: the TLS-key label only has meaning for the PKCS#11 source. A dangling
+    /// `--pkcs11-tls-key-label` on a file source would silently do nothing (a false
+    /// belief the TLS key is token-resident), so it fails closed.
+    #[test]
+    fn pkcs11_tls_label_without_pkcs11_source_is_rejected() {
+        let a = args(&[
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--signing-key-seed", "/seed",
+            "--tls-cert", "/cert",
+            "--tls-key", "/key",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+            "--pkcs11-tls-key-label", "mcps-tls",
+            "--inner-command", "my-server",
+        ]);
+        let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
+        assert!(
+            err.contains("--pkcs11-tls-key-label has no effect without --key-source pkcs11"),
+            "got: {err}"
+        );
+    }
+
+    /// #59: without a TLS-key label the PKCS#11 source keeps the exported-TLS-key
+    /// path, so `--tls-key` is STILL required (no silent fallback to a delegated
+    /// path that was not requested).
+    #[test]
+    fn pkcs11_without_tls_label_still_requires_tls_key() {
+        let err = parse_args(&with_inner_command(pkcs11_lead_no_tls_key()))
+            .expect_err("non-delegated pkcs11 must still require --tls-key");
+        assert!(err.contains("--tls-key"), "got: {err}");
+    }
+
+    /// #59: a misplaced `--pkcs11-tls-key-label` AFTER `--inner-command` is caught by
+    /// the known-proxy-flag tail scan (it would otherwise be silently swallowed into
+    /// the inner server's argv, dropping the delegated-TLS control).
+    #[test]
+    fn pkcs11_tls_label_after_inner_command_is_rejected() {
+        // Build argv with the label deliberately placed AFTER --inner-command.
+        let a = args(&[
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--key-source", "pkcs11",
+            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
+            "--pkcs11-pin", "1234",
+            "--pkcs11-token-label", "mcps-test",
+            "--pkcs11-key-label", "mcps-response-signing",
+            "--signing-key-seed", "/unused-seed",
+            "--tls-cert", "/cert",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+            "--inner-command", "my-server",
+            "--pkcs11-tls-key-label", "mcps-tls",
+        ]);
+        let err = parse_args(&a).expect_err("a proxy flag after --inner-command must be rejected");
+        assert!(
+            err.contains("--pkcs11-tls-key-label") && err.contains("AFTER --inner-command"),
+            "got: {err}"
         );
     }
 }
