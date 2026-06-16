@@ -9,7 +9,86 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [0.3.0] — 2026-06-16
+
+This release adds the **tiered multi-node profile within one trust domain**
+(epic #7). v0.2 was production-hardened for single-node deployments; v0.3
+makes a *bounded, honest* multi-node claim: each of four security axes declares
+a tier, and the composed claim is the **conjunction of the four declared tiers,
+bounded by the weakest**. The proxy can never surface a claim stronger than its
+configured tier. The enforcement artifacts are
+[`docs/spec/v0.3-claim-matrix.md`](docs/spec/v0.3-claim-matrix.md),
+[`docs/spec/v0.3-claim-boundary.md`](docs/spec/v0.3-claim-boundary.md), and
+[`docs/spec/security-boundary.md`](docs/spec/security-boundary.md), backed by
+the conformance manifest and `mcps-conformance` drift guard.
+
+### Added — tiered multi-node claim matrix (the four axes)
+
+- **Axis 1 — replay-store durability (ADR-MCPS-020).** Tiers `REDIS_ASYNC`,
+  `REDIS_WAIT_QUORUM`, `LINEARIZABLE` (named; CP backend deferred), and
+  `SINGLE_STORE_FAIL_CLOSED`, each surfacing its own honest guarantee.
+  Strict-production deployments must declare `REDIS_WAIT_QUORUM` or stronger.
+- **Axis 2 — trust propagation / revocation window `T` (ADR-MCPS-021).**
+  Bounded-cache eventual trust: revocation enforced fleet-wide within `T`
+  (default 60s), fail-closed on store outage past `T`. Zero-window revocation
+  is a forbidden claim in v0.3.
+- **Axis 3 — signing-key custody (ADR-MCPS-022 / ADR-MCPS-028).**
+  `per_node_keyset` (default; tight blast radius) or `shared_remote_signer`
+  (one non-exporting KMS/HSM identity). Copying a private key across nodes is
+  normatively forbidden in every mode.
+- **Axis 4 — ingress / transport binding (ADR-MCPS-023).** `end_to_end_mtls`
+  (peer bound to the request signer end-to-end) or `trusted_ingress_asserted`
+  (explicitly weakened; ingress in the TCB, authenticated LB↔node hop).
+
+### Added — native cloud-KMS + delegated TLS key custody (ADR-MCPS-028 §B–§G)
+
+- **Native cloud-KMS Ed25519 response signers** — AWS KMS
+  (`ECC_NIST_EDWARDS25519`, `ED25519_SHA_512`, `MessageType=RAW`) and GCP Cloud
+  KMS (`EC_SIGN_ED25519`), each over a blocking, hand-audited transport
+  (SigV4 / OAuth2 + `ureq`), **not** the async vendor SDKs — the ADR-MCPS-018
+  lean-sync firewall is preserved. The private key never leaves the KMS.
+- **Delegated TLS-server-key custody (§G)** — the TLS server key can also stay
+  non-exporting, via the `RawEd25519TlsSigner` seam and a delegated rustls
+  certificate resolver, wired across PKCS#11, AWS KMS, and GCP KMS backends.
+  Cross-cutting invariants enforced fail-closed: Ed25519-only, cert↔signer
+  public-key match at config construction, a TLS credential distinct from the
+  object-signing key, and delegated-XOR-exported mutual exclusion.
+- **Cloud-KMS live CI lanes** — nightly-real-only (no faithful Ed25519 KMS
+  emulator exists), secret-gated and non-blocking, with an anti-gaming hard
+  fail; the load-bearing proof is `mcps-core` verifying the signature over the
+  exact canonical preimage, never the provider's own `Verify`.
+
+### Added — MCP SEP composition and trust hygiene
+
+- **Replay safety under MCP multi round-trip requests (ADR-MCPS-024, SEP-2322).**
+- **Untrusted transport routing headers (ADR-MCPS-025, SEP-2243)** — `Mcp-Method`
+  / `Mcp-Name` never assert identity and never influence a security decision, in
+  every ingress mode.
+- **Signing scope vs. stateless per-request `_meta` (ADR-MCPS-026, SEP-2575).**
+- **Extension-identifier reassignment to `se.syncom/mcps` (ADR-MCPS-027).**
+
+### Known limitations — forbidden claims (tracked for v0.4, epic #68)
+
+The composed claim licenses none of the following; each is a deferred tier
+named in its ADR and tracked as v0.4 axis-hardening:
+
+- Linearizable / unconditional replay safety (Axis 1 — needs the `CPStore`
+  backend).
+- Zero-window / instantaneous revocation (Axis 2 — needs live or push tiers).
+- Smaller-than-per-node blast radius for a shared signer (Axis 3).
+- End-to-end binding under `trusted_ingress_asserted` (Axis 4 — needs the
+  LB-signed, request-bound Tier 3 assertion).
+- Multi-tenant isolation between distrusting operators, and a hostile-shared-store
+  threat model, both remain explicitly excluded from v0.3.
+
+### Build
+
+- Workspace version bumped to `0.3.0` across all crates. Cargo + Bazel still
+  coexist; every crate carries both a `Cargo.toml` and a `BUILD.bazel`.
+
 ## [0.2.0] — 2026-06-05
+
+This is the **initial public release** of MCP-S. v0.1 existed only inside the
 
 This is the **initial public release** of MCP-S. v0.1 existed only inside the
 authoring monorepo and was never published as source; it is captured here for
@@ -160,5 +239,6 @@ state of the codebase at this point.
   all are closed in v0.2.0 per the
   [v0.2 remediation log](docs/security/remediation-v0.2.md).
 
+[0.3.0]: https://github.com/matssun/mcps/releases/tag/v0.3.0
 [0.2.0]: https://github.com/matssun/mcps/releases/tag/v0.2.0
 [0.1.0]: https://github.com/matssun/mcps/releases/tag/v0.1.0
