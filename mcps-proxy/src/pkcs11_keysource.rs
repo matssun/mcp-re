@@ -44,6 +44,7 @@
 //!
 //! [SoftHSM2]: https://github.com/opendnssec/SoftHSMv2
 
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use cryptoki_sys::CK_OBJECT_HANDLE;
@@ -61,6 +62,7 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use zeroize::Zeroizing;
 
+use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::key_source::FileKeySource;
 use crate::key_source::KeyError;
 use crate::key_source::KeySource;
@@ -285,29 +287,76 @@ fn classify_op_error(
 /// the proxy's lifetime, which is the intended posture for a sidecar that signs
 /// every response; fail-closed behaviour on genuine login/sign errors is preserved.
 pub struct Pkcs11KeySource {
-    // FIELD ORDER IS LOAD-BEARING. Rust drops struct fields in declaration order,
-    // so `session` MUST precede `context`: the cached [`LoggedInSession`] closes
-    // its handle (`C_CloseSession`, via its [`SessionCloser`]) on drop, and that
-    // call dereferences `context`'s function list — which `Pkcs11Context::drop`
-    // FINALIZES (`C_Finalize`). Dropping `context` first would make the session's
-    // closer call into a finalized module (use-after-finalize → crash). With
-    // `session` first, every cached handle is closed BEFORE `C_Finalize` runs.
-    /// One logged-in session (cached by raw handle) reused across signs /
-    /// public-key reads (M16): a fresh login happens only on first use or after a
-    /// transient session invalidation. Declared first so it drops before `context`.
-    session: AmortizedSession<LoggedInSession>,
-    /// The loaded Cryptoki context (owns the module handle; finalized on drop).
-    /// Declared after `session` so `C_Finalize` runs only after the cached session
-    /// handle has been closed (see the field-order note above).
-    context: Pkcs11Context,
-    /// The id of the slot whose token holds the signing key.
-    slot: CK_SLOT_ID,
-    /// The token User PIN, scrubbed on drop.
-    pin: Zeroizing<String>,
+    /// The shared, logged-in token (one `C_Initialize` + ONE amortized `C_Login` per
+    /// process). Shared via `Arc` with the optional delegated TLS signer so BOTH the
+    /// response-signing key object and the TLS key object are reached over the SAME
+    /// login — PKCS#11 login is per-token-per-application, so a second independent
+    /// `C_Login` on the same token returns `CKR_USER_ALREADY_LOGGED_IN`.
+    token: Arc<Pkcs11Token>,
+    /// Optional DELEGATED TLS handshake signer (issue #59). Holds its own `Arc` clone
+    /// of `token`; on drop it releases that clone, and the shared token (session +
+    /// context) is torn down only when the LAST `Arc<Pkcs11Token>` drops.
+    tls_signer: Option<Arc<Pkcs11TlsSigner>>,
     /// The CKA_LABEL of the Ed25519 PRIVATE key object (used via `C_Sign` only).
     key_label: String,
     /// File-backed source for the TLS cert chain / TLS key / client-CA roots.
     tls: FileKeySource,
+}
+
+/// A loaded, logged-in PKCS#11 token shared between the response-signing source and
+/// the delegated TLS signer. Owns the one module context and the one amortized login
+/// session; each consumer differs ONLY in which object label it finds and signs with.
+///
+/// FIELD ORDER IS LOAD-BEARING. Rust drops fields in declaration order, so `session`
+/// MUST precede `context`: the cached [`LoggedInSession`] closes its handle
+/// (`C_CloseSession`, via its [`SessionCloser`]) on drop, dereferencing `context`'s
+/// function list — which [`Pkcs11Context::drop`] FINALIZES (`C_Finalize`). Dropping
+/// `context` first would call into a finalized module (use-after-finalize → crash).
+/// With `session` first, the cached handle is closed BEFORE `C_Finalize` runs.
+struct Pkcs11Token {
+    /// ONE logged-in session reused across response signs, TLS handshake signs, and
+    /// public-key reads (M16): a fresh login happens only on first use or after a
+    /// transient session invalidation. Declared first so it drops before `context`.
+    session: AmortizedSession<LoggedInSession>,
+    /// The loaded Cryptoki context (owns the module handle; finalized on drop, after
+    /// `session`). One `C_Initialize` per process.
+    context: Pkcs11Context,
+    /// The id of the slot whose token holds the key objects.
+    slot: CK_SLOT_ID,
+    /// The token User PIN, scrubbed on drop.
+    pin: Zeroizing<String>,
+}
+
+// SAFETY (Send + Sync): the shared token is held inside an `Arc` reachable from the
+// delegated [`RawEd25519TlsSigner`], which rustls requires to be `Send + Sync`.
+// `Pkcs11Token` is otherwise `!Send`/`!Sync` only because [`Pkcs11Context`] carries
+// the module's raw `CK_FUNCTION_LIST_PTR`. Sharing it across threads is sound:
+//   * the module is initialized with `CKF_OS_LOCKING_OK`, so the PKCS#11 provider is
+//     thread-safe and may be called concurrently;
+//   * the function-list pointer is set ONCE at load and never mutated afterwards —
+//     every later access is a read used purely to dispatch an FFI call;
+//   * the only mutable shared state, the cached logged-in session handle, lives
+//     behind the `AmortizedSession`'s `Mutex`, serializing the token operations.
+// The slot and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
+unsafe impl Send for Pkcs11Token {}
+unsafe impl Sync for Pkcs11Token {}
+
+/// The token opens ONE logged-in session per [`open_logged_in`] call — exactly the
+/// login that [`AmortizedSession`] makes rare. Shared by the response-signing source
+/// and the delegated TLS signer, so both ride a SINGLE `C_Login`.
+impl LoginSessionFactory for Pkcs11Token {
+    type Session = LoggedInSession;
+
+    fn open_logged_in(&self) -> Result<LoggedInSession, KeyError> {
+        let handle = self
+            .context
+            .open_logged_in_handle(self.slot, &self.pin)
+            .map_err(|e| KeyError::NotFound(format!("pkcs11: open+login session: {e}")))?;
+        Ok(LoggedInSession {
+            handle,
+            closer: self.context.session_closer(),
+        })
+    }
 }
 
 impl Pkcs11KeySource {
@@ -322,6 +371,14 @@ impl Pkcs11KeySource {
     ///
     /// Every failure maps to a [`KeyError`] with context (fail closed); this never
     /// panics and never substitutes an in-process key.
+    /// `tls_key_label` (issue #59): when `Some(label)`, a SECOND Ed25519 token
+    /// object (distinct from `key_label` — a separate security principal) custodies
+    /// the TLS server key, and a [`Pkcs11TlsSigner`] is opened over it so the TLS
+    /// handshake is signed ON the token (the TLS private key never leaves the
+    /// device, `tls_key_path` is then NOT read from disk). `None` keeps the
+    /// file-backed TLS path. The object-signing label and TLS label are independent:
+    /// neither requires the other, and a label resolving to multiple or non-Ed25519
+    /// objects fails closed at `open` (proven by the live lane).
     #[allow(clippy::too_many_arguments)]
     pub fn open(
         module_path: &str,
@@ -331,21 +388,53 @@ impl Pkcs11KeySource {
         tls_cert_path: &str,
         tls_key_path: &str,
         client_ca_path: &str,
+        tls_key_label: Option<&str>,
     ) -> Result<Self, KeyError> {
         // Load the module and C_Initialize with OS locking (CKF_OS_LOCKING_OK)
         // through the owned safe wrapper over the raw cryptoki-sys FFI bindings.
         let context = Pkcs11Context::load_and_initialize(module_path).map_err(|e| {
             KeyError::NotFound(format!("pkcs11: load+initialize module '{module_path}': {e}"))
         })?;
-
         let slot = find_token_slot(&context, token_label)?;
-        let pin = Zeroizing::new(pin.to_string());
 
-        let source = Pkcs11KeySource {
+        // The ONE shared, logged-in token. Both the response-signing key object and
+        // the TLS key object are reached over this single login (PKCS#11 login is
+        // per-token-per-application — a second independent `C_Login` on the same
+        // token would be `CKR_USER_ALREADY_LOGGED_IN`).
+        let token = Arc::new(Pkcs11Token {
+            session: AmortizedSession::new(),
             context,
             slot,
-            pin,
-            key_label: key_label.to_string(),
+            pin: Zeroizing::new(pin.to_string()),
+        });
+
+        // Prove, at construction, that the PIN logs in and BOTH response-signing key
+        // objects exist — a misconfiguration fails closed at startup, not on the
+        // first signed response. This primes the shared login the whole process
+        // reuses (the one login every later op — response AND TLS — rides).
+        let key_label = key_label.to_string();
+        token.session.with_session(token.as_ref(), |logged_in| {
+            let view = token.context.with_handle(logged_in.handle);
+            find_key(&view, &key_label, ObjectClass::Private)?;
+            find_key(&view, &key_label, ObjectClass::Public)?;
+            Ok::<(), SessionOpError>(())
+        })?;
+
+        // Issue #59: a configured TLS-key label custodies the TLS server key in a
+        // SEPARATE token object (a distinct security principal — independent of the
+        // object-signing key, neither requiring the other). The signer shares this
+        // token (same module + same login) but signs with the TLS-key label.
+        // Constructing it here proves at startup that the TLS key object is a SINGLE
+        // Ed25519 object (fail closed on zero/multiple/non-Ed25519).
+        let tls_signer = match tls_key_label {
+            Some(label) => Some(Arc::new(Pkcs11TlsSigner::open(token.clone(), label)?)),
+            None => None,
+        };
+
+        Ok(Pkcs11KeySource {
+            token,
+            tls_signer,
+            key_label,
             tls: FileKeySource {
                 // The token custodies the response-signing key, so this inner
                 // file source's signing-key path is never read; give it the TLS
@@ -356,38 +445,6 @@ impl Pkcs11KeySource {
                 tls_key_path: tls_key_path.to_string(),
                 client_ca_path: client_ca_path.to_string(),
             },
-            session: AmortizedSession::new(),
-        };
-
-        // Prove, at construction, that the PIN logs in and BOTH key objects exist
-        // — so a misconfiguration fails closed at startup rather than on the first
-        // signed response. This runs through the amortized session, so it ALSO
-        // primes the cache: the one login here is the login every later op reuses.
-        source.session.with_session(&source, |logged_in| {
-            let view = source.context.with_handle(logged_in.handle);
-            find_key(&view, &source.key_label, ObjectClass::Private)?;
-            find_key(&view, &source.key_label, ObjectClass::Public)?;
-            Ok::<(), SessionOpError>(())
-        })?;
-
-        Ok(source)
-    }
-}
-
-/// The real source opens ONE logged-in session per [`open_logged_in`] call —
-/// exactly the login that [`AmortizedSession`] makes rare. The returned
-/// [`LoggedInSession`] owns its raw handle and closes it on retirement.
-impl LoginSessionFactory for Pkcs11KeySource {
-    type Session = LoggedInSession;
-
-    fn open_logged_in(&self) -> Result<LoggedInSession, KeyError> {
-        let handle = self
-            .context
-            .open_logged_in_handle(self.slot, &self.pin)
-            .map_err(|e| KeyError::NotFound(format!("pkcs11: open+login session: {e}")))?;
-        Ok(LoggedInSession {
-            handle,
-            closer: self.context.session_closer(),
         })
     }
 }
@@ -479,14 +536,29 @@ fn raw_ed25519_point(ec_point: &[u8]) -> Result<[u8; ED25519_PUBLIC_KEY_LEN], Ke
     Ok(bytes)
 }
 
+/// Build the RFC 8410 Ed25519 `SubjectPublicKeyInfo` DER from a token's raw
+/// `CKA_EC_POINT` (issue #59, ADR-MCPS-028 §G). The point is first normalized to
+/// the bare 32-byte Edwards point (stripping a DER `OCTET STRING` wrapper if the
+/// module returned one), then prefixed with the shared 12-byte RFC 8410 Ed25519
+/// SPKI header used by the KMS public-key path — so the result feeds the same
+/// [`crate::kms_keysource::ed25519_raw_point_from_spki`] guard that the validated
+/// delegated-TLS build path (#58) uses to fail closed on a cert/key mismatch. A
+/// wrong-length / non-Ed25519 point fails closed via [`raw_ed25519_point`].
+fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
+    let raw = raw_ed25519_point(ec_point)?;
+    let mut der = crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec();
+    der.extend_from_slice(&raw);
+    Ok(der)
+}
+
 /// Signs over the token (`C_Sign` with `CKM_EDDSA`) — the private key never
 /// leaves the device — and reads the exportable public point for verification.
 impl ResponseSigner for Pkcs11KeySource {
     fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
         // Run the find+sign through the AMORTIZED logged-in session (M16): the
         // login is reused; only a transient session fault triggers ONE re-login.
-        self.session.with_session(self, |logged_in| {
-            let view = self.context.with_handle(logged_in.handle);
+        self.token.session.with_session(self.token.as_ref(), |logged_in| {
+            let view = self.token.context.with_handle(logged_in.handle);
             let private = find_key(&view, &self.key_label, ObjectClass::Private)?;
             // CKM_EDDSA over the raw preimage (NO pre-hash), matching MCP-S's
             // direct Ed25519 signing rule. The token returns the raw 64-byte sig.
@@ -509,8 +581,8 @@ impl ResponseSigner for Pkcs11KeySource {
     }
 
     fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-        self.session.with_session(self, |logged_in| {
-            let view = self.context.with_handle(logged_in.handle);
+        self.token.session.with_session(self.token.as_ref(), |logged_in| {
+            let view = self.token.context.with_handle(logged_in.handle);
             let public = find_key(&view, &self.key_label, ObjectClass::Public)?;
             let ec_point = view.get_ec_point(public).map_err(|e| {
                 classify_op_error(e, |e| {
@@ -543,16 +615,168 @@ impl KeySource for Pkcs11KeySource {
     fn client_ca_roots(&self) -> Result<Vec<CertificateDer<'static>>, KeyError> {
         self.tls.client_ca_roots()
     }
+
+    /// Issue #59 (ADR-MCPS-028 §G): when a TLS-key label was configured the TLS
+    /// handshake is DELEGATED to the token-resident TLS key, so the proxy drives the
+    /// handshake signature through the device and NEVER reads an exported TLS key
+    /// from disk. `None` (no TLS-key label) preserves the file-backed TLS path. The
+    /// validated build path (#58) feeds this signer's `tls_public_key_spki_der` into
+    /// the cert↔signer match check, failing closed before any server starts.
+    fn tls_delegated_signer(&self) -> Option<Arc<dyn RawEd25519TlsSigner>> {
+        self.tls_signer
+            .clone()
+            .map(|signer| signer as Arc<dyn RawEd25519TlsSigner>)
+    }
+}
+
+/// A PKCS#11-backed DELEGATED TLS handshake signer (issue #59, ADR-MCPS-028 §G):
+/// the Ed25519 TLS *server* key lives on the token as a SEPARATE object (a distinct
+/// security principal from the response-signing key) and is exercised ONLY via
+/// `C_Sign` with `CKM_EDDSA` — the TLS private key never leaves the device. rustls
+/// drives the handshake signature through [`RawEd25519TlsSigner::sign_tls_ed25519`];
+/// the (exportable) TLS public point feeds [`RawEd25519TlsSigner::tls_public_key_spki_der`]
+/// so the validated build path (#58) fails closed on a cert/key mismatch.
+///
+/// This signer SHARES the owning [`Pkcs11KeySource`]'s [`Pkcs11Token`] via `Arc` —
+/// one `C_Initialize` and one amortized `C_Login` per process — and signs with the
+/// TLS-key label. It is an independent signing PRINCIPAL (a separate token object,
+/// ADR-MCPS-028 §G) that rides the same module + login as the response-signing key.
+/// (The ADR allows the TLS key to carry distinct PKCS#11 auth; the CLI wires the
+/// same token PIN. A future flag could route a separate credential without changing
+/// the `RawEd25519TlsSigner` surface.)
+pub struct Pkcs11TlsSigner {
+    /// The shared, logged-in token (see [`Pkcs11Token`]). All TLS handshake signs and
+    /// public-key reads go through its one amortized login.
+    token: Arc<Pkcs11Token>,
+    /// The CKA_LABEL of the Ed25519 TLS PRIVATE key object (used via `C_Sign` only).
+    tls_key_label: String,
+}
+
+// `Pkcs11TlsSigner` is `Send + Sync` automatically: its only fields are an
+// `Arc<Pkcs11Token>` (the token is `Send + Sync` — see its `unsafe impl` above) and
+// a `String`. rustls requires the delegated `RawEd25519TlsSigner` to be `Send + Sync`,
+// which this satisfies without a further `unsafe impl`.
+
+impl Pkcs11TlsSigner {
+    /// Bind to the named Ed25519 TLS key on the shared `token`, proving at
+    /// construction that BOTH the PRIVATE and PUBLIC TLS key objects exist, are
+    /// Ed25519, and are UNAMBIGUOUS — a misconfigured TLS credential fails closed
+    /// here, before any server starts, never at the first handshake. Every failure
+    /// maps to a [`KeyError`] with context; this never panics and never fabricates a
+    /// signature or public key.
+    fn open(token: Arc<Pkcs11Token>, tls_key_label: &str) -> Result<Self, KeyError> {
+        let tls_key_label = tls_key_label.to_string();
+
+        // Prove BOTH TLS key objects exist + are single Ed25519 objects (fail closed
+        // on zero/multiple/non-Ed25519), reusing the token's already-primed login.
+        token.session.with_session(token.as_ref(), |logged_in| {
+            let view = token.context.with_handle(logged_in.handle);
+            find_key(&view, &tls_key_label, ObjectClass::Private)?;
+            find_key(&view, &tls_key_label, ObjectClass::Public)?;
+            Ok::<(), SessionOpError>(())
+        })?;
+
+        Ok(Pkcs11TlsSigner {
+            token,
+            tls_key_label,
+        })
+    }
+}
+
+/// Signs the raw TLS handshake transcript ON the token (`C_Sign` / `CKM_EDDSA`) and
+/// exports the TLS public point as an RFC 8410 Ed25519 SPKI — the TLS private key
+/// never leaves the device. Runs through the SHARED token's one amortized login.
+impl RawEd25519TlsSigner for Pkcs11TlsSigner {
+    fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
+        self.token.session.with_session(self.token.as_ref(), |logged_in| {
+            let view = self.token.context.with_handle(logged_in.handle);
+            let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;
+            // CKM_EDDSA over the raw handshake transcript (NO pre-hash): exactly the
+            // PureEdDSA signature rustls expects for SignatureScheme::ED25519. The
+            // token returns the raw 64-byte signature; the delegated signer wrapper
+            // (delegated_tls.rs) enforces the 64-byte length before it hits the wire.
+            let signature = view.sign_eddsa(private, message).map_err(|e| {
+                classify_op_error(e, |e| {
+                    KeyError::Malformed(format!("pkcs11 tls: C_Sign (CKM_EDDSA): {e}"))
+                })
+            })?;
+            if signature.len() != ED25519_SIGNATURE_LEN {
+                return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
+                    "pkcs11 tls: token returned a {}-byte signature; expected \
+                     {ED25519_SIGNATURE_LEN}",
+                    signature.len()
+                ))));
+            }
+            Ok(signature)
+        })
+    }
+
+    fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
+        self.token.session.with_session(self.token.as_ref(), |logged_in| {
+            let view = self.token.context.with_handle(logged_in.handle);
+            let public = find_key(&view, &self.tls_key_label, ObjectClass::Public)?;
+            let ec_point = view.get_ec_point(public).map_err(|e| {
+                classify_op_error(e, |e| {
+                    KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
+                })
+            })?;
+            // Build the RFC 8410 SPKI from the raw point; a wrong-length / non-Ed25519
+            // point fails closed (intrinsic — not a session fault).
+            ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
 
+    use super::ed25519_spki_from_ec_point;
     use super::AmortizedSession;
     use super::KeyError;
     use super::LoginSessionFactory;
     use super::SessionOpError;
+    use super::ED25519_PUBLIC_KEY_LEN;
+
+    /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
+    /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`
+    /// (12-byte prefix + 32-byte point = 44 bytes) AND it round-trips through the
+    /// SAME guard the validated delegated-TLS build path (#58) uses, yielding the
+    /// original 32-byte point. Both the bare-32-byte and DER-OCTET-STRING-wrapped
+    /// token encodings are accepted; a wrong-length point fails closed.
+    #[test]
+    fn tls_spki_is_well_formed_rfc8410_and_round_trips() {
+        let point = [7u8; ED25519_PUBLIC_KEY_LEN];
+
+        // Bare 32-byte point (some modules) and OCTET-STRING-wrapped (PKCS#11 v3)
+        // must both yield the identical 44-byte RFC 8410 SPKI.
+        let wrapped: Vec<u8> = {
+            let mut v = vec![0x04, ED25519_PUBLIC_KEY_LEN as u8];
+            v.extend_from_slice(&point);
+            v
+        };
+        let spki_bare = ed25519_spki_from_ec_point(&point).expect("bare point → SPKI");
+        let spki_wrapped = ed25519_spki_from_ec_point(&wrapped).expect("wrapped point → SPKI");
+        assert_eq!(spki_bare, spki_wrapped, "both encodings yield the same SPKI");
+        assert_eq!(spki_bare.len(), 44, "RFC 8410 Ed25519 SPKI is 12 + 32 bytes");
+        assert_eq!(
+            &spki_bare[..super::super::kms_keysource::ED25519_SPKI_PREFIX.len()],
+            &super::super::kms_keysource::ED25519_SPKI_PREFIX,
+            "the 12-byte RFC 8410 prefix is present"
+        );
+
+        // The exported SPKI feeds the SAME parser the #58 validated build path uses;
+        // it must recover exactly the original raw point (cert↔signer match basis).
+        let recovered = crate::kms_keysource::ed25519_raw_point_from_spki(&spki_bare)
+            .expect("exported SPKI parses under the #58 delegated-build guard");
+        assert_eq!(recovered, point, "round-trips to the original Edwards point");
+
+        // Fail closed on a wrong-length point (cannot be a valid Ed25519 key).
+        assert!(matches!(
+            ed25519_spki_from_ec_point(&[0u8; 31]),
+            Err(KeyError::Malformed(_))
+        ));
+    }
 
     /// A fake logged-in session standing in for a Cryptoki `Session` — carries the
     /// login generation that produced it so a test can prove the SAME session
