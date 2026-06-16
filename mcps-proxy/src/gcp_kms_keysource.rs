@@ -45,6 +45,12 @@ const DEFAULT_KMS_ENDPOINT: &str = "https://cloudkms.googleapis.com";
 const DEFAULT_METADATA_ENDPOINT: &str = "http://metadata.google.internal";
 /// Refresh a metadata-server token this long before its stated expiry.
 const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(60);
+/// MANDATORY per-request network timeout. The serve loop is blocking, so an
+/// unbounded fetch (stalled connect/TLS handshake) would wedge the serving thread
+/// indefinitely; every `ureq` call below carries this (mirrors the AWS/OCSP paths).
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound on an HTTP *error* body read for diagnostics — never an unbounded read.
+const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
 
 /// GCP Cloud KMS connection configuration. `key_version_name` is the full resource
 /// path `projects/P/locations/L/keyRings/R/cryptoKeys/K/cryptoKeyVersions/V`;
@@ -118,7 +124,13 @@ impl GcpAccessTokenSource for MetadataServerTokenSource {
             "{}/computeMetadata/v1/instance/service-account/default/token",
             self.endpoint
         );
-        let body = match self.agent.get(&url).set("Metadata-Flavor", "Google").call() {
+        let body = match self
+            .agent
+            .get(&url)
+            .set("Metadata-Flavor", "Google")
+            .timeout(NETWORK_TIMEOUT)
+            .call()
+        {
             Ok(resp) => {
                 let mut buf = String::new();
                 resp.into_reader()
@@ -187,11 +199,13 @@ impl UreqGcpClient {
         }
     }
 
-    fn bearer(&self) -> Result<String, KeyError> {
-        Ok(format!(
+    /// The `Authorization` header value, held in `Zeroizing` so the bearer token is
+    /// scrubbed from memory on drop (repo secret-hygiene posture).
+    fn bearer(&self) -> Result<Zeroizing<String>, KeyError> {
+        Ok(Zeroizing::new(format!(
             "Bearer {}",
             self.token_source.access_token()?.as_str()
-        ))
+        )))
     }
 }
 
@@ -201,13 +215,14 @@ impl GcpKmsTransport for UreqGcpClient {
         match self
             .agent
             .get(&self.public_key_url)
-            .set("Authorization", &auth)
+            .set("Authorization", auth.as_str())
+            .timeout(NETWORK_TIMEOUT)
             .call()
         {
             Ok(resp) => read_body(resp),
             Err(ureq::Error::Status(code, resp)) => Err(KeyError::NotFound(format!(
                 "gcp-kms: getPublicKey HTTP {code}: {}",
-                resp.into_string().unwrap_or_default()
+                read_error_body(resp)
             ))),
             Err(e) => Err(KeyError::NotFound(format!("gcp-kms: getPublicKey: {e}"))),
         }
@@ -218,14 +233,15 @@ impl GcpKmsTransport for UreqGcpClient {
         match self
             .agent
             .post(&self.sign_url)
-            .set("Authorization", &auth)
+            .set("Authorization", auth.as_str())
             .set("Content-Type", "application/json")
+            .timeout(NETWORK_TIMEOUT)
             .send_bytes(body)
         {
             Ok(resp) => read_body(resp),
             Err(ureq::Error::Status(code, resp)) => Err(KeyError::NotFound(format!(
                 "gcp-kms: asymmetricSign HTTP {code}: {}",
-                resp.into_string().unwrap_or_default()
+                read_error_body(resp)
             ))),
             Err(e) => Err(KeyError::NotFound(format!("gcp-kms: asymmetricSign: {e}"))),
         }
@@ -239,6 +255,18 @@ fn read_body(resp: ureq::Response) -> Result<Vec<u8>, KeyError> {
         .read_to_end(&mut buf)
         .map_err(|e| KeyError::NotFound(format!("gcp-kms: read response: {e}")))?;
     Ok(buf)
+}
+
+/// Read a bounded, lossy string from an HTTP *error* response body (diagnostics
+/// only). An emulator/overridden endpoint could otherwise return an arbitrarily
+/// large body; cap it rather than `into_string()`'s unbounded read.
+fn read_error_body(resp: ureq::Response) -> String {
+    let mut buf = Vec::new();
+    let _ = resp
+        .into_reader()
+        .take(MAX_ERROR_BODY_BYTES)
+        .read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 /// The `asymmetricSign` request body for an Ed25519 (`EC_SIGN_ED25519`) key — raw
