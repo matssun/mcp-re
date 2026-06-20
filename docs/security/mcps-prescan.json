@@ -1,0 +1,108 @@
+{
+  "service_src": "/Users/mats/dev/mcps",
+  "languages": [
+    "rust"
+  ],
+  "verdict": "GO",
+  "counts": {
+    "block": 0,
+    "warn": 3,
+    "py_files": 0,
+    "rs_files": 97,
+    "crates": 10
+  },
+  "roles": {
+    "test": 51,
+    "library": 88,
+    "comproot": 9,
+    "script": 1
+  },
+  "crates": {
+    "mcps-conformance": {
+      "is_bin": true,
+      "is_demo": false,
+      "has_serve": true,
+      "has_verify": true
+    },
+    "mcps-demo-fileserver": {
+      "is_bin": true,
+      "is_demo": true,
+      "has_serve": false,
+      "has_verify": false
+    },
+    "mcps-host": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": false,
+      "has_verify": true
+    },
+    "mcps-core": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": false,
+      "has_verify": true
+    },
+    "mcps-proxy": {
+      "is_bin": true,
+      "is_demo": false,
+      "has_serve": true,
+      "has_verify": true
+    },
+    "mcps-demo-server": {
+      "is_bin": true,
+      "is_demo": true,
+      "has_serve": false,
+      "has_verify": false
+    },
+    "mcps-transport": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": true,
+      "has_verify": false
+    },
+    "mcps-demo": {
+      "is_bin": true,
+      "is_demo": true,
+      "has_serve": true,
+      "has_verify": true
+    },
+    "mcps-test-paths": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": false,
+      "has_verify": false
+    },
+    "mcps-policy": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": false,
+      "has_verify": true
+    }
+  },
+  "findings": [
+    {
+      "kind": "verify-manual-verify",
+      "severity": "warn",
+      "symbol": "mcps-conformance",
+      "file": "mcps-conformance/mcps-conformance/src/fixtures.rs",
+      "line": null,
+      "detail": "Serving surface and a verification call both exist, but Stage 1 cannot prove the verify gate is on every request path and unbypassable. Stage 2 must confirm."
+    },
+    {
+      "kind": "verify-manual-verify",
+      "severity": "warn",
+      "symbol": "mcps-demo",
+      "file": "mcps-demo/mcps-demo/src/e2e_persistent_flow.rs",
+      "line": null,
+      "detail": "Serving surface and a verification call both exist, but Stage 1 cannot prove the verify gate is on every request path and unbypassable. Stage 2 must confirm."
+    },
+    {
+      "kind": "verify-manual-verify",
+      "severity": "warn",
+      "symbol": "mcps-proxy",
+      "file": "mcps-proxy/mcps-proxy/src/main.rs",
+      "line": null,
+      "detail": "Serving surface and a verification call both exist, but Stage 1 cannot prove the verify gate is on every request path and unbypassable. Stage 2 must confirm."
+    }
+  ]
+}

@@ -228,8 +228,9 @@ fn write_value(value: &JcsValue, depth: usize, out: &mut String) -> Result<(), M
             // treatment above (MCPS-092). `parse()`/`from_serde_value` cannot
             // produce duplicates, but a caller hand-building
             // `JcsValue::Object(vec![("a", _), ("a", _)])` otherwise emits the
-            // key twice instead of failing closed. After the stable sort, equal
-            // keys are adjacent, so a single adjacent-pair scan detects them.
+            // key twice instead of failing closed. Sorting by key (stability is
+            // immaterial here) puts equal keys adjacent, so a single adjacent-pair
+            // scan detects them.
             if sorted.windows(2).any(|pair| pair[0].0 == pair[1].0) {
                 return Err(McpsError::CanonicalizationFailed);
             }

@@ -121,8 +121,10 @@ enum Binding {
 /// Deterministic, [`BTreeMap`]-backed reference [`TrustResolver`] for tests and
 /// conformance vectors (MCPS_SPEC §6).
 ///
-/// Keyed by the `"signer#key_id"` string. Has no operational-failure path: it
-/// only ever returns active bindings or [`TrustResolverError::NotFound`] /
+/// Keyed by a collision-safe, length-prefixed encoding of the `(signer, key_id)`
+/// pair (see `compose_key`) — NOT a naive `"signer#key_id"` join, which is not
+/// injective when a field contains the `#` delimiter. Has no operational-failure
+/// path: it only ever returns active bindings or [`TrustResolverError::NotFound`] /
 /// [`TrustResolverError::Revoked`]. (To exercise the
 /// [`McpsError::TrustResolverUnavailable`] mapping, an always-unavailable test
 /// resolver is used instead.)

@@ -247,17 +247,22 @@ pub fn verify_response(
     let value: Value =
         serde_json::from_slice(raw_bytes).map_err(|_| McpsError::CanonicalizationFailed)?;
 
-    // Step 1 — JCS-safe domain on the ORIGINAL raw bytes.
-    canonicalize(raw_bytes)?;
-
-    // Explicit structural rejects, mirroring `verify_request`. An array/batch or
-    // notification-shaped response already fails closed at envelope location
-    // (`locate_envelope` returns MissingEnvelope), but rejecting them up front
-    // surfaces the precise wire token (BatchForbidden / NotificationForbidden)
-    // instead of the incidental MissingEnvelope, keeping the request/response
+    // Explicit structural rejects FIRST, mirroring `verify_request`. An array/batch
+    // or notification-shaped response already fails closed at envelope location
+    // (`locate_envelope` returns MissingEnvelope), but rejecting them up front —
+    // before the raw-bytes JCS pass — surfaces the precise wire token
+    // (BatchForbidden / NotificationForbidden) instead of an incidental
+    // CanonicalizationFailed / MissingEnvelope, keeping the request/response
     // taxonomy symmetric.
+
+    // Step 1 — reject a top-level array (batch).
     reject_batch(&value)?;
+
+    // Step 2 — reject a notification (no id).
     reject_notification(&value)?;
+
+    // Step 3 — JCS-safe domain on the ORIGINAL raw bytes (duplicate keys etc.).
+    canonicalize(raw_bytes)?;
 
     // Steps 2-3 — locate / deny-unknown-fields the response envelope.
     let envelope = extract_response_envelope(&value)?;
