@@ -51,18 +51,22 @@
 //!   step 7. Both tokens are reachable and exercised by the constraints
 //!   deserialization tests (absent) and the pipeline tests (present-but-empty).
 //!
-//! ## verify_response order (MCPS_SPEC §9, verify_response steps 1-7)
-//! 1. JCS-safe domain -> [`McpsError::CanonicalizationFailed`].
-//! 2. (steps 2-3) Locate / deny-unknown-fields the response envelope ->
+//! ## verify_response order (MCPS_SPEC §9 verify_response, with the structural
+//! batch/notification rejects mirrored up front from `verify_request`)
+//! 1. Parse JSON; reject a top-level array (batch) -> [`McpsError::BatchForbidden`].
+//! 2. Reject a notification (no `id`) -> [`McpsError::NotificationForbidden`].
+//! 3. JCS-safe domain on the ORIGINAL raw bytes ->
+//!    [`McpsError::CanonicalizationFailed`].
+//! 4-5. Locate / deny-unknown-fields the response envelope ->
 //!    [`McpsError::MissingEnvelope`] / [`McpsError::UnknownEnvelopeField`].
-//! 4. `signature.alg == "Ed25519"` -> else [`McpsError::ResponseSigInvalid`].
-//! 5. Resolve `(server_signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
+//! 6. `signature.alg == "Ed25519"` -> else [`McpsError::ResponseSigInvalid`].
+//! 7. Resolve `(server_signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
 //!    [`McpsError::TrustResolverUnavailable`].
-//! 6. Build the response preimage and verify Ed25519 ->
+//! 8. Build the response preimage and verify Ed25519 ->
 //!    [`McpsError::ResponseSigInvalid`].
-//! 7. `response.request_hash == expected_request_hash` -> else
+//! 9. `response.request_hash == expected_request_hash` -> else
 //!    [`McpsError::ResponseHashMismatch`]. Vector 4B proves this fires even when
-//!    the signature (step 6) is valid over a wrong `request_hash`.
+//!    the signature (step 8) is valid over a wrong `request_hash`.
 
 use serde_json::Value;
 
@@ -264,20 +268,20 @@ pub fn verify_response(
     // Step 3 — JCS-safe domain on the ORIGINAL raw bytes (duplicate keys etc.).
     canonicalize(raw_bytes)?;
 
-    // Steps 2-3 — locate / deny-unknown-fields the response envelope.
+    // Steps 4-5 — locate / deny-unknown-fields the response envelope.
     let envelope = extract_response_envelope(&value)?;
 
-    // Step 4 — signature.alg == Ed25519 (else ResponseSigInvalid).
+    // Step 6 — signature.alg == Ed25519 (else ResponseSigInvalid).
     if envelope.signature.alg != SIG_ALG_ED25519 {
         return Err(McpsError::ResponseSigInvalid);
     }
 
-    // Step 5 — resolve (server_signer, key_id) -> key.
+    // Step 7 — resolve (server_signer, key_id) -> key.
     let key = resolver
         .resolve(&envelope.server_signer, &envelope.signature.key_id)
         .map_err(McpsError::from)?;
 
-    // Step 6 — canonicalize (signature.value removed) and verify Ed25519.
+    // Step 8 — build the response preimage (signature.value removed) and verify Ed25519.
     let preimage = response_signing_preimage(&value)?;
     let signature_value = envelope
         .signature
@@ -291,7 +295,7 @@ pub fn verify_response(
         McpsError::ResponseSigInvalid,
     )?;
 
-    // Step 7 — request_hash binding (fires even with a valid signature).
+    // Step 9 — request_hash binding (fires even with a valid signature).
     if envelope.request_hash != expected_request_hash {
         return Err(McpsError::ResponseHashMismatch);
     }
