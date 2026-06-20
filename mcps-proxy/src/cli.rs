@@ -209,6 +209,19 @@ pub struct Config {
     pub reverse_proxy_header_format: ReverseProxyHeaderFormat,
     /// Authorization-policy selection.
     pub authz: AuthzKind,
+    /// Offline policy-layer revocation deny-list paths (ADR-MCPS-013). Each
+    /// `--revocation-list` value (comma-separated and/or repeated) adds a file of
+    /// newline-delimited revoked `revocation_id`s. Loaded once at startup (OFFLINE
+    /// only — restart to update). Empty means no grant deny-list is configured;
+    /// under `--authz reference` that requires the explicit `allow_empty_revocation`
+    /// acknowledgement (otherwise the proxy refuses to start — fail closed).
+    pub revocation_list_paths: Vec<String>,
+    /// Explicit acknowledgement that `--authz reference` may run with NO policy
+    /// revocation deny-list, i.e. no signed-authorization grant can ever be revoked
+    /// (fail-open). Default `false`: such a configuration is refused at parse time.
+    /// Mirrors the `crl_allow_unknown_status` / `ocsp_soft_fail` relaxations — when
+    /// set it is also a strict-production violation.
+    pub allow_empty_revocation: bool,
     /// Inner-server process model: one-shot (default) or persistent (MCPS-066).
     pub inner_mode: InnerModeKind,
     /// Allow the (dev/CI-only) environment-variable key source in this run.
@@ -352,6 +365,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--reverse-proxy-identity-header",
     "--reverse-proxy-header-format",
     "--authz",
+    "--revocation-list",
     "--inner-mode",
     "--max-header-bytes",
     "--max-body-bytes",
@@ -411,6 +425,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut reverse_proxy_identity_header: Option<String> = None;
     let mut reverse_proxy_header_format = ReverseProxyHeaderFormat::Xfcc;
     let mut authz = AuthzKind::Off;
+    // ADR-MCPS-013 policy-layer revocation: zero or more offline deny-list files,
+    // plus an explicit acknowledgement to run authz with an empty deny-list.
+    let mut revocation_list_paths: Vec<String> = Vec::new();
+    let mut allow_empty_revocation = false;
     // Inner process model: one-shot by default (preserves the existing behavior
     // for the one-shot-shaped fileserver); persistent fronts a long-lived server.
     let mut inner_mode = InnerModeKind::OneShot;
@@ -491,6 +509,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             i += 1;
             continue;
         }
+        // Valueless boolean flag (ADR-MCPS-013): explicitly accept running
+        // `--authz reference` with NO policy revocation deny-list (no grant can be
+        // revoked — fail-open). Without it, that configuration is refused below.
+        if flag == "--allow-empty-revocation" {
+            allow_empty_revocation = true;
+            i += 1;
+            continue;
+        }
         // Valueless boolean flag (ADR-MCPS-028 §C): use the GCE/GKE metadata server
         // (workload identity) for the GCP Cloud KMS OAuth2 token instead of an
         // operator-supplied `MCPS_GCP_ACCESS_TOKEN`.
@@ -565,6 +591,19 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             }
             "--trust" => trust_path = Some(value.clone()),
+            // ADR-MCPS-013: repeatable and/or comma-separated revocation deny-list
+            // file paths. An empty segment (e.g. a trailing comma) is rejected so a
+            // typo cannot silently load zero ids and quietly disable revocation.
+            "--revocation-list" => {
+                for segment in value.split(',') {
+                    if segment.is_empty() {
+                        return Err(format!(
+                            "invalid --revocation-list '{value}' (empty path segment)"
+                        ));
+                    }
+                    revocation_list_paths.push(segment.to_string());
+                }
+            }
             // #4030 online OCSP revocation mode.
             "--client-ocsp" => {
                 client_ocsp = match value.as_str() {
@@ -1027,6 +1066,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         reverse_proxy_identity_header,
         reverse_proxy_header_format,
         authz,
+        revocation_list_paths,
+        allow_empty_revocation,
         inner_mode,
         allow_env_keysource,
         pkcs11_module,
@@ -1049,6 +1090,26 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         strict,
         sandbox_explicitly_off,
     };
+
+    // ADR-MCPS-013 fail-closed revocation posture: `--authz reference` enforces
+    // signed-authorization grants, each carrying a `revocation_id`. With no
+    // revocation deny-list the proxy can never revoke a leaked-but-unexpired grant
+    // — a SILENT fail-open. Refuse to start unless the operator either supplies a
+    // deny-list (`--revocation-list`) or EXPLICITLY accepts the no-revocation
+    // posture (`--allow-empty-revocation`). This guard is unconditional (not just
+    // under --strict): the silent illusion of revocation must never ship.
+    if config.authz == AuthzKind::Reference
+        && config.revocation_list_paths.is_empty()
+        && !config.allow_empty_revocation
+    {
+        return Err(
+            "--authz reference enforces signed-authorization grants but no revocation \
+             deny-list is configured, so NO grant could ever be revoked (silent fail-open); \
+             supply --revocation-list <file>, or explicitly accept the no-revocation posture \
+             with --allow-empty-revocation"
+                .to_string(),
+        );
+    }
 
     // MCPS-3842 ("reject, not warn"): under strict/production posture, refuse to
     // start with any insecure-posture configuration that is otherwise only
@@ -1223,6 +1284,18 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
             "--crl-allow-unknown-status admits a client cert whose revocation status cannot be \
              determined from the configured CRLs (fail-open); production must fail closed \
              (omit --crl-allow-unknown-status)"
+                .to_string(),
+        );
+    }
+    // ADR-MCPS-013 (M12 analogue): running authz with an EXPLICITLY empty revocation
+    // deny-list means no leaked-but-unexpired grant can ever be revoked — a fail-open
+    // posture. Allowed (with the explicit ack) in dev/non-strict; rejected in
+    // production, mirroring the CRL/OCSP relaxations above.
+    if config.authz == AuthzKind::Reference && config.allow_empty_revocation {
+        violations.push(
+            "--allow-empty-revocation runs --authz reference with no revocation deny-list, \
+             so a leaked-but-unexpired authorization grant can never be revoked (fail-open); \
+             production must supply --revocation-list <file>"
                 .to_string(),
         );
     }
@@ -1670,6 +1743,35 @@ pub fn load_client_crls(
     Ok(crls)
 }
 
+/// Load offline policy-layer revocation ids (ADR-MCPS-013) from one or more
+/// newline-delimited files. Each non-blank, non-`#`-comment line (trimmed) is one
+/// opaque `revocation_id`. Mirrors [`load_client_crls`]: OFFLINE only (loaded once
+/// at startup; restart to update) and FAIL CLOSED — a missing/unreadable file, or
+/// a file that yields zero ids, is an error rather than a silently empty deny-list
+/// that would quietly disable revocation.
+pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
+    let mut ids: Vec<String> = Vec::new();
+    for path in paths {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("revocation list {path}: {e}"))?;
+        let before = ids.len();
+        for line in text.lines() {
+            let id = line.trim();
+            if id.is_empty() || id.starts_with('#') {
+                continue;
+            }
+            ids.push(id.to_string());
+        }
+        if ids.len() == before {
+            return Err(format!(
+                "revocation list {path}: contains no revocation ids (fail closed rather \
+                 than load an empty deny-list)"
+            ));
+        }
+    }
+    Ok(ids)
+}
+
 /// Build the ONLINE OCSP checker selected by `--client-ocsp require` (#4030),
 /// or `None` when `--client-ocsp off` (the default). Compiled ONLY under the
 /// `online_ocsp` feature; `parse_args` already fails closed for `require` in a
@@ -1933,6 +2035,7 @@ impl InnerServer for SubprocessInner {
 
 #[cfg(test)]
 mod tests {
+    use super::load_revocation_list;
     use super::load_trust;
     use super::parse_args;
     use super::strict_violations;
@@ -3573,6 +3676,116 @@ mod tests {
             config.client_crl_paths,
             vec!["/a.crl".to_string(), "/b.crl".to_string(), "/c.crl".to_string()]
         );
+    }
+
+    // --- ADR-MCPS-013 policy-layer revocation (fail-closed) ------------------
+
+    #[test]
+    fn authz_off_does_not_require_a_revocation_list() {
+        // The default (authz off) wires no policy enforcement, so revocation is
+        // moot — the guard must not spuriously demand a deny-list.
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(config.authz, AuthzKind::Off);
+        assert!(config.revocation_list_paths.is_empty());
+        assert!(!config.allow_empty_revocation);
+    }
+
+    #[test]
+    fn authz_reference_without_revocation_fails_closed() {
+        // The core fix: enabling authz with no deny-list and no explicit ack is a
+        // silent fail-open and must be REFUSED at parse time.
+        let mut a = minimal();
+        a.splice(0..0, args(&["--authz", "reference"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(
+            err.contains("revocation") && err.contains("--allow-empty-revocation"),
+            "expected a fail-closed revocation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn authz_reference_with_explicit_empty_ack_is_allowed() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--authz", "reference", "--allow-empty-revocation"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.authz, AuthzKind::Reference);
+        assert!(config.allow_empty_revocation);
+        assert!(config.revocation_list_paths.is_empty());
+    }
+
+    #[test]
+    fn authz_reference_with_revocation_list_is_allowed() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--authz", "reference", "--revocation-list", "/etc/mcps/revoked"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.authz, AuthzKind::Reference);
+        assert_eq!(config.revocation_list_paths, vec!["/etc/mcps/revoked".to_string()]);
+        assert!(!config.allow_empty_revocation);
+    }
+
+    #[test]
+    fn parses_comma_separated_revocation_lists() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--authz", "reference", "--revocation-list", "/a,/b,/c"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.revocation_list_paths,
+            vec!["/a".to_string(), "/b".to_string(), "/c".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_revocation_list_segment_is_rejected() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--authz", "reference", "--revocation-list", "/a,,/b"]));
+        assert!(parse_args(&a).unwrap_err().contains("empty path segment"));
+    }
+
+    #[test]
+    fn strict_rejects_explicit_empty_revocation_under_authz_reference() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&["--strict", "--authz", "reference", "--allow-empty-revocation"]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(
+            err.contains("--allow-empty-revocation"),
+            "strict must reject the acknowledged fail-open posture, got: {err}"
+        );
+    }
+
+    #[test]
+    fn load_revocation_list_reads_ids_skipping_blanks_and_comments() {
+        let path = std::env::temp_dir().join(format!("mcps_rev_ok_{}.txt", std::process::id()));
+        std::fs::write(
+            &path,
+            "# revoked grants\ngrant-1\n\n  grant-2  \n# trailing comment\ngrant-3\n",
+        )
+        .expect("write");
+        let ids = load_revocation_list(&[path.to_string_lossy().into_owned()]).expect("load");
+        std::fs::remove_file(&path).ok();
+        assert_eq!(
+            ids,
+            vec!["grant-1".to_string(), "grant-2".to_string(), "grant-3".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_revocation_list_missing_file_fails_closed() {
+        let path = std::env::temp_dir().join(format!("mcps_rev_absent_{}.txt", std::process::id()));
+        std::fs::remove_file(&path).ok();
+        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
+        assert!(err.contains("revocation list"), "got: {err}");
+    }
+
+    #[test]
+    fn load_revocation_list_with_no_ids_fails_closed() {
+        let path = std::env::temp_dir().join(format!("mcps_rev_empty_{}.txt", std::process::id()));
+        std::fs::write(&path, "# only comments\n\n   \n").expect("write");
+        let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.contains("no revocation ids"), "got: {err}");
     }
 
     #[test]

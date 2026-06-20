@@ -161,6 +161,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             "uri_san",
             "--authz",
             "reference",
+            "--allow-empty-revocation",
             // Generous client-cert lifetime ceiling so the bounded (~15y) fixture
             // client cert passes; lifetime ENFORCEMENT (T4) is full_stack_test's job.
             "--max-client-cert-lifetime",

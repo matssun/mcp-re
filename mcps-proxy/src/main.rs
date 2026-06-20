@@ -337,7 +337,28 @@ fn run() -> Result<(), String> {
     if config.authz == AuthzKind::Reference {
         let mut evaluator = PolicyEvaluator::new();
         evaluator.register(Box::new(ReferenceProfile::new()));
-        proxy = proxy.with_policy_enforcement(evaluator, Box::new(InMemoryRevocationSource::new()));
+        // ADR-MCPS-013 policy-layer revocation. `parse_args` has already failed
+        // closed unless a deny-list was supplied or --allow-empty-revocation was
+        // EXPLICITLY given, so reaching here with an empty list is an acknowledged
+        // posture — surfaced loudly at startup so it can never be a silent illusion.
+        let revoked = cli::load_revocation_list(&config.revocation_list_paths)?;
+        let revoked_count = revoked.len();
+        let mut revocation = InMemoryRevocationSource::new();
+        for id in revoked {
+            revocation.revoke(id);
+        }
+        if revoked_count == 0 {
+            eprintln!(
+                "mcps-proxy: WARNING: policy revocation deny-list is EMPTY \
+                 (--allow-empty-revocation) — no authorization grant can be revoked this run"
+            );
+        } else {
+            eprintln!(
+                "mcps-proxy: policy revocation enabled — {revoked_count} revoked grant id(s) \
+                 loaded (OFFLINE static list; restart to update)"
+            );
+        }
+        proxy = proxy.with_policy_enforcement(evaluator, Box::new(revocation));
     }
     if config.binding == BindingKind::Exact {
         proxy = proxy.with_transport_binding(Box::new(ExactMatchBinding::new()));
