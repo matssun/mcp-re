@@ -89,6 +89,7 @@ use x509_ocsp::Request;
 use x509_ocsp::ResponderId;
 use x509_ocsp::SingleResponse;
 use x509_parser::certificate::X509Certificate;
+use x509_parser::time::ASN1Time;
 use x509_parser::extensions::GeneralName;
 use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
@@ -730,7 +731,7 @@ pub fn verify_and_map_response(
     // (1) responder signature + (2) responder identity, against the issuer or a
     // delegated responder cert. Returns the cert whose key verified the response
     // so the identity check can be made against the SAME key.
-    let signer = verify_responder_signature(&basic, issuer_der)?;
+    let signer = verify_responder_signature(&basic, issuer_der, now)?;
     if !responder_id_matches(&basic.tbs_response_data.responder_id, &signer) {
         return Err(OcspError::ResponderIdentityMismatch(
             "responder_id does not match the signing certificate".into(),
@@ -776,6 +777,7 @@ pub fn verify_and_map_response(
 fn verify_responder_signature(
     basic: &BasicOcspResponse,
     issuer_der: &[u8],
+    now: SystemTime,
 ) -> Result<Vec<u8>, OcspError> {
     // The exact bytes the responder signed: DER of tbs_response_data.
     let tbs_der = basic
@@ -802,7 +804,7 @@ fn verify_responder_signature(
             let cert_der = cert
                 .to_der()
                 .map_err(|e| OcspError::SignatureNotVerified(format!("responder cert DER: {e}")))?;
-            if !delegated_responder_is_valid(&cert_der, issuer_der)? {
+            if !delegated_responder_is_valid(&cert_der, issuer_der, now)? {
                 continue;
             }
             if signature_verifies(&cert_der, &sig_alg_der, sig_bytes, &tbs_der)? {
@@ -816,13 +818,33 @@ fn verify_responder_signature(
     ))
 }
 
-/// Whether `cert_der` is a valid delegated OCSP responder for `issuer_der`: it is
-/// signed by the issuer AND carries the `id-kp-OCSPSigning` extended key usage
-/// (RFC 6960 §4.2.2.2). Pure; the cryptographic issuer-signature check is compiled
-/// with the `online_ocsp` module exactly as the response-signature check is.
-fn delegated_responder_is_valid(cert_der: &[u8], issuer_der: &[u8]) -> Result<bool, OcspError> {
+/// Whether `cert_der` is a valid delegated OCSP responder for `issuer_der` at
+/// `now`: it is within its own `notBefore`/`notAfter` validity window AND signed by
+/// the issuer AND carries the `id-kp-OCSPSigning` extended key usage (RFC 6960
+/// §4.2.2.2 / §4.2.2.2.1). Pure; the cryptographic issuer-signature check is
+/// compiled with the `online_ocsp` module exactly as the response-signature check
+/// is.
+fn delegated_responder_is_valid(
+    cert_der: &[u8],
+    issuer_der: &[u8],
+    now: SystemTime,
+) -> Result<bool, OcspError> {
     let (_, cert) = X509Certificate::from_der(cert_der)
         .map_err(|e| OcspError::SignatureNotVerified(format!("delegated cert parse: {e}")))?;
+    // RFC 6960 §4.2.2.2.1: the responder certificate MUST itself be valid at the
+    // response time. Reject an expired or not-yet-valid delegated responder cert
+    // (e.g. a rotated-out signer) — treating it as not-a-valid-responder so no
+    // candidate key verifies, the caller fails closed (status → Unknown → deny),
+    // and a possibly-revoked client is never admitted under a stale signer key.
+    let Some(now_unix) = system_time_to_unix(now) else {
+        return Ok(false);
+    };
+    let Ok(now_asn1) = ASN1Time::from_timestamp(now_unix.as_secs() as i64) else {
+        return Ok(false);
+    };
+    if !cert.validity().is_valid_at(now_asn1) {
+        return Ok(false);
+    }
     // Must declare the id-kp-OCSPSigning EKU (x509-parser surfaces it both as the
     // dedicated `ocsp_signing` flag and in `other`; check both for robustness).
     let has_ocsp_eku = match cert.extended_key_usage() {
@@ -1059,17 +1081,21 @@ pub fn decide_allow(status: CertRevocationStatus, soft_fail: bool) -> bool {
 mod tests {
     use super::build_ocsp_request_der;
     use super::decide_allow;
+    use super::delegated_responder_is_valid;
     use super::extract_ocsp_responder_url;
     use super::map_cert_status;
+    use super::sha1_hash;
     use super::CertRevocationStatus;
     use super::OcspChecker;
 
     use der::asn1::BitString;
     use der::Encode;
     use der::Decode;
+    use rcgen::date_time_ymd;
     use rcgen::CertificateParams;
     use rcgen::CustomExtension;
     use rcgen::DnType;
+    use rcgen::ExtendedKeyUsagePurpose;
     use rcgen::KeyPair;
     use spki::AlgorithmIdentifierOwned;
     use x509_cert::Certificate;
@@ -1095,6 +1121,121 @@ mod tests {
             .push(DnType::CommonName, "mcps-test-ca");
         let cert = params.self_signed(&key).expect("issuer self-signed");
         (cert.der().as_ref().to_vec(), key)
+    }
+
+    /// A `SystemTime` `secs` after the Unix epoch (test helper).
+    fn at_unix(secs: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+    }
+
+    /// Mint a CA issuer (`IsCa::Ca` + `KeyCertSign`) able to SIGN child certs, and
+    /// return both the rcgen `Certificate` (for signing) and its DER.
+    fn mint_ca_issuer() -> (rcgen::Certificate, KeyPair, Vec<u8>) {
+        let key = KeyPair::generate().expect("ca key");
+        let mut params = CertificateParams::new(Vec::new()).expect("ca params");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "mcps-test-ca");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        let cert = params.self_signed(&key).expect("ca self-signed");
+        let der = cert.der().as_ref().to_vec();
+        (cert, key, der)
+    }
+
+    /// Mint a delegated OCSP responder cert SIGNED BY `issuer` (issuer key),
+    /// carrying the `id-kp-OCSPSigning` EKU, valid over `[nb_ymd, na_ymd)` (each a
+    /// `(year, month, day)` triple).
+    fn mint_delegated_responder(
+        issuer: &rcgen::Certificate,
+        issuer_key: &KeyPair,
+        nb_ymd: (i32, u8, u8),
+        na_ymd: (i32, u8, u8),
+    ) -> Vec<u8> {
+        let responder_key = KeyPair::generate().expect("responder key");
+        let mut params =
+            CertificateParams::new(vec!["ocsp-responder.example".to_string()]).expect("params");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "ocsp-responder.example");
+        params.not_before = date_time_ymd(nb_ymd.0, nb_ymd.1, nb_ymd.2);
+        params.not_after = date_time_ymd(na_ymd.0, na_ymd.1, na_ymd.2);
+        params
+            .extended_key_usages
+            .push(ExtendedKeyUsagePurpose::OcspSigning);
+        let cert = params
+            .signed_by(&responder_key, issuer, issuer_key)
+            .expect("responder signed by issuer");
+        cert.der().as_ref().to_vec()
+    }
+
+    /// RFC 6960 §4.2.2.2.1: a delegated responder cert OUTSIDE its validity window
+    /// is rejected (fail closed — no candidate verifies → deny), while the same
+    /// cert WITHIN its window and issuer-signed is accepted. Locks the M-95
+    /// validity-window check.
+    #[test]
+    fn delegated_responder_validity_window_enforced() {
+        let (issuer, issuer_key, issuer_der) = mint_ca_issuer();
+        // Window: 2020-01-01 .. 2021-01-01.
+        let responder_der =
+            mint_delegated_responder(&issuer, &issuer_key, (2020, 1, 1), (2021, 1, 1));
+
+        // now inside window → valid responder (EKU + issuer signature + lifetime).
+        assert!(
+            delegated_responder_is_valid(&responder_der, &issuer_der, at_unix(1_593_561_600))
+                .unwrap(),
+            "in-window, issuer-signed, OCSP-EKU responder must be accepted" // 2020-07-01
+        );
+
+        // now AFTER notAfter → rejected (expired signer must not be trusted).
+        assert!(
+            !delegated_responder_is_valid(&responder_der, &issuer_der, at_unix(1_640_995_200))
+                .unwrap(),
+            "an EXPIRED delegated responder cert must be rejected (RFC 6960 §4.2.2.2.1)" // 2022-01-01
+        );
+
+        // now BEFORE notBefore → rejected (not-yet-valid signer).
+        assert!(
+            !delegated_responder_is_valid(&responder_der, &issuer_der, at_unix(1_546_300_800))
+                .unwrap(),
+            "a not-yet-valid delegated responder cert must be rejected" // 2019-01-01
+        );
+    }
+
+    /// Known-answer vectors for the hand-rolled FIPS 180-4 SHA-1 used by the
+    /// ResponderID `byKey` match (the standard fixes KeyHash to SHA-1). Guards the
+    /// local implementation against a regression that would make a legitimate
+    /// byKey responder mismatch (fail closed).
+    #[test]
+    fn sha1_known_answer_vectors() {
+        // FIPS 180-4 / RFC 3174 published test vectors.
+        assert_eq!(
+            sha1_hash(b""),
+            hex20("da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+            "SHA-1 of empty input"
+        );
+        assert_eq!(
+            sha1_hash(b"abc"),
+            hex20("a9993e364706816aba3e25717850c26c9cd0d89d"),
+            "SHA-1(\"abc\")"
+        );
+        assert_eq!(
+            sha1_hash(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            hex20("84983e441c3bd26ebaae4aa1f95129e5e54670f1"),
+            "SHA-1 of the 56-byte FIPS multi-block vector"
+        );
+    }
+
+    /// Decode a 40-char hex string into the 20-byte SHA-1 digest array.
+    fn hex20(s: &str) -> [u8; 20] {
+        let bytes = s.as_bytes();
+        let mut out = [0u8; 20];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let hi = (bytes[i * 2] as char).to_digit(16).expect("hex hi") as u8;
+            let lo = (bytes[i * 2 + 1] as char).to_digit(16).expect("hex lo") as u8;
+            *slot = (hi << 4) | lo;
+        }
+        out
     }
 
     /// Mint a leaf certificate carrying an AIA OCSP responder URL via a custom

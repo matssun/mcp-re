@@ -25,14 +25,24 @@
 //!     instances, modelling two proxy nodes against one shared backend; that is
 //!     the default-build, Bazel-tested path that proves cross-node rejection.
 //!
-//! The in-memory reference store is the ONLY [`AtomicReplayStore`] backend in
-//! tree today, so this build ships NO multi-node-capable shared backend: it is a
-//! single-process store and does NOT, on its own, give horizontally-scaled replay
-//! safety across separate proxy processes. A real shared backend (e.g. a Redis
-//! adapter) — together with the `crates_mcps` repin it needs and a live-backend
-//! black-box test — is tracked as a SEPARATE follow-up. The default build gains
-//! ZERO new dependencies. Until a real shared backend lands and is tested,
-//! multi-node replay safety MUST NOT be claimed.
+//! Backends in tree:
+//!   * [`InMemoryAtomicReplayStore`] (THIS module) — the default-build reference
+//!     store. It is a single-process store and does NOT, on its own, give
+//!     horizontally-scaled replay safety across SEPARATE proxy processes/hosts;
+//!     it proves the cross-instance property only within one process (two
+//!     `SharedReplayCache` over one cloned `Arc`).
+//!   * `RedisAtomicReplayStore`
+//!     ([`crate::redis_store`](crate::redis_store), compiled ONLY under the
+//!     non-default `redis_replay` cargo feature) — a REAL server-side-atomic
+//!     shared backend (Redis `SET NX PX`) wired by `cli.rs` for
+//!     `--replay-cache shared`, giving genuine cross-process/cross-node replay
+//!     safety.
+//!
+//! The DEFAULT build (without `redis_replay`) ships ONLY the in-memory reference
+//! store and gains ZERO new dependencies, so the default build does NOT provide
+//! cross-process replay safety — that "MUST NOT be claimed" caveat is scoped to
+//! the default build. Under `--features redis_replay` the Redis-backed shared
+//! store IS available.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
