@@ -15,9 +15,10 @@
 //! 2. Reject a notification (no `id`) -> [`McpsError::NotificationForbidden`].
 //! 3. JCS-safe domain on the ORIGINAL raw bytes (duplicate keys, unsafe integers,
 //!    invalid UTF-8, ...) -> [`McpsError::CanonicalizationFailed`].
-//! 4-6. Locate / deny-unknown-fields / version-check the request envelope
-//!    (-> [`McpsError::MissingEnvelope`] / [`McpsError::UnknownEnvelopeField`] /
-//!    [`McpsError::UnsupportedVersion`], mapped inside `extract_request_envelope`).
+//! 4. (steps 4-6) Locate / deny-unknown-fields / version-check the request
+//!    envelope (-> [`McpsError::MissingEnvelope`] /
+//!    [`McpsError::UnknownEnvelopeField`] / [`McpsError::UnsupportedVersion`],
+//!    mapped inside `extract_request_envelope`).
 //! 7. Required-field presence/format on the envelope:
 //!    - `authorization_hash` non-empty AND `sha256:`-prefixed
 //!      -> else [`McpsError::AuthorizationHashMissing`] (present-but-empty OR
@@ -31,11 +32,11 @@
 //! 8. `audience == config.expected_audience` -> else [`McpsError::InvalidAudience`].
 //! 9. Freshness window -> else [`McpsError::ExpiredRequest`].
 //! 10. Resolve `(signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
-//!    [`McpsError::TrustResolverUnavailable`].
+//!     [`McpsError::TrustResolverUnavailable`].
 //! 11. Build the request signing preimage (`signature.value` removed) and verify
-//!    Ed25519 -> [`McpsError::InvalidSignature`].
+//!     Ed25519 -> [`McpsError::InvalidSignature`].
 //! 12. Parse `expires_at`, then replay-cache check-and-insert ->
-//!    [`McpsError::ReplayCacheUnavailable`] / [`McpsError::ReplayDetected`].
+//!     [`McpsError::ReplayCacheUnavailable`] / [`McpsError::ReplayDetected`].
 //!
 //! ## Documented step-7 error choice (per MCPS_SPEC §9 step 7's request)
 //! - `authorization_hash`: a structurally absent value maps to
@@ -52,7 +53,7 @@
 //!
 //! ## verify_response order (MCPS_SPEC §9, verify_response steps 1-7)
 //! 1. JCS-safe domain -> [`McpsError::CanonicalizationFailed`].
-//! 2-3. Locate / deny-unknown-fields the response envelope ->
+//! 2. (steps 2-3) Locate / deny-unknown-fields the response envelope ->
 //!    [`McpsError::MissingEnvelope`] / [`McpsError::UnknownEnvelopeField`].
 //! 4. `signature.alg == "Ed25519"` -> else [`McpsError::ResponseSigInvalid`].
 //! 5. Resolve `(server_signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
@@ -248,6 +249,15 @@ pub fn verify_response(
 
     // Step 1 — JCS-safe domain on the ORIGINAL raw bytes.
     canonicalize(raw_bytes)?;
+
+    // Explicit structural rejects, mirroring `verify_request`. An array/batch or
+    // notification-shaped response already fails closed at envelope location
+    // (`locate_envelope` returns MissingEnvelope), but rejecting them up front
+    // surfaces the precise wire token (BatchForbidden / NotificationForbidden)
+    // instead of the incidental MissingEnvelope, keeping the request/response
+    // taxonomy symmetric.
+    reject_batch(&value)?;
+    reject_notification(&value)?;
 
     // Steps 2-3 — locate / deny-unknown-fields the response envelope.
     let envelope = extract_response_envelope(&value)?;
@@ -769,6 +779,30 @@ mod tests {
         assert_eq!(
             verify_response(raw, &server_resolver(), "sha256:x"),
             Err(McpsError::MissingEnvelope)
+        );
+    }
+
+    #[test]
+    fn response_batch_array_is_batch_forbidden() {
+        // A top-level array (JSON-RPC batch) response must reject with the
+        // precise BatchForbidden token, mirroring verify_request, rather than the
+        // incidental MissingEnvelope it would surface without the explicit
+        // reject_batch guard at the top of verify_response.
+        let raw = br#"[{"jsonrpc":"2.0","id":"req-1","result":{"content":[]}}]"#;
+        assert_eq!(
+            verify_response(raw, &server_resolver(), "sha256:x"),
+            Err(McpsError::BatchForbidden)
+        );
+    }
+
+    #[test]
+    fn response_notification_no_id_is_notification_forbidden() {
+        // An id-less (notification-shaped) response rejects with the precise
+        // NotificationForbidden token instead of the incidental MissingEnvelope.
+        let raw = br#"{"jsonrpc":"2.0","result":{"content":[]}}"#;
+        assert_eq!(
+            verify_response(raw, &server_resolver(), "sha256:x"),
+            Err(McpsError::NotificationForbidden)
         );
     }
 }
