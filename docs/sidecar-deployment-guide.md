@@ -173,6 +173,7 @@ bazel run //mcps-proxy:mcps_proxy_cli -- \
   --client-ca /etc/mcps/client-ca.pem \
   --trust /etc/mcps/trust.json \
   --authz reference \
+  --revocation-list /etc/mcps/revoked.txt \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \

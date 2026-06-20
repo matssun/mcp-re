@@ -189,6 +189,7 @@ fn spawn_persistent_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             "uri_san",
             "--authz",
             "reference",
+            "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
             // THE knob under test: front a long-lived inner with the persistent

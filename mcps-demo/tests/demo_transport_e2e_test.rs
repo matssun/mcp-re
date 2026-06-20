@@ -262,6 +262,7 @@ fn spawn_proxy(
             "uri_san",
             "--authz",
             "reference",
+            "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             max_cert_lifetime,
             "--inner-working-dir",
