@@ -1743,11 +1743,11 @@ pub fn load_client_crls(
     Ok(crls)
 }
 
-/// Load offline policy-layer revocation ids (ADR-MCPS-013) from one or more
+/// Load offline policy-layer revocation ids (ADR-MCPS-013) from zero or more
 /// newline-delimited files. Each non-blank, non-`#`-comment line (trimmed) is one
-/// opaque `revocation_id`. Mirrors [`load_client_crls`]: OFFLINE only (loaded once
-/// at startup; restart to update) and FAIL CLOSED — a missing/unreadable file, or
-/// a file that yields zero ids, is an error rather than a silently empty deny-list
+/// opaque `revocation_id`. If `paths` is empty, returns an empty list.
+/// Mirrors [`load_client_crls`]: OFFLINE only (loaded once at startup; restart to update)
+/// and FAIL CLOSED — a missing/unreadable file, or a file that yields zero ids, is an error rather than a silently empty deny-list
 /// that would quietly disable revocation.
 pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
     let mut ids: Vec<String> = Vec::new();
