@@ -103,13 +103,16 @@ fn run() -> Result<(), String> {
     // clock is diagnosed at the source instead of masked. We do not refuse to start
     // (the fail-closed posture is already safe), but the operator is told why every
     // request will be denied.
-    if now_unix() < EPOCH_CLOCK_FAULT_THRESHOLD_SECS {
+    // Read the clock ONCE so the comparison and the reported value are consistent
+    // (a second now_unix() call could read a different instant).
+    let startup_now_unix = now_unix();
+    if startup_now_unix < EPOCH_CLOCK_FAULT_THRESHOLD_SECS {
         eprintln!(
             "mcps-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
              almost certainly means the host clock is unset or broken. Freshness checks will \
              FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
              (NTP/RTC) rather than treating the resulting denials as a load problem.",
-            now_unix(),
+            startup_now_unix,
             EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
         );
     }
