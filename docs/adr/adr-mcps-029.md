@@ -7,7 +7,7 @@
 Proposed (v0.4 — 2026-06-21). **DESIGN ONLY — NOT YET IMPLEMENTED.** No code in
 this PR; implementation is tracked by issue #118 and MUST NOT land until this ADR
 is signed off. The `ManifestVerifier` / `ManifestPinStore` / `RevocationSource`
-subsystem (ADR-MCPS-018 origin, issue #3866) is implemented and unit-tested in
+subsystem (issue #3866, the deferred-by-ADR-MCPS-017 follow-up) is implemented and unit-tested in
 `mcps-policy`, but is **not wired into any production dispatch path** and has no
 durable pin store. This ADR is the deferred follow-up that ADR-MCPS-017 names:
 *"signed tool manifests … each requiring its own ADR / threat model."* It decides
@@ -23,33 +23,33 @@ The signed-tool-manifest subsystem exists and is correct, but unreachable:
   only non-test references are the four `pub use` re-exports in
   `mcps-policy/src/lib.rs`.
 - **#87** — the entire `ManifestVerifier::verify` pipeline
-  (`mcps-policy/src/manifest_verifier.rs:103`) is dead code outside
+  (`ManifestVerifier::verify` in `mcps-policy/src/manifest_verifier.rs`) is dead code outside
   `#[cfg(test)]`. The verifier itself is sound and well-tested: schema-hash bind,
   identity self-consistency, Ed25519 signer resolution, manifest revocation,
   symmetric-clock-skew validity window, DoS breadth/size bounds, TOFU rug-pull
   pin, and deny-before-commit. The defect is purely that nothing calls it on the
   live path. (The two LOW items in #87 — clock-skew tolerance and the redundant
   top-level `key_id` — are already addressed in the verifier: the window now uses
-  symmetric `MAX_CLOCK_SKEW_SECS` and `key_id` self-consistency is enforced at
-  `manifest_verifier.rs:129`.)
+  symmetric `MAX_CLOCK_SKEW_SECS` and `key_id` self-consistency is enforced in
+  `manifest_verifier.rs`.)
 - **#86** — the only `ManifestPinStore` impl is `InMemoryManifestPinStore`
-  (`mcps-policy/src/manifest_pin.rs:57`, a `BTreeMap`). Rug-pull detection is
+  (`InMemoryManifestPinStore` in `mcps-policy/src/manifest_pin.rs`, a `BTreeMap`). Rug-pull detection is
   trust-on-first-use, so an in-memory store resets every restart: a restarted
   proxy silently re-trusts a rug-pulled schema as a fresh first sighting. No
   `DurableManifestPinStore` exists.
 
 **Why this is not mechanical wiring — the crux.** The proxy is *byte-transparent
 to MCP response semantics*. `Proxy::handle_with_transport` →
-`dispatch_and_sign` (`mcps-proxy/src/proxy.rs:362`) →
-`build_signed_response` (`mcps-proxy/src/proxy.rs:455`) forwards the inner
+`dispatch_and_sign` (`mcps-proxy/src/proxy.rs`) →
+`build_signed_response` (`mcps-proxy/src/proxy.rs`) forwards the inner
 server's `result` opaquely: it normalizes the result *shape* (object / scalar /
 inner-error) and signs it bound to the verified `request_hash`, but it **never
 inspects `tools/list` result content**. There is no tool-listing model, no schema
 concept, nowhere a manifest is fetched or compared. The SEP-2243 routing headers
-(`mcp-method` / `mcp-name`, `transport.rs:226`) are **untrusted hints** the proxy
+(`mcp-method` / `mcp-name`, `transport.rs`) are **untrusted hints** the proxy
 explicitly does *not* route on (ADR-MCPS-025) — so the interception point cannot
 key off the `mcp-method` header. `VerifiedRequest`
-(`mcps-core/src/pipeline.rs:111`) does not carry the JSON-RPC `method` either.
+(`mcps-core/src/pipeline.rs`) does not carry the JSON-RPC `method` either.
 
 So introducing manifest enforcement is a substantial new feature: identify
 `tools/list` responses from authoritative (signed-body) data, parse the tool
@@ -75,7 +75,7 @@ call that no existing ADR makes. That decision is this ADR.
   tool set matches the verified, pinned `(name, version, schema_hash)` set,
   fail-closed.
 - **`ManifestPinStore`** — the `mcps-policy` trait
-  (`manifest_pin.rs:26`, `check_and_record`) the verifier mutates to record TOFU
+  (`manifest_pin.rs`, `check_and_record`) the verifier mutates to record TOFU
   pins; the durable impl persists this state across restarts.
 
 ## Decision
@@ -94,7 +94,7 @@ is **opt-in** and configured through a flag surface that mirrors the existing
 signed-body method** instead.
 
 - **Where.** A dedicated `verify_tools_list` step inside `dispatch_and_sign`
-  (`mcps-proxy/src/proxy.rs:362`), invoked **only when manifest enforcement is
+  (`dispatch_and_sign` in `mcps-proxy/src/proxy.rs`), invoked **only when manifest enforcement is
   configured**. `dispatch_and_sign` already holds `request_bytes` (the
   verify-validated request body) and `inner_response`; the manifest check sits
   between the `inner.dispatch(&forwarded)` call and `build_signed_response`. This
@@ -110,7 +110,7 @@ signed-body method** instead.
   via `ManifestVerifier::verify`, and assert the live set **equals** the verified
   manifest's `(name, version, schema_hash)` set (no missing, no extra, no
   schema-diverged tool). The manifest is consumed through the dup-key-rejecting
-  wire-entry seam `parse_manifest_bytes(&[u8])` (`mcps-policy/src/manifest.rs:275`,
+  wire-entry seam `parse_manifest_bytes(&[u8])` (in `mcps-policy/src/manifest.rs`,
   `deny_unknown_fields`).
 - **Why (b) not (a).** Option (a) — intercept and trust `mcp-method == tools/list`
   — couples the proxy's routing to an untrusted header and to the MCP listing
@@ -172,7 +172,7 @@ Add `DurableManifestPinStore` in `mcps-proxy/src/`, mirroring
   fail-closed `ManifestError`, so a transient failure can be retried and a partial
   write is never observed.
 - **Trait.** Implements the existing `mcps_policy::ManifestPinStore` trait
-  (`manifest_pin.rs:26`) so it drops into `ManifestVerifier::verify` unchanged.
+  (`manifest_pin.rs`) so it drops into `ManifestVerifier::verify` unchanged.
 - **Lean-sync firewall (ADR-MCPS-011/012).** Sync `std::fs` only — **no async, no
   tokio, no vendor SDK.** `mcps-core` purity is untouched; this store lives in
   `mcps-proxy`, exactly like `DurableReplayCache`.
@@ -184,8 +184,8 @@ Add `DurableManifestPinStore` in `mcps-proxy/src/`, mirroring
 
 Wiring is offered through a `Proxy::with_manifest_enforcement(verifier, resolver,
 revocation, pin_store, manifest_bytes)` builder seam, mirroring
-`with_policy_enforcement` (`proxy.rs:194`) / `with_lb_assertion` (`proxy.rs:231`)
-/ `with_replay_cache` (`proxy.rs:171`). The CLI flags mirror the established
+`with_policy_enforcement` / `with_lb_assertion`
+/ `with_replay_cache` (all in `mcps-proxy/src/proxy.rs`). The CLI flags mirror the established
 patterns:
 
 | Flag | Mirrors | Meaning |
@@ -204,7 +204,7 @@ durable store is the production tier; the in-memory store remains **test-only**.
 
 ### 6. Strict-mode interaction
 
-Under `--strict` / `--production` (`cli.rs:597`), **if a `--manifest` is
+Under `--strict` / `--production` (`mcps-proxy/src/cli.rs`), **if a `--manifest` is
 configured, the durable `--manifest-pin-store` is REQUIRED** — strict mode must
 not silently run rug-pull protection against an in-memory store that forgets pins
 on restart. Whether `--strict` should make manifest enforcement *mandatory*
@@ -335,7 +335,7 @@ with high confidence once the policy decisions land.
 ## Consequences
 
 ### Positive
-- ADR-MCPS-018 / #3866 rug-pull and forged-manifest protection becomes reachable
+- #3866 rug-pull and forged-manifest protection becomes reachable
   on the live path; #84/#87 (no caller) and #86 (no durable store) are closable.
 - The byte-transparency of `build_signed_response` is preserved for every method
   except a single configured `tools/list` step.
@@ -369,8 +369,9 @@ enforcement artifact; the claim-matrix row lands with them.
 
 - ADR-MCPS-017 (single-node ceiling; **defers** signed tool manifests to "its own
   ADR / threat model" — this ADR is that follow-up)
-- ADR-MCPS-018 / issue #3866 (manifest verifier, pin store, revocation, manifest
-  DTOs — implemented and unit-tested)
+- issue #3866 (manifest verifier, pin store, revocation, manifest
+  DTOs — implemented and unit-tested; the signed-tool-manifest verifier work
+  ADR-MCPS-017 deferred to "its own ADR / threat model")
 - ADR-MCPS-025 (untrusted SEP-2243 routing headers — why the interception keys off
   the signed body, not `mcp-method`)
 - ADR-MCPS-013 (Phase-5 authorization — not bypassed by manifest enforcement)
@@ -381,7 +382,7 @@ enforcement artifact; the claim-matrix row lands with them.
 - Tracking issue #118 (consolidates #84, #86, #87); audit findings #84, #86, #87
 - Durable-store pattern: `mcps-proxy/src/durable_replay.rs`
 - Dispatch seam: `mcps-proxy/src/proxy.rs` (`dispatch_and_sign` / `build_signed_response`)
-- Wire-entry seam: `parse_manifest_bytes` (`mcps-policy/src/manifest.rs:275`)
+- Wire-entry seam: `parse_manifest_bytes` (`mcps-policy/src/manifest.rs`)
 
 ## Open Questions for Review
 
