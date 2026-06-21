@@ -43,13 +43,18 @@ impl Clock for SystemClock {
 
 /// Deterministic test clock: always returns a fixed Unix-second value.
 ///
-/// Lives in the library (not behind `cfg(test)`) so it is reusable as an
-/// injectable fixture by integration tests in this and dependent crates.
+/// A TEST fixture, reused as an injectable clock by integration tests (and the
+/// deterministic demo binaries) in this and dependent crates. It is compiled
+/// only under `cfg(test)` or the explicit `test-fixtures` cargo feature — an
+/// *enforced* boundary, so a default (production) build of `mcps-host` does not
+/// compile it at all and cannot pin a `HostSession` to a frozen clock.
+#[cfg(any(test, feature = "test-fixtures"))]
 #[derive(Debug, Clone, Copy)]
 pub struct FixedClock {
     now_unix: i64,
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 impl FixedClock {
     /// Construct a clock frozen at `now_unix` (whole Unix seconds, UTC).
     pub fn new(now_unix: i64) -> Self {
@@ -57,6 +62,7 @@ impl FixedClock {
     }
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
 impl Clock for FixedClock {
     fn now_unix(&self) -> i64 {
         self.now_unix
