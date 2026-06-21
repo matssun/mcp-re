@@ -76,13 +76,22 @@ impl VerificationKey {
 /// NOT a purity violation.
 ///
 /// # Custody boundary (MCPS-076, ADR-MCPS-028)
-/// This is the IN-PROCESS SOFTWARE signer. PRODUCTION key custody (no soft-key
-/// fallback; non-exporting HSM / cloud-KMS only) is enforced OUTSIDE this crate,
-/// at the proxy/host signer layer: production routes through the
-/// `ResponseSigner` / `KeySource` seam (`mcps-proxy`'s PKCS#11 / AWS-KMS /
-/// GCP-KMS backends), which sign on the device and never reconstruct a raw seed.
-/// `from_seed_bytes` is reached only on test, conformance, and the gated dev
-/// `--key-source file` / `--allow-env-keysource` paths.
+/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key sources:
+/// `--key-source file` (`FileKeySource` — the proxy's default, production-capable
+/// source) and the dev-only, separately-gated `--key-source env`
+/// (`EnvKeySource`, behind `--allow-env-keysource`), plus test/conformance. All
+/// of these reconstruct a seed-backed `SigningKey` via `from_seed_bytes`, so this
+/// type IS on a production path — it is not test-only.
+///
+/// The custody property it provides is internal signing with NO export: the
+/// secret scalar stays private (no `to_bytes`/`to_seed`; see Secret hygiene), and
+/// seed-backed sources hold the on-disk/env seed in `Zeroizing` and scrub it. The
+/// STRONGER posture — a non-exporting HSM / cloud-KMS where no raw seed is ever
+/// reconstructed in process — is provided by the `KeySource` seam's PKCS#11 /
+/// AWS-KMS / GCP-KMS backends (signing on the device), tracked as the ADR-MCPS-028
+/// follow-up. An on-device-only custody guarantee requires those backends, NOT
+/// this software signer; production using `--key-source file` signs with a
+/// seed-backed software key (held private, scrubbed on drop) rather than on-device.
 ///
 /// # Secret hygiene
 /// The secret scalar lives inside dalek's `DalekSigningKey`, which is
