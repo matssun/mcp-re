@@ -213,6 +213,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "uri_san",
             "--authz",
             "reference",
+            "--allow-reference-authz",
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
