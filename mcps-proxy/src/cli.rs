@@ -190,6 +190,14 @@ pub struct Config {
     /// determines the horizontal replay-safety claim. `None` for single-node
     /// `Memory` / `File` backends.
     pub replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier>,
+    /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
+    /// revocation-propagation window the deployment asserts: Tier 1
+    /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3
+    /// (`push:<T>`). The proxy surfaces the tier's own honest guarantee and
+    /// CANNOT surface a window stronger than the configured tier proves. Defaults
+    /// to bounded-cache with the deployment-default window `T` so absent-flag
+    /// behavior is byte-for-byte the Tier-1 posture.
+    pub revocation_tier: crate::revocation_tier::RevocationTier,
     /// Transport-binding selection.
     pub binding: BindingKind,
     /// The authoritative identity field (no implicit fallback). For the default
@@ -360,6 +368,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--replay-path",
     "--replay-redis-url",
     "--replay-durability-tier",
+    "--revocation-tier",
     "--transport-binding",
     "--transport-identity-source",
     "--reverse-proxy-identity-header",
@@ -420,6 +429,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut replay_path = None;
     let mut replay_redis_url = None;
     let mut replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier> = None;
+    // ADR-MCPS-021 Axis 2: revocation tier. Defaults to Tier 1 bounded-cache with
+    // the deployment-default window T, so an absent flag preserves the existing
+    // Tier-1 posture exactly.
+    let mut revocation_tier = crate::revocation_tier::RevocationTier::BoundedCache {
+        t_secs: crate::trust_cache::DEFAULT_T_SECS,
+    };
     let mut binding = BindingKind::Exact;
     let mut identity_source = IdentityPolicy::UriSan;
     let mut reverse_proxy_identity_header: Option<String> = None;
@@ -638,6 +653,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--replay-durability-tier" => {
                 replay_durability_tier =
                     Some(crate::replay_tier::ReplayDurabilityTier::parse(value)?)
+            }
+            "--revocation-tier" => {
+                revocation_tier = crate::revocation_tier::RevocationTier::parse(value)?
             }
             "--transport-binding" => {
                 binding = match value.as_str() {
@@ -1061,6 +1079,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         replay_path,
         replay_redis_url,
         replay_durability_tier,
+        revocation_tier,
         binding,
         identity_source,
         reverse_proxy_identity_header,
@@ -3530,6 +3549,51 @@ mod tests {
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("unknown replay durability tier"), "got: {err}");
+    }
+
+    #[test]
+    fn revocation_tier_defaults_to_bounded_cache_tier_1() {
+        // Absent --revocation-tier preserves the Tier-1 bounded-cache posture with
+        // the deployment-default window T (existing behavior unchanged).
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(
+            config.revocation_tier,
+            crate::revocation_tier::RevocationTier::BoundedCache {
+                t_secs: crate::trust_cache::DEFAULT_T_SECS
+            }
+        );
+    }
+
+    #[test]
+    fn parses_each_revocation_tier() {
+        for (flag, expected) in [
+            (
+                "bounded-cache:90",
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 90 },
+            ),
+            ("live", crate::revocation_tier::RevocationTier::Live),
+            (
+                "push:30",
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+            ),
+        ] {
+            let mut a = minimal();
+            a.splice(0..0, args(&["--revocation-tier", flag]));
+            let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
+            assert_eq!(config.revocation_tier, expected, "flag {flag}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_or_malformed_revocation_tier() {
+        for flag in ["ocsp", "bounded-cache", "push:0", "bounded-cache:-1"] {
+            let mut a = minimal();
+            a.splice(0..0, args(&["--revocation-tier", flag]));
+            assert!(
+                parse_args(&a).is_err(),
+                "revocation tier '{flag}' must be rejected"
+            );
+        }
     }
 
     #[test]

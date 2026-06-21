@@ -162,6 +162,16 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", config.trust_path))?;
     let resolver = cli::load_trust(&trust_bytes)?;
 
+    // ADR-MCPS-021 Axis 2: surface the DECLARED revocation tier and its honest
+    // guarantee at startup. The proxy emits the tier's OWN guarantee string — never
+    // a hardcoded stronger one — so it cannot surface a revocation window stronger
+    // than the configured tier proves (the tier-claim ceiling). Tier 1
+    // (bounded-cache) is the default when --revocation-tier is absent.
+    eprintln!(
+        "mcps-proxy: {}",
+        config.revocation_tier.startup_audit_line("trust-store")
+    );
+
     // Inner-server environment minimization (MCPS-035, ADR-MCPS-016). By default
     // the child environment is cleared and only the explicit allowlist is passed,
     // closing the full-inheritance leak (env-loaded key material is not visible to

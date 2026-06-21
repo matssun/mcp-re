@@ -52,6 +52,19 @@ An unconditional near-zero-window revocation claim is **not** made by Tier 1 and
 requires a linearizable trust store, a live check, or a push-invalidation
 mechanism (Tier 2 / Tier 3 below).
 
+> **v0.4 update (issue #70):** Tier 2 (live strong check) and Tier 3 (push
+> invalidation) are now **declarable and implemented** as in-process reference
+> resolvers in `mcps-proxy` (`live_trust::LiveTrustResolver`,
+> `push_trust::PushInvalidationTrustCache`), selected via
+> `--revocation-tier {bounded-cache:<T>|live|push:<T>}`. Each tier surfaces its
+> OWN honest guarantee (`revocation_tier::RevocationTier::guarantee`), so the
+> proxy cannot surface a window stronger than the configured tier proves. A
+> **zero-window** claim is STILL forbidden for every tier: the live tier is
+> near-zero at the cost of a hard store-availability dependency, and the push tier
+> is near-zero with a bounded-`T` fallback because the in-process reference
+> channel does not prove reliable ordering/delivery. A networked push backend with
+> proven ordering/delivery would be a separate, feature-gated tier.
+
 ### Fail-closed rule (normative)
 
 - A trust resolver MAY cache active key state for at most `T`.
@@ -102,13 +115,26 @@ The same tier framework as ADR-MCPS-020, applied to trust/key-status state:
 - **Tier 2 — live strong trust check.** The resolver consults the shared store
   on every verification (or uses a linearizable read). Near-zero propagation
   window, at the cost of higher per-request latency and a hard dependency on
-  trust-store availability.
+  trust-store availability. *Implemented (v0.4, #70):*
+  `mcps-proxy::live_trust::LiveTrustResolver` — no positive-trust caching (a
+  store-side revocation is visible on the very next request, no `T` wait), an
+  optional second live ADR-MCPS-013 `RevocationSource` authority, and fail-closed
+  on store or revocation-source outage (never a stale "active" allow).
 - **Tier 3 — push invalidation.** Resolver caching is allowed, but a revocation
   event invalidates affected keys immediately. Requires reliable ordering and
   delivery; if the invalidation channel fails, it MUST fall back to the bounded
   `T` (or fail closed). Tier 3 is **not** called "zero window" unless its push
   mechanism has reliable ordering/delivery and explicit failure handling —
-  otherwise it is "near-zero with bounded fallback."
+  otherwise it is "near-zero with bounded fallback." *Implemented (v0.4, #70):*
+  `mcps-proxy::push_trust::PushInvalidationTrustCache` wraps the Tier-1
+  `BoundedTrustCache` and an injected `InvalidationChannel`
+  (`InMemoryInvalidationChannel` reference impl). A pushed revocation evicts the
+  affected entry before `T` elapses; when the channel reports unhealthy a missed
+  push falls back to bounded-`T` expiry (entries still served until `t_secs`, then
+  re-resolved — never indefinitely), and the surfaced guarantee degrades to
+  "near-zero with bounded-`T` fallback." The in-process reference channel does NOT
+  prove reliable ordering/delivery, so this tier never surfaces a zero-window
+  claim.
 
 ## Rationale
 

@@ -96,6 +96,18 @@ pub mod redis_store;
 // semantic names, honest per-tier guarantee, tier-claim ceiling). Pure type — in
 // the default build.
 pub mod replay_tier;
+// ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
+// live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
+// ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
+pub mod revocation_tier;
+// ADR-MCPS-021 Tier 2: live strong trust check — consults the inner store on every
+// verification (no positive-trust caching), with an optional second live
+// revocation authority; fail-closed on store/revocation outage.
+pub mod live_trust;
+// ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
+// injected invalidation channel that evicts revoked entries immediately, with a
+// bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).
+pub mod push_trust;
 pub mod rlimits;
 // Issue #3865: OS sandbox PROFILE + fail-closed platform gate for inner-server
 // fs/network containment (the config, CLI, seam, and fail-closed gate).
@@ -206,6 +218,12 @@ pub use transport::RequestHeaders;
 pub use transport::ReverseProxyHeaderFormat;
 pub use transport::ReverseProxyMtlsProvider;
 pub use trust_cache::BoundedTrustCache;
+pub use revocation_tier::RevocationTier;
+pub use live_trust::LiveTrustResolver;
+pub use push_trust::InMemoryInvalidationChannel;
+pub use push_trust::InvalidationChannel;
+pub use push_trust::InvalidationEvent;
+pub use push_trust::PushInvalidationTrustCache;
 pub use transport::StaticIdentityProvider;
 pub use transport::TransportBindingPolicy;
 pub use transport::TransportBindingProvider;

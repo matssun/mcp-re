@@ -219,6 +219,23 @@ impl BoundedTrustCache {
             cache.retain(|_, e| e.expires_at > now);
         }
     }
+
+    /// Immediately drop any cached entry for `(signer, key_id)`, regardless of its
+    /// remaining window. Returns `true` if an entry was present and removed.
+    ///
+    /// This is the hook the ADR-MCPS-021 **Tier 3** push-invalidation cache uses to
+    /// honor a pushed revocation event BEFORE `T` elapses: the next `resolve`
+    /// re-consults the inner store (picking up the revocation) instead of serving a
+    /// stale-but-within-`T` active entry. A poisoned cache mutex is treated as
+    /// "nothing to evict" (the entry, if any, is unreachable anyway and the next
+    /// read fails closed via [`cached`](BoundedTrustCache::cached)).
+    pub fn evict(&self, signer: &str, key_id: &str) -> bool {
+        let key = Self::compose_key(signer, key_id);
+        match self.cache.lock() {
+            Ok(mut cache) => cache.remove(&key).is_some(),
+            Err(_) => false,
+        }
+    }
 }
 
 impl TrustResolver for BoundedTrustCache {
@@ -520,6 +537,29 @@ mod tests {
         assert!(t_exceeds_recommended_max(RECOMMENDED_MAX_T_SECS + 1));
         assert!(!t_exceeds_recommended_max(0), "no caching never warns");
         assert!(!t_exceeds_recommended_max(super::DEFAULT_T_SECS));
+    }
+
+    #[test]
+    fn evict_drops_an_in_window_entry_forcing_re_resolution() {
+        // The Tier-3 hook: evict removes a still-in-window entry, so the next
+        // resolve re-consults the inner store rather than serving the cached one.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, _now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock);
+
+        cache.resolve("did:host", "key-1").expect("active cached");
+        assert_eq!(inner.calls(), 1);
+        // Evicting an unrelated key reports false (nothing removed).
+        assert!(!cache.evict("did:host", "key-other"));
+        // Evicting the cached entry reports true and forces a re-resolve.
+        assert!(cache.evict("did:host", "key-1"));
+        inner.set(Err(TrustResolverError::Revoked));
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "after evict the next resolve re-consults the inner store"
+        );
+        assert_eq!(inner.calls(), 2);
     }
 
     #[test]
