@@ -880,10 +880,19 @@ impl<S> DeadlineStream<S> {
     /// Build the wrapper from the configured limits: the aggregate deadline is
     /// `now + request_deadline` (or `None`, disabling the bound). `request_deadline`
     /// is retained only for the error message.
+    ///
+    /// FAIL CLOSED: if a deadline was requested but `now + t` overflows `Instant`,
+    /// we MUST NOT silently drop the bound — that would disable the slow-loris
+    /// defense. The CLI caps `--request-deadline-secs` at parse time
+    /// (`cli::parse_timeout`) so this overflow is practically unreachable, but as
+    /// defense-in-depth we saturate to the current instant (deadline already
+    /// elapsed → next read fails closed) rather than disable the control. The
+    /// `None` deadline is reserved exclusively for "no deadline was requested".
     fn new(inner: S, limits: &ServerLimits) -> Self {
+        let now = std::time::Instant::now();
         let deadline = limits
             .request_deadline
-            .and_then(|t| std::time::Instant::now().checked_add(t));
+            .map(|t| now.checked_add(t).unwrap_or(now));
         DeadlineStream {
             inner,
             deadline,
@@ -1374,6 +1383,11 @@ mod aggregate_deadline_tests {
 
     impl Read for TricklingReader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            // A zero-length buffer is legal per the `Read` contract; return
+            // `Ok(0)` before touching `buf[0]` so we never panic.
+            if buf.is_empty() {
+                return Ok(0);
+            }
             if !self.per_read_sleep.is_zero() {
                 std::thread::sleep(self.per_read_sleep);
             }
