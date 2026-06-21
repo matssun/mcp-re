@@ -729,7 +729,7 @@ fn open_dir_nofollow(path: &str) -> Result<std::os::fd::OwnedFd, String> {
     let fd = unsafe {
         libc::open(
             c_path.as_ptr(),
-            libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         )
     };
     if fd < 0 {
