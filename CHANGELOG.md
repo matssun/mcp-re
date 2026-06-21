@@ -33,7 +33,7 @@ v0.4.
   than producing an ambiguous canonical form.
 - **Injective trust-resolver composite key (#79).** `InMemoryTrustResolver`
   composes its lookup key with a length-prefixed encoding, removing a
-  delimiter-collision class across `(issuer, subject)` pairs.
+  delimiter-collision class across `(signer, key_id)` pairs.
 - **Bounded KMS response reads (#89, #92).** The AWS-KMS response body is read
   under an explicit byte cap (reject only when the length exceeds the cap), and
   GCP-KMS token-expiry arithmetic saturates on overflow instead of panicking.
