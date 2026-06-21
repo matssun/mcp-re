@@ -445,11 +445,91 @@ impl InnerLaunchConfig {
     /// * With NO configured `working_dir`, the private per-proxy default is created
     ///   `0700` and ownership/permission-validated (issue #25) — never the
     ///   world-writable bare temp dir.
+    ///
+    /// # Symlink / TOCTOU hardening of the EXPLICIT path (audit #93, findings 1+3)
+    ///
+    /// On Unix the explicit path is NOT validated with a follow-symlink
+    /// `metadata()`-then-`current_dir()` (a classic check-then-use TOCTOU: a
+    /// symlink or directory swapped between the stat and `exec` would change the
+    /// child's effective cwd). Instead the parent opens the explicit path with
+    /// `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC` — `O_NOFOLLOW` refuses a symlink at the
+    /// final path component (`ELOOP`) and `O_DIRECTORY` refuses a non-directory
+    /// (`ENOTDIR`) — and then installs a `pre_exec` hook that `fchdir`'s the child
+    /// onto that EXACT open inode (the dir fd the parent validated, never a
+    /// re-resolved path). The child therefore lands in the inode the parent
+    /// verified, closing the TOCTOU window entirely. The dir fd is `O_CLOEXEC` and is
+    /// additionally swept by the fd-close hook ([`apply_close_extra_fds`], registered
+    /// last), so it never leaks into the `exec`'d inner.
+    ///
+    /// Posture decision (deliberate asymmetry with the default path): the explicit
+    /// dir is OPERATOR-supplied config and may legitimately be a shared directory
+    /// (e.g. `/srv/inner`), so — unlike the per-proxy default — it is NOT required
+    /// to be `0700`/owned-by-us. The hardening that DOES apply to the explicit path
+    /// is the security-relevant pair the default path also enforces: no-follow
+    /// (refuse a final-component symlink) and no check-then-use race. cwd is not the
+    /// containment boundary regardless (the inner can `chdir` away; Landlock, when
+    /// enforced, is the authority).
+    ///
+    /// [`apply_close_extra_fds`]: InnerLaunchConfig::apply_close_extra_fds
+    #[cfg(unix)]
+    pub fn apply_working_dir(&self, command: &mut Command) -> Result<(), String> {
+        use std::os::unix::process::CommandExt;
+
+        match &self.working_dir {
+            Some(explicit) => {
+                use std::os::fd::AsRawFd;
+
+                // Open the explicit dir in the PARENT with O_NOFOLLOW (refuse a
+                // final-component symlink) + O_DIRECTORY (refuse a non-dir),
+                // O_CLOEXEC so the fd never leaks across exec. The returned
+                // `OwnedFd` is MOVED into the pre_exec closure: it stays open in the
+                // parent for the lifetime of the `Command` (so the child's `fchdir`
+                // has a valid fd) and is closed when the `Command` is dropped after
+                // spawn — no leak. In the forked child the closure is NOT dropped
+                // before `exec`, so no `close(2)` runs in the async-signal-unsafe
+                // window; the inherited copy of the fd is swept by the fd-close hook.
+                let dir_fd = open_dir_nofollow(explicit)?;
+                // SAFETY: the closure performs ONLY async-signal-safe `fchdir(2)`
+                // on the fd opened and owned by the parent — no allocation, no
+                // locks, no Rust runtime. `fchdir` is on the POSIX
+                // async-signal-safe list. The `OwnedFd` is moved in by value; its
+                // Drop never runs in the child (the closure is not dropped before
+                // `exec`), so no `close` executes in the post-fork window.
+                unsafe {
+                    command.pre_exec(move || {
+                        if libc::fchdir(dir_fd.as_raw_fd()) == 0 {
+                            Ok(())
+                        } else {
+                            Err(std::io::Error::last_os_error())
+                        }
+                    });
+                }
+                Ok(())
+            }
+            None => {
+                let dir = Self::ensure_private_default_working_dir()?;
+                command.current_dir(&dir);
+                Ok(())
+            }
+        }
+    }
+
+    /// Non-Unix fallback for [`apply_working_dir`]: there is no `pre_exec`/`fchdir`
+    /// seam, so the explicit path is validated with `symlink_metadata` (NO-FOLLOW)
+    /// — refusing a symlink at the path — then `current_dir` is set. This still
+    /// closes the follow-symlink gap on these platforms (the residual check-then-use
+    /// race is unavoidable without a dir-fd seam, which these platforms lack).
+    #[cfg(not(unix))]
     pub fn apply_working_dir(&self, command: &mut Command) -> Result<(), String> {
         let dir = match &self.working_dir {
             Some(explicit) => {
-                let meta = std::fs::metadata(explicit)
+                let meta = std::fs::symlink_metadata(explicit)
                     .map_err(|e| format!("--inner-working-dir {explicit}: cannot stat ({e})"))?;
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "--inner-working-dir {explicit}: is a symlink — refusing"
+                    ));
+                }
                 if !meta.is_dir() {
                     return Err(format!("--inner-working-dir {explicit}: not a directory"));
                 }
@@ -616,6 +696,57 @@ impl InnerLaunchConfig {
     }
 }
 
+/// Open `path` as a directory in the PARENT with `O_DIRECTORY | O_NOFOLLOW |
+/// O_CLOEXEC`, returning an [`std::os::fd::OwnedFd`] or a fail-closed error
+/// (audit #93, findings 1+3). This is the no-follow, no-TOCTOU validation of an
+/// explicit inner working dir:
+///
+/// * `O_NOFOLLOW` refuses a SYMLINK at the final path component (`ELOOP`), so an
+///   attacker-planted symlink at the configured name can never redirect the
+///   child's cwd.
+/// * `O_DIRECTORY` refuses a non-directory (`ENOTDIR`).
+/// * `O_CLOEXEC` ensures the parent's copy of the fd is not itself leaked into
+///   any other `exec` (the inner's inherited copy is additionally swept by
+///   [`InnerLaunchConfig::apply_close_extra_fds`]).
+///
+/// The returned fd names a concrete open INODE; `fchdir`'ing the child onto it
+/// (rather than re-resolving the path string) is what closes the check-then-use
+/// race — the child lands in exactly the inode the parent validated here.
+///
+/// This is parent-side only and uses no async-signal-unsafe machinery; it is the
+/// safe half of the dirfd + `fchdir` pattern (the `fchdir` is the post-fork half).
+#[cfg(unix)]
+fn open_dir_nofollow(path: &str) -> Result<std::os::fd::OwnedFd, String> {
+    use std::ffi::CString;
+    use std::os::fd::FromRawFd;
+    use std::os::fd::OwnedFd;
+
+    let c_path = CString::new(path).map_err(|_| {
+        format!("--inner-working-dir {path}: path contains an interior NUL byte — refusing")
+    })?;
+    // SAFETY: `open(2)` reads the NUL-terminated `c_path` we own and returns a new
+    // fd or -1; no Rust state is touched. The flags are constants.
+    let fd = unsafe {
+        libc::open(
+            c_path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let err = std::io::Error::last_os_error();
+        // ELOOP = final component is a symlink (O_NOFOLLOW); ENOTDIR = not a
+        // directory (O_DIRECTORY). Both are reported with the path (never any
+        // secret) so the fail-closed refusal is diagnosable.
+        return Err(format!(
+            "--inner-working-dir {path}: cannot open as a directory without following a symlink \
+             ({err}) — refusing"
+        ));
+    }
+    // SAFETY: `fd` is a freshly-opened, owned, valid descriptor returned by
+    // `open(2)`; transferring ownership to `OwnedFd` is exactly its contract.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
 /// The pre-`exec` hook body that closes every inherited descriptor at or above
 /// fd 3 in the forked child (M15, #4080). Separated out as a plain `fn` so the
 /// `pre_exec` closure is a single function pointer with no captured state.
@@ -672,6 +803,27 @@ fn close_fds_above_stdio() -> std::io::Result<()> {
 /// this residual cap is the justified bound for the fallback path only (the
 /// primary `close_range` path has no such cap). `EBADF` (an unopened fd in the
 /// range) is expected and ignored; any other error fails the spawn.
+///
+/// # Why the `HARD_CAP_FD` residual is never load-bearing under sandbox `Enforce`
+/// (audit #93, finding 2)
+///
+/// This capped fallback runs ONLY when `close_range(2)` is unavailable, i.e. on a
+/// Linux kernel < 5.9 or on a non-Linux platform. The sandbox `Enforce` mode
+/// requires Landlock at [`crate::sandbox_linux::REQUIRED_LANDLOCK_ABI`] (ABI v1 =
+/// Linux **5.13**), which is strictly NEWER than the close_range floor (5.9), and
+/// it fails closed at the platform gate ([`SandboxProfile::validate_platform`] /
+/// `backend_can_enforce`) on any kernel that cannot honor it. Therefore, whenever
+/// containment is actually being enforced, the running kernel is >= 5.13, the
+/// PRIMARY (uncapped) `close_range` path is taken, and this capped loop is never
+/// reached. The `HARD_CAP_FD` clamp is thus a bound on a fallback that, by this
+/// kernel-version ordering, can only run when containment is OFF (or unenforceable)
+/// — so a sensitive non-`CLOEXEC` fd above 65 536 is never the difference between
+/// contained and leaked. No runtime "require close_range under Enforce" guard is
+/// added because the ordering already makes it unreachable in the enforced case;
+/// adding one would be dead code. A `/proc/self/fd` readdir is deliberately NOT
+/// used (it is async-signal-unsafe in this post-fork window).
+///
+/// [`SandboxProfile::validate_platform`]: crate::sandbox::SandboxProfile::validate_platform
 fn close_fds_above_stdio_loop() -> std::io::Result<()> {
     const FALLBACK_MAX_FD: libc::c_int = 1024;
     const HARD_CAP_FD: libc::c_int = 65_536;
@@ -803,6 +955,91 @@ mod tests {
             std::env::temp_dir().to_string_lossy(),
             "default must be a private subdir, not bare $TMPDIR"
         );
+    }
+
+    /// Audit #93 (findings 1+3): a valid explicit working dir (a real directory,
+    /// not a symlink) is ACCEPTED — `apply_working_dir` returns `Ok` and installs
+    /// the launch context.
+    #[cfg(unix)]
+    #[test]
+    fn explicit_working_dir_real_directory_is_accepted() {
+        let dir = std::env::temp_dir().join(format!(
+            "mcps-test-wd-ok-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let config = InnerLaunchConfig {
+            working_dir: Some(dir.to_string_lossy().into_owned()),
+            ..InnerLaunchConfig::new()
+        };
+        let mut command = std::process::Command::new("/bin/true");
+        let result = config.apply_working_dir(&mut command);
+        let _ = std::fs::remove_dir_all(&dir);
+        result.expect("a real, non-symlink explicit directory must be accepted");
+    }
+
+    /// Audit #93 (findings 1+3): an explicit working dir whose final component is a
+    /// SYMLINK (even one pointing at a real directory) is REFUSED — `O_NOFOLLOW`
+    /// makes the parent-side open fail closed, so a symlink-swap can never redirect
+    /// the inner's cwd. This is the regression test for the follow-symlink gap.
+    #[cfg(unix)]
+    #[test]
+    fn explicit_working_dir_symlink_is_refused() {
+        let base = std::env::temp_dir().join(format!(
+            "mcps-test-wd-symlink-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("create test base");
+        let real_target = base.join("real_dir");
+        std::fs::create_dir_all(&real_target).expect("create real target dir");
+        let link = base.join("link_to_dir");
+        std::os::unix::fs::symlink(&real_target, &link).expect("create symlink");
+
+        let config = InnerLaunchConfig {
+            // The configured path's FINAL component is the symlink.
+            working_dir: Some(link.to_string_lossy().into_owned()),
+            ..InnerLaunchConfig::new()
+        };
+        let mut command = std::process::Command::new("/bin/true");
+        let result = config.apply_working_dir(&mut command);
+        let _ = std::fs::remove_dir_all(&base);
+
+        let err = result.expect_err(
+            "a symlink final component must be refused (O_NOFOLLOW), even pointing at a real dir",
+        );
+        assert!(
+            err.contains("symlink") || err.contains("inner-working-dir"),
+            "refusal must name the symlink/working-dir reason; got: {err}"
+        );
+    }
+
+    /// Audit #93: an explicit working dir that is a regular FILE (not a directory)
+    /// is refused (`O_DIRECTORY` → `ENOTDIR`), fail-closed.
+    #[cfg(unix)]
+    #[test]
+    fn explicit_working_dir_regular_file_is_refused() {
+        let base = std::env::temp_dir().join(format!(
+            "mcps-test-wd-file-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("create test base");
+        let file = base.join("not_a_dir");
+        std::fs::write(&file, b"x").expect("create regular file");
+
+        let config = InnerLaunchConfig {
+            working_dir: Some(file.to_string_lossy().into_owned()),
+            ..InnerLaunchConfig::new()
+        };
+        let mut command = std::process::Command::new("/bin/true");
+        let result = config.apply_working_dir(&mut command);
+        let _ = std::fs::remove_dir_all(&base);
+
+        result.expect_err("a regular file explicit working dir must be refused (O_DIRECTORY)");
     }
 
     #[test]
