@@ -74,7 +74,34 @@ impl VerificationKey {
 /// Pure and I/O-free: signing belongs in the library (it has no side effects)
 /// and is needed to generate reproducible conformance vectors (MCPS-002). It is
 /// NOT a purity violation.
-#[derive(Debug, Clone)]
+///
+/// # Custody boundary (MCPS-076, ADR-MCPS-028)
+/// This is the IN-PROCESS SOFTWARE signer, used by the SEED-BACKED key sources:
+/// `--key-source file` (`FileKeySource` — the proxy's default, production-capable
+/// source) and the dev-only, separately-gated `--key-source env`
+/// (`EnvKeySource`, behind `--allow-env-keysource`), plus test/conformance. All
+/// of these reconstruct a seed-backed `SigningKey` via `from_seed_bytes`, so this
+/// type IS on a production path — it is not test-only.
+///
+/// The custody property it provides is internal signing with NO export: the
+/// secret scalar stays private (no `to_bytes`/`to_seed`; see Secret hygiene), and
+/// seed-backed sources hold the on-disk/env seed in `Zeroizing` and scrub it. The
+/// STRONGER posture — a non-exporting HSM / cloud-KMS where no raw seed is ever
+/// reconstructed in process — is provided by the `KeySource` seam's PKCS#11 /
+/// AWS-KMS / GCP-KMS backends (signing on the device), tracked as the ADR-MCPS-028
+/// follow-up. An on-device-only custody guarantee requires those backends, NOT
+/// this software signer; production using `--key-source file` signs with a
+/// seed-backed software key (held private, scrubbed on drop) rather than on-device.
+///
+/// # Secret hygiene
+/// The secret scalar lives inside dalek's `DalekSigningKey`, which is
+/// `ZeroizeOnDrop` (the `zeroize` feature is enabled workspace-wide), so it is
+/// scrubbed on drop. There is deliberately NO seed/key EXPORT method (no
+/// `to_bytes` / `to_seed`) and no separate raw `[u8; 32]` copy is retained.
+/// `Clone` is intentionally NOT derived — a private key should not be silently
+/// duplicated. `Debug` is derived but dalek redacts the secret (prints just
+/// `"SigningKey"`), so it cannot leak the key into logs.
+#[derive(Debug)]
 pub struct SigningKey {
     inner: DalekSigningKey,
 }
