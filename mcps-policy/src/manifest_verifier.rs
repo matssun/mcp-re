@@ -15,17 +15,22 @@
 //!    [`ManifestError::ManifestSchemaHashMismatch`]. This happens BEFORE trusting
 //!    the manifest's identity so a self-inconsistent manifest is rejected even if
 //!    well signed.
-//! 2. **Signing authority + signature.** Resolve `(signer, signature.key_id)`
+//! 2. **Identity self-consistency.** The top-level `key_id` and `signature.key_id`
+//!    are both inside the signed preimage and MUST agree; a divergence (which the
+//!    key resolution would otherwise silently ignore, since it resolves on
+//!    `signature.key_id`) → [`ManifestError::ManifestMalformed`].
+//! 3. **Signing authority + signature.** Resolve `(signer, signature.key_id)`
 //!    through the injected resolver; verify the Ed25519 signature over the
 //!    canonical manifest minus `signature.value`. Unknown signer / malformed key →
 //!    [`ManifestError::ManifestSignerUnresolved`]; unsupported alg →
 //!    [`ManifestError::ManifestUnsupportedAlg`]; bad signature →
 //!    [`ManifestError::ManifestSignatureInvalid`].
-//! 3. **Revocation.** A revoked `manifest_id` (or the composite `signer#version`) →
+//! 4. **Revocation.** A revoked `manifest_id` (or the composite `signer#version`) →
 //!    [`ManifestError::ManifestRevoked`].
-//! 4. **Validity window.** `now` must be within `[issued_at, expires_at]` when
-//!    those fields are present → else [`ManifestError::ManifestExpired`].
-//! 5. **Rug-pull pin.** Duplicate tool names within the manifest are rejected
+//! 5. **Validity window.** `now` must be within `[issued_at − skew, expires_at +
+//!    skew]` (symmetric [`MAX_CLOCK_SKEW_SECS`], matching Core freshness) when
+//!    those bounds are present → else [`ManifestError::ManifestExpired`].
+//! 6. **Rug-pull pin.** Duplicate tool names within the manifest are rejected
 //!    first as [`ManifestError::ManifestMalformed`] (`name` is the pin key, so two
 //!    entries for one name are self-contradictory). Then, for each tool,
 //!    `(name, version, schema_hash)` is checked against the pin store; a changed
@@ -112,6 +117,18 @@ impl ManifestVerifier {
 
         // (1) Schema-hash binding: recompute every tool's schema_hash and compare.
         self.check_schema_hashes(manifest)?;
+
+        // (1b) Identity self-consistency: the top-level `key_id` and the
+        // `signature.key_id` are both inside the signed preimage and MUST agree.
+        // The verifier resolves the key on `signature.key_id`; the redundant
+        // top-level `key_id` (#85 findings 2+3, #87 finding 3) is otherwise never
+        // read, so a mismatched manifest would be silently accepted. Cross-check
+        // them and reject ManifestMalformed on divergence — fail closed and remove
+        // the silent-mismatch footgun (the field stays in the signed wire shape so
+        // existing readers/the documented format are unaffected).
+        if manifest.key_id != manifest.signature.key_id {
+            return Err(ManifestError::ManifestMalformed);
+        }
 
         // (2) Signing authority + Ed25519 signature over the canonical preimage.
         self.verify_signature(manifest, resolver)?;
@@ -274,16 +291,29 @@ fn composite_revocation_id(manifest: &ToolManifest) -> String {
     )
 }
 
-/// Validity-window check: when `issued_at` is present, `now` must be >= it; when
-/// `expires_at` is present, `now` must be <= it. Absent bounds impose no limit.
+/// Symmetric clock-skew tolerance (seconds) applied to the manifest validity
+/// window, matching Core freshness (MCPS-07 / [`mcps_core::check_freshness`]) and
+/// the conformance harnesses' `MAX_CLOCK_SKEW_SECS`. The two trust-boundary time
+/// checks (request freshness and manifest validity) MUST tolerate the same skew so
+/// a manifest is not spuriously rejected at one boundary while a request issued
+/// against the same clock is accepted at the other (#87 finding 2). Five minutes
+/// is the standard allowance used throughout the codebase.
+pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
+
+/// Validity-window check with a symmetric clock-skew tolerance, mirroring Core
+/// freshness ([`mcps_core::check_freshness`]): the effective window is
+/// `[issued_at − skew, expires_at + skew]` (both bounds inclusive). When
+/// `issued_at` is present, `now` must be >= `issued_at − skew`; when `expires_at`
+/// is present, `now` must be <= `expires_at + skew`. Absent bounds impose no
+/// limit. `saturating_*` keeps the arithmetic fail-closed at the i64 extremes.
 fn check_window(manifest: &ToolManifest, now_unix: i64) -> Result<(), ManifestError> {
     if let Some(issued_at) = manifest.issued_at {
-        if now_unix < issued_at {
+        if now_unix < issued_at.saturating_sub(MAX_CLOCK_SKEW_SECS) {
             return Err(ManifestError::ManifestExpired);
         }
     }
     if let Some(expires_at) = manifest.expires_at {
-        if now_unix > expires_at {
+        if now_unix > expires_at.saturating_add(MAX_CLOCK_SKEW_SECS) {
             return Err(ManifestError::ManifestExpired);
         }
     }
@@ -548,6 +578,94 @@ mod tests {
             ),
             Err(ManifestError::ManifestExpired)
         );
+    }
+
+    #[test]
+    fn mismatched_top_level_key_id_is_rejected_as_malformed() {
+        // #85 findings 2+3 / #87 finding 3: the top-level `key_id` and
+        // `signature.key_id` are both in the signed preimage and MUST agree. The
+        // verifier resolves on `signature.key_id` and otherwise never reads the
+        // top-level field, so a divergent top-level `key_id` would be silently
+        // accepted without the cross-check. Mutate the top-level field AFTER signing
+        // (it stays within the signed shape; the cross-check runs before signature
+        // verification, so this is the reject reason).
+        let mut manifest = mint_signed_manifest(&default_spec(), &signing_key(), KEY_ID).unwrap();
+        manifest.key_id = "some-other-key".to_string();
+        assert_ne!(manifest.key_id, manifest.signature.key_id);
+        let mut pins = InMemoryManifestPinStore::new();
+        assert_eq!(
+            ManifestVerifier::new().verify(
+                &manifest,
+                &resolver(),
+                &InMemoryRevocationSource::new(),
+                &mut pins,
+                NOW,
+            ),
+            Err(ManifestError::ManifestMalformed)
+        );
+    }
+
+    #[test]
+    fn issued_at_slightly_in_future_within_skew_is_accepted() {
+        // #87 finding 2: a manifest whose `issued_at` is in the future relative to
+        // `now`, but within MAX_CLOCK_SKEW_SECS, must be ACCEPTED — matching Core
+        // freshness's symmetric skew tolerance. Evaluate at issued_at − skew (the
+        // inclusive lower bound).
+        use super::MAX_CLOCK_SKEW_SECS;
+        let manifest = mint_signed_manifest(&default_spec(), &signing_key(), KEY_ID).unwrap();
+        let issued_at = manifest.issued_at.expect("spec sets issued_at");
+        let now_within_skew = issued_at - MAX_CLOCK_SKEW_SECS;
+        let mut pins = InMemoryManifestPinStore::new();
+        ManifestVerifier::new()
+            .verify(
+                &manifest,
+                &resolver(),
+                &InMemoryRevocationSource::new(),
+                &mut pins,
+                now_within_skew,
+            )
+            .expect("future-dated issued_at within skew must be accepted");
+    }
+
+    #[test]
+    fn issued_at_beyond_skew_is_rejected() {
+        // The mirror of the test above: one second BEYOND the skew tolerance on the
+        // future side must be rejected as expired/out-of-window.
+        use super::MAX_CLOCK_SKEW_SECS;
+        let manifest = mint_signed_manifest(&default_spec(), &signing_key(), KEY_ID).unwrap();
+        let issued_at = manifest.issued_at.expect("spec sets issued_at");
+        let now_beyond_skew = issued_at - MAX_CLOCK_SKEW_SECS - 1;
+        let mut pins = InMemoryManifestPinStore::new();
+        assert_eq!(
+            ManifestVerifier::new().verify(
+                &manifest,
+                &resolver(),
+                &InMemoryRevocationSource::new(),
+                &mut pins,
+                now_beyond_skew,
+            ),
+            Err(ManifestError::ManifestExpired)
+        );
+    }
+
+    #[test]
+    fn expires_at_within_skew_is_accepted() {
+        // Symmetric upper bound: `now` just past `expires_at` but within skew is
+        // still accepted (inclusive expires_at + skew boundary).
+        use super::MAX_CLOCK_SKEW_SECS;
+        let manifest = mint_signed_manifest(&default_spec(), &signing_key(), KEY_ID).unwrap();
+        let expires_at = manifest.expires_at.expect("spec sets expires_at");
+        let now_within_skew = expires_at + MAX_CLOCK_SKEW_SECS;
+        let mut pins = InMemoryManifestPinStore::new();
+        ManifestVerifier::new()
+            .verify(
+                &manifest,
+                &resolver(),
+                &InMemoryRevocationSource::new(),
+                &mut pins,
+                now_within_skew,
+            )
+            .expect("now within expires_at + skew must be accepted");
     }
 
     #[test]

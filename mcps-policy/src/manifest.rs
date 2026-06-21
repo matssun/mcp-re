@@ -36,6 +36,7 @@
 //! (RequestEnvelope/ResponseEnvelope/SignatureBlock) and `reference.rs` (its
 //! grant DTOs + `mint_reference_grant`) they live in one module.
 
+use mcps_core::canonicalize;
 use mcps_core::canonicalize_json_value;
 use mcps_core::sha256_hash_id;
 use mcps_core::SigningKey;
@@ -239,6 +240,29 @@ pub fn manifest_signing_preimage(manifest: &ToolManifest) -> Result<Vec<u8>, Man
     canonicalize_json_value(&value).map_err(|_| ManifestError::ManifestMalformed)
 }
 
+/// Parse raw manifest wire bytes into a [`ToolManifest`], rejecting bytes that
+/// carry a duplicate JSON object member anywhere in the structure (#85 finding 1).
+///
+/// This is the ONLY correct seam for turning untrusted manifest bytes into a
+/// `ToolManifest`: `serde_json::from_slice` alone CANNOT detect duplicate object
+/// members because `serde_json::Value`/`Map` collapses them last-wins, so a
+/// signed manifest whose RAW bytes carry duplicate members would be silently
+/// canonicalized last-wins on the signing/verify path rather than rejected — the
+/// exact MCPS-02 / ADR-MCPS-005 semantic-divergence class the Core request path
+/// guards against. We therefore first run the raw-bytes, dup-key-REJECTING
+/// `mcps_core::canonicalize` over the original bytes (it parses with the in-house
+/// value model that surfaces duplicate members and the full JCS-safe domain), and
+/// only on success deserialize into the typed `ToolManifest`. Any duplicate
+/// member, JCS-domain violation, or shape mismatch →
+/// [`ManifestError::ManifestMalformed`].
+pub fn parse_manifest_bytes(bytes: &[u8]) -> Result<ToolManifest, ManifestError> {
+    // (1) Reject duplicate object members (and the rest of the JCS-safe domain) on
+    // the ORIGINAL wire bytes, BEFORE any serde_json::Value collapses duplicates.
+    canonicalize(bytes).map_err(|_| ManifestError::ManifestMalformed)?;
+    // (2) Now safe to deserialize into the typed manifest.
+    serde_json::from_slice(bytes).map_err(|_| ManifestError::ManifestMalformed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::compute_schema_hash;
@@ -347,4 +371,43 @@ mod tests {
         let back: super::ToolManifest = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back, manifest);
     }
+
+    #[test]
+    fn parse_manifest_bytes_accepts_clean_wire_bytes() {
+        // A well-formed manifest's own serialization round-trips through the
+        // dup-key-rejecting parse seam unchanged.
+        let key = SigningKey::from_seed_bytes(&[5u8; 32]);
+        let manifest = mint_signed_manifest(&spec(), &key, "server-key-1").unwrap();
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let back = super::parse_manifest_bytes(&bytes).expect("clean bytes must parse");
+        assert_eq!(back, manifest);
+    }
+
+    #[test]
+    fn parse_manifest_bytes_rejects_duplicate_top_level_member() {
+        // #85 finding 1: raw bytes carrying a DUPLICATE top-level object member
+        // must be rejected — `serde_json::from_slice` alone would silently collapse
+        // the duplicate last-wins, so the dup-key-rejecting raw-bytes canonicalize
+        // is what guards the signed manifest bytes. Hand-built bytes with two
+        // `manifest_id` members; this is impossible to produce via serde
+        // serialization, so we assemble it textually.
+        let raw = br#"{"signer":"did:example:server-1","key_id":"server-key-1","manifest_id":"a","manifest_id":"b","version":"1","tools":[],"signature":{"alg":"Ed25519","key_id":"server-key-1","value":""}}"#;
+        assert_eq!(
+            super::parse_manifest_bytes(raw).unwrap_err(),
+            ManifestError::ManifestMalformed
+        );
+    }
+
+    #[test]
+    fn parse_manifest_bytes_rejects_duplicate_nested_member() {
+        // A duplicate member NESTED inside a tool's schema must also be rejected —
+        // the guard runs over the whole structure, not just the top level.
+        let raw = br#"{"signer":"did:example:server-1","key_id":"server-key-1","manifest_id":"a","version":"1","tools":[{"name":"echo","version":"1.0.0","input_schema":{"type":"object","type":"array"},"output_schema":{"type":"string"},"schema_hash":"sha256:x"}],"signature":{"alg":"Ed25519","key_id":"server-key-1","value":""}}"#;
+        assert_eq!(
+            super::parse_manifest_bytes(raw).unwrap_err(),
+            ManifestError::ManifestMalformed
+        );
+    }
+
+    use crate::manifest_error::ManifestError;
 }

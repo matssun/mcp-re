@@ -42,6 +42,7 @@ pub use evaluator::PolicyEvaluator;
 pub use manifest::compute_schema_hash;
 pub use manifest::manifest_signing_preimage;
 pub use manifest::mint_signed_manifest;
+pub use manifest::parse_manifest_bytes;
 pub use manifest::ManifestSignature;
 pub use manifest::ManifestSpec;
 pub use manifest::ToolEntry;
