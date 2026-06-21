@@ -411,6 +411,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--inner-mode",
     "--max-body-bytes",
     "--read-timeout-secs",
+    "--request-deadline-secs",
     "--write-timeout-secs",
     "--inner-read-timeout-secs",
     "--max-connections",
@@ -808,6 +809,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--read-timeout-secs" => {
                 limits.read_timeout = parse_timeout(value, "--read-timeout-secs")?
+            }
+            "--request-deadline-secs" => {
+                // Aggregate wall-clock deadline over the whole server read phase
+                // (handshake + header/body); slow-loris defense, server mirror of
+                // mcps-transport's DeadlineStream. `0` disables (like the per-socket
+                // read timeout knob).
+                limits.request_deadline = parse_timeout(value, "--request-deadline-secs")?
             }
             "--write-timeout-secs" => {
                 limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
@@ -1630,9 +1638,20 @@ fn parse_rlimit_value(flag: &str, value: &str) -> Result<Option<u64>, String> {
     Ok(Some(n))
 }
 
-/// Parse a timeout in whole seconds; `0` disables the timeout (`None`).
+/// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
+/// value is CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] (1 day) and an over-cap
+/// value is REJECTED loudly. This matters for `--request-deadline-secs`, whose
+/// value is later added to `Instant::now()` in the fail-closed deadline reader
+/// (`tls::DeadlineStream`): an absurdly large value would overflow `checked_add`
+/// and — if not rejected here — silently DISABLE the slow-loris defense. Bounding
+/// at parse time keeps the control fail-closed (mirrors [`parse_positive_timeout`]).
 fn parse_timeout(value: &str, flag: &str) -> Result<Option<Duration>, String> {
     let secs: u64 = value.parse().map_err(|_| format!("invalid {flag}"))?;
+    if secs > MAX_INNER_READ_TIMEOUT_SECS {
+        return Err(format!(
+            "{flag} must be <= {MAX_INNER_READ_TIMEOUT_SECS} seconds (1 day); got {secs}"
+        ));
+    }
     Ok(if secs == 0 {
         None
     } else {
@@ -3012,6 +3031,11 @@ mod tests {
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_concurrent_connections, 256);
         assert!(config.limits.read_timeout.is_some());
+        // Aggregate read-phase wall-clock deadline (slow-loris defense) defaults on.
+        assert_eq!(
+            config.limits.request_deadline,
+            Some(std::time::Duration::from_secs(30))
+        );
         // v1 revocation posture: enforced 1-hour client-cert lifetime by default.
         assert_eq!(
             config.max_client_cert_lifetime,
@@ -3879,12 +3903,56 @@ mod tests {
                 "--max-body-bytes", "1024",
                 "--max-connections", "8",
                 "--read-timeout-secs", "0",
+                "--request-deadline-secs", "12",
             ]),
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_body_bytes, 1024);
         assert_eq!(config.limits.max_concurrent_connections, 8);
         assert_eq!(config.limits.read_timeout, None, "0 disables the timeout");
+        assert_eq!(
+            config.limits.request_deadline,
+            Some(std::time::Duration::from_secs(12)),
+            "--request-deadline-secs sets the aggregate read-phase deadline"
+        );
+    }
+
+    #[test]
+    fn request_deadline_secs_zero_disables() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--request-deadline-secs", "0"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.limits.request_deadline, None,
+            "0 disables the aggregate read-phase deadline (like --read-timeout-secs)"
+        );
+    }
+
+    #[test]
+    fn request_deadline_secs_over_cap_is_rejected() {
+        // A nonsensically large `--request-deadline-secs` would overflow
+        // `Instant::now() + t` in `tls::DeadlineStream` and silently DISABLE the
+        // slow-loris defense. Parse-time capping rejects it LOUDLY so the control
+        // can never be turned off by out-of-range input. The boundary (cap exactly)
+        // is accepted; cap+1 is rejected.
+        let cap = super::MAX_INNER_READ_TIMEOUT_SECS;
+        let mut at_cap = minimal();
+        at_cap.splice(0..0, args(&["--request-deadline-secs", &cap.to_string()]));
+        let config = parse_args(&at_cap).expect("the cap value itself is accepted");
+        assert_eq!(
+            config.limits.request_deadline,
+            Some(std::time::Duration::from_secs(cap)),
+            "the deadline stays enforced at the maximum",
+        );
+
+        let mut over_cap = minimal();
+        let over = cap + 1;
+        over_cap.splice(0..0, args(&["--request-deadline-secs", &over.to_string()]));
+        let err = parse_args(&over_cap).expect_err("over-cap value must be rejected");
+        assert!(
+            err.contains("--request-deadline-secs") && err.contains("<="),
+            "rejection names the flag and the bound; got: {err}"
+        );
     }
 
     #[test]

@@ -59,6 +59,17 @@ pub struct ServerLimits {
     /// Per-socket read timeout (covers a stalled TLS handshake and slow-loris
     /// body trickling, since reading drives the handshake). `None` disables.
     pub read_timeout: Option<Duration>,
+    /// AGGREGATE wall-clock deadline over the WHOLE server read phase (TLS
+    /// handshake + HTTP header block + body), the server-side mirror of
+    /// mcps-transport's `DeadlineStream` (MCPS-094) and bounded response read
+    /// (MCPS-093). The per-socket `read_timeout` bounds each INDIVIDUAL read, but a
+    /// peer trickling one byte just under that timeout resets the per-read
+    /// inactivity timer on every byte and can extend a single connection's total
+    /// lifetime without bound (slow-loris below the per-read threshold), holding a
+    /// serve thread. This caps the TOTAL handshake+request read wall-clock; once it
+    /// elapses the next read fails closed (the connection is dropped). `None`
+    /// disables the aggregate bound, preserving the per-read-only semantics.
+    pub request_deadline: Option<Duration>,
     /// Per-socket write timeout. `None` disables.
     pub write_timeout: Option<Duration>,
     /// Maximum simultaneously-served connections in the threaded [`serve`] loop.
@@ -73,6 +84,7 @@ impl Default for ServerLimits {
             max_header_bytes: 64 * 1024,
             max_body_bytes: 16 * 1024 * 1024,
             read_timeout: Some(Duration::from_secs(30)),
+            request_deadline: Some(Duration::from_secs(30)),
             write_timeout: Some(Duration::from_secs(30)),
             max_concurrent_connections: 256,
         }
@@ -733,7 +745,12 @@ where
     let (tcp, _peer) = listener.accept()?;
     apply_socket_timeouts(&tcp, &options.limits)?;
     let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
-    let mut stream = StreamOwned::new(conn, tcp);
+    // AGGREGATE wall-clock deadline over the WHOLE read phase (handshake + header/
+    // body), the server-side mirror of mcps-transport's `DeadlineStream`
+    // (MCPS-094/093): a peer trickling bytes just under `read_timeout` cannot hold
+    // this serve thread without bound (slow-loris). Reads go through the wrapper;
+    // writes delegate straight to the socket (bounded by `write_timeout`).
+    let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
 
     // Reading the request drives the handshake to completion; an unauthenticated
     // or untrusted client certificate surfaces here as an error (fail closed).
@@ -808,7 +825,9 @@ where
 {
     apply_socket_timeouts(&tcp, &options.limits)?;
     let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
-    let mut stream = StreamOwned::new(conn, tcp);
+    // Aggregate read-phase wall-clock deadline (slow-loris defense); see
+    // [`serve_once_with_assertion`] and [`DeadlineStream`].
+    let mut stream = StreamOwned::new(conn, DeadlineStream::new(tcp, &options.limits));
     let request = read_http_request(&mut stream, &options.limits)?;
     let headers = RequestHeaders::parse(&request.header_block);
     let identity = resolve_identity(&stream.conn, options, &headers);
@@ -829,6 +848,91 @@ fn apply_socket_timeouts(tcp: &TcpStream, limits: &ServerLimits) -> io::Result<(
     tcp.set_read_timeout(limits.read_timeout)?;
     tcp.set_write_timeout(limits.write_timeout)?;
     Ok(())
+}
+
+/// A `Read`/`Write` wrapper that enforces an AGGREGATE wall-clock deadline across
+/// every READ on the inner stream — the server-side mirror of mcps-transport's
+/// `DeadlineStream` (MCPS-094, #4081) and bounded response read (MCPS-093).
+///
+/// The per-socket `read_timeout` (`apply_socket_timeouts`) bounds each INDIVIDUAL
+/// read, but a malicious peer trickling one byte just under that timeout resets
+/// the per-read inactivity timer on every byte and can extend a single
+/// connection's total read time without bound — driving the TLS handshake
+/// (reading completes `complete_io`) and the HTTP header/body read forever
+/// (slow-loris below the per-read threshold), holding a serve thread. Routing all
+/// server-side reads through this wrapper caps the TOTAL read wall-clock: once
+/// `deadline` passes, the next read fails closed with `io::ErrorKind::TimedOut`
+/// and the connection is dropped. `None` deadline (the `request_deadline` knob
+/// disabled) preserves the inner stream's own (per-read) semantics.
+///
+/// Writes delegate straight to the inner socket (bounded by the per-socket
+/// `write_timeout`): the aggregate deadline governs the inbound read phase only,
+/// so a legitimate slow response write is never spuriously dropped — symmetric
+/// with mcps-transport, where `DeadlineStream` wraps only the handshake read and
+/// the bare socket is reclaimed for the request write.
+struct DeadlineStream<S> {
+    inner: S,
+    deadline: Option<std::time::Instant>,
+    timeout: Option<Duration>,
+}
+
+impl<S> DeadlineStream<S> {
+    /// Build the wrapper from the configured limits: the aggregate deadline is
+    /// `now + request_deadline` (or `None`, disabling the bound). `request_deadline`
+    /// is retained only for the error message.
+    ///
+    /// FAIL CLOSED: if a deadline was requested but `now + t` overflows `Instant`,
+    /// we MUST NOT silently drop the bound — that would disable the slow-loris
+    /// defense. The CLI caps `--request-deadline-secs` at parse time
+    /// (`cli::parse_timeout`) so this overflow is practically unreachable, but as
+    /// defense-in-depth we saturate to the current instant (deadline already
+    /// elapsed → next read fails closed) rather than disable the control. The
+    /// `None` deadline is reserved exclusively for "no deadline was requested".
+    fn new(inner: S, limits: &ServerLimits) -> Self {
+        let now = std::time::Instant::now();
+        let deadline = limits
+            .request_deadline
+            .map(|t| now.checked_add(t).unwrap_or(now));
+        DeadlineStream {
+            inner,
+            deadline,
+            timeout: limits.request_deadline,
+        }
+    }
+
+    /// Fail closed if the aggregate read deadline has elapsed BEFORE delegating the
+    /// read.
+    fn check_deadline(&self) -> io::Result<()> {
+        if let Some(deadline) = self.deadline {
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "aggregate request read deadline exceeded {:?} (slow-loris trickle)",
+                        self.timeout
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<S: Read> Read for DeadlineStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.check_deadline()?;
+        self.inner.read(buf)
+    }
+}
+
+impl<S: Write> Write for DeadlineStream<S> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// One parsed HTTP/1.1 request: the request/header block (text up to and
@@ -1246,6 +1350,106 @@ mod identity_parity_tests {
         let req = read_req(block).expect("a well-formed CRLF request must be accepted");
         let headers = crate::transport::RequestHeaders::parse(&req.header_block);
         assert_eq!(headers.first("mcp-name"), Some("good"));
+    }
+}
+
+#[cfg(test)]
+mod aggregate_deadline_tests {
+    //! Issue #100: the server read path's AGGREGATE wall-clock deadline
+    //! (`DeadlineStream`) must fail closed when a peer trickles bytes just under
+    //! the per-read timeout but past the aggregate budget (slow-loris), the
+    //! server-side mirror of mcps-transport's `DeadlineStream` (MCPS-094/093).
+    //!
+    //! Hermetic and fast: a `TricklingReader` always makes per-read progress (so
+    //! the per-socket `read_timeout`/zero-byte-stall guard NEVER fires) but never
+    //! completes the header block, so only the aggregate deadline can stop it.
+
+    use std::io;
+    use std::io::Read;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    use super::DeadlineStream;
+    use super::ServerLimits;
+
+    /// A reader that always returns exactly one byte per `read` (never 0, never an
+    /// error) and never emits the `\r\n\r\n` header terminator — modelling a peer
+    /// that keeps the per-read inactivity timer alive forever while never finishing
+    /// the request. Optionally sleeps per read to model a real trickle rate without
+    /// making the test slow.
+    struct TricklingReader {
+        per_read_sleep: Duration,
+    }
+
+    impl Read for TricklingReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            // A zero-length buffer is legal per the `Read` contract; return
+            // `Ok(0)` before touching `buf[0]` so we never panic.
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            if !self.per_read_sleep.is_zero() {
+                std::thread::sleep(self.per_read_sleep);
+            }
+            // A non-terminator byte: progress is always made, so a per-read-only
+            // guard can never cut this off.
+            buf[0] = b'A';
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn aggregate_deadline_fires_on_sub_per_read_trickle() {
+        // Small aggregate budget; the per-read sleep is well UNDER it, so each
+        // individual read "succeeds" and only the aggregate deadline can stop the
+        // header read. Without the wrapper, `read_http_request` would loop forever.
+        let limits = ServerLimits {
+            // Per-read timeout disabled to prove the AGGREGATE bound (not the
+            // per-socket timeout) is what fails closed.
+            read_timeout: None,
+            request_deadline: Some(Duration::from_millis(150)),
+            ..ServerLimits::default()
+        };
+        let mut stream = DeadlineStream::new(
+            TricklingReader { per_read_sleep: Duration::from_millis(5) },
+            &limits,
+        );
+
+        let start = Instant::now();
+        let result = super::read_http_request(&mut stream, &limits);
+        let elapsed = start.elapsed();
+
+        let err = match result {
+            Ok(_) => panic!("a sub-per-read trickle past the aggregate deadline must fail closed"),
+            Err(e) => e,
+        };
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::TimedOut,
+            "the aggregate read deadline must surface as TimedOut (fail closed), got: {err}"
+        );
+        // It must be cut off PROMPTLY after the deadline, not hang. Generous upper
+        // bound to stay non-flaky on a loaded CI host.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the connection must be dropped promptly at the aggregate deadline, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_deadline_does_not_cut_off_a_completing_read() {
+        // `request_deadline: None` disables the aggregate bound; a reader that DOES
+        // complete the request must still parse cleanly (the wrapper is transparent
+        // when the deadline is off).
+        let limits = ServerLimits {
+            request_deadline: None,
+            ..ServerLimits::default()
+        };
+        let body = b"POST / HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec();
+        let mut stream = DeadlineStream::new(io::Cursor::new(body), &limits);
+        let req = super::read_http_request(&mut stream, &limits)
+            .expect("a complete request must parse when the aggregate deadline is disabled");
+        assert!(req.body.is_empty());
     }
 }
 
