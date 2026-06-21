@@ -197,6 +197,14 @@ pub struct Config {
     /// determines the horizontal replay-safety claim. `None` for single-node
     /// `Memory` / `File` backends.
     pub replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier>,
+    /// Declared revocation tier (ADR-MCPS-021 Axis 2). Selects how strong a
+    /// revocation-propagation window the deployment asserts: Tier 1
+    /// (`bounded-cache:<T>`, the default), Tier 2 (`live`), or Tier 3
+    /// (`push:<T>`). The proxy surfaces the tier's own honest guarantee and
+    /// CANNOT surface a window stronger than the configured tier proves. Defaults
+    /// to bounded-cache with the deployment-default window `T` so absent-flag
+    /// behavior is byte-for-byte the Tier-1 posture.
+    pub revocation_tier: crate::revocation_tier::RevocationTier,
     /// Transport-binding selection.
     pub binding: BindingKind,
     /// The authoritative identity field (no implicit fallback). For the default
@@ -368,6 +376,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--replay-redis-url",
     "--cpstore-etcd-endpoint",
     "--replay-durability-tier",
+    "--revocation-tier",
     "--transport-binding",
     "--transport-identity-source",
     "--reverse-proxy-identity-header",
@@ -430,6 +439,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #69 (epic #68 v0.4 Axis 1): the CP/etcd endpoint for the LINEARIZABLE tier.
     let mut cpstore_etcd_endpoint: Option<String> = None;
     let mut replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier> = None;
+    // ADR-MCPS-021 Axis 2: revocation tier. Defaults to Tier 1 bounded-cache with
+    // the deployment-default window T, so an absent flag preserves the existing
+    // Tier-1 posture exactly.
+    let mut revocation_tier = crate::revocation_tier::RevocationTier::BoundedCache {
+        t_secs: crate::trust_cache::DEFAULT_T_SECS,
+    };
     let mut binding = BindingKind::Exact;
     let mut identity_source = IdentityPolicy::UriSan;
     let mut reverse_proxy_identity_header: Option<String> = None;
@@ -658,6 +673,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--replay-durability-tier" => {
                 replay_durability_tier =
                     Some(crate::replay_tier::ReplayDurabilityTier::parse(value)?)
+            }
+            "--revocation-tier" => {
+                revocation_tier = crate::revocation_tier::RevocationTier::parse(value)?
             }
             "--transport-binding" => {
                 binding = match value.as_str() {
@@ -1118,6 +1136,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         replay_redis_url,
         cpstore_etcd_endpoint,
         replay_durability_tier,
+        revocation_tier,
         binding,
         identity_source,
         reverse_proxy_identity_header,
@@ -1821,6 +1840,59 @@ pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
         resolver.insert(signer, key_id, key);
     }
     Ok(resolver)
+}
+
+/// Wrap the base trust resolver according to the declared revocation tier
+/// (ADR-MCPS-021, Axis 2), so the configured tier actually GOVERNS runtime
+/// behavior instead of only labeling a startup line.
+///
+/// - [`RevocationTier::BoundedCache`] → a Tier-1 [`BoundedTrustCache`] caching
+///   active state for at most `T`.
+/// - [`RevocationTier::Live`] → a Tier-2 [`LiveTrustResolver`] that consults the
+///   inner store on every call (no positive caching), so a store revocation is
+///   visible on the very next request.
+/// - [`RevocationTier::Push`] → a Tier-3 [`PushInvalidationTrustCache`] over an
+///   in-process [`InMemoryInvalidationChannel`]. NOTE: no networked event source
+///   ships yet, so the reference channel delivers no external pushes and the cache
+///   operates at its honest bounded-`T` fallback (exactly what
+///   [`RevocationTier::Push`]'s `guarantee()` already states). The wrapping is
+///   still correct: it is the same code path a real push backend will drive, and
+///   it never claims a near-zero window the channel cannot prove.
+///
+/// Pure and unit-testable: the `clock` is injected (tests pass a controllable one),
+/// and the negative TTL is the named [`crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS`].
+pub fn build_revocation_resolver(
+    tier: &crate::revocation_tier::RevocationTier,
+    base: Box<dyn mcps_core::TrustResolver + Send + Sync>,
+    clock: crate::trust_cache::UnixClock,
+) -> Box<dyn mcps_core::TrustResolver + Send + Sync> {
+    let negative_ttl_secs = crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
+    match tier {
+        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => {
+            Box::new(crate::trust_cache::BoundedTrustCache::new(
+                base,
+                *t_secs,
+                negative_ttl_secs,
+                clock,
+            ))
+        }
+        crate::revocation_tier::RevocationTier::Live => {
+            Box::new(crate::live_trust::LiveTrustResolver::new(base))
+        }
+        crate::revocation_tier::RevocationTier::Push { t_secs } => {
+            // Tier 3 over the in-process reference channel: with no networked event
+            // source wired, the channel is inert and the cache runs at its bounded-`T`
+            // fallback (the honest guarantee). A real push backend would inject its
+            // own channel here in place of the in-memory reference.
+            Box::new(crate::push_trust::PushInvalidationTrustCache::new(
+                base,
+                *t_secs,
+                negative_ttl_secs,
+                clock,
+                Box::new(crate::push_trust::InMemoryInvalidationChannel::new()),
+            ))
+        }
+    }
 }
 
 /// Load the configured offline client-certificate revocation lists (#3839) into
@@ -3763,6 +3835,51 @@ mod tests {
     }
 
     #[test]
+    fn revocation_tier_defaults_to_bounded_cache_tier_1() {
+        // Absent --revocation-tier preserves the Tier-1 bounded-cache posture with
+        // the deployment-default window T (existing behavior unchanged).
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(
+            config.revocation_tier,
+            crate::revocation_tier::RevocationTier::BoundedCache {
+                t_secs: crate::trust_cache::DEFAULT_T_SECS
+            }
+        );
+    }
+
+    #[test]
+    fn parses_each_revocation_tier() {
+        for (flag, expected) in [
+            (
+                "bounded-cache:90",
+                crate::revocation_tier::RevocationTier::BoundedCache { t_secs: 90 },
+            ),
+            ("live", crate::revocation_tier::RevocationTier::Live),
+            (
+                "push:30",
+                crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
+            ),
+        ] {
+            let mut a = minimal();
+            a.splice(0..0, args(&["--revocation-tier", flag]));
+            let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
+            assert_eq!(config.revocation_tier, expected, "flag {flag}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_or_malformed_revocation_tier() {
+        for flag in ["ocsp", "bounded-cache", "push:0", "bounded-cache:-1"] {
+            let mut a = minimal();
+            a.splice(0..0, args(&["--revocation-tier", flag]));
+            assert!(
+                parse_args(&a).is_err(),
+                "revocation tier '{flag}' must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_replay_cache_lists_shared() {
         let mut a = minimal();
         a.splice(0..0, args(&["--replay-cache", "cluster"]));
@@ -4884,5 +5001,162 @@ mod tests {
             err.contains("--pkcs11-tls-key-label") && err.contains("AFTER --inner-command"),
             "got: {err}"
         );
+    }
+
+    // ---- ADR-MCPS-021 Axis 2: build_revocation_resolver wiring ----------------
+    //
+    // These prove the helper does not merely label the tier but CHANGES runtime
+    // behavior: Tier 2 (Live) reflects a store revocation immediately (no caching),
+    // while Tier 1 (BoundedCache) caches within T. Uses the same ScriptedResolver
+    // test-double style as `trust_cache` / `live_trust`.
+
+    use std::sync::atomic::AtomicI64;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+    use mcps_core::TrustResolverError;
+    use mcps_core::VerificationKey;
+    use super::build_revocation_resolver;
+    use crate::revocation_tier::RevocationTier;
+    use crate::trust_cache::UnixClock;
+
+    const SEED_A_REV: [u8; 32] = [1u8; 32];
+
+    fn rev_key() -> VerificationKey {
+        SigningKey::from_seed_bytes(&SEED_A_REV).public_key()
+    }
+
+    /// A resolver whose outcome the test flips, counting inner consultations to
+    /// prove caching (or its absence). Mirrors the other modules' doubles.
+    struct ScriptedRevResolver {
+        outcome: Mutex<Result<VerificationKey, TrustResolverError>>,
+        calls: AtomicUsize,
+    }
+    impl ScriptedRevResolver {
+        fn new(initial: Result<VerificationKey, TrustResolverError>) -> Self {
+            ScriptedRevResolver {
+                outcome: Mutex::new(initial),
+                calls: AtomicUsize::new(0),
+            }
+        }
+        fn set(&self, outcome: Result<VerificationKey, TrustResolverError>) {
+            *self.outcome.lock().unwrap() = outcome;
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(AtomicOrdering::SeqCst)
+        }
+    }
+    impl TrustResolver for ScriptedRevResolver {
+        fn resolve(
+            &self,
+            _signer: &str,
+            _key_id: &str,
+        ) -> Result<VerificationKey, TrustResolverError> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            self.outcome.lock().unwrap().clone()
+        }
+    }
+
+    /// Box a shared scripted resolver as the helper's `base`, keeping a handle.
+    fn base_over(inner: Arc<ScriptedRevResolver>) -> Box<dyn TrustResolver + Send + Sync> {
+        struct Shared(Arc<ScriptedRevResolver>);
+        impl TrustResolver for Shared {
+            fn resolve(
+                &self,
+                signer: &str,
+                key_id: &str,
+            ) -> Result<VerificationKey, TrustResolverError> {
+                self.0.resolve(signer, key_id)
+            }
+        }
+        Box::new(Shared(inner))
+    }
+
+    fn fixed_clock(start: i64) -> (UnixClock, Arc<AtomicI64>) {
+        let now = Arc::new(AtomicI64::new(start));
+        let handle = now.clone();
+        let clock: UnixClock = Box::new(move || now.load(AtomicOrdering::SeqCst));
+        (clock, handle)
+    }
+
+    #[test]
+    fn live_tier_wrapping_reflects_a_store_revocation_immediately() {
+        // Proves Tier 2 (Live) was actually APPLIED: the wrapped resolver consults
+        // the inner store on every call, so a store-side revocation is rejected on
+        // the next request with no T wait and no caching.
+        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
+        let (clock, _now) = fixed_clock(1000);
+        let resolver =
+            build_revocation_resolver(&RevocationTier::Live, base_over(inner.clone()), clock);
+
+        resolver.resolve("did:host", "key-1").expect("active resolves");
+        // Store flips to Revoked; NO clock advance (Live has no propagation window).
+        inner.set(Err(TrustResolverError::Revoked));
+        assert_eq!(
+            resolver.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "Live wrapping reflects a store revocation immediately"
+        );
+        assert_eq!(
+            inner.calls(),
+            2,
+            "Live consults the inner store every call (no positive caching)"
+        );
+    }
+
+    #[test]
+    fn bounded_cache_tier_wrapping_caches_within_t() {
+        // Proves Tier 1 (BoundedCache) was actually APPLIED: within T a second
+        // resolve is served from cache and the inner store is consulted only once
+        // — the opposite of the Live behavior above, so the two tiers are
+        // genuinely distinct at runtime.
+        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
+        let (clock, _now) = fixed_clock(1000);
+        let resolver = build_revocation_resolver(
+            &RevocationTier::BoundedCache { t_secs: 60 },
+            base_over(inner.clone()),
+            clock,
+        );
+
+        resolver.resolve("did:host", "key-1").expect("active resolves");
+        // A store revocation within T is NOT seen — the cached active entry holds.
+        inner.set(Err(TrustResolverError::Revoked));
+        resolver
+            .resolve("did:host", "key-1")
+            .expect("within T the cached active entry is served");
+        assert_eq!(
+            inner.calls(),
+            1,
+            "BoundedCache consults the inner store once within T (caching is in effect)"
+        );
+    }
+
+    #[test]
+    fn push_tier_wrapping_behaves_as_bounded_t_with_an_inert_channel() {
+        // Tier 3 over the inert in-process channel (no networked event source ships)
+        // behaves exactly as bounded-T: within T a second resolve is a cache hit; a
+        // store revocation is not picked up until T elapses.
+        let inner = Arc::new(ScriptedRevResolver::new(Ok(rev_key())));
+        let (clock, now) = fixed_clock(1000);
+        let resolver = build_revocation_resolver(
+            &RevocationTier::Push { t_secs: 60 },
+            base_over(inner.clone()),
+            clock,
+        );
+
+        resolver.resolve("did:host", "key-1").expect("active resolves");
+        inner.set(Err(TrustResolverError::Revoked));
+        // Within T: still a cache hit (the inert channel delivers no push).
+        resolver
+            .resolve("did:host", "key-1")
+            .expect("within T the bounded-T fallback serves the cached entry");
+        assert_eq!(inner.calls(), 1, "inert-channel Tier 3 is bounded-T (cache hit within T)");
+        // Past T: the bounded window caps exposure and the revocation is picked up.
+        now.store(1000 + 60, AtomicOrdering::SeqCst);
+        assert_eq!(
+            resolver.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked,
+            "past T the bounded fallback re-resolves and picks up the revocation"
+        );
+        assert_eq!(inner.calls(), 2);
     }
 }

@@ -58,6 +58,15 @@ _PROXY_LIB_SRCS = [
     "src/etcd_store.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
+    # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
+    # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
+    "src/revocation_tier.rs",
+    # ADR-MCPS-021 Tier 2: live strong trust check (no positive caching, optional
+    # second live revocation authority, fail-closed on outage).
+    "src/live_trust.rs",
+    # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
+    # invalidation channel; bounded-T fallback when the channel is unhealthy).
+    "src/push_trust.rs",
     "src/rlimits.rs",
     # Issue #3865 / #4039: OS sandbox profile + fail-closed platform gate, plus the
     # Linux Landlock/seccomp ENFORCEMENT backend (sandbox_linux.rs is
