@@ -365,6 +365,17 @@ impl AtomicReplayStore for EtcdAtomicReplayStore {
 
         Ok(decision)
     }
+
+    /// `Durable` (issue #78, ADR-MCPS-020): admitted nonces live in a SHARED,
+    /// LINEARIZABLE etcd cluster (a CP store) visible to every verifier instance
+    /// pointed at the same cluster, so they survive a single proxy's restart and
+    /// prevent cross-node replays. A [`SharedReplayCache`](crate::shared_replay::SharedReplayCache)
+    /// backed by this store therefore declares `Durable` and clears the strict
+    /// object-level durability gate; the horizontal strength beyond mere durability
+    /// is asserted separately by the configured `ReplayDurabilityTier`.
+    fn durability_class(&self) -> mcps_core::ReplayDurabilityClass {
+        mcps_core::ReplayDurabilityClass::Durable
+    }
 }
 
 #[cfg(test)]
