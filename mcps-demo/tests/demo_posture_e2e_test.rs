@@ -437,6 +437,7 @@ fn spawn_durable_proxy(fixtures: &DemoFixtures, replay_path: &Path) -> DurablePr
             "uri_san",
             "--authz",
             "reference",
+            "--allow-reference-authz",
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
