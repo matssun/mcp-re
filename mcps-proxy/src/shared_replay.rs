@@ -55,6 +55,7 @@ use mcps_core::sha256_hash_id;
 use mcps_core::ReplayCache;
 use mcps_core::ReplayCacheError;
 use mcps_core::ReplayDecision;
+use mcps_core::ReplayDurabilityClass;
 
 /// An operational failure of an [`AtomicReplayStore`] (the shared backend could
 /// not be reached or did not answer).
@@ -117,6 +118,24 @@ pub trait AtomicReplayStore {
         expires_at_unix: i64,
         now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError>;
+
+    /// This store's self-declared [`ReplayDurabilityClass`] (issue #78,
+    /// ADR-MCPS-020). A [`SharedReplayCache`] DELEGATES its own
+    /// `durability_class()` to this, so the durability declaration is anchored to
+    /// the store that actually persists nonces, NOT hardcoded on the cache wrapper.
+    ///
+    /// The default is the conservative
+    /// [`ReplayDurabilityClass::SingleProcessReference`] (fail closed): a store that
+    /// does not explicitly override this — including any future backend that forgets
+    /// to — is treated as the non-durable, single-process reference and can never
+    /// silently pass a strict/production durability gate. Only a genuinely durable
+    /// / cross-process store (the Redis and etcd backends) overrides this to honestly
+    /// return [`ReplayDurabilityClass::Durable`]. This is a PURE, type-level
+    /// capability (no IO, no async) — safe to keep `mcps-core` pure
+    /// (ADR-MCPS-011/012) since it only returns the pure `mcps-core` enum.
+    fn durability_class(&self) -> ReplayDurabilityClass {
+        ReplayDurabilityClass::SingleProcessReference
+    }
 }
 
 /// A [`ReplayCache`] backed by a shared [`AtomicReplayStore`], giving
@@ -189,6 +208,23 @@ impl ReplayCache for SharedReplayCache {
         // eviction timing does.
         let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
         Ok(self.store.insert_if_absent(&key, retain_until, 0)?)
+    }
+
+    /// DELEGATES to the backing [`AtomicReplayStore`]'s own
+    /// [`durability_class`](AtomicReplayStore::durability_class) (issue #78,
+    /// ADR-MCPS-020) — the wrapper does NOT hardcode `Durable`.
+    ///
+    /// A `SharedReplayCache` is only as durable as the store behind it: backed by a
+    /// genuinely durable / cross-process store (Redis, etcd) it reports
+    /// [`ReplayDurabilityClass::Durable`]; backed by the single-process
+    /// [`InMemoryAtomicReplayStore`] reference it reports the conservative
+    /// [`ReplayDurabilityClass::SingleProcessReference`] (the store's default), so an
+    /// in-process-only shared cache can NOT masquerade as durable and CANNOT clear
+    /// the strict object-level durability gate. The strength of any horizontal claim
+    /// beyond mere durability is asserted separately by the configured
+    /// `ReplayDurabilityTier`.
+    fn durability_class(&self) -> ReplayDurabilityClass {
+        self.store.durability_class()
     }
 }
 
@@ -265,6 +301,10 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
     use super::AtomicReplayStore;
     use super::InMemoryAtomicReplayStore;
     use super::ReplayStoreError;
@@ -273,6 +313,7 @@ mod tests {
     use mcps_core::ReplayCache;
     use mcps_core::ReplayCacheError;
     use mcps_core::ReplayDecision;
+    use mcps_core::ReplayDurabilityClass;
 
     const SIGNER: &str = "did:example:host";
     const AUD: &str = "did:example:verifier";
@@ -296,6 +337,67 @@ mod tests {
                 details: "shared backend unreachable".to_string(),
             })
         }
+    }
+
+    /// A test double modelling a genuinely durable / cross-process backend (Redis
+    /// or etcd in production): it OVERRIDES `durability_class()` to `Durable`. It
+    /// exists only to prove the SharedReplayCache DELEGATES its declared class to
+    /// the backing store (a real durable store ⇒ the cache declares Durable),
+    /// without compiling a feature-gated Redis/etcd backend into the default build.
+    #[derive(Clone, Default)]
+    struct DurableModelStore {
+        seen: Arc<Mutex<BTreeMap<String, i64>>>,
+    }
+
+    impl AtomicReplayStore for DurableModelStore {
+        fn insert_if_absent(
+            &self,
+            key: &str,
+            expires_at_unix: i64,
+            _now_unix: i64,
+        ) -> Result<ReplayDecision, ReplayStoreError> {
+            let mut map = self.seen.lock().map_err(|e| ReplayStoreError::Unavailable {
+                details: format!("durable model store poisoned: {e}"),
+            })?;
+            if map.contains_key(key) {
+                return Ok(ReplayDecision::Replay);
+            }
+            map.insert(key.to_string(), expires_at_unix);
+            Ok(ReplayDecision::Fresh)
+        }
+
+        fn durability_class(&self) -> ReplayDurabilityClass {
+            ReplayDurabilityClass::Durable
+        }
+    }
+
+    #[test]
+    fn durability_class_delegates_to_backing_store() {
+        // #78 (ADR-MCPS-020): a SharedReplayCache is only as durable as the store
+        // behind it — its durability_class DELEGATES to the backing store's, it does
+        // NOT hardcode Durable.
+
+        // Over the SINGLE-PROCESS in-memory reference store (which does NOT override
+        // the conservative default), the cache must declare SingleProcessReference,
+        // so it canNOT masquerade as durable nor clear the strict object-level gate.
+        let in_memory = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), SKEW);
+        assert_eq!(
+            in_memory.durability_class(),
+            ReplayDurabilityClass::SingleProcessReference,
+            "an in-memory-backed shared cache is single-process, not durable"
+        );
+        assert!(in_memory.is_single_process_reference());
+
+        // Over a genuinely durable / cross-process store (Redis/etcd in production,
+        // modelled here by a store that overrides to Durable), the cache declares
+        // Durable — proving the delegation, not a hardcode.
+        let durable = SharedReplayCache::new(Box::new(DurableModelStore::default()), SKEW);
+        assert_eq!(
+            durable.durability_class(),
+            ReplayDurabilityClass::Durable,
+            "a durable-store-backed shared cache must declare Durable"
+        );
+        assert!(!durable.is_single_process_reference());
     }
 
     #[test]
