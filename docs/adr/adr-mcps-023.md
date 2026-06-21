@@ -154,16 +154,19 @@ Tier 3 is implemented in `mcps-proxy` (issue #71, v0.4 axis-hardening) as the
   transport binding. Under `--strict`/`--production` the proxy refuses to enable
   `lb-assertion` silently.
 
-**Integration scope note (issue #71).** The cryptographic verifier, the LB
-key-custody trust map, and the CLI configuration land in `mcps-proxy`. Activating
-Tier 3 in the live serve loop additionally requires routing the presented
-assertion header and the verified in-hand `request_hash` into the binding step;
-that step depends on the post-verification request hash, whereas the existing
-`IdentityStrategy` seam resolves identity *pre*-verification and the shared
-`serve_once`/`serve` callback (used by out-of-scope demo tests) passes only the
-request body. Wiring it end-to-end through that callback is tracked as a
-follow-up; the verifier here is the load-bearing security unit and is fully
-conformance-tested in-crate.
+**Integration (issue #71).** The cryptographic verifier, the LB key-custody
+trust map, the CLI configuration, AND the live-serve-loop wiring all land in
+`mcps-proxy`. The presented assertion header (`mcp-ingress-assertion`) is routed
+through the serve path by `IdentityStrategy::LbAssertion` plus a
+`serve_once_with_assertion` entry point, and verified at the post-verification
+binding step in `Proxy::handle_with_transport` — where the in-hand
+`request_hash` is already available, so the binding check sees both the verified
+signer and the verified request hash. `serve_once`/`serve` keep their original
+arity by delegating to the new entry point, so the demo/transport callers are
+unchanged. Object-signature verification still runs first in `verify_request`,
+independently of and before this binding. The feature is therefore enforced
+end-to-end, with both a unit-level verifier suite and a serve-level acceptance
+suite (`tests/proxy_lb_assertion_test.rs`).
 
 ## Threat Model
 

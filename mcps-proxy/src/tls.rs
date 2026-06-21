@@ -520,7 +520,7 @@ fn assertion_header<'a>(
     options: &ServerOptions,
     headers: &'a RequestHeaders,
 ) -> Option<&'a str> {
-    match options.identity_strategy {
+    match &options.identity_strategy {
         IdentityStrategy::LbAssertion => {
             // Fail closed on a duplicated trust header before reading any value.
             if headers.count(MCP_INGRESS_ASSERTION_HEADER) != 1 {
