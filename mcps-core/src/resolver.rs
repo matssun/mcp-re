@@ -121,8 +121,10 @@ enum Binding {
 /// Deterministic, [`BTreeMap`]-backed reference [`TrustResolver`] for tests and
 /// conformance vectors (MCPS_SPEC §6).
 ///
-/// Keyed by the `"signer#key_id"` string. Has no operational-failure path: it
-/// only ever returns active bindings or [`TrustResolverError::NotFound`] /
+/// Keyed by a collision-safe, length-prefixed encoding of the `(signer, key_id)`
+/// pair (see `compose_key`) — NOT a naive `"signer#key_id"` join, which is not
+/// injective when a field contains the `#` delimiter. Has no operational-failure
+/// path: it only ever returns active bindings or [`TrustResolverError::NotFound`] /
 /// [`TrustResolverError::Revoked`]. (To exercise the
 /// [`McpsError::TrustResolverUnavailable`] mapping, an always-unavailable test
 /// resolver is used instead.)
@@ -139,9 +141,19 @@ impl InMemoryTrustResolver {
         }
     }
 
-    /// Compose the lookup key from a `(signer, key_id)` pair.
+    /// Compose a COLLISION-SAFE lookup key from a `(signer, key_id)` pair.
+    ///
+    /// A naive `"{signer}#{key_id}"` join is NOT injective: a `signer` or
+    /// `key_id` containing the delimiter aliases distinct pairs (e.g.
+    /// `("a#b", "c")` and `("a", "b#c")` both compose to `"a#b#c"`). Signer
+    /// strings are DIDs/URIs that legitimately contain `#`, so two different
+    /// bindings could collide and one tenant's `(signer, key_id)` could resolve
+    /// a key bound under another's. We length-prefix each field (in BYTES) so the
+    /// parse is unambiguous regardless of any delimiter the fields contain,
+    /// guaranteeing injectivity of the lookup key. (Same hardening as
+    /// `SharedReplayCache::composite_key`.)
     fn compose_key(signer: &str, key_id: &str) -> String {
-        format!("{signer}#{key_id}")
+        format!("{}:{}|{}:{}", signer.len(), signer, key_id.len(), key_id)
     }
 
     /// Insert (or replace) an active binding for `(signer, key_id)`.
@@ -280,6 +292,31 @@ mod tests {
             .resolve("did:example:host", "key-1")
             .expect_err("always-unavailable resolver must fail");
         assert_eq!(err.to_mcps_error(), McpsError::TrustResolverUnavailable);
+    }
+
+    #[test]
+    fn composite_key_is_injective_across_delimiter_containing_pairs() {
+        // `("a#b", "c")` and `("a", "b#c")` both collapse to `"a#b#c"` under a
+        // naive `#` join. The length-prefixed encoding must keep them distinct so
+        // one binding can never shadow or resolve under a different
+        // `(signer, key_id)` pair (DIDs/URIs legitimately contain `#`).
+        let key_ab = key_from(&SEED_A);
+        let key_bc = key_from(&SEED_B);
+        let mut resolver = InMemoryTrustResolver::new();
+        resolver.insert("a#b", "c", key_ab.clone());
+        resolver.insert("a", "b#c", key_bc.clone());
+
+        let resolved_ab = resolver
+            .resolve("a#b", "c")
+            .expect("(\"a#b\", \"c\") must resolve to its own key");
+        let resolved_bc = resolver
+            .resolve("a", "b#c")
+            .expect("(\"a\", \"b#c\") must resolve to its own key");
+
+        // No collision: each pair keeps its own distinct binding.
+        assert_eq!(resolved_ab.to_bytes(), key_ab.to_bytes());
+        assert_eq!(resolved_bc.to_bytes(), key_bc.to_bytes());
+        assert_ne!(resolved_ab.to_bytes(), resolved_bc.to_bytes());
     }
 
     #[test]

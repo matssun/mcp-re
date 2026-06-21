@@ -59,8 +59,7 @@ fn jcs_safe_json() -> impl Strategy<Value = serde_json::Value> {
     let leaf = prop_oneof![
         Just(serde_json::Value::Null),
         proptest::bool::ANY.prop_map(serde_json::Value::Bool),
-        (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
-            .prop_map(|i| serde_json::Value::from(i)),
+        (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).prop_map(serde_json::Value::from),
         ".*".prop_map(serde_json::Value::String),
     ];
     leaf.prop_recursive(GEN_DEPTH, 64, 8, |inner| {

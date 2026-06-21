@@ -15,9 +15,10 @@
 //! 2. Reject a notification (no `id`) -> [`McpsError::NotificationForbidden`].
 //! 3. JCS-safe domain on the ORIGINAL raw bytes (duplicate keys, unsafe integers,
 //!    invalid UTF-8, ...) -> [`McpsError::CanonicalizationFailed`].
-//! 4-6. Locate / deny-unknown-fields / version-check the request envelope
-//!    (-> [`McpsError::MissingEnvelope`] / [`McpsError::UnknownEnvelopeField`] /
-//!    [`McpsError::UnsupportedVersion`], mapped inside `extract_request_envelope`).
+//! 4. (steps 4-6) Locate / deny-unknown-fields / version-check the request
+//!    envelope (-> [`McpsError::MissingEnvelope`] /
+//!    [`McpsError::UnknownEnvelopeField`] / [`McpsError::UnsupportedVersion`],
+//!    mapped inside `extract_request_envelope`).
 //! 7. Required-field presence/format on the envelope:
 //!    - `authorization_hash` non-empty AND `sha256:`-prefixed
 //!      -> else [`McpsError::AuthorizationHashMissing`] (present-but-empty OR
@@ -31,11 +32,11 @@
 //! 8. `audience == config.expected_audience` -> else [`McpsError::InvalidAudience`].
 //! 9. Freshness window -> else [`McpsError::ExpiredRequest`].
 //! 10. Resolve `(signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
-//!    [`McpsError::TrustResolverUnavailable`].
+//!     [`McpsError::TrustResolverUnavailable`].
 //! 11. Build the request signing preimage (`signature.value` removed) and verify
-//!    Ed25519 -> [`McpsError::InvalidSignature`].
+//!     Ed25519 -> [`McpsError::InvalidSignature`].
 //! 12. Parse `expires_at`, then replay-cache check-and-insert ->
-//!    [`McpsError::ReplayCacheUnavailable`] / [`McpsError::ReplayDetected`].
+//!     [`McpsError::ReplayCacheUnavailable`] / [`McpsError::ReplayDetected`].
 //!
 //! ## Documented step-7 error choice (per MCPS_SPEC §9 step 7's request)
 //! - `authorization_hash`: a structurally absent value maps to
@@ -50,18 +51,22 @@
 //!   step 7. Both tokens are reachable and exercised by the constraints
 //!   deserialization tests (absent) and the pipeline tests (present-but-empty).
 //!
-//! ## verify_response order (MCPS_SPEC §9, verify_response steps 1-7)
-//! 1. JCS-safe domain -> [`McpsError::CanonicalizationFailed`].
-//! 2-3. Locate / deny-unknown-fields the response envelope ->
+//! ## verify_response order (MCPS_SPEC §9 verify_response, with the structural
+//! batch/notification rejects mirrored up front from `verify_request`)
+//! 1. Parse JSON; reject a top-level array (batch) -> [`McpsError::BatchForbidden`].
+//! 2. Reject a notification (no `id`) -> [`McpsError::NotificationForbidden`].
+//! 3. JCS-safe domain on the ORIGINAL raw bytes ->
+//!    [`McpsError::CanonicalizationFailed`].
+//! 4-5. Locate / deny-unknown-fields the response envelope ->
 //!    [`McpsError::MissingEnvelope`] / [`McpsError::UnknownEnvelopeField`].
-//! 4. `signature.alg == "Ed25519"` -> else [`McpsError::ResponseSigInvalid`].
-//! 5. Resolve `(server_signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
+//! 6. `signature.alg == "Ed25519"` -> else [`McpsError::ResponseSigInvalid`].
+//! 7. Resolve `(server_signer, key_id)` -> [`McpsError::ActorBindingFailed`] /
 //!    [`McpsError::TrustResolverUnavailable`].
-//! 6. Build the response preimage and verify Ed25519 ->
+//! 8. Build the response preimage and verify Ed25519 ->
 //!    [`McpsError::ResponseSigInvalid`].
-//! 7. `response.request_hash == expected_request_hash` -> else
+//! 9. `response.request_hash == expected_request_hash` -> else
 //!    [`McpsError::ResponseHashMismatch`]. Vector 4B proves this fires even when
-//!    the signature (step 6) is valid over a wrong `request_hash`.
+//!    the signature (step 8) is valid over a wrong `request_hash`.
 
 use serde_json::Value;
 
@@ -246,23 +251,37 @@ pub fn verify_response(
     let value: Value =
         serde_json::from_slice(raw_bytes).map_err(|_| McpsError::CanonicalizationFailed)?;
 
-    // Step 1 — JCS-safe domain on the ORIGINAL raw bytes.
+    // Explicit structural rejects FIRST, mirroring `verify_request`. An array/batch
+    // or notification-shaped response already fails closed at envelope location
+    // (`locate_envelope` returns MissingEnvelope), but rejecting them up front —
+    // before the raw-bytes JCS pass — surfaces the precise wire token
+    // (BatchForbidden / NotificationForbidden) instead of an incidental
+    // CanonicalizationFailed / MissingEnvelope, keeping the request/response
+    // taxonomy symmetric.
+
+    // Step 1 — reject a top-level array (batch).
+    reject_batch(&value)?;
+
+    // Step 2 — reject a notification (no id).
+    reject_notification(&value)?;
+
+    // Step 3 — JCS-safe domain on the ORIGINAL raw bytes (duplicate keys etc.).
     canonicalize(raw_bytes)?;
 
-    // Steps 2-3 — locate / deny-unknown-fields the response envelope.
+    // Steps 4-5 — locate / deny-unknown-fields the response envelope.
     let envelope = extract_response_envelope(&value)?;
 
-    // Step 4 — signature.alg == Ed25519 (else ResponseSigInvalid).
+    // Step 6 — signature.alg == Ed25519 (else ResponseSigInvalid).
     if envelope.signature.alg != SIG_ALG_ED25519 {
         return Err(McpsError::ResponseSigInvalid);
     }
 
-    // Step 5 — resolve (server_signer, key_id) -> key.
+    // Step 7 — resolve (server_signer, key_id) -> key.
     let key = resolver
         .resolve(&envelope.server_signer, &envelope.signature.key_id)
         .map_err(McpsError::from)?;
 
-    // Step 6 — canonicalize (signature.value removed) and verify Ed25519.
+    // Step 8 — build the response preimage (signature.value removed) and verify Ed25519.
     let preimage = response_signing_preimage(&value)?;
     let signature_value = envelope
         .signature
@@ -276,7 +295,7 @@ pub fn verify_response(
         McpsError::ResponseSigInvalid,
     )?;
 
-    // Step 7 — request_hash binding (fires even with a valid signature).
+    // Step 9 — request_hash binding (fires even with a valid signature).
     if envelope.request_hash != expected_request_hash {
         return Err(McpsError::ResponseHashMismatch);
     }
@@ -769,6 +788,30 @@ mod tests {
         assert_eq!(
             verify_response(raw, &server_resolver(), "sha256:x"),
             Err(McpsError::MissingEnvelope)
+        );
+    }
+
+    #[test]
+    fn response_batch_array_is_batch_forbidden() {
+        // A top-level array (JSON-RPC batch) response must reject with the
+        // precise BatchForbidden token, mirroring verify_request, rather than the
+        // incidental MissingEnvelope it would surface without the explicit
+        // reject_batch guard at the top of verify_response.
+        let raw = br#"[{"jsonrpc":"2.0","id":"req-1","result":{"content":[]}}]"#;
+        assert_eq!(
+            verify_response(raw, &server_resolver(), "sha256:x"),
+            Err(McpsError::BatchForbidden)
+        );
+    }
+
+    #[test]
+    fn response_notification_no_id_is_notification_forbidden() {
+        // An id-less (notification-shaped) response rejects with the precise
+        // NotificationForbidden token instead of the incidental MissingEnvelope.
+        let raw = br#"{"jsonrpc":"2.0","result":{"content":[]}}"#;
+        assert_eq!(
+            verify_response(raw, &server_resolver(), "sha256:x"),
+            Err(McpsError::NotificationForbidden)
         );
     }
 }

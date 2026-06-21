@@ -176,10 +176,10 @@ fn from_serde_value_at(value: &serde_json::Value, depth: usize) -> Result<JcsVal
 }
 
 fn check_safe_integer(i: i64) -> Result<(), McpsError> {
-    if i < -MAX_SAFE_INTEGER || i > MAX_SAFE_INTEGER {
-        Err(McpsError::CanonicalizationFailed)
-    } else {
+    if (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&i) {
         Ok(())
+    } else {
+        Err(McpsError::CanonicalizationFailed)
     }
 }
 
@@ -223,6 +223,17 @@ fn write_value(value: &JcsValue, depth: usize, out: &mut String) -> Result<(), M
             // Sort members by member name using UTF-16 code-unit ordering.
             let mut sorted: Vec<&(String, JcsValue)> = members.iter().collect();
             sorted.sort_by(|a, b| cmp_utf16(&a.0, &b.0));
+            // Re-enforce the JCS no-duplicate-key invariant on the PUBLIC,
+            // hand-constructible `JcsValue` surface, mirroring the depth-bound
+            // treatment above (MCPS-092). `parse()`/`from_serde_value` cannot
+            // produce duplicates, but a caller hand-building
+            // `JcsValue::Object(vec![("a", _), ("a", _)])` otherwise emits the
+            // key twice instead of failing closed. Sorting by key (stability is
+            // immaterial here) puts equal keys adjacent, so a single adjacent-pair
+            // scan detects them.
+            if sorted.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                return Err(McpsError::CanonicalizationFailed);
+            }
             out.push('{');
             for (idx, (key, val)) in sorted.iter().enumerate() {
                 if idx > 0 {
@@ -943,5 +954,34 @@ mod tests {
         let at_max = nested_array(MAX_PARSE_DEPTH);
         canonicalize_value(&at_max)
             .expect("serializer depth at the inclusive boundary must canonicalize");
+    }
+
+    #[test]
+    fn write_value_rejects_hand_built_object_with_duplicate_keys() {
+        // The PUBLIC `JcsValue` surface is hand-constructible, so a caller can
+        // build an Object that violates the JCS no-duplicate-key invariant that
+        // `parse()`/`from_serde_value` would otherwise guarantee. The serializer
+        // must re-enforce it (MCPS-092), mirroring the depth-bound treatment,
+        // rather than emitting the duplicated key twice.
+        let dup = JcsValue::Object(vec![
+            ("a".to_string(), JcsValue::Integer(1)),
+            ("a".to_string(), JcsValue::Integer(2)),
+        ]);
+        assert_eq!(
+            canonicalize_value(&dup).unwrap_err(),
+            McpsError::CanonicalizationFailed
+        );
+    }
+
+    #[test]
+    fn write_value_accepts_hand_built_object_with_distinct_keys() {
+        // Pairs with the duplicate-key rejection above: an Object with distinct
+        // keys must still canonicalize, proving the rejection is keyed on
+        // duplication, not a blanket Object failure.
+        let ok = JcsValue::Object(vec![
+            ("a".to_string(), JcsValue::Integer(1)),
+            ("b".to_string(), JcsValue::Integer(2)),
+        ]);
+        canonicalize_value(&ok).expect("distinct-keyed object must canonicalize");
     }
 }
