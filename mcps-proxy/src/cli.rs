@@ -411,6 +411,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--inner-mode",
     "--max-body-bytes",
     "--read-timeout-secs",
+    "--request-deadline-secs",
     "--write-timeout-secs",
     "--inner-read-timeout-secs",
     "--max-connections",
@@ -808,6 +809,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--read-timeout-secs" => {
                 limits.read_timeout = parse_timeout(value, "--read-timeout-secs")?
+            }
+            "--request-deadline-secs" => {
+                // Aggregate wall-clock deadline over the whole server read phase
+                // (handshake + header/body); slow-loris defense, server mirror of
+                // mcps-transport's DeadlineStream. `0` disables (like the per-socket
+                // read timeout knob).
+                limits.request_deadline = parse_timeout(value, "--request-deadline-secs")?
             }
             "--write-timeout-secs" => {
                 limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
@@ -3012,6 +3020,11 @@ mod tests {
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_concurrent_connections, 256);
         assert!(config.limits.read_timeout.is_some());
+        // Aggregate read-phase wall-clock deadline (slow-loris defense) defaults on.
+        assert_eq!(
+            config.limits.request_deadline,
+            Some(std::time::Duration::from_secs(30))
+        );
         // v1 revocation posture: enforced 1-hour client-cert lifetime by default.
         assert_eq!(
             config.max_client_cert_lifetime,
@@ -3879,12 +3892,29 @@ mod tests {
                 "--max-body-bytes", "1024",
                 "--max-connections", "8",
                 "--read-timeout-secs", "0",
+                "--request-deadline-secs", "12",
             ]),
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_body_bytes, 1024);
         assert_eq!(config.limits.max_concurrent_connections, 8);
         assert_eq!(config.limits.read_timeout, None, "0 disables the timeout");
+        assert_eq!(
+            config.limits.request_deadline,
+            Some(std::time::Duration::from_secs(12)),
+            "--request-deadline-secs sets the aggregate read-phase deadline"
+        );
+    }
+
+    #[test]
+    fn request_deadline_secs_zero_disables() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--request-deadline-secs", "0"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.limits.request_deadline, None,
+            "0 disables the aggregate read-phase deadline (like --read-timeout-secs)"
+        );
     }
 
     #[test]
