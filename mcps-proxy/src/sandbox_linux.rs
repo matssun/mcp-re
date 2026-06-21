@@ -288,7 +288,16 @@ impl SandboxArtifacts {
         }
 
         // (2) Landlock: enforce the prebuilt ruleset on this thread. `restrict_self`
-        //     consumes the ruleset, so take it out of the artifacts.
+        //     consumes the ruleset, so clone it first (the `pre_exec` closure is
+        //     `FnMut` and may be retained, so we cannot move the ruleset out).
+        //     CAVEAT (async-signal-safety): `try_clone` `dup`s the ruleset fd and,
+        //     depending on the `landlock` crate version, MAY touch the heap for its
+        //     wrapper — strictly not async-signal-safe in the fork-without-exec
+        //     window of a multithreaded parent. It is the one residual heap-touch
+        //     in this otherwise allocation-free `enforce`; in practice the parent
+        //     is effectively single-threaded at spawn time and the `dup` is the
+        //     only kernel effect, and any failure surfaces fail-closed as an
+        //     `io::Error` (the spawn aborts), never as weakened containment.
         let ruleset = self.ruleset.try_clone().map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::Other,

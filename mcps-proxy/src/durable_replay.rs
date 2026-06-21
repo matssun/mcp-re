@@ -83,10 +83,19 @@ impl DurableReplayCache {
         })
     }
 
-    /// Drop every entry whose `retain_until <= now_unix` and persist. Call
+    /// Drop every entry whose `retain_until < now_unix` and persist. Call
     /// periodically to bound growth.
+    ///
+    /// The retain-until boundary is `>=` (an entry is KEPT through its
+    /// `retain_until` and evicted only strictly past it), matching the in-memory
+    /// reference store's canonical semantics
+    /// ([`InMemoryAtomicReplayStore::prune`](crate::shared_replay::InMemoryAtomicReplayStore::prune),
+    /// whose own test asserts this `>=` boundary as the intended contract). Both
+    /// boundaries are safe (past `retain_until` the nonce can no longer pass the
+    /// freshness window, so readmission is not exploitable); aligning them removes
+    /// a one-second cross-backend inconsistency in the exact eviction instant.
     pub fn prune(&mut self, now_unix: i64) -> io::Result<()> {
-        self.entries.retain(|_, &mut retain_until| retain_until > now_unix);
+        self.entries.retain(|_, &mut retain_until| retain_until >= now_unix);
         persist(&self.path, &self.entries)
     }
 
@@ -374,6 +383,36 @@ mod tests {
         assert_eq!(
             reopened.check_and_insert("s", "a", "n0", 1000).unwrap(),
             ReplayDecision::Replay
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The prune retain-until boundary is `>=`, matching the in-memory reference
+    /// store's canonical contract (`shared_replay`'s
+    /// `skew_folded_into_retain_until_matches_in_memory_semantics`): pruning AT
+    /// `retain_until` KEEPS the entry; pruning strictly past it evicts. This locks
+    /// the two backends to the SAME eviction instant (no one-second drift).
+    #[test]
+    fn prune_boundary_keeps_entry_at_retain_until_matches_in_memory() {
+        let path = tmp("prune_boundary");
+        let _ = std::fs::remove_file(&path);
+        // skew = 30, expires_at = 1000 → retain_until = 1030.
+        let mut cache = DurableReplayCache::open(&path, 30).unwrap();
+        cache.check_and_insert("s", "a", "n", 1000).unwrap();
+        let retain_until = 1030;
+        // Prune AT retain_until keeps the entry (retain_until >= now).
+        cache.prune(retain_until).unwrap();
+        assert_eq!(
+            cache.check_and_insert("s", "a", "n", 1000).unwrap(),
+            ReplayDecision::Replay,
+            "entry is live THROUGH its retain-until (>= boundary, in-memory parity)"
+        );
+        // Prune strictly past retain_until evicts → fresh again.
+        cache.prune(retain_until + 1).unwrap();
+        assert!(cache.is_empty());
+        assert_eq!(
+            cache.check_and_insert("s", "a", "n", 2000).unwrap(),
+            ReplayDecision::Fresh
         );
         let _ = std::fs::remove_file(&path);
     }
