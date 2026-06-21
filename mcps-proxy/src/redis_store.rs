@@ -94,11 +94,20 @@ const MAX_INFLIGHT_CONNECTS: usize = 64;
 /// [`MAX_INFLIGHT_CONNECTS`] ceiling bounds.
 static INFLIGHT_CONNECTS: AtomicUsize = AtomicUsize::new(0);
 
-/// RAII permit for one in-flight connect watchdog thread. Acquiring increments
-/// [`INFLIGHT_CONNECTS`] and fails closed if that would exceed
-/// [`MAX_INFLIGHT_CONNECTS`]; dropping decrements it. The permit is MOVED into
-/// the watchdog worker so the slot is reclaimed exactly when the worker thread
-/// terminates (in time OR late), which is the moment its socket fd is released.
+/// RAII permit tracking one watchdog WORKER thread's lifetime (NOT an open
+/// connection). Acquiring increments [`INFLIGHT_CONNECTS`] and fails closed if
+/// that would exceed [`MAX_INFLIGHT_CONNECTS`]; dropping decrements it. The
+/// permit is MOVED into the watchdog worker so the slot is freed exactly when
+/// the worker thread terminates (in time OR late) — it bounds the count of
+/// live/abandoned WORKERS, not the count of open sockets.
+///
+/// Permit-release coincides with fd-release ONLY for workers whose connection is
+/// NOT handed back: an ABANDONED late worker (its doomed handshake read finally
+/// errors), or a late SUCCESS whose `redis::Connection` is dropped because the
+/// receiver already timed out. On the in-time SUCCESS path the connection (and
+/// its fd) is transferred to the CALLER via the channel and OUTLIVES the worker,
+/// so the fd is NOT released when the permit is — the permit only ever tracked
+/// the worker thread.
 struct ConnectPermit;
 
 impl ConnectPermit {
@@ -133,7 +142,19 @@ impl ConnectPermit {
 
 impl Drop for ConnectPermit {
     fn drop(&mut self) {
-        INFLIGHT_CONNECTS.fetch_sub(1, Ordering::AcqRel);
+        // This Drop is the ONLY decrement site (acquire is the only increment).
+        // `fetch_sub` on a usize WRAPS on underflow, which would permanently
+        // poison the semaphore (count becomes huge ⇒ every acquire fails closed
+        // forever). The RAII pairing guarantees `prev >= 1`, so assert it in
+        // debug to catch an accidental double-drop / mis-construction in a future
+        // refactor. Release-mode behavior is unchanged (the assert compiles out).
+        let prev = INFLIGHT_CONNECTS.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(
+            prev >= 1,
+            "INFLIGHT_CONNECTS underflow: dropped a ConnectPermit while the count \
+             was 0 — the RAII acquire/drop pairing is broken (double-drop or a \
+             permit constructed without acquire())"
+        );
     }
 }
 
@@ -330,12 +351,16 @@ fn ttl_ms_via_clock(clock: &UnixClock, expires_at_unix: i64) -> u64 {
 /// DoS. redis-rs 0.27's blocking API exposes no seam to put a read deadline on
 /// the handshake socket itself (see [`MAX_INFLIGHT_CONNECTS`]), so we cannot make
 /// the worker actually finish. Instead we CAP the number of concurrently
-/// in-flight/abandoned workers with the [`INFLIGHT_CONNECTS`] counting semaphore:
+/// in-flight/abandoned WORKERS with the [`INFLIGHT_CONNECTS`] counting semaphore:
 /// a permit is acquired BEFORE the worker is spawned and MOVED into it, so the
-/// slot is reclaimed exactly when the worker terminates (the moment its fd is
-/// released). Once [`MAX_INFLIGHT_CONNECTS`] are outstanding, this fails closed
-/// immediately — the stranded-thread/fd count is bounded by that constant rather
-/// than by request rate.
+/// slot is reclaimed exactly when the worker THREAD terminates. The permit tracks
+/// the worker's lifetime, not the connection — on the in-time SUCCESS path the
+/// connection (and its fd) is handed to the caller and outlives the worker, so
+/// fd-release coincides with permit-release ONLY for abandoned/late workers (or a
+/// late success whose connection is dropped because the receiver already timed
+/// out). Once [`MAX_INFLIGHT_CONNECTS`] are outstanding, this fails closed
+/// immediately — the stranded-WORKER (and hence stranded-fd) count is bounded by
+/// that constant rather than by request rate.
 fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplayStoreError> {
     // Fail closed BEFORE spawning if the ceiling of in-flight/abandoned connect
     // threads is already saturated, so a persistently half-open backend cannot
@@ -351,9 +376,13 @@ fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplaySt
     // Detached: if it overruns the deadline we abandon it (it is a doomed blocked
     // read on a dead socket; the process owns no shared state it can corrupt)
     // rather than join it and re-introduce the hang. The `permit` is MOVED in, so
-    // it is dropped — releasing the in-flight slot — exactly when this worker
-    // thread terminates, whether on time or LATE after abandonment (the instant
-    // its socket fd is also released).
+    // it is dropped — releasing the in-flight WORKER slot — exactly when this
+    // worker thread terminates, whether on time or LATE after abandonment. The
+    // slot tracks the worker's lifetime: on the in-time SUCCESS path the
+    // connection (and its fd) is sent to the caller and outlives this thread, so
+    // the fd is NOT released when the permit is. fd-release coincides with
+    // permit-release only for an abandoned/late worker, or a late success whose
+    // connection is dropped because the receiver already timed out.
     std::thread::spawn(move || {
         let _permit = permit;
         let outcome = (|| {
