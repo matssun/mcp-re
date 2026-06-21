@@ -987,6 +987,25 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 .to_string(),
         );
     }
+    // #90 (defense-in-depth, UNCONDITIONAL — not just under --strict): the env key
+    // source reads the Ed25519 signing seed from a proxy environment variable, and
+    // `--inherit-env true` passes the proxy's ENTIRE environment to the inner
+    // server. Together they would leak the signing-seed env var into the inner
+    // process. These two postures are incompatible regardless of strict mode: a
+    // hard config-construction error here guarantees the env-keysource seed can
+    // never be inherited by the inner, rather than relying on the operator running
+    // under --strict (which defaults off). Mirrors the dangling-flag fail-closed
+    // guards above.
+    if inner_launch.inherit_env && key_source == KeySourceKind::Env {
+        return Err(
+            "--inherit-env true passes the proxy's ENTIRE environment to the inner server, \
+             but --key-source env reads the signing-key seed from a proxy environment \
+             variable, so full inheritance would leak that signing seed into the inner \
+             process; these are incompatible. Use --inherit-env false with explicit \
+             --inner-env / --inner-env-allow, or a non-env --key-source"
+                .to_string(),
+        );
+    }
     // #4034 PKCS#11 key source: the module path, User PIN, token label, and
     // signing-key object label are all required when this source is selected.
     // Each is checked here (not in build_key_source) so a missing flag is a clear
@@ -1372,6 +1391,28 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
         violations.push(
             "--inner-rlimit-best-effort true silently degrades resource ceilings to logged \
              no-ops; production must fail closed (--inner-rlimit-best-effort false)"
+                .to_string(),
+        );
+    }
+    // ADR-MCPS-014/020 (#90): the DEFAULT replay backend is `Memory`, an
+    // in-process cache whose admitted nonces live ONLY in process memory. A proxy
+    // restart loses every admitted nonce, re-opening a replay window for any
+    // captured envelope that is still within its `expires_at + skew` freshness
+    // window at restart time — the exposure is the in-restart-window captured-but-
+    // still-fresh envelope (the atomic check-and-insert means a nonce re-admitted
+    // AFTER its freshness window cannot verify). ADR-020 treats durable /
+    // cross-instance replay as the production posture, so under strict/production
+    // the non-durable in-memory default is rejected (not merely warned), mirroring
+    // the fail-open relaxation guards. `File` (single-node durable) and `Shared`
+    // (horizontally durable) survive on their own durability merits and are
+    // assessed by the tier check below.
+    if config.replay == ReplayKind::Memory {
+        violations.push(
+            "--replay-cache memory (the default) keeps admitted nonces only in process \
+             memory, so a proxy RESTART forgets them and re-opens a replay window for any \
+             still-fresh captured envelope until its expires_at+skew; production must use a \
+             durable replay store: --replay-cache file (single-node durability) or \
+             --replay-cache shared (horizontal durability)"
                 .to_string(),
         );
     }
@@ -2874,6 +2915,16 @@ mod tests {
         ])
     }
 
+    /// A durable single-node replay selection (`--replay-cache file --replay-path
+    /// <p>`). The DEFAULT replay backend is the non-durable in-memory cache, which
+    /// is a strict-production violation (#90, ADR-MCPS-014/020): a restart forgets
+    /// admitted nonces and re-opens a replay window. Tests that assert a config
+    /// parses SUCCESSFULLY under `--strict` must therefore declare a durable backend
+    /// — they splice these flags in alongside `--strict`.
+    fn durable_replay() -> Vec<String> {
+        args(&["--replay-cache", "file", "--replay-path", "/replay"])
+    }
+
     #[test]
     fn parses_a_minimal_config_with_defaults() {
         let config = parse_args(&minimal()).expect("parse");
@@ -3852,6 +3903,12 @@ mod tests {
     fn proxy_security_flags_after_inner_command_are_rejected_not_swallowed() {
         for flag in ["--strict", "--production", "--allow-env-keysource"] {
             let mut a = minimal();
+            // Declare a durable replay backend so the --strict/--production cases
+            // are otherwise-safe and reach the "flag interpreted" Ok branch (the
+            // default in-memory replay would be a #90 strict violation, muddying
+            // this test's intent — that a security flag after --inner-command is
+            // interpreted, not swallowed into the inner argv).
+            a.splice(0..0, durable_replay());
             a.extend(args(&[flag]));
             match parse_args(&a) {
                 // Acceptable outcome: the flag was interpreted (strict turned on).
@@ -4587,8 +4644,11 @@ mod tests {
     fn strict_flag_defaults_off_and_parses_on() {
         // Default: warn-only posture.
         assert!(!parse_args(&minimal()).expect("parse").strict);
-        // --strict turns it on for an otherwise-safe config.
+        // --strict turns it on for an otherwise-safe config. The minimal config's
+        // DEFAULT in-memory replay is itself a strict violation (#90), so an
+        // otherwise-safe strict config must declare a durable replay backend.
         let mut a = minimal();
+        a.splice(0..0, durable_replay());
         a.splice(0..0, args(&["--strict"]));
         assert!(parse_args(&a).expect("parse").strict);
     }
@@ -4596,6 +4656,8 @@ mod tests {
     #[test]
     fn production_alias_maps_to_strict_true() {
         let mut a = minimal();
+        // --production implies strict, so the durable-replay posture (#90) applies.
+        a.splice(0..0, durable_replay());
         a.splice(0..0, args(&["--production"]));
         let config = parse_args(&a).expect("parse");
         assert!(config.strict, "--production must map to strict = true");
@@ -4603,8 +4665,12 @@ mod tests {
 
     #[test]
     fn strict_accepts_a_fully_safe_config() {
-        // The minimal config uses every secure default; --strict must accept it.
+        // The minimal config uses every secure default EXCEPT replay, whose default
+        // is the non-durable in-memory cache (#90 rejects it under strict); a fully
+        // safe config therefore also declares a durable replay backend. --strict
+        // must then accept it.
         let mut a = minimal();
+        a.splice(0..0, durable_replay());
         a.splice(0..0, args(&["--strict"]));
         let config = parse_args(&a).expect("a fully-safe config must parse under --strict");
         assert!(config.strict);
@@ -4661,6 +4727,117 @@ mod tests {
         );
     }
 
+    // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable
+    // in-memory cache, which loses admitted nonces on restart and re-opens a replay
+    // window for still-fresh captured envelopes. Under --strict it is a hard parse
+    // error directing the operator at a durable backend.
+    #[test]
+    fn strict_rejects_in_memory_replay_default() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--strict"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--strict"), "got: {err}");
+        assert!(err.contains("--replay-cache memory"), "got: {err}");
+        // The message must direct to BOTH durable options (single-node + horizontal).
+        assert!(err.contains("--replay-cache file"), "got: {err}");
+        assert!(err.contains("--replay-cache shared"), "got: {err}");
+    }
+
+    // #90: the durable single-node `file` backend is NOT a strict violation — a
+    // proxy restart re-reads its admitted nonces from disk, so no restart window
+    // re-opens. The minimal+strict config with `--replay-cache file` must parse Ok
+    // with no replay strict violation.
+    #[test]
+    fn strict_accepts_file_replay_backend() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict"]));
+        let config = parse_args(&a).expect("durable file replay must parse under --strict");
+        assert_eq!(config.replay, ReplayKind::File);
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("--replay-cache")),
+            "a durable file replay must not be a replay strict violation"
+        );
+    }
+
+    // #90: the horizontally-durable `shared` backend at an adequate tier is NOT a
+    // replay strict violation either (the weaker-tier case is covered by
+    // `strict_rejects_weak_replay_durability_tier`).
+    #[test]
+    fn strict_accepts_shared_replay_at_adequate_tier() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--strict",
+                "--replay-cache",
+                "shared",
+                "--replay-redis-url",
+                "redis://127.0.0.1:6379",
+                "--replay-durability-tier",
+                "redis-wait-quorum:2:500",
+            ]),
+        );
+        let config = parse_args(&a).expect("durable shared replay must parse under --strict");
+        assert_eq!(config.replay, ReplayKind::Shared);
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("--replay-cache memory")),
+            "a durable shared replay must not trip the in-memory replay violation"
+        );
+    }
+
+    // #90: the in-memory default is only a STRICT posture violation, not a
+    // default-insecure config — without --strict it parses Ok (warn-only).
+    #[test]
+    fn non_strict_in_memory_replay_is_ok() {
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(config.replay, ReplayKind::Memory);
+        assert!(!config.strict);
+    }
+
+    // #90 (defense-in-depth, UNCONDITIONAL): --inherit-env true together with
+    // --key-source env would leak the signing-seed env var into the inner server.
+    // This is a hard config-construction error REGARDLESS of --strict (which
+    // defaults off), so the env-keysource seed can never be inherited.
+    #[test]
+    fn inherit_env_true_with_env_key_source_is_a_hard_error_without_strict() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--inherit-env",
+                "true",
+                "--key-source",
+                "env",
+                "--allow-env-keysource",
+            ]),
+        );
+        // No --strict: this must STILL be rejected.
+        let err = parse_args(&a).unwrap_err();
+        assert!(
+            !err.contains("refuses unsafe configuration"),
+            "must be a direct config-build error, not a --strict violation; got: {err}"
+        );
+        assert!(err.contains("--inherit-env true"), "got: {err}");
+        assert!(err.contains("--key-source env"), "got: {err}");
+    }
+
+    // #90 control: --inherit-env true with a NON-env key source is allowed (no
+    // signing seed lives in the env to leak); only the env-keysource pairing is
+    // incompatible. (It remains a --strict warn-then-reject, covered separately.)
+    #[test]
+    fn inherit_env_true_with_file_key_source_is_ok() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inherit-env", "true"]));
+        let config = parse_args(&a).expect("inherit-env with the default file key source parses");
+        assert!(config.inner_launch.inherit_env);
+        assert_eq!(config.key_source, KeySourceKind::File);
+    }
+
     #[test]
     fn strict_rejects_env_key_source() {
         let mut a = minimal();
@@ -4714,6 +4891,9 @@ mod tests {
         // MCPS-3842: a lifetime > 1h is a RECOMMENDATION, not an unsafe posture
         // (still enforced, just longer), so it must NOT error even under strict.
         let mut a = minimal();
+        // Declare a durable replay backend so the only posture under test is the
+        // lifetime (the default in-memory replay would itself be a #90 violation).
+        a.splice(0..0, durable_replay());
         a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "2h"]));
         let config = parse_args(&a).expect("an over-recommended-but-enforced lifetime is allowed");
         assert_eq!(
@@ -4784,13 +4964,21 @@ mod tests {
     fn strict_reports_all_violations_at_once() {
         // The error aggregates every parse-time violation so the operator can fix
         // the whole posture in one pass, not one error per restart.
+        //
+        // NOTE (#90): `--key-source env` + `--inherit-env true` is now an
+        // UNCONDITIONAL config-build error (it would leak the signing seed into the
+        // inner) that fires BEFORE the strict-aggregation gate, so the two cannot
+        // co-occur here. To still exercise BOTH the env-keysource strict violation
+        // AND the inherit-env strict violation in one aggregated message, keep
+        // `--inherit-env true` with the default (file) key source — inherit-env is a
+        // strict violation on its own — and demonstrate the env-keysource strict
+        // rejection in its dedicated test (`strict_rejects_env_key_source`). The
+        // default in-memory replay is also a #90 strict violation and aggregates.
         let mut a = minimal();
         a.splice(
             0..0,
             args(&[
                 "--strict",
-                "--key-source", "env",
-                "--allow-env-keysource",
                 "--max-client-cert-lifetime", "none",
                 "--inherit-env", "true",
                 "--transport-identity-source", "cn_legacy",
@@ -4798,7 +4986,8 @@ mod tests {
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--key-source env"), "got: {err}");
+        // The default in-memory replay is itself an aggregated strict violation.
+        assert!(err.contains("--replay-cache memory"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
         assert!(err.contains("--inherit-env true"), "got: {err}");
         assert!(err.contains("cn_legacy"), "got: {err}");
