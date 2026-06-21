@@ -101,6 +101,7 @@
     "//mcps-proxy:persistent_session_test",
     "//mcps-proxy:pkcs11_keysource_e2e_test",
     "//mcps-proxy:proxy_ext_unit_test",
+    "//mcps-proxy:proxy_lb_assertion_test",
     "//mcps-proxy:proxy_policy_test",
     "//mcps-proxy:proxy_test",
     "//mcps-proxy:proxy_transport_test",
