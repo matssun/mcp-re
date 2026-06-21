@@ -307,6 +307,19 @@ pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
 /// is present, `now` must be <= `expires_at + skew`. Absent bounds impose no
 /// limit. `saturating_*` keeps the arithmetic fail-closed at the i64 extremes.
 fn check_window(manifest: &ToolManifest, now_unix: i64) -> Result<(), ManifestError> {
+    // An inverted/malformed validity window (`expires_at < issued_at`) is
+    // nonsensical and MUST be rejected fail-closed BEFORE the skew-widened bounds
+    // are tested independently — otherwise widening each bound by `skew` could
+    // accidentally admit a `now` that falls in the spurious `[issued − skew,
+    // expires + skew]` band even though the manifest's own window is inverted.
+    // Mirrors Core `mcps_core::check_freshness`, which rejects `expires < issued`
+    // before applying skew. The window itself is malformed, so this is
+    // `ManifestMalformed` rather than `ManifestExpired`.
+    if let (Some(issued_at), Some(expires_at)) = (manifest.issued_at, manifest.expires_at) {
+        if expires_at < issued_at {
+            return Err(ManifestError::ManifestMalformed);
+        }
+    }
     if let Some(issued_at) = manifest.issued_at {
         if now_unix < issued_at.saturating_sub(MAX_CLOCK_SKEW_SECS) {
             return Err(ManifestError::ManifestExpired);
@@ -666,6 +679,40 @@ mod tests {
                 now_within_skew,
             )
             .expect("now within expires_at + skew must be accepted");
+    }
+
+    #[test]
+    fn inverted_validity_window_is_rejected_even_within_skew_band() {
+        // #85 review (Comment A): an INVERTED/malformed window (`expires_at <
+        // issued_at`) must be rejected fail-closed, mirroring Core
+        // `check_freshness`'s `expires < issued` guard — even when `now` lands in
+        // the spurious skew-widened band `[issued − skew, expires + skew]` that
+        // would otherwise be admitted because each bound is widened independently.
+        use super::MAX_CLOCK_SKEW_SECS;
+        // issued_at = 1000, expires_at = 900 (inverted). With skew = 300 the
+        // independent bounds give a lower of 700 and an upper of 1200, so a `now`
+        // of 950 sits inside both half-checks — yet the window is malformed.
+        let issued_at: i64 = 1_000;
+        let expires_at: i64 = 900;
+        let now = 950;
+        assert!(now >= issued_at - MAX_CLOCK_SKEW_SECS && now <= expires_at + MAX_CLOCK_SKEW_SECS);
+        let mut spec = default_spec();
+        spec.issued_at = Some(issued_at);
+        spec.expires_at = Some(expires_at);
+        // Mint (and thus sign) the manifest WITH the inverted window so the
+        // signature stays valid — isolating the window check from signature checks.
+        let manifest = mint_signed_manifest(&spec, &signing_key(), KEY_ID).unwrap();
+        let mut pins = InMemoryManifestPinStore::new();
+        assert_eq!(
+            ManifestVerifier::new().verify(
+                &manifest,
+                &resolver(),
+                &InMemoryRevocationSource::new(),
+                &mut pins,
+                now,
+            ),
+            Err(ManifestError::ManifestMalformed)
+        );
     }
 
     #[test]

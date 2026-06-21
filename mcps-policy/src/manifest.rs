@@ -53,6 +53,7 @@ use crate::manifest_error::ManifestError;
 /// Base64URL-no-pad Ed25519 signature over the canonical manifest minus
 /// `signature.value`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestSignature {
     /// Signature algorithm; MUST be `Ed25519`.
     pub alg: String,
@@ -67,6 +68,7 @@ pub struct ManifestSignature {
 /// `(name, version)` is the tool identity; `schema_hash` is the integrity binding
 /// over the input/output schemas (recomputed and compared at verify time).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolEntry {
     /// The tool name (identity component).
     pub name: String,
@@ -126,6 +128,7 @@ pub fn compute_schema_hash(
 /// The signed tool manifest: manifest-level identity, the tool list, and the
 /// signature block.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ToolManifest {
     /// The signing-authority / issuer identity. Resolves a verification key via
     /// the injected `TrustResolver` together with `signature.key_id`.
@@ -255,11 +258,24 @@ pub fn manifest_signing_preimage(manifest: &ToolManifest) -> Result<Vec<u8>, Man
 /// only on success deserialize into the typed `ToolManifest`. Any duplicate
 /// member, JCS-domain violation, or shape mismatch →
 /// [`ManifestError::ManifestMalformed`].
+///
+/// Complementarily, the signed-object structs ([`ToolManifest`],
+/// [`ManifestSignature`], [`ToolEntry`]) carry `#[serde(deny_unknown_fields)]`, so
+/// a wire manifest carrying an EXTRA/unknown object member on the signed object is
+/// REJECTED at deserialize time rather than silently dropped (#85 review). Were it
+/// dropped, that member would be excluded from the signature preimage recomputed
+/// from the typed manifest, so a verifier and a re-serializer would disagree about
+/// the "frozen JSON object" — exactly the divergence the dup-key guard above
+/// prevents for duplicate members. The per-tool `input_schema` / `output_schema`
+/// are free-form `serde_json::Value`s and are unaffected: `deny_unknown_fields`
+/// constrains only the named fields of these DTOs, never the JSON held inside a
+/// `Value`.
 pub fn parse_manifest_bytes(bytes: &[u8]) -> Result<ToolManifest, ManifestError> {
     // (1) Reject duplicate object members (and the rest of the JCS-safe domain) on
     // the ORIGINAL wire bytes, BEFORE any serde_json::Value collapses duplicates.
     canonicalize(bytes).map_err(|_| ManifestError::ManifestMalformed)?;
-    // (2) Now safe to deserialize into the typed manifest.
+    // (2) Now safe to deserialize into the typed manifest; `deny_unknown_fields`
+    // on the signed-object structs rejects any extra/unknown member here.
     serde_json::from_slice(bytes).map_err(|_| ManifestError::ManifestMalformed)
 }
 
@@ -407,6 +423,65 @@ mod tests {
             super::parse_manifest_bytes(raw).unwrap_err(),
             ManifestError::ManifestMalformed
         );
+    }
+
+    #[test]
+    fn parse_manifest_bytes_rejects_unknown_top_level_member() {
+        // #85 review: a wire manifest carrying an EXTRA/unknown top-level object
+        // member must be REJECTED at deserialize time (`deny_unknown_fields`),
+        // not silently dropped. A dropped member would be excluded from the
+        // signature preimage recomputed from the typed manifest, undermining the
+        // frozen-JSON-object contract. The bytes are otherwise a clean, unique-key
+        // object so this isolates the unknown-member path from the dup-key path.
+        let raw = br#"{"signer":"did:example:server-1","key_id":"server-key-1","manifest_id":"a","version":"1","tools":[],"signature":{"alg":"Ed25519","key_id":"server-key-1","value":""},"smuggled":"x"}"#;
+        assert_eq!(
+            super::parse_manifest_bytes(raw).unwrap_err(),
+            ManifestError::ManifestMalformed
+        );
+    }
+
+    #[test]
+    fn parse_manifest_bytes_rejects_unknown_member_in_signature_block() {
+        // The guard must also reject an unknown member NESTED in a signed
+        // sub-object (the signature block), not just at the top level.
+        let raw = br#"{"signer":"did:example:server-1","key_id":"server-key-1","manifest_id":"a","version":"1","tools":[],"signature":{"alg":"Ed25519","key_id":"server-key-1","value":"","extra":"y"}}"#;
+        assert_eq!(
+            super::parse_manifest_bytes(raw).unwrap_err(),
+            ManifestError::ManifestMalformed
+        );
+    }
+
+    #[test]
+    fn parse_manifest_bytes_allows_free_form_members_inside_tool_schemas() {
+        // `deny_unknown_fields` must NOT leak into the free-form schema `Value`s:
+        // arbitrary members inside `input_schema` / `output_schema` are legitimate
+        // JSON Schema content and must be preserved, not rejected.
+        let key = SigningKey::from_seed_bytes(&[5u8; 32]);
+        let entry = ToolEntry::new(
+            "echo",
+            "1.0.0",
+            json!({ "type": "object", "x-vendor-ext": { "anything": [1, 2, 3] } }),
+            output_schema(),
+        )
+        .unwrap();
+        let spec = ManifestSpec {
+            signer: "did:example:server-1".to_string(),
+            manifest_id: "manifest-1".to_string(),
+            version: "1".to_string(),
+            issued_at: None,
+            expires_at: None,
+            tools: vec![ToolSpec {
+                name: entry.name.clone(),
+                version: entry.version.clone(),
+                input_schema: entry.input_schema.clone(),
+                output_schema: entry.output_schema.clone(),
+            }],
+        };
+        let manifest = mint_signed_manifest(&spec, &key, "server-key-1").unwrap();
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let back = super::parse_manifest_bytes(&bytes)
+            .expect("free-form schema members must be preserved, not rejected");
+        assert_eq!(back, manifest);
     }
 
     use crate::manifest_error::ManifestError;
