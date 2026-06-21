@@ -74,7 +74,25 @@ impl VerificationKey {
 /// Pure and I/O-free: signing belongs in the library (it has no side effects)
 /// and is needed to generate reproducible conformance vectors (MCPS-002). It is
 /// NOT a purity violation.
-#[derive(Debug, Clone)]
+///
+/// # Custody boundary (MCPS-076, ADR-MCPS-028)
+/// This is the IN-PROCESS SOFTWARE signer. PRODUCTION key custody (no soft-key
+/// fallback; non-exporting HSM / cloud-KMS only) is enforced OUTSIDE this crate,
+/// at the proxy/host signer layer: production routes through the
+/// `ResponseSigner` / `KeySource` seam (`mcps-proxy`'s PKCS#11 / AWS-KMS /
+/// GCP-KMS backends), which sign on the device and never reconstruct a raw seed.
+/// `from_seed_bytes` is reached only on test, conformance, and the gated dev
+/// `--key-source file` / `--allow-env-keysource` paths.
+///
+/// # Secret hygiene
+/// The secret scalar lives inside dalek's `DalekSigningKey`, which is
+/// `ZeroizeOnDrop` (the `zeroize` feature is enabled workspace-wide), so it is
+/// scrubbed on drop. There is deliberately NO seed/key EXPORT method (no
+/// `to_bytes` / `to_seed`) and no separate raw `[u8; 32]` copy is retained.
+/// `Clone` is intentionally NOT derived — a private key should not be silently
+/// duplicated. `Debug` is derived but dalek redacts the secret (prints just
+/// `"SigningKey"`), so it cannot leak the key into logs.
+#[derive(Debug)]
 pub struct SigningKey {
     inner: DalekSigningKey,
 }
