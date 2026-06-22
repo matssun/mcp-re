@@ -43,6 +43,7 @@ pub use constraints::extract_request_envelope;
 pub use constraints::extract_response_envelope;
 pub use constraints::reject_batch;
 pub use constraints::reject_notification;
+pub use crypto::ensure_ed25519_alg;
 pub use crypto::verify_ed25519;
 pub use crypto::verify_ed25519_with;
 pub use crypto::SigningKey;
