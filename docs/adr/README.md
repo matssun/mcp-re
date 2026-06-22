@@ -42,6 +42,12 @@ maintainable as the project evolves.
 | [ADR-MCPS-027](adr-mcps-027.md) | Extension Identifier Reassignment to `se.syncom/mcps` (supersedes ADR-MCPS-010 identifier) |
 | [ADR-MCPS-028](adr-mcps-028.md) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) |
 | [ADR-MCPS-030](adr-mcps-030.md) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded (the former ADR-MCPS-029 manifest design was removed and relocated to `mcp-tool-catalog-integrity` ADR-MTCI-002) |
+| [ADR-MCPS-031](adr-mcps-031.md) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope (Proposed) |
+| [ADR-MCPS-032](adr-mcps-032.md) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs (Proposed) |
+| [ADR-MCPS-033](adr-mcps-033.md) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A (Proposed) |
+| [ADR-MCPS-034](adr-mcps-034.md) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard (Proposed) |
+| [ADR-MCPS-035](adr-mcps-035.md) | MCP-S Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy (Proposed) |
+| [ADR-MCPS-036](adr-mcps-036.md) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine (Proposed) |
 
 ## Provenance
 
