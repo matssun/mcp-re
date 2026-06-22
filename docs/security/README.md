@@ -79,10 +79,45 @@ remediation document are the publish-ready record. Re-running the audit
 workflow against a future revision of this repository is the right way to
 extend the audit history.
 
+## Finding ledger — cross-round disposition memory
+
+Re-running the audit is expensive, and most of that cost is the 3-skeptic
+verify gate. Paying it again on a finding already adjudicated in a prior round
+(fixed, false-positive, accepted-risk) is waste. [`finding-ledger.jsonl`](finding-ledger.jsonl)
+is the durable, version-controlled record of every finding ever seen and how it
+was dispositioned, so a later round can suppress the already-handled set and
+verify only what is genuinely new.
+
+- **Identity:** each finding has a coarse fingerprint — `sha1(file-basename |
+  sorted significant title tokens)` — stable under line drift and reworded
+  titles. Line numbers and exact wording are deliberately excluded.
+- **`status`:** `open` (tracked by an issue) · `fixed` (carry the PR; a
+  recurrence is a **regression**) · `false-positive` · `accepted-risk` ·
+  `wontfix` · `superseded` (code removed) · `positive-control` (an INFO good
+  control) · `handled-prior-round` (filed + closed previously, exact resolution
+  not re-derived).
+- **`verified.method`** records *how* a disposition was reached and never
+  overclaims: `gate-3skeptic` · `manual-source` · `fix-merged` ·
+  `review-adjudicated` · `intentional-posture` · `closed-issue` · `removed-code`.
+  (No mcps round has run the 3-skeptic gate yet, so no entry claims it.)
+- **Reconcile:** at the start of each round the funnel matches the new pre-run
+  against the ledger and buckets findings into *new* (verify these), *tracked*
+  (already filed), *regression* (a `fixed` finding reappeared — loud), and
+  *suppressed* (FP/accepted/positive-control — skipped). Same-file/same-category
+  near-misses are surfaced as *fuzzy candidates* for confirmation, never silently
+  suppressed.
+
+The ledger is seeded from the prior round (issues #74–#101 @ `45a1876`) and the
+current round (@ `32f1430`); the manifest-subsystem findings are `superseded`
+(removed in the ADR-030 purification). The tooling lives in the
+`security-audit-funnel` skill (`scripts/ledger.py`).
+
 ## How to extend this record
 
 If you re-run a multi-agent security audit against a future release of this
 repository, place the resulting report in this directory as `audit-vX.Y.md`
 and accompany it with a `remediation-vX.Y.md` that tracks per-finding status
 against the released source tree. Lows and Infos may continue to be
-aggregated by count; Critical, High, and Medium should be enumerated.
+aggregated by count; Critical, High, and Medium should be enumerated. Ingest
+the round into [`finding-ledger.jsonl`](finding-ledger.jsonl) and reconcile
+before verifying, so the verify gate runs only on new findings.
