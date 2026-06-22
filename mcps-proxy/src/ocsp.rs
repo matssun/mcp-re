@@ -2078,8 +2078,12 @@ mod tests {
         // security property is that NO request reaches the sentinel.
         let _ = checker.post_request(&url, b"dummy-ocsp-request");
 
-        // Give an erroneously-followed redirect ample time to land on the sentinel.
-        thread::sleep(Duration::from_millis(250));
+        // Wait (bounded) for the responder thread to observe the connection so the test
+        // can't false-pass due to a failed first request.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !responder_hit.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
         assert!(
             responder_hit.load(Ordering::SeqCst),
             "the OCSP fetch never reached the responder — test would false-pass; check the harness"
