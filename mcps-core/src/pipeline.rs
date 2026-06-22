@@ -75,10 +75,10 @@ use crate::constraints::extract_request_envelope;
 use crate::constraints::extract_response_envelope;
 use crate::constraints::reject_batch;
 use crate::constraints::reject_notification;
+use crate::crypto::ensure_ed25519_alg;
 use crate::crypto::verify_ed25519;
 use crate::crypto::verify_ed25519_with;
 use crate::error::McpsError;
-use crate::ids::SIG_ALG_ED25519;
 use crate::replay::ReplayCache;
 use crate::replay::ReplayDecision;
 use crate::resolver::TrustResolver;
@@ -309,9 +309,7 @@ pub fn verify_response(
     let envelope = extract_response_envelope(&value)?;
 
     // Step 6 — signature.alg == Ed25519 (else ResponseSigInvalid).
-    if envelope.signature.alg != SIG_ALG_ED25519 {
-        return Err(McpsError::ResponseSigInvalid);
-    }
+    ensure_ed25519_alg(&envelope.signature.alg, McpsError::ResponseSigInvalid)?;
 
     // Step 7 — resolve (server_signer, key_id) -> key.
     let key = resolver
@@ -369,9 +367,7 @@ fn check_on_behalf_of(on_behalf_of: &str) -> Result<(), McpsError> {
 /// other alg, or an absent value, -> [`McpsError::InvalidSignature`] (unknown alg
 /// is treated as a signature failure in v1, MCPS_SPEC §3).
 fn check_signature_block(alg: &str, value: Option<&str>) -> Result<(), McpsError> {
-    if alg != SIG_ALG_ED25519 {
-        return Err(McpsError::InvalidSignature);
-    }
+    ensure_ed25519_alg(alg, McpsError::InvalidSignature)?;
     if value.is_none() {
         return Err(McpsError::InvalidSignature);
     }
@@ -812,6 +808,31 @@ mod tests {
         obj["result"]["_meta"][RESPONSE_META_KEY]["server_signer"] =
             Value::String(SERVER_SIGNER_ID.to_string());
         obj["result"]["content"] = json!([{ "type": "text", "text": "tampered" }]);
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        assert_eq!(
+            verify_response(&raw, &server_resolver(), true_hash),
+            Err(McpsError::ResponseSigInvalid)
+        );
+    }
+
+    #[test]
+    fn response_non_ed25519_alg_is_response_sig_invalid() {
+        // Step 6 gates signature.alg through `ensure_ed25519_alg`; a non-Ed25519
+        // alg must fail closed to ResponseSigInvalid.
+        //
+        // Isolation (anti false-pass): set alg to a non-Ed25519 value BEFORE
+        // signing, so the Ed25519 signature is cryptographically VALID over the
+        // alg-bearing preimage (signing.rs retains signature.alg in the preimage).
+        // Therefore ONLY the Step-6 alg gate can reject this response: if the gate
+        // were removed, Step-8 signature verification would PASS and Step-9 hash
+        // would match, so verify_response would return Ok. This assertion thus
+        // fails-on-gate-removal — it pins the gate rather than an incidental
+        // signature mismatch.
+        let true_hash = "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
+        let mut obj = response_unsigned(true_hash);
+        obj["result"]["_meta"][RESPONSE_META_KEY]["signature"]["alg"] =
+            Value::String("RS256".to_string());
+        sign_response_value(&mut obj);
         let raw = serde_json::to_vec(&obj).expect("serialize");
         assert_eq!(
             verify_response(&raw, &server_resolver(), true_hash),
