@@ -99,7 +99,12 @@ verify only what is genuinely new.
 - **`verified.method`** records *how* a disposition was reached and never
   overclaims: `gate-3skeptic` · `manual-source` · `fix-merged` ·
   `review-adjudicated` · `intentional-posture` · `closed-issue` · `removed-code`.
-  (No mcps round has run the 3-skeptic gate yet, so no entry claims it.)
+  The v0.1 audit ([`audit-v0.1.md`](audit-v0.1.md)) ran the full three-stage round
+  *including* the 3-skeptic verify gate; v0.2, v0.3 (closed at 0.3.1), and the
+  current v0.4 round ran Stage 1+2 only to save tokens, and **false positives were
+  identified by hand during remediation** — those FP determinations are captured
+  here (`review-adjudicated`), which is the whole point: a later round must not
+  re-evaluate a finding a prior round already proved false.
 - **Reconcile:** at the start of each round the funnel matches the new pre-run
   against the ledger and buckets findings into *new* (verify these), *tracked*
   (already filed), *regression* (a `fixed` finding reappeared — loud), and
@@ -107,10 +112,11 @@ verify only what is genuinely new.
   near-misses are surfaced as *fuzzy candidates* for confirmation, never silently
   suppressed.
 
-The ledger is seeded from the prior round (issues #74–#101 @ `45a1876`) and the
-current round (@ `32f1430`); the manifest-subsystem findings are `superseded`
-(removed in the ADR-030 purification). The tooling lives in the
-`security-audit-funnel` skill (`scripts/ledger.py`).
+The ledger is seeded from the prior Stage-1+2 round (issues #74–#101 @ `45a1876`,
+dispositioned from their triage comments: false-positive / fixed / accepted-risk
+per ADR posture) and the current round (@ `32f1430`); the manifest-subsystem
+findings are `superseded` (removed in the ADR-030 purification). The tooling lives
+in the `security-audit-funnel` skill (`scripts/ledger.py`).
 
 ## How to extend this record
 
