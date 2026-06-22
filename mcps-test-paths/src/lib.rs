@@ -65,6 +65,12 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcps-conformance/security_traceability_manifest.json")
         }
         "MCPS_CORE_MANIFEST" => workspace_root.join("mcps-core/tests/vectors/manifest.json"),
+        // ADR-MCPS-034: Core src sentinel (method-name drift guard scans its dir).
+        "MCPS_CORE_SRC_LIB" => workspace_root.join("mcps-core/src/lib.rs"),
+        // ADR-MCPS-035: frozen error taxonomy + audit vocabulary (the audit drift
+        // guard asserts every audit rejection reason ∈ McpsError::wire_code()).
+        "MCPS_CORE_SRC_ERROR" => workspace_root.join("mcps-core/src/error.rs"),
+        "MCPS_CORE_SRC_AUDIT" => workspace_root.join("mcps-core/src/audit.rs"),
         "MCPS_PHASE5" => workspace_root.join("mcps-policy/tests/vectors/phase5_vectors.json"),
         // Per-crate BUILD.bazel (read by drift / traceability guards)
         "MCPS_BUILD_CONFORMANCE" => workspace_root.join("mcps-conformance/BUILD.bazel"),
@@ -78,6 +84,13 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCPS_BUILD_TRANSPORT" => workspace_root.join("mcps-transport/BUILD.bazel"),
         // Per-test source files (read by the security-traceability guard)
         "MCPS_SRC_OBJECT_SUITE" => workspace_root.join("mcps-conformance/tests/object_suite_test.rs"),
+        // ADR-MCPS-034: the two method-transparency proof artifacts.
+        "MCPS_SRC_METHOD_TRANSPARENCY" => {
+            workspace_root.join("mcps-conformance/tests/method_transparency_test.rs")
+        }
+        "MCPS_SRC_METHOD_NAME_DRIFT_GUARD" => {
+            workspace_root.join("mcps-conformance/tests/method_name_drift_guard_test.rs")
+        }
         "MCPS_SRC_HOST_SESSION" => workspace_root.join("mcps-host/tests/host_session_test.rs"),
         "MCPS_SRC_PERSISTENT_SCOPE" => {
             workspace_root.join("mcps-proxy/tests/persistent_scope_test.rs")
@@ -109,6 +122,26 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcps-demo-server/tests/received_log_test.rs")
         }
         "MCPS_SRC_MTLS_CLIENT" => workspace_root.join("mcps-transport/tests/mtls_client_test.rs"),
+        "MCPS_SRC_KEYSET_ADMISSION" => {
+            workspace_root.join("mcps-proxy/tests/keyset_admission_test.rs")
+        }
+        // ADR-MCPS-036 gate spine: the conformance-guard test sources the
+        // traceability manifest maps for the audit (#151) and forbidden-claim
+        // (#155) guards, plus the §A claim matrix read by the §A-coverage check.
+        "MCPS_SRC_AUDIT_VOCABULARY_GUARD" => {
+            workspace_root.join("mcps-conformance/tests/audit_vocabulary_guard_test.rs")
+        }
+        "MCPS_SRC_FORBIDDEN_CLAIM_GUARD" => {
+            workspace_root.join("mcps-conformance/tests/forbidden_claim_guard_test.rs")
+        }
+        "MCPS_CLAIM_MATRIX" => workspace_root.join("docs/spec/v0.5-claim-matrix.md"),
+        // ADR-MCPS-036: proposal-facing docs scanned by the forbidden-claim guard.
+        "MCPS_DOC_SECURITY_BOUNDARY" => workspace_root.join("docs/spec/security-boundary.md"),
+        "MCPS_DOC_CLAIM_MATRIX" => workspace_root.join("docs/spec/v0.5-claim-matrix.md"),
+        "MCPS_DOC_THREAT_COVERAGE" => workspace_root.join("docs/spec/threat-coverage-matrix.md"),
+        "MCPS_DOC_COMPOSABILITY" => workspace_root.join("docs/spec/composability.md"),
+        "MCPS_DOC_PROPOSAL_SCOPE" => workspace_root.join("docs/spec/proposal-scope.md"),
+        "MCPS_DOC_SECURITY_BOUNDARY_STUB" => workspace_root.join("docs/SECURITY_BOUNDARY.md"),
         other => panic!(
             "mcps_test_paths: unknown runfile env key '{other}' — add it to \
              cargo_fallback in mcps-test-paths/src/lib.rs"

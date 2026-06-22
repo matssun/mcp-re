@@ -1,0 +1,16 @@
+# ADR-MCPS-036: proposal-facing docs exposed so the forbidden-claim guard in
+# mcps-conformance can scan them from DISK (via runfiles) — the same data-dep
+# scheme the conformance drift_guard and method-name drift guard use for their
+# fixtures / source trees. Only the proposal-facing set is exported here; the
+# guard deliberately does NOT scan historical ADRs, the v0.3 files, or fixtures.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "SECURITY_BOUNDARY.md",
+    "spec/security-boundary.md",
+    "spec/v0.5-claim-matrix.md",
+    "spec/threat-coverage-matrix.md",
+    "spec/composability.md",
+    "spec/proposal-scope.md",
+])

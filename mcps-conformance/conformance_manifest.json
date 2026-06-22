@@ -54,13 +54,17 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 56
+    "bazel_test_targets": 60
   },
   "bazel_test_targets": [
     "//mcps-conformance:acceptance_test",
+    "//mcps-conformance:audit_vocabulary_guard_test",
     "//mcps-conformance:drift_guard_test",
     "//mcps-conformance:echo_server_test",
+    "//mcps-conformance:forbidden_claim_guard_test",
     "//mcps-conformance:http_harness_test",
+    "//mcps-conformance:method_name_drift_guard_test",
+    "//mcps-conformance:method_transparency_test",
     "//mcps-conformance:object_suite_test",
     "//mcps-conformance:security_traceability_guard_test",
     "//mcps-conformance:stdio_harness_test",

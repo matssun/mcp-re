@@ -240,7 +240,7 @@ Authority: [ADR-MCPS-018
 
 | Field          | Value                                            |
 | -------------- | ------------------------------------------------ |
-| Document       | `documents/mcps/security-boundary.md`            |
+| Document       | `docs/spec/security-boundary.md`                 |
 | Gate type      | HITL release gate (release blocked until signed) |
 | Author         | _(agent — does not self-approve)_                |
 | Owner sign-off | **Mats Sundvall — 2026-05-30** (signed)          |
@@ -314,3 +314,51 @@ matrix states allowed/forbidden per tier ✅; **CI green** ✅ — `.github/work
 (blocking `cargo build`/`cargo test --workspace` + feature-gated backend job) and
 the nightly `live-infra-e2e` lane (Redis primary+replica, SoftHSM2 PKCS#11, OpenSSL
 OCSP) are green on `main`. The v0.3 multi-node claim is **active** as of 2026-06-15.
+
+---
+
+## 9. Audit-evidence vocabulary (derived from the frozen error taxonomy)
+
+> **Non-goal:** this is **not** a SIEM schema and does not replace deployment
+> audit policy. It fixes only the stable machine tokens MCP-S Core emits as
+> evidence for its own verdicts; everything else (storage, correlation, retention,
+> human dashboards) is the deploying operator's concern.
+
+MCP-S can emit audit evidence for the verdicts it reaches. To keep that evidence
+honest, its **rejection reasons are derived from the frozen
+`McpsError::wire_code()` taxonomy** — `mcps-core/src/error.rs` is the **sole
+authority** (ADR-MCPS-002/007/009, ADR-MCPS-035). The vocabulary lives in one
+place, `mcps-core/src/audit.rs`, keyed off `wire_code()`; there is **no parallel
+rejection vocabulary**.
+
+- **Rejection events** use a small fixed `event_type` — `mcps.request.rejected`
+  or `mcps.response.rejected` — with `reason` set to the **exact**
+  `McpsError::wire_code()` token. Example:
+  `{ "event_type": "mcps.request.rejected", "reason": "mcps.invalid_signature" }`.
+  No minted sub-names (no `…rejected.bad_signature`, `…expired`, `…replay`,
+  `…untrusted_signer`).
+- **Success events** are the only net-new surface, because the error enum cannot
+  express a success/lifecycle outcome. The set is **exactly two**:
+  `mcps.request.accepted` and `mcps.response.signed`. No third success event may
+  be minted without an ADR.
+- **No `authorization_hash_mismatch`.** Core **binds** `authorization_hash` and
+  never **interprets** the authorization artifact (ADR-MCPS-013); "mismatch" would
+  imply a semantic comparison Core does not perform, so no such audit reason
+  exists. (The `mcps.authorization_hash_mismatch` token is a *policy-layer*
+  `PolicyError` produced by the configured AuthorizationProfile — outside Core, and
+  not an audit reason.)
+- **Optional `reason_label`.** A non-normative, human-readable label (e.g.
+  "Invalid signature") may accompany an event for readability. It is display-only
+  and **must never be parsed**; the stable machine token is always `reason`.
+
+**Adding a rejection outcome** therefore requires adding an `McpsError` variant
+first (the frozen-taxonomy process), which the audit layer inherits
+automatically — the vocabulary cannot drift from the verdicts the pipeline
+actually makes.
+
+**Enforcement.** A CI drift guard
+(`//mcps-conformance:audit_vocabulary_guard_test`, ADR-MCPS-035) reads
+`error.rs` and `audit.rs` from disk and FAILS if any audit rejection `reason` is
+not a member of `McpsError::wire_code()`, if the success set is not exactly the
+two-item allowlist, or if an `authorization_hash_mismatch` notion reappears as an
+audit reason.

@@ -35,6 +35,15 @@ filegroup(
     srcs = glob(["tests/vectors/**"]),
 )
 
+# ADR-MCPS-034: the Core source tree, exposed so the method-name drift guard in
+# mcps-conformance can scan non-test mcps-core/src for banned MCP method-name
+# literals from DISK (via runfiles) — the same data-dep scheme the conformance
+# drift_guard uses for the vector fixtures.
+filegroup(
+    name = "src_files",
+    srcs = glob(["src/**/*.rs"]),
+)
+
 nt_rust_test(
     name = "vectors_test",
     srcs = ["tests/vectors_test.rs"],

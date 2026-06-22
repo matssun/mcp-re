@@ -60,6 +60,90 @@ fn entry_str<'a>(entry: &'a Value, key: &str) -> &'a str {
         .unwrap_or_else(|| panic!("entry missing string field '{key}': {entry}"))
 }
 
+/// Every `property` string the manifest declares.
+fn manifest_properties(m: &Value) -> Vec<String> {
+    entries(m)
+        .iter()
+        .map(|e| entry_str(e, "property").to_string())
+        .collect()
+}
+
+// --- §A claim-matrix derivation (ADR-MCPS-036 gate item 1) --------------------
+
+/// One §A capability row: the capability label and the set of manifest-property
+/// phrases its Required-conformance cell quotes (each split on the `…`/`...`
+/// ellipsis into the fragments that must ALL appear in one manifest property).
+struct ClaimRow {
+    capability: String,
+    /// Each element is one quoted citation, already split into its `…` fragments.
+    cited: Vec<Vec<String>>,
+}
+
+/// Parse §A of the v0.5 claim matrix from DISK into its capability rows. §A is the
+/// region between the `## §A` heading and the `## §B` heading; a capability row is
+/// a markdown table row (`| … |`) with ≥ 6 cells that is neither the header
+/// (`Capability …`) nor the `---` separator. The Required-conformance cell is the
+/// 5th column (index 4); every double-quoted phrase in it is a manifest-property
+/// citation, split on the `…`/`...` ellipsis into substring fragments.
+fn parse_section_a(matrix: &str) -> Vec<ClaimRow> {
+    let a = matrix
+        .split_once("## §A")
+        .and_then(|(_, after)| after.split_once("## §B").map(|(a, _)| a))
+        .unwrap_or_else(|| panic!("claim matrix has no §A/§B sections"));
+    let mut rows = Vec::new();
+    for line in a.lines() {
+        let t = line.trim();
+        if !t.starts_with('|') {
+            continue;
+        }
+        // Skip the `---`/`:---` separator row.
+        if t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
+            continue;
+        }
+        let cells: Vec<&str> = t.trim_matches('|').split('|').map(|c| c.trim()).collect();
+        if cells.len() < 6 {
+            continue;
+        }
+        // Skip the header row.
+        if cells[0].eq_ignore_ascii_case("capability") {
+            continue;
+        }
+        let capability = cells[0].trim_matches('*').trim().to_string();
+        let required = cells[4];
+        let cited = quoted_phrases(required)
+            .into_iter()
+            .map(|q| {
+                q.split(['…'])
+                    .flat_map(|s| s.split("..."))
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<String>>()
+            })
+            .filter(|frags| !frags.is_empty())
+            .collect();
+        rows.push(ClaimRow { capability, cited });
+    }
+    rows
+}
+
+/// Every double-quoted (`"…"`) substring of `text`.
+fn quoted_phrases(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if let Some(rel) = text[i + 1..].find('"') {
+                out.push(text[i + 1..i + 1 + rel].to_string());
+                i = i + 1 + rel + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 // --- on-disk derivation ------------------------------------------------------
 
 /// The map from `//<package>` label-prefix to the env var carrying that
@@ -115,6 +199,11 @@ fn test_names_in_build(text: &str) -> Vec<String> {
 fn source_env_for(source: &str) -> &'static str {
     match source {
         "mcps-conformance/tests/object_suite_test.rs" => "MCPS_SRC_OBJECT_SUITE",
+        "mcps-conformance/tests/method_transparency_test.rs" => "MCPS_SRC_METHOD_TRANSPARENCY",
+        "mcps-conformance/tests/method_name_drift_guard_test.rs" => "MCPS_SRC_METHOD_NAME_DRIFT_GUARD",
+        "mcps-conformance/tests/audit_vocabulary_guard_test.rs" => "MCPS_SRC_AUDIT_VOCABULARY_GUARD",
+        "mcps-conformance/tests/forbidden_claim_guard_test.rs" => "MCPS_SRC_FORBIDDEN_CLAIM_GUARD",
+        "mcps-proxy/tests/keyset_admission_test.rs" => "MCPS_SRC_KEYSET_ADMISSION",
         "mcps-demo/tests/demo_negative_e2e_test.rs" => "MCPS_SRC_DEMO_NEGATIVE_E2E",
         "mcps-demo/tests/demo_transport_e2e_test.rs" => "MCPS_SRC_DEMO_TRANSPORT_E2E",
         "mcps-demo/tests/demo_e2e_persistent_test.rs" => "MCPS_SRC_DEMO_E2E_PERSISTENT",
@@ -251,6 +340,98 @@ fn four_server_auth_cases_are_present() {
     }
 }
 
+/// ADR-MCPS-036 gate item 1 — "no traceability-mapped green test, no proposal
+/// claim." EVERY §A capability claim in `docs/spec/v0.5-claim-matrix.md` must map
+/// to at least one named test in the manifest. The matrix §A is read from DISK
+/// (runfiles, same scheme as the sources) and each row's Required-conformance
+/// citation(s) are matched against the manifest `property` set: a citation matches
+/// when ALL of its `…`-split fragments are substrings of a single manifest
+/// property. A row with no matched citation is an UNMAPPED §A claim and FAILS.
+#[test]
+fn every_section_a_claim_maps_to_a_manifest_entry() {
+    let m = manifest();
+    let props = manifest_properties(&m);
+    let rows = parse_section_a(&read("MCPS_CLAIM_MATRIX"));
+    assert!(
+        rows.len() >= 13,
+        "parsed too few §A capability rows ({}) — claim-matrix wiring/parse broken",
+        rows.len()
+    );
+    let mut unmapped: Vec<String> = Vec::new();
+    for row in &rows {
+        let mapped = row.cited.iter().any(|frags| {
+            props
+                .iter()
+                .any(|p| frags.iter().all(|f| p.contains(f.as_str())))
+        });
+        if !mapped {
+            unmapped.push(format!(
+                "{} (citations: {:?})",
+                row.capability, row.cited
+            ));
+        }
+    }
+    assert!(
+        unmapped.is_empty(),
+        "§A capability claim(s) with NO mapped manifest entry — add a named green test \
+         entry to security_traceability_manifest.json (no traceability-mapped green test, \
+         no proposal claim — ADR-MCPS-036): {unmapped:?}"
+    );
+}
+
+/// ADR-MCPS-036 gate items (b)/(c)/(d) — the three required guard pairs are each
+/// represented by a named manifest entry, so the gate fails if any is dropped from
+/// the spine: the #150 method-transparency PAIR (behavioral + static-drift), the
+/// #151 audit-vocabulary drift guard, and the #155 forbidden-claim guard. Each is
+/// keyed on its (bazel_target, test_fn) so a rename is caught by the other guards
+/// re-reading reality.
+#[test]
+fn required_gate_guards_are_mapped() {
+    let m = manifest();
+    let present: BTreeSet<(String, String)> = entries(&m)
+        .iter()
+        .map(|e| {
+            (
+                entry_str(e, "bazel_target").to_string(),
+                entry_str(e, "test_fn").to_string(),
+            )
+        })
+        .collect();
+    let required: &[(&str, &str)] = &[
+        // #150 method-transparency pair (ADR-MCPS-030/034).
+        (
+            "//mcps-conformance:method_transparency_test",
+            "accepted_verdict_is_identical_across_all_methods",
+        ),
+        (
+            "//mcps-conformance:method_name_drift_guard_test",
+            "no_banned_method_literal_in_non_test_core_src",
+        ),
+        // #151 audit-vocabulary drift guard (ADR-MCPS-035).
+        (
+            "//mcps-conformance:audit_vocabulary_guard_test",
+            "every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+        ),
+        // #155 forbidden-claim guard (ADR-MCPS-036 item 4).
+        (
+            "//mcps-conformance:forbidden_claim_guard_test",
+            "no_forbidden_phrase_is_an_asserted_claim",
+        ),
+    ];
+    let mut missing: Vec<String> = Vec::new();
+    for (target, test_fn) in required {
+        if !present.contains(&(target.to_string(), test_fn.to_string())) {
+            missing.push(format!("{target}::{test_fn}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "required proposal-gate guard(s) not mapped in the traceability manifest \
+         (method-transparency pair #150 / audit guard #151 / forbidden-claim guard #155 — \
+         ADR-MCPS-036): {missing:?}"
+    );
+}
+
 /// Sanity: the guard actually parsed something from every source, so a silent
 /// empty-set false-pass (e.g. a renamed env var resolving to an empty file)
 /// cannot masquerade as "no drift".
@@ -266,6 +447,12 @@ fn guard_inputs_are_non_empty() {
     assert!(
         declared_test_targets().contains("//mcps-conformance:security_traceability_guard_test"),
         "BUILD must declare the security_traceability_guard_test target itself"
+    );
+    // The claim matrix §A was actually read and parsed, so the §A-coverage check
+    // cannot silently false-pass on an empty/broken runfile.
+    assert!(
+        parse_section_a(&read("MCPS_CLAIM_MATRIX")).len() >= 13,
+        "parsed too few §A capability rows — claim-matrix runfile wiring is broken"
     );
 }
 
