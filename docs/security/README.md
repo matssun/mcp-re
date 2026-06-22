@@ -88,9 +88,24 @@ is the durable, version-controlled record of every finding ever seen and how it
 was dispositioned, so a later round can suppress the already-handled set and
 verify only what is genuinely new.
 
-- **Identity:** each finding has a coarse fingerprint — `sha1(file-basename |
-  sorted significant title tokens)` — stable under line drift and reworded
-  titles. Line numbers and exact wording are deliberately excluded.
+- **Identity:** each finding has a coarse fingerprint — the **first 16 hex
+  characters** (a truncation, not a full 40-hex digest) of `sha1(file-basename |
+  sorted significant title tokens)`. It is stable under line drift and reworded
+  titles; line numbers and exact wording are deliberately excluded. The
+  `file-basename` (not the full crate-relative path) is used on purpose so a
+  finding survives a file move within the tree. The bounded cost: two findings in
+  same-named files in different crates (e.g. `mcps-core/src/lib.rs` vs
+  `mcps-proxy/src/lib.rs`) that *also* share the same significant title tokens
+  would collide. In practice the title-token sets differ across crates, so the
+  current ledger has **zero fingerprint collisions**; and reconcile never
+  auto-suppresses on fingerprint alone — a same-file/same-category match it cannot
+  confirm is surfaced as a *fuzzy candidate* for human review (below), so a
+  collision degrades to a manual check, not a silent mis-suppression.
+- **`category`** is a free-text label carried from the review lens (e.g.
+  `replay-freshness`, `key-custody`, `mTLS identity binding`) and is used by
+  reconcile only as a **soft** signal feeding fuzzy-candidate surfacing — it is
+  not a controlled vocabulary and is never the basis for automatic suppression, so
+  vocabulary drift degrades match recall gracefully rather than mis-bucketing.
 - **`status`:** `open` (tracked by an issue) · `fixed` (carry the PR; a
   recurrence is a **regression**) · `false-positive` · `accepted-risk` ·
   `wontfix` · `superseded` (code removed) · `positive-control` (an INFO good
@@ -115,8 +130,13 @@ verify only what is genuinely new.
 The ledger is seeded from the prior Stage-1+2 round (issues #74–#101 @ `45a1876`,
 dispositioned from their triage comments: false-positive / fixed / accepted-risk
 per ADR posture) and the current round (@ `32f1430`); the manifest-subsystem
-findings are `superseded` (removed in the ADR-030 purification). The tooling lives
-in the `security-audit-funnel` skill (`scripts/ledger.py`).
+findings are `superseded` (removed in the ADR-030 purification).
+
+The in-repo artifacts are this README and [`finding-ledger.jsonl`](finding-ledger.jsonl)
+itself (the JSONL is self-describing — one finding per line). The generator/reconcile
+tool (`ledger.py`) lives in the author's separate `security-audit-funnel` automation,
+not in this repository, so there is no `scripts/` directory here; the ledger format
+above is the contract a re-implementation must honor.
 
 ## How to extend this record
 
