@@ -1,5 +1,5 @@
 {
-  "service_src": "/Users/mats/dev/mcps/mcps-core/src",
+  "service_src": "mcps-core/src",
   "languages": [
     "rust"
   ],
