@@ -9,6 +9,125 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [0.5.0] — 2026-06-23
+
+**Proposal-readiness release over the frozen `draft-01` wire envelope.** 0.5 adds
+**zero** wire-envelope fields; request and response envelopes are unchanged. The
+work is documentation, conformance, and claim hardening — making every security
+claim reviewable and traceable to a green test — not new protocol mechanism. Any
+claim `draft-01` cannot support is ejected to a future `draft-02` ADR rather than
+smuggled in as a field addition (ADR-MCPS-031, [`docs/spec/proposal-scope.md`](docs/spec/proposal-scope.md)).
+Proposal-readiness is gated twice: mechanical CI **and** owner HITL sign-off over
+one evidence spine (ADR-MCPS-036; [`security-boundary.md`](docs/spec/security-boundary.md) §10).
+
+### Added — proposal-readiness artifacts
+
+- **ADR-MCPS-031..036 (Accepted).** 031 frames 0.5 as proposal-readiness over a
+  frozen `draft-01`; 032 consolidates docs to one canonical boundary + docs root;
+  033 defines the two-section v0.5 claim matrix (NSA/threat-coverage matrix
+  derived from §A, one evidence spine); 034 makes method-transparency
+  CI-enforced; 035 derives the audit-evidence vocabulary from the frozen error
+  taxonomy; 036 defines the dual proposal-readiness gate (mechanical CI + owner
+  HITL).
+- **v0.5 claim matrix** ([`docs/spec/v0.5-claim-matrix.md`](docs/spec/v0.5-claim-matrix.md),
+  supersedes the v0.3 matrix): §A per-capability reviewer-facing claims, §B the
+  four-axis deployment-tier composition (AND of declared tiers, bounded by the
+  weakest).
+- **New spec briefs:** [`proposal-scope.md`](docs/spec/proposal-scope.md) (draft-01
+  freeze + bind-not-interpret authorization), [`composability.md`](docs/spec/composability.md),
+  [`threat-coverage-matrix.md`](docs/spec/threat-coverage-matrix.md); glossary and
+  v0.5 grilling seed.
+- **Method-transparency is CI-enforced (ADR-MCPS-034):** a behavioral-equivalence
+  test plus a static drift guard in `mcps-conformance` (`method_transparency_test`,
+  `method_name_drift_guard_test`, `security_traceability_guard_test`,
+  `forbidden_claim_guard_test`, `audit_vocabulary_guard_test`).
+
+### Security
+
+- **OCSP DNS-rebinding fix (#128).** The OCSP fetch is pinned to the vetted
+  resolved IPs, closing a rebinding window between resolution and connection.
+- **OCSP freshness when `nextUpdate` is absent (#136).** Acceptance age is bounded
+  by `thisUpdate` + a `max_age` cap instead of being accepted unbounded.
+- **Verify-before-return at the remote-signer seams (#137, #138).** PKCS#11 and
+  KMS response signing now verify the produced signature before returning it,
+  centralized at the response-signer seam.
+- **Per-method key-reference scope (#133).** A key reference scopes its target
+  per-method; empty-tool grants are rejected.
+- **LB-assertion fails closed without a transport binding (#135).** A wired
+  load-balancer ingress assertion with no transport binding now fails closed
+  rather than admitting.
+- **Replay-cache growth bounded (#140).** The file and in-memory replay paths are
+  growth-bounded, and durable inline-prune is anchored on a real clock rather than
+  request expiry.
+- **Non-positive-TTL replay rejected pre-store (MCPS-08, #142).** Requests with a
+  non-positive TTL are rejected before the store write, on the etcd backend too.
+
+### Note
+
+Internal version (`VERSION`, workspace `Cargo.toml`) advances from 0.3.1 to 0.5.0.
+0.4.0 (below) was tagged retroactively from the hardening-epic history; it carried
+no separate release commit, so the source tree at the v0.4.0 tag still declares
+0.3.1.
+
+## [0.4.0] — 2026-06-22
+
+**Hardening-epic release (#68).** 0.4 wires the v0.3 tiered multi-node profile from
+declared tiers into enforced backends, lands the full audit-remediation cluster
+from the v0.4 Stage 1–2 audit round, and purifies MCP-S Core. *Tagged
+retroactively* at the first-parent tip of the epic (`09f3250`, just before the 0.5
+proposal-readiness work) — the tag was created after the fact, so no release commit
+bumps `VERSION`/`Cargo.toml` at this point in history.
+
+### Added — four-axis multi-node profile, wired
+
+- **Axis 1 — LINEARIZABLE CP replay backend (#69).** An etcd-backed CPStore
+  replay backend, the concrete realization of the v0.3 `LINEARIZABLE` tier.
+- **Axis 2 — near-zero revocation tiers (#70).** Live + push revocation tiers
+  wired into the trust resolver, with an injective trust-cache key.
+- **Axis 4 — Tier-3 LB-signed ingress assertion (#71).** A request-bound,
+  load-balancer-signed ingress assertion, wired into the serve path with
+  serve-level acceptance.
+
+### Security & hardening — v0.4 audit remediation
+
+- **Seccomp egress (#98).** `io_uring` egress is denied in the `DenyAll` seccomp
+  posture.
+- **Production-surface sealing (#81, #83).** Test nonce/clock fixtures are
+  feature-gated off the production surface; `VerifiedResult`/`VerifiedResponse`
+  are sealed against out-of-band construction.
+- **Strict-mode replay durability (#78, #90).** Replay caches self-declare a
+  type-level durability class; strict mode rejects a non-durable in-memory cache
+  and forbids `inherit-env` together with an env key source.
+- **Reference-authz acknowledge gate + epoch-clock diagnosis (#94).**
+- **Signed-manifest canonicalization & identity (#85, #87).** Duplicate keys in
+  signed manifest bytes are rejected, `key_id` is cross-checked, the validity
+  window is skew-tolerant, and inverted windows / unknown wire members are
+  rejected.
+- **Server read-path deadline (#100).** An aggregate wall-clock deadline on the
+  server read path closes a slow-loris exposure.
+- **Redis handshake watchdog (#97).** Abandoned Redis connect-handshake watchdog
+  threads are bounded.
+- **Working-dir TOCTOU (#93).** An explicit `--inner-working-dir` is hardened
+  against symlink/TOCTOU with an explicit `O_RDONLY` no-follow open.
+- **Key custody (#76).** The unused `Clone` on `SigningKey` is dropped and the
+  custody boundary documented.
+- **OCSP SSRF guards (#130).** Redirect-follow and empty-label-host SSRF bypasses
+  on the OCSP fetch path are closed.
+- **Centralized Ed25519 alg gate (#131).** The Ed25519 envelope algorithm gate is
+  centralized in Core.
+
+### Changed — Core purification (ADR-MCPS-030)
+
+- The tool-catalog **signed-manifest subsystem is removed from MCP-S Core**; the
+  manifest-enforcement design (formerly ADR-MCPS-029) is relocated to MTCI. Core
+  is once again pure verification.
+
+### Added — security process
+
+- **Cross-round finding ledger** ([`docs/security/finding-ledger.jsonl`](docs/security/finding-ledger.jsonl)):
+  durable per-finding disposition memory so a later audit round verifies only what
+  is genuinely new and flags regressions loudly.
+
 ## [0.3.1] — 2026-06-21
 
 Security-hardening patch release. No API or wire-format change relative to

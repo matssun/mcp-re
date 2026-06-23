@@ -25,6 +25,38 @@ Current implementation claim:
 
 > MCP-S is production-hardened for single-node Rust-native deployments.
 
+### Release 0.5 — proposal-readiness over frozen `draft-01`
+
+0.5 is a **proposal-readiness** release. Its work is documentation, conformance,
+and claim hardening over the existing `draft-01` wire envelope — making every
+security claim reviewable and traceable to a green test — **not** new protocol
+mechanism. 0.5 adds **zero** wire-envelope fields; request and response envelopes
+are unchanged, and any claim `draft-01` cannot support is ejected to a future
+`draft-02` ADR rather than smuggled in as a field addition
+([`docs/spec/proposal-scope.md`](docs/spec/proposal-scope.md)).
+
+What 0.5 lands:
+
+- **One canonical claim surface.** The [v0.5 claim matrix](docs/spec/v0.5-claim-matrix.md)
+  (§A per-capability reviewer-facing claims; §B the four-axis deployment-tier
+  composition) supersedes the v0.3 matrix, with the NSA/threat-coverage matrix
+  derived from §A over one evidence spine.
+- **Method-transparency is CI-enforced** (ADR-MCPS-034): a behavioral-equivalence
+  test plus a static drift guard in `mcps-conformance`.
+- **Audit-evidence vocabulary is derived from the frozen error taxonomy**
+  (ADR-MCPS-035), guarded against drift in CI.
+- **Proposal-readiness is a dual gate** — mechanical CI **and** owner HITL
+  sign-off (ADR-MCPS-036; [security boundary](docs/spec/security-boundary.md) §10).
+- A round of feature-gated security fixes (OCSP DNS-rebinding and freshness,
+  verify-before-return at the PKCS#11/KMS signer seams, per-method key-reference
+  scope, bounded replay-cache growth). See [`CHANGELOG.md`](CHANGELOG.md).
+
+Decisions are recorded in ADR-MCPS-031..036 (all Accepted). The predecessor
+**0.4** release wired the v0.3 tiered multi-node profile into enforced backends
+(etcd CP replay, revocation tiers, LB-signed ingress assertion), landed the v0.4
+audit-remediation cluster, and purified MCP-S Core of the tool-catalog manifest
+subsystem (ADR-MCPS-030).
+
 This means the current implementation has demonstrated a complete single-node end-to-end path:
 
 ```text
@@ -173,9 +205,9 @@ mcps-demo-server/          Long-lived stdio MCP server (demo target).
 mcps-demo-fileserver/      Minimal stdio MCP server (demo target).
 mcps-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
-docs/adr/                  19 architecture decision records (ADR-MCPS-001..019).
-docs/spec/                 Spec briefs (core spec, security boundary, upstream proposal).
-docs/security/             v0.1 + v0.2 multi-agent audit reports + per-finding remediation log.
+docs/adr/                  Architecture decision records (ADR-MCPS-001..036).
+docs/spec/                 Spec briefs (core spec, security boundary, claim matrix, proposal scope).
+docs/security/             Multi-agent audit reports + per-finding remediation log + cross-round ledger.
 docs/LICENSING.md          Per-file licensing notes.
 docs/PROJECT_STATUS.md     Current stage and what "experimental" means here.
 docs/SECURITY_BOUNDARY.md  What MCP-S protects (and what it explicitly does not).
@@ -193,9 +225,10 @@ docs/*-guide.md            Operator runbooks (sidecar, host, transport, conforma
 - **Specification briefs:** [`docs/spec/`](docs/spec/) — the core spec, the
   [security boundary](docs/SECURITY_BOUNDARY.md), and the upstream-proposal
   brief intended for an eventual MCP SEP submission.
-- **Security:** [`docs/security/`](docs/security/) — two multi-agent
-  Claude Opus 4.8 audits (v0.1 and v0.2) and the per-finding remediation log
-  for v0.2.0. Vulnerability reporting: [`SECURITY.md`](SECURITY.md).
+- **Security:** [`docs/security/`](docs/security/) — multi-agent
+  Claude Opus 4.8 audits (v0.1 and v0.2), the per-finding remediation log for
+  v0.2.0, and the cross-round [finding ledger](docs/security/finding-ledger.jsonl).
+  Vulnerability reporting: [`SECURITY.md`](SECURITY.md).
 - **Operator guides:** [`docs/sidecar-deployment-guide.md`](docs/sidecar-deployment-guide.md),
   [`docs/host-integration-guide.md`](docs/host-integration-guide.md),
   [`docs/transport-hardening-guide.md`](docs/transport-hardening-guide.md),
