@@ -144,7 +144,11 @@ nt_rust_test(
     srcs = ["tests/audit_vocabulary_guard_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
-    data = ["//mcps-core:src_files"],
+    data = [
+        "//mcps-core:src_files",
+        "//mcps-core:src/error.rs",
+        "//mcps-core:src/audit.rs",
+    ],
     edition = "2021",
     env = {
         "MCPS_CORE_SRC_ERROR": "$(rlocationpath //mcps-core:src/error.rs)",
