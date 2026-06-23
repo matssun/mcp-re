@@ -26,9 +26,9 @@ security-scan evidence; none of their content was previously captured in any
 | [`mcps-core-postfix131-prescan.json`](mcps-core-postfix131-prescan.json) | `mcps-core/src` (Rust, 16 files, this repo) | pre-flight readiness gate | **GO** | 0 findings |
 
 > **Provenance note.** The `security-pre*.json` files target a path in a separate
-> working tree (`/Users/mats/dev/ws_b/.../components/common/security`), not this
-> repository. They are the *precursor* component's scans, kept here as the
-> historical "first scan" record per the maintainer's intent. The Rust prescan
+> working tree (outside this repository), under `components/common/security`.
+> They are the *precursor* component's scans, kept here as the historical "first scan"
+> record per the maintainer's intent. The Rust prescan
 > (`mcps-core-postfix131-prescan.json`) targets this repo directly.
 
 ## `security-prescan.json` — readiness gate (NO-GO)
