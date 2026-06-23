@@ -1,0 +1,143 @@
+{
+  "service_src": "components/common/security/src/security",
+  "languages": [
+    "python"
+  ],
+  "verdict": "NO-GO",
+  "counts": {
+    "block": 15,
+    "warn": 0,
+    "py_files": 916,
+    "rs_files": 0,
+    "crates": 0
+  },
+  "roles": {
+    "library": 889,
+    "adapter": 24,
+    "comproot": 1,
+    "script": 2
+  },
+  "crates": {},
+  "findings": [
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "AttributeResolver",
+      "file": "layer_1_orchestration/orchestration/attribute_resolver.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "CredentialService",
+      "file": "layer_0_primitives/identity/services/credential_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "CredentialVerifier",
+      "file": "layer_0_primitives/identity/services/credential_verifier.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "EncryptionService",
+      "file": "layer_0_primitives/cryptography/services/encryption_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "HashingService",
+      "file": "layer_0_primitives/cryptography/services/hashing_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "IdentityVerifier",
+      "file": "layer_0_primitives/identity/services/identity_verifier.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "JWTSigningService",
+      "file": "layer_0_primitives/cryptography/signing/jwt_signing_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "JWTSubResolver",
+      "file": "adapters/identity_binding/jwt_sub_resolver.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "JsonWebSignatureProofVerifier",
+      "file": "layer_0_primitives/identity/services/json_web_signature_proof_verifier.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "MandateService",
+      "file": "layer_0_primitives/delegation/services/mandate_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "OIDCDiscoveryService",
+      "file": "layer_0_primitives/authentication/sso/oidc_discovery_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "PKCEHandler",
+      "file": "layer_0_primitives/authentication/pkce/pkce_handler.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "SecurityCoordinator",
+      "file": "layer_3_coordinators/security_coordinator.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "SigningService",
+      "file": "layer_0_primitives/cryptography/services/signing_service.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    },
+    {
+      "kind": "dead-wired",
+      "severity": "block",
+      "symbol": "ZeroTrustEntityBindingVerifier",
+      "file": "pdp/zero_trust_entity_binding_verifier.py",
+      "line": null,
+      "detail": "Orchestration class is never referenced in any production file outside its own definition."
+    }
+  ]
+}

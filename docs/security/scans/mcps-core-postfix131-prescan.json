@@ -1,0 +1,26 @@
+{
+  "service_src": "mcps-core/src",
+  "languages": [
+    "rust"
+  ],
+  "verdict": "GO",
+  "counts": {
+    "block": 0,
+    "warn": 0,
+    "py_files": 0,
+    "rs_files": 16,
+    "crates": 1
+  },
+  "roles": {
+    "library": 16
+  },
+  "crates": {
+    "mcps-core": {
+      "is_bin": false,
+      "is_demo": false,
+      "has_serve": true,
+      "has_verify": true
+    }
+  },
+  "findings": []
+}
