@@ -705,7 +705,7 @@ mod tests {
             "not_before": NOT_BEFORE,
             "expires_at": EXPIRES_AT,
             "revocation_id": "rev-1",
-            "signature": { "alg": "Ed25519", "key_id": ISSUER_KEY_ID },
+            "signature": { "alg": mcps_core::SIG_ALG_ED25519, "key_id": ISSUER_KEY_ID },
         });
         let preimage = mcps_core::canonicalize_json_value(&artifact).unwrap();
         artifact["signature"]["value"] = Value::String(issuer_key().sign(&preimage));
