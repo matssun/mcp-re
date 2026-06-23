@@ -17,6 +17,7 @@
 //! into the full verification pipeline (`pipeline`): `verify_request` and
 //! `verify_response`.
 
+pub mod audit;
 pub mod canonical;
 pub mod constraints;
 pub mod crypto;

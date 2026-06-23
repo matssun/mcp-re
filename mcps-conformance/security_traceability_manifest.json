@@ -225,10 +225,59 @@
       "source": "mcps-proxy/tests/key_source_test.rs",
       "test_fn": "key_errors_never_leak_secret_material",
       "notes": "Defense-in-depth for the env-keysource path: error messages from the key source never echo the secret seed."
+    },
+    {
+      "property": "authorization binding: Core binds on_behalf_of and authorization_hash into the signed object, surfaced to the AuthorizationProfile (Core binds; profile interprets)",
+      "bazel_target": "//mcps-host:host_session_test",
+      "source": "mcps-host/tests/host_session_test.rs",
+      "test_fn": "signed_request_is_accepted_by_the_verifier",
+      "notes": "§A Delegation / authorization binding (ADR-MCPS-013). The signed request carries on_behalf_of + authorization_hash inside the signing scope; the verifier accepts and the verified object surfaces verified.on_behalf_of == ON_BEHALF_OF and verified.authorization_hash == AUTH_HASH for the configured AuthorizationProfile to interpret. Core BINDS; it never validates artifact contents, provides RBAC, or emits a mismatch (coverage Partial). Same fn as the round-trip foundation entry; this entry names the authorization-binding property §A maps."
+    },
+    {
+      "property": "trust-cache / revocation-tier: a bounded trust cache admits an active key and denies an unknown key (fails closed)",
+      "bazel_target": "//mcps-proxy:keyset_admission_test",
+      "source": "mcps-proxy/tests/keyset_admission_test.rs",
+      "test_fn": "composes_with_bounded_trust_cache_admits_active_and_denies_unknown",
+      "notes": "§A Revocation / trust propagation → §B Axis 2 (ADR-MCPS-021). A BoundedTrustCache wrapping the ADR-022 authorized-key-set resolver admits an active node key and fails closed on an unknown key. The bounded-window tier surfaces its own honest guarantee (never zero-window). §B Axis 2's live/push tiers are additionally exercised by the proxy_unit_test revocation_tier/live_trust/push_trust vectors re-derived by drift_guard."
+    },
+    {
+      "property": "keyset-admission: per-node keys accepted, unknown/revoked rejected, shared-remote-signer mode (Axis 3 blast radius)",
+      "bazel_target": "//mcps-proxy:keyset_admission_test",
+      "source": "mcps-proxy/tests/keyset_admission_test.rs",
+      "test_fn": "per_node_keyset_node_a_and_node_b_accepted",
+      "notes": "§A Key custody / blast radius → §B Axis 3 (ADR-MCPS-022) AND §A Signer identity. Per-node Ed25519 keys are each an explicit member of the authorized key set (node-a and node-b accepted); the sibling cases per_node_keyset_unknown_key_rejected / per_node_keyset_revoked_key_rejected fail closed, and shared_remote_signer_only_shared_key_accepted covers the single-pinned-identity mode. One compromised node revokes only that node's key — never a smaller blast radius than per-node."
+    },
+    {
+      "property": "audit-evidence vocabulary drift (ADR-MCPS-035): every emitted rejection reason is a member of the frozen McpsError::wire_code() taxonomy and the success-event set is exactly the two-item allowlist",
+      "bazel_target": "//mcps-conformance:audit_vocabulary_guard_test",
+      "source": "mcps-conformance/tests/audit_vocabulary_guard_test.rs",
+      "test_fn": "every_audit_token_is_a_wire_code_or_a_fixed_event_type",
+      "notes": "ADR-MCPS-036 gate item (c) / issue #151. The audit vocabulary (mcps-core/src/audit.rs) mints no rejection reason outside the frozen wire_code() taxonomy (error.rs is the sole authority), read from disk via runfiles. Companion assertions in the same target keep the success allowlist exact (success_event_set_is_exactly_the_two_item_allowlist) and forbid any authorization_hash_mismatch notion (no_authorization_hash_mismatch_audit_reason)."
+    },
+    {
+      "property": "forbidden-claim drift (ADR-MCPS-036): no forbidden over-claim wording appears as an asserted live claim in the proposal-facing docs",
+      "bazel_target": "//mcps-conformance:forbidden_claim_guard_test",
+      "source": "mcps-conformance/tests/forbidden_claim_guard_test.rs",
+      "test_fn": "no_forbidden_phrase_is_an_asserted_claim",
+      "notes": "ADR-MCPS-036 gate item (d) / issue #155. The forbidden-wording list (co-located with §A's Forbidden-claim column) does not appear as a live claim in security-boundary / v0.5-claim-matrix / threat-coverage / composability / proposal-scope, read from disk via runfiles. A phrase inside a Forbidden-claim table cell or a negated sentence is legitimately naming the non-goal and is allowed."
+    },
+    {
+      "property": "method-transparency (ADR-MCPS-030): the Core verdict is independent of the JSON-RPC method — identical verdict across tools/list, tools/call, resources/list, prompts/list, and a fabricated x/nonexistent/custom, for an accepted AND a rejected envelope",
+      "bazel_target": "//mcps-conformance:method_transparency_test",
+      "source": "mcps-conformance/tests/method_transparency_test.rs",
+      "test_fn": "accepted_verdict_is_identical_across_all_methods",
+      "notes": "ADR-MCPS-034 behavioral equivalence proof (extends ADR-MCPS-030). Each method is re-signed (method is in signing scope, ADR-MCPS-026), so the proof is verdict PARITY across honestly-signed envelopes — a strictly stronger claim than mere acceptance of known methods. The rejected family (rejected_verdict_is_identical_across_all_methods) holds one defect (expired window) constant while only the method varies, proving the method neither rescues nor worsens the verdict; accepted_and_rejected_verdicts_are_distinct keeps the parity non-vacuous."
+    },
+    {
+      "property": "method-transparency is durable (ADR-MCPS-030): no non-test mcps-core/src code references a concrete MCP method-name literal (tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get, sampling/createMessage, completion/complete)",
+      "bazel_target": "//mcps-conformance:method_name_drift_guard_test",
+      "source": "mcps-conformance/tests/method_name_drift_guard_test.rs",
+      "test_fn": "no_banned_method_literal_in_non_test_core_src",
+      "notes": "ADR-MCPS-034 static drift guard (extends ADR-MCPS-030). Scans every *.rs in mcps-core/src (delivered via runfiles, dir re-read so new files are covered), excluding the trailing #[cfg(test)] region of each file, and FAILS if any banned method-name literal appears in production Core. The bare \"method\" field is deliberately NOT banned (bare_method_word_is_not_banned) — Core must still sign/canonicalize the full object; guard_inputs_are_non_empty_and_exclusion_is_load_bearing proves the test-region exclusion is exercised so the guard cannot silently false-pass."
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 32
+    "entries": 39
   }
 }

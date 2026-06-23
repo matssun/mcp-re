@@ -87,6 +87,115 @@ nt_rust_test(
     ],
 )
 
+# ADR-MCPS-034 (extends ADR-MCPS-030): method-transparency behavioral
+# equivalence proof. Varies ONLY the JSON-RPC method (re-signing each, since
+# method is in signing scope) across tools/list, tools/call, resources/list,
+# prompts/list, and a fabricated x/nonexistent/custom, and asserts the Core
+# verdict is IDENTICAL for an accepted envelope and (separately) a rejected one.
+nt_rust_test(
+    name = "method_transparency_test",
+    srcs = ["tests/method_transparency_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_conformance_lib",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# ADR-MCPS-034 (extends ADR-MCPS-030): static method-name drift guard. Scans the
+# NON-TEST mcps-core/src for banned concrete MCP method-name literals
+# (tools/list, tools/call, resources/list, resources/read, prompts/list,
+# prompts/get, sampling/createMessage, completion/complete) and FAILS if any is
+# added to production Core. The Core src tree is delivered as data (runfiles);
+# the guard resolves lib.rs and scans its parent dir from DISK, with the
+# mcps-test-paths cargo fallback — the same scheme as the drift_guard.
+nt_rust_test(
+    name = "method_name_drift_guard_test",
+    srcs = ["tests/method_name_drift_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-core:src_files",
+        "//mcps-core:src/lib.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_CORE_SRC_LIB": "$(rlocationpath //mcps-core:src/lib.rs)",
+    },
+    deps = [
+        "//mcps-test-paths:mcps_test_paths",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# ADR-MCPS-035: audit-evidence vocabulary drift guard. Asserts the MCP-S audit
+# vocabulary (mcps-core/src/audit.rs) derives every rejection reason from the
+# frozen McpsError::wire_code() taxonomy (mcps-core/src/error.rs is the sole
+# authority) and that the success-event set is EXACTLY the two-item allowlist.
+# Both Core source files are delivered as data (runfiles); the guard reads them
+# from DISK (via $(rlocationpath), with the mcps-test-paths cargo fallback) — the
+# same scheme as the method-name drift guard — so a newly added McpsError variant
+# (new frozen wire_code) or an edited audit vocabulary is re-read from reality.
+nt_rust_test(
+    name = "audit_vocabulary_guard_test",
+    srcs = ["tests/audit_vocabulary_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcps-core:src_files",
+        "//mcps-core:src/error.rs",
+        "//mcps-core:src/audit.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_CORE_SRC_ERROR": "$(rlocationpath //mcps-core:src/error.rs)",
+        "MCPS_CORE_SRC_AUDIT": "$(rlocationpath //mcps-core:src/audit.rs)",
+    },
+    deps = [
+        "//mcps-test-paths:mcps_test_paths",
+    ],
+)
+
+# ADR-MCPS-036 (gate item 4): forbidden-claim guard. Scans the proposal-facing
+# docs (security-boundary, v0.5 claim matrix, threat-coverage, composability,
+# proposal-scope) from DISK (via runfiles) and FAILS if any forbidden over-claim
+# wording appears as an ASSERTED (live) claim — a phrase inside a "Forbidden
+# claim" table column or a negated sentence is legitimately NAMING the non-goal
+# and is allowed. The optional add-on asserts docs/SECURITY_BOUNDARY.md is a
+# redirect stub with no live claim (ADR-MCPS-032). Docs delivered as data
+# ($(rlocationpath)), with the mcps-test-paths cargo fallback — the same scheme
+# as the drift_guard / method-name drift guard. Proposal-facing docs ONLY: no
+# historical ADRs, no v0.3 files, no fixtures.
+nt_rust_test(
+    name = "forbidden_claim_guard_test",
+    srcs = ["tests/forbidden_claim_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//docs:SECURITY_BOUNDARY.md",
+        "//docs:spec/security-boundary.md",
+        "//docs:spec/v0.5-claim-matrix.md",
+        "//docs:spec/threat-coverage-matrix.md",
+        "//docs:spec/composability.md",
+        "//docs:spec/proposal-scope.md",
+    ],
+    edition = "2021",
+    env = {
+        "MCPS_DOC_SECURITY_BOUNDARY": "$(rlocationpath //docs:spec/security-boundary.md)",
+        "MCPS_DOC_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
+        "MCPS_DOC_THREAT_COVERAGE": "$(rlocationpath //docs:spec/threat-coverage-matrix.md)",
+        "MCPS_DOC_COMPOSABILITY": "$(rlocationpath //docs:spec/composability.md)",
+        "MCPS_DOC_PROPOSAL_SCOPE": "$(rlocationpath //docs:spec/proposal-scope.md)",
+        "MCPS_DOC_SECURITY_BOUNDARY_STUB": "$(rlocationpath //docs:SECURITY_BOUNDARY.md)",
+    },
+    deps = [
+        "//mcps-test-paths:mcps_test_paths",
+    ],
+)
+
 # MCPS-013: Streamable HTTP harness — runs the documented echo server on a
 # loopback socket and drives the same outcome matrix over HTTP, then asserts
 # HTTP == stdio == object for every shared request vector (the transport-
@@ -196,6 +305,11 @@ nt_rust_test(
         "security_traceability_manifest.json",
         "BUILD.bazel",
         "tests/object_suite_test.rs",
+        "tests/method_transparency_test.rs",
+        "tests/method_name_drift_guard_test.rs",
+        "tests/audit_vocabulary_guard_test.rs",
+        "tests/forbidden_claim_guard_test.rs",
+        "//docs:spec/v0.5-claim-matrix.md",
         "//mcps-core:BUILD.bazel",
         "//mcps-host:BUILD.bazel",
         "//mcps-host:tests/host_session_test.rs",
@@ -207,6 +321,7 @@ nt_rust_test(
         "//mcps-proxy:tests/proxy_test.rs",
         "//mcps-proxy:tests/key_source_test.rs",
         "//mcps-proxy:tests/dev_env_key_source_test.rs",
+        "//mcps-proxy:tests/keyset_admission_test.rs",
         "//mcps-demo:BUILD.bazel",
         "//mcps-demo:tests/demo_negative_e2e_test.rs",
         "//mcps-demo:tests/demo_transport_e2e_test.rs",
@@ -228,8 +343,14 @@ nt_rust_test(
         "MCPS_BUILD_DEMO": "$(rlocationpath //mcps-demo:BUILD.bazel)",
         "MCPS_BUILD_DEMO_SERVER": "$(rlocationpath //mcps-demo-server:BUILD.bazel)",
         "MCPS_BUILD_TRANSPORT": "$(rlocationpath //mcps-transport:BUILD.bazel)",
+        "MCPS_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
         "MCPS_SRC_OBJECT_SUITE": "$(rlocationpath tests/object_suite_test.rs)",
+        "MCPS_SRC_METHOD_TRANSPARENCY": "$(rlocationpath tests/method_transparency_test.rs)",
+        "MCPS_SRC_METHOD_NAME_DRIFT_GUARD": "$(rlocationpath tests/method_name_drift_guard_test.rs)",
+        "MCPS_SRC_AUDIT_VOCABULARY_GUARD": "$(rlocationpath tests/audit_vocabulary_guard_test.rs)",
+        "MCPS_SRC_FORBIDDEN_CLAIM_GUARD": "$(rlocationpath tests/forbidden_claim_guard_test.rs)",
         "MCPS_SRC_HOST_SESSION": "$(rlocationpath //mcps-host:tests/host_session_test.rs)",
+        "MCPS_SRC_KEYSET_ADMISSION": "$(rlocationpath //mcps-proxy:tests/keyset_admission_test.rs)",
         "MCPS_SRC_PERSISTENT_SCOPE": "$(rlocationpath //mcps-proxy:tests/persistent_scope_test.rs)",
         "MCPS_SRC_PERSISTENT_INNER": "$(rlocationpath //mcps-proxy:tests/persistent_inner_test.rs)",
         "MCPS_SRC_PERSISTENT_SESSION": "$(rlocationpath //mcps-proxy:tests/persistent_session_test.rs)",
