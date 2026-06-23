@@ -221,6 +221,11 @@ pub struct OcspChecker {
     soft_fail: bool,
     /// The mandatory HTTP fetch timeout (see [`DEFAULT_OCSP_TIMEOUT`]).
     timeout: Duration,
+    /// Whether the fetch resolver vets resolved addresses against the public-IP
+    /// predicates (the production SSRF / DNS-rebinding guard, #128). Always `true`
+    /// in production; a test-only constructor sets it `false` so a test can drive
+    /// the real fetch path against a loopback responder (e.g. the redirect test).
+    vet_resolved_addresses: bool,
 }
 
 impl OcspChecker {
@@ -234,6 +239,20 @@ impl OcspChecker {
             responder_url_override,
             soft_fail,
             timeout: DEFAULT_OCSP_TIMEOUT,
+            vet_resolved_addresses: true,
+        }
+    }
+
+    /// Test-only constructor that DISABLES resolved-address vetting so a test can
+    /// drive the real fetch path against a loopback responder. Production code
+    /// always uses [`OcspChecker::new`], which vets (the #128 guard).
+    #[cfg(test)]
+    fn new_allowing_loopback(responder_url_override: Option<String>, soft_fail: bool) -> Self {
+        OcspChecker {
+            responder_url_override,
+            soft_fail,
+            timeout: DEFAULT_OCSP_TIMEOUT,
+            vet_resolved_addresses: false,
         }
     }
 
@@ -261,7 +280,7 @@ impl OcspChecker {
         leaf_der: &[u8],
         issuer_der: &[u8],
     ) -> Result<CertRevocationStatus, OcspError> {
-        let responder_url = match self.resolve_responder_url(leaf_der) {
+        let (responder_url, source) = match self.resolve_responder_url(leaf_der) {
             Some((url, source)) => {
                 // #4078 (M14): the AIA responder URL is attacker-influenced (it
                 // comes from the leaf), so an SSRF guard MUST run BEFORE any fetch.
@@ -280,7 +299,7 @@ impl OcspChecker {
                 if !safe {
                     return Ok(CertRevocationStatus::Unknown);
                 }
-                url
+                (url, source)
             }
             // No override and no AIA OCSP URL on the leaf: the status is
             // indeterminate (Unknown), which the policy treats as fail-closed
@@ -293,7 +312,7 @@ impl OcspChecker {
         // rejected (RFC 6960 §4.4.1 / RFC 8954). Drawn from the OS CSPRNG.
         let nonce = random_nonce()?;
         let request_der = build_ocsp_request_der_with_nonce(leaf_der, issuer_der, &nonce)?;
-        let response_der = self.post_request(&responder_url, &request_der)?;
+        let response_der = self.post_request(&responder_url, &request_der, source)?;
         // The expected CertID we requested — used to bind the SingleResponse.
         let expected_cert_id = build_cert_id(leaf_der, issuer_der)?;
         verify_and_map_response(
@@ -321,7 +340,18 @@ impl OcspChecker {
 
     /// POST a DER OCSP request to `url` with the mandatory timeout and return the
     /// raw response body bytes. Any HTTP/timeout/transport error is `Err`.
-    fn post_request(&self, url: &str, request_der: &[u8]) -> Result<Vec<u8>, OcspError> {
+    ///
+    /// `source` selects the SSRF posture, mirroring the pre-fetch guard in
+    /// [`OcspChecker::check`]: a cert-derived (attacker-influenced) URL gets the
+    /// resolved-address vetting (the #128 DNS-rebinding guard), while an operator
+    /// override is NOT IP-restricted — by design an operator may run an internal
+    /// responder — so it keeps the default resolver.
+    fn post_request(
+        &self,
+        url: &str,
+        request_der: &[u8],
+        source: ResponderUrlSource,
+    ) -> Result<Vec<u8>, OcspError> {
         // SSRF hardening: the responder host is guarded (`aia_responder_url_is_safe`
         // → `host_is_public`) BEFORE this call, but that guard only inspects the
         // FIRST URL. `ureq` follows HTTP 3xx redirects by default, so a hostile
@@ -331,7 +361,29 @@ impl OcspChecker {
         // disable them (`redirects(0)`): a 3xx is then returned as-is, its body is
         // not a valid OCSP response, and the path fails CLOSED (Unknown → deny under
         // hard-fail) rather than reaching the redirect target.
-        let agent = ureq::AgentBuilder::new().redirects(0).build();
+        // SSRF hardening (#128, DNS rebinding / TOCTOU): the pre-fetch guard
+        // (`aia_responder_url_is_safe` → `host_is_public`) inspects the URL string
+        // only — it blocks LITERAL private IPs and `localhost` but cannot defend a
+        // hostile PUBLIC hostname that RESOLVES to an internal address at fetch time
+        // (e.g. an attacker rebinds `ocsp.evil.test` to `169.254.169.254` between the
+        // guard and the connect). Install a custom resolver that re-applies the SAME
+        // public-IP predicates (`ipv4_is_public`/`ipv6_is_public`) to every RESOLVED
+        // address and connects ONLY to a vetted one: if ANY resolved address is
+        // non-public the resolve fails CLOSED (the fetch errors → Unknown → deny under
+        // hard-fail), so there is no TOCTOU re-resolve window to an internal IP.
+        // Vet resolved addresses for the attacker-influenced cert-AIA path only; an
+        // operator override is deliberately allowed to target an internal responder
+        // (it is scheme-checked, not IP-blocked, in `check`). `vet_resolved_addresses`
+        // is a test-only kill switch (default on) so the redirect test can fetch from
+        // a loopback responder.
+        let vet = self.vet_resolved_addresses && source == ResponderUrlSource::CertAia;
+        let builder = ureq::AgentBuilder::new().redirects(0);
+        let builder = if vet {
+            builder.resolver(VettingResolver::std())
+        } else {
+            builder
+        };
+        let agent = builder.build();
         let response = agent
             .post(url)
             .set("Content-Type", "application/ocsp-request")
@@ -434,13 +486,13 @@ pub fn responder_scheme_allowed(url: &str) -> bool {
 /// (the host is reached over the network where the OS resolves it); literal private
 /// IPs and the loopback name — the practical SSRF vectors — are blocked outright.
 ///
-/// RESIDUAL LIMITATION (DNS rebinding): this is a URL/host *syntactic and literal-IP*
-/// guard, not a guarantee against a hostile PUBLIC hostname that later RESOLVES to an
-/// internal address at fetch time. Closing that requires pinning and re-validating
-/// the address actually connected to (a custom resolver/connector), which this guard
-/// does not do. The redirect vector — a guarded first URL that `302`s to an internal
-/// address — IS closed: the OCSP fetch disables redirect-following (see
-/// `OcspChecker::post_request`). DNS rebinding is tracked as issue #128.
+/// This is a URL/host *syntactic and literal-IP* guard. The DNS-rebinding vector — a
+/// hostile PUBLIC hostname that later RESOLVES to an internal address at fetch time —
+/// is NOT handled here (this layer does no DNS) but IS closed at connect time by
+/// [`VettingResolver`], which re-applies `ipv4_is_public`/`ipv6_is_public` to every
+/// RESOLVED address and fails closed on a non-public one (issue #128). The redirect
+/// vector — a guarded first URL that `302`s to an internal address — is likewise
+/// closed: the OCSP fetch disables redirect-following (see `OcspChecker::post_request`).
 pub fn aia_responder_url_is_safe(url: &str) -> bool {
     if !responder_scheme_allowed(url) {
         return false;
@@ -640,6 +692,91 @@ fn ipv6_is_public(v6: &std::net::Ipv6Addr) -> bool {
         return false;
     }
     true
+}
+
+/// Whether a RESOLVED IP address is a public (fetchable) address, reusing the
+/// SAME predicates the literal-IP guard applies. The single chokepoint through
+/// which every resolved OCSP-fetch address must pass (see [`VettingResolver`]);
+/// it must never be weakened independently of `ipv4_is_public`/`ipv6_is_public`.
+fn resolved_ip_is_public(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => ipv4_is_public(v4),
+        std::net::IpAddr::V6(v6) => ipv6_is_public(v6),
+    }
+}
+
+/// The DNS resolution seam ([`VettingResolver`] vets whatever this returns). The
+/// production implementation defers to the OS resolver via `std`'s
+/// `ToSocketAddrs`; tests inject a fixed-address implementation to exercise the
+/// rebinding-rejection path WITHOUT real DNS.
+trait BaseResolver: Send + Sync {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>>;
+}
+
+/// The production base resolver: the OS resolver, exactly as `ureq`'s default
+/// `StdResolver` would use. The vetting wrapper is what makes it safe.
+struct StdBaseResolver;
+
+impl BaseResolver for StdBaseResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        netloc.to_socket_addrs().map(|iter| iter.collect())
+    }
+}
+
+/// A `ureq` [`Resolver`](ureq::Resolver) that closes the DNS-rebinding hole (#128).
+///
+/// `ureq` connects to whatever a resolver returns; by pinning that set to ONLY
+/// addresses that pass [`resolved_ip_is_public`] — and FAILING CLOSED (an
+/// `io::Error`, which surfaces as `OcspError::Http` → `Unknown` → deny under
+/// hard-fail) the instant ANY resolved address is non-public — there is no
+/// TOCTOU window in which a hostile public hostname can be re-resolved to an
+/// internal IP between the syntactic guard and the connect. Reuses the existing
+/// public-IP predicates (it does NOT duplicate or relax them). Consistent with
+/// the ADR-MCPS-018 lean-sync (blocking `ureq`) firewall: synchronous, no async
+/// runtime, no extra network round-trip beyond the resolve itself.
+struct VettingResolver {
+    base: Box<dyn BaseResolver>,
+}
+
+impl VettingResolver {
+    /// The production resolver: OS resolution, every address vetted.
+    fn std() -> Self {
+        Self { base: Box::new(StdBaseResolver) }
+    }
+
+    /// Resolve `netloc` and return ONLY the vetted addresses, or an error if the
+    /// host did not resolve or ANY resolved address is non-public (fail closed).
+    fn resolve_vetted(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        let addrs = self.base.resolve(netloc)?;
+        if addrs.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "OCSP responder host did not resolve to any address",
+            ));
+        }
+        // Fail CLOSED on the WHOLE resolve if any address is non-public: an
+        // attacker who returns one internal + one public address must not be able
+        // to have the internal one connected to, and partial filtering would let a
+        // rebinding race pick the internal address. Reject the lot.
+        if let Some(bad) = addrs.iter().find(|sa| !resolved_ip_is_public(&sa.ip())) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "OCSP responder host resolved to a non-public address ({}); \
+                     refusing to connect (SSRF / DNS-rebinding guard, issue #128)",
+                    bad.ip()
+                ),
+            ));
+        }
+        Ok(addrs)
+    }
+}
+
+impl ureq::Resolver for VettingResolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        self.resolve_vetted(netloc)
+    }
 }
 
 /// Build a DER-encoded OCSP request for `leaf_der` against `issuer_der`, using a
@@ -1988,6 +2125,88 @@ mod tests {
         );
     }
 
+    /// DNS-rebinding regression (#128): a hostile PUBLIC hostname that passes the
+    /// syntactic AIA guard but RESOLVES to an internal address at fetch time must be
+    /// rejected at resolve/connect time by [`super::VettingResolver`], which
+    /// re-applies the public-IP predicates to the RESOLVED address and fails CLOSED.
+    /// A fixed-address base resolver is injected (the test seam) so no real DNS is
+    /// used: each internal target (`127.0.0.1` loopback, `169.254.169.254` cloud
+    /// metadata) must yield an `Err`, while a public address must yield `Ok`.
+    ///
+    /// WITHOUT the guard (`VettingResolver` returning the addresses unfiltered) the
+    /// internal cases would return `Ok` and `ureq` would connect to the internal IP —
+    /// the very SSRF the fix closes; this asserts they are rejected instead.
+    #[test]
+    fn vetting_resolver_rejects_rebinding_to_internal_addresses() {
+        use super::{BaseResolver, VettingResolver};
+        use std::net::SocketAddr;
+
+        /// A base resolver that ignores the hostname and returns a fixed address —
+        /// the injectable seam standing in for a hostile/rebinding DNS answer.
+        struct FixedResolver(SocketAddr);
+        impl BaseResolver for FixedResolver {
+            fn resolve(&self, _netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
+                Ok(vec![self.0])
+            }
+        }
+        fn resolver_for(addr: &str) -> VettingResolver {
+            VettingResolver {
+                base: Box::new(FixedResolver(addr.parse().expect("test addr"))),
+            }
+        }
+
+        // Loopback — the public hostname "rebinds" to 127.0.0.1.
+        assert!(
+            resolver_for("127.0.0.1:80")
+                .resolve_vetted("ocsp.evil.test:80")
+                .is_err(),
+            "a host resolving to 127.0.0.1 must be REJECTED at resolve time"
+        );
+        // Cloud metadata endpoint — the classic rebinding SSRF target.
+        assert!(
+            resolver_for("169.254.169.254:80")
+                .resolve_vetted("ocsp.evil.test:80")
+                .is_err(),
+            "a host resolving to 169.254.169.254 must be REJECTED at resolve time"
+        );
+        // IPv6 loopback, for completeness.
+        assert!(
+            resolver_for("[::1]:80")
+                .resolve_vetted("ocsp.evil.test:80")
+                .is_err(),
+            "a host resolving to ::1 must be REJECTED at resolve time"
+        );
+        // Positive control: a genuinely public resolved address is admitted, so the
+        // resolver does not over-block legitimate responders.
+        let ok = resolver_for("93.184.216.34:80").resolve_vetted("ocsp.example.com:80");
+        assert!(
+            ok.is_ok(),
+            "a host resolving to a public address must be admitted"
+        );
+        assert_eq!(
+            ok.unwrap(),
+            vec!["93.184.216.34:80".parse::<SocketAddr>().unwrap()],
+            "the vetted public address is pinned and returned for connect"
+        );
+        // Mixed answer: a public + an internal address must fail CLOSED on the whole
+        // resolve (no partial filtering that a rebinding race could exploit).
+        struct PairResolver;
+        impl BaseResolver for PairResolver {
+            fn resolve(&self, _netloc: &str) -> std::io::Result<Vec<SocketAddr>> {
+                Ok(vec![
+                    "93.184.216.34:80".parse().unwrap(),
+                    "169.254.169.254:80".parse().unwrap(),
+                ])
+            }
+        }
+        assert!(
+            VettingResolver { base: Box::new(PairResolver) }
+                .resolve_vetted("ocsp.evil.test:80")
+                .is_err(),
+            "a mixed public+internal resolve must fail CLOSED, not connect to the public half"
+        );
+    }
+
     /// The AIA guard (cert-derived, attacker-influenced) blocks disallowed schemes
     /// AND every private/loopback/link-local/unspecified/multicast literal IP.
     #[test]
@@ -2148,11 +2367,19 @@ mod tests {
             }
         });
 
-        let checker = OcspChecker::new(None, false);
+        // Loopback-allowing checker: this test deliberately fetches from a
+        // 127.0.0.1 responder, which the production #128 vetting resolver would
+        // (correctly) refuse; the test seam disables vetting to exercise the
+        // redirect-following property in isolation.
+        let checker = OcspChecker::new_allowing_loopback(None, false);
         let url = format!("http://{responder_addr}/ocsp");
         // The result itself is irrelevant (a 302 carries no valid OCSP body); the
         // security property is that NO request reaches the sentinel.
-        let _ = checker.post_request(&url, b"dummy-ocsp-request");
+        let _ = checker.post_request(
+            &url,
+            b"dummy-ocsp-request",
+            super::ResponderUrlSource::CertAia,
+        );
 
         // Wait (bounded) for the responder thread to observe the connection so the test
         // can't false-pass due to a failed first request.
