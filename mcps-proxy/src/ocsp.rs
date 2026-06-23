@@ -50,9 +50,12 @@
 //!      `CertID` equals the CertID we requested (hash alg OID, issuer name hash,
 //!      issuer key hash, serial). A response that answers a DIFFERENT cert is not
 //!      evidence about ours. See [`select_matching_single_response`].
-//!   4. **Freshness** — `now >= thisUpdate - skew` and, when present,
-//!      `now <= nextUpdate + skew`; a stale or not-yet-valid response is treated
-//!      as Unknown. See [`is_fresh`].
+//!   4. **Freshness** — `now >= thisUpdate - skew` and `now <= upper + skew`,
+//!      where `upper` is `nextUpdate` when present, capped unconditionally at
+//!      `thisUpdate + max_response_age`. The cap bounds acceptance even when a
+//!      response omits `nextUpdate`, so an old responder-signed Good cannot be
+//!      replayed indefinitely. A stale or not-yet-valid response is treated as
+//!      Unknown. See [`is_fresh`].
 //!   5. **Nonce** — the request carries a 16-byte CSPRNG nonce; when the
 //!      responder echoes a nonce it MUST equal the request's, else the response
 //!      is a replay/substitution and is rejected. See [`nonce_ok`].
@@ -794,7 +797,9 @@ pub fn verify_and_map_response(
     // (5) freshness of the selected response.
     if !is_fresh(single, now, OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE) {
         return Err(OcspError::NotFresh(
-            "thisUpdate/nextUpdate window does not include now".into(),
+            "response not fresh: now outside [thisUpdate - skew, upper + skew], \
+             where upper = min(nextUpdate, thisUpdate + max_response_age)"
+                .into(),
         ));
     }
 
