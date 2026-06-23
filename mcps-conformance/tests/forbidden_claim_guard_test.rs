@@ -123,7 +123,22 @@ fn phrase_is_in_forbidden_column(row: &str, header: &str, phrase_lc: &str) -> bo
 
 /// `true` iff a negation/non-existence marker appears on this (lower-cased) line.
 fn line_has_negation(line_lc: &str) -> bool {
-    NEGATION_MARKERS.iter().any(|m| line_lc.contains(m))
+    for &m in NEGATION_MARKERS {
+        if m == "never" {
+            // Avoid substring false-positives like "whenever" matching "never".
+            if line_lc
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .any(|w| w == "never")
+            {
+                return true;
+            }
+            continue;
+        }
+        if line_lc.contains(m) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Scan one doc; return every (1-based line number, phrase) pair that is a LIVE
@@ -134,10 +149,12 @@ fn live_claim_hits(text: &str) -> Vec<(usize, &'static str)> {
     // Track the most recent markdown table header that contains "forbidden claim".
     let mut current_forbidden_header: Option<String> = None;
     for (idx, line) in text.lines().enumerate() {
+        // The forbidden-claim table context only applies while we're inside that table.
+        if current_forbidden_header.is_some() && !line.trim_start().starts_with('|') {
+            current_forbidden_header = None;
+        }
         let line_lc = line.to_lowercase();
-        if line_lc.contains("forbidden claim")
-            && line.trim_start().starts_with('|')
-        {
+        if line_lc.contains("forbidden claim") && line.trim_start().starts_with('|') {
             current_forbidden_header = Some(line.to_string());
         }
         for &phrase in FORBIDDEN_PHRASES {
