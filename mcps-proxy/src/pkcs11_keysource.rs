@@ -57,6 +57,7 @@ use cryptoki_sys::CKR_SESSION_COUNT;
 use cryptoki_sys::CKR_SESSION_HANDLE_INVALID;
 use cryptoki_sys::CKR_USER_NOT_LOGGED_IN;
 use mcps_core::b64url_encode;
+use mcps_core::verify_ed25519;
 use mcps_core::VerificationKey;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
@@ -551,6 +552,62 @@ fn ed25519_spki_from_ec_point(ec_point: &[u8]) -> Result<Vec<u8>, KeyError> {
     Ok(der)
 }
 
+/// Emit-guard for a token `C_Sign` result (ADR-MCPS-028 §D verify-before-return).
+///
+/// Encodes the raw signature exactly as [`mcps_core::SigningKey::sign`] would
+/// (Base64URL-no-pad) and confirms it verifies against `verify_key` — the token's
+/// OWN advertised Ed25519 public point — under the unmodified mcps-core verifier
+/// BEFORE the proxy is allowed to emit it. A 64-byte blob that does not verify (a
+/// mis-bound key, a prehash/over-hashing `CKM_*` mechanism, or corruption) is a
+/// [`KeyError::Malformed`] — fail closed, never emitted. This is the pure,
+/// token-free core mirroring the AWS/GCP `sign_raw_ed25519` guardrail, so it is
+/// unit-testable without a live token.
+fn verify_before_emit(
+    preimage: &[u8],
+    signature: &[u8],
+    verify_key: &VerificationKey,
+) -> Result<String, KeyError> {
+    // Match SigningKey::sign EXACTLY: Base64URL-no-pad of the raw 64 bytes.
+    let signature_b64url = b64url_encode(signature);
+    verify_ed25519(preimage, &signature_b64url, verify_key).map_err(|e| {
+        KeyError::Malformed(format!(
+            "pkcs11: C_Sign signature did NOT verify against the token's advertised \
+             public key (mis-bound key or prehash/over-hashing CKM mechanism?): {e}"
+        ))
+    })?;
+    Ok(signature_b64url)
+}
+
+/// Read the token's Ed25519 PUBLIC point for `key_label` and parse it into a
+/// [`VerificationKey`], classified for the amortization layer.
+///
+/// Shared by [`ResponseSigner::response_public_key`] (what relying parties verify
+/// against) and the verify-before-return guard in
+/// [`ResponseSigner::sign_response`] (which checks each `C_Sign` result against
+/// this SAME advertised point before emitting it). A transient session fault on
+/// the `CKA_EC_POINT` read is [`SessionOpError::SessionInvalid`] (retry once); a
+/// wrong-length / non-canonical / off-curve point is a [`SessionOpError::Fatal`]
+/// [`KeyError::Malformed`] (intrinsic trust-binding failure — fail closed).
+fn verification_key(
+    view: &SessionRef<'_>,
+    key_label: &str,
+) -> Result<VerificationKey, SessionOpError> {
+    let public = find_key(view, key_label, ObjectClass::Public)?;
+    let ec_point = view.get_ec_point(public).map_err(|e| {
+        classify_op_error(e, |e| {
+            KeyError::Malformed(format!("pkcs11: read CKA_EC_POINT: {e}"))
+        })
+    })?;
+    let bytes = raw_ed25519_point(&ec_point).map_err(SessionOpError::Fatal)?;
+    // A non-canonical / off-curve point is a trust-binding failure in mcps-core;
+    // surface it as malformed key material here. Intrinsic — not a session fault.
+    VerificationKey::from_bytes(&bytes).map_err(|e| {
+        SessionOpError::Fatal(KeyError::Malformed(format!(
+            "pkcs11: invalid Ed25519 public key: {e}"
+        )))
+    })
+}
+
 /// Signs over the token (`C_Sign` with `CKM_EDDSA`) — the private key never
 /// leaves the device — and reads the exportable public point for verification.
 impl ResponseSigner for Pkcs11KeySource {
@@ -575,30 +632,27 @@ impl ResponseSigner for Pkcs11KeySource {
                     signature.len()
                 ))));
             }
-            // Match SigningKey::sign EXACTLY: Base64URL-no-pad of the raw 64 bytes.
-            Ok(b64url_encode(&signature))
+            // VERIFY-BEFORE-RETURN (ADR-MCPS-028 §D / guardrail): mirror the AWS
+            // (`aws_kms_keysource.rs`) and GCP (`gcp_kms_keysource.rs`) backends —
+            // the 64-byte length is necessary but NOT sufficient. Read the token's
+            // own Ed25519 public point (the SAME object relying parties verify
+            // against via `response_public_key`) and confirm the signature verifies
+            // under the unmodified mcps-core verifier BEFORE emitting it. This
+            // catches a mis-bound key, a prehash/over-hashing `CKM_*` mechanism, or
+            // any corruption that still yields a 64-byte blob — fail closed, never
+            // emit an unverifiable signature. Reading the public point is intrinsic
+            // to this signed response; a transient session fault on the read still
+            // routes through the amortization retry via `verification_key`.
+            let verify_key = verification_key(&view, &self.key_label)?;
+            verify_before_emit(preimage, &signature, &verify_key)
+                .map_err(SessionOpError::Fatal)
         })
     }
 
     fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
         self.token.session.with_session(self.token.as_ref(), |logged_in| {
             let view = self.token.context.with_handle(logged_in.handle);
-            let public = find_key(&view, &self.key_label, ObjectClass::Public)?;
-            let ec_point = view.get_ec_point(public).map_err(|e| {
-                classify_op_error(e, |e| {
-                    KeyError::Malformed(format!("pkcs11: read CKA_EC_POINT: {e}"))
-                })
-            })?;
-            let bytes = raw_ed25519_point(&ec_point).map_err(SessionOpError::Fatal)?;
-            // A non-canonical / off-curve point is a trust-binding failure in
-            // mcps-core; surface it as malformed key material here. Intrinsic —
-            // not a session fault.
-            VerificationKey::from_bytes(&bytes)
-                .map_err(|e| {
-                    SessionOpError::Fatal(KeyError::Malformed(format!(
-                        "pkcs11: invalid Ed25519 public key: {e}"
-                    )))
-                })
+            verification_key(&view, &self.key_label)
         })
     }
 }
@@ -731,12 +785,18 @@ impl RawEd25519TlsSigner for Pkcs11TlsSigner {
 mod tests {
     use std::cell::Cell;
 
+    use mcps_core::b64url_decode;
+    use mcps_core::b64url_encode;
+    use mcps_core::SigningKey;
+
     use super::ed25519_spki_from_ec_point;
+    use super::verify_before_emit;
     use super::AmortizedSession;
     use super::KeyError;
     use super::LoginSessionFactory;
     use super::SessionOpError;
     use super::ED25519_PUBLIC_KEY_LEN;
+    use super::ED25519_SIGNATURE_LEN;
 
     /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
     /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`
@@ -776,6 +836,76 @@ mod tests {
             ed25519_spki_from_ec_point(&[0u8; 31]),
             Err(KeyError::Malformed(_))
         ));
+    }
+
+    /// Finding #137 (ADR-MCPS-028 §D verify-before-return): a 64-byte signature that
+    /// does NOT verify against the token's advertised public key — modelling a
+    /// mis-bound key or a prehash/over-hashing `CKM_*` mechanism that still returns a
+    /// well-formed-length blob — is REJECTED before emit, mirroring the AWS/GCP
+    /// `sign_raw_ed25519` guardrail. A correctly-bound signature passes.
+    ///
+    /// RED without the fix: before this change `sign_response` checked ONLY the
+    /// 64-byte length and then emitted `b64url_encode(signature)` unconditionally, so
+    /// `verify_before_emit` (the guard) did not exist and an unverifiable 64-byte
+    /// signature would be returned. With the guard, it fails closed as `Malformed`.
+    #[test]
+    fn unverifiable_64byte_signature_is_rejected_before_emit() {
+        let preimage = b"mcps-response-preimage";
+
+        // The token's advertised response-signing key (what relying parties verify
+        // against, read in-band via `verification_key`).
+        let signing_key = SigningKey::from_seed_bytes(&[3u8; 32]);
+        let verify_key = signing_key.public_key();
+
+        // Good path: the genuine 64-byte signature from THIS key verifies and is
+        // emitted as Base64URL-no-pad — byte-for-byte what `SigningKey::sign`
+        // produces, so the verifier accepts it with no special-casing.
+        let good_sig = b64url_decode(&signing_key.sign(preimage)).expect("64-byte raw sig");
+        assert_eq!(good_sig.len(), ED25519_SIGNATURE_LEN);
+        let emitted = verify_before_emit(preimage, &good_sig, &verify_key)
+            .expect("a correctly-bound signature passes verify-before-emit");
+        assert_eq!(
+            emitted,
+            b64url_encode(&good_sig),
+            "the emitted string is the Base64URL-no-pad of the raw 64 bytes"
+        );
+
+        // Mis-bound key: the token returns a 64-byte signature made by a DIFFERENT
+        // key (or over a prehash) — it passes the length check the old code relied on
+        // but does NOT verify under the advertised public key. Must fail closed.
+        let wrong_key = SigningKey::from_seed_bytes(&[4u8; 32]);
+        let wrong_sig = b64url_decode(&wrong_key.sign(preimage)).expect("64-byte raw sig");
+        assert_eq!(
+            wrong_sig.len(),
+            ED25519_SIGNATURE_LEN,
+            "the wrong-key signature is still 64 bytes — the length check alone is NOT enough"
+        );
+        assert!(
+            matches!(
+                verify_before_emit(preimage, &wrong_sig, &verify_key),
+                Err(KeyError::Malformed(_))
+            ),
+            "a 64-byte signature that does not verify against the token's public key \
+             must be rejected before emit (fail closed), never returned"
+        );
+
+        // Over-prehash variant: a signature over SHA-512(preimage) instead of the raw
+        // preimage — the canonical mis-configured prehash CKM — is 64 bytes but does
+        // not verify against the raw preimage. Must also fail closed.
+        let prehashed = {
+            use sha2::Digest;
+            use sha2::Sha512;
+            let digest = Sha512::digest(preimage);
+            b64url_decode(&signing_key.sign(&digest)).expect("64-byte raw sig")
+        };
+        assert_eq!(prehashed.len(), ED25519_SIGNATURE_LEN);
+        assert!(
+            matches!(
+                verify_before_emit(preimage, &prehashed, &verify_key),
+                Err(KeyError::Malformed(_))
+            ),
+            "an over-prehashed (SHA-512) signature must be rejected before emit"
+        );
     }
 
     /// A fake logged-in session standing in for a Cryptoki `Session` — carries the
