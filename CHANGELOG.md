@@ -9,6 +9,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [0.5.1] — 2026-06-24
+
+**Live Google Cloud KMS validation release.** No wire-envelope changes: this
+release proves the already-shipped GCP Cloud KMS adapter against **real** Cloud
+KMS and adds a one-command reproduction harness. It is evidence and test surface,
+not new protocol mechanism (see
+[`docs/security/google-validation-plan.md`](docs/security/google-validation-plan.md)).
+The `draft-01` request/response envelopes are unchanged.
+
+### Added
+
+- **Live GCP delegated-TLS test lane**
+  (`mcps-proxy/tests/gcp_kms_delegated_tls_live_test.rs`). Proves the proxy's TLS
+  *server* private key can live entirely in Cloud KMS and never leave it: the
+  server leaf is minted over the KMS **public** key (rcgen `RemoteKeyPair`, no
+  private key), and a fully-validating rustls mTLS handshake completes only
+  because a live `asymmetricSign` produced the `CertificateVerify`. Negative
+  lanes: a leaf not bound to the KMS key is rejected at config construction
+  (`DelegatedKeyMismatch`), and an untrusted client certificate is rejected at the
+  handshake (fail closed).
+- **Object-signing negative lanes** in `gcp_kms_live_test.rs`: wrong-identity (a
+  signature must not verify under a foreign key), bad-token fail-closed (an
+  invalid access token must fail backend construction), and non-Ed25519 rejection
+  (a provisioned RSA key version is rejected at construction, variant-matched).
+- **One-command reproduction harness**
+  (`docs/security/gcloud-kms-validation.sh`): sanitized, no secrets, `PROJECT_ID`
+  placeholder-guarded; enables the KMS API, idempotently provisions the keys, and
+  runs both live lanes.
+- **First-time Google Cloud onboarding** in the validation plan ("Reproducing
+  Stage 1 locally"): the account, billing, project, and `gcloud auth` steps a
+  brand-new user needs before running the harness.
+
 ## [0.5.0] — 2026-06-23
 
 **Proposal-readiness release over the frozen `draft-01` wire envelope.** 0.5 adds
