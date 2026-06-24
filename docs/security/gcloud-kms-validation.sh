@@ -64,8 +64,8 @@ fi
 
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 
-gcloud config set project "$PROJECT_ID"
-gcloud services enable cloudkms.googleapis.com
+export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
+gcloud services enable cloudkms.googleapis.com --project "$PROJECT_ID"
 
 # ---------------------------------------------------------------------------
 # Idempotent provisioning. KMS key rings and keys CANNOT be deleted, so each
