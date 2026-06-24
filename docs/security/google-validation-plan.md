@@ -44,7 +44,9 @@ The premise that we "need a Google adapter" is **out of date** — we have one.
 | `ResponseSigner` / `KeySource` seam | `mcps-proxy/src/key_source.rs` | Shipped |
 | Frozen audit-event vocabulary | `mcps-core/src/audit.rs` (ADR-MCPS-035) | Shipped |
 | Frozen error taxonomy | `mcps-core/src/error.rs` | Shipped |
-| GCP live test harness | `mcps-proxy/tests/gcp_kms_live_test.rs` | Shipped (needs real/emulated KMS) |
+| GCP live test harness (object signing) | `mcps-proxy/tests/gcp_kms_live_test.rs` | Shipped (needs real/emulated KMS) |
+| GCP live test harness (delegated TLS) | `mcps-proxy/tests/gcp_kms_delegated_tls_live_test.rs` | Shipped (needs real/emulated KMS) |
+| Reproduction harness (one command) | `docs/security/gcloud-kms-validation.sh` | Shipped |
 | Design rationale | `docs/adr/adr-mcps-028.md` | Proposed |
 
 `GcpKmsKeySource` already does the security-critical work: `getPublicKey`
@@ -113,6 +115,47 @@ asserted `EC_SIGN_ED25519`, (b) N signatures produced by Cloud KMS and verified
 by `mcps-core`, (c) wrong-key and tampered-byte cases rejected with the correct
 frozen wire codes, (d) the private key never left KMS (only `getPublicKey` /
 `asymmetricSign` calls in the request log).
+
+### Reproducing Stage 1 locally
+
+A one-command harness is committed at `docs/security/gcloud-kms-validation.sh`.
+It enables the KMS API, provisions the keys (idempotently — KMS keys cannot be
+deleted, so re-runs reuse them), and runs the live test lanes. It contains no
+secrets; you supply `PROJECT_ID`.
+
+**First-time Google Cloud setup (once, before you fill in the script).** This is
+the part that has no CLI shortcut for a brand-new user:
+
+1. **Google account** — any Google account works.
+2. **Sign up for Google Cloud** — accept the terms at
+   <https://console.cloud.google.com>. New accounts get ~$300 in free-trial
+   credits, ample for this proof.
+3. **Billing account** — Cloud KMS requires billing *enabled*, even on the free
+   trial (the trial supplies the credits). Create one in the console under
+   *Billing*.
+4. **A project, linked to billing** — create it in the console, or by CLI:
+   `gcloud projects create <id>` then
+   `gcloud billing projects link <id> --billing-account=XXXXXX-XXXXXX-XXXXXX`.
+5. **Install the gcloud CLI** — <https://cloud.google.com/sdk/docs/install>.
+6. **Authenticate** — `gcloud auth login`.
+
+You do **not** need to pre-create the key ring, the keys, or enable the KMS API
+by hand — the script does all of that.
+
+**Run it:**
+
+```
+PROJECT_ID="<your-project-id>" ./docs/security/gcloud-kms-validation.sh
+```
+
+**What runs** (the `#[ignore]` live lanes, built with `--features gcp_kms_keysource`):
+
+- `mcps-proxy/tests/gcp_kms_live_test.rs` — object signing: positive verify +
+  wrong-identity + bad-token + non-Ed25519 rejection.
+- `mcps-proxy/tests/gcp_kms_delegated_tls_live_test.rs` — delegated TLS: a real
+  mTLS handshake whose server `CertificateVerify` is signed **inside** Cloud KMS,
+  plus wrong-key-binding and untrusted-client negatives. Proves the TLS private
+  key never leaves the cloud (the cert is minted over the KMS *public* key only).
 
 ### Stage 1b — evidence to Cloud Logging / BigQuery
 
