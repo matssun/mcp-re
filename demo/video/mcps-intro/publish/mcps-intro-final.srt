@@ -1,0 +1,138 @@
+1
+00:00:00,500 --> 00:00:04,000
+There's a new kid on the protocol block.
+No, not the 90s boy band.
+
+2
+00:00:04,300 --> 00:00:07,600
+MCP-S
+Verifiable runtime evidence for MCP calls.
+
+3
+00:00:08,000 --> 00:00:11,840
+MCP gives agents a standard way to connect to tools,
+
+4
+00:00:11,840 --> 00:00:15,920
+source control, databases, internal docs, calendars,
+
+5
+00:00:15,920 --> 00:00:19,880
+payment APIs, and the systems developers already use.
+
+6
+00:00:19,880 --> 00:00:21,840
+That is why developers like it.
+
+7
+00:00:21,840 --> 00:00:25,160
+Instead of one-off glue for every tool and every host,
+
+8
+00:00:25,160 --> 00:00:28,720
+MCP gives us reusable integrations with a common shape.
+
+9
+00:00:28,720 --> 00:00:31,360
+Host, client, server, tool.
+
+10
+00:00:31,360 --> 00:00:33,920
+But that call path is also a boundary.
+
+11
+00:00:33,920 --> 00:00:36,760
+Once an agent asks a tool to do something sensitive,
+
+12
+00:00:36,760 --> 00:00:39,360
+we need evidence about identity, integrity,
+
+13
+00:00:39,360 --> 00:00:42,480
+freshness, replay, and response binding.
+
+14
+00:00:42,480 --> 00:00:44,080
+Take a payment request.
+
+15
+00:00:44,080 --> 00:00:48,800
+The agent sends pay invoice 1042.
+
+16
+00:00:48,800 --> 00:00:51,680
+If that call can be copied, replayed or changed,
+
+17
+00:00:51,680 --> 00:00:54,160
+one trusted action can become two bad ones.
+
+18
+00:00:59,240 --> 00:01:01,960
+MCP-S adds verifiable runtime evidence
+
+19
+00:01:01,960 --> 00:01:03,960
+around those MCP calls.
+
+20
+00:01:03,960 --> 00:01:06,560
+A request can carry a signature, a nonce,
+
+21
+00:01:06,560 --> 00:01:10,440
+an expiry, authorization context, and a request hash.
+
+22
+00:01:10,440 --> 00:01:13,280
+The response can be bound back with its own hash.
+
+23
+00:01:13,280 --> 00:01:15,360
+The point is not magic security.
+
+24
+00:01:15,360 --> 00:01:17,160
+The point is evidence that a verifier
+
+25
+00:01:17,160 --> 00:01:19,400
+can check while the system is running.
+
+26
+00:01:19,400 --> 00:01:21,600
+For enterprise deployments, signing keys
+
+27
+00:01:21,600 --> 00:01:23,760
+can stay in Google Cloud KMS.
+
+28
+00:01:23,760 --> 00:01:26,240
+MCP-S asks KMS to sign.
+
+29
+00:01:26,240 --> 00:01:28,440
+The private key is not exported.
+
+30
+00:01:28,440 --> 00:01:32,000
+MCP-S receives signatures, not raw key material.
+
+31
+00:01:32,000 --> 00:01:34,440
+The payoff is operational and testable.
+
+32
+00:01:34,440 --> 00:01:37,920
+Valid requests are accepted, tampered requests are rejected,
+
+33
+00:01:37,920 --> 00:01:41,840
+replays are rejected, and bad response bindings are rejected.
+
+34
+00:01:41,840 --> 00:01:46,400
+Try MCP-S at github.com/matssun/mcps.
+

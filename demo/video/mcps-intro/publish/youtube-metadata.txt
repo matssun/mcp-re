@@ -1,0 +1,103 @@
+========================================
+TITLE
+========================================
+MCP-S: Verifiable Runtime Evidence for MCP Calls
+
+(Alternatives:
+ • MCP-S — Tamper-Evident Security for MCP Agents
+ • A Runtime Evidence Profile for MCP — demonstrated with MCP-S + Google Cloud KMS)
+
+========================================
+TAGLINE (for pinned comment / social / thumbnail)
+========================================
+MCP connects AI agents to your tools. MCP-S proves those calls weren't forged,
+replayed, or tampered with — per-call evidence that belongs in the standard.
+
+========================================
+DESCRIPTION (full)
+========================================
+The Model Context Protocol (MCP) gave AI agents a standard way to reach real
+tools — source control, databases, internal docs, calendars, payment APIs. That
+standardization is exactly why it took off. But the standard stops at the
+boundary it creates: once an agent tells a tool to do something sensitive, there
+is no built-in, portable way to prove who asked, that the request wasn't altered,
+or that it isn't a replay of an earlier one. Transport security and OAuth-style
+authorization don't give you per-call runtime evidence you can audit later.
+
+MCP-S closes that gap.
+
+MCP-S adds verifiable runtime evidence around every MCP call. Each request can
+carry a signature, a nonce, an expiry, authorization context, and a request
+hash. Each response is bound back with its own hash. None of it is "trust us"
+security — it's evidence a verifier can independently check while the system is
+running. Valid requests are accepted; tampered requests, replays, and bad
+response bindings are rejected. Provably.
+
+▸ Why it matters
+  • Agents are starting to move money, change records, and touch production.
+    A single trusted action that can be copied or replayed becomes two bad ones.
+  • MCP-S makes tool calls tamper-evident and replay-proof by construction.
+  • It's testable: you can assert "tampered request → rejected" in CI, not hope.
+
+▸ It complements authorization — it doesn't replace it
+  Authorization decides whether a caller may use a server, tool, or capability.
+  Runtime evidence proves what exact MCP call actually happened. MCP-S sits next
+  to OAuth/OIDC, not on top of it — and it doesn't try to solve prompt injection
+  or police tool catalogs. One job, done well: portable per-call evidence.
+
+▸ Built for enterprise
+  • Signing keys can stay in Google Cloud KMS. MCP-S asks KMS to sign — the
+    private key is never exported. You get signatures, not raw key material.
+
+▸ Should this be in the MCP standard?
+  That's an open question, and it's being worked in the open. The proposal —
+  "A Runtime Evidence Profile for MCP tool calls" — argues the natural next layer
+  is a small set of standard evidence properties (request/response signatures,
+  audience binding, freshness, replay protection, authorization-artifact binding,
+  response-to-request binding) that any verifier can check, supporting both
+  native-server and sidecar/gateway models. MCP-S is the experimental reference
+  implementation showing it's feasible. If you build agent infrastructure, read
+  the proposal and weigh in.
+
+⭐ Start here (README):            https://github.com/matssun/mcps
+📐 The standardization proposal:   https://github.com/matssun/mcps/discussions/175
+🔬 Try it locally:                 see the demo in the repo
+
+If you think portable, per-call verification belongs in MCP, read discussion
+#175, star the repo, and share this with someone building agents.
+
+Chapters:
+0:00 Intro — what MCP gives us
+0:19 Why developers like it
+0:31 The security boundary
+0:42 The risk: a replayed payment
+0:59 Enter MCP-S
+1:19 Signing keys in Google Cloud KMS
+1:32 The payoff — try it
+
+#MCP #AIagents #AItooling #security #cryptography #GoogleCloudKMS #devtools #opensource
+
+========================================
+DESCRIPTION (short — for cross-posting / Shorts / LinkedIn)
+========================================
+MCP standardized how AI agents call tools. The next gap: proving what call
+actually happened. MCP-S adds per-call runtime evidence — signature, nonce,
+expiry, authz, and request/response hashes a verifier checks at runtime.
+Tampered requests and replays are rejected; signing keys stay in Google Cloud
+KMS, never exported. It complements OAuth, it doesn't replace it.
+
+Should this be in the MCP standard? The proposal is open for feedback:
+Proposal — https://github.com/matssun/mcps/discussions/175
+Repo / README — https://github.com/matssun/mcps
+
+========================================
+PINNED COMMENT
+========================================
+MCP standardized how agents call tools — but nothing proves a sensitive call
+wasn't forged, replayed, or tampered with. MCP-S adds per-call runtime evidence
+that a verifier can check live. Should this be part of MCP itself?
+
+→ Read & weigh in on the proposal: https://github.com/matssun/mcps/discussions/175
+→ Code / README: https://github.com/matssun/mcps
+
+What would you need to see before trusting an agent to move money? 👇
