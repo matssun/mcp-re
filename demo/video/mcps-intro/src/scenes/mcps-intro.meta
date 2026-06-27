@@ -1,0 +1,42 @@
+{
+  "version": 0,
+  "timeEvents": [
+    {
+      "name": "s1-out",
+      "targetTime": 10.76
+    },
+    {
+      "name": "s2-out",
+      "targetTime": 22.22
+    },
+    {
+      "name": "s3-out",
+      "targetTime": 33.14
+    },
+    {
+      "name": "s4-replay",
+      "targetTime": 40.7
+    },
+    {
+      "name": "s4-secure",
+      "targetTime": 46.2
+    },
+    {
+      "name": "s4-out",
+      "targetTime": 50.5
+    },
+    {
+      "name": "s5-out",
+      "targetTime": 70.36
+    },
+    {
+      "name": "s6-out",
+      "targetTime": 83.04
+    },
+    {
+      "name": "end",
+      "targetTime": 99.8
+    }
+  ],
+  "seed": 4247351182
+}

@@ -1,0 +1,12 @@
+# dependencies & build output
+node_modules/
+dist/
+output/
+.venv/
+
+# generated audio — rebuild via scripts/ (gen-intro-sfx.py, generate-voiceover.mjs)
+assets/audio/*.wav
+
+# macOS
+.DS_Store
+**/.DS_Store

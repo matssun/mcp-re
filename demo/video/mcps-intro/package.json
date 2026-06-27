@@ -1,0 +1,27 @@
+{
+  "name": "mcps-intro-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "vite --host 0.0.0.0",
+    "preview": "vite --host 0.0.0.0",
+    "render": "vite build",
+    "voiceover:cedar": "node scripts/generate-voiceover.mjs cedar",
+    "voiceover:marin": "node scripts/generate-voiceover.mjs marin",
+    "render:silent": "vite build",
+    "render:final": "npm run render:silent && node scripts/mux-final.mjs",
+    "build:final": "node scripts/build-intro-final.mjs"
+  },
+  "dependencies": {
+    "@motion-canvas/2d": "^3.17.2",
+    "@motion-canvas/core": "^3.17.2",
+    "@motion-canvas/ffmpeg": "^3.17.2",
+    "@motion-canvas/ui": "^3.17.2",
+    "@motion-canvas/vite-plugin": "^3.17.2",
+    "vite": "^5.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

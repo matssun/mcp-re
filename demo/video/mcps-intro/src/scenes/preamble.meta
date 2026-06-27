@@ -1,0 +1,30 @@
+{
+  "version": 0,
+  "timeEvents": [
+    {
+      "name": "l2",
+      "targetTime": 1.8
+    },
+    {
+      "name": "clear",
+      "targetTime": 4
+    },
+    {
+      "name": "braam",
+      "targetTime": 4.3
+    },
+    {
+      "name": "sub",
+      "targetTime": 5
+    },
+    {
+      "name": "out",
+      "targetTime": 7.5
+    },
+    {
+      "name": "end",
+      "targetTime": 8
+    }
+  ],
+  "seed": 1717171717
+}
