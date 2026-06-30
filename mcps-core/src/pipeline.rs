@@ -71,6 +71,8 @@
 use serde_json::Value;
 
 use crate::canonical::canonicalize;
+use crate::constraints::extract_draft02_request_envelope;
+use crate::constraints::extract_draft02_response_envelope;
 use crate::constraints::extract_request_envelope;
 use crate::constraints::extract_response_envelope;
 use crate::constraints::reject_batch;
@@ -127,6 +129,10 @@ pub struct VerifiedRequest {
     pub issued_at: String,
     /// The envelope `expires_at` (RFC 3339 UTC).
     pub expires_at: String,
+    /// The protected `canonicalization_id` from the verified envelope —
+    /// `Some(..)` for draft-02 (it binds the later response's scheme), `None`
+    /// for draft-01 (which carries no canonicalization id). ADR-MCPS-038.
+    pub canonicalization_id: Option<String>,
 }
 
 /// The successful outcome of [`verify_response`] (MCPS_SPEC §9).
@@ -270,6 +276,8 @@ pub fn verify_request(
         nonce: envelope.nonce,
         issued_at: envelope.issued_at,
         expires_at: envelope.expires_at,
+        // draft-01 carries no canonicalization id.
+        canonicalization_id: None,
     })
 }
 
@@ -342,6 +350,178 @@ pub fn verify_response(
     ))
 }
 
+// ---------------------------------------------------------------------------
+// Draft-02 (v0.6) verify paths — ADR-MCPS-038/041 / decision B.2, G.1.
+// ---------------------------------------------------------------------------
+//
+// These are strictly separate from the draft-01 verify functions: profile
+// semantics are never merged (decision G.1). They share only the below-profile
+// primitives (raw-bytes JCS domain check, the preimage builder, Ed25519 verify,
+// freshness, replay) — the same functions the draft-01 path calls. The policy-
+// gated dispatcher that selects between the draft-01 and draft-02 paths by the
+// untrusted `version` selector, with the required expected-version policy and
+// no cross-accept, lands in MCPS-37 (#183); here each path enforces its own
+// exact signed `version`.
+
+/// Verify a signed MCP-S **draft-02** request end-to-end. Mirrors
+/// [`verify_request`] but extracts the draft-02 envelope, which enforces
+/// `version == "draft-02"` and a profile-allowlisted `canonicalization_id`
+/// (read as untrusted selectors before the signature verifies — ADR-MCPS-038).
+/// The returned [`VerifiedRequest`] carries `canonicalization_id: Some(..)` so a
+/// later [`verify_response_draft02`] can bind the same scheme.
+///
+/// Mutating `version` or `canonicalization_id` on the wire changes the signing
+/// preimage (both are protected, inside it), so tampering them fails at the
+/// Ed25519 check even past the structural selector validation.
+pub fn verify_request_draft02(
+    raw_bytes: &[u8],
+    resolver: &dyn TrustResolver,
+    replay: &mut dyn ReplayCache,
+    config: &VerificationConfig,
+    now_unix: i64,
+) -> Result<VerifiedRequest, McpsError> {
+    let value: Value =
+        serde_json::from_slice(raw_bytes).map_err(|_| McpsError::CanonicalizationFailed)?;
+
+    // Steps 1-3 — structural rejects + raw-bytes JCS-safe domain (shared).
+    reject_batch(&value)?;
+    reject_notification(&value)?;
+    canonicalize(raw_bytes)?;
+
+    // Steps 4-6 (draft-02) — locate / deny-unknown-fields / version=="draft-02" /
+    // canonicalization_id ∈ allowlist, all read as untrusted selectors.
+    let envelope = extract_draft02_request_envelope(&value)?;
+
+    // Step 7 — required-field presence / format (authorization_hash is replaced
+    // by authorization_binding in MCPS-35 / #181).
+    check_authorization_hash(&envelope.authorization_hash)?;
+    check_on_behalf_of(&envelope.on_behalf_of)?;
+    check_signature_block(&envelope.signature.alg, envelope.signature.value.as_deref())?;
+
+    // Step 8 — audience match.
+    if envelope.audience != config.expected_audience {
+        return Err(McpsError::InvalidAudience);
+    }
+
+    // Step 9 — freshness window.
+    check_freshness(
+        &envelope.issued_at,
+        &envelope.expires_at,
+        now_unix,
+        config.max_clock_skew_secs,
+    )?;
+
+    // Step 10 — resolve (signer, key_id) -> key.
+    let key = resolver
+        .resolve(&envelope.signer, &envelope.signature.key_id)
+        .map_err(McpsError::from)?;
+
+    // Step 11 — canonicalize (signature.value removed) and verify Ed25519. The
+    // preimage retains the protected version + canonicalization_id, so tampering
+    // either fails here.
+    let preimage = request_signing_preimage(&value)?;
+    let signature_value = envelope
+        .signature
+        .value
+        .as_deref()
+        .ok_or(McpsError::InvalidSignature)?;
+    verify_ed25519(&preimage, signature_value, &key)?;
+
+    // Step 12 — replay check-and-insert (LAST, after a valid signature).
+    let expires_at_unix = parse_rfc3339_utc(&envelope.expires_at)?;
+    match replay.check_and_insert(
+        &envelope.signer,
+        &envelope.audience,
+        &envelope.nonce,
+        expires_at_unix,
+    ) {
+        Ok(ReplayDecision::Fresh) => {}
+        Ok(ReplayDecision::Replay) => return Err(McpsError::ReplayDetected),
+        Err(err) => return Err(McpsError::from(err)),
+    }
+
+    let computed_request_hash = request_hash(&value)?;
+    Ok(VerifiedRequest {
+        verified_signer: envelope.signer,
+        key_id: envelope.signature.key_id,
+        on_behalf_of: envelope.on_behalf_of,
+        audience: envelope.audience,
+        authorization_hash: envelope.authorization_hash,
+        request_hash: computed_request_hash,
+        nonce: envelope.nonce,
+        issued_at: envelope.issued_at,
+        expires_at: envelope.expires_at,
+        canonicalization_id: Some(envelope.canonicalization_id),
+    })
+}
+
+/// Verify a signed MCP-S **draft-02** response end-to-end. Mirrors
+/// [`verify_response`] but extracts the draft-02 response envelope (which now
+/// carries `version` + `canonicalization_id`) and adds the scheme-binding check.
+///
+/// `expected_request_hash` and `expected_canonicalization_id` both come from the
+/// locally verified [`VerifiedRequest`] (use its `request_hash` and the inner
+/// value of its `canonicalization_id`). Both binding checks run AFTER the
+/// signature verifies: a response signed over a different request hash →
+/// [`McpsError::ResponseHashMismatch`]; a response declaring a different scheme
+/// than the bound request → [`McpsError::CanonicalizationIdMismatch`] (decision
+/// B.2 — request and response share the same canonicalization_id).
+pub fn verify_response_draft02(
+    raw_bytes: &[u8],
+    resolver: &dyn TrustResolver,
+    expected_request_hash: &str,
+    expected_canonicalization_id: &str,
+) -> Result<VerifiedResponse, McpsError> {
+    let value: Value =
+        serde_json::from_slice(raw_bytes).map_err(|_| McpsError::CanonicalizationFailed)?;
+
+    // Steps 1-3 — structural rejects + raw-bytes JCS-safe domain (shared).
+    reject_batch(&value)?;
+    reject_notification(&value)?;
+    canonicalize(raw_bytes)?;
+
+    // Steps 4-5 (draft-02) — locate / deny-unknown / version=="draft-02" /
+    // canonicalization_id ∈ allowlist.
+    let envelope = extract_draft02_response_envelope(&value)?;
+
+    // Step 6 — signature.alg == Ed25519 (else ResponseSigInvalid).
+    ensure_ed25519_alg(&envelope.signature.alg, McpsError::ResponseSigInvalid)?;
+
+    // Step 7 — resolve (server_signer, key_id) -> key.
+    let key = resolver
+        .resolve(&envelope.server_signer, &envelope.signature.key_id)
+        .map_err(McpsError::from)?;
+
+    // Step 8 — build the response preimage (signature.value removed) and verify.
+    let preimage = response_signing_preimage(&value)?;
+    let signature_value = envelope
+        .signature
+        .value
+        .as_deref()
+        .ok_or(McpsError::ResponseSigInvalid)?;
+    verify_ed25519_with(
+        &preimage,
+        signature_value,
+        &key,
+        McpsError::ResponseSigInvalid,
+    )?;
+
+    // Step 9 — binding checks (post-signature): same scheme AND same request hash
+    // as the verified request. Both fire even with a valid signature.
+    if envelope.canonicalization_id != expected_canonicalization_id {
+        return Err(McpsError::CanonicalizationIdMismatch);
+    }
+    if envelope.request_hash != expected_request_hash {
+        return Err(McpsError::ResponseHashMismatch);
+    }
+
+    Ok(VerifiedResponse::new(
+        envelope.server_signer,
+        envelope.signature.key_id,
+        envelope.request_hash,
+    ))
+}
+
 /// Step 7 — `authorization_hash` must be present, non-empty, and `sha256:`-
 /// prefixed. Absent/empty/malformed all -> [`McpsError::AuthorizationHashMissing`]
 /// (documented choice; fails closed without a separate format error).
@@ -380,7 +560,9 @@ mod tests {
     use super::check_on_behalf_of;
     use super::check_signature_block;
     use super::verify_request;
+    use super::verify_request_draft02;
     use super::verify_response;
+    use super::verify_response_draft02;
     use super::VerificationConfig;
     use crate::crypto::SigningKey;
     use crate::error::McpsError;
@@ -584,6 +766,171 @@ mod tests {
             Err(McpsError::InvalidSignature)
         );
         assert_eq!(check_signature_block("Ed25519", Some("x")), Ok(()));
+    }
+
+    // ---- Draft-02 (v0.6) verify path — ADR-MCPS-038 / decision B.2 -----------
+
+    /// An unsigned draft-02 request: draft-01 shape + the two protected
+    /// identifiers (version="draft-02", canonicalization_id="mcps-jcs-int53-json-v1").
+    fn request_unsigned_draft02(id: &str, arg_text: &str) -> Value {
+        let mut obj = request_unsigned(id, arg_text);
+        let env = obj["params"]["_meta"][REQUEST_META_KEY]
+            .as_object_mut()
+            .expect("request envelope object");
+        env.insert("version".into(), json!("draft-02"));
+        env.insert(
+            "canonicalization_id".into(),
+            json!("mcps-jcs-int53-json-v1"),
+        );
+        obj
+    }
+
+    fn signed_request_draft02(id: &str, arg_text: &str) -> Vec<u8> {
+        let mut obj = request_unsigned_draft02(id, arg_text);
+        sign_request_value(&mut obj);
+        serde_json::to_vec(&obj).expect("serialize")
+    }
+
+    fn response_unsigned_draft02(request_hash_value: &str) -> Value {
+        let mut obj = response_unsigned(request_hash_value);
+        let env = obj["result"]["_meta"][RESPONSE_META_KEY]
+            .as_object_mut()
+            .expect("response envelope object");
+        env.insert("version".into(), json!("draft-02"));
+        env.insert(
+            "canonicalization_id".into(),
+            json!("mcps-jcs-int53-json-v1"),
+        );
+        obj
+    }
+
+    fn signed_response_draft02(request_hash_value: &str) -> Vec<u8> {
+        let mut obj = response_unsigned_draft02(request_hash_value);
+        sign_response_value(&mut obj);
+        serde_json::to_vec(&obj).expect("serialize")
+    }
+
+    #[test]
+    fn draft02_request_verifies_and_carries_canonicalization_id() {
+        let raw = signed_request_draft02("req-1", "hello");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        let verified = verify_request_draft02(
+            &raw,
+            &signer_resolver(),
+            &mut replay,
+            &config(),
+            ISSUED_EPOCH + 60,
+        )
+        .expect("valid draft-02 request verifies");
+        assert_eq!(verified.verified_signer, SIGNER_ID);
+        assert_eq!(
+            verified.canonicalization_id.as_deref(),
+            Some("mcps-jcs-int53-json-v1")
+        );
+    }
+
+    #[test]
+    fn draft02_full_round_trip_request_then_response() {
+        let raw_req = signed_request_draft02("req-1", "hello");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        let verified_req = verify_request_draft02(
+            &raw_req,
+            &signer_resolver(),
+            &mut replay,
+            &config(),
+            ISSUED_EPOCH + 60,
+        )
+        .expect("request verifies");
+
+        let raw_resp = signed_response_draft02(&verified_req.request_hash);
+        let verified_resp = verify_response_draft02(
+            &raw_resp,
+            &server_resolver(),
+            &verified_req.request_hash,
+            verified_req.canonicalization_id.as_deref().unwrap(),
+        )
+        .expect("response verifies and binds");
+        assert_eq!(verified_resp.server_signer(), SERVER_SIGNER_ID);
+        assert_eq!(verified_resp.request_hash(), verified_req.request_hash);
+    }
+
+    #[test]
+    fn draft02_mutating_canonicalization_id_breaks_the_signature() {
+        // canonicalization_id is protected (inside the preimage). Sign a valid
+        // request, then swap the id to a still-allowlisted-shaped but different
+        // value: it is no longer in the allowlist, so extraction rejects it BEFORE
+        // crypto — and even an allowlisted swap would break the signature.
+        let mut obj = request_unsigned_draft02("req-1", "hello");
+        sign_request_value(&mut obj);
+        obj["params"]["_meta"][REQUEST_META_KEY]["canonicalization_id"] =
+            json!("mcps-jcs-int53-json-v1-TAMPERED");
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            Err(McpsError::CanonicalizationIdUnknown)
+        );
+    }
+
+    #[test]
+    fn draft02_mutating_version_after_signing_fails_closed() {
+        // version is protected too; flipping it to draft-01 makes the draft-02
+        // verifier reject it as unsupported (it is not the draft-02 selector).
+        let mut obj = request_unsigned_draft02("req-1", "hello");
+        sign_request_value(&mut obj);
+        obj["params"]["_meta"][REQUEST_META_KEY]["version"] = json!("draft-01");
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            Err(McpsError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn draft02_response_scheme_mismatch_is_rejected() {
+        // A correctly signed draft-02 response whose scheme does not match the
+        // bound request's scheme fails the post-signature binding check (decision
+        // B.2: request and response share canonicalization_id).
+        let raw_req = signed_request_draft02("req-1", "hello");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        let verified_req = verify_request_draft02(
+            &raw_req,
+            &signer_resolver(),
+            &mut replay,
+            &config(),
+            ISSUED_EPOCH + 60,
+        )
+        .expect("request verifies");
+
+        let raw_resp = signed_response_draft02(&verified_req.request_hash);
+        // The verified request used the int53 scheme; assert the response is bound
+        // to a DIFFERENT expected scheme -> mismatch (forward-compat path).
+        assert_eq!(
+            verify_response_draft02(
+                &raw_resp,
+                &server_resolver(),
+                &verified_req.request_hash,
+                "mcps-jcs-future-floats-v2",
+            ),
+            Err(McpsError::CanonicalizationIdMismatch)
+        );
+    }
+
+    #[test]
+    fn draft02_missing_canonicalization_id_fails_before_crypto() {
+        let mut obj = request_unsigned_draft02("req-1", "hello");
+        sign_request_value(&mut obj);
+        obj["params"]["_meta"][REQUEST_META_KEY]
+            .as_object_mut()
+            .unwrap()
+            .remove("canonicalization_id");
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            Err(McpsError::CanonicalizationIdMissing)
+        );
     }
 
     // ---- verify_request happy path -------------------------------------------
