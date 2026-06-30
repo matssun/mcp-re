@@ -62,3 +62,18 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# MCPS-45: a provider's authorization binding is signed verbatim into the preimage
+# and recovered unchanged by the server-side verifier (bind-not-interpret).
+nt_rust_test(
+    name = "authz_binding_preimage_test",
+    srcs = ["tests/authz_binding_preimage_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_client_core",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
