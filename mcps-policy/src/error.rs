@@ -71,6 +71,17 @@ pub enum PolicyError {
     /// artifact's granted scope.
     #[error("mcps.authorization_scope_denied")]
     AuthorizationScopeDenied,
+
+    /// A draft-02 `authz-system-reference` binding was presented, but no
+    /// authorization-reference profile/resolver is configured for its
+    /// `authorization_system_id`. MCP-S binds the system-produced evidence but
+    /// never interprets it; without a configured resolver there is no one to
+    /// validate the reference, so the policy fails closed (ADR-MCPS-039 /
+    /// decision E.2). Distinct from `authorization_profile_unsupported` (which is
+    /// about the artifact-interpretation `profile`): this is the binding-form
+    /// resolver, a separate axis.
+    #[error("mcps.authorization_binding_profile_required")]
+    AuthorizationBindingProfileRequired,
 }
 
 impl PolicyError {
@@ -94,6 +105,9 @@ impl PolicyError {
                 "mcps.authorization_revocation_unavailable"
             }
             PolicyError::AuthorizationScopeDenied => "mcps.authorization_scope_denied",
+            PolicyError::AuthorizationBindingProfileRequired => {
+                "mcps.authorization_binding_profile_required"
+            }
         }
     }
 }
@@ -161,6 +175,10 @@ mod tests {
         check(
             PolicyError::AuthorizationScopeDenied,
             "mcps.authorization_scope_denied",
+        );
+        check(
+            PolicyError::AuthorizationBindingProfileRequired,
+            "mcps.authorization_binding_profile_required",
         );
     }
 

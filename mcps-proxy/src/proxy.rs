@@ -426,12 +426,22 @@ impl Proxy {
         // the request and have it reach the inner server as proxy-authored.
         scrub_proxy_owned_meta(&mut request);
 
+        // The proxy request path runs the draft-01 verifier, so the verified
+        // authorization is always the draft-01 hash. The draft-02 binding sidecar
+        // is wired with the proxy's draft-02 path in MCPS-37 (#183); a draft-02
+        // verdict reaching this draft-01-only builder fails closed rather than
+        // emitting a placeholder.
+        let authorization_hash = verified
+            .authorization
+            .draft01_hash()
+            .ok_or(McpsError::UnsupportedVersion)?
+            .to_string();
         let context = VerifiedContext {
             verified_signer: verified.verified_signer.clone(),
             key_id: verified.key_id.clone(),
             on_behalf_of: verified.on_behalf_of.clone(),
             audience: verified.audience.clone(),
-            authorization_hash: verified.authorization_hash.clone(),
+            authorization_hash,
             request_hash: verified.request_hash.clone(),
             verifier: self.server_signer.clone(),
             verified_at: unix_to_rfc3339_utc(now_unix),

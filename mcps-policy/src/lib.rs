@@ -36,6 +36,7 @@ pub use error::PolicyError;
 pub use error::PolicyResult;
 pub use evaluator::PolicyEvaluator;
 pub use profile::AuthorizationProfile;
+pub use profile::AuthorizationReferenceResolver;
 pub use reference::mint_reference_grant;
 pub use reference::GrantedOperation;
 pub use reference::ReferenceGrantSpec;

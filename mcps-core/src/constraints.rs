@@ -32,7 +32,10 @@ use crate::envelope::Draft02ResponseEnvelope;
 use crate::envelope::RequestEnvelope;
 use crate::envelope::ResponseEnvelope;
 use crate::error::McpsError;
+use crate::ids::BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE;
+use crate::ids::BINDING_TYPE_OPAQUE_BYTES;
 use crate::ids::CANONICALIZATION_ID_INT53_V1;
+use crate::ids::DIGEST_ALG_SHA256;
 use crate::ids::DRAFT_02_CANONICALIZATION_ALLOWLIST;
 use crate::ids::REQUEST_META_KEY;
 use crate::ids::RESPONSE_META_KEY;
@@ -247,7 +250,93 @@ pub fn extract_draft02_request_envelope(
     let raw = locate_envelope(msg, "params", REQUEST_META_KEY)?;
     require_draft02_version(raw)?;
     check_canonicalization_id(raw)?;
-    deserialize_envelope(raw).map_err(|err| classify_request_envelope_error(raw, err))
+    check_authorization_binding(raw)?;
+    deserialize_envelope(raw).map_err(|err| classify_draft02_request_envelope_error(raw, err))
+}
+
+/// Re-classify a draft-02 request-envelope deserialization error: a structurally
+/// absent `authorization_binding` surfaces [`McpsError::AuthorizationBindingMissing`]
+/// regardless of serde's first-missing-field ordering (the draft-02 analogue of
+/// [`classify_request_envelope_error`]; the binding's internal shape is already
+/// validated by [`check_authorization_binding`] before this point). Other
+/// structural failures keep their generic verdict.
+fn classify_draft02_request_envelope_error(raw: &Value, original: McpsError) -> McpsError {
+    if original != McpsError::CanonicalizationFailed {
+        return original;
+    }
+    match raw.as_object() {
+        Some(obj) if !obj.contains_key("authorization_binding") => {
+            McpsError::AuthorizationBindingMissing
+        }
+        _ => original,
+    }
+}
+
+/// Validate the raw envelope's `authorization_binding` object structurally
+/// (ADR-MCPS-039 / decision E.1, E.2) — Core BINDS, never interprets. Maps to the
+/// precise MCPS-31 codes:
+/// - absent → [`McpsError::AuthorizationBindingMissing`];
+/// - `binding_type` not in the base set → [`McpsError::AuthorizationBindingTypeUnsupported`];
+/// - opaque-bytes carrying authz-system-reference-only fields (both forms / a
+///   oneof violation) → [`McpsError::AuthorizationBindingAmbiguousBytes`];
+/// - wrong field set, empty field, or `digest_alg != "sha256"` →
+///   [`McpsError::AuthorizationBindingMalformed`].
+///
+/// It checks shape only: it never decodes the artifact, hashes, fetches, or
+/// authorizes — that is the `mcps-policy` profile's job.
+fn check_authorization_binding(raw: &Value) -> Result<(), McpsError> {
+    let binding = raw
+        .get("authorization_binding")
+        .ok_or(McpsError::AuthorizationBindingMissing)?;
+    let obj = binding
+        .as_object()
+        .ok_or(McpsError::AuthorizationBindingMalformed)?;
+    let binding_type = obj
+        .get("binding_type")
+        .and_then(Value::as_str)
+        .ok_or(McpsError::AuthorizationBindingMalformed)?;
+
+    let required: &[&str] = if binding_type == BINDING_TYPE_OPAQUE_BYTES {
+        // A oneof violation: opaque-bytes carrying any reference-only field means
+        // both forms are present and the opaque bytes are ambiguous.
+        const REFERENCE_ONLY: [&str; 3] = [
+            "authorization_system_id",
+            "reference_scheme_id",
+            "reference_value",
+        ];
+        if REFERENCE_ONLY.iter().any(|k| obj.contains_key(*k)) {
+            return Err(McpsError::AuthorizationBindingAmbiguousBytes);
+        }
+        &["binding_type", "digest_alg", "digest_value"]
+    } else if binding_type == BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE {
+        &[
+            "binding_type",
+            "authorization_system_id",
+            "reference_scheme_id",
+            "reference_value",
+            "digest_alg",
+            "digest_value",
+        ]
+    } else {
+        return Err(McpsError::AuthorizationBindingTypeUnsupported);
+    };
+
+    // Exactly the required fields — no fewer (mandatory), no extra (deny mixing
+    // / unknown). Each must be a non-empty string.
+    if obj.len() != required.len() {
+        return Err(McpsError::AuthorizationBindingMalformed);
+    }
+    for key in required {
+        match obj.get(*key).and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => {}
+            _ => return Err(McpsError::AuthorizationBindingMalformed),
+        }
+    }
+    // The digest algorithm is an explicit protected field; only sha256 in v0.6.
+    if obj.get("digest_alg").and_then(Value::as_str) != Some(DIGEST_ALG_SHA256) {
+        return Err(McpsError::AuthorizationBindingMalformed);
+    }
+    Ok(())
 }
 
 /// Draft-02 response-envelope extraction. Unlike draft-01, the draft-02 response
@@ -416,15 +505,25 @@ mod tests {
 
     // ---- Draft-02 (v0.6) fixtures — ADR-MCPS-038 / decision B.2 ---------------
 
-    /// A valid draft-02 request envelope value (draft-01 fields + the two
-    /// protected identifiers).
+    /// A valid draft-02 request envelope value: the draft-01 fields with
+    /// `authorization_hash` REPLACED by an opaque-bytes `authorization_binding`,
+    /// plus the two protected identifiers.
     fn valid_draft02_request_envelope() -> Value {
         let mut env = valid_request_envelope();
         let obj = env.as_object_mut().unwrap();
+        obj.remove("authorization_hash");
         obj.insert("version".into(), json!("draft-02"));
         obj.insert(
             "canonicalization_id".into(),
             json!("mcps-jcs-int53-json-v1"),
+        );
+        obj.insert(
+            "authorization_binding".into(),
+            json!({
+                "binding_type": "opaque-bytes",
+                "digest_alg": "sha256",
+                "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+            }),
         );
         env
     }
@@ -516,6 +615,116 @@ mod tests {
         assert_eq!(
             extract_draft02_response_envelope(&msg),
             Err(McpsError::CanonicalizationIdMissing)
+        );
+    }
+
+    // ---- authorization_binding structural validation (ADR-MCPS-039) ----------
+
+    #[test]
+    fn draft02_request_opaque_binding_extracts() {
+        let msg = request_message_with_envelope(valid_draft02_request_envelope());
+        let env = extract_draft02_request_envelope(&msg).expect("valid opaque binding");
+        assert!(matches!(
+            env.authorization_binding,
+            crate::envelope::AuthorizationBinding::OpaqueBytes { .. }
+        ));
+    }
+
+    #[test]
+    fn draft02_request_authz_system_reference_binding_extracts() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"] = json!({
+            "binding_type": "authz-system-reference",
+            "authorization_system_id": "sys-1",
+            "reference_scheme_id": "scheme-1",
+            "reference_value": "grant-1",
+            "digest_alg": "sha256",
+            "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+        });
+        let msg = request_message_with_envelope(env);
+        let e = extract_draft02_request_envelope(&msg).expect("valid reference binding");
+        assert!(matches!(
+            e.authorization_binding,
+            crate::envelope::AuthorizationBinding::AuthzSystemReference { .. }
+        ));
+    }
+
+    #[test]
+    fn draft02_request_missing_binding_is_binding_missing() {
+        let mut env = valid_draft02_request_envelope();
+        env.as_object_mut().unwrap().remove("authorization_binding");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMissing)
+        );
+    }
+
+    #[test]
+    fn draft02_request_unknown_binding_type_is_type_unsupported() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]["binding_type"] = json!("structured-object-v1");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingTypeUnsupported)
+        );
+    }
+
+    #[test]
+    fn draft02_request_opaque_missing_digest_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]
+            .as_object_mut()
+            .unwrap()
+            .remove("digest_value");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
+        );
+    }
+
+    #[test]
+    fn draft02_request_wrong_digest_alg_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]["digest_alg"] = json!("md5");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
+        );
+    }
+
+    #[test]
+    fn draft02_request_both_binding_forms_is_ambiguous_bytes() {
+        // A oneof violation: opaque-bytes carrying reference-only fields.
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]
+            .as_object_mut()
+            .unwrap()
+            .insert("authorization_system_id".into(), json!("sys-1"));
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingAmbiguousBytes)
+        );
+    }
+
+    #[test]
+    fn draft02_request_reference_missing_field_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"] = json!({
+            "binding_type": "authz-system-reference",
+            "authorization_system_id": "sys-1",
+            "reference_scheme_id": "scheme-1",
+            "digest_alg": "sha256",
+            "digest_value": "abc"
+        }); // reference_value missing
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
         );
     }
 

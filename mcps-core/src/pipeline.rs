@@ -74,6 +74,7 @@ use crate::canonical::canonicalize;
 use crate::constraints::extract_draft02_request_envelope;
 use crate::constraints::extract_draft02_response_envelope;
 use crate::constraints::extract_request_envelope;
+use crate::envelope::AuthorizationBinding;
 use crate::constraints::extract_response_envelope;
 use crate::constraints::reject_batch;
 use crate::constraints::reject_notification;
@@ -104,6 +105,49 @@ pub struct VerificationConfig {
     pub max_clock_skew_secs: i64,
 }
 
+/// The verified authorization evidence, **versioned and explicit** so the policy
+/// layer matches it exhaustively — no sentinel/empty-field placeholders for the
+/// inactive profile (ADR-MCPS-039). draft-01 carries a bare hash; draft-02
+/// carries the typed [`AuthorizationBinding`]. Core BINDS this evidence; the
+/// `mcps-policy` profile interprets it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedAuthorization {
+    /// draft-01: the bare `authorization_hash` (`"sha256:<b64url-no-pad>"`).
+    Draft01Hash {
+        /// The authorization-artifact binding hash from the verified envelope.
+        authorization_hash: String,
+    },
+    /// draft-02: the typed `authorization_binding` object from the verified
+    /// envelope (opaque-bytes or authz-system-reference).
+    Draft02Binding {
+        /// The verified, structurally-validated authorization binding.
+        authorization_binding: AuthorizationBinding,
+    },
+}
+
+impl VerifiedAuthorization {
+    /// The draft-01 `authorization_hash`, if this is a draft-01 verdict; `None`
+    /// for a draft-02 binding. Lets a draft-01-only consumer read the hash
+    /// without assuming the profile.
+    pub fn draft01_hash(&self) -> Option<&str> {
+        match self {
+            VerifiedAuthorization::Draft01Hash { authorization_hash } => Some(authorization_hash),
+            VerifiedAuthorization::Draft02Binding { .. } => None,
+        }
+    }
+
+    /// The draft-02 [`AuthorizationBinding`], if this is a draft-02 verdict;
+    /// `None` for a draft-01 hash.
+    pub fn draft02_binding(&self) -> Option<&AuthorizationBinding> {
+        match self {
+            VerifiedAuthorization::Draft02Binding { authorization_binding } => {
+                Some(authorization_binding)
+            }
+            VerifiedAuthorization::Draft01Hash { .. } => None,
+        }
+    }
+}
+
 /// The successful outcome of [`verify_request`] (MCPS_SPEC §9).
 ///
 /// Every field is copied from the cryptographically verified request envelope;
@@ -119,8 +163,8 @@ pub struct VerifiedRequest {
     pub on_behalf_of: String,
     /// The audience from the verified envelope (equals the expected audience).
     pub audience: String,
-    /// The authorization-artifact binding from the verified envelope.
-    pub authorization_hash: String,
+    /// The verified authorization evidence, versioned by profile.
+    pub authorization: VerifiedAuthorization,
     /// `sha256:<b64url-no-pad>` of the verified request signing preimage.
     pub request_hash: String,
     /// The anti-replay nonce from the verified envelope.
@@ -271,7 +315,9 @@ pub fn verify_request(
         key_id: envelope.signature.key_id,
         on_behalf_of: envelope.on_behalf_of,
         audience: envelope.audience,
-        authorization_hash: envelope.authorization_hash,
+        authorization: VerifiedAuthorization::Draft01Hash {
+            authorization_hash: envelope.authorization_hash,
+        },
         request_hash: computed_request_hash,
         nonce: envelope.nonce,
         issued_at: envelope.issued_at,
@@ -389,12 +435,12 @@ pub fn verify_request_draft02(
     canonicalize(raw_bytes)?;
 
     // Steps 4-6 (draft-02) — locate / deny-unknown-fields / version=="draft-02" /
-    // canonicalization_id ∈ allowlist, all read as untrusted selectors.
+    // canonicalization_id ∈ allowlist / authorization_binding structurally valid,
+    // all read as untrusted selectors (the binding shape is validated inside
+    // extraction — ADR-MCPS-039).
     let envelope = extract_draft02_request_envelope(&value)?;
 
-    // Step 7 — required-field presence / format (authorization_hash is replaced
-    // by authorization_binding in MCPS-35 / #181).
-    check_authorization_hash(&envelope.authorization_hash)?;
+    // Step 7 — required-field presence / format.
     check_on_behalf_of(&envelope.on_behalf_of)?;
     check_signature_block(&envelope.signature.alg, envelope.signature.value.as_deref())?;
 
@@ -446,7 +492,9 @@ pub fn verify_request_draft02(
         key_id: envelope.signature.key_id,
         on_behalf_of: envelope.on_behalf_of,
         audience: envelope.audience,
-        authorization_hash: envelope.authorization_hash,
+        authorization: VerifiedAuthorization::Draft02Binding {
+            authorization_binding: envelope.authorization_binding,
+        },
         request_hash: computed_request_hash,
         nonce: envelope.nonce,
         issued_at: envelope.issued_at,
@@ -564,6 +612,7 @@ mod tests {
     use super::verify_response;
     use super::verify_response_draft02;
     use super::VerificationConfig;
+    use super::VerifiedAuthorization;
     use crate::crypto::SigningKey;
     use crate::error::McpsError;
     use crate::ids::REQUEST_META_KEY;
@@ -782,6 +831,16 @@ mod tests {
             "canonicalization_id".into(),
             json!("mcps-jcs-int53-json-v1"),
         );
+        // draft-02 replaces authorization_hash with the typed binding.
+        env.remove("authorization_hash");
+        env.insert(
+            "authorization_binding".into(),
+            json!({
+                "binding_type": "opaque-bytes",
+                "digest_alg": "sha256",
+                "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+            }),
+        );
         obj
     }
 
@@ -989,7 +1048,12 @@ mod tests {
         assert_eq!(verified.key_id, SIGNER_KEY_ID);
         assert_eq!(verified.on_behalf_of, ON_BEHALF_OF);
         assert_eq!(verified.audience, AUDIENCE);
-        assert_eq!(verified.authorization_hash, AUTHORIZATION_HASH);
+        assert_eq!(
+            verified.authorization,
+            VerifiedAuthorization::Draft01Hash {
+                authorization_hash: AUTHORIZATION_HASH.to_string()
+            }
+        );
         assert_eq!(verified.nonce, NONCE);
         assert_eq!(verified.issued_at, ISSUED_AT);
         assert_eq!(verified.expires_at, EXPIRES_AT);

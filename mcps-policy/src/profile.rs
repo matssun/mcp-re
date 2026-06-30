@@ -56,9 +56,41 @@ pub trait AuthorizationProfile {
     ) -> AuthorizationDecision;
 }
 
+/// Validates a draft-02 `authz-system-reference` authorization binding
+/// (ADR-MCPS-039 / decision E.2). An external authorization system produced the
+/// `digest_value` under `reference_scheme_id`; MCP-S has already **bound** that
+/// evidence (Core validated the binding's structure and it is inside the signed
+/// preimage). This resolver decides allow/deny for one `authorization_system_id`
+/// **without MCP-S interpreting authorization semantics** — the resolver owns the
+/// system's meaning of the reference, MCP-S owns only the binding.
+///
+/// If no resolver is registered for a presented `authorization_system_id`, the
+/// evaluator fails closed with
+/// [`PolicyError::AuthorizationBindingProfileRequired`] — never a silent accept.
+pub trait AuthorizationReferenceResolver {
+    /// The `authorization_system_id` this resolver validates references for.
+    fn authorization_system_id(&self) -> &str;
+
+    /// Decide allow/deny for the bound `authz-system-reference` evidence. The
+    /// `binding` is the verified [`AuthorizationBinding::AuthzSystemReference`]
+    /// (all six fields structurally validated by Core); `verified`/`request`
+    /// give the request context. Returns [`AuthorizationDecision::Allow`] only
+    /// when the system's own validation of the reference passes.
+    fn authorize_reference(
+        &self,
+        binding: &mcps_core::AuthorizationBinding,
+        verified: &VerifiedRequest,
+        request: &Value,
+        resolver: &dyn TrustResolver,
+        revocation: &dyn RevocationSource,
+        now_unix: i64,
+    ) -> AuthorizationDecision;
+}
+
 #[cfg(test)]
 mod tests {
     use super::AuthorizationProfile;
+    use mcps_core::VerifiedAuthorization;
     use crate::decision::AuthorizationDecision;
     use crate::error::PolicyError;
     use crate::revocation::InMemoryRevocationSource;
@@ -102,11 +134,14 @@ mod tests {
             key_id: "key-1".to_string(),
             on_behalf_of: "did:example:user-1".to_string(),
             audience: "did:example:server-1".to_string(),
-            authorization_hash: sha256_hash_id(b"artifact"),
+            authorization: VerifiedAuthorization::Draft01Hash {
+                authorization_hash: sha256_hash_id(b"artifact"),
+            },
             request_hash: "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o".to_string(),
             nonce: "nonce-1".to_string(),
             issued_at: "2026-05-28T20:00:00Z".to_string(),
             expires_at: "2026-05-28T20:05:00Z".to_string(),
+            canonicalization_id: None,
         }
     }
 

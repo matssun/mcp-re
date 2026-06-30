@@ -56,6 +56,21 @@ pub const DRAFT_02_CANONICALIZATION_ALLOWLIST: [&str; 1] = [CANONICALIZATION_ID_
 /// signature failure in v1.
 pub const SIG_ALG_ED25519: &str = "Ed25519";
 
+/// Draft-02 `authorization_binding.binding_type` — opaque-bytes form
+/// (ADR-MCPS-039 / decision E.1): the digest is over the transport-decoded
+/// artifact bytes.
+pub const BINDING_TYPE_OPAQUE_BYTES: &str = "opaque-bytes";
+
+/// Draft-02 `authorization_binding.binding_type` — authz-system-reference form
+/// (ADR-MCPS-039 / decision E.2): an external authorization system's
+/// digest + reference, bound (never interpreted) by MCP-S.
+pub const BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE: &str = "authz-system-reference";
+
+/// The only `authorization_binding.digest_alg` token in draft-02 (split form:
+/// explicit algorithm + bare `digest_value`, no `sha256:` prefix —
+/// ADR-MCPS-039). Matches the existing `sha256:` convention's algorithm name.
+pub const DIGEST_ALG_SHA256: &str = "sha256";
+
 /// Wrapper key under which the proxy preserves a NON-OBJECT inner `result`
 /// (scalar/array/null) before signing — see `mcps-proxy` `build_signed_response`
 /// (the `json!({ "value": result })` branch). The client-side
