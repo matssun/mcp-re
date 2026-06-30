@@ -121,7 +121,10 @@ the live-cloud script. The ladder maps onto the phases:
     distrusts → it reports a generic fail-closed verdict). So T3 proves the
     OUTCOME (denied before dispatch, cross-process); the server-side reason token
     stays pinned by the in-process `mcps-proxy` suite. Downgrade negatives live in
-    `proxy_version_policy_test`, not re-proven here.
+    `proxy_version_policy_test`, not re-proven here. The capability gap this exposes
+    — a client cannot learn a TRUSTED rejection reason over an untrusted channel —
+    is addressed by [046](adr-mcps-046.md) (Signed Rejection Receipts), a separate
+    protocol feature; T3 deliberately does not pre-empt it.
 - **Phase 4** — client-side GCP KMS signer in `mcps-client-core` + live lane →
   **T4**.
 - **Phase 5** — sanitized two-version model (real `work/` script gitignored; a
