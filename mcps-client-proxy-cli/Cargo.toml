@@ -1,0 +1,36 @@
+[package]
+name = "mcps-client-proxy-cli"
+version = "0.6.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Binary front-end for mcps-client-proxy (ADR-MCPS-045 Phase 3): a plain-MCP stdio endpoint that signs draft-02 requests via mcps-client-core and forwards them to a remote MCP-S server over verifying mTLS."
+
+[dependencies]
+# The MODE-SPECIFIC binary above the pure mcps-client-proxy/mcps-client-core
+# seam: it owns the stdio listener, the per-call freshness/nonce wiring, and the
+# concrete mTLS RemoteTransport adapter (mcps-transport). The library stays pure
+# (trait-only transport); this crate supplies the real I/O.
+mcps-client-proxy = { path = "../mcps-client-proxy" }
+mcps-client-core = { path = "../mcps-client-core" }
+mcps-core = { path = "../mcps-core" }
+mcps-transport = { path = "../mcps-transport" }
+# Production OS-CSPRNG nonce source (>= 128-bit), reused from the host ambassador.
+mcps-host = { path = "../mcps-host" }
+serde_json = { workspace = true }
+# OPTIONAL, feature-gated (gcp_kms). The client-side KMS signer (ADR-MCPS-045
+# Phase 4 / T4) reuses the live-tested GCP Cloud KMS Ed25519 backend from
+# mcps-proxy (its KmsEd25519Backend seam + verify-before-return) rather than
+# re-deriving the REST/ureq signing path. A default build never pulls it.
+# (Follow-up: extract the KMS backend into a neutral shared crate so the client
+# need not depend on the server crate — tracked in ADR-MCPS-045 §Phase 4.)
+mcps-proxy = { path = "../mcps-proxy", optional = true }
+
+[features]
+# Client-side GCP Cloud KMS object signing (NonExporting custody) for Tier T4.
+# Pulls mcps-proxy with its gcp_kms_keysource backend. OFF by default.
+gcp_kms = ["dep:mcps-proxy", "mcps-proxy/gcp_kms_keysource"]
+
+[[bin]]
+name = "mcps-client-proxy-cli"
+path = "src/main.rs"

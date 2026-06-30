@@ -677,6 +677,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcps-client-proxy-cli"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-client-proxy",
+ "mcps-core",
+ "mcps-host",
+ "mcps-proxy",
+ "mcps-transport",
+ "serde_json",
+]
+
+[[package]]
 name = "mcps-conformance"
 version = "0.6.0"
 dependencies = [
@@ -774,6 +787,7 @@ dependencies = [
  "hmac",
  "landlock",
  "libc",
+ "mcps-client-core",
  "mcps-core",
  "mcps-host",
  "mcps-policy",
@@ -808,6 +822,17 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mcps-walkthrough"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-core",
+ "mcps-demo",
+ "mcps-test-paths",
+ "serde_json",
 ]
 
 [[package]]
