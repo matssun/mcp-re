@@ -1,0 +1,28 @@
+{
+  "id": "req-7",
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "se.syncom/mcps.request": {
+        "audience": "did:example:server-1",
+        "authorization_hash": "sha256:AAAA",
+        "expires_at": "2026-05-28T20:05:00Z",
+        "issued_at": "2026-05-28T20:00:00Z",
+        "nonce": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+        "on_behalf_of": "did:example:user-1",
+        "signature": {
+          "alg": "Ed25519",
+          "key_id": "key-1",
+          "value": null
+        },
+        "signer": "did:example:agent-1",
+        "version": "draft-01"
+      }
+    },
+    "arguments": {
+      "text": "hello"
+    },
+    "name": "echo"
+  }
+}
