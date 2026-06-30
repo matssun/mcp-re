@@ -4,8 +4,8 @@
 
 ## Status
 
-Proposed — resolved in the v0.6 grill (2026-06-29, owner per-branch sign-off);
-becomes Accepted on merge to main as v0.6. Sibling of the v0.6 draft-02 set
+Accepted — v0.6 (2026-06-30). Resolved in the v0.6 grill (2026-06-29,
+owner per-branch sign-off). Sibling of the v0.6 draft-02 set
 ([037](adr-mcps-037.md)–[041](adr-mcps-041.md)). Extends the conformance-as-specification
 model of [ADR-MCPS-011](adr-mcps-011.md) and the manifest authority of
 [ADR-MCPS-018](adr-mcps-018.md).

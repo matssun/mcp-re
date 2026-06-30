@@ -1,6 +1,6 @@
 # ADR-MCPS-019 (MCP-S v0.6) — Grill Decision Summary
 
-**Status: LOCAL DRAFT — not published to the ADR until Mats approves this summary.**
+**Status: ACCEPTED — approved and published as MCP-S v0.6 (2026-06-30). The per-branch decisions are recorded in ADRs 037–042.**
 Mode: Codex-assisted (griller = Claude, answerer = Codex, judge = stance-profile rubric, per-branch sign-off = Mats).
 Companion transcript: `mcps-v0.6-grill-transcript.md`.
 
@@ -134,4 +134,4 @@ ADR auth-evidence questions Q8–Q16 all covered: opaque binding typed (Q8); sys
 
 ---
 
-## Status: all eight branches resolved (A–H). Awaiting final summary sign-off before any ADR publication.
+## Status: all eight branches resolved (A–H) and signed off; published as MCP-S v0.6 in ADRs 037–042 (2026-06-30).

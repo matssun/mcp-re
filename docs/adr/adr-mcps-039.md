@@ -4,8 +4,8 @@
 
 ## Status
 
-Proposed — resolved in the v0.6 grill (2026-06-29, owner per-branch sign-off);
-becomes Accepted on merge to main as v0.6. Sibling of the v0.6 draft-02 set
+Accepted — v0.6 (2026-06-30). Resolved in the v0.6 grill (2026-06-29,
+owner per-branch sign-off). Sibling of the v0.6 draft-02 set
 ([037](adr-mcps-037.md), [038](adr-mcps-038.md), [040](adr-mcps-040.md)–[042](adr-mcps-042.md)).
 Builds on the bind-not-interpret `AuthorizationProfile` model of
 [ADR-MCPS-013](adr-mcps-013.md).

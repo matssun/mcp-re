@@ -1,6 +1,6 @@
 # MCP-S Core Specification
 
-**Status:** Normative for MCP-S Core (`draft-01`)
+**Status:** Normative for MCP-S Core. The released field baseline is `draft-01` (v0.5.1); v0.6 adds the strictly-separated `draft-02` profile (runtime-evidence preimages — ADRs [037](../adr/adr-mcps-037.md)–[042](../adr/adr-mcps-042.md)), verified alongside `draft-01` by a version-dispatched dual verifier. `draft-01` rules below are unchanged; `draft-02` deltas are called out inline.
 **Scope:** The frozen wire vocabulary, signing rule, canonicalization domain, freshness/replay model, trust resolution, message constraints, error taxonomy, and verification pipeline of MCP-S Core.
 
 This document **states the current rule**. It does **not** restate the rationale: every major rule cites the ADR that records *why* it is so. Conformance counts (vectors, Bazel test targets) are **not** hardcoded here — they are owned by the drift-guarded conformance manifest (see [§12](#12-conformance-manifest-counts)). The convention is: the spec states the rule, the ADR records why, the guide explains how to use it, and the tests prove it — each fact has one home.

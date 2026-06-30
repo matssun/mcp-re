@@ -9,18 +9,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
-## [Unreleased] — v0.6 (`draft-02`)
+## [0.6.0] — 2026-06-30
 
 **Runtime-evidence preimages — a `draft-02` wire-envelope change.** v0.6
 introduces the `draft-02` profile alongside the released `draft-01`/v0.5.1
 baseline: two protected envelope identifiers (`version: "draft-02"` and a
 self-describing `canonicalization_id`), an explicit canonical-preimage exclusion
-predicate, a typed `authorization_binding` object, nine new fail-closed wire
-codes, a dual verifier with strict version dispatch, and a separate frozen
-conformance corpus. `draft-01`/v0.5.1 stays byte-for-byte and verdict-for-verdict
-unchanged. Resolved in the v0.6 grill (2026-06-29);
-ADRs [037](docs/adr/adr-mcps-037.md)–[042](docs/adr/adr-mcps-042.md). **In
-progress — not yet released.**
+predicate, a typed `authorization_binding` object (both `opaque-bytes` and
+`authz-system-reference` base forms), nine new fail-closed wire codes, a dual
+verifier with strict version dispatch and a required expected-version policy, and
+a separate frozen conformance corpus with a static interop oracle.
+`draft-01`/v0.5.1 stays byte-for-byte and verdict-for-verdict unchanged.
+Resolved in the v0.6 grill (2026-06-29);
+ADRs [037](docs/adr/adr-mcps-037.md)–[042](docs/adr/adr-mcps-042.md).
+
+**Scope.** v0.6 ships the draft-02 profile, verifier, authorization-binding
+policy wiring, and conformance corpus (including a live Cloud KMS draft-02
+envelope lane). The `mcps-host`/`mcps-proxy` production paths still emit and
+serve `draft-01`; adopting the draft-02 signing/serving path end-to-end is a
+follow-up. The dual verifier exists so both profiles coexist at the verification
+boundary during that migration.
 
 ### Documented limitation — integer-only canonicalization (`mcps-jcs-int53-json-v1`)
 
