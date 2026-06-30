@@ -18,6 +18,18 @@ mcps-transport = { path = "../mcps-transport" }
 # Production OS-CSPRNG nonce source (>= 128-bit), reused from the host ambassador.
 mcps-host = { path = "../mcps-host" }
 serde_json = { workspace = true }
+# OPTIONAL, feature-gated (gcp_kms). The client-side KMS signer (ADR-MCPS-045
+# Phase 4 / T4) reuses the live-tested GCP Cloud KMS Ed25519 backend from
+# mcps-proxy (its KmsEd25519Backend seam + verify-before-return) rather than
+# re-deriving the REST/ureq signing path. A default build never pulls it.
+# (Follow-up: extract the KMS backend into a neutral shared crate so the client
+# need not depend on the server crate — tracked in ADR-MCPS-045 §Phase 4.)
+mcps-proxy = { path = "../mcps-proxy", optional = true }
+
+[features]
+# Client-side GCP Cloud KMS object signing (NonExporting custody) for Tier T4.
+# Pulls mcps-proxy with its gcp_kms_keysource backend. OFF by default.
+gcp_kms = ["dep:mcps-proxy", "mcps-proxy/gcp_kms_keysource"]
 
 [[bin]]
 name = "mcps-client-proxy-cli"
