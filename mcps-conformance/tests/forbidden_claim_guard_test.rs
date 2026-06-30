@@ -82,9 +82,15 @@ const NEGATION_MARKERS: &[&str] = &[
 /// key that delivers each. Proposal-facing ONLY — no ADRs, no v0.3 files, no
 /// fixtures.
 const SCANNED_DOCS: &[(&str, &str)] = &[
-    ("docs/spec/security-boundary.md", "MCPS_DOC_SECURITY_BOUNDARY"),
+    (
+        "docs/spec/security-boundary.md",
+        "MCPS_DOC_SECURITY_BOUNDARY",
+    ),
     ("docs/spec/v0.5-claim-matrix.md", "MCPS_DOC_CLAIM_MATRIX"),
-    ("docs/spec/threat-coverage-matrix.md", "MCPS_DOC_THREAT_COVERAGE"),
+    (
+        "docs/spec/threat-coverage-matrix.md",
+        "MCPS_DOC_THREAT_COVERAGE",
+    ),
     ("docs/spec/composability.md", "MCPS_DOC_COMPOSABILITY"),
     ("docs/spec/proposal-scope.md", "MCPS_DOC_PROPOSAL_SCOPE"),
 ];
@@ -189,7 +195,9 @@ fn no_forbidden_phrase_is_an_asserted_claim() {
     for (doc, env_key) in SCANNED_DOCS {
         let text = read(env_key);
         for (line_no, phrase) in live_claim_hits(&text) {
-            violations.push(format!("{doc}:{line_no}: asserted forbidden claim {phrase:?}"));
+            violations.push(format!(
+                "{doc}:{line_no}: asserted forbidden claim {phrase:?}"
+            ));
         }
     }
     assert!(

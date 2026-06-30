@@ -35,8 +35,8 @@ pub fn load_from_dir(dir: &Path) -> Result<Vec<VectorCase>, String> {
     let mut cases = Vec::with_capacity(entries.len());
     for entry in entries {
         let path = dir.join(&entry.file);
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         cases.push(parse_case(&text)?);
     }
     Ok(cases)

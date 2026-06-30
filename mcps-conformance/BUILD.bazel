@@ -73,6 +73,21 @@ nt_rust_test(
     ],
 )
 
+# MCPS-50 (#197): the 14 ADR-043 discovery/enforcement acceptance vectors over the
+# real mcps-client-core decision surface — the downgrade-resistance corpus.
+nt_rust_test(
+    name = "discovery_enforcement_conformance_test",
+    srcs = ["tests/discovery_enforcement_conformance_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcps-client-core:mcps_client_core",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
 # MCPS-011: native MCP-S echo server round-trip tests (in-process; no transport).
 nt_rust_test(
     name = "echo_server_test",
@@ -305,6 +320,7 @@ nt_rust_test(
         "security_traceability_manifest.json",
         "BUILD.bazel",
         "tests/object_suite_test.rs",
+        "tests/discovery_enforcement_conformance_test.rs",
         "tests/method_transparency_test.rs",
         "tests/method_name_drift_guard_test.rs",
         "tests/audit_vocabulary_guard_test.rs",
@@ -345,6 +361,7 @@ nt_rust_test(
         "MCPS_BUILD_TRANSPORT": "$(rlocationpath //mcps-transport:BUILD.bazel)",
         "MCPS_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
         "MCPS_SRC_OBJECT_SUITE": "$(rlocationpath tests/object_suite_test.rs)",
+        "MCPS_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE": "$(rlocationpath tests/discovery_enforcement_conformance_test.rs)",
         "MCPS_SRC_METHOD_TRANSPARENCY": "$(rlocationpath tests/method_transparency_test.rs)",
         "MCPS_SRC_METHOD_NAME_DRIFT_GUARD": "$(rlocationpath tests/method_name_drift_guard_test.rs)",
         "MCPS_SRC_AUDIT_VOCABULARY_GUARD": "$(rlocationpath tests/audit_vocabulary_guard_test.rs)",

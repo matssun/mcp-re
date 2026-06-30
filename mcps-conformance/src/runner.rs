@@ -72,7 +72,11 @@ fn build_context(cases: &[VectorCase]) -> RunContext {
     let canonical = cases
         .iter()
         .find(|c| c.name == CANONICAL_REQUEST_NAME)
-        .or_else(|| cases.iter().find(|c| c.kind == "request" && c.expected == "verify_ok"));
+        .or_else(|| {
+            cases
+                .iter()
+                .find(|c| c.kind == "request" && c.expected == "verify_ok")
+        });
     let canonical_request_hash = canonical.and_then(|c| canonical_request_hash(c).ok());
     RunContext {
         canonical_request_hash,
