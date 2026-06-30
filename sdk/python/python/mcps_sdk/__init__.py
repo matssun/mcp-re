@@ -24,9 +24,12 @@ __all__ = [
     "canonicalization_id",
     "sign_request",
     "sign_request_with_signer",
+    "verify_response",
     "SignedRequest",
     "Signer",
     "SignerPolicy",
+    "TrustResolver",
+    "VerifyResult",
     "McpsTransport",
     "connect",
 ]
@@ -45,6 +48,12 @@ SignedRequest = _core.SignedRequest
 Signer = _core.Signer
 #: The signer-custody policy gating which signers may sign under a route/mode.
 SignerPolicy = _core.SignerPolicy
+#: Verify a signed response + apply the enforcement decision (return-leg chain).
+verify_response = _core.verify_response
+#: Trust anchors for response verification: ``.insert_public_key`` / ``.insert_dev_seed``.
+TrustResolver = _core.TrustResolver
+#: Structured verification outcome: ``.decision`` / ``.path`` / ``.reason`` / ``.server_signer``.
+VerifyResult = _core.VerifyResult
 
 # Imported lazily-friendly: these modules reference `mcp`, a declared dependency.
 from .transport import McpsTransport  # noqa: E402

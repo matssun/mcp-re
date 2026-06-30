@@ -24,10 +24,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use mcps_client_core::{
-    build_signed_request, build_signed_request_with_signer, ClientSigner, CustodyClass,
-    DevFileSigner, Environment, RequestSigningInputs, SignerPolicy, SoftwareSigner,
+    audit_for_decision, build_signed_request, build_signed_request_with_signer,
+    classify_response_result, decide, verify_signed_response, AbsenceReason, ClientOutcome,
+    ClientPath, ClientSigner, CustodyClass, DevFileSigner, EnforcementDecision, EnforcementMode,
+    Environment, RequestSigningInputs, ResponseExpectation, SignerPolicy, SoftwareSigner,
 };
-use mcps_core::{AuthorizationBinding, McpsError, SigningKey};
+use mcps_core::{AuthorizationBinding, InMemoryTrustResolver, McpsError, SigningKey, VerificationKey};
 use serde_json::{Map, Value};
 
 // --- shared helpers --------------------------------------------------------
@@ -67,6 +69,24 @@ fn parse_env(s: &str) -> PyResult<Environment> {
         other => Err(PyValueError::new_err(format!(
             "environment must be 'production' or 'dev-test', got {other:?}"
         ))),
+    }
+}
+
+fn parse_mode(s: &str) -> PyResult<EnforcementMode> {
+    match s {
+        "require_mcps" => Ok(EnforcementMode::RequireMcps),
+        "allow_legacy_explicit" => Ok(EnforcementMode::AllowLegacyExplicit),
+        other => Err(PyValueError::new_err(format!(
+            "enforcement_mode must be 'require_mcps' or 'allow_legacy_explicit', got {other:?}"
+        ))),
+    }
+}
+
+fn absence_str(reason: AbsenceReason) -> &'static str {
+    match reason {
+        AbsenceReason::TransportFailurePreEvidence => "transport-failure-pre-evidence",
+        AbsenceReason::PlainUnsigned => "plain-unsigned",
+        AbsenceReason::ExplicitUnsupportedHint => "explicit-unsupported-hint",
     }
 }
 
@@ -319,14 +339,177 @@ fn sign_request_with_signer(
     Ok(PySignedRequest::from_signed(signed))
 }
 
+// --- response verification: trust resolver ---------------------------------
+
+/// The client's trust anchor set for response verification — maps a verified
+/// `(server_signer, key_id)` to the PUBLIC verifying key. Response verification
+/// consumes public keys only; a verifier never needs private signing material.
+#[pyclass(name = "TrustResolver")]
+struct PyTrustResolver {
+    inner: InMemoryTrustResolver,
+}
+
+#[pymethods]
+impl PyTrustResolver {
+    #[new]
+    fn new() -> Self {
+        PyTrustResolver {
+            inner: InMemoryTrustResolver::new(),
+        }
+    }
+
+    /// Register a server signer by its raw 32-byte Ed25519 PUBLIC key. This is the
+    /// real verifier input.
+    fn insert_public_key(&mut self, signer_id: &str, key_id: &str, public_key: &[u8]) -> PyResult<()> {
+        let pk: [u8; 32] = public_key.try_into().map_err(|_| {
+            PyValueError::new_err(format!(
+                "public_key must be exactly 32 bytes, got {}",
+                public_key.len()
+            ))
+        })?;
+        self.inner
+            .insert(signer_id, key_id, VerificationKey::from_bytes(&pk).map_err(to_py_err)?);
+        Ok(())
+    }
+
+    /// DEV/TEST ONLY: register a server signer from a 32-byte SEED, deriving the
+    /// public key. This exists solely to make parity vectors byte-identical with
+    /// the signing side — verifiers NEVER need private material; production trust
+    /// config uses `insert_public_key`.
+    fn insert_dev_seed(&mut self, signer_id: &str, key_id: &str, seed: &[u8]) -> PyResult<()> {
+        self.inner
+            .insert(signer_id, key_id, seed_to_key(seed)?.public_key());
+        Ok(())
+    }
+}
+
+/// The structured outcome of [`verify_response`]: the enforcement decision plus the
+/// audit-facing path/outcome/reason and (on a verified exchange) the server identity
+/// and bound request_hash. A fail-closed verification is a RESULT here (with the
+/// frozen `mcps.*` wire reason), not a Python exception.
+#[pyclass(name = "VerifyResult", frozen)]
+struct PyVerifyResult {
+    /// "accept" | "fallback" | "fail-closed".
+    #[pyo3(get)]
+    decision: &'static str,
+    /// "mcps-verified" | "legacy-explicit".
+    #[pyo3(get)]
+    path: &'static str,
+    /// "accepted" | "fell-back" | "rejected".
+    #[pyo3(get)]
+    outcome: &'static str,
+    /// Frozen `McpsError::wire_code()` token on a fail-closed rejection; else `None`.
+    #[pyo3(get)]
+    reason: Option<String>,
+    /// The absence reason that made a legacy fallback eligible (local); else `None`.
+    #[pyo3(get)]
+    legacy_reason: Option<String>,
+    /// The verified server signer (on a verified exchange); else `None`.
+    #[pyo3(get)]
+    server_signer: Option<String>,
+    /// The key id that verified the response (on a verified exchange); else `None`.
+    #[pyo3(get)]
+    key_id: Option<String>,
+    /// The bound `request_hash` (on a verified exchange); else `None`.
+    #[pyo3(get)]
+    request_hash: Option<String>,
+    /// Convenience: true iff the decision was AcceptMcps.
+    #[pyo3(get)]
+    accepted: bool,
+}
+
+#[pymethods]
+impl PyVerifyResult {
+    fn __repr__(&self) -> String {
+        format!(
+            "VerifyResult(decision={:?}, path={:?}, reason={:?})",
+            self.decision, self.path, self.reason
+        )
+    }
+}
+
+/// Verify a signed draft-02 response and apply the enforcement decision — the
+/// proxy's return-leg pipeline (`verify_signed_response` → `classify_response_result`
+/// → `decide` → `audit_for_decision`). Returns a [`VerifyResult`]; a fail-closed
+/// verification is reported there (not raised). Malformed arguments raise `ValueError`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    raw_bytes, *,
+    resolver, expected_request_hash,
+    expected_canonicalization_id=None, expected_server_signer=None,
+    enforcement_mode="require_mcps", legacy_allowed=false,
+))]
+fn verify_response(
+    raw_bytes: &[u8],
+    resolver: PyRef<'_, PyTrustResolver>,
+    expected_request_hash: &str,
+    expected_canonicalization_id: Option<&str>,
+    expected_server_signer: Option<&str>,
+    enforcement_mode: &str,
+    legacy_allowed: bool,
+) -> PyResult<PyVerifyResult> {
+    let canon = expected_canonicalization_id.unwrap_or(mcps_core::CANONICALIZATION_ID_INT53_V1);
+    let mut expectation = ResponseExpectation::new(expected_request_hash, canon);
+    if let Some(signer) = expected_server_signer {
+        expectation = expectation.with_expected_server_signer(signer);
+    }
+    let mode = parse_mode(enforcement_mode)?;
+
+    let result = verify_signed_response(raw_bytes, &resolver.inner, &expectation);
+    // Capture the verified identity before the value is moved into the outcome.
+    let verified = result
+        .as_ref()
+        .ok()
+        .map(|v| (v.server_signer().to_string(), v.key_id().to_string(), v.request_hash().to_string()));
+
+    let outcome = classify_response_result(result);
+    let decision = decide(mode, legacy_allowed, &outcome);
+    let audit = audit_for_decision(&decision);
+
+    let (decision_str, accepted) = match &decision {
+        EnforcementDecision::AcceptMcps => ("accept", true),
+        EnforcementDecision::FallBackToLegacy { .. } => ("fallback", false),
+        EnforcementDecision::FailClosed(_) => ("fail-closed", false),
+    };
+    let path = match audit.path {
+        ClientPath::McpsVerified => "mcps-verified",
+        ClientPath::LegacyExplicit => "legacy-explicit",
+    };
+    let outcome_str = match audit.outcome {
+        ClientOutcome::Accepted => "accepted",
+        ClientOutcome::FellBackToLegacy => "fell-back",
+        ClientOutcome::Rejected => "rejected",
+    };
+    let (server_signer, key_id, request_hash) = match verified {
+        Some((s, k, h)) => (Some(s), Some(k), Some(h)),
+        None => (None, None, None),
+    };
+
+    Ok(PyVerifyResult {
+        decision: decision_str,
+        path,
+        outcome: outcome_str,
+        reason: audit.reason.map(|s| s.to_string()),
+        legacy_reason: audit.legacy_reason.map(|r| absence_str(r).to_string()),
+        server_signer,
+        key_id,
+        request_hash,
+        accepted,
+    })
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(core_version, m)?)?;
     m.add_function(wrap_pyfunction!(canonicalization_id, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request_with_signer, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_response, m)?)?;
     m.add_class::<PySignedRequest>()?;
     m.add_class::<PySigner>()?;
     m.add_class::<PySignerPolicy>()?;
+    m.add_class::<PyTrustResolver>()?;
+    m.add_class::<PyVerifyResult>()?;
     Ok(())
 }

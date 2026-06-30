@@ -107,7 +107,4 @@ def test_bad_seed_length_is_rejected():
         )
 
 
-@pytest.mark.skip(reason="scaffold: response verification binding not implemented (#199)")
-def test_response_verification_matches_proxy():
-    """Same signed response + trust resolver -> identical EnforcementDecision /
-    audit path (McpsVerified vs LegacyExplicit vs FailClosed) as the proxy."""
+# Response-side verification parity now lives in test_response.py (verify_response).
