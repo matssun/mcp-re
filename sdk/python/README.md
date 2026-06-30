@@ -3,11 +3,25 @@
 Runtime-evidence security for the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk):
 signed requests and verified responses, added without changing application code.
 
-> **Status: scaffold (issue #199, ADR-MCPS-044).** The structure, the build
-> wiring, and the security pipeline contract are in place. The native bindings
-> and the transport bodies are stubbed (`NotImplementedError` / `TODO(#199)`).
-> The one thing that works today is the PyO3 link to the audited core
-> (`test_core_link`).
+> **Status (issue #199, ADR-MCPS-044).** The full client obligation is bound and
+> tested over the audited `mcps-client-core` via PyO3: request signing
+> (`sign_request`), custody/signer policy (`Signer` / `SignerPolicy`), response
+> verification (`verify_response` / `TrustResolver`), in-flight correlation
+> (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
+> that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
+> 47 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> **including a live cross-process e2e**: the adapter drives a real `tools/call`
+> over stdio to the **real Rust server-side proxy** (`mcps-stdio-server --mode
+> proxy` = `mcps_proxy::Proxy`), which verifies the signed request, echoes, and
+> signs the response; the adapter verifies + correlates + strips it to plain MCP.
+> A live negative proves fail-closed when the server signer isn't trusted.
+> **Remaining:** full `ClientSession.initialize()` against a real MCP server (the
+> fileserver) over the mTLS `mcps-proxy` path; streamable-HTTP; signed/verified
+> server-initiated messages; pinning upstream `mcp`.
+>
+> Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
+> The live e2e also needs `cargo build -p mcps-conformance --bin mcps-stdio-server`
+> (skips cleanly if absent).
 
 ## Why this exists, and why it's an *adapter*
 

@@ -62,6 +62,16 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
   rejection receipts) is designed, not built: ADR
   [046](docs/adr/adr-mcps-046.md).
 
+### Build & test
+
+The **Cargo** workspace is the authoritative, maintained test gate and is fully
+green (116 test binaries, 0 failures). The Cloud KMS lanes are intentionally
+`#[ignore]`/manual (they require live cloud credentials). The **Bazel** build has
+known, pre-existing **non-gating** `BUILD`-file parity rot — unrelated to this
+release — e.g. `//mcps-proxy:mcps_proxy_cli` missing a `//mcps-core:mcps_core`
+dep (present already before this epic) and `pkcs11` test-dep gaps; tracked
+separately and NOT mixed into this line.
+
 ## [0.6.0] — 2026-06-30
 
 **Runtime-evidence preimages — a `draft-02` wire-envelope change.** v0.6
