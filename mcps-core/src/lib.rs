@@ -71,6 +71,8 @@ pub use signing::request_signing_preimage;
 pub use signing::response_signing_preimage;
 pub use signing::signing_preimage;
 pub use signing::EnvelopeLocation;
+pub use envelope::Draft02RequestEnvelope;
+pub use envelope::Draft02ResponseEnvelope;
 pub use envelope::RequestEnvelope;
 pub use envelope::ResponseEnvelope;
 pub use envelope::SignatureBlock;
