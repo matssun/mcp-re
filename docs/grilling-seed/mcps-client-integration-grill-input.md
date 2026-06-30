@@ -195,8 +195,8 @@ application code
 
 Candidate SDKs:
 
-- TypeScript wrapper around existing MCP TypeScript SDK;
-- Python wrapper around existing MCP Python SDK;
+- Python wrapper around existing MCP Python SDK (first);
+- TypeScript wrapper around existing MCP TypeScript SDK (later);
 - Rust client library for MCP-S-native deployments;
 - later Java/Kotlin/C# if enterprise demand exists.
 
@@ -243,7 +243,7 @@ The grilling session should evaluate this priority order:
 ```text
 1. Define client discovery/enforcement policy.
 2. Implement local client-side MCP-S proxy.
-3. Implement one SDK wrapper, probably TypeScript or Python.
+3. Implement one SDK wrapper, Python first (Anthropic's Python MCP SDK), TypeScript later.
 4. Add Rust client support if useful for internal/proxy reuse.
 5. Treat native host/client support as future ecosystem adoption.
 ```
@@ -559,15 +559,16 @@ Otherwise define the smallest adapter layer needed.
 
 Candidate answers:
 
-- TypeScript first because many MCP clients/hosts use TypeScript.
-- Python first because it is fast to prototype and useful for enterprise scripts.
+- Python first because Anthropic's Python MCP SDK is well-supported and easy to test/validate, and it is the maintainer's stronger language.
+- TypeScript later because many MCP clients/hosts use TypeScript.
 - Rust first because core MCP-S implementation is Rust and proxy reuse is easier.
 
 Proposed grill direction:
 
 ```text
 Implement proxy in Rust if that matches the existing MCP-S codebase.
-Implement first SDK wrapper in the ecosystem language with highest adoption leverage.
+Implement the first SDK wrapper in Python (Anthropic's Python MCP SDK — easiest
+to test/validate, maintainer's stronger language); TypeScript follows.
 ```
 
 ### Q7. Where do client signing keys live?

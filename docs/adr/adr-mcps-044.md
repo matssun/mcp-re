@@ -38,7 +38,7 @@ support**, **local client-side proxy**, and **SDK wrapper** — with this priori
 
 ```text
 1. Local client-side proxy   (first practical adoption bridge)
-2. SDK wrapper               (TypeScript first)
+2. SDK wrapper               (Python first)
 3. Native client/host        (future ecosystem adoption)
 ```
 
@@ -134,15 +134,31 @@ explicitly-labelled development/test mode and are never accepted as production
 `require_mcps` custody. TOFU stays forbidden under `require_mcps`
 ([043](adr-mcps-043.md)).
 
-### SDK wrap-or-fork rule; TypeScript first
+**Two custody profiles — made explicit (do not conflate).** The base
+`require_mcps` posture is *property-based*: a configured **software-held-private**
+signer (key held in-process, scrubbed on drop, identified in evidence, bound to
+the route/audience/client-identity policy) MAY sign — this is the **baseline**,
+explicitly **NOT** the high-assurance posture. The opt-in **high-assurance /
+non-exporting hardening profile** additionally **rejects software-held keys**,
+admitting only non-exporting custody (HSM / KMS / Secure Enclave / delegated
+signer). **Unprotected dev-file keys are forbidden under production `require_mcps`**
+in *both* profiles, and permitted only in explicitly-labelled dev/test. The client
+core enforces exactly this split (`mcps-client-core` `CustodyClass` +
+`SignerPolicy::require_non_exporting`; surfaced in the Python SDK as `Signer` /
+`SignerPolicy`). Accepting a software signer under production `require_mcps` is
+therefore correct *only* as the baseline property-based profile and MUST NOT be
+described as the high-assurance posture.
+
+### SDK wrap-or-fork rule; Python first
 
 An SDK wrapper is permitted only when the underlying MCP SDK exposes hooks to **sign
 the exact outbound bytes / canonical preimage before send** and **verify the exact
 inbound response bytes/evidence before application parsing.** If an SDK cannot provide
 that without semantic drift, the project MUST NOT claim a transparent wrapper for it;
 the fallback is a small transport adapter or a minimal/forked client layer that owns
-serialization boundaries explicitly. **TypeScript is the first SDK** (highest MCP
-client/host adoption leverage); other languages follow by demand.
+serialization boundaries explicitly. **Python is the first SDK** — Anthropic's
+well-supported Python MCP SDK is easy to test and validate and is the maintainer's
+stronger language; **TypeScript follows**, then other languages by demand.
 
 ## Alternatives Considered
 
@@ -194,5 +210,5 @@ remote MCP-S server/proxy → ordinary MCP server.
 - Grill input: [`mcps-client-integration-grill-input.md`](../grilling-seed/mcps-client-integration-grill-input.md).
 - Sibling (binding constraints): [043](adr-mcps-043.md) (Discovery & Enforcement).
 - Depends on: [026](adr-mcps-026.md), [028](adr-mcps-028.md), [021](adr-mcps-021.md).
-- Roadmap: post-v0.6 — proxy → TypeScript SDK → end-to-end demo.
+- Roadmap: post-v0.6 — proxy → Python SDK → end-to-end demo (TypeScript SDK later).
 - Glossary: [`CONTEXT.md`](../../CONTEXT.md).
