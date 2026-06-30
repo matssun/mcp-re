@@ -30,6 +30,7 @@ use mcps_core::McpsError;
 use mcps_core::ReplayCache;
 use mcps_core::TrustResolver;
 use mcps_core::VerificationConfig;
+use mcps_core::VerifiedAuthorization;
 use mcps_core::VerifiedContext;
 use mcps_core::VerifiedRequest;
 use mcps_core::REQUEST_META_KEY;
@@ -38,6 +39,7 @@ use mcps_core::RESPONSE_WRAP_INNER_ERROR_KEY;
 use mcps_core::RESPONSE_WRAP_VALUE_KEY;
 use mcps_core::SIG_ALG_ED25519;
 use mcps_core::VERIFIED_META_KEY;
+use mcps_core::VERSION_DRAFT_02;
 use mcps_policy::json_rpc_authorization_error;
 use mcps_policy::AuthorizationDecision;
 use mcps_policy::PolicyEvaluator;
@@ -452,28 +454,11 @@ impl Proxy {
         // the request and have it reach the inner server as proxy-authored.
         scrub_proxy_owned_meta(&mut request);
 
-        // The proxy request path runs the draft-01 verifier, so the verified
-        // authorization is always the draft-01 hash. The draft-02 binding sidecar
-        // is wired with the proxy's draft-02 path in MCPS-37 (#183); a draft-02
-        // verdict reaching this draft-01-only builder fails closed rather than
-        // emitting a placeholder.
-        let authorization_hash = verified
-            .authorization
-            .draft01_hash()
-            .ok_or(McpsError::UnsupportedVersion)?
-            .to_string();
-        let context = VerifiedContext {
-            verified_signer: verified.verified_signer.clone(),
-            key_id: verified.key_id.clone(),
-            on_behalf_of: verified.on_behalf_of.clone(),
-            audience: verified.audience.clone(),
-            authorization_hash,
-            request_hash: verified.request_hash.clone(),
-            verifier: self.server_signer.clone(),
-            verified_at: unix_to_rfc3339_utc(now_unix),
-        };
-        let context_value =
-            serde_json::to_value(&context).map_err(|_| McpsError::CanonicalizationFailed)?;
+        // ADR-MCPS-039: the injected verified-context block is VERSIONED to match
+        // the verified request's profile — no sentinel/empty-field placeholder for
+        // the inactive profile. draft-01 carries the bare `authorization_hash`;
+        // draft-02 carries the typed `authorization_binding`.
+        let context_value = self.build_verified_context(verified, now_unix)?;
 
         // Inject the SINGLE canonical `verified` block the proxy authors. The
         // recursive scrub above already removed every proxy-owned key (the external
@@ -492,6 +477,62 @@ impl Proxy {
         }
 
         serde_json::to_vec(&request).map_err(|_| McpsError::CanonicalizationFailed)
+    }
+
+    /// Build the proxy-authored verified-context value injected for the inner
+    /// server (and the audit trail), matching the verified request's profile.
+    ///
+    /// draft-01 yields the existing [`VerifiedContext`] (bare `authorization_hash`).
+    /// draft-02 yields a context carrying the protected `version` /
+    /// `canonicalization_id` and the typed `authorization_binding` copied from the
+    /// verified request — an ATTESTATION the proxy makes, never the raw artifact
+    /// bytes and never a request to the inner to reinterpret authorization. A
+    /// draft-02 verdict missing its `canonicalization_id` fails closed rather than
+    /// emitting a placeholder (it cannot happen for a verified request, but the
+    /// builder never fabricates the protected identifier).
+    fn build_verified_context(
+        &self,
+        verified: &VerifiedRequest,
+        now_unix: i64,
+    ) -> Result<Value, McpsError> {
+        let verified_at = unix_to_rfc3339_utc(now_unix);
+        match &verified.authorization {
+            VerifiedAuthorization::Draft01Hash { authorization_hash } => {
+                let context = VerifiedContext {
+                    verified_signer: verified.verified_signer.clone(),
+                    key_id: verified.key_id.clone(),
+                    on_behalf_of: verified.on_behalf_of.clone(),
+                    audience: verified.audience.clone(),
+                    authorization_hash: authorization_hash.clone(),
+                    request_hash: verified.request_hash.clone(),
+                    verifier: self.server_signer.clone(),
+                    verified_at,
+                };
+                serde_json::to_value(&context).map_err(|_| McpsError::CanonicalizationFailed)
+            }
+            VerifiedAuthorization::Draft02Binding {
+                authorization_binding,
+            } => {
+                let canonicalization_id = verified
+                    .canonicalization_id
+                    .as_deref()
+                    .ok_or(McpsError::CanonicalizationIdMissing)?;
+                let binding_value = serde_json::to_value(authorization_binding)
+                    .map_err(|_| McpsError::CanonicalizationFailed)?;
+                Ok(json!({
+                    "version": VERSION_DRAFT_02,
+                    "verified_signer": verified.verified_signer,
+                    "key_id": verified.key_id,
+                    "on_behalf_of": verified.on_behalf_of,
+                    "audience": verified.audience,
+                    "request_hash": verified.request_hash,
+                    "verifier": self.server_signer,
+                    "verified_at": verified_at,
+                    "canonicalization_id": canonicalization_id,
+                    "authorization_binding": binding_value,
+                }))
+            }
+        }
     }
 
     /// Wrap the inner server's response in a SIGNED envelope bound to the verified
@@ -556,12 +597,8 @@ impl Proxy {
             "id": id_value.clone(),
             "result": result,
         });
-        response["result"]["_meta"][RESPONSE_META_KEY] = json!({
-            "request_hash": verified.request_hash,
-            "server_signer": self.server_signer,
-            "issued_at": unix_to_rfc3339_utc(now_unix),
-            "signature": { "alg": SIG_ALG_ED25519, "key_id": self.key_id },
-        });
+        response["result"]["_meta"][RESPONSE_META_KEY] =
+            self.build_response_envelope(verified, now_unix)?;
 
         let preimage = response_signing_preimage(&response)?;
         // Issue #3838: sign through the delegation seam. The key never leaves the
@@ -577,6 +614,48 @@ impl Proxy {
             Value::String(signature);
 
         serde_json::to_vec(&response).map_err(|_| McpsError::CanonicalizationFailed)
+    }
+
+    /// Build the `result._meta.response` envelope value (minus the signature
+    /// value, filled after preimage signing), VERSIONED to the verified request's
+    /// profile.
+    ///
+    /// draft-01 is the existing block (`request_hash` / `server_signer` /
+    /// `issued_at` / `signature`). draft-02 additionally carries the PROTECTED
+    /// `version` and `canonicalization_id` — both inside the object before the
+    /// preimage is taken, so the signature covers them — making the response a
+    /// self-describing draft-02 record the client verifies through
+    /// `verify_signed_response`. A draft-02 verdict missing its
+    /// `canonicalization_id` fails closed (no fabricated protected identifier).
+    fn build_response_envelope(
+        &self,
+        verified: &VerifiedRequest,
+        now_unix: i64,
+    ) -> Result<Value, McpsError> {
+        let issued_at = unix_to_rfc3339_utc(now_unix);
+        let signature = json!({ "alg": SIG_ALG_ED25519, "key_id": self.key_id });
+        match &verified.authorization {
+            VerifiedAuthorization::Draft01Hash { .. } => Ok(json!({
+                "request_hash": verified.request_hash,
+                "server_signer": self.server_signer,
+                "issued_at": issued_at,
+                "signature": signature,
+            })),
+            VerifiedAuthorization::Draft02Binding { .. } => {
+                let canonicalization_id = verified
+                    .canonicalization_id
+                    .as_deref()
+                    .ok_or(McpsError::CanonicalizationIdMissing)?;
+                Ok(json!({
+                    "version": VERSION_DRAFT_02,
+                    "canonicalization_id": canonicalization_id,
+                    "request_hash": verified.request_hash,
+                    "server_signer": self.server_signer,
+                    "issued_at": issued_at,
+                    "signature": signature,
+                }))
+            }
+        }
     }
 }
 
