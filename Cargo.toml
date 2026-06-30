@@ -18,6 +18,7 @@ members = [
     "mcps-host",        # Client-side ambassador (request signing, response verification)
     "mcps-client-core", # Client-side shared seam for proxy + SDK (ADR-MCPS-044) — signed draft-02 requests, response binding
     "mcps-client-proxy",# Local client-side MCP-S proxy (first adoption bridge) — plain-MCP endpoint -> sign -> forward -> verify (ADR-MCPS-044)
+    "mcps-client-proxy-cli", # Binary front-end for mcps-client-proxy (ADR-MCPS-045 Phase 3) — plain-MCP stdio -> sign draft-02 -> mTLS to remote
     "mcps-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
     "mcps-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
     "mcps-demo-fileserver", # Phase 6.5 demo target — ordinary MCP-S-unaware stdio server
