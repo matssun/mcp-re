@@ -299,8 +299,7 @@ fn guard_inputs_are_non_empty() {
     // The guard test target must itself be recorded (it is a target under
     // components/mcps too) — proves the manifest includes the guard.
     assert!(
-        manifest_targets(&manifest())
-            .contains("//mcps-conformance:drift_guard_test"),
+        manifest_targets(&manifest()).contains("//mcps-conformance:drift_guard_test"),
         "manifest must record the drift_guard_test target itself"
     );
 }

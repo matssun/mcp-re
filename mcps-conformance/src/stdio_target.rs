@@ -75,7 +75,9 @@ impl StdioHarness {
                 stdin
                     .write_all(request)
                     .map_err(|e| format!("write request: {e}"))?;
-                stdin.write_all(b"\n").map_err(|e| format!("write nl: {e}"))?;
+                stdin
+                    .write_all(b"\n")
+                    .map_err(|e| format!("write nl: {e}"))?;
             }
             // Dropping stdin closes it, signaling EOF to the serve loop.
         }
@@ -126,7 +128,10 @@ pub fn outcome_token(
     };
 
     if let Some(message) = value.get("error").and_then(|e| e.get("message")) {
-        return message.as_str().unwrap_or("harness_error: non-string error.message").to_string();
+        return message
+            .as_str()
+            .unwrap_or("harness_error: non-string error.message")
+            .to_string();
     }
 
     match verify_response(response, resolver, expected_request_hash) {

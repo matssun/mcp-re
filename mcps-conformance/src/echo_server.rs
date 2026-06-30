@@ -15,13 +15,13 @@
 
 use std::cell::RefCell;
 
+use mcps_core::json_rpc_error_object;
 use mcps_core::request_signing_preimage;
 use mcps_core::response_signing_preimage;
-use mcps_core::json_rpc_error_object;
+use mcps_core::unix_to_rfc3339_utc;
 use mcps_core::verify_request;
 use mcps_core::InMemoryReplayCache;
 use mcps_core::McpsError;
-use mcps_core::unix_to_rfc3339_utc;
 use mcps_core::SigningKey;
 use mcps_core::TrustResolver;
 use mcps_core::VerificationConfig;
@@ -99,15 +99,12 @@ impl EchoServer {
         };
 
         match verify_result {
-            Ok(verified) => match self.build_signed_response(
-                parsed.as_ref(),
-                &verified,
-                now_unix,
-                &id_value,
-            ) {
-                Ok(bytes) => bytes,
-                Err(err) => json_rpc_error_object(&err, &id_value),
-            },
+            Ok(verified) => {
+                match self.build_signed_response(parsed.as_ref(), &verified, now_unix, &id_value) {
+                    Ok(bytes) => bytes,
+                    Err(err) => json_rpc_error_object(&err, &id_value),
+                }
+            }
             Err(err) => json_rpc_error_object(&err, &id_value),
         }
     }
@@ -208,8 +205,7 @@ pub fn build_signed_request(
 
     let preimage = request_signing_preimage(&request)?;
     let signature = signing_key.sign(&preimage);
-    request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] =
-        Value::String(signature);
+    request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] = Value::String(signature);
 
     serde_json::to_vec(&request).map_err(|_| McpsError::CanonicalizationFailed)
 }

@@ -50,15 +50,16 @@
     }
   },
   "counts": {
-    "comment": "Recorded counts. The guard re-derives each value from the on-disk fixtures and the enumerated lists above and FAILS on any mismatch — these cannot silently rot.",
+    "comment": "Recorded counts. The guard re-derives each value from the on-disk fixtures and the enumerated lists above and FAILS on any mismatch \u2014 these cannot silently rot.",
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 60
+    "bazel_test_targets": 61
   },
   "bazel_test_targets": [
     "//mcps-conformance:acceptance_test",
     "//mcps-conformance:audit_vocabulary_guard_test",
+    "//mcps-conformance:discovery_enforcement_conformance_test",
     "//mcps-conformance:drift_guard_test",
     "//mcps-conformance:echo_server_test",
     "//mcps-conformance:forbidden_claim_guard_test",

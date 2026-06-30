@@ -199,9 +199,16 @@ fn test_names_in_build(text: &str) -> Vec<String> {
 fn source_env_for(source: &str) -> &'static str {
     match source {
         "mcps-conformance/tests/object_suite_test.rs" => "MCPS_SRC_OBJECT_SUITE",
+        "mcps-conformance/tests/discovery_enforcement_conformance_test.rs" => {
+            "MCPS_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE"
+        }
         "mcps-conformance/tests/method_transparency_test.rs" => "MCPS_SRC_METHOD_TRANSPARENCY",
-        "mcps-conformance/tests/method_name_drift_guard_test.rs" => "MCPS_SRC_METHOD_NAME_DRIFT_GUARD",
-        "mcps-conformance/tests/audit_vocabulary_guard_test.rs" => "MCPS_SRC_AUDIT_VOCABULARY_GUARD",
+        "mcps-conformance/tests/method_name_drift_guard_test.rs" => {
+            "MCPS_SRC_METHOD_NAME_DRIFT_GUARD"
+        }
+        "mcps-conformance/tests/audit_vocabulary_guard_test.rs" => {
+            "MCPS_SRC_AUDIT_VOCABULARY_GUARD"
+        }
         "mcps-conformance/tests/forbidden_claim_guard_test.rs" => "MCPS_SRC_FORBIDDEN_CLAIM_GUARD",
         "mcps-proxy/tests/keyset_admission_test.rs" => "MCPS_SRC_KEYSET_ADMISSION",
         "mcps-demo/tests/demo_negative_e2e_test.rs" => "MCPS_SRC_DEMO_NEGATIVE_E2E",
@@ -365,10 +372,7 @@ fn every_section_a_claim_maps_to_a_manifest_entry() {
                 .any(|p| frags.iter().all(|f| p.contains(f.as_str())))
         });
         if !mapped {
-            unmapped.push(format!(
-                "{} (citations: {:?})",
-                row.capability, row.cited
-            ));
+            unmapped.push(format!("{} (citations: {:?})", row.capability, row.cited));
         }
     }
     assert!(
@@ -438,7 +442,10 @@ fn required_gate_guards_are_mapped() {
 #[test]
 fn guard_inputs_are_non_empty() {
     let m = manifest();
-    assert!(!entries(&m).is_empty(), "manifest has zero entries — wiring broken");
+    assert!(
+        !entries(&m).is_empty(),
+        "manifest has zero entries — wiring broken"
+    );
     assert!(
         declared_test_targets().len() >= 20,
         "parsed too few nt_rust_test targets from BUILD files — parser/wiring broken"
@@ -477,7 +484,10 @@ fn drift_detector_rejects_renamed_target_and_fn() {
         "control: the real fn is found"
     );
     assert!(
-        !declares_fn(&host_session, "signed_request_is_accepted_by_the_verifier_RENAMED"),
+        !declares_fn(
+            &host_session,
+            "signed_request_is_accepted_by_the_verifier_RENAMED"
+        ),
         "a renamed fn must NOT be found in the source (drift would be caught)"
     );
 }

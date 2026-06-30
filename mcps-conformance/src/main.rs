@@ -10,8 +10,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use mcps_conformance::run_suite;
 use mcps_conformance::load_from_dir;
+use mcps_conformance::run_suite;
 use mcps_conformance::ObjectTarget;
 
 /// Default vectors directory for local `cargo run` (workspace-relative). The

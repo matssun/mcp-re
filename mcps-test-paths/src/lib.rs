@@ -83,7 +83,13 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCPS_BUILD_PROXY" => workspace_root.join("mcps-proxy/BUILD.bazel"),
         "MCPS_BUILD_TRANSPORT" => workspace_root.join("mcps-transport/BUILD.bazel"),
         // Per-test source files (read by the security-traceability guard)
-        "MCPS_SRC_OBJECT_SUITE" => workspace_root.join("mcps-conformance/tests/object_suite_test.rs"),
+        "MCPS_SRC_OBJECT_SUITE" => {
+            workspace_root.join("mcps-conformance/tests/object_suite_test.rs")
+        }
+        // MCPS-50 (#197): the discovery/enforcement conformance corpus source.
+        "MCPS_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE" => {
+            workspace_root.join("mcps-conformance/tests/discovery_enforcement_conformance_test.rs")
+        }
         // ADR-MCPS-034: the two method-transparency proof artifacts.
         "MCPS_SRC_METHOD_TRANSPARENCY" => {
             workspace_root.join("mcps-conformance/tests/method_transparency_test.rs")
@@ -187,8 +193,16 @@ fn find_bin(workspace_root: &Path, bin_name: &str) -> PathBuf {
     let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| workspace_root.join("target"));
-    let primary_profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    let other_profile = if primary_profile == "debug" { "release" } else { "debug" };
+    let primary_profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let other_profile = if primary_profile == "debug" {
+        "release"
+    } else {
+        "debug"
+    };
     for profile in [primary_profile, other_profile] {
         let candidate = target_dir.join(profile).join(&bin_file);
         if candidate.is_file() {

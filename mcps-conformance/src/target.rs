@@ -125,8 +125,9 @@ impl ObjectTarget {
             return b64url_decode(b64).map_err(|e| format!("raw_bytes_b64url decode failed: {e}"));
         }
         match &case.message {
-            Some(message) => serde_json::to_vec(message)
-                .map_err(|e| format!("serialize message failed: {e}")),
+            Some(message) => {
+                serde_json::to_vec(message).map_err(|e| format!("serialize message failed: {e}"))
+            }
             None => Err(format!(
                 "vector '{}' has neither message nor raw bytes",
                 case.name
@@ -171,7 +172,11 @@ impl ObjectTarget {
 
         let mut replay = InMemoryReplayCache::new(TEST_MAX_CLOCK_SKEW_SECS);
         Ok(Self::map_result(verify_request(
-            bytes, &resolver, &mut replay, &config, now,
+            bytes,
+            &resolver,
+            &mut replay,
+            &config,
+            now,
         )))
     }
 
@@ -182,11 +187,14 @@ impl ObjectTarget {
         ctx: &RunContext,
     ) -> Result<TargetOutcome, String> {
         let resolver = Self::resolver_for(case)?;
-        let expected_hash = ctx
-            .canonical_request_hash
-            .as_deref()
-            .ok_or_else(|| "response vector needs canonical_request_hash in RunContext".to_string())?;
-        Ok(Self::map_result(verify_response(bytes, &resolver, expected_hash)))
+        let expected_hash = ctx.canonical_request_hash.as_deref().ok_or_else(|| {
+            "response vector needs canonical_request_hash in RunContext".to_string()
+        })?;
+        Ok(Self::map_result(verify_response(
+            bytes,
+            &resolver,
+            expected_hash,
+        )))
     }
 }
 
