@@ -9,6 +9,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [Unreleased] — v0.6 (`draft-02`)
+
+**Runtime-evidence preimages — a `draft-02` wire-envelope change.** v0.6
+introduces the `draft-02` profile alongside the released `draft-01`/v0.5.1
+baseline: two protected envelope identifiers (`version: "draft-02"` and a
+self-describing `canonicalization_id`), an explicit canonical-preimage exclusion
+predicate, a typed `authorization_binding` object, nine new fail-closed wire
+codes, a dual verifier with strict version dispatch, and a separate frozen
+conformance corpus. `draft-01`/v0.5.1 stays byte-for-byte and verdict-for-verdict
+unchanged. Resolved in the v0.6 grill (2026-06-29);
+ADRs [037](docs/adr/adr-mcps-037.md)–[042](docs/adr/adr-mcps-042.md). **In
+progress — not yet released.**
+
+### Documented limitation — integer-only canonicalization (`mcps-jcs-int53-json-v1`)
+
+The first `draft-02` canonicalization scheme keeps the integer-only JSON number
+domain (±(2^53 − 1)), named `mcps-jcs-int53-json-v1`. **MCP-S v0.6 does NOT
+protect a signed payload that contains JSON fractional numbers** —
+`{"temperature":0.7}`, `{"price":19.99}`, a latitude — such messages fail closed
+with `mcps.canonicalization_failed` unless the value is carried as a string. This
+is an intentional, named, machine-checked scope boundary (a required honesty
+conformance vector proves `0.7`/`19.99` are rejected), not a defect: full
+RFC 8785 fractional-number serialization is the highest-risk cross-implementation
+interop surface and is **deferred to a future, separately-named, separately-
+vector-hardened `mcps-jcs-…-v2` scheme** admitted through the canonicalization
+allowlist — never by widening v1 ([ADR-MCPS-037](docs/adr/adr-mcps-037.md)).
+
 ## [0.5.1] — 2026-06-24
 
 **Live Google Cloud KMS validation release.** No wire-envelope changes: this

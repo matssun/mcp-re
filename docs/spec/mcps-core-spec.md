@@ -104,6 +104,20 @@ Before signature verification, the protected message MUST be validated against t
 - No Unicode normalization, no parser repair/coercion.
 - Big IDs, decimals, nanosecond timestamps, monetary amounts → carry as JSON strings. JSON-RPC `id` SHOULD be a string (an integer `id` is allowed only if within the safe-integer range).
 
+> **Draft-02 (v0.6) — named scheme and documented float limitation.** The
+> draft-02 profile names this exact domain `mcps-jcs-int53-json-v1` (the
+> protected `canonicalization_id`, [ADR-MCPS-037](../adr/adr-mcps-037.md) /
+> [038](../adr/adr-mcps-038.md)). **MCP-S v0.6 therefore does NOT protect a
+> signed payload that contains JSON fractional numbers** — `{"temperature":0.7}`,
+> `{"price":19.99}`, a latitude — such a message fails closed with
+> `mcps.canonicalization_failed` unless the value is carried as a string. This is
+> an intentional, named, machine-checked scope boundary (the required honesty
+> conformance vector proves `0.7`/`19.99` are rejected), not a parser accident:
+> full RFC 8785 fractional-number serialization is the highest-risk
+> cross-implementation interop surface, so it is **deferred to a future,
+> separately-named, separately-vector-hardened `mcps-jcs-…-v2` scheme** admitted
+> through the canonicalization allowlist — never by widening v1.
+
 Canonicalization (RFC 8785) emitted from the validated value tree:
 
 - Object members sorted by member name, ordered by UTF-16 code unit. (For BMP/ASCII keys used here this is bytewise; implement the UTF-16 rule for correctness.)

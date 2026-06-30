@@ -634,6 +634,26 @@ mod tests {
         assert_eq!(err, McpsError::CanonicalizationFailed);
     }
 
+    /// ADR-MCPS-037 / decision B.1 — the int53 scheme (`mcps-jcs-int53-json-v1`)
+    /// does NOT protect signed payloads containing common MCP fractional numbers.
+    /// These exact examples (a temperature, a price) fail closed; the limitation
+    /// is machine-checked here, not merely documented.
+    #[test]
+    fn int53_documented_float_limitation_rejects_common_mcp_floats() {
+        for float in ["0.7", "19.99", "-0.0", "55.7047", "0.1"] {
+            assert_eq!(
+                canonicalize(float.as_bytes()).unwrap_err(),
+                McpsError::CanonicalizationFailed,
+                "{float} must fail closed under the int53 domain"
+            );
+        }
+        // …and inside a realistic signed-payload arguments object.
+        assert_eq!(
+            canonicalize(br#"{"temperature":0.7,"price":19.99}"#).unwrap_err(),
+            McpsError::CanonicalizationFailed
+        );
+    }
+
     #[test]
     fn jcs_05_exponent_number_rejected() {
         assert_eq!(canonicalize(b"1e3").unwrap_err(), McpsError::CanonicalizationFailed);

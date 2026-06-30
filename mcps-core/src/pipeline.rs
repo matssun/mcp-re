@@ -918,6 +918,43 @@ mod tests {
     }
 
     #[test]
+    fn draft02_float_bearing_payload_fails_closed_int53_honesty_vector() {
+        // ADR-MCPS-037 / decision B.1: the v0.6 int53 scheme does NOT protect a
+        // signed payload carrying JSON fractional numbers. A float in the signed
+        // arguments fails closed at the raw-bytes JCS domain check (step 3),
+        // before the signature — machine-checking the documented limitation
+        // end-to-end through the draft-02 verifier.
+        let mut obj = request_unsigned_draft02("req-1", "hello");
+        obj["params"]["arguments"] = json!({ "temperature": 0.7, "price": 19.99 });
+        // The float cannot even be signed (the preimage canonicalizer rejects it),
+        // so a placeholder signature suffices: verification rejects at step 3.
+        obj["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] = json!("AA");
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        assert_eq!(
+            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            Err(McpsError::CanonicalizationFailed)
+        );
+    }
+
+    #[test]
+    fn draft02_max_safe_integer_payload_verifies() {
+        // The int53 boundary (±(2^53−1)) IS in domain: a max-safe-int argument
+        // signs and verifies, confirming the limitation is floats-only, not
+        // integers-near-the-edge.
+        let mut obj = request_unsigned_draft02("req-1", "hello");
+        obj["params"]["arguments"] = json!({ "count": 9_007_199_254_740_991i64 });
+        sign_request_value(&mut obj);
+        let raw = serde_json::to_vec(&obj).expect("serialize");
+        let mut replay = InMemoryReplayCache::new(SKEW);
+        assert!(
+            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60)
+                .is_ok(),
+            "a max-safe-integer payload must verify under the int53 scheme"
+        );
+    }
+
+    #[test]
     fn draft02_missing_canonicalization_id_fails_before_crypto() {
         let mut obj = request_unsigned_draft02("req-1", "hello");
         sign_request_value(&mut obj);
