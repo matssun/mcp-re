@@ -677,6 +677,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcps-client-proxy-cli"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-client-proxy",
+ "mcps-core",
+ "mcps-host",
+ "mcps-transport",
+ "serde_json",
+]
+
+[[package]]
 name = "mcps-conformance"
 version = "0.6.0"
 dependencies = [
