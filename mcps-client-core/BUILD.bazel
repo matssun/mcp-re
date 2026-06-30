@@ -106,3 +106,18 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# MCPS-43: the audience tuple discriminates tenants/routes sharing one signer
+# (wildcard SaaS) — hostname alone is insufficient.
+nt_rust_test(
+    name = "signer_audience_binding_test",
+    srcs = ["tests/signer_audience_binding_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_client_core",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
