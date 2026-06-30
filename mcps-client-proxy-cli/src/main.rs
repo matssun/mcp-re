@@ -23,6 +23,10 @@
 //!     --tls-cert <pem> --tls-key <pem> --server-ca <pem> \
 //!     [--route-id tools] [--on-behalf-of <principal>] [--ttl-secs 300]
 
+// The client-side Cloud KMS signer (ADR-MCPS-045 Phase 4 / T4) is compiled only
+// under the optional `gcp_kms` feature; a default build is mTLS + software keys.
+#[cfg(feature = "gcp_kms")]
+mod kms_signer;
 mod transport;
 
 use std::io::BufRead;
@@ -36,6 +40,7 @@ use std::time::UNIX_EPOCH;
 
 use mcps_client_core::AudienceTuple;
 use mcps_client_core::AuthorizationBindingPolicy;
+use mcps_client_core::ClientSigner;
 use mcps_client_core::EnforcementMode;
 use mcps_client_core::Environment;
 use mcps_client_core::OpaqueBytesProvider;
@@ -62,6 +67,16 @@ use serde_json::Value;
 
 use crate::transport::MtlsRemoteTransport;
 
+/// Where the client's request-signing key lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeySource {
+    /// A seed-backed in-process software key (`--signing-key-seed`).
+    File,
+    /// A non-exporting GCP Cloud KMS `EC_SIGN_ED25519` key (`--gcp-kms-*`); the
+    /// hardening profile is enforced (NonExporting custody required).
+    GcpKms,
+}
+
 /// The parsed CLI configuration.
 #[derive(Debug)]
 struct CliArgs {
@@ -69,7 +84,13 @@ struct CliArgs {
     server_name: String,
     signer_id: String,
     key_id: String,
-    signing_key_seed: String,
+    key_source: KeySource,
+    /// Required for [`KeySource::File`]; unused for KMS (the key never leaves KMS).
+    signing_key_seed: Option<String>,
+    /// Full Cloud KMS resource path; required for [`KeySource::GcpKms`].
+    gcp_kms_key_version: Option<String>,
+    gcp_kms_endpoint: Option<String>,
+    gcp_kms_use_metadata: bool,
     server_signer: String,
     server_key_id: String,
     server_pubkey: String,
@@ -87,7 +108,11 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
     let mut server_name = None;
     let mut signer_id = None;
     let mut key_id = None;
+    let mut key_source = "file".to_string();
     let mut signing_key_seed = None;
+    let mut gcp_kms_key_version = None;
+    let mut gcp_kms_endpoint = None;
+    let mut gcp_kms_use_metadata = false;
     let mut server_signer = None;
     let mut server_key_id = None;
     let mut server_pubkey = None;
@@ -112,6 +137,10 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
             "--signer-id" => signer_id = Some(take("--signer-id")?),
             "--key-id" => key_id = Some(take("--key-id")?),
             "--signing-key-seed" => signing_key_seed = Some(take("--signing-key-seed")?),
+            "--key-source" => key_source = take("--key-source")?,
+            "--gcp-kms-key-version" => gcp_kms_key_version = Some(take("--gcp-kms-key-version")?),
+            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(take("--gcp-kms-endpoint")?),
+            "--gcp-kms-use-metadata" => gcp_kms_use_metadata = true,
             "--server-signer" => server_signer = Some(take("--server-signer")?),
             "--server-key-id" => server_key_id = Some(take("--server-key-id")?),
             "--server-pubkey" => server_pubkey = Some(take("--server-pubkey")?),
@@ -131,12 +160,34 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
     }
 
     let req = |opt: Option<String>, flag: &str| opt.ok_or_else(|| format!("{flag} is required"));
+    let key_source = match key_source.as_str() {
+        "file" => KeySource::File,
+        "gcp-kms" => KeySource::GcpKms,
+        other => return Err(format!("unknown --key-source '{other}' (file|gcp-kms)")),
+    };
+    // Per-source required fields: a file key needs a seed; a KMS key needs a key
+    // version (and the key never leaves KMS, so no seed).
+    match key_source {
+        KeySource::File if signing_key_seed.is_none() => {
+            return Err("--signing-key-seed is required for --key-source file".to_string())
+        }
+        KeySource::GcpKms if gcp_kms_key_version.is_none() => {
+            return Err(
+                "--gcp-kms-key-version is required for --key-source gcp-kms".to_string(),
+            )
+        }
+        _ => {}
+    }
     Ok(CliArgs {
         remote_addr: req(remote_addr, "--remote-addr")?,
         server_name: req(server_name, "--server-name")?,
         signer_id: req(signer_id, "--signer-id")?,
         key_id: req(key_id, "--key-id")?,
-        signing_key_seed: req(signing_key_seed, "--signing-key-seed")?,
+        key_source,
+        signing_key_seed,
+        gcp_kms_key_version,
+        gcp_kms_endpoint,
+        gcp_kms_use_metadata,
         server_signer: req(server_signer, "--server-signer")?,
         server_key_id: req(server_key_id, "--server-key-id")?,
         server_pubkey: req(server_pubkey, "--server-pubkey")?,
@@ -184,15 +235,74 @@ fn parse_audience(value: &str) -> Result<AudienceTuple, String> {
         .map_err(|e| format!("invalid --audience: {e}"))
 }
 
-/// Build the configured [`ClientProxy`] from the parsed args.
-fn build_proxy(args: &CliArgs) -> Result<(ClientProxy, SocketAddr), String> {
-    // Client signing identity (software custody — in-memory key).
-    let seed_b64url = resolve_inline_or_file(&args.signing_key_seed)?;
-    let signer = SoftwareSigner::new(
-        signing_key_from_seed_b64url(&seed_b64url)?,
+/// Build the request signer + its custody policy from the configured key source.
+/// File keys are software custody (base posture); a Cloud KMS key is non-exporting
+/// custody and the hardening profile is REQUIRED (T4 "keys in cloud KMS").
+fn build_signer(args: &CliArgs) -> Result<(Box<dyn ClientSigner>, SignerPolicy), String> {
+    let base_policy = SignerPolicy::new(&args.signer_id, Environment::Production, true);
+    match args.key_source {
+        KeySource::File => {
+            let seed = args
+                .signing_key_seed
+                .as_deref()
+                .ok_or("--signing-key-seed is required for --key-source file")?;
+            let seed_b64url = resolve_inline_or_file(seed)?;
+            let signer = SoftwareSigner::new(
+                signing_key_from_seed_b64url(&seed_b64url)?,
+                &args.signer_id,
+                &args.key_id,
+            );
+            Ok((Box::new(signer), base_policy))
+        }
+        KeySource::GcpKms => build_kms_signer(args, base_policy),
+    }
+}
+
+/// The Cloud KMS arm of [`build_signer`], compiled only under the `gcp_kms`
+/// feature; a default build refuses `--key-source gcp-kms` with a clear message
+/// rather than silently degrading.
+#[cfg(feature = "gcp_kms")]
+fn build_kms_signer(
+    args: &CliArgs,
+    base_policy: SignerPolicy,
+) -> Result<(Box<dyn ClientSigner>, SignerPolicy), String> {
+    let key_version = args
+        .gcp_kms_key_version
+        .clone()
+        .ok_or("--gcp-kms-key-version is required for --key-source gcp-kms")?;
+    let config = mcps_proxy::GcpKmsConfig {
+        key_version_name: key_version,
+        endpoint: args.gcp_kms_endpoint.clone(),
+    };
+    let signer = kms_signer::KmsClientSigner::new(
+        &config,
+        args.gcp_kms_use_metadata,
         &args.signer_id,
         &args.key_id,
+    )?;
+    // Cloud KMS keys are non-exporting; enforce the hardening profile so a
+    // software key can never be silently substituted for this route.
+    Ok((Box::new(signer), base_policy.require_non_exporting()))
+}
+
+#[cfg(not(feature = "gcp_kms"))]
+fn build_kms_signer(
+    args: &CliArgs,
+    _base_policy: SignerPolicy,
+) -> Result<(Box<dyn ClientSigner>, SignerPolicy), String> {
+    // Acknowledge the KMS args (parsed regardless of feature) so a default build
+    // stays dead-code-clean; this build cannot honor them.
+    let _ = (
+        &args.gcp_kms_key_version,
+        &args.gcp_kms_endpoint,
+        args.gcp_kms_use_metadata,
     );
+    Err("--key-source gcp-kms requires a build with the `gcp_kms` feature".to_string())
+}
+
+/// Build the configured [`ClientProxy`] from the parsed args.
+fn build_proxy(args: &CliArgs) -> Result<(ClientProxy, SocketAddr), String> {
+    let (signer, signer_policy) = build_signer(args)?;
 
     // Trust the remote's response-signing public key.
     let server_pubkey_b64url = resolve_inline_or_file(&args.server_pubkey)?;
@@ -234,8 +344,8 @@ fn build_proxy(args: &CliArgs) -> Result<(ClientProxy, SocketAddr), String> {
 
     let proxy = ClientProxy::new(
         RouteRegistry::new().register(route),
-        Box::new(signer),
-        SignerPolicy::new(&args.signer_id, Environment::Production, true),
+        signer,
+        signer_policy,
         Box::new(trust),
         Box::new(MtlsRemoteTransport::new(mtls, addr)),
     );
