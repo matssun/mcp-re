@@ -145,7 +145,7 @@ fn signed_request_is_accepted_by_the_verifier() {
     assert_eq!(verified.verified_signer, SIGNER);
     assert_eq!(verified.on_behalf_of, ON_BEHALF_OF);
     assert_eq!(verified.audience, AUDIENCE);
-    assert_eq!(verified.authorization_hash, AUTH_HASH);
+    assert_eq!(verified.authorization.draft01_hash(), Some(AUTH_HASH));
 }
 
 #[test]

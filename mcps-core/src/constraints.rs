@@ -27,12 +27,31 @@
 
 use serde_json::Value;
 
+use crate::envelope::Draft02RequestEnvelope;
+use crate::envelope::Draft02ResponseEnvelope;
 use crate::envelope::RequestEnvelope;
 use crate::envelope::ResponseEnvelope;
 use crate::error::McpsError;
+use crate::ids::BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE;
+use crate::ids::BINDING_TYPE_OPAQUE_BYTES;
+use crate::ids::CANONICALIZATION_ID_INT53_V1;
+use crate::ids::DIGEST_ALG_SHA256;
+use crate::ids::DRAFT_02_CANONICALIZATION_ALLOWLIST;
 use crate::ids::REQUEST_META_KEY;
 use crate::ids::RESPONSE_META_KEY;
 use crate::ids::VERSION_DRAFT_01;
+use crate::ids::VERSION_DRAFT_02;
+
+/// Every canonicalization scheme id the verifier RECOGNIZES as a real scheme,
+/// across all profile versions (ADR-MCPS-038 / decision B.2). It is a SUPERSET
+/// of any single profile's allowlist and is the seam that distinguishes an
+/// *unknown* id (names no scheme at all → `mcps.canonicalization_id_unknown`)
+/// from a *recognized-but-disallowed* id (a real scheme not admitted by the
+/// active profile → `mcps.canonicalization_id_not_allowed`). In v0.6 exactly one
+/// scheme exists, so this equals the draft-02 allowlist; a future float-capable
+/// `…-v2` scheme ([ADR-MCPS-037](../adr)) is added HERE first, then to a profile
+/// allowlist when proven — never the reverse.
+pub const KNOWN_CANONICALIZATION_SCHEMES: [&str; 1] = [CANONICALIZATION_ID_INT53_V1];
 
 /// §9 step 1 — reject a JSON-RPC batch (top-level array).
 ///
@@ -203,8 +222,192 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Draft-02 (v0.6) envelope extraction — ADR-MCPS-038 / decision B.2, D.1.
+// ---------------------------------------------------------------------------
+
+/// Draft-02 request-envelope extraction in the ADR-MCPS-038 verification ORDER:
+/// read `version` and `canonicalization_id` from the raw object as UNTRUSTED
+/// selectors first, require `version == "draft-02"`, require
+/// `canonicalization_id` ∈ the profile allowlist, THEN deserialize the full
+/// `deny_unknown_fields` struct. The fields are read before the signature
+/// verifies (the caller does that next) and trusted only after — the same
+/// read-untrusted/trust-after-verify pattern `alg`/`key_id` already follow.
+///
+/// Fail-closed mapping:
+/// - missing/absent envelope → [`McpsError::MissingEnvelope`];
+/// - `version != "draft-02"` (or absent) → [`McpsError::UnsupportedVersion`];
+/// - `canonicalization_id` absent → [`McpsError::CanonicalizationIdMissing`];
+/// - unrecognized scheme → [`McpsError::CanonicalizationIdUnknown`];
+/// - recognized but not allowlisted → [`McpsError::CanonicalizationIdNotAllowed`];
+/// - unknown field → [`McpsError::UnknownEnvelopeField`];
+/// - other structural failure → [`McpsError::CanonicalizationFailed`], with a
+///   structurally-absent `authorization_hash`/`on_behalf_of` upgraded to its
+///   dedicated token (same priority as draft-01).
+pub fn extract_draft02_request_envelope(
+    msg: &Value,
+) -> Result<Draft02RequestEnvelope, McpsError> {
+    let raw = locate_envelope(msg, "params", REQUEST_META_KEY)?;
+    require_draft02_version(raw)?;
+    check_canonicalization_id(raw)?;
+    check_authorization_binding(raw)?;
+    deserialize_envelope(raw).map_err(|err| classify_draft02_request_envelope_error(raw, err))
+}
+
+/// Re-classify a draft-02 request-envelope deserialization error: a structurally
+/// absent `authorization_binding` surfaces [`McpsError::AuthorizationBindingMissing`]
+/// regardless of serde's first-missing-field ordering (the draft-02 analogue of
+/// [`classify_request_envelope_error`]; the binding's internal shape is already
+/// validated by [`check_authorization_binding`] before this point). Other
+/// structural failures keep their generic verdict.
+fn classify_draft02_request_envelope_error(raw: &Value, original: McpsError) -> McpsError {
+    if original != McpsError::CanonicalizationFailed {
+        return original;
+    }
+    match raw.as_object() {
+        Some(obj) if !obj.contains_key("authorization_binding") => {
+            McpsError::AuthorizationBindingMissing
+        }
+        _ => original,
+    }
+}
+
+/// Validate the raw envelope's `authorization_binding` object structurally
+/// (ADR-MCPS-039 / decision E.1, E.2) — Core BINDS, never interprets. Maps to the
+/// precise MCPS-31 codes:
+/// - absent → [`McpsError::AuthorizationBindingMissing`];
+/// - `binding_type` not in the base set → [`McpsError::AuthorizationBindingTypeUnsupported`];
+/// - opaque-bytes carrying authz-system-reference-only fields (both forms / a
+///   oneof violation) → [`McpsError::AuthorizationBindingAmbiguousBytes`];
+/// - wrong field set, empty field, or `digest_alg != "sha256"` →
+///   [`McpsError::AuthorizationBindingMalformed`].
+///
+/// It checks shape only: it never decodes the artifact, hashes, fetches, or
+/// authorizes — that is the `mcps-policy` profile's job.
+fn check_authorization_binding(raw: &Value) -> Result<(), McpsError> {
+    let binding = raw
+        .get("authorization_binding")
+        .ok_or(McpsError::AuthorizationBindingMissing)?;
+    let obj = binding
+        .as_object()
+        .ok_or(McpsError::AuthorizationBindingMalformed)?;
+    let binding_type = obj
+        .get("binding_type")
+        .and_then(Value::as_str)
+        .ok_or(McpsError::AuthorizationBindingMalformed)?;
+
+    let required: &[&str] = if binding_type == BINDING_TYPE_OPAQUE_BYTES {
+        // A oneof violation: opaque-bytes carrying any reference-only field means
+        // both forms are present and the opaque bytes are ambiguous.
+        const REFERENCE_ONLY: [&str; 3] = [
+            "authorization_system_id",
+            "reference_scheme_id",
+            "reference_value",
+        ];
+        if REFERENCE_ONLY.iter().any(|k| obj.contains_key(*k)) {
+            return Err(McpsError::AuthorizationBindingAmbiguousBytes);
+        }
+        &["binding_type", "digest_alg", "digest_value"]
+    } else if binding_type == BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE {
+        &[
+            "binding_type",
+            "authorization_system_id",
+            "reference_scheme_id",
+            "reference_value",
+            "digest_alg",
+            "digest_value",
+        ]
+    } else {
+        return Err(McpsError::AuthorizationBindingTypeUnsupported);
+    };
+
+    // Exactly the required fields — no fewer (mandatory), no extra (deny mixing
+    // / unknown). Each must be a non-empty string.
+    if obj.len() != required.len() {
+        return Err(McpsError::AuthorizationBindingMalformed);
+    }
+    for key in required {
+        match obj.get(*key).and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => {}
+            _ => return Err(McpsError::AuthorizationBindingMalformed),
+        }
+    }
+    // The digest algorithm is an explicit protected field; only sha256 in v0.6.
+    if obj.get("digest_alg").and_then(Value::as_str) != Some(DIGEST_ALG_SHA256) {
+        return Err(McpsError::AuthorizationBindingMalformed);
+    }
+    Ok(())
+}
+
+/// Draft-02 response-envelope extraction. Unlike draft-01, the draft-02 response
+/// DOES carry `version` and `canonicalization_id`, so it runs the same untrusted
+/// selector reads as the request: the response is an independently signed record
+/// and must be self-describing standalone (decision B.2). Same fail-closed
+/// mapping as [`extract_draft02_request_envelope`] minus the request-only
+/// dedicated-field upgrades.
+pub fn extract_draft02_response_envelope(
+    msg: &Value,
+) -> Result<Draft02ResponseEnvelope, McpsError> {
+    let raw = locate_envelope(msg, "result", RESPONSE_META_KEY)?;
+    require_draft02_version(raw)?;
+    check_canonicalization_id(raw)?;
+    deserialize_envelope(raw)
+}
+
+/// Require the raw envelope's `version` member to be exactly `"draft-02"`. Absent
+/// or any other value → [`McpsError::UnsupportedVersion`] (the profile cannot be
+/// selected). Read from the raw JSON as an untrusted selector before the
+/// signature verifies.
+fn require_draft02_version(raw: &Value) -> Result<(), McpsError> {
+    match raw.get("version").and_then(Value::as_str) {
+        Some(VERSION_DRAFT_02) => Ok(()),
+        _ => Err(McpsError::UnsupportedVersion),
+    }
+}
+
+/// Validate the raw envelope's protected `canonicalization_id` against the
+/// draft-02 profile (ADR-MCPS-038 step 4). Absent/non-string →
+/// [`McpsError::CanonicalizationIdMissing`]; present value classified by
+/// [`classify_canonicalization_id`].
+fn check_canonicalization_id(raw: &Value) -> Result<(), McpsError> {
+    match raw.get("canonicalization_id").and_then(Value::as_str) {
+        Some(id) => classify_canonicalization_id(
+            id,
+            &DRAFT_02_CANONICALIZATION_ALLOWLIST,
+            &KNOWN_CANONICALIZATION_SCHEMES,
+        ),
+        None => Err(McpsError::CanonicalizationIdMissing),
+    }
+}
+
+/// Classify a presented `canonicalization_id` against the active profile.
+///
+/// `allowlist` = the schemes the active profile admits; `known` = every scheme
+/// the verifier recognizes as real (a superset). The order matters: an allowed
+/// id passes; a recognized-but-unallowlisted id is a disallowed-scheme probe
+/// ([`McpsError::CanonicalizationIdNotAllowed`]); anything else names no scheme
+/// at all ([`McpsError::CanonicalizationIdUnknown`]). The verifier NEVER selects
+/// the canonicalizer from this field — membership is checked, the scheme is then
+/// chosen from the profile (no `alg`-confusion).
+fn classify_canonicalization_id(
+    id: &str,
+    allowlist: &[&str],
+    known: &[&str],
+) -> Result<(), McpsError> {
+    if allowlist.contains(&id) {
+        Ok(())
+    } else if known.contains(&id) {
+        Err(McpsError::CanonicalizationIdNotAllowed)
+    } else {
+        Err(McpsError::CanonicalizationIdUnknown)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::classify_canonicalization_id;
+    use super::extract_draft02_request_envelope;
+    use super::extract_draft02_response_envelope;
     use super::extract_request_envelope;
     use super::extract_response_envelope;
     use super::reject_batch;
@@ -298,6 +501,255 @@ mod tests {
                 "content": []
             }
         })
+    }
+
+    // ---- Draft-02 (v0.6) fixtures — ADR-MCPS-038 / decision B.2 ---------------
+
+    /// A valid draft-02 request envelope value: the draft-01 fields with
+    /// `authorization_hash` REPLACED by an opaque-bytes `authorization_binding`,
+    /// plus the two protected identifiers.
+    fn valid_draft02_request_envelope() -> Value {
+        let mut env = valid_request_envelope();
+        let obj = env.as_object_mut().unwrap();
+        obj.remove("authorization_hash");
+        obj.insert("version".into(), json!("draft-02"));
+        obj.insert(
+            "canonicalization_id".into(),
+            json!("mcps-jcs-int53-json-v1"),
+        );
+        obj.insert(
+            "authorization_binding".into(),
+            json!({
+                "binding_type": "opaque-bytes",
+                "digest_alg": "sha256",
+                "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+            }),
+        );
+        env
+    }
+
+    /// A valid draft-02 response envelope value (draft-01 response + both
+    /// protected identifiers).
+    fn valid_draft02_response_envelope() -> Value {
+        let mut env = valid_response_envelope();
+        let obj = env.as_object_mut().unwrap();
+        obj.insert("version".into(), json!("draft-02"));
+        obj.insert(
+            "canonicalization_id".into(),
+            json!("mcps-jcs-int53-json-v1"),
+        );
+        env
+    }
+
+    // ---- extract_draft02_request_envelope ------------------------------------
+
+    #[test]
+    fn draft02_request_extracts_with_both_identifiers() {
+        let msg = request_message_with_envelope(valid_draft02_request_envelope());
+        let env = extract_draft02_request_envelope(&msg).expect("valid draft-02 request");
+        assert_eq!(env.version, "draft-02");
+        assert_eq!(env.canonicalization_id, "mcps-jcs-int53-json-v1");
+    }
+
+    #[test]
+    fn draft02_request_wrong_version_is_unsupported() {
+        let mut env = valid_draft02_request_envelope();
+        env["version"] = json!("draft-01");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn draft02_request_missing_canonicalization_id() {
+        let mut env = valid_draft02_request_envelope();
+        env.as_object_mut().unwrap().remove("canonicalization_id");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::CanonicalizationIdMissing)
+        );
+    }
+
+    #[test]
+    fn draft02_request_unknown_canonicalization_id() {
+        let mut env = valid_draft02_request_envelope();
+        env["canonicalization_id"] = json!("nope-not-a-scheme");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::CanonicalizationIdUnknown)
+        );
+    }
+
+    #[test]
+    fn draft02_request_unknown_field_is_rejected() {
+        let mut env = valid_draft02_request_envelope();
+        env.as_object_mut()
+            .unwrap()
+            .insert("bogus".into(), json!(true));
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::UnknownEnvelopeField)
+        );
+    }
+
+    // ---- extract_draft02_response_envelope -----------------------------------
+
+    #[test]
+    fn draft02_response_extracts_with_both_identifiers() {
+        let msg = response_message_with_envelope(valid_draft02_response_envelope());
+        let env = extract_draft02_response_envelope(&msg).expect("valid draft-02 response");
+        assert_eq!(env.version, "draft-02");
+        assert_eq!(env.canonicalization_id, "mcps-jcs-int53-json-v1");
+    }
+
+    #[test]
+    fn draft02_response_missing_canonicalization_id() {
+        let mut env = valid_draft02_response_envelope();
+        env.as_object_mut().unwrap().remove("canonicalization_id");
+        let msg = response_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_response_envelope(&msg),
+            Err(McpsError::CanonicalizationIdMissing)
+        );
+    }
+
+    // ---- authorization_binding structural validation (ADR-MCPS-039) ----------
+
+    #[test]
+    fn draft02_request_opaque_binding_extracts() {
+        let msg = request_message_with_envelope(valid_draft02_request_envelope());
+        let env = extract_draft02_request_envelope(&msg).expect("valid opaque binding");
+        assert!(matches!(
+            env.authorization_binding,
+            crate::envelope::AuthorizationBinding::OpaqueBytes { .. }
+        ));
+    }
+
+    #[test]
+    fn draft02_request_authz_system_reference_binding_extracts() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"] = json!({
+            "binding_type": "authz-system-reference",
+            "authorization_system_id": "sys-1",
+            "reference_scheme_id": "scheme-1",
+            "reference_value": "grant-1",
+            "digest_alg": "sha256",
+            "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+        });
+        let msg = request_message_with_envelope(env);
+        let e = extract_draft02_request_envelope(&msg).expect("valid reference binding");
+        assert!(matches!(
+            e.authorization_binding,
+            crate::envelope::AuthorizationBinding::AuthzSystemReference { .. }
+        ));
+    }
+
+    #[test]
+    fn draft02_request_missing_binding_is_binding_missing() {
+        let mut env = valid_draft02_request_envelope();
+        env.as_object_mut().unwrap().remove("authorization_binding");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMissing)
+        );
+    }
+
+    #[test]
+    fn draft02_request_unknown_binding_type_is_type_unsupported() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]["binding_type"] = json!("structured-object-v1");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingTypeUnsupported)
+        );
+    }
+
+    #[test]
+    fn draft02_request_opaque_missing_digest_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]
+            .as_object_mut()
+            .unwrap()
+            .remove("digest_value");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
+        );
+    }
+
+    #[test]
+    fn draft02_request_wrong_digest_alg_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]["digest_alg"] = json!("md5");
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
+        );
+    }
+
+    #[test]
+    fn draft02_request_both_binding_forms_is_ambiguous_bytes() {
+        // A oneof violation: opaque-bytes carrying reference-only fields.
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"]
+            .as_object_mut()
+            .unwrap()
+            .insert("authorization_system_id".into(), json!("sys-1"));
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingAmbiguousBytes)
+        );
+    }
+
+    #[test]
+    fn draft02_request_reference_missing_field_is_malformed() {
+        let mut env = valid_draft02_request_envelope();
+        env["authorization_binding"] = json!({
+            "binding_type": "authz-system-reference",
+            "authorization_system_id": "sys-1",
+            "reference_scheme_id": "scheme-1",
+            "digest_alg": "sha256",
+            "digest_value": "abc"
+        }); // reference_value missing
+        let msg = request_message_with_envelope(env);
+        assert_eq!(
+            extract_draft02_request_envelope(&msg),
+            Err(McpsError::AuthorizationBindingMalformed)
+        );
+    }
+
+    // ---- classify_canonicalization_id ----------------------------------------
+
+    /// The recognized-but-unallowlisted path: a real future scheme presented
+    /// under a profile that does not admit it → `not_allowed` (distinct from an
+    /// `unknown` id that names no scheme). Tested at the classifier so the
+    /// forward-compat path is pinned without minting an undecided v0.6 wire name.
+    #[test]
+    fn classify_recognized_but_disallowed_is_not_allowed() {
+        let allowlist = ["mcps-jcs-int53-json-v1"];
+        let known = ["mcps-jcs-int53-json-v1", "mcps-jcs-future-floats-v2"];
+        assert_eq!(
+            classify_canonicalization_id("mcps-jcs-future-floats-v2", &allowlist, &known),
+            Err(McpsError::CanonicalizationIdNotAllowed)
+        );
+        assert_eq!(
+            classify_canonicalization_id("mcps-jcs-int53-json-v1", &allowlist, &known),
+            Ok(())
+        );
+        assert_eq!(
+            classify_canonicalization_id("totally-unknown", &allowlist, &known),
+            Err(McpsError::CanonicalizationIdUnknown)
+        );
     }
 
     // ---- reject_batch --------------------------------------------------------

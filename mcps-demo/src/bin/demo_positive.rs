@@ -217,7 +217,7 @@ fn run() -> Result<(), String> {
         verified.on_behalf_of,
         verified.audience,
         verified.request_hash,
-        verified.authorization_hash,
+        verified.authorization.draft01_hash().unwrap_or("<draft-02 binding>"),
         ALLOWED_PATH,
         policy_result,
     );

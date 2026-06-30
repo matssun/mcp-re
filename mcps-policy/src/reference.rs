@@ -443,18 +443,21 @@ mod tests {
         }
     }
 
-    /// A VerifiedRequest whose authorization_hash binds the given artifact bytes.
+    /// A VerifiedRequest whose authorization binds the given artifact bytes.
     fn verified_for(artifact: &[u8]) -> VerifiedRequest {
         VerifiedRequest {
             verified_signer: AGENT.to_string(),
             key_id: "key-1".to_string(),
             on_behalf_of: USER.to_string(),
             audience: SERVER.to_string(),
-            authorization_hash: sha256_hash_id(artifact),
+            authorization: mcps_core::VerifiedAuthorization::Draft01Hash {
+                authorization_hash: sha256_hash_id(artifact),
+            },
             request_hash: "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o".to_string(),
             nonce: "nonce-1".to_string(),
             issued_at: NOT_BEFORE.to_string(),
             expires_at: EXPIRES_AT.to_string(),
+            canonicalization_id: None,
         }
     }
 

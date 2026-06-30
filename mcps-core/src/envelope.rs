@@ -77,6 +77,139 @@ pub struct ResponseEnvelope {
     pub signature: SignatureBlock,
 }
 
+// ---------------------------------------------------------------------------
+// Draft-02 (v0.6) envelopes — ADR-MCPS-038 / decision B.2, D.1.
+// ---------------------------------------------------------------------------
+//
+// Draft-02 carries two non-overloaded PROTECTED identifiers inside the signing
+// preimage on BOTH envelopes:
+//   * `version: "draft-02"`            — the profile-version authority (DIRECTS
+//      the verifier's allowlist/rules/algorithms/structure/error behavior);
+//   * `canonicalization_id: "mcps-jcs-int53-json-v1"` — the audit-facing record
+//      of the byte scheme used (DESCRIBES/binds; never directs verification).
+//
+// Both are mandatory even though v0.6 admits exactly one scheme: behavior-
+// redundant but not EVIDENCE-redundant — a signed record must state its byte
+// scheme under signature (the "describes and binds; does not direct" principle).
+// These structs are strictly separate from the draft-01 ones: the verifier
+// never merges profile semantics across versions (ADR-MCPS-041 / decision G.1).
+//
+// NOTE: the draft-02 request envelope still carries `authorization_hash` here;
+// MCPS-35 (#181) replaces it with the typed `authorization_binding` object.
+
+/// The draft-02 typed authorization-evidence binding (ADR-MCPS-039 / decision
+/// E.1, E.2). Replaces draft-01's bare `authorization_hash` string: the envelope
+/// carries the **binding contract** (typed, inside the signing preimage), while
+/// the sibling `se.syncom/mcps.authorization` `_meta` block continues to carry
+/// the profile-specific evidence (`{ profile, artifact }`). Two base forms in
+/// v0.6; structured authorization-object hashing (case 3) stays OUT of the base
+/// profile (allowed only via an explicit authorization-binding profile).
+///
+/// MCP-S **binds and never interprets**: Core validates structure (`binding_type`
+/// ∈ base set, mandatory fields, `digest_alg` shape); the `mcps-policy` profile
+/// reproduces/compares (opaque) or hands a reference off to a configured
+/// authorization-reference resolver. The digest representation is the SPLIT form
+/// (`digest_alg` + bare `digest_value`, no `sha256:` prefix) — security
+/// parameters are explicit protected fields, matching `canonicalization_id`.
+///
+/// `#[serde(tag = "binding_type")]` makes it internally tagged; the exact field
+/// set (and the oneof — no mixing forms) is enforced by Core's explicit
+/// structural validator, which maps violations to the precise MCPS-31 codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "binding_type")]
+pub enum AuthorizationBinding {
+    /// Opaque-bytes: the digest is SHA-256 over the transport-decoded artifact
+    /// bytes (base64url-no-pad decode → SHA-256 → base64url-no-pad), never the
+    /// base64 text or UTF-8 JSON string bytes.
+    #[serde(rename = "opaque-bytes")]
+    OpaqueBytes {
+        /// Digest algorithm token; `"sha256"` in v0.6.
+        digest_alg: String,
+        /// `base64url-no-pad(SHA-256(decoded artifact bytes))` — bare, no prefix.
+        digest_value: String,
+    },
+    /// Authz-system-reference: an external authorization system's self-contained
+    /// digest plus cross-audit reference metadata. All fields mandatory; the
+    /// digest (not the reference) is the cryptographic binding, so the record
+    /// stays historically verifiable independent of the external system's live
+    /// state. MCP-S binds it; a configured reference profile/resolver validates.
+    #[serde(rename = "authz-system-reference")]
+    AuthzSystemReference {
+        /// Namespace of the external authorization system.
+        authorization_system_id: String,
+        /// The authz system's scheme: what `reference_value` means and how the
+        /// digest was produced.
+        reference_scheme_id: String,
+        /// Decision id / grant id / reference handle (cross-audit metadata).
+        reference_value: String,
+        /// Digest algorithm token; `"sha256"` in v0.6.
+        digest_alg: String,
+        /// `base64url-no-pad` digest produced by the authz system under
+        /// `reference_scheme_id` — bare, no prefix.
+        digest_value: String,
+    },
+}
+
+/// The draft-02 request envelope (value under the request `_meta` key).
+///
+/// Mirrors [`RequestEnvelope`] plus the two protected draft-02 identifiers, with
+/// the bare `authorization_hash` string **replaced** by the typed
+/// [`AuthorizationBinding`] object (ADR-MCPS-039 — no compat alias).
+/// `#[serde(deny_unknown_fields)]` keeps the fail-closed
+/// `mcps.unknown_envelope_field` rule; a stray draft-01-shaped (e.g.
+/// `authorization_hash`) or unknown field is rejected at deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Draft02RequestEnvelope {
+    /// Envelope version; must be `"draft-02"` (profile-version authority).
+    pub version: String,
+    /// Protected canonicalization-scheme id; must be `"mcps-jcs-int53-json-v1"`
+    /// for v0.6. Recorded under signature for audit self-description; the
+    /// verifier selects the canonicalizer from the profile, never from this field.
+    pub canonicalization_id: String,
+    /// Identity controlling `signature.key_id`'s private key.
+    pub signer: String,
+    /// Signed assertion of the principal on whose behalf the request is made.
+    pub on_behalf_of: String,
+    /// Intended verifier identity.
+    pub audience: String,
+    /// Typed authorization-evidence binding (replaces draft-01's
+    /// `authorization_hash`). Core validates structure only; the policy profile
+    /// reproduces/compares or hands a reference off — never interpreted in Core.
+    pub authorization_binding: AuthorizationBinding,
+    /// Opaque anti-replay nonce (>= 128 bits entropy).
+    pub nonce: String,
+    /// Issue time, RFC 3339 UTC.
+    pub issued_at: String,
+    /// Expiry time, RFC 3339 UTC.
+    pub expires_at: String,
+    /// Detached-in-line signature over the canonical preimage.
+    pub signature: SignatureBlock,
+}
+
+/// The draft-02 response envelope (value under the response `_meta` key).
+///
+/// Unlike draft-01, the draft-02 response carries **both** `version` and
+/// `canonicalization_id`: it is an independently signed server-evidence record
+/// that must be self-describing standalone, not dependent on the bound request
+/// to recover its profile/scheme context (ADR-MCPS-038 / decision B.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Draft02ResponseEnvelope {
+    /// Envelope version; must be `"draft-02"`.
+    pub version: String,
+    /// Protected canonicalization-scheme id; must be `"mcps-jcs-int53-json-v1"`.
+    pub canonicalization_id: String,
+    /// Hash of the verified request signing preimage: `"sha256:<b64url-no-pad>"`.
+    pub request_hash: String,
+    /// Identity controlling the server signing key.
+    pub server_signer: String,
+    /// Issue time, RFC 3339 UTC.
+    pub issued_at: String,
+    /// Detached-in-line signature over the canonical response preimage.
+    pub signature: SignatureBlock,
+}
+
 /// The verified-context sidecar block (MCPS_SPEC §2 / ADR-008).
 ///
 /// Emitted locally by a verifier into the verified `_meta` key after a request
@@ -211,6 +344,133 @@ mod tests {
         );
         let result: Result<ResponseEnvelope, _> = serde_json::from_str(&bogus);
         assert!(result.is_err(), "trust_label must be rejected");
+    }
+
+    // ---- Draft-02 (v0.6) envelopes — ADR-MCPS-038 / decision B.2 ------------
+
+    const DRAFT02_REQUEST_JSON: &str = r#"{
+        "version": "draft-02",
+        "canonicalization_id": "mcps-jcs-int53-json-v1",
+        "signer": "did:example:host",
+        "on_behalf_of": "user:alice",
+        "audience": "did:example:server",
+        "authorization_binding": {
+            "binding_type": "opaque-bytes",
+            "digest_alg": "sha256",
+            "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+        },
+        "nonce": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+        "issued_at": "2026-05-28T20:00:00Z",
+        "expires_at": "2026-05-28T20:05:00Z",
+        "signature": {
+            "alg": "Ed25519",
+            "key_id": "key-1",
+            "value": "c2lnbmF0dXJl"
+        }
+    }"#;
+
+    const DRAFT02_RESPONSE_JSON: &str = r#"{
+        "version": "draft-02",
+        "canonicalization_id": "mcps-jcs-int53-json-v1",
+        "request_hash": "sha256:BBBB",
+        "server_signer": "did:example:server",
+        "issued_at": "2026-05-28T20:00:01Z",
+        "signature": {
+            "alg": "Ed25519",
+            "key_id": "srv-key-1",
+            "value": "cmVzcG9uc2VzaWc"
+        }
+    }"#;
+
+    #[test]
+    fn draft02_request_envelope_carries_both_protected_identifiers() {
+        let parsed: super::Draft02RequestEnvelope =
+            serde_json::from_str(DRAFT02_REQUEST_JSON).expect("draft-02 request must deserialize");
+        assert_eq!(parsed.version, "draft-02");
+        assert_eq!(parsed.canonicalization_id, "mcps-jcs-int53-json-v1");
+        assert_eq!(parsed.signer, "did:example:host");
+        assert!(matches!(
+            parsed.authorization_binding,
+            super::AuthorizationBinding::OpaqueBytes { .. }
+        ));
+
+        let serialized = serde_json::to_string(&parsed).expect("serialize");
+        let reparsed: super::Draft02RequestEnvelope =
+            serde_json::from_str(&serialized).expect("reparse");
+        assert_eq!(parsed, reparsed);
+    }
+
+    #[test]
+    fn draft02_request_rejects_draft01_authorization_hash_field() {
+        // No compat alias: a draft-01-shaped authorization_hash is an unknown
+        // field on the draft-02 envelope (ADR-MCPS-039).
+        let bogus = DRAFT02_REQUEST_JSON.replace(
+            "\"signer\": \"did:example:host\",",
+            "\"signer\": \"did:example:host\",\n        \"authorization_hash\": \"sha256:AAAA\",",
+        );
+        let result: Result<super::Draft02RequestEnvelope, _> = serde_json::from_str(&bogus);
+        assert!(result.is_err(), "authorization_hash must be rejected in draft-02");
+    }
+
+    #[test]
+    fn authorization_binding_both_forms_round_trip() {
+        use super::AuthorizationBinding;
+        let opaque = AuthorizationBinding::OpaqueBytes {
+            digest_alg: "sha256".to_string(),
+            digest_value: "abc".to_string(),
+        };
+        let reference = AuthorizationBinding::AuthzSystemReference {
+            authorization_system_id: "sys-1".to_string(),
+            reference_scheme_id: "scheme-1".to_string(),
+            reference_value: "grant-1".to_string(),
+            digest_alg: "sha256".to_string(),
+            digest_value: "def".to_string(),
+        };
+        for binding in [opaque, reference] {
+            let json = serde_json::to_string(&binding).expect("serialize");
+            // The discriminator is the wire field `binding_type`.
+            assert!(json.contains("\"binding_type\""));
+            let reparsed: AuthorizationBinding =
+                serde_json::from_str(&json).expect("reparse");
+            assert_eq!(binding, reparsed);
+        }
+    }
+
+    #[test]
+    fn draft02_response_envelope_carries_both_protected_identifiers() {
+        // The draft-01 response carries NEITHER identifier; draft-02 gains both so
+        // a stored response is self-describing standalone (decision B.2).
+        let parsed: super::Draft02ResponseEnvelope =
+            serde_json::from_str(DRAFT02_RESPONSE_JSON).expect("draft-02 response must deserialize");
+        assert_eq!(parsed.version, "draft-02");
+        assert_eq!(parsed.canonicalization_id, "mcps-jcs-int53-json-v1");
+        assert_eq!(parsed.request_hash, "sha256:BBBB");
+
+        let serialized = serde_json::to_string(&parsed).expect("serialize");
+        let reparsed: super::Draft02ResponseEnvelope =
+            serde_json::from_str(&serialized).expect("reparse");
+        assert_eq!(parsed, reparsed);
+    }
+
+    #[test]
+    fn draft02_request_rejects_unknown_field() {
+        let bogus = DRAFT02_REQUEST_JSON.replace(
+            "\"version\": \"draft-02\",",
+            "\"version\": \"draft-02\",\n        \"bogus\": true,",
+        );
+        let result: Result<super::Draft02RequestEnvelope, _> = serde_json::from_str(&bogus);
+        assert!(result.is_err(), "unknown field must be rejected (fail closed)");
+    }
+
+    #[test]
+    fn draft02_request_rejects_missing_canonicalization_id() {
+        // A draft-02 envelope lacking the protected canonicalization_id is
+        // structurally invalid (the pipeline maps this to
+        // mcps.canonicalization_id_missing).
+        let missing = DRAFT02_REQUEST_JSON
+            .replace("\"canonicalization_id\": \"mcps-jcs-int53-json-v1\",\n        ", "");
+        let result: Result<super::Draft02RequestEnvelope, _> = serde_json::from_str(&missing);
+        assert!(result.is_err(), "missing canonicalization_id must fail closed");
     }
 
     #[test]

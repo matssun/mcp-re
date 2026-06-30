@@ -1,6 +1,6 @@
 # MCP-S Core Specification
 
-**Status:** Normative for MCP-S Core (`draft-01`)
+**Status:** Normative for MCP-S Core. The released field baseline is `draft-01` (v0.5.1); v0.6 adds the strictly-separated `draft-02` profile (runtime-evidence preimages — ADRs [037](../adr/adr-mcps-037.md)–[042](../adr/adr-mcps-042.md)), verified alongside `draft-01` by a version-dispatched dual verifier. `draft-01` rules below are unchanged; `draft-02` deltas are called out inline.
 **Scope:** The frozen wire vocabulary, signing rule, canonicalization domain, freshness/replay model, trust resolution, message constraints, error taxonomy, and verification pipeline of MCP-S Core.
 
 This document **states the current rule**. It does **not** restate the rationale: every major rule cites the ADR that records *why* it is so. Conformance counts (vectors, Bazel test targets) are **not** hardcoded here — they are owned by the drift-guarded conformance manifest (see [§12](#12-conformance-manifest-counts)). The convention is: the spec states the rule, the ADR records why, the guide explains how to use it, and the tests prove it — each fact has one home.
@@ -103,6 +103,20 @@ Before signature verification, the protected message MUST be validated against t
 - Numbers: integers only, within ±(2^53 − 1) inclusive. No fractional, no exponent, no non-finite (NaN/Inf impossible in JSON but reject any non-integer numeric).
 - No Unicode normalization, no parser repair/coercion.
 - Big IDs, decimals, nanosecond timestamps, monetary amounts → carry as JSON strings. JSON-RPC `id` SHOULD be a string (an integer `id` is allowed only if within the safe-integer range).
+
+> **Draft-02 (v0.6) — named scheme and documented float limitation.** The
+> draft-02 profile names this exact domain `mcps-jcs-int53-json-v1` (the
+> protected `canonicalization_id`, [ADR-MCPS-037](../adr/adr-mcps-037.md) /
+> [038](../adr/adr-mcps-038.md)). **MCP-S v0.6 therefore does NOT protect a
+> signed payload that contains JSON fractional numbers** — `{"temperature":0.7}`,
+> `{"price":19.99}`, a latitude — such a message fails closed with
+> `mcps.canonicalization_failed` unless the value is carried as a string. This is
+> an intentional, named, machine-checked scope boundary (the required honesty
+> conformance vector proves `0.7`/`19.99` are rejected), not a parser accident:
+> full RFC 8785 fractional-number serialization is the highest-risk
+> cross-implementation interop surface, so it is **deferred to a future,
+> separately-named, separately-vector-hardened `mcps-jcs-…-v2` scheme** admitted
+> through the canonicalization allowlist — never by widening v1.
 
 Canonicalization (RFC 8785) emitted from the validated value tree:
 

@@ -901,7 +901,7 @@ fn pipeline_v1_valid_request_verifies_with_matching_fields() {
     assert_eq!(verified.key_id, SIGNER_KEY_ID);
     assert_eq!(verified.on_behalf_of, ON_BEHALF_OF);
     assert_eq!(verified.audience, AUDIENCE);
-    assert_eq!(verified.authorization_hash, AUTHORIZATION_HASH);
+    assert_eq!(verified.authorization.draft01_hash(), Some(AUTHORIZATION_HASH));
     assert_eq!(verified.nonce, NONCE);
     assert_eq!(verified.issued_at, ISSUED_AT);
     assert_eq!(verified.expires_at, EXPIRES_AT);
