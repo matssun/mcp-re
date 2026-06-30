@@ -33,14 +33,30 @@
 //!   `allow_legacy_explicit` + an allowlisted route; bad/downgrade-shaped evidence
 //!   always fails closed).
 //!
-//! The authz-binding hook, signer custody, correlation store, discovery, and
-//! audit/error mapping land in the following sprint slices (#190–#200) on top of
-//! this seam.
+//! - MCPS-45 (#192): the [`AuthorizationBindingProvider`] hook +
+//!   [`resolve_authorization_binding`] — opaque-bytes / authz-system-reference base
+//!   forms, route type-policy enforcement, structured-hashing rejected in base
+//!   (bind-not-interpret; the binding is placed in the signed preimage).
+//!
+//! Signer custody, the correlation store, signer→audience binding, discovery, and
+//! audit/error mapping land in the following sprint slices on top of this seam.
 
+pub mod authz;
 pub mod enforcement;
 pub mod request;
 pub mod response;
 
+pub use authz::binding_tag;
+pub use authz::resolve_authorization_binding;
+pub use authz::AuthorizationBindingPolicy;
+pub use authz::AuthorizationBindingProvider;
+pub use authz::AuthorizationReferenceResolver;
+pub use authz::AuthzReference;
+pub use authz::AuthzSystemReferenceProvider;
+pub use authz::BindingRequestContext;
+pub use authz::BindingTypeTag;
+pub use authz::OpaqueBytesProvider;
+pub use authz::StructuredObjectHashingProvider;
 pub use enforcement::classify_response_result;
 pub use enforcement::decide;
 pub use enforcement::AbsenceReason;
