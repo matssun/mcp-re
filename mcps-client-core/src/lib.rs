@@ -44,10 +44,15 @@
 //!   rejected under production `require_mcps`, rotation/revocation by config,
 //!   hardware/KMS-only as an opt-in hardening profile.
 //!
-//! The correlation store, signer→audience binding, discovery, and audit/error
-//! mapping land in the following sprint slices on top of this seam.
+//! - MCPS-47 (#194): the in-flight [`CorrelationStore`] — per-outstanding-request
+//!   [`PendingRequest`] state, cleanup-on-completion + expiry sweep, late-response
+//!   fail-closed ([`CorrelationError::Uncorrelatable`]), nonce-reuse prevention.
+//!
+//! The signer→audience binding, discovery, and audit/error mapping land in the
+//! following sprint slices on top of this seam.
 
 pub mod authz;
+pub mod correlation;
 pub mod enforcement;
 pub mod request;
 pub mod response;
@@ -64,6 +69,9 @@ pub use authz::BindingRequestContext;
 pub use authz::BindingTypeTag;
 pub use authz::OpaqueBytesProvider;
 pub use authz::StructuredObjectHashingProvider;
+pub use correlation::CorrelationError;
+pub use correlation::CorrelationStore;
+pub use correlation::PendingRequest;
 pub use enforcement::classify_response_result;
 pub use enforcement::decide;
 pub use enforcement::AbsenceReason;

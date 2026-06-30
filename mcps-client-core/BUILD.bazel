@@ -17,6 +17,20 @@ nt_rust_library(
     ],
 )
 
+# Inline crate unit tests (request / response / enforcement / authz / signer /
+# correlation #[cfg(test)] modules).
+nt_rust_test(
+    name = "mcps_client_core_test",
+    crate = ":mcps_client_core",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
 # An ordinary MCP request signed by the client core verifies against the
 # server-side mcps-core draft-02 verifier; the client request_hash equals the
 # verifier's response-binding handle (the MCPS-40 cross-side oracle).
