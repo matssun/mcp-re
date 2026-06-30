@@ -48,9 +48,16 @@
 //!   [`PendingRequest`] state, cleanup-on-completion + expiry sweep, late-response
 //!   fail-closed ([`CorrelationError::Uncorrelatable`]), nonce-reuse prevention.
 //!
-//! The signer→audience binding, discovery, and audit/error mapping land in the
-//! following sprint slices on top of this seam.
+//! - MCPS-43 (#190): the signer→audience binding ([`AudienceTuple`] /
+//!   [`resolve_signer_audience`] / [`SignerAudiencePolicy`]) — the expected
+//!   `(server_signer, audience)` resolved from local policy + verified transport
+//!   pre-discovery; mandatory tenant/route discriminators; discovery can never
+//!   choose/widen/rewrite the audience.
+//!
+//! Discovery and audit/error mapping land in the following sprint slices on top of
+//! this seam.
 
+pub mod audience;
 pub mod authz;
 pub mod correlation;
 pub mod enforcement;
@@ -58,6 +65,12 @@ pub mod request;
 pub mod response;
 pub mod signer;
 
+pub use audience::enforce_request_audience;
+pub use audience::resolve_signer_audience;
+pub use audience::AudienceTuple;
+pub use audience::SignerAudienceBinding;
+pub use audience::SignerAudiencePolicy;
+pub use audience::TransportIdentity;
 pub use authz::binding_tag;
 pub use authz::resolve_authorization_binding;
 pub use authz::AuthorizationBindingPolicy;
