@@ -9,12 +9,19 @@ signed requests and verified responses, added without changing application code.
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
 > (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
 > that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 45 tests pass, all parity against independent `mcps-client-core` oracle vectors.
-> **Remaining:** a live cross-process end-to-end against the Rust MCP-S server
-> (`connect_stdio`'s real-subprocess path), streamable-HTTP, signed/verified
-> server-initiated messages, and pinning upstream `mcp`.
+> 47 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> **including a live cross-process e2e**: the adapter drives a real `tools/call`
+> over stdio to the **real Rust server-side proxy** (`mcps-stdio-server --mode
+> proxy` = `mcps_proxy::Proxy`), which verifies the signed request, echoes, and
+> signs the response; the adapter verifies + correlates + strips it to plain MCP.
+> A live negative proves fail-closed when the server signer isn't trusted.
+> **Remaining:** full `ClientSession.initialize()` against a real MCP server (the
+> fileserver) over the mTLS `mcps-proxy` path; streamable-HTTP; signed/verified
+> server-initiated messages; pinning upstream `mcp`.
 >
-> Transport tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
+> Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
+> The live e2e also needs `cargo build -p mcps-conformance --bin mcps-stdio-server`
+> (skips cleanly if absent).
 
 ## Why this exists, and why it's an *adapter*
 
