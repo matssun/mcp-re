@@ -9,19 +9,25 @@ signed requests and verified responses, added without changing application code.
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
 > (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
 > that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 47 tests pass, all parity against independent `mcps-client-core` oracle vectors —
-> **including a live cross-process e2e**: the adapter drives a real `tools/call`
-> over stdio to the **real Rust server-side proxy** (`mcps-stdio-server --mode
-> proxy` = `mcps_proxy::Proxy`), which verifies the signed request, echoes, and
-> signs the response; the adapter verifies + correlates + strips it to plain MCP.
-> A live negative proves fail-closed when the server signer isn't trusted.
-> **Remaining:** full `ClientSession.initialize()` against a real MCP server (the
-> fileserver) over the mTLS `mcps-proxy` path; streamable-HTTP; signed/verified
-> server-initiated messages; pinning upstream `mcp`.
+> 49 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> including **two live cross-process e2es against real Rust binaries**:
+> 1. **stdio** — the adapter drives a real `tools/call` to the real server-side
+>    proxy (`mcps-stdio-server --mode proxy` = `mcps_proxy::Proxy`).
+> 2. **mTLS/HTTP** — the SDK signs a `read_file`, opens one mTLS connection, and
+>    `POST`s it to the **real production `mcps-proxy`** fronting the **real
+>    `mcps-demo-fileserver`**; the production-signed response is verified +
+>    correlated back to a plain MCP result. Both have a fail-closed live negative.
+>
+> **Remaining:** the production `mcps-proxy` mTLS transport is *one HTTP POST per
+> connection* (not a stream), so a full `ClientSession.initialize()` over it needs a
+> dedicated request/response mTLS-HTTP `ClientSession` transport (step ii — a larger
+> adapter feature with MCP-lifecycle questions); plus streamable-HTTP, signed
+> server-initiated messages, and pinning upstream `mcp`.
 >
 > Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
-> The live e2e also needs `cargo build -p mcps-conformance --bin mcps-stdio-server`
-> (skips cleanly if absent).
+> The stdio e2e needs `cargo build -p mcps-conformance --bin mcps-stdio-server`; the
+> mTLS e2e needs `cargo build -p mcps-proxy -p mcps-demo-fileserver` + cargo (to mint
+> `DemoFixtures` material). All skip cleanly if absent.
 
 ## Why this exists, and why it's an *adapter*
 
