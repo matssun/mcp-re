@@ -34,9 +34,11 @@ __all__ = [
     "PendingRequest",
     "McpsConfig",
     "McpsTransport",
+    "McpsHttpTransport",
     "McpsVerificationError",
     "connect",
     "connect_stdio",
+    "connect_mtls_http",
 ]
 
 #: MCP-S protocol version the bound core verifies/signs against (e.g. "draft-02").
@@ -67,7 +69,8 @@ PendingRequest = _core.PendingRequest
 # The adapter: imports `mcp` lazily (inside functions), so this is import-safe even
 # where `mcp` is not installed.
 from .transport import McpsConfig, McpsTransport, McpsVerificationError  # noqa: E402
-from .client import connect, connect_stdio  # noqa: E402
+from .http_transport import McpsHttpTransport  # noqa: E402
+from .client import connect, connect_mtls_http, connect_stdio  # noqa: E402
 
 #: Response-envelope key the adapter strips before handing a plain response to the app.
 response_meta_key = _core.response_meta_key

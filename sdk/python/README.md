@@ -9,20 +9,24 @@ signed requests and verified responses, added without changing application code.
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
 > (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
 > that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 49 tests pass, all parity against independent `mcps-client-core` oracle vectors —
-> including **two live cross-process e2es against real Rust binaries**:
+> 51 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> including **three live cross-process e2es against real Rust binaries**:
 > 1. **stdio** — the adapter drives a real `tools/call` to the real server-side
 >    proxy (`mcps-stdio-server --mode proxy` = `mcps_proxy::Proxy`).
-> 2. **mTLS/HTTP** — the SDK signs a `read_file`, opens one mTLS connection, and
->    `POST`s it to the **real production `mcps-proxy`** fronting the **real
->    `mcps-demo-fileserver`**; the production-signed response is verified +
->    correlated back to a plain MCP result. Both have a fail-closed live negative.
+> 2. **mTLS/HTTP (raw request)** — the SDK signs a `read_file`, opens one mTLS
+>    connection, and `POST`s it to the **real production `mcps-proxy`** fronting the
+>    **real `mcps-demo-fileserver`**; the production-signed response is verified +
+>    correlated back to a plain MCP result.
+> 3. **mTLS/HTTP (full `ClientSession`)** — a real `mcp.ClientSession` runs
+>    `initialize()` then `call_tool("read_file")` over `connect_mtls_http`, mapping
+>    ClientSession's stream model onto the proxy's one-POST-per-connection wire
+>    (step ii). `initialize` round-trips as a signed request; client→server
+>    notifications are dropped (no fire-and-forget channel); a rejected response is
+>    delivered as a JSON-RPC error correlated to the request id so the awaiting call
+>    raises rather than hangs. All three have a fail-closed live negative.
 >
-> **Remaining:** the production `mcps-proxy` mTLS transport is *one HTTP POST per
-> connection* (not a stream), so a full `ClientSession.initialize()` over it needs a
-> dedicated request/response mTLS-HTTP `ClientSession` transport (step ii — a larger
-> adapter feature with MCP-lifecycle questions); plus streamable-HTTP, signed
-> server-initiated messages, and pinning upstream `mcp`.
+> **Remaining:** streamable-HTTP multi-path inbound decode, signed/verified
+> server-initiated messages (currently dropped), and pinning upstream `mcp`.
 >
 > Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
 > The stdio e2e needs `cargo build -p mcps-conformance --bin mcps-stdio-server`; the
