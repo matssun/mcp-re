@@ -680,6 +680,7 @@ dependencies = [
 name = "mcps-conformance"
 version = "0.6.0"
 dependencies = [
+ "mcps-client-core",
  "mcps-core",
  "mcps-host",
  "mcps-proxy",
