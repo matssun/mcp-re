@@ -388,10 +388,14 @@ fn run() -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let args = parse_args(&argv)?;
     let (mut proxy, addr) = build_proxy(&args)?;
-    eprintln!(
-        "mcps-client-proxy-cli: route '{}' -> {} (server '{}')",
-        args.route_id, addr, args.server_name
-    );
+    // Startup diagnostic. Bind the non-secret display fields to locals so the log
+    // never reads the `CliArgs` struct directly — that struct also carries the
+    // signing-key seed / TLS paths, and the cleartext-logging analysis is
+    // field-insensitive over it. No secret is ever formatted here: the seed is
+    // consumed into the signer and never touches a log sink.
+    let route_id: &str = args.route_id.as_str();
+    let server_name: &str = args.server_name.as_str();
+    eprintln!("mcps-client-proxy-cli: route '{route_id}' -> {addr} (server '{server_name}')");
 
     let mut nonce_source = SystemNonceSource::new();
     let stdin = std::io::stdin();
