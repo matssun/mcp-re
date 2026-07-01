@@ -28,11 +28,13 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import secrets
 import socket
 import ssl
 import sys
 import time
+import urllib.request
 from datetime import datetime, timezone
 
 import mcps_sdk
@@ -87,6 +89,78 @@ def _canonical_audience(six_field: str) -> str:
     )
 
 
+def _gcp_access_token(use_metadata: bool) -> str:
+    """The OAuth2 bearer for Cloud KMS: the GCE metadata server (``--gcp-kms-use-
+    metadata``) or ``MCPS_GCP_ACCESS_TOKEN`` — mirroring the Rust backend's sources."""
+    if use_metadata:
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/"
+            "service-accounts/default/token",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.load(resp)["access_token"]
+    token = os.environ.get("MCPS_GCP_ACCESS_TOKEN", "")
+    if not token:
+        raise SystemExit(
+            "MCPS_GCP_ACCESS_TOKEN must be set for --key-source gcp-kms "
+            "(or pass --gcp-kms-use-metadata on a GCE instance)"
+        )
+    return token
+
+
+def _gcp_kms_sign_callback(key_version: str, endpoint: str | None, token: str):
+    """A non-exporting signer callback: Ed25519-sign the preimage via Cloud KMS
+    ``asymmetricSign`` and return the Base64URL-no-pad signature the SDK core wants.
+
+    The KMS key is ``EC_SIGN_ED25519`` (PureEdDSA), so the RAW preimage is signed as
+    ``data`` (not a pre-hashed digest) — the SAME preimage and algorithm the software
+    path signs, no substitution. The private key never leaves KMS (custody
+    ``NonExporting``)."""
+    base = endpoint or "https://cloudkms.googleapis.com"
+    url = f"{base}/v1/{key_version}:asymmetricSign"
+
+    def sign(preimage: bytes) -> str:
+        body = json.dumps({"data": base64.b64encode(preimage).decode()}).encode()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.load(resp)
+        raw_sig = base64.b64decode(payload["signature"])  # 64-byte Ed25519 signature
+        return base64.urlsafe_b64encode(raw_sig).decode().rstrip("=")
+
+    return sign
+
+
+def _build_signer(args: argparse.Namespace):
+    """Build the request signer + custody policy for the configured key source: a
+    software seed (default) or a non-exporting Cloud KMS key (``--key-source
+    gcp-kms``, the SDK's ``Signer.non_exporting`` seam under the hardening profile)."""
+    if args.key_source == "gcp-kms":
+        if not args.gcp_kms_key_version:
+            raise SystemExit("--gcp-kms-key-version is required for --key-source gcp-kms")
+        token = _gcp_access_token(args.gcp_kms_use_metadata)
+        callback = _gcp_kms_sign_callback(args.gcp_kms_key_version, args.gcp_kms_endpoint, token)
+        signer = mcps_sdk.Signer.non_exporting(
+            signer_id=args.signer_id, key_id=args.key_id, sign_callback=callback
+        )
+        policy = mcps_sdk.SignerPolicy(
+            args.signer_id, environment="production", require_mcps=True
+        ).require_non_exporting()
+        return signer, policy
+    if not args.signing_key_seed:
+        raise SystemExit("--signing-key-seed is required for --key-source file")
+    signer = mcps_sdk.Signer.software(
+        _read_seed(args.signing_key_seed), signer_id=args.signer_id, key_id=args.key_id
+    )
+    policy = mcps_sdk.SignerPolicy(args.signer_id, environment="dev-test", require_mcps=True)
+    return signer, policy
+
+
 def _strip_envelope(obj: dict) -> dict:
     """Remove the MCP-S response envelope from ``result._meta`` so the harness sees
     plain MCP (and no ``_meta`` at all when the envelope was its only key)."""
@@ -106,7 +180,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--server-name", required=True)          # expected server cert SAN
     p.add_argument("--signer-id", required=True)
     p.add_argument("--key-id", required=True)
-    p.add_argument("--signing-key-seed", required=True)     # <b64url> | @<path>
+    p.add_argument("--signing-key-seed")                    # <b64url> | @<path> (file source)
     p.add_argument("--server-signer", required=True)
     p.add_argument("--server-key-id", required=True)
     p.add_argument("--server-pubkey", required=True)        # raw-32 b64url
@@ -115,8 +189,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--tls-key", required=True)
     p.add_argument("--server-ca", required=True)
     p.add_argument("--on-behalf-of", required=True)
-    # Accepted-but-unused here (this driver is software-key only).
-    p.add_argument("--key-source", default="file")
+    # Key source: software seed (default) or non-exporting Cloud KMS.
+    p.add_argument("--key-source", default="file")          # file | gcp-kms
+    p.add_argument("--gcp-kms-key-version")
+    p.add_argument("--gcp-kms-endpoint")
+    p.add_argument("--gcp-kms-use-metadata", action="store_true")
     return p.parse_args(argv)
 
 
@@ -152,10 +229,7 @@ def _make_post(args: argparse.Namespace):
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
-    signer = mcps_sdk.Signer.software(
-        _read_seed(args.signing_key_seed), signer_id=args.signer_id, key_id=args.key_id
-    )
-    policy = mcps_sdk.SignerPolicy(args.signer_id, environment="dev-test", require_mcps=True)
+    signer, policy = _build_signer(args)
     resolver = mcps_sdk.TrustResolver()
     resolver.insert_public_key(
         args.server_signer, args.server_key_id, _b64url_decode(args.server_pubkey)

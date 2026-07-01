@@ -90,3 +90,8 @@ MCPS_DRIVER_PYTHON="python3 -m mcps_sdk.driver" \
 Recognized keys: `MCPS_DRIVER_PYTHON`, `MCPS_DRIVER_TS`. Any tier (`FourHopOptions
 { client_driver: Some(..), .. }`) can be pointed at a specific SDK driver the same
 way; the Rust reference `mcps-proxy` PEP stays the single conformance oracle.
+
+The seam composes with the key-source axis: `t4_python_kms_custody` runs the Python
+driver in `--key-source gcp-kms` mode (its request signer a non-exporting Cloud KMS
+key) across the integrated four-hop — the cross-language counterpart to the Rust
+`t4_enterprise_kms_custody`. Both are live/`#[ignore]`d (cloud script, commands 5–6).

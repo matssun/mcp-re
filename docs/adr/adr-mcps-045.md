@@ -151,6 +151,17 @@ the live-cloud script. The ladder maps onto the phases:
     `#[ignore]`d (fails loud without credentials), run as command 5 of the cloud
     script after building both CLIs with their KMS features so the harness spawns
     KMS-capable binaries. PROVEN live against a real Cloud KMS project.
+  - **Multi-SDK client leg + Python KMS (DONE).** The harness client leg is a
+    pluggable `ClientDriver` (stdio + CLI contract; `mcps-client-proxy-cli` is the
+    reference), so every SDK runs the tiers as an interchangeable client
+    (`sdk_driver_matrix`, skip-not-fail). The Python SDK is wired in via
+    `mcps_sdk.driver`, proven live in the four-hop for both software keys AND — via
+    its `Signer.non_exporting` seam over Cloud KMS `asymmetricSign` — a non-exporting
+    Cloud KMS request signer (`t4_python_kms_custody`, live, cloud-script command 6):
+    Python client KMS + Rust server KMS across the real socket. This also surfaced
+    and fixed a cross-language cert defect — the demo TLS leaves lacked an Authority
+    Key Identifier (tolerated by rustls, rejected by OpenSSL/Python). TypeScript and
+    Rust SDKs are additive (same contract, `MCPS_DRIVER_TS` / a Rust driver).
 - **Phase 5** (DONE) — sanitized two-version model: the real `work/` script stays
   gitignored; a committed placeholder (`scripts/test-gcp-cloud.sh.example`, all
   identifiers replaced) documents the full lane incl. the client KMS key; and a

@@ -53,6 +53,19 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
 - **Python SDK — request-side slice (#199).** `mcps-python-sdk` gains request
   signing + custody/signer-policy binding (request side only;
   ADR [044](docs/adr/adr-mcps-044.md)).
+- **Multi-SDK test architecture — pluggable client leg.** The four-hop harness's
+  client leg is a `ClientDriver` seam: every MCP-S SDK is an interchangeable client
+  behind one stdio + CLI contract (`mcps-client-proxy-cli` is the reference), and
+  the `sdk_driver_matrix` runs the tiers against each configured driver (skip-not-
+  fail). Ready for the upcoming TypeScript/Rust SDKs (`MCPS_DRIVER_*`).
+- **Python SDK — live four-hop interop, software AND Cloud KMS.** `mcps_sdk.driver`
+  makes the Python SDK a live client leg: it signs via the SDK's audited core, mTLS-
+  POSTs to the real `mcps-proxy`, and verifies the server-signed response. Proven
+  green in the matrix; and with `--key-source gcp-kms` the Python client signs every
+  request with a NON-EXPORTING Cloud KMS key (`Signer.non_exporting` → `asymmetric
+  Sign`) across the integrated four-hop (`t4_python_kms_custody`, live, #[ignore]).
+  Surfaced (and fixed) a real cross-language cert defect: the demo TLS leaves lacked
+  an Authority Key Identifier — tolerated by rustls, rejected by OpenSSL (Python).
 
 ### NOT yet claimed in v0.7
 
