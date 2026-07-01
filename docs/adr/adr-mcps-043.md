@@ -4,7 +4,7 @@
 
 ## Status
 
-Proposed — targets v0.7 (post-v0.6). Resolved in the discovery/client-integration
+Accepted (v0.7, 2026-07-02). Resolved in the discovery/client-integration
 grill (2026-06-30, Codex + Judge supported). Sibling of
 [044](adr-mcps-044.md) (Client-Side Integration Model). Depends on
 [026](adr-mcps-026.md) (signing scope vs stateless `_meta`),

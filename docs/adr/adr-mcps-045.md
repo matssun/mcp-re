@@ -4,7 +4,7 @@
 
 ## Status
 
-Proposed — v0.7 work, Phase 0 spike output (2026-06-30). Closes the
+Accepted (v0.7, 2026-07-02). Phase 0 spike output (2026-06-30). Closes the
 "prove v0.7 end-to-end" gap left open by [044](adr-mcps-044.md) (Client
 Integration Model), which specified the client proxy but landed it with
 **in-process** tests only. Depends on the existing `verify_request_dispatch`
