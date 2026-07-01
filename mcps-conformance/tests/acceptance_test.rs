@@ -173,7 +173,11 @@ fn native_and_sidecar_agree_across_both_transports() {
 fn model_holds_no_key_yet_sidecar_accepts_host_signed_request() {
     // The HostSigner owns the key; "model logic" here only supplies the tool
     // text. There is deliberately no accessor to read the key off the signer.
-    let host = HostSigner::new(SigningKey::from_seed_bytes(&[1u8; 32]), SIGNER, SIGNER_KEY_ID);
+    let host = HostSigner::new(
+        SigningKey::from_seed_bytes(&[1u8; 32]),
+        SIGNER,
+        SIGNER_KEY_ID,
+    );
     let request = host
         .sign_tool_call(
             &Value::String("req-accept".to_string()),
@@ -189,8 +193,8 @@ fn model_holds_no_key_yet_sidecar_accepts_host_signed_request() {
         .expect("host signs (model never touches the key)");
 
     let now = parse_rfc3339_utc(ISSUED_AT).expect("parse") + 60;
-    let expected_hash = request_hash(&serde_json::from_slice::<Value>(&request).unwrap())
-        .expect("request_hash");
+    let expected_hash =
+        request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
     // The sidecar-wrapped ORDINARY server accepts it over stdio and returns a
     // signed response bound to the request.
@@ -198,5 +202,8 @@ fn model_holds_no_key_yet_sidecar_accepts_host_signed_request() {
         .serve_kind(&[request], now, ServerKind::SidecarWrapped)
         .expect("sidecar serves");
     let token = outcome_token(&responses[0], &expected_hash, &response_resolver());
-    assert_eq!(token, "verify_ok", "sidecar accepts the host-signed request");
+    assert_eq!(
+        token, "verify_ok",
+        "sidecar accepts the host-signed request"
+    );
 }

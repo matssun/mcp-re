@@ -201,9 +201,15 @@ fn every_audit_token_is_a_wire_code_or_a_fixed_event_type() {
 #[test]
 fn success_event_set_is_exactly_the_two_item_allowlist() {
     let audit = read("MCPS_CORE_SRC_AUDIT");
-    let declared = resolve_slice_tokens(&slice_value_body(&audit, "SUCCESS_EVENT_TYPES"), &event_type_consts(&audit));
+    let declared = resolve_slice_tokens(
+        &slice_value_body(&audit, "SUCCESS_EVENT_TYPES"),
+        &event_type_consts(&audit),
+    );
 
-    let expected: BTreeSet<String> = EXPECTED_SUCCESS_EVENTS.iter().map(|s| s.to_string()).collect();
+    let expected: BTreeSet<String> = EXPECTED_SUCCESS_EVENTS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(
         declared, expected,
         "audit.rs SUCCESS_EVENT_TYPES must be EXACTLY the two-item allowlist \
@@ -219,7 +225,10 @@ fn success_event_set_is_exactly_the_two_item_allowlist() {
 #[test]
 fn event_types_do_not_collide_with_frozen_wire_codes() {
     let codes = frozen_wire_codes(&read("MCPS_CORE_SRC_ERROR"));
-    for ev in EXPECTED_SUCCESS_EVENTS.iter().chain(EXPECTED_REJECTION_EVENTS.iter()) {
+    for ev in EXPECTED_SUCCESS_EVENTS
+        .iter()
+        .chain(EXPECTED_REJECTION_EVENTS.iter())
+    {
         assert!(
             !codes.contains(*ev),
             "audit event_type {ev:?} collides with a frozen McpsError::wire_code() token — \
@@ -268,7 +277,10 @@ fn guard_inputs_are_non_empty() {
         "expected mcps.invalid_signature among the parsed frozen wire_codes"
     );
     let tokens = audit_mcps_tokens(&read("MCPS_CORE_SRC_AUDIT"));
-    for ev in EXPECTED_SUCCESS_EVENTS.iter().chain(EXPECTED_REJECTION_EVENTS.iter()) {
+    for ev in EXPECTED_SUCCESS_EVENTS
+        .iter()
+        .chain(EXPECTED_REJECTION_EVENTS.iter())
+    {
         assert!(
             tokens.contains(*ev),
             "expected audit event_type {ev:?} to appear in audit.rs production region — wiring broken"

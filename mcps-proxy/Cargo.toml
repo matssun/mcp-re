@@ -132,6 +132,8 @@ ed25519-dalek = { workspace = true }
 # compiles only under its `test-fixtures` feature (audit #81); enable it here as a
 # DEV-dependency feature so it never reaches the production proxy closure.
 mcps-host = { path = "../mcps-host", features = ["test-fixtures"] }
+# The draft-02 serving test signs a real draft-02 request via the client seam.
+mcps-client-core = { path = "../mcps-client-core" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.
 mcps-test-paths = { path = "../mcps-test-paths" }
 

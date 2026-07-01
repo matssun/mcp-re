@@ -50,6 +50,8 @@ maintainable as the project evolves.
 | [ADR-MCPS-036](adr-mcps-036.md) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine (Proposed) |
 | [ADR-MCPS-043](adr-mcps-043.md) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy (Proposed, v0.7) |
 | [ADR-MCPS-044](adr-mcps-044.md) | Client-Side MCP-S Integration Model (Proposed, v0.7/v0.8) |
+| [ADR-MCPS-045](adr-mcps-045.md) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop (Proposed, v0.7) |
+| [ADR-MCPS-046](adr-mcps-046.md) | Signed Rejection Receipts (Proposed, v0.7+) |
 
 ## Provenance
 

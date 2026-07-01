@@ -91,8 +91,7 @@ fn valid_request_over_http_verifies_and_binds() {
 #[test]
 fn tampered_request_over_http_is_rejected() {
     let case = parse_case(V1).expect("parse v1");
-    let mut value: Value =
-        serde_json::from_slice(&request_bytes(&case)).expect("parse v1 message");
+    let mut value: Value = serde_json::from_slice(&request_bytes(&case)).expect("parse v1 message");
     value["params"]["arguments"]["text"] = Value::String("goodbye".to_string());
     let tampered = serde_json::to_vec(&value).expect("reserialize tampered");
 
@@ -110,7 +109,11 @@ fn replayed_request_over_http_is_rejected_on_second_submission() {
         .expect("serve twice");
     assert_eq!(responses.len(), 2, "two requests, two responses");
 
-    let first = outcome_token(&responses[0], &case_request_hash(&case), &response_resolver());
+    let first = outcome_token(
+        &responses[0],
+        &case_request_hash(&case),
+        &response_resolver(),
+    );
     assert_eq!(first, "verify_ok", "first submission accepted");
     let second = outcome_token(&responses[1], "sha256:unused", &response_resolver());
     assert_eq!(second, "mcps.replay_detected", "second submission replayed");
@@ -143,7 +146,11 @@ fn signed_response_bound_to_wrong_request_is_rejected_over_http() {
     let resp = http()
         .roundtrip(&request_bytes(&case), now_fresh())
         .expect("roundtrip");
-    let token = outcome_token(&resp, "sha256:some-other-request-hash", &response_resolver());
+    let token = outcome_token(
+        &resp,
+        "sha256:some-other-request-hash",
+        &response_resolver(),
+    );
     assert_eq!(token, McpsError::ResponseHashMismatch.wire_code());
 }
 

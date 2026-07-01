@@ -102,8 +102,7 @@ fn signed_request_with_method(method: &str, nonce: &str) -> Vec<u8> {
 
     let preimage = request_signing_preimage(&request).expect("request preimage");
     let signature = fixtures::signer_key().sign(&preimage);
-    request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] =
-        Value::String(signature);
+    request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] = Value::String(signature);
 
     serde_json::to_vec(&request).expect("serialize signed request")
 }
@@ -123,7 +122,11 @@ fn verdict(response: &[u8], expected_request_hash: &str) -> String {
             .expect("error.message is a string")
             .to_string();
     }
-    match verify_response(response, &fixtures::response_resolver(), expected_request_hash) {
+    match verify_response(
+        response,
+        &fixtures::response_resolver(),
+        expected_request_hash,
+    ) {
         Ok(_) => "accepted".to_string(),
         Err(err) => err.wire_code().to_string(),
     }

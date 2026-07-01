@@ -660,9 +660,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
+name = "mcps-client-core"
+version = "0.6.0"
+dependencies = [
+ "mcps-core",
+ "serde_json",
+]
+
+[[package]]
+name = "mcps-client-proxy"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-core",
+ "serde_json",
+]
+
+[[package]]
+name = "mcps-client-proxy-cli"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-client-proxy",
+ "mcps-core",
+ "mcps-host",
+ "mcps-proxy",
+ "mcps-transport",
+ "serde_json",
+]
+
+[[package]]
 name = "mcps-conformance"
 version = "0.6.0"
 dependencies = [
+ "mcps-client-core",
  "mcps-core",
  "mcps-host",
  "mcps-proxy",
@@ -756,6 +787,7 @@ dependencies = [
  "hmac",
  "landlock",
  "libc",
+ "mcps-client-core",
  "mcps-core",
  "mcps-host",
  "mcps-policy",
@@ -790,6 +822,18 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mcps-walkthrough"
+version = "0.6.0"
+dependencies = [
+ "mcps-client-core",
+ "mcps-core",
+ "mcps-demo",
+ "mcps-proxy",
+ "mcps-test-paths",
+ "serde_json",
 ]
 
 [[package]]
