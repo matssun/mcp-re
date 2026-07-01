@@ -30,7 +30,6 @@ import subprocess
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -59,7 +58,6 @@ SIGNER, SIGNER_KEY = "did:example:agent-1", "key-1"
 SERVER, SERVER_KEY = "did:example:server-1", "server-key-1"
 AUDIENCE, SERVER_NAME = "did:example:server-1", "proxy.internal"
 ON_BEHALF_OF = "did:example:user-1"
-AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
 FILE_TEXT = "hello from the inner fileserver\n"
 
 
@@ -111,15 +109,18 @@ def proxy():
 
 
 def _config(resolver, expected_server_signer):
-    now = datetime.now(timezone.utc)
     return mcps_sdk.McpsConfig(
         signer=mcps_sdk.Signer.software(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY),
         policy=mcps_sdk.SignerPolicy(SIGNER, environment="dev-test", require_mcps=True),
         resolver=resolver,
         audience=AUDIENCE,
         on_behalf_of=ON_BEHALF_OF,
-        binding_digest_alg="sha256",
-        binding_digest_value=AUTHZ_DIGEST,
+        # Real authorization-binding provider: the digest is SHA-256 of the actual
+        # decoded capability bytes, computed by the audited core — not a constant.
+        # The route is fail-closed to opaque-bytes only. The production proxy accepts
+        # the well-formed binding (bind-not-interpret) over real mTLS.
+        authorization=mcps_sdk.OpaqueBytesProvider(b"demo-capability-token-decoded-bytes"),
+        authorization_policy=mcps_sdk.AuthorizationBindingPolicy.opaque_only(),
         expected_server_signer=expected_server_signer,
         enforcement_mode="require_mcps",
         ttl_seconds=300,

@@ -46,8 +46,15 @@ class McpsConfig:
     resolver: Any  # mcps_sdk.TrustResolver
     audience: str
     on_behalf_of: str
-    # The authorization-evidence binding (opaque digest). The AuthorizationBinding
-    # provider hook is a later slice; for now the caller supplies the digest.
+    # Authorization-evidence binding. PREFER a provider: set ``authorization`` to an
+    # ``AuthorizationBindingProvider`` (e.g. ``OpaqueBytesProvider``) or a prebuilt
+    # ``mcps_sdk.AuthorizationBinding`` — the digest is then computed in the audited
+    # core from the real artifact bytes, not supplied as a constant.
+    # ``authorization_policy`` (an ``mcps_sdk.AuthorizationBindingPolicy``) fails a
+    # route closed to its permitted binding types. The raw ``binding_digest_*``
+    # shortcut below is the dev/test fallback used only when ``authorization`` is None.
+    authorization: Any = None
+    authorization_policy: Any = None
     binding_digest_alg: str = "sha256"
     binding_digest_value: str = ""
     expected_server_signer: Optional[str] = None
@@ -78,6 +85,41 @@ def _request_fields(session_message: Any):
     return (rid is not None and method is not None), rid, method, getattr(root, "params", None)
 
 
+def _binding_kwargs(config: McpsConfig, method: str, params: Any, deadline_unix: int) -> dict:
+    """Resolve the authorization-binding signing kwargs for this request.
+
+    With ``config.authorization`` set, call the provider (or accept a prebuilt
+    binding) under a real :class:`~mcps_sdk.authorization.BindingRequestContext`, so
+    the digest is computed by the audited core from the actual artifact — then
+    enforce the optional route policy (fails closed on a disallowed type). With no
+    provider, fall back to the raw ``binding_digest_*`` opaque shortcut (dev/test).
+    """
+    if config.authorization is None:
+        return {
+            "binding_digest_alg": config.binding_digest_alg,
+            "binding_digest_value": config.binding_digest_value,
+        }
+    provider = config.authorization
+    if hasattr(provider, "provide"):
+        from .authorization import BindingRequestContext
+
+        tool_id = params.get("name") if (method == "tools/call" and isinstance(params, dict)) else None
+        binding = provider.provide(
+            BindingRequestContext(
+                audience=config.audience,
+                route_id=config.route_id,
+                method=method,
+                tool_id=tool_id,
+                deadline_unix=deadline_unix,
+            )
+        )
+    else:
+        binding = provider  # a prebuilt mcps_sdk.AuthorizationBinding
+    if config.authorization_policy is not None:
+        config.authorization_policy.enforce(binding)  # raises on a disallowed type
+    return {"authorization_binding": binding}
+
+
 def sign_outbound(
     session_message: Any,
     config: McpsConfig,
@@ -102,13 +144,12 @@ def sign_outbound(
         json.dumps(params or {}),
         on_behalf_of=config.on_behalf_of,
         audience=config.audience,
-        binding_digest_alg=config.binding_digest_alg,
-        binding_digest_value=config.binding_digest_value,
         nonce=nonce,
         issued_at=_rfc3339(now_unix),
         expires_at=_rfc3339(expires_unix),
         signer=config.signer,
         policy=config.policy,
+        **_binding_kwargs(config, method, params, expires_unix),
     )
     correlation.register(
         correlation_id=str(rid),

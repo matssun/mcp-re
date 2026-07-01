@@ -9,7 +9,7 @@ signed requests and verified responses, added without changing application code.
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
 > (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
 > that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 70 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> 84 tests pass, all parity against independent `mcps-client-core` oracle vectors —
 > including **three live cross-process e2es against real Rust binaries**:
 > 1. **stdio** — the adapter drives a real `tools/call` to the real server-side
 >    proxy (`mcps-stdio-server --mode proxy` = `mcps_proxy::Proxy`).
@@ -32,9 +32,23 @@ signed requests and verified responses, added without changing application code.
 > carry no `request_hash`, so the core cannot verify them: the inbound policy
 > **fails closed** by default (`mcps.missing_envelope` / `mcps.notification_forbidden`)
 > and passes them through only under an explicit `allow_unverified_server_initiated`
-> opt-in (audited as no-evidence). **Remaining:** an incremental SSE *streaming*
-> transport (consuming events on a long-lived connection — the decoder is the layer
-> it plugs into) and pinning upstream `mcp`.
+> opt-in (audited as no-evidence).
+>
+> **Authorization-binding provider (done).** The signed request's
+> `authorization_binding.digest_value` is now computed by the audited core from the
+> ACTUAL artifact, not handed in as a constant. `authorization.py` mirrors
+> `mcps-client-core::authz`: `OpaqueBytesProvider` binds the exact decoded artifact
+> bytes (`base64url-no-pad(SHA-256(bytes))`, computed in Rust — checked against an
+> independent stdlib-SHA-256 oracle), `AuthzSystemReferenceProvider` binds an
+> external authz system's digest+reference, and `AuthorizationBindingPolicy` fails a
+> route closed to permitted binding types (`mcps.authorization_binding_type_unsupported`).
+> `McpsConfig.authorization` / `authorization_policy` wire a provider per request
+> (called with a real `BindingRequestContext`); the live mTLS `ClientSession` e2e
+> signs via `OpaqueBytesProvider` so the production proxy accepts a real-evidence
+> digest. The raw `binding_digest_*` kwargs remain as a documented dev/test shortcut.
+> **Remaining:** an incremental SSE *streaming* transport (consuming events on a
+> long-lived connection — the decoder is the layer it plugs into) and pinning
+> upstream `mcp`.
 >
 > Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
 > The stdio e2e needs `cargo build -p mcps-conformance --bin mcps-stdio-server`; the

@@ -32,6 +32,13 @@ __all__ = [
     "VerifyResult",
     "CorrelationStore",
     "PendingRequest",
+    "AuthorizationBinding",
+    "AuthorizationBindingPolicy",
+    "BindingRequestContext",
+    "AuthzReference",
+    "OpaqueBytesProvider",
+    "AuthzSystemReferenceProvider",
+    "StaticAuthorizationProvider",
     "McpsConfig",
     "McpsTransport",
     "McpsHttpTransport",
@@ -68,12 +75,24 @@ VerifyResult = _core.VerifyResult
 CorrelationStore = _core.CorrelationStore
 #: One outstanding request's retained state (returned by ``take_for_response``).
 PendingRequest = _core.PendingRequest
+#: A typed authorization-evidence binding, built via the audited providers
+#: (``AuthorizationBinding.opaque_bytes`` / ``.authz_system_reference``).
+AuthorizationBinding = _core.AuthorizationBinding
+#: Per-route policy of permitted binding base forms (fail-closed ``.enforce``).
+AuthorizationBindingPolicy = _core.AuthorizationBindingPolicy
 
 # The adapter: imports `mcp` lazily (inside functions), so this is import-safe even
 # where `mcp` is not installed.
 from .transport import McpsConfig, McpsTransport, McpsVerificationError  # noqa: E402
 from .http_transport import McpsHttpTransport  # noqa: E402
 from .streamable import decode_inbound, sse_data_events, verify_inbound_messages  # noqa: E402
+from .authorization import (  # noqa: E402
+    AuthzReference,
+    AuthzSystemReferenceProvider,
+    BindingRequestContext,
+    OpaqueBytesProvider,
+    StaticAuthorizationProvider,
+)
 from .client import connect, connect_mtls_http, connect_stdio  # noqa: E402
 
 #: Response-envelope key the adapter strips before handing a plain response to the app.
