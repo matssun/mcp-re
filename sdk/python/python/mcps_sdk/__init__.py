@@ -50,6 +50,7 @@ __all__ = [
     "decode_inbound",
     "sse_data_events",
     "verify_inbound_messages",
+    "response_meta_key",
 ]
 
 #: MCP-S protocol version the bound core verifies/signs against (e.g. "draft-02").
