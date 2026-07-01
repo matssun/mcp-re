@@ -84,3 +84,44 @@ fn every_configured_sdk_driver_round_trips_a_signed_call() {
         "the Rust reference driver must always be available and run"
     );
 }
+
+/// The cross-language NEGATIVE: every configured driver must FAIL CLOSED when the
+/// server is untrusted. The PEP signs a genuine response, but the client leg is
+/// handed a valid-but-wrong server public key — so response verification cannot
+/// succeed and no SDK may surface the file content. This proves each SDK's
+/// verification is real (not a rubber stamp) through the whole four-hop, not just
+/// in its own unit suite.
+#[test]
+fn every_configured_sdk_driver_fails_closed_on_an_untrusted_server() {
+    for driver in &ClientDriver::available() {
+        eprintln!("[driver-matrix-neg] RUN {} ({:?})", driver.label, driver.command);
+        let mut hop = FourHop::launch_with(FourHopOptions {
+            client_driver: Some(driver.clone()),
+            tamper_server_pubkey: true,
+            ..FourHopOptions::default()
+        });
+
+        let response = hop.call(&tool_call(
+            &format!("neg-{}", driver.label),
+            "read_file",
+            serde_json::json!({ "path": "hello.txt" }),
+        ));
+
+        // Fail closed: an error, and NEVER a plain result carrying the file text.
+        assert!(
+            response.get("error").is_some(),
+            "driver '{}' must fail closed on an untrusted server, got: {response}",
+            driver.label
+        );
+        assert!(
+            response.get("result").is_none(),
+            "driver '{}' must surface no result on a fail-closed exchange: {response}",
+            driver.label
+        );
+        assert!(
+            !response.to_string().contains(SEED_TEXT.trim()),
+            "driver '{}' must not leak inner file content on fail-closed: {response}",
+            driver.label
+        );
+    }
+}

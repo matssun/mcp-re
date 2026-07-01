@@ -178,6 +178,11 @@ pub struct FourHopOptions {
     /// Which SDK's client leg to launch (default `None` → the Rust reference
     /// driver, [`ClientDriver::rust`]). Set to run a tier against another SDK.
     pub client_driver: Option<ClientDriver>,
+    /// When `true`, hand the client leg a VALID-but-WRONG server public key, so the
+    /// PEP's genuinely-signed response fails the client's response verification —
+    /// the "untrusted server" negative. The client must FAIL CLOSED (no plain
+    /// result), which every SDK driver must honor identically. Default `false`.
+    pub tamper_server_pubkey: bool,
 }
 
 impl Default for FourHopOptions {
@@ -189,6 +194,7 @@ impl Default for FourHopOptions {
             server_name_override: None,
             signing: SigningMode::Software,
             client_driver: None,
+            tamper_server_pubkey: false,
         }
     }
 }
@@ -410,7 +416,7 @@ impl FourHop {
         let files = fixtures.write_files().expect("write fixture material");
 
         // Resolve where the object-signing keys live (software seeds or Cloud KMS).
-        let profile = match &opts.signing {
+        let mut profile = match &opts.signing {
             SigningMode::Software => SigningProfile::software(&fixtures, &files),
             #[cfg(feature = "gcp_kms")]
             SigningMode::GcpKms {
@@ -418,6 +424,15 @@ impl FourHop {
                 server_key_version,
             } => SigningProfile::gcp_kms(client_key_version, server_key_version, &files),
         };
+        if opts.tamper_server_pubkey {
+            // A valid Ed25519 key that is NOT the server's response signer: the
+            // client trusts the wrong anchor, so the genuine signed response cannot
+            // verify and the client must fail closed. (The signer seed yields a
+            // real, distinct key — never a malformed one that would fail earlier.)
+            profile.client_server_pubkey = mcps_core::SigningKey::from_seed_bytes(&fixtures.signer_seed())
+                .public_key()
+                .to_b64url();
+        }
 
         // A writable demo root, seeded so reads/lists have something real.
         let demo_root = TempDir::new("root").expect("create demo root");
