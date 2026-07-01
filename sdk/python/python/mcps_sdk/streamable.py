@@ -99,7 +99,12 @@ def verify_inbound_messages(
     fail-closed inbound policy — uniformly, whichever decode site the body came from.
     """
     outcomes: List[InboundOutcome] = []
-    for payload in decode_inbound(content_type, body):
+    try:
+        payloads = decode_inbound(content_type, body)
+    except UnicodeDecodeError:
+        return [InboundOutcome("reject", reason="mcps.canonicalization_failed")]
+
+    for payload in payloads:
         try:
             outcomes.append(verify_inbound(payload, config, correlation, now_unix=now_unix))
         except (UnicodeDecodeError, ValueError, TypeError):
