@@ -40,6 +40,12 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
 - **Server Cloud KMS support (existing live lane).** `mcps-proxy --key-source
   GcpKms` continues to sign responses from a non-exporting Cloud KMS key
   (feature `gcp_kms_keysource`, live lanes).
+- **Integrated Cloud KMS four-hop — Tier T4 (live, #218).** A single live run
+  with the client request signer AND the server response signer BOTH non-exporting
+  in Cloud KMS (two distinct keys), over the real mTLS socket. The walkthrough
+  harness (`FourHop::launch_kms`, feature `gcp_kms`) fetches both KMS public keys
+  to wire trust and drives a signed round-trip end to end; `#[ignore]`d, run from
+  the cloud script (command 5). PROVEN against a real Cloud KMS project.
 - **Secret-hygiene guard.** A tracked-file leak guard
   (`mcps-walkthrough` `no_tracked_secrets`) asserts no real account/project
   identifier is committed; the live-cloud script stays gitignored behind a
@@ -47,15 +53,25 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
 - **Python SDK — request-side slice (#199).** `mcps-python-sdk` gains request
   signing + custody/signer-policy binding (request side only;
   ADR [044](docs/adr/adr-mcps-044.md)).
+- **Multi-SDK test architecture — pluggable client leg.** The four-hop harness's
+  client leg is a `ClientDriver` seam: every MCP-S SDK is an interchangeable client
+  behind one stdio + CLI contract (`mcps-client-proxy-cli` is the reference), and
+  the `sdk_driver_matrix` runs the tiers against each configured driver (skip-not-
+  fail). Ready for the upcoming TypeScript/Rust SDKs (`MCPS_DRIVER_*`).
+- **Python SDK — live four-hop interop, software AND Cloud KMS.** `mcps_sdk.driver`
+  makes the Python SDK a live client leg: it signs via the SDK's audited core, mTLS-
+  POSTs to the real `mcps-proxy`, and verifies the server-signed response. Proven
+  green in the matrix; and with `--key-source gcp-kms` the Python client signs every
+  request with a NON-EXPORTING Cloud KMS key (`Signer.non_exporting` → `asymmetric
+  Sign`) across the integrated four-hop (`t4_python_kms_custody`, live, #[ignore]).
+  Both the happy path AND the untrusted-server negative are proven cross-language
+  through the four-hop: every driver must fail closed when it cannot verify the
+  server's response. Surfaced (and fixed) a real cross-language cert defect: the demo
+  TLS leaves lacked an Authority Key Identifier — tolerated by rustls, rejected by
+  OpenSSL (Python).
 
 ### NOT yet claimed in v0.7
 
-- **A single integrated live-cloud four-hop with BOTH client and server signing
-  keys in Cloud KMS** over the real socket. Its two halves exist as separate
-  live lanes (client KMS signer + server KMS response signing), but they are not
-  yet stitched into one live four-hop run, which can only be validated with cloud
-  credentials. Tracked as the T4-integrated follow-up
-  (ADR [045](docs/adr/adr-mcps-045.md) Phase 4).
 - **Signed rejection reasons across the wire.** A client that fails closed cannot
   yet surface the remote's specific reason (e.g. `transport_binding_failed`) — it
   rides an unsigned error body the client rightly distrusts. The fix (signed
@@ -65,8 +81,9 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
 ### Build & test
 
 The **Cargo** workspace is the authoritative, maintained test gate and is fully
-green (116 test binaries, 0 failures). The Cloud KMS lanes are intentionally
-`#[ignore]`/manual (they require live cloud credentials). The **Bazel** build has
+green (1104 tests across the workspace, 0 failures). The Cloud KMS lanes and the
+live cross-language KMS four-hop are intentionally `#[ignore]`/manual (they require
+live cloud credentials). The **Bazel** build has
 known, pre-existing **non-gating** `BUILD`-file parity rot — unrelated to this
 release — e.g. `//mcps-proxy:mcps_proxy_cli` missing a `//mcps-core:mcps_core`
 dep (present already before this epic) and `pkcs11` test-dep gaps; tracked

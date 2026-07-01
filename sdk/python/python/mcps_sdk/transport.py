@@ -46,8 +46,15 @@ class McpsConfig:
     resolver: Any  # mcps_sdk.TrustResolver
     audience: str
     on_behalf_of: str
-    # The authorization-evidence binding (opaque digest). The AuthorizationBinding
-    # provider hook is a later slice; for now the caller supplies the digest.
+    # Authorization-evidence binding. PREFER a provider: set ``authorization`` to an
+    # ``AuthorizationBindingProvider`` (e.g. ``OpaqueBytesProvider``) or a prebuilt
+    # ``mcps_sdk.AuthorizationBinding`` — the digest is then computed in the audited
+    # core from the real artifact bytes, not supplied as a constant.
+    # ``authorization_policy`` (an ``mcps_sdk.AuthorizationBindingPolicy``) fails a
+    # route closed to its permitted binding types. The raw ``binding_digest_*``
+    # shortcut below is the dev/test fallback used only when ``authorization`` is None.
+    authorization: Any = None
+    authorization_policy: Any = None
     binding_digest_alg: str = "sha256"
     binding_digest_value: str = ""
     expected_server_signer: Optional[str] = None
@@ -55,6 +62,20 @@ class McpsConfig:
     legacy_allowed: bool = False
     ttl_seconds: int = 300
     route_id: str = "default"
+    # Inbound policy for SERVER-INITIATED messages (a server->client request or
+    # notification — NOT a response to one of our signed requests). The MCP-S
+    # evidence model binds a server's signature to the client's `request_hash`; a
+    # server-initiated message has none, so `mcps-client-core` cannot verify it.
+    # STRICT MCP-S is the client-initiated request/response subset (to be extended
+    # to signed multi-round-trip continuation by a future v0.8 profile; ARBITRARY
+    # server push stays out of scope): the safe default FAILS CLOSED (in-taxonomy).
+    #
+    # `True` is a DEGRADED / MIGRATION policy ONLY — it is an explicit operator
+    # opt-OUT of the guarantee for the server-initiated channel, to run legacy
+    # servers during migration. The message is then delivered but audited as
+    # NO-EVIDENCE. It is NOT strict enterprise MCP-S and must never be presented as
+    # such. Leave it off for strict deployments.
+    allow_unverified_server_initiated: bool = False
 
 
 def _rfc3339(unix: int) -> str:
@@ -67,6 +88,41 @@ def _request_fields(session_message: Any):
     rid = getattr(root, "id", None)
     method = getattr(root, "method", None)
     return (rid is not None and method is not None), rid, method, getattr(root, "params", None)
+
+
+def _binding_kwargs(config: McpsConfig, method: str, params: Any, deadline_unix: int) -> dict:
+    """Resolve the authorization-binding signing kwargs for this request.
+
+    With ``config.authorization`` set, call the provider (or accept a prebuilt
+    binding) under a real :class:`~mcps_sdk.authorization.BindingRequestContext`, so
+    the digest is computed by the audited core from the actual artifact — then
+    enforce the optional route policy (fails closed on a disallowed type). With no
+    provider, fall back to the raw ``binding_digest_*`` opaque shortcut (dev/test).
+    """
+    if config.authorization is None:
+        return {
+            "binding_digest_alg": config.binding_digest_alg,
+            "binding_digest_value": config.binding_digest_value,
+        }
+    provider = config.authorization
+    if hasattr(provider, "provide"):
+        from .authorization import BindingRequestContext
+
+        tool_id = params.get("name") if (method == "tools/call" and isinstance(params, dict)) else None
+        binding = provider.provide(
+            BindingRequestContext(
+                audience=config.audience,
+                route_id=config.route_id,
+                method=method,
+                tool_id=tool_id,
+                deadline_unix=deadline_unix,
+            )
+        )
+    else:
+        binding = provider  # a prebuilt mcps_sdk.AuthorizationBinding
+    if config.authorization_policy is not None:
+        config.authorization_policy.enforce(binding)  # raises on a disallowed type
+    return {"authorization_binding": binding}
 
 
 def sign_outbound(
@@ -93,13 +149,12 @@ def sign_outbound(
         json.dumps(params or {}),
         on_behalf_of=config.on_behalf_of,
         audience=config.audience,
-        binding_digest_alg=config.binding_digest_alg,
-        binding_digest_value=config.binding_digest_value,
         nonce=nonce,
         issued_at=_rfc3339(now_unix),
         expires_at=_rfc3339(expires_unix),
         signer=config.signer,
         policy=config.policy,
+        **_binding_kwargs(config, method, params, expires_unix),
     )
     correlation.register(
         correlation_id=str(rid),
@@ -156,16 +211,32 @@ def verify_inbound(
     A response to one of our requests (has ``id``, no ``method``) is correlated and
     verified; on accept the MCP-S envelope is stripped and a plain SessionMessage is
     returned. A late/uncorrelatable/expired correlation or a failed verification is
-    a fail-closed reject. Server-initiated requests/notifications are passed through
-    unverified for now (#199 gap).
+    a fail-closed reject.
+
+    A SERVER-INITIATED message (it carries a ``method`` — a server->client request if
+    id-bearing, a notification if not) is NOT a response to one of our requests, so
+    there is no ``request_hash`` to bind it and the core cannot verify it. The
+    ``allow_unverified_server_initiated`` policy decides: fail closed under the safe
+    default (``mcps.missing_envelope`` for an id-bearing server request,
+    ``mcps.notification_forbidden`` for a notification — both in the frozen
+    taxonomy), or pass it through unverified (audited as no-evidence) when allowed.
     """
     obj = json.loads(line)
     has_method = "method" in obj
     rid = obj.get("id")
 
-    if rid is None or has_method:
-        # Server-initiated request or notification — not a response to us.
-        return InboundOutcome("passthrough", message=_session_message(obj))
+    if has_method:
+        # Server-initiated request/notification — no request_hash binding exists, so
+        # the core cannot verify it. Apply the inbound policy.
+        if config.allow_unverified_server_initiated:
+            return InboundOutcome("passthrough", message=_session_message(obj))
+        reason = "mcps.missing_envelope" if rid is not None else "mcps.notification_forbidden"
+        return InboundOutcome("reject", reason=reason)
+
+    if rid is None:
+        # Neither a method nor an id: not a correlatable JSON-RPC response. Fail
+        # closed rather than deliver an uncorrelatable, unverifiable message.
+        return InboundOutcome("reject", reason="mcps.missing_envelope")
 
     # A response to one of our outstanding requests.
     try:

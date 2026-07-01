@@ -74,3 +74,76 @@ async def connect_stdio(
             yield session
     finally:
         process.terminate()
+
+
+@asynccontextmanager
+async def connect_mtls_http(
+    host: str,
+    port: int,
+    config: McpsConfig,
+    *,
+    server_ca: str,
+    client_cert: str,
+    client_key: str,
+    server_name: str,
+    timeout: float = 15.0,
+    correlation: Any = None,
+    clock=None,
+    nonce_factory=None,
+):
+    """Yield an ``mcp.ClientSession`` whose every request is one MCP-S-signed mTLS
+    POST to the production ``mcps-proxy`` (verified server-signed response).
+
+    This is the request/response counterpart to :func:`connect_stdio`: the proxy
+    serves one HTTP/1.1 POST per mTLS connection (``Connection: close``), so each
+    ``ClientSession`` request opens its own connection. ``initialize`` round-trips
+    as a normal signed request; client→server notifications are dropped (the
+    transport has no fire-and-forget channel and the minimal proxy never pushes).
+
+    The client authenticates with ``client_cert`` / ``client_key`` (the cert's URI
+    SAN is the MCP-S signer DID) and verifies the proxy's server certificate against
+    ``server_ca`` for ``server_name``.
+    """
+    import socket
+    import ssl
+
+    from mcp import ClientSession  # lazy: keeps `import mcps_sdk` mcp-free
+
+    from .http_transport import McpsHttpTransport
+
+    ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=server_ca)
+    ctx.load_cert_chain(client_cert, client_key)
+
+    def post_sync(body: bytes) -> "tuple[str, bytes]":
+        """One mTLS HTTP/1.1 POST; returns ``(content_type, response_body)``."""
+        raw = socket.create_connection((host, port), timeout=timeout)
+        tls = ctx.wrap_socket(raw, server_hostname=server_name)
+        try:
+            head = (
+                f"POST / HTTP/1.1\r\nHost: {server_name}\r\n"
+                f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+            ).encode()
+            tls.sendall(head + body)
+            resp = b""
+            while True:
+                chunk = tls.recv(65536)
+                if not chunk:
+                    break
+                resp += chunk
+        finally:
+            tls.close()
+        head_bytes, _, resp_body = resp.partition(b"\r\n\r\n")
+        content_type = ""
+        for line in head_bytes.split(b"\r\n"):
+            name, sep, value = line.partition(b":")
+            if sep and name.strip().lower() == b"content-type":
+                content_type = value.strip().decode("latin-1")
+                break
+        return content_type, resp_body
+
+    transport = McpsHttpTransport(
+        post_sync, config, correlation, clock=clock, nonce_factory=nonce_factory
+    )
+    async with transport as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            yield session
