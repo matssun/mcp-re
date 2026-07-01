@@ -106,6 +106,6 @@ def verify_inbound_messages(
             continue
         try:
             outcomes.append(verify_inbound(payload, config, correlation, now_unix=now_unix))
-        except Exception:
+        except ValueError:
             outcomes.append(InboundOutcome("reject", reason="mcps.missing_envelope"))
     return outcomes
