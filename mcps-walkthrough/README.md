@@ -54,3 +54,39 @@ Each test calls `FourHop::launch()` (see `src/lib.rs`), which mints ephemeral
 mTLS material (`DemoFixtures`), spawns both proxies pointed at a writable demo
 root, and exposes `call(plain_request) -> plain_response`. Everything is wiped on
 drop. Read one test top-to-bottom — that's the whole demo.
+
+## Multi-SDK: the client leg is pluggable
+
+An MCP-S SDK is an *interchangeable client* — it signs requests and verifies
+responses. The harness launches the client leg through a `ClientDriver` seam, so
+every tier can run against any SDK, not just the Rust reference proxy. The Rust
+`mcps-client-proxy-cli` is the reference implementation of the driver contract; a
+Python/TypeScript SDK provides a thin CLI wrapping its own signer.
+
+**The driver contract** (what each SDK's driver binary/script must honor):
+
+- **stdio:** read one plain MCP JSON-RPC request per line on stdin; write one
+  plain MCP JSON-RPC response per line on stdout; sign the request and verify the
+  signed response in between. No MCP-S fields ever leak to stdout.
+- **CLI args** (appended by the harness, identical for every driver):
+  `--remote-addr --server-name --signer-id --key-id` + the key-source flags
+  (`--signing-key-seed @<path>` or `--key-source gcp-kms --gcp-kms-key-version`)
+  `--server-signer --server-key-id --server-pubkey --audience --tls-cert
+  --tls-key --server-ca --on-behalf-of`.
+
+**Running the matrix.** `ClientDriver::available()` always includes the Rust
+reference driver and adds any SDK driver named by an env key — skip-not-fail, so an
+absent toolchain is logged, never a failure:
+
+```sh
+# Rust reference only (the always-on lane):
+cargo test -p mcps-walkthrough --test sdk_driver_matrix -- --nocapture
+
+# Add a Python SDK driver to the same matrix:
+MCPS_DRIVER_PYTHON="python3 -m mcps_sdk.driver" \
+  cargo test -p mcps-walkthrough --test sdk_driver_matrix -- --nocapture
+```
+
+Recognized keys: `MCPS_DRIVER_PYTHON`, `MCPS_DRIVER_TS`. Any tier (`FourHopOptions
+{ client_driver: Some(..), .. }`) can be pointed at a specific SDK driver the same
+way; the Rust reference `mcps-proxy` PEP stays the single conformance oracle.

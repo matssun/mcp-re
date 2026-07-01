@@ -76,6 +76,70 @@ pub enum ClientCert {
     Mismatched,
 }
 
+/// How to launch the client leg — the pluggable seam that lets every tier run
+/// against ANY MCP-S SDK (Rust today; Python/TypeScript upcoming), not just the
+/// Rust reference proxy.
+///
+/// Each driver is a subprocess honoring ONE stdio contract: plain MCP JSON-RPC in
+/// on stdin, one plain MCP JSON-RPC response out per line on stdout, with MCP-S
+/// signing (request) + verification (response) in between. The driver ALSO accepts
+/// the shared client CLI arg surface the harness appends (`--remote-addr`,
+/// `--server-name`, `--signer-id`, `--key-id`, the key-source flags,
+/// `--server-signer`, `--server-key-id`, `--server-pubkey`, `--audience`,
+/// `--tls-cert`, `--tls-key`, `--server-ca`, `--on-behalf-of`). The Rust
+/// `mcps-client-proxy-cli` is the reference implementation of that contract; an SDK
+/// driver is a thin `__main__`/CLI wrapping the SDK's own signer.
+#[derive(Debug, Clone)]
+pub struct ClientDriver {
+    /// Short label for diagnostics + skip logging (e.g. `rust`, `python`).
+    pub label: String,
+    /// The launch prefix: program plus any leading args (e.g.
+    /// `["python3", "-m", "mcps_sdk.driver"]`). The shared contract args are
+    /// appended by the harness.
+    pub command: Vec<String>,
+}
+
+impl ClientDriver {
+    /// The Rust reference driver: `mcps-client-proxy-cli`, resolved via
+    /// `mcps-test-paths` (Bazel runfiles OR cargo target).
+    pub fn rust() -> Self {
+        ClientDriver {
+            label: "rust".to_string(),
+            command: vec![resolve_bin("MCPS_CLIENT_PROXY_CLI")],
+        }
+    }
+
+    /// Every client driver configured in this environment. The Rust reference
+    /// driver is ALWAYS present; each additional SDK driver is included only when
+    /// its env key names a launch command — skip-not-fail, so a contributor without
+    /// a given SDK's toolchain runs the drivers they have and NEVER fails on the
+    /// ones they lack. The launch command is whitespace-split.
+    ///
+    /// Recognized keys: `MCPS_DRIVER_PYTHON`, `MCPS_DRIVER_TS`.
+    pub fn available() -> Vec<ClientDriver> {
+        let mut drivers = vec![ClientDriver::rust()];
+        for (label, key) in [
+            ("python", "MCPS_DRIVER_PYTHON"),
+            ("typescript", "MCPS_DRIVER_TS"),
+        ] {
+            if let Some(raw) = std::env::var_os(key) {
+                let parts: Vec<String> = raw
+                    .to_string_lossy()
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect();
+                if !parts.is_empty() {
+                    drivers.push(ClientDriver {
+                        label: label.to_string(),
+                        command: parts,
+                    });
+                }
+            }
+        }
+        drivers
+    }
+}
+
 /// Where the object-layer SIGNING keys live: the fixture software seeds
 /// (default, T0..T3) or GCP Cloud KMS (T4 — both client request signer and server
 /// response signer non-exporting in the cloud). mTLS material is file-backed in
@@ -111,6 +175,9 @@ pub struct FourHopOptions {
     pub server_name_override: Option<String>,
     /// Where the object-signing keys live (default [`SigningMode::Software`]).
     pub signing: SigningMode,
+    /// Which SDK's client leg to launch (default `None` → the Rust reference
+    /// driver, [`ClientDriver::rust`]). Set to run a tier against another SDK.
+    pub client_driver: Option<ClientDriver>,
 }
 
 impl Default for FourHopOptions {
@@ -121,6 +188,7 @@ impl Default for FourHopOptions {
             received_log: None,
             server_name_override: None,
             signing: SigningMode::Software,
+            client_driver: None,
         }
     }
 }
@@ -375,8 +443,9 @@ impl FourHop {
             .server_name_override
             .clone()
             .unwrap_or_else(|| fixtures.server_name().to_string());
+        let driver = opts.client_driver.clone().unwrap_or_else(ClientDriver::rust);
         let (client, client_in, client_out) = spawn_client(
-            &resolve_bin("MCPS_CLIENT_PROXY_CLI"),
+            &driver,
             &files,
             &fixtures,
             &audience,
@@ -582,11 +651,13 @@ fn parse_listening_addr(line: &str) -> Option<SocketAddr> {
     token.parse().ok()
 }
 
-/// Spawn the client `mcps-client-proxy-cli` with stdio piped; returns the child
-/// plus its stdin and a buffered stdout reader.
+/// Spawn the client leg (`driver`) with stdio piped, appending the shared client
+/// CLI contract args; returns the child plus its stdin and a buffered stdout
+/// reader. `driver` is the Rust reference proxy or any SDK driver honoring the
+/// same contract.
 #[allow(clippy::too_many_arguments)]
 fn spawn_client(
-    client_bin: &str,
+    driver: &ClientDriver,
     files: &DemoFixtureFiles,
     fixtures: &DemoFixtures,
     audience: &AudienceTuple,
@@ -631,13 +702,21 @@ fn spawn_client(
         "--on-behalf-of".into(), "user:alice".into(),
     ]);
 
-    let mut child = Command::new(client_bin)
+    // Launch prefix (program + any leading args) then the shared contract args.
+    let (program, prefix) = driver
+        .command
+        .split_first()
+        .expect("client driver command must name a program");
+    let mut child = Command::new(program)
+        .args(prefix)
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap_or_else(|e| panic!("spawn client proxy {client_bin}: {e}"));
+        .unwrap_or_else(|e| {
+            panic!("spawn client driver '{}' ({program}): {e}", driver.label)
+        });
 
     // Drain the client's stderr (startup line + per-request audit) so the pipe
     // never fills and blocks the child.
