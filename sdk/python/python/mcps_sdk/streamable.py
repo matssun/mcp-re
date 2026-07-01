@@ -44,7 +44,11 @@ def sse_data_events(raw: bytes) -> List[bytes]:
     message (MCP emits one message per event). An event with no ``data`` field
     yields nothing.
     """
-    text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("invalid UTF-8 in text/event-stream body") from exc
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     events: List[bytes] = []
     data_lines: List[str] = []
 
