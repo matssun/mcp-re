@@ -97,8 +97,21 @@ def verify_inbound_messages(
     :func:`~mcps_sdk.transport.verify_inbound`, so a correlated response is
     ``request_hash``-verified and a server-initiated message is subjected to the
     fail-closed inbound policy — uniformly, whichever decode site the body came from.
+
+    Resilient by design: a body that cannot even be decoded (e.g. non-UTF-8 SSE
+    bytes) fails closed as a single ``missing_envelope`` reject rather than crashing
+    the caller, and one malformed payload in a multi-message SSE body fails closed on
+    its own without poisoning the other (valid) messages in the same body.
     """
-    return [
-        verify_inbound(payload, config, correlation, now_unix=now_unix)
-        for payload in decode_inbound(content_type, body)
-    ]
+    try:
+        payloads = decode_inbound(content_type, body)
+    except (UnicodeDecodeError, ValueError):
+        return [InboundOutcome("reject", reason="mcps.missing_envelope")]
+
+    outcomes: List[InboundOutcome] = []
+    for payload in payloads:
+        try:
+            outcomes.append(verify_inbound(payload, config, correlation, now_unix=now_unix))
+        except Exception:  # noqa: BLE001 — one bad payload fails closed, batch continues
+            outcomes.append(InboundOutcome("reject", reason="mcps.missing_envelope"))
+    return outcomes

@@ -206,7 +206,11 @@ def _make_post(args: argparse.Namespace):
 
     def post(body: bytes) -> bytes:
         raw = socket.create_connection((host, port), timeout=15)
-        tls = ctx.wrap_socket(raw, server_hostname=args.server_name)
+        try:
+            tls = ctx.wrap_socket(raw, server_hostname=args.server_name)
+        except Exception:
+            raw.close()  # don't leak the TCP socket on a handshake/config failure
+            raise
         try:
             head = (
                 f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"

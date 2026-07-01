@@ -9,6 +9,7 @@ subprocess (the common MCP stdio case).
 
 from __future__ import annotations
 
+import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -73,7 +74,10 @@ async def connect_stdio(
         async with connect(byte_send, byte_lines(), config) as session:
             yield session
     finally:
+        # Reap the child so it does not linger as a zombie (terminate + await exit).
         process.terminate()
+        with contextlib.suppress(Exception):
+            await process.wait()
 
 
 @asynccontextmanager
@@ -117,7 +121,11 @@ async def connect_mtls_http(
     def post_sync(body: bytes) -> "tuple[str, bytes]":
         """One mTLS HTTP/1.1 POST; returns ``(content_type, response_body)``."""
         raw = socket.create_connection((host, port), timeout=timeout)
-        tls = ctx.wrap_socket(raw, server_hostname=server_name)
+        try:
+            tls = ctx.wrap_socket(raw, server_hostname=server_name)
+        except Exception:
+            raw.close()  # a handshake/config failure must not leak the TCP socket
+            raise
         try:
             head = (
                 f"POST / HTTP/1.1\r\nHost: {server_name}\r\n"
