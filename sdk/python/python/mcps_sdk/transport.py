@@ -65,11 +65,16 @@ class McpsConfig:
     # Inbound policy for SERVER-INITIATED messages (a server->client request or
     # notification — NOT a response to one of our signed requests). The MCP-S
     # evidence model binds a server's signature to the client's `request_hash`; a
-    # server-initiated message has none, so `mcps-client-core` cannot verify it.
-    # The safe default therefore FAILS CLOSED (reject with an in-taxonomy reason).
-    # Set True only for a transitional deployment that knowingly accepts unverified
-    # server-initiated traffic — it is then delivered to the app, audited as
-    # carrying no evidence.
+    # server-initiated message has none, so `mcps-client-core` cannot verify it, and
+    # draft-02 defines no evidence for this direction (ADR-MCPS-047). STRICT MCP-S is
+    # the client-initiated request/response subset: the safe default FAILS CLOSED
+    # (reject with an in-taxonomy reason).
+    #
+    # `True` is a DEGRADED / MIGRATION policy ONLY — it is an explicit operator
+    # opt-OUT of the guarantee for the server-initiated channel, to run legacy
+    # servers during migration. The message is then delivered but audited as
+    # NO-EVIDENCE. It is NOT strict enterprise MCP-S and must never be presented as
+    # such. Leave it off for strict deployments.
     allow_unverified_server_initiated: bool = False
 
 

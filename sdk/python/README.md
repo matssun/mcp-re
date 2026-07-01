@@ -29,10 +29,13 @@ signed requests and verified responses, added without changing application code.
 > decodes all three streamable-HTTP inbound sites (direct JSON, POST-SSE,
 > standalone GET-SSE) to JSON-RPC payloads and routes EVERY one through the same
 > verification. Server-initiated messages (a server→client request/notification)
-> carry no `request_hash`, so the core cannot verify them: the inbound policy
-> **fails closed** by default (`mcps.missing_envelope` / `mcps.notification_forbidden`)
-> and passes them through only under an explicit `allow_unverified_server_initiated`
-> opt-in (audited as no-evidence).
+> carry no `request_hash`, so the core cannot verify them and draft-02 defines no
+> evidence for this direction (ADR-MCPS-047). **Strict MCP-S is the client-initiated
+> request/response subset:** the inbound policy **fails closed** by default
+> (`mcps.missing_envelope` / `mcps.notification_forbidden`).
+> `allow_unverified_server_initiated` is a **degraded/migration opt-out only**
+> (delivered, audited as no-evidence) — never strict MCP-S. Verifying
+> server-initiated messages is deferred to ADR-MCPS-047 (bidirectional evidence).
 >
 > **Authorization-binding provider (done).** The signed request's
 > `authorization_binding.digest_value` is now computed by the audited core from the
