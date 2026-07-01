@@ -108,6 +108,10 @@ fn make_ca(common_name: &str) -> Ca {
     let mut params = CertificateParams::new(Vec::new()).expect("ca params");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    // Emit an Authority Key Identifier (referencing this CA's own SubjectKeyId,
+    // which `IsCa::Ca` already writes). rustls tolerates its absence, but OpenSSL
+    // 3.x — used by the Python/Node SDK clients — fails chain building without it.
+    params.use_authority_key_identifier_extension = true;
     params.distinguished_name.push(DnType::CommonName, common_name);
     let cert = params.self_signed(&key).expect("ca self-signed");
     Ca { cert, key }
@@ -136,6 +140,10 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
+    // Emit the Authority Key Identifier (referencing the issuing CA's SubjectKeyId)
+    // so OpenSSL-based clients (the Python/Node SDKs) can build the chain; rustls
+    // does not require it, which is why the Rust tiers passed without it.
+    params.use_authority_key_identifier_extension = true;
     let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
     (cert, key)
 }
