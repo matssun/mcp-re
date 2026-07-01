@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
-## [0.7.0] — Unreleased
+## [0.7.0] — 2026-07-02
 
 **End-to-end walkthrough — the v0.7 persona ladder.** v0.7 closes the
 "prove v0.7 end-to-end" gap with a real, multi-process MCP-S path: an ordinary
