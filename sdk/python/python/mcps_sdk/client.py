@@ -68,6 +68,10 @@ async def connect_stdio(
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
                 yield line
+        # Yield a final unterminated line (stdout closed without a trailing '\n')
+        # rather than silently dropping the last message.
+        if buffer:
+            yield buffer
 
     try:
         async with connect(byte_send, byte_lines(), config) as session:
@@ -129,15 +133,17 @@ async def connect_mtls_http(
         try:
             head = (
                 f"POST / HTTP/1.1\r\nHost: {server_name}\r\n"
+                f"Content-Type: application/json\r\n"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()
             tls.sendall(head + body)
-            resp = b""
+            chunks: list[bytes] = []
             while True:
                 chunk = tls.recv(65536)
                 if not chunk:
                     break
-                resp += chunk
+                chunks.append(chunk)
+            resp = b"".join(chunks)
         finally:
             tls.close()
         head_bytes, _, resp_body = resp.partition(b"\r\n\r\n")
