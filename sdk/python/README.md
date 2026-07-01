@@ -34,8 +34,10 @@ signed requests and verified responses, added without changing application code.
 > request/response subset:** the inbound policy **fails closed** by default
 > (`mcps.missing_envelope` / `mcps.notification_forbidden`).
 > `allow_unverified_server_initiated` is a **degraded/migration opt-out only**
-> (delivered, audited as no-evidence) — never strict MCP-S. Verifying
-> server-initiated messages is deferred to ADR-MCPS-047 (bidirectional evidence).
+> (delivered, audited as no-evidence) — never strict MCP-S. ADR-MCPS-047 (stateless
+> multi-round-trip continuation) folds request-associated elicitation
+> (`InputRequiredResult` → signed continuation) back into the strict request/response
+> profile; **arbitrary** server push stays out of scope and fails closed.
 >
 > **Authorization-binding provider (done).** The signed request's
 > `authorization_binding.digest_value` is now computed by the audited core from the

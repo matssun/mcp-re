@@ -65,10 +65,10 @@ class McpsConfig:
     # Inbound policy for SERVER-INITIATED messages (a server->client request or
     # notification — NOT a response to one of our signed requests). The MCP-S
     # evidence model binds a server's signature to the client's `request_hash`; a
-    # server-initiated message has none, so `mcps-client-core` cannot verify it, and
-    # draft-02 defines no evidence for this direction (ADR-MCPS-047). STRICT MCP-S is
-    # the client-initiated request/response subset: the safe default FAILS CLOSED
-    # (reject with an in-taxonomy reason).
+    # server-initiated message has none, so `mcps-client-core` cannot verify it.
+    # STRICT MCP-S is the client-initiated request/response subset (extended to
+    # signed multi-round-trip continuation by ADR-MCPS-047; ARBITRARY server push
+    # stays out of scope): the safe default FAILS CLOSED (an in-taxonomy reason).
     #
     # `True` is a DEGRADED / MIGRATION policy ONLY — it is an explicit operator
     # opt-OUT of the guarantee for the server-initiated channel, to run legacy
