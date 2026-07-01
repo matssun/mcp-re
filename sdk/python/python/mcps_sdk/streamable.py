@@ -50,7 +50,9 @@ def sse_data_events(raw: bytes) -> List[bytes]:
 
     def dispatch() -> None:
         if data_lines:
-            events.append("\n".join(data_lines).encode("utf-8"))
+            payload = "\n".join(data_lines)
+            if payload:
+                events.append(payload.encode("utf-8"))
             data_lines.clear()
 
     for line in text.split("\n"):
