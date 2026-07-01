@@ -123,6 +123,28 @@ def _sign(tool, arguments):
     )
 
 
+def _sign_non_exporting(tool, arguments):
+    """Sign via a NON-EXPORTING signer under the PRODUCTION hardening profile: the
+    key lives in a SigningDevice, the signer holds only its sign callback, custody is
+    NonExporting, and the policy requires it. The proxy must accept the resulting
+    evidence exactly as for a software signer (same key, same signature)."""
+    now = datetime.now(timezone.utc)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    device = mcps_sdk.SigningDevice.from_seed(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY)
+    signer = mcps_sdk.Signer.non_exporting(signer_id=SIGNER, key_id=SIGNER_KEY, sign_callback=device.sign)
+    policy = mcps_sdk.SignerPolicy(
+        SIGNER, environment="production", require_mcps=True
+    ).require_non_exporting()
+    return mcps_sdk.sign_request_with_signer(
+        '"req-1"', "tools/call", json.dumps({"name": tool, "arguments": arguments}),
+        on_behalf_of=ON_BEHALF_OF, audience=AUDIENCE,
+        binding_digest_alg="sha256", binding_digest_value=AUTHZ_DIGEST,
+        nonce=secrets.token_urlsafe(16),
+        issued_at=now.strftime(fmt), expires_at=(now + timedelta(seconds=300)).strftime(fmt),
+        signer=signer, policy=policy,
+    )
+
+
 def _post(out, port, body):
     """One mTLS HTTP/1.1 POST; returns the response body bytes."""
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=f"{out}/server_ca.pem")
@@ -172,6 +194,26 @@ def test_mtls_roundtrip_real_proxy_and_fileserver(proxy):
     obj.get("result", {}).get("_meta", {}).pop(mcps_sdk.response_meta_key(), None)
     assert obj["result"]["content"][0]["text"] == FILE_TEXT
     assert "_meta" not in obj["result"] or obj["result"]["_meta"] == {}
+
+
+def test_mtls_roundtrip_non_exporting_signer(proxy):
+    """A request signed via a non-exporting (device-delegated) signer under the
+    production hardening profile is accepted by the real mcps-proxy over real mTLS,
+    the fileserver executes it, and the production-signed response verifies — proving
+    the non-exporting custody path produces genuine, proxy-accepted evidence."""
+    signed = _sign_non_exporting("read_file", {"path": "greeting.txt"})
+    body = _post(proxy["out"], proxy["port"], signed.wire_bytes)
+
+    res = mcps_sdk.verify_response(
+        body, resolver=_trusting_resolver(),
+        expected_request_hash=signed.request_hash, expected_server_signer=SERVER,
+        enforcement_mode="require_mcps",
+    )
+    assert res.accepted and res.decision == "accept"
+
+    obj = json.loads(body)
+    obj.get("result", {}).get("_meta", {}).pop(mcps_sdk.response_meta_key(), None)
+    assert obj["result"]["content"][0]["text"] == FILE_TEXT
 
 
 def test_mtls_response_fails_closed_when_server_untrusted(proxy):

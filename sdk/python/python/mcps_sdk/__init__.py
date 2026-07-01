@@ -27,6 +27,7 @@ __all__ = [
     "verify_response",
     "SignedRequest",
     "Signer",
+    "SigningDevice",
     "SignerPolicy",
     "TrustResolver",
     "VerifyResult",
@@ -61,8 +62,12 @@ sign_request = _core.sign_request
 sign_request_with_signer = _core.sign_request_with_signer
 #: A signed draft-02 request: ``.wire_bytes`` (bytes) + ``.request_hash`` (str).
 SignedRequest = _core.SignedRequest
-#: A client signing identity: ``Signer.software(...)`` / ``Signer.dev_file(...)``.
+#: A client signing identity: ``Signer.software(...)`` / ``Signer.dev_file(...)`` /
+#: ``Signer.non_exporting(...)`` (custody ``NonExporting``, signs via a device callback).
 Signer = _core.Signer
+#: An HSM/KMS stand-in that holds a key internally and exposes only ``.sign(preimage)``
+#: (no getter) — provision with ``SigningDevice.from_seed(...)`` for non-exporting custody.
+SigningDevice = _core.SigningDevice
 #: The signer-custody policy gating which signers may sign under a route/mode.
 SignerPolicy = _core.SignerPolicy
 #: Verify a signed response + apply the enforcement decision (return-leg chain).

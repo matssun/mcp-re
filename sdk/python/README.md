@@ -9,7 +9,7 @@ signed requests and verified responses, added without changing application code.
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
 > (`CorrelationStore`), and the **transport adapter** (`McpsTransport` / `connect`)
 > that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 84 tests pass, all parity against independent `mcps-client-core` oracle vectors —
+> 91 tests pass, all parity against independent `mcps-client-core` oracle vectors —
 > including **three live cross-process e2es against real Rust binaries**:
 > 1. **stdio** — the adapter drives a real `tools/call` to the real server-side
 >    proxy (`mcps-stdio-server --mode proxy` = `mcps_proxy::Proxy`).
@@ -46,6 +46,18 @@ signed requests and verified responses, added without changing application code.
 > (called with a real `BindingRequestContext`); the live mTLS `ClientSession` e2e
 > signs via `OpaqueBytesProvider` so the production proxy accepts a real-evidence
 > digest. The raw `binding_digest_*` kwargs remain as a documented dev/test shortcut.
+>
+> **Non-exporting custody (done).** `Signer.non_exporting(signer_id, key_id,
+> sign_callback)` is a signer whose private key NEVER enters the SDK — it holds only
+> a `preimage -> signature` callback (a KMS/HSM client call in production). Custody is
+> `NonExporting`, the only class `SignerPolicy.require_non_exporting()` accepts.
+> `SigningDevice.from_seed(...)` is the HSM/KMS stand-in: it encapsulates the key and
+> exposes ONLY `.sign(preimage)` (no getter). Proven both ways — the hardening
+> profile rejects software/dev-file keys (`mcps.actor_binding_failed`) and accepts
+> the device-delegated signer; the delegation is byte-identical to the direct
+> software path (same evidence, key just moved behind the device); a device that
+> can't sign fails closed; and a live mTLS test signs via the non-exporting signer
+> under the **production** hardening profile, accepted by the real `mcps-proxy`.
 > **Remaining:** an incremental SSE *streaming* transport (consuming events on a
 > long-lived connection — the decoder is the layer it plugs into) and pinning
 > upstream `mcp`.

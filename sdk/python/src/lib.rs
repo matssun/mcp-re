@@ -172,11 +172,50 @@ impl PySignedRequest {
 enum SignerKind {
     Software(SoftwareSigner),
     DevFile(DevFileSigner),
+    Delegated(DelegatedSigner),
+}
+
+/// A NON-EXPORTING signer (custody class `NonExporting`): the private key lives in
+/// an external device (HSM / KMS / remote signer) and NEVER enters the SDK. Signing
+/// is delegated to a Python callback `preimage_bytes -> base64url_no_pad_signature`;
+/// this struct holds only that callback, so there is nothing to export. A callback
+/// that raises or returns a non-string fails closed (`mcps.actor_binding_failed`) —
+/// a signer that cannot sign never yields a placeholder.
+struct DelegatedSigner {
+    signer_id: String,
+    key_id: String,
+    sign_cb: Py<PyAny>,
+}
+
+impl ClientSigner for DelegatedSigner {
+    fn signer_id(&self) -> &str {
+        &self.signer_id
+    }
+    fn key_id(&self) -> &str {
+        &self.key_id
+    }
+    fn custody(&self) -> CustodyClass {
+        CustodyClass::NonExporting
+    }
+    fn sign_preimage(&self, preimage: &[u8]) -> Result<String, McpsError> {
+        Python::with_gil(|py| {
+            let arg = PyBytes::new(py, preimage);
+            let out = self
+                .sign_cb
+                .call1(py, (arg,))
+                .map_err(|_| McpsError::ActorBindingFailed)?;
+            out.extract::<String>(py)
+                .map_err(|_| McpsError::ActorBindingFailed)
+        })
+    }
 }
 
 /// A client signing identity (the custody seam). Construct via [`Signer::software`]
-/// (a held-private software key — acceptable in production) or [`Signer::dev_file`]
-/// (an unprotected dev/test key — rejected under production `require_mcps`).
+/// (a held-private software key — acceptable in production), [`Signer::dev_file`]
+/// (an unprotected dev/test key — rejected under production `require_mcps`), or
+/// [`Signer::non_exporting`] (custody `NonExporting`, the hardening profile — signs
+/// via an external device, the only class [`SignerPolicy::require_non_exporting`]
+/// accepts).
 #[pyclass(name = "Signer", frozen)]
 struct PySigner {
     kind: SignerKind,
@@ -187,6 +226,7 @@ impl PySigner {
         match &self.kind {
             SignerKind::Software(s) => s,
             SignerKind::DevFile(s) => s,
+            SignerKind::Delegated(s) => s,
         }
     }
 }
@@ -209,6 +249,23 @@ impl PySigner {
         Ok(PySigner {
             kind: SignerKind::DevFile(DevFileSigner::new(seed_to_key(seed)?, signer_id, key_id)),
         })
+    }
+
+    /// NON-EXPORTING signer (custody class `NonExporting`, the hardening profile):
+    /// the key lives in an external device and never enters the SDK. `sign_callback`
+    /// is a callable `preimage_bytes -> base64url-no-pad signature str` (e.g. a
+    /// `SigningDevice.sign` bound method, or a KMS/HSM client call). This is the only
+    /// custody class a `require_non_exporting()` policy accepts.
+    #[staticmethod]
+    #[pyo3(signature = (*, signer_id, key_id, sign_callback))]
+    fn non_exporting(signer_id: &str, key_id: &str, sign_callback: Py<PyAny>) -> Self {
+        PySigner {
+            kind: SignerKind::Delegated(DelegatedSigner {
+                signer_id: signer_id.to_string(),
+                key_id: key_id.to_string(),
+                sign_cb: sign_callback,
+            }),
+        }
     }
 
     #[getter]
@@ -237,6 +294,38 @@ impl PySigner {
             self.as_dyn().key_id(),
             self.custody(),
         )
+    }
+}
+
+/// A signing device that ENCAPSULATES a key: it holds the private key internally
+/// and exposes ONLY a sign operation — there is no getter, so the key can never be
+/// read back out. This is the HSM/KMS stand-in for the non-exporting custody path:
+/// provision it (here from a seed; in production it wraps a device/KMS handle) and
+/// hand its [`sign`](Self::sign) to [`Signer::non_exporting`]. The Ed25519 signing is
+/// the audited core path (a `SoftwareSigner` held privately, scrubbed on drop).
+#[pyclass(name = "SigningDevice", frozen)]
+struct PySigningDevice {
+    inner: SoftwareSigner,
+}
+
+#[pymethods]
+impl PySigningDevice {
+    /// Provision a device holding the key derived from `seed` (32 bytes). The seed is
+    /// consumed into the device and never exposed again — modelling key provisioning
+    /// into hardware. A real deployment constructs the device from a KMS/HSM handle
+    /// instead of a seed.
+    #[staticmethod]
+    #[pyo3(signature = (seed, *, signer_id, key_id))]
+    fn from_seed(seed: &[u8], signer_id: &str, key_id: &str) -> PyResult<Self> {
+        Ok(PySigningDevice {
+            inner: SoftwareSigner::new(seed_to_key(seed)?, signer_id, key_id),
+        })
+    }
+
+    /// The device signing operation: Ed25519-sign `preimage` with the device-held
+    /// key, returning the base64url-no-pad signature. The key never leaves the device.
+    fn sign(&self, preimage: &[u8]) -> PyResult<String> {
+        self.inner.sign_preimage(preimage).map_err(to_py_err)
     }
 }
 
@@ -863,6 +952,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verify_response, m)?)?;
     m.add_class::<PySignedRequest>()?;
     m.add_class::<PySigner>()?;
+    m.add_class::<PySigningDevice>()?;
     m.add_class::<PySignerPolicy>()?;
     m.add_class::<PyTrustResolver>()?;
     m.add_class::<PyVerifyResult>()?;

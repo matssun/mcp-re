@@ -108,6 +108,62 @@ def test_hardening_profile_rejects_software_key():
         _sign_with(_software_signer(), policy)
 
 
+# --- non-exporting custody path (the hardening profile ACCEPT side) ---------
+
+def _device():
+    return mcps_sdk.SigningDevice.from_seed(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
+
+
+def _non_exporting_signer(sign_callback=None):
+    # The key lives in the device; the signer holds only the device's sign callback.
+    return mcps_sdk.Signer.non_exporting(
+        signer_id=SIGNER_ID, key_id=KEY_ID, sign_callback=sign_callback or _device().sign
+    )
+
+
+def test_non_exporting_signer_metadata():
+    assert _non_exporting_signer().custody == "non-exporting"
+
+
+def test_hardening_profile_accepts_non_exporting_signer():
+    """The non-exporting signer is the one class the hardening profile permits."""
+    signed = _sign_with(_non_exporting_signer(), _policy().require_non_exporting())
+    assert signed.request_hash.startswith("sha256:")
+
+
+def test_non_exporting_delegation_is_byte_identical_to_software():
+    """Delegating signing to the device yields the EXACT same evidence as the direct
+    software path with the same key — the seam is cryptographically faithful, it just
+    moves the key behind a device boundary. Same wire bytes, same request_hash."""
+    signed = _sign_with(_non_exporting_signer(), _policy().require_non_exporting())
+    assert signed.wire_bytes.decode() == EXPECTED["expected_wire_bytes"]
+    assert signed.request_hash == EXPECTED["expected_request_hash"]
+
+
+def test_non_exporting_dev_file_still_rejected_under_hardening():
+    """Hardening also excludes the unprotected dev-file class (only NonExporting passes)."""
+    with pytest.raises(ValueError, match="ActorBindingFailed"):
+        _sign_with(_dev_file_signer(), _policy().require_non_exporting())
+
+
+def test_non_exporting_callback_failure_fails_closed():
+    """A device that cannot sign (raises) fails closed — no placeholder signature."""
+
+    def offline(_preimage):
+        raise RuntimeError("device unreachable")
+
+    signer = _non_exporting_signer(sign_callback=offline)
+    with pytest.raises(ValueError, match="ActorBindingFailed"):
+        _sign_with(signer, _policy().require_non_exporting())
+
+
+def test_signing_device_exposes_no_key_getter():
+    """The device offers only provisioning + sign; there is no way to read the key
+    back out (the non-exporting property at the API boundary)."""
+    public = [a for a in dir(_device()) if not a.startswith("__")]
+    assert public == ["from_seed", "sign"]
+
+
 def test_unknown_environment_rejected():
     with pytest.raises(ValueError, match="environment must be"):
         mcps_sdk.SignerPolicy(SIGNER_ID, environment="staging", require_mcps=True)
