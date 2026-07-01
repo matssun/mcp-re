@@ -214,18 +214,19 @@ def _make_post(args: argparse.Namespace):
         try:
             head = (
                 f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"
+                f"Content-Type: application/json\r\n"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()
             tls.sendall(head + body)
-            resp = b""
+            chunks = []
             while True:
                 chunk = tls.recv(65536)
                 if not chunk:
                     break
-                resp += chunk
+                chunks.append(chunk)
         finally:
             tls.close()
-        return resp.split(b"\r\n\r\n", 1)[1]
+        return b"".join(chunks).split(b"\r\n\r\n", 1)[1]
 
     return post
 

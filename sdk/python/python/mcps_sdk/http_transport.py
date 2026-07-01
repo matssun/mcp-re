@@ -145,26 +145,34 @@ class McpsHttpTransport:
         # response, so a reject binds to this request's id (so the awaiting call
         # raises, not hangs); an accepted/passed-through message is delivered as-is.
         try:
-            outcomes = verify_inbound_messages(
-                content_type,
-                body,
-                self._config,
-                self._correlation,
-                now_unix=self._clock(),
-            )
-        except Exception:
-            await self._app_read_send.send(self._reject_message(rid, "mcps.missing_envelope"))
-            return
+            try:
+                outcomes = verify_inbound_messages(
+                    content_type,
+                    body,
+                    self._config,
+                    self._correlation,
+                    now_unix=self._clock(),
+                )
+            except Exception:
+                await self._app_read_send.send(self._reject_message(rid, "mcps.missing_envelope"))
+                return
 
-        if not outcomes:
-            await self._app_read_send.send(self._reject_message(rid, "mcps.missing_envelope"))
-            return
+            if not outcomes:
+                await self._app_read_send.send(self._reject_message(rid, "mcps.missing_envelope"))
+                return
 
-        for outcome in outcomes:
-            if outcome.kind in ("accept", "passthrough"):
-                await self._app_read_send.send(outcome.message)
-            else:
-                await self._app_read_send.send(self._reject_message(rid, outcome.reason))
+            for outcome in outcomes:
+                if outcome.kind in ("accept", "passthrough"):
+                    await self._app_read_send.send(outcome.message)
+                else:
+                    await self._app_read_send.send(self._reject_message(rid, outcome.reason))
+        finally:
+            # Reap our own correlation entry if this round trip produced no correlated
+            # response for it (decode/verify failure, empty body, or a server-initiated
+            # message) — a no-op if an accepted response already consumed it. Without
+            # this the entry would leak (this transport never sweeps) and could block
+            # reuse of the JSON-RPC id.
+            self._correlation.cancel(str(rid))
     @staticmethod
     def _reject_message(rid: Any, reason: Optional[str]) -> Any:
         from mcp.shared.message import SessionMessage
