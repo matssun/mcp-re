@@ -99,8 +99,9 @@ export class McpsHttpTransport implements Transport {
     // One independent POST per request. Do NOT await the round trip here — each request
     // owns its own correlation entry (distinct JSON-RPC ids), and the Client awaits its
     // response via onmessage; a slow round trip must not head-of-line block other calls.
-    void this.roundTrip(message, m.id);
-  }
+    void this.roundTrip(message, m.id).catch((err) => {
+      this.onerror?.(err instanceof Error ? err : new Error(String(err)));
+    });
 
   async close(): Promise<void> {
     this.closed = true;
