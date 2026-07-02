@@ -60,6 +60,12 @@ SDK and the proxy. Built on top of the released v0.7.0.
   workflow that runs off the per-push inner loop (`push: main` / merge queue / weekly)
   and excludes the test-fixture `hard-coded-cryptographic-value` false positives; a
   `.pre-commit-config.yaml` adds a fast local hygiene + Semgrep tier.
+- **Draft-02 corpus pinned by content.** The v0.8.0 draft-02 conformance corpus is
+  pinned by digest, not only by Git tag: `scripts/corpus_digest.py` deterministically
+  recomputes a `manifest.json` SHA-256 and a whole-directory file-hash-list digest from
+  the checked-in bytes, so a reviewer can confirm they are recomputing against the same
+  corpus object. The script's output is the normative pin; the scope and values live in
+  the [Conformance Guide](docs/conformance-guide.md#v080-draft-02-conformance-corpus-pinning).
 
 ### Not in v0.8 (gaps / deferred)
 
