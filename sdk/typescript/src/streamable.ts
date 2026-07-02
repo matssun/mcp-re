@@ -111,10 +111,11 @@ export function verifyInboundMessages(
 ): InboundOutcome[] {
   const outcomes: InboundOutcome[] = [];
   for (const payload of decodeInbound(contentType, body)) {
-    // Skip empty / whitespace-only payloads rather than failing them closed — an SSE
-    // heartbeat or blank event (`data:\n\n`) yields a zero-length Buffer and is not a
-    // message. Parity with the Python SDK (`if not payload: continue`).
-    if (payload.toString("utf-8").trim().length === 0) continue;
+    // Skip only truly EMPTY payloads (an SSE heartbeat / blank event `data:\n\n` yields
+    // a zero-length Buffer and is not a message) — exact parity with the Python SDK
+    // (`if not payload: continue`). Whitespace-only or otherwise malformed payloads are
+    // NOT skipped here; they fall through to verifyInbound and fail closed.
+    if (payload.length === 0) continue;
     try {
       outcomes.push(verifyInbound(payload, config, correlation, { nowUnix: opts.nowUnix, mrt: opts.mrt }));
     } catch {

@@ -90,6 +90,11 @@ export function connectMtlsHttp(
   },
   hooks?: TransportHooks,
 ): McpsHttpTransport {
+  // `serverName` is interpolated into the raw HTTP `Host:` header — reject any control
+  // character (CR/LF especially) up front so a caller-supplied name can't inject headers.
+  if (/[\u0000-\u001f\u007f]/.test(tls.serverName)) {
+    throw new Error("mcps: serverName must not contain control characters (CR/LF header injection)");
+  }
   const timeoutMs = tls.timeoutMs ?? 15000;
   const post: PostFn = (body: Buffer) => oneMtlsPost(host, port, body, tls, timeoutMs);
   return new McpsHttpTransport(post, config, hooks);
@@ -125,6 +130,9 @@ function oneMtlsPost(
       const head = Buffer.from(
         `POST / HTTP/1.1\r\nHost: ${tls.serverName}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
       );
+      // write() (NOT end()): on a TLS socket, end() sends close_notify and tears down the
+      // read side before the server's response arrives. Connection: close means the server
+      // FINs after responding, which ends our read normally.
       socket.write(Buffer.concat([head, body]));
     });
     socket.on("data", (d: Buffer) => chunks.push(d));
