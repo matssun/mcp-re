@@ -102,6 +102,7 @@ export class McpsHttpTransport implements Transport {
     void this.roundTrip(message, m.id).catch((err) => {
       this.onerror?.(err instanceof Error ? err : new Error(String(err)));
     });
+  }
 
   async close(): Promise<void> {
     this.closed = true;
