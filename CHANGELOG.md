@@ -41,6 +41,25 @@ SDK and the proxy. Built on top of the released v0.7.0.
   opaque `requestState`) drives the elicitation → continuation SECURITY SHAPE end to
   end through the real four-hop across the **Rust reference, Python, and TypeScript**
   drivers.
+- **`McpsHttpTransport` MRT coverage in both SDKs.** The continuation path through the
+  request/response transport (record on the `InputRequiredResult` leg, bind on the
+  answer leg) is covered three ways: always-run hermetic transport tests, the
+  primitives-level four-hop matrix, and a **live** `delete_files` elicit → answer round
+  trip driving the transport against the real `mcps-proxy` + fileserver — added for both
+  the Python and TypeScript SDKs.
+- **Transport hardening (message-boundary correctness).** `serverName` is validated
+  against CR/LF before it reaches the HTTP `Host` header (header-injection guard); the
+  stdio reader fails closed per message so one malformed line can't tear down the
+  transport; the request/response transport delivers exactly one outcome per request id
+  (no contradictory success-then-failure on interleaved server messages); and empty-vs-
+  malformed inbound-payload handling is byte-for-byte matched across the two SDKs.
+
+### Tooling
+
+- **Two-tier security scanning.** CodeQL moved from default setup to an advanced-setup
+  workflow that runs off the per-push inner loop (`push: main` / merge queue / weekly)
+  and excludes the test-fixture `hard-coded-cryptographic-value` false positives; a
+  `.pre-commit-config.yaml` adds a fast local hygiene + Semgrep tier.
 
 ### Not in v0.8 (gaps / deferred)
 
@@ -50,9 +69,6 @@ SDK and the proxy. Built on top of the released v0.7.0.
 - **ADR-MCPS-044 (Client-Side Integration Model) stays Proposed.** Both SDKs realize
   it, but its full scope is not yet claimed complete — not overclaiming.
 - **ADR-MCPS-046 (Signed Rejection Receipts) stays deferred / design-only.**
-- **TypeScript SDK live cross-process mTLS e2es are not yet written.** The driver
-  matrix already exercises the TS SDK through the real four-hop; dedicated mTLS e2es
-  mirroring the Python `test_e2e_*` suite are a follow-up.
 - **The TypeScript conformance driver's Cloud KMS path signs via a synchronous
   `curl`** (Node has no native synchronous HTTP, and the napi non-exporting sign
   callback is synchronous); the offline/software path is fully in-process.
