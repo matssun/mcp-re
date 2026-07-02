@@ -216,7 +216,10 @@ fn continuation_is_single_use() {
 
     let answer = json!({
         "jsonrpc": "2.0", "id": "req-2", "method": "tools/call",
-        "params": { "name": "delete_files", "arguments": {}, "requestState": REQUEST_STATE }
+        "params": {
+            "name": "delete_files", "arguments": {},
+            "inputResponses": { "confirm": true }, "requestState": REQUEST_STATE
+        }
     });
     proxy
         .handle(
@@ -231,7 +234,10 @@ fn continuation_is_single_use() {
     // rather than completing — proving the binding was consumed, not reusable.
     let replay = json!({
         "jsonrpc": "2.0", "id": "req-3", "method": "tools/call",
-        "params": { "name": "delete_files", "arguments": {}, "requestState": REQUEST_STATE }
+        "params": {
+            "name": "delete_files", "arguments": {},
+            "inputResponses": { "confirm": true }, "requestState": REQUEST_STATE
+        }
     });
     let out = proxy
         .handle(
@@ -241,4 +247,58 @@ fn continuation_is_single_use() {
         )
         .expect("leg 3 replay");
     assert_eq!(out.plain_response["result"]["resultType"], "inputRequired");
+}
+
+/// A follow-up that echoes `requestState` but omits `inputResponses` is NOT an answer
+/// leg (SEP-2322: an answer carries both). It must not consume the single-use
+/// continuation nor attach a binding — otherwise a malformed/partial call would burn
+/// the stored state and the real answer could never complete.
+#[test]
+fn partial_follow_up_without_input_responses_is_not_bound() {
+    let mut proxy = proxy();
+
+    let first = json!({
+        "jsonrpc": "2.0", "id": "req-1", "method": "tools/call",
+        "params": { "name": "delete_files", "arguments": {} }
+    });
+    proxy
+        .handle("tools", &first, &params("Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA"))
+        .expect("leg 1");
+
+    // Partial follow-up: requestState but no inputResponses. With the gate it is signed
+    // as an ordinary (unbound) request, so the remote elicits again rather than
+    // completing — the binding was NOT attached.
+    let partial = json!({
+        "jsonrpc": "2.0", "id": "req-2", "method": "tools/call",
+        "params": { "name": "delete_files", "arguments": {}, "requestState": REQUEST_STATE }
+    });
+    let out = proxy
+        .handle(
+            "tools",
+            &partial,
+            &params("bm9uY2UtdHdvLWZyZXNoLTEyMzQ1Njc4OTA"),
+        )
+        .expect("partial follow-up");
+    assert_eq!(out.plain_response["result"]["resultType"], "inputRequired");
+
+    // The continuation was not burned: a real answer (inputResponses + requestState)
+    // still completes the exchange.
+    let answer = json!({
+        "jsonrpc": "2.0", "id": "req-3", "method": "tools/call",
+        "params": {
+            "name": "delete_files", "arguments": {},
+            "inputResponses": { "confirm": true }, "requestState": REQUEST_STATE
+        }
+    });
+    let out2 = proxy
+        .handle(
+            "tools",
+            &answer,
+            &params("bm9uY2UtdGhyZWUtZnJlc2gtMTIzNDU2Nzg"),
+        )
+        .expect("real answer completes");
+    assert_eq!(
+        out2.plain_response["result"]["content"][0]["text"],
+        "deleted 3 files"
+    );
 }

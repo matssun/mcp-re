@@ -654,10 +654,12 @@ fn delete_files_terminal(paths: &[Value], responses: &Value, request_state: &str
 /// only to this server, which decodes it to resume — the ADR-MCPS-047 / D5 contract.
 /// Hand-rolled hex keeps this MCP-S-unaware server dependency-free.
 fn encode_request_state(paths: &[Value]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let json = Value::Array(paths.to_vec()).to_string();
     let mut out = String::with_capacity(json.len() * 2);
-    for b in json.as_bytes() {
-        out.push_str(&format!("{b:02x}"));
+    for &b in json.as_bytes() {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
 }

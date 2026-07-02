@@ -156,16 +156,18 @@ impl ClientProxy {
             &ctx,
         )?;
 
-        // Continuation answer leg (ADR-MCPS-047 / D3+D4): if this call echoes a
-        // `requestState` we retained from a prior InputRequiredResult, bind the
-        // stored continuation into the signed request. `remove` consumes it — a
-        // continuation is single-use; a replayed answer finds nothing and is signed
-        // as an ordinary (unbound) request, which the server rejects on its own
-        // requestState rules.
-        let continuation = req_params
-            .get("requestState")
-            .and_then(Value::as_str)
-            .and_then(|state| self.continuations.remove(state));
+        // Continuation answer leg (ADR-MCPS-047 / D3+D4): an answer carries BOTH
+        // `inputResponses` and the echoed `requestState` (SEP-2322) — the same gate the
+        // SDK drivers apply. Only then do we bind the stored continuation we retained
+        // from the prior InputRequiredResult. `remove` consumes it — a continuation is
+        // single-use; a replayed answer finds nothing and is signed as an ordinary
+        // (unbound) request, which the server rejects on its own requestState rules.
+        // Gating on `inputResponses` too avoids burning the single-use state on a
+        // malformed/partial follow-up that echoes `requestState` without answering.
+        let continuation = match (req_params.get("inputResponses"), req_params.get("requestState")) {
+            (Some(_), Some(state)) => state.as_str().and_then(|s| self.continuations.remove(s)),
+            _ => None,
+        };
 
         // Build + sign the draft-02 request through the custody seam.
         let mut inputs = RequestSigningInputs::with_default_canonicalization(
