@@ -172,6 +172,11 @@ export class McpsHttpTransport implements Transport {
         answered = true;
         this.correlation.cancel(String(rid));
         this.onmessage?.(this.rejectMessage(rid, outcome.reason));
+      } else {
+        // A reject AFTER the correlated response was already delivered (e.g. a forbidden
+        // server-initiated message interleaved in an SSE body). Emitting a second response
+        // for this id would violate JSON-RPC — surface it out-of-band instead.
+        this.onerror?.(new Error(`mcps inbound message rejected: ${outcome.reason ?? "mcps.verification_failed"}`));
       }
     }
     if (!answered) {

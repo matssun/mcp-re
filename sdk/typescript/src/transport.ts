@@ -509,10 +509,18 @@ export class McpsTransport implements Transport {
       for await (const line of this.byteLines) {
         if (this.closed) break;
         if (!line || line.length === 0) continue;
-        const outcome = verifyInbound(line, this.config, this.correlation, {
-          nowUnix: this.clock(),
-          mrt: this.mrt,
-        });
+        let outcome: InboundOutcome;
+        try {
+          outcome = verifyInbound(line, this.config, this.correlation, {
+            nowUnix: this.clock(),
+            mrt: this.mrt,
+          });
+        } catch {
+          // A single malformed line (bad JSON / non-UTF-8) must not tear down the whole
+          // reader — fail closed for THIS line and keep reading subsequent messages.
+          this.onerror?.(new McpsVerificationError("mcps.missing_envelope"));
+          continue;
+        }
         if (outcome.kind === "accept" || outcome.kind === "passthrough") {
           this.onmessage?.(outcome.message as JSONRPCMessage);
         } else {
