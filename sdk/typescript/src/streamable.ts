@@ -85,9 +85,12 @@ export function decodeInbound(contentType: string, body: Buffer | string): Buffe
   if (mediaType === "text/event-stream") {
     return sseDataEvents(body);
   }
-  const buf = typeof body === "string" ? Buffer.from(body) : body;
-  const trimmed = buf.toString("utf-8").trim();
-  return trimmed ? [Buffer.from(trimmed)] : [];
+  const buf = typeof body === "string" ? Buffer.from(body, "utf-8") : body;
+  // Treat a whitespace-only body as empty, but do not re-encode or otherwise mutate bytes.
+  for (const b of buf) {
+    if (b !== 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) return [buf];
+  }
+  return [];
 }
 
 /**
