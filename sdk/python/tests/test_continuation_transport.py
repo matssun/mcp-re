@@ -276,3 +276,62 @@ def test_async_transport_drives_elicitation_round_trip():
     env = json.loads(sent[-1].rstrip(b"\n"))["params"]["_meta"][REQUEST_META_KEY]
     assert env["continuation"]["previous_request_hash"] == H1
     assert env["continuation"]["input_required_response_hash"] == _irr_response_hash()
+
+
+# --- request/response (mTLS/HTTP) transport: same MRT threading, one POST per leg -
+
+
+def test_http_transport_drives_elicitation_round_trip():
+    """ADR-047 continuation through :class:`McpsHttpTransport` — the one-POST-per-request
+    wire the production ``connect_mtls_http`` uses. Proves the transport's own MRT
+    threading (``self._mrt`` recorded on the InputRequiredResult leg, bound on the answer
+    leg): without it the answer POST would fail closed as ``mcps.continuation_malformed``.
+
+    The stdio async test above injects the server IRR into a passive byte pump; the HTTP
+    transport has no such channel — every inbound message is the response to a POST — so a
+    fake ``post`` returns the (pre-signed) IRR for the first leg and captures the answer
+    leg's wire. As in that test, the first-round hash is stood in for by the pre-registered
+    ``H1`` (the fixture IRR binds it); the first leg carries a DISTINCT id so its own
+    correlation entry does not clobber that pre-registration."""
+    from mcps_sdk.http_transport import McpsHttpTransport
+
+    posted: list = []
+
+    def fake_post(wire: bytes):
+        posted.append(wire)
+        # Leg 1 (the elicit): reply with the server-signed InputRequiredResult (bound to
+        # H1). Leg 2 (the answer): we assert on the captured wire, so any well-formed body
+        # that fails closed is fine — it is delivered as a correlated reject we drain.
+        return ("application/json", _input_required_bytes() if len(posted) == 1 else b"{}")
+
+    nonces = iter([f"httpnonce{i}" for i in range(8)])
+
+    async def scenario():
+        corr = mcps_sdk.CorrelationStore()
+        _register_first(corr)  # the pre-registered first-round (H1) the fixture IRR binds
+        transport = McpsHttpTransport(
+            fake_post,
+            _config(),
+            corr,
+            clock=lambda: NOW + 1,
+            nonce_factory=lambda: next(nonces),  # distinct per leg (both legs sign here)
+        )
+        async with transport as (read_stream, write_stream):
+            # A DISTINCT id (not req-1) so this leg's own entry can't overwrite H1's.
+            await write_stream.send(
+                _sm("req-0", "tools/call", {"name": "delete_files", "arguments": {"paths": ["a", "b", "c"]}})
+            )
+            elicit = await read_stream.receive()
+            # The answer: the writer must pick up the recorded MRT state and bind it.
+            await write_stream.send(_answer())
+            await read_stream.receive()  # drain the answer leg's (fail-closed) delivery
+        return elicit
+
+    elicit = anyio.run(scenario)
+    dumped = json.loads(elicit.message.model_dump_json(by_alias=True, exclude_none=True))
+    assert dumped["result"]["resultType"] == "inputRequired"
+    assert len(posted) == 2, "both the elicit leg and the answer leg must POST"
+    env = json.loads(posted[-1])["params"]["_meta"][REQUEST_META_KEY]
+    assert env["continuation"]["type"] == "mcp-mrt"
+    assert env["continuation"]["previous_request_hash"] == H1
+    assert env["continuation"]["input_required_response_hash"] == _irr_response_hash()

@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CorrelationStore,
+  McpsHttpTransport,
   McpsTransport,
   Signer,
   SignerPolicy,
@@ -204,6 +205,70 @@ describe("async transport drives the round trip", () => {
 
     expect(sent.length).toBeGreaterThan(0);
     const cont = envelope(sent[sent.length - 1].subarray(0, sent[sent.length - 1].length - 1)).continuation;
+    expect(cont.previous_request_hash).toBe(H1);
+    expect(cont.input_required_response_hash).toBe(irrResponseHash());
+  });
+});
+
+describe("request/response (mTLS/HTTP) transport drives the round trip", () => {
+  it("records on the elicit POST, binds on the answer POST (shared MRT state)", async () => {
+    // ADR-047 continuation through McpsHttpTransport — the one-POST-per-request wire the
+    // production connectMtlsHttp uses. Proves the transport's own MRT threading (the
+    // `this.mrt` map recorded on the InputRequiredResult leg, bound on the answer leg);
+    // without it the answer POST fails closed as `mcps.continuation_malformed`.
+    //
+    // The push-based transport has no channel to inject an unsolicited response, so a fake
+    // `post` returns the (pre-signed) IRR for the first leg and captures the answer leg's
+    // wire. As in the stdio test the first-round hash is stood in for by the pre-registered
+    // H1 (the fixture IRR binds it); the first leg carries a DISTINCT id so its own
+    // correlation entry does not clobber that pre-registration.
+    const posted: Buffer[] = [];
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const post = async (wire: Buffer): Promise<{ contentType: string; body: Buffer }> => {
+      posted.push(wire);
+      if (posted.length === 2) resolveSettled(); // the answer wire has been captured
+      // Leg 1: the server-signed InputRequiredResult (bound to H1). Leg 2: any well-formed
+      // body — we assert on the captured wire, and its fail-closed delivery is drained.
+      return { contentType: "application/json", body: posted.length === 1 ? inputRequiredBytes() : Buffer.from("{}") };
+    };
+
+    const corr = new CorrelationStore();
+    registerFirst(corr); // the pre-registered first-round (H1) the fixture IRR binds
+    let nonce = 0;
+    const transport = new McpsHttpTransport(post, config(), {
+      correlation: corr,
+      clock: () => NOW + 1,
+      nonceFactory: () => `httpnonce${nonce++}`, // distinct per leg (both legs sign here)
+    });
+
+    const gotElicit = new Promise<any>((resolve) => {
+      transport.onmessage = resolve;
+    });
+    await transport.start();
+    // A DISTINCT id (not req-1) so this leg's own entry can't overwrite H1's.
+    await transport.send({
+      jsonrpc: "2.0",
+      id: "req-0",
+      method: "tools/call",
+      params: { name: "delete_files", arguments: { paths: ["a", "b", "c"] } },
+    } as any);
+    const elicit = await gotElicit;
+    expect(elicit.result.resultType).toBe("inputRequired");
+
+    // The answer: the transport must pick up the recorded MRT state and bind it. On a
+    // regression signOutbound throws before posting; onmessage delivers the reject, so
+    // either path settles and the posted.length assertion fails fast rather than hanging.
+    transport.onmessage = () => resolveSettled();
+    await transport.send(answer());
+    await settled;
+    await transport.close();
+
+    expect(posted.length).toBe(2);
+    const cont = JSON.parse(posted[1].toString("utf-8")).params._meta[REQUEST_META_KEY].continuation;
+    expect(cont.type).toBe("mcp-mrt");
     expect(cont.previous_request_hash).toBe(H1);
     expect(cont.input_required_response_hash).toBe(irrResponseHash());
   });
