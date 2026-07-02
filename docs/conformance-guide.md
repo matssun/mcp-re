@@ -109,3 +109,65 @@ alters the corpus.
 For what each layer is claimed to prove (and the single-node production ceiling),
 see the [Transport Hardening Guide](transport-hardening-guide.md) and
 ADR-MCPS-017 ([view](adr/adr-mcps-017.md)).
+
+## v0.8.0 draft-02 conformance corpus pinning
+
+The v0.8.0 draft-02 corpus is pinned **by content, not only by Git tag**. A tag
+name records *which commit*; these digests record *which bytes*, so an
+independent reviewer can confirm they are recomputing against the same corpus
+object rather than trusting that `v0.8.0` still points where they expect.
+
+Two pins, both recomputed from the checked-in corpus bytes by
+[`scripts/corpus_digest.py`](../scripts/corpus_digest.py):
+
+- **`manifest.json` SHA-256** — SHA-256 over the exact bytes of
+  `mcps-core/tests/vectors/draft-02/manifest.json`:
+
+  ```
+  a1e7812772975f80aa628048081a354a1a52f7cc1bbe3de306ae69b706bfd7db
+  ```
+
+- **`draft02_file_hash_list_digest`** — SHA-256 over a deterministic file-hash
+  list covering **every** regular file in
+  `mcps-core/tests/vectors/draft-02` (the manifest included), sorted by
+  repository-relative path, one LF-terminated `\<path\>  sha256:\<hex\>` line per
+  file:
+
+  ```
+  1e9967f046feb2dbb20d40d13259fd991d4b5129fe62e85a01dc21c707d53130
+  ```
+
+### Reproduce the pins
+
+The script is the **normative definition** of these values: the pin is whatever
+the checked-in script recomputes from the checked-in corpus, not a value copied
+from a comment. It has no third-party dependencies — a fresh clone plus
+`python3` is enough.
+
+```bash
+# Print both pins (add --list to dump the exact per-file preimage).
+python3 scripts/corpus_digest.py
+
+# Fail (non-zero exit) if the corpus no longer matches the published pins.
+python3 scripts/corpus_digest.py --check \
+  a1e7812772975f80aa628048081a354a1a52f7cc1bbe3de306ae69b706bfd7db \
+  1e9967f046feb2dbb20d40d13259fd991d4b5129fe62e85a01dc21c707d53130
+```
+
+If the corpus changes intentionally, the digests change with it; regenerate them
+with the script and update the values here in the same change.
+
+### Scope of the independent recompute
+
+An independent from-fixture recompute reproduced the committed canonical
+preimage bytes and SHA-256 values for the oracle-bearing draft-02 vectors within
+its stated scope. This check validates the **canonical-preimage / hash oracle
+layer only** — the preimage bytes and their SHA-256 values. It does **not** claim
+Ed25519 signature validation, SDK interoperability, or live KMS/server behavior.
+
+> An earlier externally reported second digest (`75f06ec2…f06f`) could not be
+> reproduced from the checked-in corpus without its construction, so it is **not
+> normative** here. The normative corpus-list digest is the one emitted by
+> `scripts/corpus_digest.py` above. A conformance pin must be reproducible from
+> checked-in code and checked-in corpus bytes; anything that is not, we do not
+> publish as a pin.
