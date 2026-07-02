@@ -134,8 +134,18 @@ The client accepts the `InputRequiredResult` only if:
 - `version` is allowed by local policy;
 - `canonicalization_id` is allowed by local policy;
 - `response.request_hash` matches an outstanding client `request_hash`;
-- the result body, including `inputRequests` and `requestState`, is inside the
-  signed preimage.
+- the result body, including the `resultType` discriminator, `inputRequests`, and
+  `requestState`, is inside the signed preimage.
+
+Because the `resultType` discriminator is itself inside the signed preimage, the
+NON-TERMINAL classification of an `InputRequiredResult` is protected by the server
+signature, not left to client-side interpretation. The signed region is the
+complete result body minus only `signature.value` and container-level trace keys
+(ADR-MCPS-026 / ADR-MCPS-038), so `resultType` is in scope like any other field.
+A truncated or forged presentation therefore cannot misrepresent a pause
+(`resultType: "inputRequired"`) as a terminal outcome, or vice versa, without
+failing response verification. Classification (`classify_result`) is structurally
+gated to run only on a result body whose response signature has ALREADY verified.
 
 Only after this verification may the client display or act on the elicitation
 prompt.
@@ -262,6 +272,50 @@ If such features are required, they need a separate future ADR for a bidirection
 or subscription evidence profile. Under `require_mcps`, these messages fail closed
 unless represented by the stateless multi-round-trip mechanism defined here.
 
+### D10 — The continuation/resumption handle is a BOUND artifact, not a fixed seam
+
+MCP-S binds the continuation/resumption handle; it does not own or interpret it.
+The seam is "bind whatever primitive MCP standardizes," exactly as authorization
+binding (ADR-MCPS-039) binds an authorization artifact without owning it. This
+generalizes D5 (`requestState` opaque) so that adopting a future native MCP
+continuation primitive is a swap of the bound artifact, not a redesign of the
+evidence chain. Three cases, by the shape of what MCP provides:
+
+- **Opaque bytes/token** — MCP-S hashes the exact bytes as received and binds that
+  hash. Nothing else is declared. This is the CURRENT case: the client binds
+  `input_required_response_hash` (D4), the hash of the whole verified
+  `InputRequiredResult` preimage — `requestState` included — so today's design is
+  already an instance of this rule, not a special-cased seam.
+- **Native digest / id / reference** — if the primitive ships its own digest, id,
+  or reference under a declared scheme, MCP-S binds THAT value under the primitive's
+  declared scheme (the authorization-binding pattern of a `binding_type` +
+  `digest_alg` / `digest_value` or a typed reference).
+- **Structured, self-hashed by the evidence layer** — if MCP expects MCP-S to hash
+  a structured object itself, that reopens the canonical-preimage problem and MUST
+  be handled by an explicit continuation-binding profile (a declared
+  canonicalization + field set), never by ad hoc structure hashing.
+
+MCP-S never interprets the handle's contents in any case; it only commits to it.
+
+### D11 — The multi-round-trip chain fails closed AS A WHOLE (auditability)
+
+Each hop is hash-bound inside a signed preimage, so a later reviewer MUST be able
+to re-link the whole exchange — initial request → `InputRequiredResult` response →
+continuation request → terminal response — from retained bytes alone: the terminal
+response binds the continuation `request_hash`; the continuation binds
+`previous_request_hash` + `input_required_response_hash` (D4); the
+`InputRequiredResult` binds the initial `request_hash` (D2).
+
+The auditability property this imposes: if any middle hop is MISSING from the
+retained record, the terminal response is an INCOMPLETE call record — a bound
+reference to a hop the reviewer cannot resolve — not a complete result that merely
+lacks context. A consumer of the evidence chain MUST NOT treat a terminal result
+whose continuation lineage cannot be fully re-linked as a complete, context-free
+outcome; the correct reading is "incomplete call record, lineage unresolved." This
+is precisely why the linkage is stateless per-message evidence (D8) rather than
+session-local control flow: the completeness of the record is a property of the
+retained signed bytes, not of any live session's memory.
+
 ## Conformance vectors
 
 The implementation must provide vectors for:
@@ -326,6 +380,16 @@ continuation bound to the exact signed `InputRequiredResult`.
 
 This keeps MCP-S aligned with the stateless MCP direction while avoiding an
 unnecessary general bidirectional evidence system.
+
+D10 and D11 are post-acceptance refinements from conformance review (they clarify,
+not change, the shipped D1–D9 behavior). D10 restates the continuation handle as a
+bound-not-owned artifact, so a future native MCP continuation primitive is adopted
+by swapping the bound artifact rather than redesigning the evidence chain; the
+current `input_required_response_hash` binding is already the opaque-bytes instance
+of that rule. D11 makes explicit the whole-chain fail-closed / auditability
+property already implied by the per-hop hash binding: a reviewer re-links the
+exchange from retained bytes, and a missing middle hop reads as an incomplete call
+record, never as a complete context-free result.
 
 ## Implementation plan
 
