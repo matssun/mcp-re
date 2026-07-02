@@ -353,6 +353,11 @@ impl FileServer {
         let paths = arguments.get("paths").and_then(Value::as_array).ok_or_else(|| {
             FileServerError::InvalidParams("delete_files requires an array 'paths' argument".into())
         })?;
+        if !paths.iter().all(Value::is_string) {
+            return Err(FileServerError::InvalidParams(
+                "delete_files requires 'paths' to be an array of strings".into(),
+            ));
+        }
 
         match params.get("inputResponses") {
             // First leg — elicit confirmation; stash the paths in the opaque requestState.
