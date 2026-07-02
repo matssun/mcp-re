@@ -10,15 +10,17 @@ answered by a tampered response.
 
 **MCP-S answer.** MCP-S protects *individual MCP calls* with object-level
 signatures, freshness, replay protection, delegated-authorization binding,
-response binding, and sidecar-injected verified context — proven on a single-node
-Rust-native path and against live Google Cloud KMS (v0.5.1).
+response binding, and sidecar-injected verified context. It is proven end to end
+across a real multi-process path — an unmodified plain-MCP client → a client-side
+MCP-S proxy or SDK → mTLS → a server-side proxy that verifies and serves — and
+against live Google Cloud KMS key custody (as of **v0.8.0**).
 
 **Non-goals.** MCP-S is **not** OAuth, **not** EMA, **not** sandboxing, **not** a
 full audit-receipt format. It composes with those layers rather than replacing
 them.
 
 See [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) for the one-page
-overview.
+overview and [`CHANGELOG.md`](CHANGELOG.md) for what each release proved.
 
 ## Overview
 
@@ -26,12 +28,17 @@ MCP-S is an experimental third-party security extension proposal for the Model C
 
 It provides a reference implementation and conformance package for protecting MCP tool calls with:
 
-- object-level request and response signatures;
+- object-level request and response signatures over the frozen `draft-02`
+  runtime-evidence envelope;
 - freshness and replay protection;
-- delegated authorization binding;
+- delegated authorization binding, bound into the signed evidence;
+- **stateless multi-round-trip continuation** — request-associated elicitation
+  stays cryptographically bound turn to turn (ADR-MCPS-047);
 - Rust-native mTLS transport hardening;
 - sidecar-based protection of ordinary MCP stdio servers;
-- signed response verification by the host/client side.
+- signed response verification on the host/client side, via a client-side proxy
+  **or** a native SDK (**Python and TypeScript**, both bound to the same audited
+  `mcps-client-core` so the signed evidence is byte-identical across languages).
 
 MCP-S is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
@@ -39,7 +46,7 @@ MCP-S is not part of the official MCP specification unless and until it is accep
 
 Run the single-node demo and watch the proxy accept exactly one valid signed
 call and fail closed on ten tampered, stale, replayed, mis-routed, unauthorized,
-or unbound calls — real v0.5.1 behavior, no cloud credentials:
+or unbound calls — no cloud credentials:
 
 ```sh
 ./scripts/demo-local.sh
@@ -54,6 +61,12 @@ Full walkthrough, the grouped fail-closed output, and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
 KMS key-custody path (optional, separate): [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md).
 
+For the **end-to-end four-hop** path (an unmodified plain-MCP client → client-side
+proxy/SDK → mTLS → server-side proxy → inner MCP server) the `mcps-walkthrough`
+crate runs the full topology as separate OS processes, and the same tiers drive
+the **Python** and **TypeScript** SDKs interchangeably (`MCPS_DRIVER_PYTHON` /
+`MCPS_DRIVER_TS`). See [`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript).
+
 ## Project status
 
 Current status:
@@ -62,53 +75,48 @@ Current status:
 
 Current implementation claim:
 
-> MCP-S is production-hardened for single-node Rust-native deployments.
+> MCP-S is production-hardened for single-node Rust-native deployments, with a
+> proven end-to-end client-integration path (client-side proxy + Python/TypeScript
+> SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
-### Release 0.5 — proposal-readiness over frozen `draft-01`
+### Recent releases (0.6 → 0.8)
 
-0.5 is a **proposal-readiness** release. Its work is documentation, conformance,
-and claim hardening over the existing `draft-01` wire envelope — making every
-security claim reviewable and traceable to a green test — **not** new protocol
-mechanism. 0.5 adds **zero** wire-envelope fields; request and response envelopes
-are unchanged, and any claim `draft-01` cannot support is ejected to a future
-`draft-02` ADR rather than smuggled in as a field addition
-([`docs/spec/proposal-scope.md`](docs/spec/proposal-scope.md)).
+Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
+in [`docs/adr/`](docs/adr/). In brief:
 
-What 0.5 lands:
+- **0.6** froze the **`draft-02` runtime-evidence** wire envelope — the canonical
+  signed preimage that every later release builds on.
+- **0.7** proved the real **end-to-end four-hop** path as separate OS processes
+  (plain-MCP client → `mcps-client-proxy` → mTLS → `mcps-proxy` server PEP →
+  unmodified inner server), organized as a runnable persona ladder
+  (ADR-MCPS-045), with scoped deny-before-dispatch authorization,
+  transport-identity binding, integrated Cloud-KMS custody on both signing legs,
+  and the first **Python SDK** slice.
+- **0.8** added **stateless multi-round-trip continuation** — request-associated
+  elicitation folded into strict MCP-S as signed evidence, fail-closed on
+  arbitrary server push (ADR-MCPS-047) — and shipped the **TypeScript SDK**,
+  bound to the same audited `mcps-client-core` as Python so the signed preimage
+  is byte-identical across languages. Both SDKs are exercised through the real
+  four-hop matrix.
 
-- **One canonical claim surface.** The [v0.5 claim matrix](docs/spec/v0.5-claim-matrix.md)
-  (§A per-capability reviewer-facing claims; §B the four-axis deployment-tier
-  composition) supersedes the v0.3 matrix, with the NSA/threat-coverage matrix
-  derived from §A over one evidence spine.
-- **Method-transparency is CI-enforced** (ADR-MCPS-034): a behavioral-equivalence
-  test plus a static drift guard in `mcps-conformance`.
-- **Audit-evidence vocabulary is derived from the frozen error taxonomy**
-  (ADR-MCPS-035), guarded against drift in CI.
-- **Proposal-readiness is a dual gate** — mechanical CI **and** owner HITL
-  sign-off (ADR-MCPS-036; [security boundary](docs/spec/security-boundary.md) §10).
-- A round of feature-gated security fixes (OCSP DNS-rebinding and freshness,
-  verify-before-return at the PKCS#11/KMS signer seams, per-method key-reference
-  scope, bounded replay-cache growth). See [`CHANGELOG.md`](CHANGELOG.md).
+Predecessors: **0.5** was a proposal-readiness release (conformance + claim
+hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
+multi-node profile into enforced backends. Decisions are recorded across
+ADR-MCPS-001..047.
 
-Decisions are recorded in ADR-MCPS-031..036 (all Accepted). The predecessor
-**0.4** release wired the v0.3 tiered multi-node profile into enforced backends
-(etcd CP replay, revocation tiers, LB-signed ingress assertion), landed the v0.4
-audit-remediation cluster, and purified MCP-S Core of the tool-catalog manifest
-subsystem (ADR-MCPS-030).
-
-This means the current implementation has demonstrated a complete single-node end-to-end path:
+The current implementation demonstrates a complete end-to-end **four-hop** path:
 
 ```text
-HostSession client
-  -> signed MCP-S request
+plain-MCP client (unmodified)
+  -> mcps-client-proxy / Python or TypeScript SDK  (signs draft-02, binds authz)
   -> mTLS transport
-  -> mcps-proxy
-  -> Core signature/freshness/replay verification
-  -> delegated authorization
+  -> mcps-proxy  (server-side PEP)
+  -> Core signature / freshness / replay verification
+  -> delegated authorization (deny-before-dispatch)
   -> verified-context injection
-  -> persistent inner MCP server
+  -> unmodified inner MCP server
   -> signed response
-  -> HostSession response verification
+  -> client-side response verification (correlated, bound, stripped to plain MCP)
 ```
 
 ## Deployment profiles
@@ -204,15 +212,16 @@ cargo build --workspace --bins
 # Run the full test suite. The first step is required because Cargo does not
 # auto-build cross-crate binaries for integration tests; the bins must exist on
 # disk before the multi-process tests spawn them. With the bins in place, the
-# suite is fully green:
-#
-#     test result: ok. 678 passed; 0 failed; 1 ignored
+# suite is fully green.
 cargo test --workspace
 ```
 
-The 1 ignored test (`write_fixtures` in `mcps-core/tests/vectors_test.rs`) is
-a deliberately `#[ignore]`-gated developer-only fixture writer, not a skipped
-production test.
+The SDK suites live outside the cargo workspace and run separately:
+`sdk/python` (`pytest`, needs `maturin develop`) and `sdk/typescript`
+(`npm test` — builds the native binding then runs `vitest`).
+
+`#[ignore]`-gated tests (developer-only fixture writers and the live Cloud-KMS
+lanes) are deliberate, not skipped production tests.
 
 ### Bazel
 
@@ -238,13 +247,20 @@ mcps-host/                 Client-side ambassador (signing + bound verify).
 mcps-transport/            Verifying mTLS client.
 mcps-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcps-policy/               Delegated-authorization profiles (Phase 5).
+mcps-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
+mcps-client-proxy/         Local client-side MCP-S proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
+mcps-client-proxy-cli/     Binary front-end for the client proxy (plain-MCP stdio -> sign draft-02 -> mTLS to remote).
 mcps-conformance/          Black-box conformance harness.
+mcps-walkthrough/          End-to-end four-hop persona-ladder walkthrough (ADR-MCPS-045).
 mcps-demo/                 Single-node demo harness.
 mcps-demo-server/          Long-lived stdio MCP server (demo target).
 mcps-demo-fileserver/      Minimal stdio MCP server (demo target).
 mcps-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
-docs/adr/                  Architecture decision records (ADR-MCPS-001..036).
+sdk/python/                Python SDK — maturin/PyO3 binding to mcps-client-core (ADR-MCPS-044).
+sdk/typescript/            TypeScript SDK — napi-rs binding to mcps-client-core (byte-identical evidence).
+
+docs/adr/                  Architecture decision records (ADR-MCPS-001..047).
 docs/spec/                 Spec briefs (core spec, security boundary, claim matrix, proposal scope).
 docs/security/             Multi-agent audit reports + per-finding remediation log + cross-round ledger.
 docs/LICENSING.md          Per-file licensing notes.
@@ -264,7 +280,8 @@ rules, replay/freshness model, authorization profile, transport hardening,
 conformance, reference implementation, demos, and non-goals):
 
 1. **One page** — [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md):
-   what it is, the threat, where it sits, what v0.5.1 proves, what it does not claim.
+   what it is, the threat, where it sits, what the current release proves, and what
+   it does not claim.
 2. **Security boundary** — [`docs/spec/security-boundary.md`](docs/spec/security-boundary.md):
    what MCP-S protects and what it explicitly does not.
 3. **v0.5 claim matrix** — [`docs/spec/v0.5-claim-matrix.md`](docs/spec/v0.5-claim-matrix.md):
@@ -276,7 +293,7 @@ conformance, reference implementation, demos, and non-goals):
    the black-box conformance harness and vectors.
 6. **EMA composition** — [`docs/spec/ema-composition.md`](docs/spec/ema-composition.md):
    how MCP-S would compose with Enterprise-Managed Authorization (a **proposed**
-   design note — EMA is not implemented or demoed in v0.5.1).
+   design note — EMA is not implemented or demoed).
 7. **Run it** — [`docs/quickstart-local.md`](docs/quickstart-local.md): the
    local fail-closed demo (`./scripts/demo-local.sh`), no cloud credentials.
 
@@ -284,7 +301,7 @@ conformance, reference implementation, demos, and non-goals):
 
 - **One-page overview:** [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) —
   what MCP-S is, the threat it addresses, where it sits relative to EMA/OAuth, and
-  what v0.5.1 proves.
+  what the current release proves.
 - **Quickstarts:** [`docs/quickstart-local.md`](docs/quickstart-local.md)
   (local fail-closed demo, no cloud) and
   [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md) (live GCP Cloud KMS).
