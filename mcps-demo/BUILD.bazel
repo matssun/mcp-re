@@ -25,7 +25,7 @@ nt_rust_library(
     edition = "2021",
     deps = [
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "//mcps-transport:mcps_transport",
@@ -47,7 +47,7 @@ nt_rust_test(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "@crates_mcps//:serde_json",
     ],
 )
@@ -91,7 +91,7 @@ nt_rust_test(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-proxy:mcps_proxy",
         "//mcps-transport:mcps_transport",
         "@crates_mcps//:rcgen",
@@ -126,7 +126,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
     ],
@@ -160,7 +160,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
@@ -192,7 +192,7 @@ nt_rust_test(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-proxy:mcps_proxy",
         "//mcps-test-paths:mcps_test_paths",
         "@crates_mcps//:serde_json",
@@ -228,7 +228,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
@@ -267,7 +267,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
@@ -300,7 +300,7 @@ nt_rust_binary(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
@@ -331,7 +331,7 @@ nt_rust_binary(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:serde_json",
@@ -356,7 +356,7 @@ nt_rust_binary(
     deps = [
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-transport:mcps_transport",
         "@crates_mcps//:serde_json",
     ],
@@ -475,7 +475,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-transport:mcps_transport",
         "@crates_mcps//:serde_json",
     ],
@@ -518,7 +518,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-transport:mcps_transport",
         "@crates_mcps//:serde_json",
     ],
@@ -565,7 +565,7 @@ nt_rust_test(
         "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_demo",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host_test_fixtures",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-transport:mcps_transport",
         "@crates_mcps//:rcgen",
         "@crates_mcps//:rustls",

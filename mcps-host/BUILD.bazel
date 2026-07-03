@@ -69,7 +69,7 @@ nt_rust_test(
     bazel_build_cfg = False,
     edition = "2021",
     deps = [
-        ":mcps_host_test_fixtures",
+        ":mcps_host_test_fixtures",  # keep
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
     ],

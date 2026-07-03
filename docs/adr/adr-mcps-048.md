@@ -143,6 +143,46 @@ hand-maintain a second copy of a fact Cargo already owns.
   assumed.
 - Until the gate lands, Cargo remains the authoritative gate (unchanged).
 
+## Implementation notes (MCPS-68 / MCPS-69 — refines the gate design)
+
+Wiring `gazelle_rust` (MCPS-68) and annotating the awkward crates (MCPS-69)
+surfaced constraints that **revise the "byte-identical BUILD" gate above**. What
+is proven and what must change:
+
+- **Proven:** `gazelle_rust` in `generate_from_cargo` mode, with
+  `map_kind rust_* → nt_rust_*`, generates one target per crate root and resolves
+  first-party (`//mcps-*`) + third-party (`@crates_mcps//:`) `use`-edges through
+  the house macros. It also catches genuine drift (it found `draft02_vectors_test`,
+  a cargo test with no Bazel target → MCPS-76).
+- **Feature-flavor selection is not inferable and is pinned by hand.** Several
+  crates publish >1 target with the same `crate_name` (`mcps_host` +
+  `mcps_host_test_fixtures`; `mcps_proxy` + `_fault`/`_dev_env`/`_ext`;
+  `mcps_transport` + `_fault`). A `use mcps_proxy::X` cannot say which flavor, so:
+  root-BUILD `# gazelle:resolve` pins the DEFAULT (plain) target, and every
+  consumer edge that needs a specific flavor carries a trailing **`# keep`**
+  (gazelle preserves it). This is the documented pattern for adding a
+  feature-gated/flavored dep: point at the flavor target and append `# keep`.
+- **Byte-identity is NOT achievable; gate on SEMANTIC drift.** `generate_from_cargo`
+  always adds `compile_data = ["Cargo.toml"]` + explicit `visibility` and sorts
+  `deps` — none suppressible. So the staleness gate must compare the **managed
+  set** (targets exist; `deps`/`srcs` edges match) and normalize/ignore
+  formatting (visibility, compile_data-of-Cargo.toml, dep order), NOT require a
+  byte-identical file. Write output is **not** auto-adopted wholesale.
+- **Cargo-only / HITL test files can't be suppressed by directive.** In cargo
+  mode gazelle enumerates tests from Cargo metadata, so `# gazelle:exclude <file>`
+  does not stop it proposing targets for the HITL live-cloud KMS tests
+  (`*_live_test.rs`, `#![cfg(feature="…kms…")]` + `#[ignore]`). These stay
+  cargo-only; the gate must **allowlist** them as expected non-Bazel targets.
+- **Platform-conditional + naming mismatch stay hand-authored.** A generated
+  crate-level `mcps_proxy_test` pulls `seccompiler` (Linux-only `prctl`/`SECCOMP_*`)
+  into the darwin build, and gazelle's `<crate>_test` naming collides with the
+  repo's `proxy_unit_test`. These remain hand-authored; the gate allowlists them.
+
+Net: gazelle is adopted as a **generator for ordinary `use`-edges + a drift
+detector**, with a hand-annotated exception set (`# keep` + resolve + a gate
+allowlist), rather than the sole byte-authority the Decision's first framing
+implied. The ~95%/annotated-exceptions expectation in Consequences holds.
+
 ## Related
 
 - Issue: #220 (Bazel/cargo parity rehabilitation — the mechanical baseline this ADR

@@ -79,7 +79,7 @@ nt_rust_test(
     crate_features = ["fault_accept_any_server"],
     edition = "2021",
     deps = [
-        ":mcps_transport_fault",
+        ":mcps_transport_fault",  # keep
         "//mcps-proxy:mcps_proxy",
         "@crates_mcps//:rcgen",
         "@crates_mcps//:rustls",
