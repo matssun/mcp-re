@@ -71,6 +71,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath :mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         "@crates_mcps//:serde_json",
     ],
 )

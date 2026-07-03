@@ -226,6 +226,7 @@ nt_rust_test(
     edition = "2021",
     env = {"MCPS_STDIO_SERVER": "$(rlocationpath :mcps_stdio_server)"},
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_conformance_lib",
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
@@ -402,6 +403,7 @@ nt_rust_test(
     edition = "2021",
     env = {"MCPS_STDIO_SERVER": "$(rlocationpath :mcps_stdio_server)"},
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_conformance_lib",
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",

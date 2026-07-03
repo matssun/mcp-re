@@ -278,6 +278,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -306,6 +307,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -335,6 +337,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -355,7 +358,7 @@ nt_rust_test(
     deps = [
         ":mcps_proxy",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host",
+        "//mcps-host:mcps_host_test_fixtures",
         "//mcps-policy:mcps_policy",
         "@crates_mcps//:serde_json",
     ],
@@ -577,6 +580,7 @@ nt_rust_test(
         "MCPS_PROXY_CLI": "$(rlocationpath :mcps_proxy_cli)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -708,6 +712,11 @@ nt_rust_test(
     deps = [
         ":mcps_proxy_ext",
         "//mcps-core:mcps_core",
+        # #220 (ADR-048): the e2e mints a CA/leaf + rustls config to drive a real
+        # mTLS handshake against the PKCS#11 signer; these test deps match Cargo.toml.
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
         "@crates_mcps//:serde_json",
     ],
 )

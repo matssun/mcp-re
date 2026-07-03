@@ -17,6 +17,27 @@ nt_rust_library(
     ],
 )
 
+# ADR-MCPS-048 / #220 (feature-flavor handling, cf. MCPS-69): a `test-fixtures`-enabled
+# flavor of the SAME crate. FixedClock / SeededNonceSource are cfg'd behind
+# `#[cfg(any(test, feature = "test-fixtures"))]` (audit #81 — kept off the production
+# surface). In-workspace demo/test targets that consume those deterministic fixtures
+# depend on THIS flavor, matching the Cargo `mcps-host = { features = ["test-fixtures"] }`
+# dev-dep. Same `crate_name`, so consumers still `use mcps_host::…`; a target links
+# EITHER this or `:mcps_host`, never both (one crate name). The plain `:mcps_host`
+# stays fixture-free for production consumers.
+nt_rust_library(
+    name = "mcps_host_test_fixtures",
+    srcs = glob(["src/**/*.rs"]),
+    crate_features = ["test-fixtures"],
+    crate_name = "mcps_host",
+    edition = "2021",
+    deps = [
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:getrandom",
+        "@crates_mcps//:serde_json",
+    ],
+)
+
 # Host signs a request a verifier accepts; host verifies the bound response.
 nt_rust_test(
     name = "host_test",
@@ -48,7 +69,7 @@ nt_rust_test(
     bazel_build_cfg = False,
     edition = "2021",
     deps = [
-        ":mcps_host",
+        ":mcps_host_test_fixtures",
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
     ],
