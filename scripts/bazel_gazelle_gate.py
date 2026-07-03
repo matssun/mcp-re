@@ -92,12 +92,10 @@ ALLOW_HITL_LIVE = {
 # target lands.
 ALLOW_TRACKED_DRIFT = {
     # name: "issue — why it is not yet a Bazel target"
-    # Wireable directly (pure tests, no runtime fixture reads) — wired in the
-    # commit that follows this gate (the gate CAUGHT them; that is the point):
-    "continuation_roundtrip_test": "gate-discovered #220 drift (MCPS-70) — wired next commit",
-    "continuation_driving_test": "gate-discovered #220 drift (MCPS-70) — wired next commit",
-    "draft02_vectors_test": "MCPS-76 (#255) — dual-mode fixture bridge; wired next commit",
-    # Need a runfile/driver bridge — tracked for a dedicated slice:
+    # These need a runfile/driver bridge (they read the repo tree / drive external
+    # SDK driver binaries); tracked for a dedicated slice. The three directly
+    # wireable drifts the gate first found (continuation_roundtrip_test,
+    # continuation_driving_test, draft02_vectors_test) are now real Bazel targets.
     "no_tracked_secrets": "MCPS-77 (#256) — scans tracked repo files; needs runfiles bridge",
     "sdk_driver_matrix": "MCPS-77 (#256) — drives SDK driver binaries as runfiles",
 }

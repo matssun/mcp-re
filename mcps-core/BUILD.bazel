@@ -102,10 +102,24 @@ nt_rust_test(
     ],
 )
 
-# MCPS-68 drift catch: mcps-core/tests/draft02_vectors_test.rs runs under cargo
-# but has NO Bazel target — gazelle_rust (ADR-MCPS-048) surfaced the gap. Wiring
-# it green needs dual-mode fixture-path bridging in the test source (its live
-# assertions read the committed corpus from disk via CARGO_MANIFEST_DIR, which
-# bakes to the compile sandbox under Bazel) — the same rlocationpath-env pattern
-# as mcps-conformance/acceptance_test. Tracked as follow-up MCPS-76 (#255); the
-# MCPS-70 staleness gate will keep such gaps from recurring.
+# ADR-MCPS-041 (MCPS-76, gate-discovered by MCPS-70): draft-02 committed-corpus
+# conformance. Live assertions read the corpus from disk; under Bazel the source
+# tree is unavailable at runtime, so the fixtures ship as `data` and the test
+# resolves them via MCPS_CORE_VECTORS_MANIFEST (rlocationpath of the draft-01
+# manifest, whose parent is the vectors root — see vectors_root() in the test).
+# The #[ignore]d write_draft02_fixtures writer is skipped.
+nt_rust_test(
+    name = "draft02_vectors_test",
+    srcs = ["tests/draft02_vectors_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/**"]),
+    edition = "2021",
+    env = {
+        "MCPS_CORE_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/manifest.json)",
+    },
+    deps = [
+        ":mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)
