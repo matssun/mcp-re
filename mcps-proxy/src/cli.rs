@@ -1411,6 +1411,11 @@ pub fn validate_tls_signing_exclusivity(
     Ok(())
 }
 
+/// The strict-mode ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1,
+/// MCPS-57). A lifetime above this cannot honestly be audited as
+/// `short_lived_cert`, so strict/production rejects it. Matches the 1h default.
+const STRICT_MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
+
 /// Collect the parse-time strict-posture violations for `config` (MCPS-3842).
 ///
 /// This is the pure, black-box-testable core of `--strict`/`--production`: each
@@ -1419,11 +1424,13 @@ pub fn validate_tls_signing_exclusivity(
 /// key-file check is filesystem-dependent and lives in `main.rs` (which reads the
 /// file mode and reuses the same fail-closed posture).
 ///
-/// Deliberately EXCLUDED: a `--max-client-cert-lifetime` greater than the
-/// recommended 1h. That is a RECOMMENDATION (the default is 1h), not an unsafe
-/// posture — a longer-but-still-enforced lifetime is a tradeoff, not a hole — so
-/// it stays a warning even under strict. Only DISABLED enforcement (`none`/`0`,
-/// i.e. `max_client_cert_lifetime == None`) is an unsafe posture and is rejected.
+/// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
+/// [`STRICT_MAX_CLIENT_CERT_LIFETIME`] is a strict violation, not merely a warning.
+/// Mode-A's entire certificate-revocation posture is short-lived certificates (on
+/// GCP the online-OCSP path is a no-op and CAS is CRL-only), so a long-lived cert
+/// cannot honestly be audited as `short_lived_cert`. DISABLED enforcement
+/// (`none`/`0`, i.e. `max_client_cert_lifetime == None`) remains rejected as an
+/// unsafe posture.
 ///
 /// Also deliberately EXCLUDED (#4082): the DEFAULT `--inner-sandbox off`,
 /// `--inner-net allow`, and `--authz off`. No kernel sandbox backend ships in
@@ -1443,12 +1450,24 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
                 .to_string(),
         );
     }
-    if config.max_client_cert_lifetime.is_none() {
-        violations.push(
+    // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
+    // above the strict ceiling would let a NOT-short-lived cert be audited as
+    // `short_lived_cert`. Both fail closed under strict.
+    match config.max_client_cert_lifetime {
+        None => violations.push(
             "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
              set a bounded lifetime (default 1h)"
                 .to_string(),
-        );
+        ),
+        Some(lifetime) if lifetime > STRICT_MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
+            "--max-client-cert-lifetime {}s exceeds the strict ceiling of {}s: Mode-A's \
+             revocation posture is short-lived certificates, so a longer lifetime cannot be \
+             audited as short_lived_cert; set a lifetime <= {}s",
+            lifetime.as_secs(),
+            STRICT_MAX_CLIENT_CERT_LIFETIME.as_secs(),
+            STRICT_MAX_CLIENT_CERT_LIFETIME.as_secs(),
+        )),
+        Some(_) => {}
     }
     if config.inner_launch.inherit_env {
         violations.push(
@@ -5135,6 +5154,54 @@ mod tests {
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
 
+    // ADR-MCPS-023 §A1 (MCPS-57), conformance vector (a): under --strict a
+    // client-cert lifetime ABOVE the 1h ceiling is a hard violation — Mode-A's
+    // revocation posture is short-lived certs, so a longer-lived cert cannot be
+    // audited as `short_lived_cert`.
+    #[test]
+    fn strict_rejects_over_ceiling_cert_lifetime() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "24h"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--strict"), "got: {err}");
+        assert!(err.contains("exceeds the strict ceiling"), "got: {err}");
+        assert!(err.contains("86400s"), "got: {err}");
+        assert!(err.contains("short_lived_cert"), "got: {err}");
+    }
+
+    // ADR-MCPS-023 §A1: the boundary is inclusive — a lifetime EXACTLY at the 1h
+    // ceiling (the default) is acceptable, so a default config is not
+    // self-rejecting. Durable replay is spliced in to isolate the cert-lifetime
+    // dimension (#90 rejects the in-memory default under strict).
+    #[test]
+    fn strict_accepts_cert_lifetime_at_ceiling() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "3600"]));
+        let config = parse_args(&a).expect("a 1h lifetime must be strict-acceptable");
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("max-client-cert-lifetime")),
+            "a lifetime at the ceiling must not be a strict violation"
+        );
+    }
+
+    // ADR-MCPS-023 §A1: a lifetime just BELOW the ceiling is also acceptable.
+    #[test]
+    fn strict_accepts_cert_lifetime_below_ceiling() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "30m"]));
+        let config = parse_args(&a).expect("a 30m lifetime must be strict-acceptable");
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("max-client-cert-lifetime")),
+            "a lifetime below the ceiling must not be a strict violation"
+        );
+    }
+
     #[test]
     fn non_strict_disabled_cert_lifetime_is_ok() {
         // Control: disabled enforcement parses Ok without --strict (warn-only).
@@ -5145,24 +5212,20 @@ mod tests {
         assert!(!config.strict);
     }
 
+    // SUPERSEDED by ADR-MCPS-023 §A1 (v0.9, MCPS-57): the earlier MCPS-3842 stance
+    // treated a lifetime > 1h as a warning-only recommendation. That is reversed —
+    // Mode-A's revocation posture IS the cert lifetime, so a lifetime above the
+    // ceiling now fails closed under strict. A 2h lifetime is enforced but cannot
+    // be audited as `short_lived_cert`, so strict rejects it.
     #[test]
-    fn strict_keeps_over_recommended_lifetime_as_warning_not_error() {
-        // MCPS-3842: a lifetime > 1h is a RECOMMENDATION, not an unsafe posture
-        // (still enforced, just longer), so it must NOT error even under strict.
+    fn strict_rejects_over_ceiling_lifetime_2h() {
         let mut a = minimal();
-        // Declare a durable replay backend so the only posture under test is the
-        // lifetime (the default in-memory replay would itself be a #90 violation).
+        // Durable replay so the only posture under test is the lifetime (#90).
         a.splice(0..0, durable_replay());
         a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "2h"]));
-        let config = parse_args(&a).expect("an over-recommended-but-enforced lifetime is allowed");
-        assert_eq!(
-            config.max_client_cert_lifetime,
-            Some(std::time::Duration::from_secs(7200))
-        );
-        assert!(
-            strict_violations(&config).is_empty(),
-            "a longer-but-enforced lifetime must not be a strict violation"
-        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("exceeds the strict ceiling"), "got: {err}");
+        assert!(err.contains("7200s"), "got: {err}");
     }
 
     #[test]

@@ -164,13 +164,14 @@ fn run() -> Result<(), String> {
              online revocation a compromised client cert is usable until expiry. Set \
              --max-client-cert-lifetime (default 1h)."
         ),
-        // MCPS-3842: a lifetime > 1h is a RECOMMENDATION (the default is 1h), not
-        // an unsafe posture — a longer-but-still-enforced lifetime is a tradeoff,
-        // not a hole — so it stays a WARNING even under --strict. Only DISABLED
-        // enforcement (the `None` arm above) is rejected by strict mode.
+        // ADR-MCPS-023 §A1 (v0.9, MCPS-57): under --strict a lifetime above the 1h
+        // ceiling is REJECTED at parse time (see `cli::strict_violations`), so this
+        // arm is reached only in non-strict mode. There it stays a warning: the cert
+        // is still enforced, but is too long-lived to be audited as
+        // `short_lived_cert`. (Supersedes the earlier MCPS-3842 warning-only stance.)
         Some(d) if d.as_secs() > 3600 => eprintln!(
-            "mcps-proxy: WARNING: --max-client-cert-lifetime {}s exceeds the recommended 1h for the \
-             short-lived-cert revocation posture.",
+            "mcps-proxy: WARNING: --max-client-cert-lifetime {}s exceeds the 1h ceiling for the \
+             short-lived-cert revocation posture; under --strict this is rejected.",
             d.as_secs()
         ),
         Some(_) => {}
