@@ -223,7 +223,7 @@ impl ClientSigner for DelegatedSigner {
         CustodyClass::NonExporting
     }
     fn sign_preimage(&self, preimage: &[u8]) -> Result<String, McpsError> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let arg = PyBytes::new(py, preimage);
             let out = self
                 .sign_cb
@@ -896,7 +896,7 @@ impl PyCorrelationStore {
 /// A typed authorization-evidence binding bound into the signed request preimage
 /// (bind-not-interpret). Built through the AUDITED `mcps-client-core` providers so
 /// the digest is computed in one place — never a caller-supplied magic constant.
-#[pyclass(name = "AuthorizationBinding")]
+#[pyclass(name = "AuthorizationBinding", skip_from_py_object)]
 #[derive(Clone)]
 struct PyAuthorizationBinding {
     inner: AuthorizationBinding,
@@ -1002,7 +1002,7 @@ impl PyAuthorizationBinding {
 /// Per-route policy: which authorization-binding base forms a route permits
 /// (mirrors `mcps-client-core::authz::AuthorizationBindingPolicy`). A binding of a
 /// non-permitted type fails closed with `mcps.authorization_binding_type_unsupported`.
-#[pyclass(name = "AuthorizationBindingPolicy")]
+#[pyclass(name = "AuthorizationBindingPolicy", skip_from_py_object)]
 #[derive(Clone)]
 struct PyAuthorizationBindingPolicy {
     inner: AuthorizationBindingPolicy,
