@@ -516,7 +516,10 @@ impl RawEd25519TlsSigner for GcpKmsEd25519Backend {
 #[cfg(test)]
 mod tests {
     use mcps_core::b64url_decode;
+    use mcps_core::InMemoryTrustResolver;
     use mcps_core::SigningKey;
+    use mcps_core::TrustResolver;
+    use mcps_core::TrustResolverError;
 
     use super::*;
     use crate::kms_keysource::ED25519_SPKI_PREFIX;
@@ -590,9 +593,33 @@ mod tests {
     struct FakeGcp {
         key: SigningKey,
         prehash: bool,
+        /// Simulate a KMS key version whose public key can no longer be downloaded
+        /// (destroyed / disabled): `getPublicKey` fails, so `with_transport`
+        /// construction fails closed (ADR-MCPS-028 §Verification negative 4).
+        fail_get_public_key: bool,
+        /// Simulate a DISABLED KMS key version: `asymmetricSign` is denied, so the
+        /// signer fails closed with no local-key fallback (negative 1).
+        fail_sign: bool,
+    }
+    impl FakeGcp {
+        /// A well-behaved fake Cloud KMS transport keyed by `seed`.
+        fn good(seed: u8) -> Self {
+            FakeGcp {
+                key: SigningKey::from_seed_bytes(&[seed; 32]),
+                prehash: false,
+                fail_get_public_key: false,
+                fail_sign: false,
+            }
+        }
     }
     impl GcpKmsTransport for FakeGcp {
         fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+            if self.fail_get_public_key {
+                return Err(KeyError::Malformed(
+                    "fake gcp kms: getPublicKey unavailable (key version destroyed/disabled)"
+                        .into(),
+                ));
+            }
             Ok(serde_json::json!({
                 "algorithm": ALGORITHM_ED25519,
                 "pem": pem_from_raw(&self.key.public_key().to_bytes()),
@@ -601,6 +628,11 @@ mod tests {
             .into_bytes())
         }
         fn asymmetric_sign(&self, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+            if self.fail_sign {
+                return Err(KeyError::Malformed(
+                    "fake gcp kms: asymmetricSign denied (key version disabled)".into(),
+                ));
+            }
             let v: serde_json::Value = serde_json::from_slice(body).unwrap();
             let data = STANDARD
                 .decode(v.get("data").unwrap().as_str().unwrap())
@@ -623,10 +655,7 @@ mod tests {
     /// the SPKI it reports is the advertised key.
     #[test]
     fn gcp_backend_signs_and_verifies_end_to_end() {
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
-            key: SigningKey::from_seed_bytes(&[12u8; 32]),
-            prehash: false,
-        }))
+        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(12)))
         .expect("construct");
         let preimage = b"mcps canonical response preimage";
         let sig = backend.sign_raw_ed25519(preimage).expect("sign");
@@ -641,8 +670,8 @@ mod tests {
     #[test]
     fn prehash_signature_is_rejected_before_return() {
         let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
-            key: SigningKey::from_seed_bytes(&[12u8; 32]),
             prehash: true,
+            ..FakeGcp::good(12)
         }))
         .expect("construct");
         let err = backend
@@ -658,10 +687,7 @@ mod tests {
     /// reuses the object-signing RAW-Ed25519 `asymmetricSign`.
     #[test]
     fn gcp_backend_tls_sign_verifies_under_reported_spki() {
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
-            key: SigningKey::from_seed_bytes(&[24u8; 32]),
-            prehash: false,
-        }))
+        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(24)))
         .expect("construct");
         let transcript = b"tls handshake transcript bytes";
         let sig = backend.sign_tls_ed25519(transcript).expect("tls sign");
@@ -674,5 +700,133 @@ mod tests {
         let raw = ed25519_raw_point_from_spki(&backend.tls_public_key_spki_der().unwrap()).unwrap();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    // -----------------------------------------------------------------------
+    // MCPS-56 — KMS-lifecycle-vs-trust-policy offline evidence spine
+    // (ADR-MCPS-028 §Verification negatives; ADR-MCPS-021 §M–O).
+    //
+    // The boundary these negatives pin, offline and with NO live KMS:
+    //
+    //   KMS lifecycle controls signing authority. MCP-S trust policy controls
+    //   evidence acceptance.
+    //
+    // A KMS key-version disable/destroy stops NEW signatures; it does NOT, by
+    // itself, make a verifier reject already-signed evidence. Acceptance is
+    // trust-policy-driven: the (signer, key_id) mapping — where key_id is the KMS
+    // cryptoKeyVersion (ADR-MCPS-028 §H) — is what the verifier consults. The verify
+    // path has no KMS transport at all, so a KMS outage cannot break verification of
+    // retained evidence.
+    // -----------------------------------------------------------------------
+
+    /// Sign `preimage` with a GOOD KMS-backed signer keyed by `seed`, returning the
+    /// advertised verification key and the base64url signature — a stand-in for
+    /// retained KMS-signed evidence.
+    fn kms_sign(seed: u8, preimage: &[u8]) -> (VerificationKey, String) {
+        let backend =
+            GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(seed))).expect("construct");
+        let sig = backend.sign_raw_ed25519(preimage).expect("sign");
+        let raw = ed25519_raw_point_from_spki(&backend.public_key_spki_der().unwrap()).unwrap();
+        let key = VerificationKey::from_bytes(&raw).unwrap();
+        (key, b64url_encode(&sig))
+    }
+
+    // (1) KMS disable → new signing fails closed, with no local-key fallback.
+    #[test]
+    fn kms_disable_stops_new_signing() {
+        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
+            fail_sign: true,
+            ..FakeGcp::good(31)
+        }))
+        .expect("construction still succeeds — getPublicKey works");
+        let err = backend
+            .sign_raw_ed25519(b"mcps canonical response preimage")
+            .expect_err("a disabled key version must fail closed on sign");
+        assert!(matches!(err, KeyError::Malformed(_)));
+    }
+
+    // (4) KMS destroy → getPublicKey unavailable → a FRESH backend fails closed at
+    // construction (a signer cannot pin an unresolvable key).
+    #[test]
+    fn kms_destroy_public_key_unavailable_fails_closed_at_construction() {
+        let result = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp {
+            fail_get_public_key: true,
+            ..FakeGcp::good(32)
+        }));
+        assert!(
+            matches!(result, Err(KeyError::Malformed(_))),
+            "an unresolvable public key must fail closed at construction"
+        );
+    }
+
+    // (2)+(5) KMS disable ALONE is not verifier revocation: evidence signed while
+    // the (signer, key_id) mapping is trusted STILL verifies against the PINNED key,
+    // through a verify path that has no KMS transport.
+    #[test]
+    fn kms_disable_alone_is_not_verifier_revocation() {
+        let preimage = b"retained mcps response evidence";
+        let (key, sig) = kms_sign(33, preimage);
+        let mut trust = InMemoryTrustResolver::new();
+        let signer = "did:example:server-1";
+        let key_id = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1";
+        trust.insert(signer, key_id, key);
+        // Verify via the pinned trust bundle only — no KMS transport in this path,
+        // so a subsequent KMS disable cannot affect it.
+        let pinned = trust.resolve(signer, key_id).expect("pinned key resolves");
+        verify_ed25519(preimage, &sig, &pinned)
+            .expect("retained evidence still verifies while (signer, key_id) is trusted");
+    }
+
+    // (3) Trust-policy revoke → the SAME cryptographically-valid evidence is now
+    // rejected. Acceptance flipped with no change to the signature or the KMS.
+    #[test]
+    fn trust_policy_revoke_rejects_kms_signed_evidence() {
+        let preimage = b"retained mcps response evidence";
+        let (key, sig) = kms_sign(34, preimage);
+        // The signature is cryptographically valid on its own...
+        verify_ed25519(preimage, &sig, &key).expect("signature is valid bytes");
+        let mut trust = InMemoryTrustResolver::new();
+        let signer = "did:example:server-1";
+        let key_id = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1";
+        trust.insert(signer, key_id, key);
+        assert!(trust.resolve(signer, key_id).is_ok(), "trusted before revoke");
+        // ...but a trust-policy revoke makes the verifier reject it: acceptance is
+        // trust-policy-driven, not signature-driven.
+        trust.revoke(signer, key_id);
+        assert_eq!(
+            trust.resolve(signer, key_id).unwrap_err(),
+            TrustResolverError::Revoked,
+            "after trust-policy revoke the (signer, key_id) no longer resolves"
+        );
+    }
+
+    // (6) Rotation overlap: two key versions are trusted at once (old + new); both
+    // verify during the overlap. After the old version is removed/revoked, its
+    // evidence is rejected while the new version keeps verifying.
+    #[test]
+    fn rotation_overlap_old_and_new_then_old_revoked() {
+        let preimage = b"rotation overlap evidence";
+        let (key_v1, sig_v1) = kms_sign(35, preimage);
+        let (key_v2, sig_v2) = kms_sign(36, preimage);
+        let signer = "did:example:server-1";
+        let kid1 = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1";
+        let kid2 = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2";
+        let mut trust = InMemoryTrustResolver::new();
+        trust.insert(signer, kid1, key_v1);
+        trust.insert(signer, kid2, key_v2);
+        // Overlap window: both versions verify.
+        verify_ed25519(preimage, &sig_v1, &trust.resolve(signer, kid1).unwrap())
+            .expect("old version verifies during overlap");
+        verify_ed25519(preimage, &sig_v2, &trust.resolve(signer, kid2).unwrap())
+            .expect("new version verifies during overlap");
+        // Rotation completes: the old version is removed/revoked.
+        trust.revoke(signer, kid1);
+        assert_eq!(
+            trust.resolve(signer, kid1).unwrap_err(),
+            TrustResolverError::Revoked,
+            "old version rejected after rotation completes"
+        );
+        verify_ed25519(preimage, &sig_v2, &trust.resolve(signer, kid2).unwrap())
+            .expect("new version still verifies after the old is removed");
     }
 }
