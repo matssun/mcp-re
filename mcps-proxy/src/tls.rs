@@ -393,6 +393,45 @@ pub fn crl_freshness(
     })
 }
 
+/// The startup revocation-posture facts for a configured client CRL
+/// (ADR-MCPS-023 §A1, MCPS-58).
+///
+/// These feed the operator-visible `mcps.revocation.posture` diagnostic line. That
+/// line is a **posture diagnostic, not a structured per-request audit guarantee** —
+/// the structured evidence/audit vocabulary lands with Mode C attested ingress
+/// (MCPS-62), where `delegated_attestor_crl` actually exists. The field names here
+/// (`crl_digest`, `crl_this_update`, `crl_next_update`) are the canonical ones so a
+/// future structured audit sink can reuse them verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrlPosture {
+    /// `sha256:<base64url>` over the CRL DER (the MCP-S hash-identifier format).
+    pub crl_digest: String,
+    /// `thisUpdate` as a Unix timestamp.
+    pub this_update_unix: i64,
+    /// `nextUpdate` as a Unix timestamp, if present (RFC 5280 permits omission).
+    pub next_update_unix: Option<i64>,
+}
+
+/// Extract the [`CrlPosture`] facts from a DER-encoded client CRL. Pure and
+/// offline-testable. A malformed CRL is a hard error (fail closed), consistent
+/// with [`crl_freshness`] and the verifier build.
+pub fn crl_posture(crl_der: &[u8]) -> Result<CrlPosture, TlsError> {
+    use der::Decode;
+    use x509_cert::crl::CertificateList;
+    let crl = CertificateList::from_der(crl_der)
+        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let this_update = crl.tbs_cert_list.this_update.to_unix_duration().as_secs() as i64;
+    let next_update_unix = crl
+        .tbs_cert_list
+        .next_update
+        .map(|t| t.to_unix_duration().as_secs() as i64);
+    Ok(CrlPosture {
+        crl_digest: mcps_core::sha256_hash_id(crl_der),
+        this_update_unix: this_update,
+        next_update_unix,
+    })
+}
+
 /// Build a mutual-TLS [`ServerConfig`] whose server certificate is signed by a
 /// non-exporting device/KMS via a [`ResolvesServerCert`] (ADR-MCPS-028 §G), rather
 /// than from an exported private key. The TLS server private key never leaves the

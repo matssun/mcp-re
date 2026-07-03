@@ -1626,3 +1626,30 @@ fn crl_freshness_rejects_malformed_der() {
         "a malformed CRL must be a hard error, not a silent pass"
     );
 }
+
+// ADR-MCPS-023 §A1 (MCPS-58): the posture facts feeding the
+// `mcps.revocation.posture ... revocation_mode=static_crl_snapshot` diagnostic
+// line — a canonical `sha256:` digest and the CRL's this/next update timestamps.
+#[test]
+fn crl_posture_reports_canonical_digest_and_dates() {
+    use mcps_proxy::tls::crl_posture;
+    let ca = make_ca();
+    let crl = make_crl_full(&ca, &[0x01], (2024, 1, 1), (2999, 1, 1));
+    let p = crl_posture(crl.as_ref()).expect("parse");
+    assert!(
+        p.crl_digest.starts_with("sha256:"),
+        "crl_digest is the MCP-S hash-identifier format, got {}",
+        p.crl_digest
+    );
+    assert_eq!(
+        p.crl_digest,
+        mcps_core::sha256_hash_id(crl.as_ref()),
+        "the digest is the SHA-256 of the CRL DER in canonical form"
+    );
+    let next = p.next_update_unix.expect("this CRL carries a nextUpdate");
+    assert!(
+        p.this_update_unix < next,
+        "thisUpdate ({}) precedes nextUpdate ({next})",
+        p.this_update_unix
+    );
+}

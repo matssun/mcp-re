@@ -559,6 +559,46 @@ fn run() -> Result<(), String> {
         );
     }
 
+    // ADR-MCPS-023 §A1 (MCPS-58): operator-visible revocation POSTURE DIAGNOSTIC.
+    // This is a posture diagnostic, NOT a structured per-request audit guarantee —
+    // the structured evidence vocabulary (including `delegated_attestor_crl`, which
+    // does not exist yet) lands with Mode C attested ingress (MCPS-62). These lines
+    // deliberately use the canonical ADR field names so that future audit surface
+    // can reuse them verbatim. OCSP posture is per-request (no-AIA is a per-cert
+    // fact, not a config-load one) and likewise belongs to the MCPS-62 surface, not
+    // this startup line.
+    {
+        let exposure_window = match config.max_client_cert_lifetime {
+            Some(d) => format!("{}s", d.as_secs()),
+            None => "unbounded".to_string(),
+        };
+        if client_crls.is_empty() {
+            let max_lifetime = match config.max_client_cert_lifetime {
+                Some(d) => format!("{}s", d.as_secs()),
+                None => "none".to_string(),
+            };
+            eprintln!(
+                "mcps.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
+                 exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
+            );
+        } else {
+            for (i, crl) in client_crls.iter().enumerate() {
+                let posture = tls::crl_posture(crl.as_ref()).map_err(|e| e.to_string())?;
+                let next_update = posture
+                    .next_update_unix
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                eprintln!(
+                    "mcps.revocation.posture revocation_mode=static_crl_snapshot \
+                     dynamic_revocation=false stale_crl_policy=fail_closed crl_index={i} \
+                     crl_digest={} crl_this_update={} crl_next_update={} \
+                     exposure_window={exposure_window}",
+                    posture.crl_digest, posture.this_update_unix, next_update
+                );
+            }
+        }
+    }
+
     // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
     // the handshake signature through the device/KMS signer (TLS private key never
     // exported); the validated builder fails closed at construction if the leaf cert
