@@ -31,7 +31,19 @@ fn demo_root() -> PathBuf {
         candidates.push(PathBuf::from(&rel));
         for candidate in candidates {
             if candidate.exists() {
-                return candidate
+                // Bazel delivers each runfile as a SYMLINK into the source/exec
+                // tree. The FileServer's symlink-escape guard (resolve_within_root)
+                // canonicalizes BOTH the root and the target and requires
+                // containment; if the root is the runfiles symlink dir, every
+                // in-root file canonicalizes to its real location OUTSIDE that dir
+                // and is (correctly) rejected as an escape. Canonicalize the readme
+                // here so we root the server at the DEREFERENCED real directory,
+                // keeping the guard intact while resolving correctly under Bazel
+                // (MCPS-74 / ADR-MCPS-048).
+                let real = candidate
+                    .canonicalize()
+                    .expect("canonicalize demo_root readme runfile");
+                return real
                     .parent()
                     .expect("readme.txt has a parent")
                     .to_path_buf();
