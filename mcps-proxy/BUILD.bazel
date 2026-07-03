@@ -169,6 +169,11 @@ nt_rust_binary(
     edition = "2021",
     deps = [
         ":mcps_proxy",
+        # #220 (ADR-MCPS-048): main.rs uses mcps_core directly (e.g.
+        # `mcps_core::ReplayDurabilityClass`), so it must link mcps-core — the Cargo
+        # build resolved this transitively/by-manifest but the Bazel binary target
+        # never listed it, which is the head of the #220 fail-to-build cascade.
+        "//mcps-core:mcps_core",
         "//mcps-policy:mcps_policy",
     ],
 )

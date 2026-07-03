@@ -1,0 +1,6 @@
+# Directories Bazel must not try to load as packages (ADR-MCPS-048 / #220).
+# The demo video's npm tree vendors third-party packages (e.g. mathjax-full)
+# that ship their own non-Bazel `BUILD` files, which break `bazel test //...`
+# package loading. These are local/untracked and not part of the build graph.
+demo/video/mcps-intro/node_modules
+sdk/typescript/node_modules

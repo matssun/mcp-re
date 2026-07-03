@@ -95,6 +95,9 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath :mcps_demo_server_bin)",
     },
     deps = [
+        # #220 (ADR-MCPS-048): the test uses mcps_test_paths::… to resolve the
+        # binary via runfiles ($(rlocationpath) above), so it must link it.
+        "//mcps-test-paths:mcps_test_paths",
         "@crates_mcps//:serde_json",
     ],
 )
