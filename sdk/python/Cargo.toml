@@ -43,4 +43,4 @@ serde_json = "1.0"
 # it is added only for the wheel build via `[tool.maturin] features` below (the
 # recommended pyo3 pattern), so `cargo test`/`cargo run --example` can still link
 # against libpython to generate the parity oracle.
-pyo3 = { version = "0.23", features = ["abi3-py39"] }
+pyo3 = { version = "0.29", features = ["abi3-py39"] }
