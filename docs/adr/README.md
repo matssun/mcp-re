@@ -53,6 +53,7 @@ maintainable as the project evolves.
 | [ADR-MCPS-045](adr-mcps-045.md) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop (Accepted, v0.7) |
 | [ADR-MCPS-046](adr-mcps-046.md) | Signed Rejection Receipts (Proposed, v0.7+) |
 | [ADR-MCPS-047](adr-mcps-047.md) | Stateless Multi-Round-Trip Continuation Evidence (Accepted, v0.8) |
+| [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
 
 ## Provenance
 
