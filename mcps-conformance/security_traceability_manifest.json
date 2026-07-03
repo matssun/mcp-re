@@ -372,10 +372,115 @@
       "source": "mcps-conformance/tests/discovery_enforcement_conformance_test.rs",
       "test_fn": "v14_request_hash_mismatch_rejected",
       "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcps-client-core decision surface."
+    },
+    {
+      "property": "cloud-KMS seam: a KMS-produced Ed25519 response signature verifies under the mcps-core verifier (provider-agnostic delegation)",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/kms_keysource.rs",
+      "test_fn": "kms_signature_verifies_under_mcps_core_verifier",
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 provider-agnostic KMS response-signer core (the shared seam behind the #3838 delegation). Positive control: a signature from the generic KMS wrapper (mock backend) verifies under the same mcps-core VerificationKey path production uses. Runs under the default-feature proxy_unit_test (the seam is always compiled, not feature-gated)."
+    },
+    {
+      "property": "cloud-KMS seam fails closed: a backend returning a non-64-byte signature is rejected",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/kms_keysource.rs",
+      "test_fn": "wrong_length_signature_fails_closed",
+      "notes": "MCPS-72 (#252) / MCPS-56. A KMS backend that returns a wrong-length (non-Ed25519) signature is rejected at the seam before it can be emitted \u2014 malformed KMS output never reaches the wire."
+    },
+    {
+      "property": "cloud-KMS seam fails closed: a backend reporting a non-Ed25519 public key is rejected",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/kms_keysource.rs",
+      "test_fn": "non_ed25519_public_key_fails_closed",
+      "notes": "MCPS-72 (#252) / MCPS-56. The seam refuses a backend whose reported SPKI public key is not Ed25519 \u2014 the response-signing identity is pinned to Ed25519 (no algorithm substitution)."
+    },
+    {
+      "property": "cloud-KMS seam fails closed: prehash-mode signing (KMS signs a digest, not the raw preimage) is caught",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/kms_keysource.rs",
+      "test_fn": "prehash_mode_is_caught_at_the_seam",
+      "notes": "MCPS-72 (#252) / MCPS-56. Ed25519ph (prehashed) is a DIFFERENT primitive from pure Ed25519; a backend that prehashes would produce a signature the Core verifier rejects. The seam catches the prehash/pure mismatch so a misconfigured KMS key can never silently downgrade the signing primitive."
+    },
+    {
+      "property": "cloud-KMS seam fails closed: a signature not matching the reported public key is rejected",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/kms_keysource.rs",
+      "test_fn": "mismatched_key_signature_fails_closed_at_the_seam",
+      "notes": "MCPS-72 (#252) / MCPS-56. A signature produced by a key that does not correspond to the backend's reported public key fails closed at the seam \u2014 the emitted signature is always self-consistent with the advertised signer identity."
+    },
+    {
+      "property": "GCP Cloud KMS backend: signs an Ed25519 response that verifies end-to-end under mcps-core (offline, local-seed backend)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/gcp_kms_keysource.rs",
+      "test_fn": "gcp_backend_signs_and_verifies_end_to_end",
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7C native GCP Cloud KMS Ed25519 response signer. Offline positive control (for_test_with_local_seed, no network) exercised under the both-KMS-features proxy_ext_unit_test: a GCP-backed signature verifies under the production mcps-core path. The #[ignore]d gcp_kms_live_test is the online complement (manual live-infra lane)."
+    },
+    {
+      "property": "GCP Cloud KMS backend fails closed: a non-Ed25519 key algorithm is rejected",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/gcp_kms_keysource.rs",
+      "test_fn": "non_ed25519_algorithm_fails_closed",
+      "notes": "MCPS-72 (#252) / MCPS-56. The GCP adapter refuses a key version whose algorithm is not Ed25519 (EC_SIGN_ED25519) \u2014 no algorithm substitution from the cloud KMS side."
+    },
+    {
+      "property": "GCP Cloud KMS backend fails closed: a prehash signature is rejected before return",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/gcp_kms_keysource.rs",
+      "test_fn": "prehash_signature_is_rejected_before_return",
+      "notes": "MCPS-72 (#252) / MCPS-56. Defense-in-depth for the seam's prehash guard, specialized to the GCP backend: a prehashed signature is caught before the adapter returns it."
+    },
+    {
+      "property": "GCP Cloud KMS backend: the reported public key (PEM) parses to a well-formed Ed25519 SPKI (identity binding)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/gcp_kms_keysource.rs",
+      "test_fn": "get_public_key_parses_ed25519_pem",
+      "notes": "MCPS-72 (#252) / MCPS-56. The public key GCP reports (PEM-encoded) parses to the exact Ed25519 SPKI the verifier binds \u2014 the response-signer identity advertised to clients is the one KMS holds."
+    },
+    {
+      "property": "GCP Cloud KMS delegated TLS: the handshake signature verifies under the reported SPKI (non-exporting device signer)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/gcp_kms_keysource.rs",
+      "test_fn": "gcp_backend_tls_sign_verifies_under_reported_spki",
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7G delegated TLS handshake signing fronting the GCP KMS key: the TLS-layer signature verifies under the same reported SPKI, so the device/KMS never exports the private key yet still terminates the handshake."
+    },
+    {
+      "property": "AWS KMS backend: signs an Ed25519 response that verifies end-to-end under mcps-core (offline, local-seed backend)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/aws_kms_keysource.rs",
+      "test_fn": "aws_backend_signs_and_verifies_end_to_end",
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7B native AWS KMS Ed25519 response signer (minimal audited SigV4, no async aws-sdk-kms). Offline positive control (for_test_with_local_seed, no network) under proxy_ext_unit_test: an AWS-backed signature verifies under the production mcps-core path. The #[ignore]d aws_kms_live_test is the online complement."
+    },
+    {
+      "property": "AWS KMS backend fails closed: a non-Ed25519 key spec is rejected",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/aws_kms_keysource.rs",
+      "test_fn": "non_ed25519_key_spec_fails_closed",
+      "notes": "MCPS-72 (#252) / MCPS-56. The AWS adapter refuses a KMS key whose spec is not Ed25519 \u2014 no algorithm substitution from the cloud KMS side."
+    },
+    {
+      "property": "AWS KMS backend fails closed: a prehash signature is rejected before return",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/aws_kms_keysource.rs",
+      "test_fn": "prehash_signature_is_rejected_before_return",
+      "notes": "MCPS-72 (#252) / MCPS-56. Defense-in-depth for the seam's prehash guard, specialized to the AWS backend: a prehashed signature is caught before the adapter returns it."
+    },
+    {
+      "property": "AWS KMS backend: the reported public key (SPKI DER) parses to a well-formed Ed25519 key (identity binding)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/aws_kms_keysource.rs",
+      "test_fn": "get_public_key_parses_ed25519_spki",
+      "notes": "MCPS-72 (#252) / MCPS-56. The public key AWS reports (SPKI DER) parses to the exact Ed25519 key the verifier binds \u2014 the advertised response-signer identity is the one KMS holds."
+    },
+    {
+      "property": "AWS KMS delegated TLS: the handshake signature verifies under the reported SPKI (non-exporting device signer)",
+      "bazel_target": "//mcps-proxy:proxy_ext_unit_test",
+      "source": "mcps-proxy/src/aws_kms_keysource.rs",
+      "test_fn": "aws_backend_tls_sign_verifies_under_reported_spki",
+      "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7G delegated TLS handshake signing fronting the AWS KMS key: the TLS-layer signature verifies under the same reported SPKI, so the device/KMS never exports the private key yet still terminates the handshake."
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 53
+    "entries": 68
   }
 }

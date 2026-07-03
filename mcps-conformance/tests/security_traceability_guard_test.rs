@@ -211,6 +211,15 @@ fn source_env_for(source: &str) -> &'static str {
         }
         "mcps-conformance/tests/forbidden_claim_guard_test.rs" => "MCPS_SRC_FORBIDDEN_CLAIM_GUARD",
         "mcps-proxy/tests/keyset_admission_test.rs" => "MCPS_SRC_KEYSET_ADMISSION",
+        // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
+        // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
+        // `tests/*.rs`). The generic provider-agnostic signer seam runs under the
+        // default-feature `proxy_unit_test`; the GCP/AWS backend negatives run under
+        // the both-KMS-features `proxy_ext_unit_test`. All three sources are read
+        // from DISK the same way (runfile via the guard BUILD `data`).
+        "mcps-proxy/src/kms_keysource.rs" => "MCPS_SRC_KMS_KEYSOURCE",
+        "mcps-proxy/src/gcp_kms_keysource.rs" => "MCPS_SRC_GCP_KMS_KEYSOURCE",
+        "mcps-proxy/src/aws_kms_keysource.rs" => "MCPS_SRC_AWS_KMS_KEYSOURCE",
         "mcps-demo/tests/demo_negative_e2e_test.rs" => "MCPS_SRC_DEMO_NEGATIVE_E2E",
         "mcps-demo/tests/demo_transport_e2e_test.rs" => "MCPS_SRC_DEMO_TRANSPORT_E2E",
         "mcps-demo/tests/demo_e2e_persistent_test.rs" => "MCPS_SRC_DEMO_E2E_PERSISTENT",
