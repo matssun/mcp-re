@@ -4,7 +4,68 @@
 # let the isolated `crates_mcps` crate_universe hub reference the workspace
 # manifest AND lockfile (ADR-MCPS-012).
 
+load("@gazelle//:def.bzl", "gazelle")
+
 package(default_visibility = ["//visibility:public"])
+
+# ADR-MCPS-048 / MCPS-68 — first-party BUILD generation via gazelle_rust.
+#
+# Directives (apply to this package and all subpackages):
+#   * rust_cargo_lockfile / rust_crates_prefix — resolve third-party `use`
+#     paths to the existing `@crates_mcps//:...` crate_universe hub.
+#   * map_kind — emit the house `nt_rust_*` macros (from //bazel:defs.bzl)
+#     instead of the raw rules_rust rules, so generated targets keep the
+#     workspace's lint/edition/stamp/test-harness policy. gazelle manages the
+#     name/srcs/deps/proc_macro_deps/crate_features attrs; all other custom
+#     attrs (compile_data, auto_cargo_toml, fixture_files, …) are preserved.
+#
+# Non-Bazel / build-artifact trees gazelle must never walk: cargo `target/`
+# output dirs (contain generated build-script .rs), the SDK crates (published
+# via maturin/napi, deliberately outside the Bazel graph per ADR-MCPS-048), the
+# `work/` scratch dir, and the demo video's npm tree.
+# gazelle:exclude target
+# gazelle:exclude sdk
+# gazelle:exclude work
+# gazelle:exclude demo
+# gazelle:exclude scripts
+#
+# Cargo-driven mode: read each crate's Cargo.toml so a crate is treated as ONE
+# compilation unit (single target rooted at lib.rs/main.rs) and its BUILD.bazel
+# is generated next to the Cargo.toml — matching the one-BUILD-per-crate-root
+# layout. (Source mode would mis-split every `src/*.rs` module into its own lib.)
+# gazelle:rust_mode generate_from_cargo
+# gazelle:rust_default_edition 2021
+#
+# gazelle:rust_cargo_lockfile Cargo.lock
+# gazelle:rust_crates_prefix @crates_mcps//:
+# gazelle:map_kind rust_library nt_rust_library //bazel:defs.bzl
+# gazelle:map_kind rust_binary nt_rust_binary //bazel:defs.bzl
+# gazelle:map_kind rust_test nt_rust_test //bazel:defs.bzl
+#
+# Feature-flavor disambiguation: several crates publish >1 target with the same
+# `crate_name` (a plain flavor plus feature-gated ones — e.g. mcps_host +
+# mcps_host_test_fixtures; mcps_proxy + _fault/_dev_env/_ext; mcps_transport +
+# _fault). gazelle can't tell from `use mcps_proxy::X` which flavor an importer
+# wants, so these `resolve` directives pin the DEFAULT (plain) target. Importers
+# that need a specific flavor keep that edge hand-written with a `# keep` comment
+# — the flavor-selection logic is MCPS-69's job. (See ADR-MCPS-048.)
+# gazelle:resolve rust mcps_host //mcps-host:mcps_host
+# gazelle:resolve rust mcps_proxy //mcps-proxy:mcps_proxy
+# gazelle:resolve rust mcps_transport //mcps-transport:mcps_transport
+
+# Run with: bazel run //:gazelle -- -mode diff   (dry-run; prints the diff)
+#
+# WARNING — write mode (`bazel run //:gazelle`) is NOT yet safe to commit
+# wholesale. gazelle manages only the `use`-graph edges; it strips the non-code
+# edges this security-evidence repo relies on (source/spec/BUILD files consumed
+# via include_str! by the traceability manifest + transport-free guard) and the
+# feature-flavor edges above. Adopting write mode as the source of truth is gated
+# on MCPS-69 (feature-flavor / build-script annotations) + MCPS-70 (CI staleness
+# gate). Until then use `-mode diff` as an advisory drift signal only.
+gazelle(
+    name = "gazelle",
+    gazelle = "@gazelle_rust//:gazelle_bin",
+)
 
 exports_files([
     "Cargo.toml",

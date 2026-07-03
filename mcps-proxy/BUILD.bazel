@@ -5,6 +5,18 @@ load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# ADR-MCPS-048 / MCPS-69 — these HITL live-cloud KMS tests are intentionally
+# cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
+# and runs ONLY in the manual live-infra lane (`cargo test --features … --
+# --ignored` against real AWS/GCP KMS):
+#   tests/aws_kms_live_test.rs, tests/gcp_kms_live_test.rs,
+#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs
+# NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
+# Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
+# will always PROPOSE a target for each in `-mode diff`. This is a documented
+# advisory-diff false-positive; MCPS-70's staleness gate must allowlist them (and
+# not auto-adopt gazelle write output wholesale). Do NOT add Bazel targets here.
+
 # Single source of truth for the mcps_proxy library sources. The default
 # `:mcps_proxy` library and the feature-flavored `:mcps_proxy_fault` /
 # `:mcps_proxy_dev_env` instances (each a full rebuild of the same crate under a
@@ -169,6 +181,11 @@ nt_rust_binary(
     edition = "2021",
     deps = [
         ":mcps_proxy",
+        # #220 (ADR-MCPS-048): main.rs uses mcps_core directly (e.g.
+        # `mcps_core::ReplayDurabilityClass`), so it must link mcps-core — the Cargo
+        # build resolved this transitively/by-manifest but the Bazel binary target
+        # never listed it, which is the head of the #220 fail-to-build cascade.
+        "//mcps-core:mcps_core",
         "//mcps-policy:mcps_policy",
     ],
 )
@@ -227,7 +244,7 @@ nt_rust_test(
     crate_features = ["fault_accept_any_client"],
     edition = "2021",
     deps = [
-        ":mcps_proxy_fault",
+        ":mcps_proxy_fault",  # keep
         "@crates_mcps//:rcgen",
         "@crates_mcps//:rustls",
         "@crates_mcps//:rustls-pki-types",
@@ -273,6 +290,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -301,6 +319,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -330,6 +349,7 @@ nt_rust_test(
         "DEMO_SERVER_BIN": "$(rlocationpath //mcps-demo-server:mcps_demo_server_bin)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -350,7 +370,7 @@ nt_rust_test(
     deps = [
         ":mcps_proxy",
         "//mcps-core:mcps_core",
-        "//mcps-host:mcps_host",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
         "//mcps-policy:mcps_policy",
         "@crates_mcps//:serde_json",
     ],
@@ -437,7 +457,7 @@ nt_rust_test(
     crate_features = ["dev_env_key_source"],
     edition = "2021",
     deps = [
-        ":mcps_proxy_dev_env",
+        ":mcps_proxy_dev_env",  # keep
         "//mcps-core:mcps_core",
         "@crates_mcps//:zeroize",
     ],
@@ -572,6 +592,7 @@ nt_rust_test(
         "MCPS_PROXY_CLI": "$(rlocationpath :mcps_proxy_cli)",
     },
     deps = [
+        "//mcps-test-paths:mcps_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcps_proxy",
         "//mcps-core:mcps_core",
         "//mcps-host:mcps_host",
@@ -615,7 +636,7 @@ nt_rust_library(
 # Ed25519 signer (ed25519-dalek) only mints the signed fixtures.
 nt_rust_test(
     name = "proxy_ext_unit_test",
-    crate = ":mcps_proxy_ext",
+    crate = ":mcps_proxy_ext",  # keep
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = _PROXY_EXT_FEATURES,
@@ -644,7 +665,7 @@ nt_rust_test(
         "MCPS_REQUIRE_LIVE_INFRA",
     ],
     deps = [
-        ":mcps_proxy_ext",
+        ":mcps_proxy_ext",  # keep
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
         # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
@@ -671,7 +692,7 @@ nt_rust_test(
         "MCPS_REQUIRE_LIVE_INFRA",
     ],
     deps = [
-        ":mcps_proxy_ext",
+        ":mcps_proxy_ext",  # keep
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
         # The live TTL probe base64-encodes the key + drives the etcd v3 gateway.
@@ -701,8 +722,13 @@ nt_rust_test(
         "MCPS_REQUIRE_LIVE_INFRA",
     ],
     deps = [
-        ":mcps_proxy_ext",
+        ":mcps_proxy_ext",  # keep
         "//mcps-core:mcps_core",
+        # #220 (ADR-048): the e2e mints a CA/leaf + rustls config to drive a real
+        # mTLS handshake against the PKCS#11 signer; these test deps match Cargo.toml.
+        "@crates_mcps//:rcgen",
+        "@crates_mcps//:rustls",
+        "@crates_mcps//:rustls-pki-types",
         "@crates_mcps//:serde_json",
     ],
 )
@@ -725,7 +751,7 @@ nt_rust_test(
         "MCPS_REQUIRE_LIVE_INFRA",
     ],
     deps = [
-        ":mcps_proxy_ext",
+        ":mcps_proxy_ext",  # keep
         "//mcps-core:mcps_core",
         "@crates_mcps//:serde_json",
         "@crates_mcps//:rcgen",
@@ -771,7 +797,7 @@ nt_rust_binary(
     # _PROXY_EXT_DEPS already includes //mcps-policy:mcps_policy (via
     # _PROXY_LIB_DEPS), so it is NOT relisted here — the lean CLI lists it
     # explicitly only because its lean dep set (`:mcps_proxy`) does not.
-    deps = [":mcps_proxy_ext"] + _PROXY_EXT_DEPS,
+    deps = [":mcps_proxy_ext"] + _PROXY_EXT_DEPS,  # keep
 )
 
 # Cross-compile the ext binary to the linux/amd64 image platform (from darwin).

@@ -501,11 +501,44 @@ fn corpus() -> Vec<Fixture> {
 // The harness.
 // ---------------------------------------------------------------------------
 
-fn vectors_dir() -> std::path::PathBuf {
+/// Locate the committed `tests/vectors` directory under BOTH build systems.
+///
+/// Cargo bakes `CARGO_MANIFEST_DIR` to the crate root, so the corpus is read
+/// straight from the source tree. Under Bazel that path is the COMPILE sandbox
+/// (gone at test runtime), so the `draft02_vectors_test` target passes
+/// `MCPS_CORE_VECTORS_MANIFEST = $(rlocationpath tests/vectors/manifest.json)`
+/// and ships the fixtures as `data`; we resolve that runfile and take its parent.
+/// (ADR-MCPS-048 / MCPS-76 — the dual-mode fixture bridge; same rlocationpath
+/// scheme as mcps-conformance/acceptance_test.)
+fn vectors_root() -> std::path::PathBuf {
+    if let Ok(rel) = std::env::var("MCPS_CORE_VECTORS_MANIFEST") {
+        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
+            if let Ok(root) = std::env::var(key) {
+                let candidate = std::path::Path::new(&root).join(&rel);
+                if candidate.exists() {
+                    return candidate
+                        .parent()
+                        .expect("vectors manifest runfile has a parent")
+                        .to_path_buf();
+                }
+            }
+        }
+        let candidate = std::path::PathBuf::from(&rel);
+        if candidate.exists() {
+            return candidate
+                .parent()
+                .expect("vectors manifest runfile has a parent")
+                .to_path_buf();
+        }
+        panic!("MCPS_CORE_VECTORS_MANIFEST set but the runfile was not found (rel={rel})");
+    }
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("vectors")
-        .join("draft-02")
+}
+
+fn vectors_dir() -> std::path::PathBuf {
+    vectors_root().join("draft-02")
 }
 
 /// Run a fixture's verification and return the observed outcome as a wire token.
@@ -739,10 +772,7 @@ fn static_oracle_matches_recomputed_bytes() {
 /// made mechanical by the separate-corpus structure).
 #[test]
 fn draft01_corpus_is_separate_and_untouched() {
-    let draft01_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("vectors")
-        .join("manifest.json");
+    let draft01_manifest = vectors_root().join("manifest.json");
     let body = std::fs::read_to_string(&draft01_manifest).expect("read draft-01 manifest");
     assert!(
         !body.contains("draft-02") && !body.contains("authorization_binding"),

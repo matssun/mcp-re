@@ -127,3 +127,21 @@ use_repo(
     "distroless_cc_base",
     "distroless_cc_base_linux_amd64",
 )
+
+########################################
+# Gazelle + gazelle_rust — first-party BUILD generation (ADR-MCPS-048 / MCPS-68)
+########################################
+#
+# gazelle_rust parses each crate's `use` graph and generates/updates the
+# first-party `rust_*` targets and their first-party `deps` edges. Combined with
+# the `# gazelle:map_kind` directives in the root BUILD.bazel, generated targets
+# use the house `nt_rust_*` macros; third-party edges resolve to the existing
+# `@crates_mcps//:...` hub (see `# gazelle:rust_crates_prefix`). This makes the
+# hand-maintained first-party deps surface — the entire #220 drift class —
+# generated instead of hand-written. A CI staleness gate (MCPS-70) makes it stick.
+#
+# These are dev/tooling-only bazel_deps (host-side gazelle binary); they do not
+# enter the runtime graph of any mcps crate or the published artifacts.
+
+bazel_dep(name = "gazelle", version = "0.51.3", dev_dependency = True)
+bazel_dep(name = "gazelle_rust", version = "0.1.0", dev_dependency = True)

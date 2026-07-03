@@ -50,3 +50,20 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# ADR-MCPS-047 step 7: the client proxy drives the InputRequiredResult ->
+# continuation round trip transparently for an unmodified plain-MCP client.
+# (MCPS-70: gate-discovered #220 drift — cargo ran it, Bazel had no target.)
+nt_rust_test(
+    name = "continuation_driving_test",
+    srcs = ["tests/continuation_driving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_client_proxy",
+        "//mcps-client-core:mcps_client_core",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)

@@ -136,3 +136,20 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# ADR-MCPS-047 continuation-binding cross-side oracle: a continuation request
+# signed by mcps-client-core (with a `continuation` binding in the signed
+# preimage) is accepted by the server-side mcps_core::verify_request_draft02.
+# (MCPS-70: gate-discovered #220 drift — cargo ran it, Bazel had no target.)
+nt_rust_test(
+    name = "continuation_roundtrip_test",
+    srcs = ["tests/continuation_roundtrip_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcps_client_core",
+        "//mcps-core:mcps_core",
+        "@crates_mcps//:serde_json",
+    ],
+)

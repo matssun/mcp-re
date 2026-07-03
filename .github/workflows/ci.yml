@@ -23,6 +23,12 @@
 #     repository was not developed under `cargo fmt`/`clippy -D warnings`, so these
 #     surface drift without blocking. Promote them to blocking once a one-time
 #     repo-wide format + lint cleanup lands (and bump rust-toolchain.toml together).
+#   - BLOCKING (ADR-MCPS-048 / MCPS-70): the `bazel` job gates the OTHER build
+#     system. Bazel was ungated, which is exactly how #220 (Bazel/cargo drift)
+#     happened. Two steps: (1) the semantic-drift gate — gazelle_rust as a drift
+#     DETECTOR (not a byte-authority): fails if the Cargo graph has a target/edge
+#     the committed BUILD omits, modulo the script's allowlist; (2) `bazel test
+#     //...` parity with the cargo suite.
 name: CI
 
 on:
@@ -98,3 +104,41 @@ jobs:
         run: >-
           cargo test -p mcps-proxy
           --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
+
+  bazel:
+    name: bazel semantic-drift gate + test parity
+    runs-on: ubuntu-latest
+    # ADR-MCPS-048 / MCPS-70 — the enforcement that makes generation stick.
+    # Runs on Linux so the platform-gated crates (seccompiler, landlock) compile
+    # (they are cfg'd out on macOS); this is also the canonical hermetic target.
+    steps:
+      - uses: actions/checkout@v4
+
+      # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
+      # cargo jobs; install it so the Bazel build links on a clean runner.
+      - name: System build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev
+
+      # Cache the Bazel repository + disk cache across runs (crate_universe hub,
+      # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
+      # Cargo lock so a dependency change busts it.
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      - name: Bazel version
+        run: bazel version
+
+      # (1) Semantic-drift gate: fails if a `use`/test lacks its BUILD target/edge.
+      - name: BUILD semantic-drift gate (gazelle as drift detector)
+        run: python3 scripts/bazel_gazelle_gate.py
+
+      # (2) Parity: the Bazel suite must pass like the cargo suite.
+      - name: Bazel test parity (//...)
+        run: bazel test //... --test_output=errors

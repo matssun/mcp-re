@@ -71,8 +71,16 @@ fn locate_server() -> PathBuf {
     }
     // Cargo mode: the `mcps-stdio-server` `[[bin]]` is a same-crate target, so
     // CARGO_BIN_EXE_<name> is set automatically when this integration test is
-    // compiled.
-    PathBuf::from(env!("CARGO_BIN_EXE_mcps-stdio-server"))
+    // compiled by Cargo. Under Bazel that env is ABSENT at compile time, so use
+    // `option_env!` (compiles to `None`) rather than `env!` (which would fail the
+    // build) — this branch is unreachable under Bazel, which always takes the
+    // `MCPS_STDIO_SERVER` runfiles branch above (ADR-MCPS-048 / #220 parity).
+    PathBuf::from(
+        option_env!("CARGO_BIN_EXE_mcps-stdio-server").expect(
+            "neither MCPS_STDIO_SERVER (Bazel) nor CARGO_BIN_EXE_mcps-stdio-server \
+             (Cargo) is set — cannot locate the stdio server binary",
+        ),
+    )
 }
 
 fn stdio() -> StdioHarness {
