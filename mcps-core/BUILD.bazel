@@ -101,3 +101,11 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# MCPS-68 drift catch: mcps-core/tests/draft02_vectors_test.rs runs under cargo
+# but has NO Bazel target — gazelle_rust (ADR-MCPS-048) surfaced the gap. Wiring
+# it green needs dual-mode fixture-path bridging in the test source (its live
+# assertions read the committed corpus from disk via CARGO_MANIFEST_DIR, which
+# bakes to the compile sandbox under Bazel) — the same rlocationpath-env pattern
+# as mcps-conformance/acceptance_test. Tracked as follow-up MCPS-76 (#255); the
+# MCPS-70 staleness gate will keep such gaps from recurring.
