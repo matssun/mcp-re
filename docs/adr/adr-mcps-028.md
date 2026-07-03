@@ -9,6 +9,14 @@ ADR-MCPS-022 (signing key custody at scale). Implementation lands as its own
 follow-up PR(s) per the design-PR-then-implementation rhythm. Does **not** change
 the MCP-S signature contract: MCP-S Core stays Ed25519-only (ADR-MCPS-004).
 
+**v0.9 hardening addendum (2026-07-03):** the native GCP Cloud KMS custody path
+(§C) is **promoted to Accepted for v0.9**, provable offline. The enterprise-custody
+deltas — key-version identity, the KMS-lifecycle-vs-verifier-revocation boundary,
+the Ed25519-only reaffirmation over the seed's P-256 temptation, the FIPS-L3
+live-fact gate, and the offline evidence spine — are recorded in the
+[**v0.9 Custody-Hardening Addendum**](#v09-custody-hardening-addendum-2026-07-03)
+below (Decisions H–L). No wire change; the draft-02 request preimage is untouched.
+
 ## Context
 
 MCP-S signs every response with Ed25519 over the canonical JCS preimage, **directly
@@ -184,3 +192,111 @@ the adapter uses PureEdDSA-RAW (a prehash signature would fail this check).
   not hidden.
 - Default builds are unaffected (both adapters are off-by-default feature gates; the
   cloud SDKs are not linked unless enabled).
+
+## v0.9 Custody-Hardening Addendum (2026-07-03)
+
+Outcome of the v0.9/v0.10 enterprise-hardening design review. This is a **delta
+addendum** (not a new ADR): it hardens and schedules the native GCP Cloud KMS
+custody path (§C) for v0.9 and records the enterprise-custody boundary decisions.
+The parent invariants stand unchanged — **Ed25519-only (§A), non-exporting (§D),
+the `ResponseSigner` seam is the only coupling (§F)**. Nothing here adds a draft-02
+wire field; `deny_unknown_fields` on the request envelope is preserved.
+
+### Decisions (H–L, extending §A–§G)
+
+**H. Key-version identity rides the existing `(signer, key_id)` slot — no new wire
+field.** The GCP Cloud KMS `cryptoKeyVersion` resource name
+(`projects/…/cryptoKeys/…/cryptoKeyVersions/N`) maps onto the existing MCP-S
+`(signer, key_id)` trust-bundle entry. The requirement "the signer key version
+appears in evidence" is satisfied by the `key_id` that is **already in the signed
+preimage** — no `key_version` envelope field is added (that would reopen the frozen
+draft-02 preimage). Rotation, disable, and revocation are expressed as **trust-bundle
+mapping movements**, never wire changes. Audit records `signer` + `key_id`; the
+`key_id`→`cryptoKeyVersion` correspondence is operator trust-bundle configuration.
+
+**I. KMS lifecycle ≠ verifier revocation (the load-bearing boundary).** KMS
+key-version *disable* / *destroy* controls **future signing authority only**. It does
+**not** make verifiers reject already-signed evidence or already-cached public keys.
+Verifier acceptance is **trust-policy-driven** — an operator adds/removes/`Revoke`s
+the `(signer, key_id)` mapping, and exposure is bounded by the ADR-MCPS-021
+trust-propagation window `T` (or invalidated immediately via the Tier-3 push channel).
+The verifier **MUST NOT call KMS at verification time**: `getPublicKey` /
+`asymmetricSign` live on the SIGNER seam only (§C, `key_source.rs`), so verification
+correctness never couples to KMS availability — a KMS outage cannot break
+verification of retained audit evidence. `security-boundary.md` states this verbatim:
+
+> KMS lifecycle controls signing authority. MCP-S trust policy controls evidence
+> acceptance. Disabling a KMS key version prevents new signatures, but verifiers
+> reject existing or cached-key evidence only after the relevant `key_id` is revoked
+> or removed from MCP-S trust policy.
+
+A live KMS-status→trust-policy **sync job** MAY exist as operator glue, but it feeds
+trust policy; it is never the verification path.
+
+**J. Rotation model — explicit overlap.** Three phases over `(signer, key_id)`
+mappings: (1) trust old only; (2) trust old **and** new (overlap; new signatures use
+the new version); (3) trust new only, old revoked/removed. Emergency revocation is
+phase 3 forced immediately (remove mapping / push `Revoked`), bounded by `T` /
+Tier-3 push per §I.
+
+**K. Ed25519-only reaffirmed; P-256 rejected for the GCP profile.** The seed proposed
+also supporting P-256 because Google lists it as a general EC recommendation. **Not
+adopted.** `GcpKmsKeySource` pins `EC_SIGN_ED25519` and fails closed on any other key
+spec (§C, §D). Admitting a second curve would fork the one interop-critical wire
+property (Ed25519-only, ADR-MCPS-004) for zero protocol benefit — GCP already offers
+`EC_SIGN_ED25519`. If a deployment cannot obtain an Ed25519 key at the required
+protection level, it **scopes out the high-assurance claim** for that deployment
+rather than adding a curve.
+
+**L. FIPS-140-2 L3 custody is a live-infra fact to verify, not an assumption.**
+Before any FIPS-L3 line is written in the Google Cloud cookbook, verify **natively**
+whether GCP Cloud KMS exposes `EC_SIGN_ED25519` at **HSM protection level**. The
+parent ADR sources HSM-Ed25519 custody from the **PKCS#11 path** (`CKM_EDDSA`, §Context
+table) — *not* the native REST adapter this ADR builds; the native adapter pins the
+algorithm but says nothing about protection level. If native GCP KMS offers Ed25519
+only at **software** protection, the cookbook's L3 story MUST route through
+`Pkcs11KeySource`, and the native GCP KMS adapter is honestly labeled
+**software-protection custody** — never presented as FIPS-L3. Do not sell native
+software-protection custody as HSM/L3.
+
+### Verification (v0.9 evidence spine — offline-first)
+
+Every KMS-lifecycle acceptance property is a **verifier fail-closed** property, which
+is provable **offline** and therefore qualifies as an evidence-spine claim (a named
+GREEN OFFLINE test in `security_traceability_manifest.json`). A live GCP run proves
+only Google's own IAM enforcement, **not** an MCP-S property — so live lanes are
+`#[ignore]`d **supporting-only** evidence, never the spine entry for a claim.
+
+The five negatives, correctly scoped:
+
+1. **Disable stops new signatures** — offline via a `FakeGcp` fault variant that
+   errors on `asymmetricSign`; the signer fails closed (no local-key fallback, §D).
+   *(touches the KMS transport seam only)*
+2. **Disable alone ≠ verifier revocation** — evidence signed *before* disable still
+   verifies while `(signer, key_id)` remains trusted, proving acceptance is
+   trust-policy-driven, not KMS-status-driven. **Pure trust-resolver test, no KMS.**
+3. **Pushed `Revoked` / `key_id` removal → verifier rejects** within window `T`, or
+   immediately via the Tier-3 push channel. **Trust-resolver / `push_trust` test, no
+   KMS.**
+4. **Destroy → fresh `getPublicKey` fails closed** (`FakeGcp` fault variant on
+   `get_public_key`) while a **pre-pinned** verifier still verifies pre-destroy
+   evidence. *(the only other KMS-transport-touching case)*
+5. **Rotation overlap** — accept old+new during overlap, then reject old after
+   removal. **Trust-resolver test.**
+
+**Construction rule:** negatives (3)–(5) run over a **pinned trust bundle with the KMS
+transport unreachable**, which itself proves the verify path makes no `getPublicKey`
+call (§I). `FakeGcp` (already the offline stand-in for the two-method
+`GcpKmsTransport`) supplies the fault variants for (1) and (4).
+
+### Consequences (v0.9)
+
+- Native GCP Cloud KMS custody is **Accepted for v0.9** and clears the evidence-spine
+  gate **without** live GCP — the whole item is offline-provable.
+- Audit evidence is unchanged on the wire: `signer` + `key_id` (= the KMS key version)
+  are already in the signed preimage; the KMS-lifecycle/verifier-revocation split is
+  an operator-and-trust-policy concern (paired with the **ADR-MCPS-021 trust/rotation
+  addendum**, the other v0.9 custody item).
+- The FIPS-L3 claim is gated behind a live-infra check; software-protection native
+  custody is labeled honestly rather than overclaimed.
+- P-256 is closed as a non-goal; the Ed25519-only wire contract is preserved.

@@ -8,6 +8,15 @@ Accepted (targets v0.3). Sibling of ADR-MCPS-020 (shared replay state); both
 reuse one storage-tier framework. Partially lifts the multi-node limitation
 recorded in ADR-MCPS-017 for trust/key-status state only.
 
+**v0.9 hardening addendum (2026-07-03):** the window-`T` / tier framework is
+operationalized for **KMS-backed signers** (ADR-MCPS-028 §C, Accepted for v0.9) —
+the bridge from KMS key-version lifecycle to verifier-side trust policy. It adds no
+new mechanism; it applies the existing one. See the
+[**v0.9 Signing-Key Revocation & Rotation Addendum**](#v09-signing-key-revocation--rotation-addendum-2026-07-03)
+below (Decisions M–O). **Domain note:** this ADR governs *signing-key* revocation
+only; *mTLS certificate* revocation is a separate domain handled in the ADR-MCPS-023
+v0.9 amendment (short-lived-cert + static-CRL) and its Mode-C attestor.
+
 ## Context
 
 ADR-MCPS-007 makes the `TrustResolver` authoritative at verification time,
@@ -218,3 +227,68 @@ accept it. Deployments that need a stronger guarantee opt into Tier 2 or Tier 3.
   ReplayCache, online OCSP/CRL revocation).
 - Lifts (for trust state only): ADR-MCPS-017 (single-node production claim
   ceiling).
+
+## v0.9 Signing-Key Revocation & Rotation Addendum (2026-07-03)
+
+Outcome of the v0.9/v0.10 enterprise-hardening design review. Native KMS-backed
+signers (ADR-MCPS-028 §C) make the signing key non-exportable, but a KMS
+key-version lifecycle event does **not**, by itself, revoke already-signed evidence
+or already-cached public keys at verifiers. This addendum operationalizes the
+window-`T` / tier framework for KMS-backed signers. It is a **delta addendum** (not a
+new ADR) and introduces **no new mechanism** — it applies the mechanism this ADR
+already defines.
+
+### Two revocation domains (do not conflate)
+
+The v0.9 hardening surfaces two distinct revocation problems that must not be merged
+(they have different authorities and different failure modes):
+
+| Domain | Authority | Where handled |
+|---|---|---|
+| **Signing-key revocation** | MCP-S `TrustResolver` — the `(signer, key_id)` trust state, bounded by window `T` / Tiers 1–3 | **This ADR** |
+| **mTLS certificate revocation** | PKI / CA / CRL / OCSP / short-lived certs, at the transport/ingress boundary | **ADR-MCPS-023 v0.9 amendment** (Mode A short-lived-cert + static-CRL; Mode C attestor CRL) |
+
+A KMS `disable` is a *signing-key* event; a revoked client certificate is an *mTLS*
+event. This ADR speaks only to the first.
+
+### Decisions (M–O, extending §Decision)
+
+**M. KMS lifecycle → trust policy is operator-mediated and bounded by `T`.** A KMS
+key-version `disable`/`destroy` stops the signer from producing *new* signatures
+(ADR-MCPS-028 §I) but does not change verifier acceptance. To revoke acceptance, an
+operator — or a KMS-status→trust-policy **sync job** — translates the KMS event into a
+`Revoked`/removed `(signer, key_id)` mapping in the trust store. Exposure is then
+bounded by window `T` (Tier 1) or invalidated immediately via the Tier-3 push channel.
+The verifier **never calls KMS** (ADR-MCPS-028 §I); the fail-closed-after-`T` rule
+(§Fail-closed rule) applies to KMS-backed signers unchanged. The `cryptoKeyVersion`
+resource name is the `key_id` carried in the mapping (ADR-MCPS-028 §H).
+
+**N. Rotation-overlap for KMS key versions is publish-before-use, verbatim.** The
+§Rotation rule applies with `(signer, key_id)` = `(signer, cryptoKeyVersion)`:
+publish the new-version mapping → wait ≥ `T` → begin signing with the new version →
+keep the old version's mapping active until in-flight requests drain
+(`max_request_lifetime + max_clock_skew`) → remove the old mapping. This is the
+operational basis for ADR-MCPS-028 §J and its rotation-overlap acceptance test.
+Beginning to sign with the new key version before `T` elapses is an **availability**
+fault (some verifiers reject valid requests), not a security bypass — the rule exists
+to prevent it.
+
+**O. Emergency signer revocation = forced phase-3 removal, or Tier-3 push for
+faster-than-`T`.** Killing a compromised signing key immediately means forcing the
+final rotation phase (remove/`Revoke` the mapping) at once; exposure is still bounded
+by `T` under Tier 1. Deployments that must beat `T` opt into **Tier 3** (push
+invalidation), which evicts the `(signer, key_id)` before `T` elapses and degrades to
+bounded-`T` on channel failure — **never** zero-window (§Storage tiers, Tier 3). There
+is no new "emergency" code path; emergency revocation is the existing tiers exercised
+without the rotation drain wait.
+
+### Compliance (v0.9 — offline evidence spine)
+
+The acceptance properties are **verifier-side and offline-provable**, and are the
+*same* trust-resolver / `push_trust` tests scoped as negatives (2)–(5) in
+ADR-MCPS-028 §Verification — they are ADR-021-domain tests (no KMS at verify time).
+**Reference them; do not duplicate.** The existing §Compliance conformance vector (c)
+(publish-before-use rotation) gains one offline variant: a KMS-key-version overlap
+where old+new verify during overlap and old is rejected after removal. A live GCP KMS
+run proves only Google's IAM enforcement of `disable`/`destroy` — it is
+supporting-only (`#[ignore]`), never the evidence-spine entry for a fail-closed claim.
