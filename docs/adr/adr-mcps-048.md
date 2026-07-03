@@ -133,11 +133,17 @@ hand-maintain a second copy of a fact Cargo already owns.
 
 ## Compliance and Enforcement
 
-- **CI staleness gate (the enforcement):** a required CI job runs the generator in
-  check/diff mode and **fails** if any committed BUILD file differs from generated
-  output. This is what would have caught #220 at PR time.
-- **Bazel build/test parity job:** `bazel test` over the mcps packages must pass (or
-  each documented gap is explicitly tracked), matching the Cargo suite.
+- **CI staleness gate (the enforcement):** a required CI job (`bazel` job in
+  `.github/workflows/ci.yml`) runs `python3 scripts/bazel_gazelle_gate.py`, which
+  drives the generator in read-only diff mode and **fails on unmanaged semantic
+  drift** — a target or `deps` edge the Cargo graph has but the committed BUILD
+  omits. Per the Implementation notes above it gates the *semantic* managed set,
+  not byte-identity, with a categorized allowlist (HITL/live-cloud, platform,
+  naming collisions, and tracked known drift). This is what would have caught #220
+  at PR time; on first run it caught five real missing-target drifts.
+- **Bazel build/test parity job:** the same `bazel` job runs `bazel test //...`,
+  which must pass (or each documented gap is explicitly tracked), matching the
+  Cargo suite.
 - **Downloader-artifact job:** CI builds the `cargo` crates, the maturin wheel, and
   the napi package from the same source, so the "skip Bazel" path is verified, not
   assumed.
