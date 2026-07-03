@@ -307,6 +307,16 @@ impl RustlsDirectProvider {
 /// unknown-status rejection by default, full-chain revocation, operator opt-out
 /// only via `allow_unknown_revocation_status`, and a malformed CRL → startup
 /// `TlsError::Verifier` (fail closed).
+///
+/// ADR-MCPS-023 §A1 (v0.9, MCPS-58): the verifier now **enforces CRL expiration**
+/// (`enforce_revocation_expiration`). Before this, the builder used the rustls
+/// default `ExpirationPolicy::Ignore`, i.e. a CRL past its `nextUpdate` was still
+/// honored — revocation checking silently failed OPEN on staleness. Enforcing it
+/// means a stale CRL causes new handshakes to fail CLOSED. Because a stale CRL
+/// then rejects everything, this ships together with the startup freshness gate
+/// ([`crl_freshness`]) and the "restart before `nextUpdate`" operator contract;
+/// the in-process hot-reloader is tracked as a v0.10 follow-up. The call is a
+/// no-op when no CRLs are configured (revocation checks are not performed).
 fn build_client_verifier(
     client_ca: Vec<CertificateDer<'static>>,
     crls: Vec<CertificateRevocationListDer<'static>>,
@@ -317,14 +327,70 @@ fn build_client_verifier(
     for ca in client_ca {
         roots.add(ca).map_err(|_| TlsError::BadClientCa)?;
     }
-    let mut builder =
-        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider).with_crls(crls);
+    let mut builder = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+        .with_crls(crls)
+        .enforce_revocation_expiration();
     if allow_unknown_revocation_status {
         builder = builder.allow_unknown_revocation_status();
     }
     builder
         .build()
         .map_err(|e| TlsError::Verifier(e.to_string()))
+}
+
+/// The freshness of a configured client CRL relative to a verification instant
+/// (ADR-MCPS-023 §A1, MCPS-58).
+///
+/// [`build_client_verifier`] now enforces `nextUpdate` at handshake time, so a
+/// `Stale` CRL fails every new handshake closed. This startup gate surfaces that
+/// condition **loudly at boot**: under strict the proxy refuses to start, rather
+/// than coming up and silently rejecting every client at the first handshake, and
+/// it warns while a CRL is `NearExpiry` so the operator can reload/restart with a
+/// refreshed CRL before the cutover (the "restart before `nextUpdate`" contract;
+/// the in-process hot-reloader is a v0.10 follow-up).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrlFreshness {
+    /// `now < nextUpdate - warn_window` — comfortably valid.
+    Fresh,
+    /// `nextUpdate - warn_window <= now < nextUpdate` — still valid, but a
+    /// refreshed CRL must be in place before `next_update_unix` or new handshakes
+    /// will start failing closed.
+    NearExpiry { next_update_unix: i64 },
+    /// `now >= nextUpdate` — expired; the verifier fails all new handshakes closed.
+    Stale { next_update_unix: i64 },
+}
+
+/// Classify a DER-encoded client CRL's `nextUpdate` against `now_unix`, warning
+/// `warn_window_secs` ahead of expiry. Pure and offline-testable.
+///
+/// A CRL with no `nextUpdate` is treated as [`CrlFreshness::Fresh`] (RFC 5280
+/// permits its omission; rustls' expiration enforcement then has nothing to
+/// check). A CRL that cannot be parsed is a hard error — the verifier build would
+/// reject it too, so this fails closed rather than silently skipping the gate.
+pub fn crl_freshness(
+    crl_der: &[u8],
+    now_unix: i64,
+    warn_window_secs: i64,
+) -> Result<CrlFreshness, TlsError> {
+    use der::Decode;
+    use x509_cert::crl::CertificateList;
+    let crl = CertificateList::from_der(crl_der)
+        .map_err(|e| TlsError::Verifier(format!("malformed client CRL: {e}")))?;
+    let next_update = match crl.tbs_cert_list.next_update {
+        Some(t) => t.to_unix_duration().as_secs() as i64,
+        None => return Ok(CrlFreshness::Fresh),
+    };
+    Ok(if now_unix >= next_update {
+        CrlFreshness::Stale {
+            next_update_unix: next_update,
+        }
+    } else if now_unix >= next_update - warn_window_secs {
+        CrlFreshness::NearExpiry {
+            next_update_unix: next_update,
+        }
+    } else {
+        CrlFreshness::Fresh
+    })
 }
 
 /// Build a mutual-TLS [`ServerConfig`] whose server certificate is signed by a

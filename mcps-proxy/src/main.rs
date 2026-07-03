@@ -522,6 +522,37 @@ fn run() -> Result<(), String> {
             config.client_crl_paths.len(),
             if config.crl_allow_unknown_status { "ALLOWED (relaxed)" } else { "DENIED (fail closed)" },
         );
+        // ADR-MCPS-023 §A1 (MCPS-58): the verifier now enforces CRL nextUpdate, so
+        // a stale CRL fails every new handshake closed. Surface that at BOOT — under
+        // strict refuse to start; otherwise warn loudly — and warn while a CRL is
+        // near expiry so a refreshed CRL can be installed before the cutover
+        // ("restart before nextUpdate"; the in-process hot-reloader is a v0.10
+        // follow-up). A malformed CRL is a hard startup error (fail closed).
+        const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
+        for (i, crl) in client_crls.iter().enumerate() {
+            match tls::crl_freshness(crl.as_ref(), startup_now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
+                .map_err(|e| e.to_string())?
+            {
+                tls::CrlFreshness::Fresh => {}
+                tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
+                    "mcps-proxy: WARNING: client CRL #{i} is near expiry (nextUpdate={next_update_unix}); \
+                     install a refreshed CRL and restart before then, or new handshakes will fail closed."
+                ),
+                tls::CrlFreshness::Stale { next_update_unix } => {
+                    let msg = format!(
+                        "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= now={startup_now_unix}): \
+                         with CRL expiration enforced, every new client handshake fails closed. Install a \
+                         CRL published within its nextUpdate window."
+                    );
+                    if config.strict {
+                        return Err(format!(
+                            "--strict/--production refuses to start with a stale client CRL: {msg}"
+                        ));
+                    }
+                    eprintln!("mcps-proxy: WARNING: {msg}");
+                }
+            }
+        }
     } else if config.crl_allow_unknown_status {
         eprintln!(
             "mcps-proxy: WARNING: --crl-allow-unknown-status has no effect without --client-crl"

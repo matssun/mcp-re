@@ -152,21 +152,35 @@ fn make_client_leaf_with_serial(
 /// (#3839). The CA carries `CrlSign` key usage (see `make_ca`), which rcgen
 /// requires of a CRL issuer. Returns the CRL in the DER form rustls consumes.
 fn make_crl(ca: &Ca, revoked_serials: &[u64]) -> CertificateRevocationListDer<'static> {
+    // A far-future nextUpdate (2999): well-formed and never stale, so the existing
+    // revocation tests exercise the revoked-vs-not path independently of the
+    // ADR-MCPS-023 §A1 (MCPS-58) nextUpdate-expiration enforcement.
+    make_crl_full(ca, revoked_serials, (2024, 1, 1), (2999, 1, 1))
+}
+
+/// Mint a CRL signed by `ca` with explicit `thisUpdate` / `nextUpdate` dates, so a
+/// STALE CRL (nextUpdate in the past) can be constructed to exercise the
+/// ADR-MCPS-023 §A1 (MCPS-58) fail-closed-on-stale enforcement.
+fn make_crl_full(
+    ca: &Ca,
+    revoked_serials: &[u64],
+    this_update_ymd: (i32, u8, u8),
+    next_update_ymd: (i32, u8, u8),
+) -> CertificateRevocationListDer<'static> {
+    let this_update = rcgen::date_time_ymd(this_update_ymd.0, this_update_ymd.1, this_update_ymd.2);
+    let next_update = rcgen::date_time_ymd(next_update_ymd.0, next_update_ymd.1, next_update_ymd.2);
     let revoked_certs = revoked_serials
         .iter()
         .map(|serial| RevokedCertParams {
             serial_number: SerialNumber::from(*serial),
-            revocation_time: rcgen::date_time_ymd(2024, 1, 1),
+            revocation_time: this_update,
             reason_code: Some(RevocationReason::KeyCompromise),
             invalidity_date: None,
         })
         .collect();
     let params = CertificateRevocationListParams {
-        this_update: rcgen::date_time_ymd(2024, 1, 1),
-        // Far-future nextUpdate: the proxy's default verifier does NOT enforce CRL
-        // expiration (ExpirationPolicy::Ignore), but a future date keeps the CRL
-        // well-formed regardless.
-        next_update: rcgen::date_time_ymd(2999, 1, 1),
+        this_update,
+        next_update,
         crl_number: SerialNumber::from(1u64),
         issuing_distribution_point: None,
         revoked_certs,
@@ -1524,5 +1538,91 @@ fn revoked_client_cert_handshake_is_rejected() {
     assert!(
         result.is_err(),
         "the server must reject a client certificate revoked by the configured CRL"
+    );
+}
+
+// ADR-MCPS-023 §A1 (v0.9, MCPS-58), conformance vector (b): a client CRL past its
+// `nextUpdate` is STALE. With expiration now enforced
+// (`enforce_revocation_expiration`), a stale CRL is unusable and the verifier fails
+// closed — even for a cert the CRL does NOT revoke. Under the previous
+// `ExpirationPolicy::Ignore` default this same handshake would have SUCCEEDED, so
+// this test pins the behavior change.
+#[test]
+fn stale_crl_fails_client_handshake_closed() {
+    let client_ca = make_ca();
+    // A non-revoked client (serial 0x42; the CRL lists a different serial).
+    let (client_cert, client_key) =
+        make_client_leaf_with_serial(&client_ca, "spiffe://example.org/agent-good", 0x0000_0042);
+    // Stale: thisUpdate 2020-01-01, nextUpdate 2020-06-01 — long in the past.
+    let stale_crl = make_crl_full(&client_ca, &[0x00BA_DBAD], (2020, 1, 1), (2020, 6, 1));
+    let config = server_config_with_crls_for(&client_ca, vec![stale_crl]);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+
+    let server = thread::spawn(move || {
+        serve_once(&listener, config, &ServerOptions::default(), |_req, _id| {
+            b"{\"ok\":true}".to_vec()
+        })
+    });
+
+    let _ = client_round_trip(
+        addr,
+        client_config(Some((vec![client_cert], client_key))),
+        b"{\"jsonrpc\":\"2.0\"}",
+    );
+    let result = server.join().expect("join");
+    assert!(
+        result.is_err(),
+        "a stale CRL (past nextUpdate) must fail the handshake closed with expiration enforced, \
+         even for a cert the CRL does not revoke"
+    );
+}
+
+// ADR-MCPS-023 §A1 (MCPS-58): the pure startup freshness gate. Boundaries are
+// derived from the minted CRL's own nextUpdate so the test is independent of the
+// absolute date.
+#[test]
+fn crl_freshness_classifies_fresh_near_and_stale() {
+    use mcps_proxy::tls::{crl_freshness, CrlFreshness};
+    let ca = make_ca();
+    let crl = make_crl_full(&ca, &[0x01], (2020, 1, 1), (2020, 6, 1));
+    let warn = 6 * 3600;
+
+    // Recover nextUpdate from a Stale classification at a far-future instant.
+    let nu = match crl_freshness(crl.as_ref(), i64::MAX / 2, warn).expect("parse") {
+        CrlFreshness::Stale { next_update_unix } => next_update_unix,
+        other => panic!("expected Stale at +inf, got {other:?}"),
+    };
+
+    assert_eq!(
+        crl_freshness(crl.as_ref(), nu - warn - 1, warn).expect("parse"),
+        CrlFreshness::Fresh,
+        "before the warn window the CRL is Fresh"
+    );
+    assert_eq!(
+        crl_freshness(crl.as_ref(), nu - 1, warn).expect("parse"),
+        CrlFreshness::NearExpiry {
+            next_update_unix: nu
+        },
+        "inside the warn window but before nextUpdate the CRL is NearExpiry"
+    );
+    assert_eq!(
+        crl_freshness(crl.as_ref(), nu, warn).expect("parse"),
+        CrlFreshness::Stale {
+            next_update_unix: nu
+        },
+        "at exactly nextUpdate the CRL is Stale (boundary is inclusive)"
+    );
+}
+
+// ADR-MCPS-023 §A1 (MCPS-58): a malformed CRL is a hard error — the gate fails
+// closed rather than silently skipping (the verifier build would reject it too).
+#[test]
+fn crl_freshness_rejects_malformed_der() {
+    use mcps_proxy::tls::crl_freshness;
+    assert!(
+        crl_freshness(b"not a der crl", 0, 3600).is_err(),
+        "a malformed CRL must be a hard error, not a silent pass"
     );
 }
