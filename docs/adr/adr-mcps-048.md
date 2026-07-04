@@ -144,9 +144,16 @@ hand-maintain a second copy of a fact Cargo already owns.
 - **Bazel build/test parity job:** the same `bazel` job runs `bazel test //...`,
   which must pass (or each documented gap is explicitly tracked), matching the
   Cargo suite.
-- **Downloader-artifact job:** CI builds the `cargo` crates, the maturin wheel, and
-  the napi package from the same source, so the "skip Bazel" path is verified, not
-  assumed.
+- **Downloader-artifact jobs (MCPS-71):** two required CI jobs (`sdk-python`,
+  `sdk-typescript` in `.github/workflows/ci.yml`) build the ecosystem-native
+  artifacts from the same source — the maturin wheel and the napi package — and
+  **install each into a clean environment** (a fresh venv / an empty npm project;
+  wheel/tarball only, never an editable install and never the source tree on the
+  import path) before running the SDK suites. Neither job installs or invokes
+  Bazel; the e2e suites that need the built Rust binaries self-skip cleanly, so the
+  clean-env lane exercises the downloader's unit surface. Together with the pure
+  `cargo` jobs (the third downloader path), this makes the README's "downloaders
+  skip Bazel" claim CI-backed, not assumed.
 - Until the gate lands, Cargo remains the authoritative gate (unchanged).
 
 ## Implementation notes (MCPS-68 / MCPS-69 — refines the gate design)

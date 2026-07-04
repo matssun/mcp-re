@@ -29,6 +29,16 @@
 #     DETECTOR (not a byte-authority): fails if the Cargo graph has a target/edge
 #     the committed BUILD omits, modulo the script's allowlist; (2) `bazel test
 #     //...` parity with the cargo suite.
+#   - BLOCKING (ADR-MCPS-048 / MCPS-71): the `sdk-python` and `sdk-typescript`
+#     jobs make "downloaders skip Bazel" a VERIFIED path, not a rotting side
+#     artifact. Each builds the ecosystem-native artifact (maturin wheel / napi
+#     package) from the SAME source, installs it into a clean environment
+#     (fresh venv / empty npm project — wheel/tarball only, no editable, no
+#     workspace on sys.path), and runs the SDK test suite. Neither job installs
+#     or invokes Bazel; the e2e suites that need the built Rust binaries
+#     self-skip cleanly (their guards check for the target/{debug,release}
+#     binaries + cargo), so the clean-env lane exercises the unit surface. The
+#     cargo jobs above are the third downloader path (pure `cargo`, no Bazel).
 name: CI
 
 on:
@@ -142,3 +152,97 @@ jobs:
       # (2) Parity: the Bazel suite must pass like the cargo suite.
       - name: Bazel test parity (//...)
         run: bazel test //... --test_output=errors
+
+  sdk-python:
+    name: downloader — Python maturin wheel (no Bazel)
+    runs-on: ubuntu-latest
+    # ADR-MCPS-048 / MCPS-71 — the pip downloader path. sdk/python is its OWN
+    # Cargo workspace (empty [workspace] table) linking the audited
+    # mcps-client-core / mcps-core via path deps; the pyo3 layer is abi3-py39, so
+    # ONE wheel serves any CPython >= 3.9. No cryptoki/openssl in the SDK closure,
+    # so no libclang is needed. Bazel is neither installed nor invoked.
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The pinned Rust toolchain (rust-toolchain.toml at the repo root) applies
+      # here too — rustup walks up to it — so the wheel is built with the same
+      # compiler as the cargo/bazel gates.
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      - name: Install maturin
+        run: pip install "maturin>=1.5,<2.0"
+
+      - name: Build the release wheel
+        run: maturin build --release --out dist
+
+      # Clean-env smoke install: a fresh venv gets ONLY the built wheel plus the
+      # upstream MCP SDK + pytest — never an editable install and never the
+      # source python/ tree on sys.path, so `import mcps_sdk` resolves to the
+      # INSTALLED wheel (its native mcps_sdk._core), proving the downloader
+      # artifact stands on its own.
+      - name: Clean-env install (wheel only) + smoke import
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --upgrade pip
+          /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8"
+          /tmp/venv/bin/python -c "import mcps_sdk, mcps_sdk._core; print('wheel import OK')"
+
+      # Run the SDK suite against the installed wheel from the repo root so the
+      # source package cannot shadow it. The e2e/mtls tests self-skip (no built
+      # workspace binaries in this Bazel-free lane); the unit surface runs.
+      - name: pytest (installed wheel; e2e self-skip without binaries)
+        working-directory: ${{ github.workspace }}
+        run: /tmp/venv/bin/python -m pytest sdk/python/tests -q
+
+  sdk-typescript:
+    name: downloader — TypeScript napi package (no Bazel)
+    runs-on: ubuntu-latest
+    # ADR-MCPS-048 / MCPS-71 — the npm downloader path. sdk/typescript is its OWN
+    # Cargo workspace (empty [workspace] table) linking mcps-client-core via a
+    # path dep; @napi-rs/cli builds the Node native addon. Bazel is neither
+    # installed nor invoked.
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      # napi build (native .node) + tsc (dist/). This is the published artifact's
+      # exact build.
+      - name: Build native addon + TypeScript
+        run: npm run build
+
+      - name: Test (vitest; live-transport tests self-skip without binaries)
+        run: npx vitest run
+
+      # Clean-env smoke install: pack the tarball exactly as published, install it
+      # into an EMPTY project (no dev deps, no workspace), and require it — the
+      # bundled native/*.node must load on its own.
+      - name: Pack + clean-dir install smoke
+        run: |
+          npm pack --pack-destination /tmp
+          TGZ=$(ls -t /tmp/mcps-sdk-*.tgz | head -1)
+          mkdir -p /tmp/npm-smoke && cd /tmp/npm-smoke
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$TGZ"
+          node -e "const m=require('@mcps/sdk'); if(typeof m.signRequest!=='function'){throw new Error('napi package export missing');} console.log('npm package require OK')"
