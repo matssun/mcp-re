@@ -1,0 +1,18 @@
+# MCP-S Bazel configuration.
+#
+# Host-OS-specific config is opt-in via --enable_platform_specific_config, which
+# auto-applies the `build:linux` / `build:macos` stanzas based on the HOST OS.
+build --enable_platform_specific_config
+
+# The hermetic zig cc toolchain (MODULE.bazel, `hermetic_cc_toolchain`) exists
+# ONLY to cross-compile the linux/amd64 OCI image from a darwin host. Register it
+# on darwin hosts only. Registering it globally made it the exec/host C++
+# toolchain on the Linux CI runner too, where its lld/wrapper fails to link
+# protobuf's upb generators and rules_rust's process_wrapper:
+#
+#   ld.lld: error: undefined symbol: __start_linkarr_upb_AllExts
+#   error: unsupported linker extension flag: -z nostart-stop-gc
+#
+# On a Linux host the target is native, so the autodetected cc toolchain builds
+# every target (including the OCI cross) with GNU ld semantics and no zig.
+build:macos --extra_toolchains=@zig_sdk//toolchain:linux_amd64_gnu.2.28

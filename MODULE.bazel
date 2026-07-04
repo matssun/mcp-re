@@ -43,7 +43,14 @@ bazel_dep(name = "rules_oci", version = "2.0.0")
 bazel_dep(name = "rules_pkg", version = "1.0.1")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "hermetic_cc_toolchain", version = "4.1.0")
-register_toolchains("@zig_sdk//toolchain:linux_amd64_gnu.2.28")
+# NOTE: the zig toolchain is intentionally NOT registered globally here. It is
+# only needed to cross-compile the linux/amd64 OCI image FROM a darwin host;
+# registering it globally also makes it the exec/host C++ toolchain on a Linux
+# runner, where zig's lld/wrapper breaks upb + rust tool links (undefined
+# __start_linkarr_* under -z start-stop-gc, and zig rejects -z nostart-stop-gc).
+# It is registered on darwin hosts only, via `build:macos --extra_toolchains` in
+# .bazelrc (+ --enable_platform_specific_config). On a Linux host the native cc
+# toolchain builds every target (the OCI cross is native there), so no zig.
 
 ########################################
 # Tar toolchains (required for rules_pkg with bzlmod)
