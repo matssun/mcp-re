@@ -85,22 +85,32 @@ ALLOW_HITL_LIVE = {
     "t4_python_kms_custody",
 }
 
-# Tracked known drift: genuine missing Bazel targets whose Bazel wiring needs a
-# dedicated fixture/runfile bridge (they read the repo tree / drive external SDK
-# drivers). Filed as issues; allowlisted so the gate is GREEN-but-honest until
-# each is wired, and NEW untracked drift still fails. Remove an entry when its
-# target lands.
-ALLOW_TRACKED_DRIFT = {
-    # name: "issue — why it is not yet a Bazel target"
-    # These need a runfile/driver bridge (they read the repo tree / drive external
-    # SDK driver binaries); tracked for a dedicated slice. The three directly
-    # wireable drifts the gate first found (continuation_roundtrip_test,
-    # continuation_driving_test, draft02_vectors_test) are now real Bazel targets.
-    "no_tracked_secrets": "MCPS-77 (#256) — scans tracked repo files; needs runfiles bridge",
-    "sdk_driver_matrix": "MCPS-77 (#256) — drives SDK driver binaries as runfiles",
+# Non-hermetic guards: cargo tests that assert an invariant of the git WORKING
+# TREE itself (they shell out to `git` over the checkout). Bazel runs tests in a
+# hermetic sandbox with no `.git` and no working tree, so a generated target
+# would fail spuriously. These are structurally cargo-lane-only, not "not yet
+# wired" — do NOT move them to a Bazel target.
+ALLOW_NON_HERMETIC = {
+    # no_tracked_secrets runs `git rev-parse` + `git grep` over the tracked files
+    # to prove no real GCP/personal identifier was ever committed; the git tree is
+    # the subject under test, so it cannot be sandboxed.
+    "no_tracked_secrets",
 }
 
-ALLOWLIST = ALLOW_NAMING_COLLISION | ALLOW_HITL_LIVE | set(ALLOW_TRACKED_DRIFT)
+# Tracked known drift: genuine missing Bazel targets whose Bazel wiring needs a
+# dedicated fixture/runfile bridge. Filed as issues; allowlisted so the gate is
+# GREEN-but-honest until each is wired, and NEW untracked drift still fails.
+# Remove an entry when its target lands. (Now empty — the gate's first finds
+# [continuation_roundtrip_test, continuation_driving_test, draft02_vectors_test]
+# and then sdk_driver_matrix (MCPS-77) are all real Bazel targets;
+# no_tracked_secrets moved to ALLOW_NON_HERMETIC as a permanent cargo-only guard.)
+ALLOW_TRACKED_DRIFT = {
+    # name: "issue — why it is not yet a Bazel target"
+}
+
+ALLOWLIST = (
+    ALLOW_NAMING_COLLISION | ALLOW_HITL_LIVE | ALLOW_NON_HERMETIC | set(ALLOW_TRACKED_DRIFT)
+)
 
 # A quoted Bazel label at line start (first-party //, third-party @crates_mcps//:,
 # or local :). Captures the bare label value so trailing commas AND inline
