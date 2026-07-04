@@ -9,6 +9,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [0.9.0] — 2026-07-04
+
+**Enterprise hardening — KMS key custody + Mode-A revocation honesty — on a
+generated-first build graph.** v0.9 hardens the strict-mode operational envelope
+(short-lived-cert Mode-A revocation, offline KMS-lifecycle-vs-trust-policy
+custody semantics) with offline-provable evidence, and rebuilds the dual
+Cargo/Bazel build so the Bazel graph is generated from the Cargo manifests and
+CI-gated against drift. Built on top of v0.8.0.
+
+### Added in v0.9
+
+- **Mode-A strict cert-lifetime ceiling** (`mcps-proxy`). Strict mode now rejects
+  a `max_client_cert_lifetime` above 3600s (previously strict only rejected
+  none/0), tightening the short-lived-cert revocation posture (ADR-023 §A1).
+- **Static CRL fail-closed-on-stale** (`mcps-proxy`). `--client-crl` enforces
+  revocation-list expiration (rustls `enforce_revocation_expiration()`; the prior
+  default was fail-open `Ignore`), plus a pure `crl_freshness()` startup gate
+  (strict = refuse-start on a stale CRL; otherwise warn) and explicit
+  OCSP-no-AIA → Unknown honesty. This is the restart-before-nextUpdate path; the
+  in-process hot-reloader is deferred (MCPS-66).
+- **Offline KMS-lifecycle custody negatives** (`mcps-proxy`, gcp/aws features). A
+  fault-injecting FakeGcp backend + offline negatives proving the ADR-028/021
+  custody sentence: KMS disable → sign-fail; destroy → construct-fail; a disabled
+  KMS key is NOT verifier revocation (trust-policy-driven, no live KMS at verify);
+  trust revocation rejects an otherwise-valid signature; rotation overlap.
+- **Honest KMS protection-level labeling** (`mcps-proxy`, gcp feature). The native
+  GCP Cloud KMS adapter documents software-vs-HSM protection precisely; FIPS-140-2
+  L3 routes via PKCS#11 (CKM_EDDSA); Ed25519-only. (The live-GCP HSM protection
+  fact-check remains HITL / open, #239.)
+- ADR-021 / ADR-023 / ADR-028 gain v0.9 delta addendums recording these decisions;
+  ADR-028 §C (KMS key custody) is promoted to Accepted for v0.9.
+
+### Tooling
+
+- **Generated-first build graph (ADR-048).** The Cargo/pyproject/package.json
+  manifests are the sole human-authored dependency truth; first-party Bazel BUILD
+  targets/edges are generated (gazelle_rust) and a **semantic drift gate**
+  (`scripts/bazel_gazelle_gate.py`) fails CI on divergence — killing the #220
+  Bazel/cargo parity-rot class. gazelle is the drift detector, not the byte-owner.
+- **Blocking Bazel CI parity job.** `bazel test //...` + the drift gate now run on
+  every push/PR (Bazel was previously ungated — the root cause of #220). The zig
+  hermetic toolchain is scoped to darwin cross-compiles so the Linux runner builds
+  every target with the native cc toolchain.
+- **Downloader-artifact CI** (no Bazel). The maturin wheel (Python SDK) and napi
+  package (TypeScript SDK) are built and smoke-installed in clean environments,
+  proving the cargo/pip/npm downloader path.
+
+### Not in v0.9 (gaps / deferred)
+
+- **Mode C attested ingress** (`mcps/lb-ingress-assertion/v2` + attestor +
+  `BindingKind::AttestedIngress` + offline rejection conformance) is v0.10
+  (epic #245).
+- **Live-cloud KMS fact-checks stay HITL** — the GCP HSM Ed25519 protection-level
+  verification (MCPS-59, #239) and live revocation lanes are not part of the
+  offline-provable v0.9 gate.
+- **In-process CRL hot-reloader** deferred to MCPS-66 (#246).
+
 ## [0.8.0] — 2026-07-02
 
 **Stateless multi-round-trip continuation + the TypeScript SDK.** v0.8 folds

@@ -79,7 +79,7 @@ Current implementation claim:
 > proven end-to-end client-integration path (client-side proxy + Python/TypeScript
 > SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
-### Recent releases (0.6 → 0.8)
+### Recent releases (0.6 → 0.9)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -98,11 +98,16 @@ in [`docs/adr/`](docs/adr/). In brief:
   bound to the same audited `mcps-client-core` as Python so the signed preimage
   is byte-identical across languages. Both SDKs are exercised through the real
   four-hop matrix.
+- **0.9** hardened the **enterprise operational envelope** — a strict Mode-A
+  short-lived-cert lifetime ceiling, static-CRL fail-closed-on-stale, and offline
+  KMS-lifecycle-vs-trust-policy custody negatives (ADR-MCPS-021/023/028) — and
+  moved the dual Cargo/Bazel build to a **generated-first graph** with a CI
+  semantic-drift gate (ADR-MCPS-048), killing the #220 parity-rot class.
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
 multi-node profile into enforced backends. Decisions are recorded across
-ADR-MCPS-001..047.
+ADR-MCPS-001..048.
 
 The current implementation demonstrates a complete end-to-end **four-hop** path:
 
