@@ -112,11 +112,21 @@ fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
 
 /// Drain a child's piped stderr on a dedicated thread into a shared buffer (so a
 /// full pipe never deadlocks the child and the diagnostic is assertable).
-fn drain_stderr(child: &mut std::process::Child) -> Arc<Mutex<String>> {
+///
+/// Returns the buffer AND the reader thread's join handle. A caller that reads
+/// the buffer AFTER the child has exited (to assert on a one-shot diagnostic)
+/// MUST `join()` the handle first: the child can be reaped before the reader
+/// thread has drained the final pipe chunk, so reading the buffer without the
+/// join is a race that intermittently observes an empty string. A caller that
+/// instead POLLS the buffer while the child is still running (readiness gating)
+/// drops the handle — joining there would deadlock (the pipe is not at EOF).
+fn drain_stderr(
+    child: &mut std::process::Child,
+) -> (Arc<Mutex<String>>, std::thread::JoinHandle<()>) {
     let buf = Arc::new(Mutex::new(String::new()));
     let mut pipe = child.stderr.take().expect("piped stderr");
     let sink = Arc::clone(&buf);
-    std::thread::spawn(move || {
+    let reader = std::thread::spawn(move || {
         let mut chunk = [0u8; 4096];
         loop {
             match pipe.read(&mut chunk) {
@@ -130,7 +140,7 @@ fn drain_stderr(child: &mut std::process::Child) -> Arc<Mutex<String>> {
             }
         }
     });
-    buf
+    (buf, reader)
 }
 
 // ===========================================================================
@@ -256,7 +266,7 @@ fn c1_env_keysource_without_opt_in_fails_closed_no_listener() {
     // Bind :0 is irrelevant here (the refusal happens before bind); pass it so no
     // free_port() is involved.
     let mut proxy = spawn_env_keysource_proxy(&fixtures, "127.0.0.1:0", &inner, &root, &[]);
-    let stderr = drain_stderr(&mut proxy.child);
+    let (stderr, stderr_reader) = drain_stderr(&mut proxy.child);
 
     // The refusal is in argument parsing (before bind), so the process exits
     // promptly — wait for exit. We do NOT probe a port for "is it listening?": a
@@ -281,6 +291,9 @@ fn c1_env_keysource_without_opt_in_fails_closed_no_listener() {
             proxy.child.wait().expect("wait")
         }
     };
+    // Child is reaped: join the reader so the full one-shot diagnostic is captured
+    // before we assert on it (else `diag` can race to empty).
+    stderr_reader.join().ok();
 
     assert!(
         !status.success(),
@@ -326,7 +339,7 @@ fn c1_env_keysource_fails_closed_even_with_opt_in_in_production_build() {
         &root,
         &["--allow-env-keysource"],
     );
-    let stderr = drain_stderr(&mut proxy.child);
+    let (stderr, stderr_reader) = drain_stderr(&mut proxy.child);
 
     // The refusal is at key-source CONSTRUCTION (before bind), so the process
     // exits promptly — wait for exit (no port probe; see MCPS-087). The "never
@@ -349,6 +362,9 @@ fn c1_env_keysource_fails_closed_even_with_opt_in_in_production_build() {
             proxy.child.wait().expect("wait")
         }
     };
+    // Child is reaped: join the reader so the full one-shot diagnostic is captured
+    // before we assert on it (else `diag` can race to empty).
+    stderr_reader.join().ok();
 
     assert!(
         !status.success(),
@@ -457,7 +473,9 @@ fn spawn_durable_proxy(fixtures: &DemoFixtures, replay_path: &Path) -> DurablePr
         .spawn()
         .expect("spawn mcps_proxy_cli");
 
-    let stderr = drain_stderr(&mut child);
+    // Readiness gating: POLL the buffer while the proxy runs, so drop the reader
+    // handle (joining here would block until the long-lived proxy exits).
+    let (stderr, _stderr_reader) = drain_stderr(&mut child);
 
     let mut addr: Option<SocketAddr> = None;
     for _ in 0..1200 {
