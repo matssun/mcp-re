@@ -4,10 +4,12 @@
 
 ## Status
 
-Proposed (v0.3 follow-up — design). Child of ADR-MCPS-019 (external backends) and
-ADR-MCPS-022 (signing key custody at scale). Implementation lands as its own
-follow-up PR(s) per the design-PR-then-implementation rhythm. Does **not** change
-the MCP-S signature contract: MCP-S Core stays Ed25519-only (ADR-MCPS-004).
+Proposed (v0.3 follow-up — design); **§C (native GCP Cloud KMS key custody)
+Accepted for v0.9** (2026-07-04, offline-provable — see the v0.9 addendum below).
+Child of ADR-MCPS-019 (external backends) and ADR-MCPS-022 (signing key custody at
+scale). Implementation lands as its own follow-up PR(s) per the
+design-PR-then-implementation rhythm. Does **not** change the MCP-S signature
+contract: MCP-S Core stays Ed25519-only (ADR-MCPS-004).
 
 **v0.9 hardening addendum (2026-07-03):** the native GCP Cloud KMS custody path
 (§C) is **promoted to Accepted for v0.9**, provable offline. The enterprise-custody
