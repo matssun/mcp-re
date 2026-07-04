@@ -233,6 +233,12 @@ fn source_env_for(source: &str) -> &'static str {
         "mcps-proxy/tests/proxy_test.rs" => "MCPS_SRC_PROXY",
         "mcps-proxy/tests/key_source_test.rs" => "MCPS_SRC_KEY_SOURCE",
         "mcps-proxy/tests/dev_env_key_source_test.rs" => "MCPS_SRC_DEV_ENV_KEY_SOURCE",
+        // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): the attested-ingress serve-level
+        // conformance vectors live in the Tier-3/Tier-4 assertion test file; the
+        // Mode-C CLI guards + Mode-B strict-rejection conformance are in-crate
+        // `#[cfg(test)]` unit tests in `cli.rs` (run under `proxy_unit_test`).
+        "mcps-proxy/tests/proxy_lb_assertion_test.rs" => "MCPS_SRC_PROXY_LB_ASSERTION",
+        "mcps-proxy/src/cli.rs" => "MCPS_SRC_CLI",
         other => panic!(
             "manifest 'source' {other:?} has no runfile wired in the guard BUILD target. \
              Add a data entry + env var for it (so the guard can read the test fn)."

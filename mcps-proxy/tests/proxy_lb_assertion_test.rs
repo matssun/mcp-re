@@ -32,11 +32,16 @@ use mcps_core::verify_response;
 use mcps_core::InMemoryTrustResolver;
 use mcps_core::SigningKey;
 use mcps_host::HostSigner;
+use mcps_proxy::AttestedCertVerification;
+use mcps_proxy::AttestedRevocation;
 use mcps_proxy::ExactMatchBinding;
 use mcps_proxy::IdentitySource;
 use mcps_proxy::LbAssertion;
 use mcps_proxy::LbAssertionBinding;
+use mcps_proxy::LbAssertionV2;
+use mcps_proxy::LbAssertionV2Binding;
 use mcps_proxy::Proxy;
+use mcps_proxy::TransportIdentity;
 use serde_json::json;
 use serde_json::Value;
 
@@ -286,5 +291,268 @@ fn tampered_object_signature_fails_regardless_of_a_valid_assertion() {
         error_message(&response),
         "mcps.invalid_signature",
         "object-signature verification must fail BEFORE the assertion binding is consulted"
+    );
+}
+
+// ===========================================================================
+// ADR-MCPS-023 §C (v0.10) Mode C attested ingress — offline evidence spine
+// (MCPS-62). Node-side rejection of the v2 assertion for each negative fact,
+// draft-02 preimage invariance vs Mode A, and Mode-B demotion.
+// ===========================================================================
+
+const INGRESS_ID: &str = "spiffe://example.org/ingress-attestor-1";
+const ATTESTOR_KEY_ID: &str = "attestor-1";
+
+/// The ingress-attestor signing key (distinct seed from the v1 `lb_key`).
+fn attestor_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&[11u8; 32])
+}
+
+/// A proxy wired EXACTLY as `main.rs` wires `BindingKind::AttestedIngress`: the
+/// SAME ExactMatchBinding plus the v2 verifier trusting `attestor_key` under
+/// `ATTESTOR_KEY_ID`, the node audience `AUDIENCE`, and the trusted `INGRESS_ID`.
+fn attested_ingress_proxy() -> (Proxy, Calls) {
+    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
+    let calls_for_inner = Rc::clone(&calls);
+    let inner = move |request: &[u8]| -> Vec<u8> {
+        let value: Value = serde_json::from_slice(request).expect("inner parses");
+        let id = value.get("id").cloned().unwrap_or(Value::Null);
+        calls_for_inner.borrow_mut().push(value);
+        serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": { "ok": true } })).unwrap()
+    };
+    let mut binding = LbAssertionV2Binding::new(IdentitySource::UriSan, AUDIENCE);
+    binding.add_key(ATTESTOR_KEY_ID, attestor_key().public_key());
+    binding.permit_ingress_identity(INGRESS_ID);
+    let proxy = Proxy::new(
+        server_key(),
+        SERVER,
+        SERVER_KEY_ID,
+        Box::new(resolver()),
+        AUDIENCE,
+        SKEW,
+        Box::new(inner),
+    )
+    .with_transport_binding(Box::new(ExactMatchBinding::new()))
+    .with_attested_ingress(binding);
+    (proxy, calls)
+}
+
+/// A canonical valid v2 assertion for `bound_request_hash`: delegated client =
+/// `SIGNER` (so ExactMatchBinding admits it), audience = `AUDIENCE`, ingress =
+/// `INGRESS_ID`, cert Verified, revocation Good.
+fn v2_valid(bound_request_hash: &str) -> LbAssertionV2 {
+    LbAssertionV2 {
+        key_id: ATTESTOR_KEY_ID.to_string(),
+        ingress_identity: INGRESS_ID.to_string(),
+        asserted_client_identity: SIGNER.to_string(),
+        request_hash: bound_request_hash.to_string(),
+        audience: AUDIENCE.to_string(),
+        cert_verification_result: AttestedCertVerification::Verified,
+        revocation_result: AttestedRevocation::Good,
+        validation_time: now(),
+        crl_next_update: now() + 86_400,
+        expires_at: None,
+    }
+}
+
+/// Sign `assertion` with the trusted attestor key and render the v2 wire form.
+fn mint_v2(assertion: &LbAssertionV2) -> String {
+    assertion.to_wire(&attestor_key().sign(&assertion.signing_preimage()))
+}
+
+// ---- happy path ----
+
+#[test]
+fn mode_c_valid_assertion_reaches_inner_and_response_verifies() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-ok-1");
+    let rh = request_hash_of(&req);
+    let assertion = mint_v2(&v2_valid(&rh));
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
+
+    assert_eq!(calls.borrow().len(), 1, "a valid Mode-C assertion must reach the inner");
+    verify_response(&response, &server_resolver(), &rh)
+        .expect("the response must be a signed, request-bound envelope");
+}
+
+// ---- node-side rejection of each negative asserted fact (ADR §Conformance) ----
+
+#[test]
+fn mode_c_revoked_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-revoked-1");
+    let rh = request_hash_of(&req);
+    let mut a = v2_valid(&rh);
+    a.revocation_result = AttestedRevocation::Revoked;
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
+
+    assert_eq!(calls.borrow().len(), 0, "a revoked-cert assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_stale_crl_freshness_is_rejected_before_dispatch() {
+    // The attestor's own CRL was stale (past nextUpdate) — surfaced as an explicit
+    // StaleCrl verdict. The node fails closed WITHOUT itself doing CRL math (§C3).
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-stalecrl-1");
+    let rh = request_hash_of(&req);
+    let mut a = v2_valid(&rh);
+    a.revocation_result = AttestedRevocation::StaleCrl;
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
+
+    assert_eq!(calls.borrow().len(), 0, "a stale-CRL assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_bad_signature_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-badsig-1");
+    let rh = request_hash_of(&req);
+    // Signed by an UNTRUSTED attestor key: the trusted key id, wrong signer.
+    let rogue = SigningKey::from_seed_bytes(&[123u8; 32]);
+    let a = v2_valid(&rh);
+    let forged = a.to_wire(&rogue.sign(&a.signing_preimage()));
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&forged));
+
+    assert_eq!(calls.borrow().len(), 0, "a bad-signature assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_cross_request_hash_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-cross-1");
+    // Bound to a DIFFERENT request's hash.
+    let other = request_hash_of(&signed_request("nonce-c-cross-OTHER"));
+    let assertion = mint_v2(&v2_valid(&other));
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
+
+    assert_eq!(calls.borrow().len(), 0, "a cross-request assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_untrusted_ingress_identity_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-rogueingress-1");
+    let rh = request_hash_of(&req);
+    let mut a = v2_valid(&rh);
+    a.ingress_identity = "spiffe://example.org/rogue-ingress".to_string();
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
+
+    assert_eq!(calls.borrow().len(), 0, "an untrusted-ingress assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_audience_mismatch_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-aud-1");
+    let rh = request_hash_of(&req);
+    let mut a = v2_valid(&rh);
+    a.audience = "did:example:some-other-server".to_string();
+
+    let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
+
+    assert_eq!(calls.borrow().len(), 0, "an audience-mismatch assertion must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_missing_assertion_header_is_rejected_before_dispatch() {
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-missing-1");
+    // No assertion header while the Mode-C verifier requires it (assertion-required).
+    let response = proxy.handle_with_transport(&req, now(), None, None);
+
+    assert_eq!(calls.borrow().len(), 0, "a missing assertion header must not reach the inner");
+    assert_eq!(error_message(&response), "mcps.transport_binding_failed");
+}
+
+#[test]
+fn mode_c_object_signature_fails_regardless_of_a_valid_assertion() {
+    // Object verification runs first: a valid Mode-C assertion can never rescue a
+    // tampered object signature, and the failure is the SIGNATURE error.
+    let (proxy, calls) = attested_ingress_proxy();
+    let req = signed_request("nonce-c-objtamper-1");
+    let rh = request_hash_of(&req);
+    let assertion = mint_v2(&v2_valid(&rh));
+    let mut value: Value = serde_json::from_slice(&req).expect("parse");
+    value["params"]["arguments"]["text"] = Value::String("tampered".to_string());
+    let tampered = serde_json::to_vec(&value).expect("reserialize");
+
+    let response = proxy.handle_with_transport(&tampered, now(), None, Some(&assertion));
+
+    assert_eq!(calls.borrow().len(), 0, "a tampered object must never reach the inner");
+    assert_eq!(error_message(&response), "mcps.invalid_signature");
+}
+
+// ---- draft-02 preimage invariance: C-only facts ride the assertion ----
+
+#[test]
+fn mode_c_forwarded_request_is_byte_identical_to_mode_a() {
+    // The request the inner receives under Mode C must be BYTE-IDENTICAL to the one
+    // it receives under Mode A (end_to_end_mtls / exact) for the same signed request:
+    // Mode-C facts ride the v2 assertion, never the forwarded draft-02 request
+    // preimage. The inner strips the MCP-S envelope identically in both modes.
+    let captured_a: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    let captured_c: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+
+    let req = signed_request("nonce-c-invariance-1");
+    let rh = request_hash_of(&req);
+
+    // Mode A: exact binding, identity supplied at the connection seam.
+    {
+        let cap = Rc::clone(&captured_a);
+        let inner = move |request: &[u8]| -> Vec<u8> {
+            *cap.borrow_mut() = Some(request.to_vec());
+            let value: Value = serde_json::from_slice(request).expect("parse");
+            let id = value.get("id").cloned().unwrap_or(Value::Null);
+            serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
+        };
+        let proxy = Proxy::new(
+            server_key(), SERVER, SERVER_KEY_ID, Box::new(resolver()), AUDIENCE, SKEW,
+            Box::new(inner),
+        )
+        .with_transport_binding(Box::new(ExactMatchBinding::new()));
+        let identity = TransportIdentity::new(SIGNER, IdentitySource::UriSan);
+        let _ = proxy.handle_with_transport(&req, now(), Some(&identity), None);
+    }
+
+    // Mode C: attested ingress, identity from the v2 assertion.
+    {
+        let cap = Rc::clone(&captured_c);
+        let inner = move |request: &[u8]| -> Vec<u8> {
+            *cap.borrow_mut() = Some(request.to_vec());
+            let value: Value = serde_json::from_slice(request).expect("parse");
+            let id = value.get("id").cloned().unwrap_or(Value::Null);
+            serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
+        };
+        let mut binding = LbAssertionV2Binding::new(IdentitySource::UriSan, AUDIENCE);
+        binding.add_key(ATTESTOR_KEY_ID, attestor_key().public_key());
+        binding.permit_ingress_identity(INGRESS_ID);
+        let proxy = Proxy::new(
+            server_key(), SERVER, SERVER_KEY_ID, Box::new(resolver()), AUDIENCE, SKEW,
+            Box::new(inner),
+        )
+        .with_transport_binding(Box::new(ExactMatchBinding::new()))
+        .with_attested_ingress(binding);
+        let _ = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&v2_valid(&rh))));
+    }
+
+    let a = captured_a.borrow().clone().expect("Mode A forwarded a request");
+    let c = captured_c.borrow().clone().expect("Mode C forwarded a request");
+    assert_eq!(
+        a, c,
+        "the forwarded draft-02 request preimage under Mode C must be byte-identical \
+         to Mode A — C-only facts ride the assertion, never the request"
     );
 }

@@ -477,10 +477,66 @@
       "source": "mcps-proxy/src/aws_kms_keysource.rs",
       "test_fn": "aws_backend_tls_sign_verifies_under_reported_spki",
       "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7G delegated TLS handshake signing fronting the AWS KMS key: the TLS-layer signature verifies under the same reported SPKI, so the device/KMS never exports the private key yet still terminates the handshake."
+    },
+    {
+      "property": "Mode C attested ingress: v2 assertion carrying revocation_result=revoked is rejected node-side before dispatch",
+      "bazel_target": "//mcps-proxy:proxy_lb_assertion_test",
+      "source": "mcps-proxy/tests/proxy_lb_assertion_test.rs",
+      "test_fn": "mode_c_revoked_is_rejected_before_dispatch",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). The node treats the attestor's revocation_result as an opaque asserted fact and admits only Good (bind-not-interpret, \u00a7C3); a revoked verdict fails closed with mcps.transport_binding_failed and the inner is never reached. GREEN-OFFLINE (no live GCP)."
+    },
+    {
+      "property": "Mode C attested ingress: v2 assertion carrying a stale CRL-freshness verdict is rejected node-side before dispatch",
+      "bazel_target": "//mcps-proxy:proxy_lb_assertion_test",
+      "source": "mcps-proxy/tests/proxy_lb_assertion_test.rs",
+      "test_fn": "mode_c_stale_crl_freshness_is_rejected_before_dispatch",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A stale attestor CRL surfaces as an explicit StaleCrl verdict; the node fails closed WITHOUT itself performing any CRL-freshness computation (\u00a7C3). GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode C attested ingress: a v2 assertion with a bad attestor signature is rejected node-side before dispatch",
+      "bazel_target": "//mcps-proxy:proxy_lb_assertion_test",
+      "source": "mcps-proxy/tests/proxy_lb_assertion_test.rs",
+      "test_fn": "mode_c_bad_signature_is_rejected_before_dispatch",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A v2 assertion signed by an untrusted attestor key (under a trusted key id) fails the Ed25519 check over the length-prefixed v2 preimage; fail closed. GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode C attested ingress: a v2 assertion bound to a cross-request request_hash is rejected node-side before dispatch",
+      "bazel_target": "//mcps-proxy:proxy_lb_assertion_test",
+      "source": "mcps-proxy/tests/proxy_lb_assertion_test.rs",
+      "test_fn": "mode_c_cross_request_hash_is_rejected_before_dispatch",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A validly-signed assertion bound to a DIFFERENT request's hash fails the request-binding check against the in-hand hash; no independent nonce is needed (\u00a7C1). GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode C attested ingress: the forwarded draft-02 request preimage is byte-identical to Mode A (C-only facts ride the assertion, not the request)",
+      "bazel_target": "//mcps-proxy:proxy_lb_assertion_test",
+      "source": "mcps-proxy/tests/proxy_lb_assertion_test.rs",
+      "test_fn": "mode_c_forwarded_request_is_byte_identical_to_mode_a",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10) preimage invariance. The request the inner receives under Mode C is byte-identical to the one it receives under Mode A for the same signed request \u2014 proving the epic invariant of zero draft-02 preimage change. GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode C attested ingress refuses to start without the explicit pinned-mTLS acknowledgement (fail closed)",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/cli.rs",
+      "test_fn": "attested_ingress_without_pinned_mtls_fails_closed",
+      "notes": "MCPS-62/MCPS-61. ADR-MCPS-023 \u00a7C2 / \u00a7Conformance. --transport-binding attested-ingress without --ingress-pinned-mtls is rejected at parse time; the pinned attestor\u2192node channel is load-bearing and cannot be silently absent. GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode B demotion: plain lb-assertion (Tier 3) transport binding is strict-rejected",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/cli.rs",
+      "test_fn": "strict_rejects_lb_assertion_binding",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The plain lb-assertion path places the LB in the TCB without the Mode-C strict bar; strict/production refuses to enable it (legacy/migration only, never presented beside Mode A/C). GREEN-OFFLINE."
+    },
+    {
+      "property": "Mode B demotion: the Tier-2 trusted reverse-proxy identity header is strict-rejected",
+      "bazel_target": "//mcps-proxy:proxy_unit_test",
+      "source": "mcps-proxy/src/cli.rs",
+      "test_fn": "strict_rejects_reverse_proxy_identity_header_ingress",
+      "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The forwarded trusted-ingress identity header (Tier 2) is spoofable by any peer that can reach the socket; strict refuses it. Raw forwarded-identity headers remain forbidden under strict. GREEN-OFFLINE."
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 68
+    "entries": 76
   }
 }
