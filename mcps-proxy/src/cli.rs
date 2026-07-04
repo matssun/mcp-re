@@ -96,6 +96,16 @@ pub enum BindingKind {
     /// then binds exactly to the request signer. Honestly downgraded — NOT
     /// `end_to_end_mtls`. Requires at least one `--ingress-lb-key`.
     LbAssertion,
+    /// ADR-MCPS-023 §C (v0.10) Mode C **attested ingress**: the verified transport
+    /// identity comes from a controlled ingress attestor's request-bound
+    /// `mcps/lb-ingress-assertion/v2` assertion, verified over the pinned
+    /// attestor→node channel, then bound exactly to the request signer. Unlike
+    /// `LbAssertion` (Mode B, strict-rejected) this is a strict-ADMITTED, explicit-
+    /// opt-in posture — but it is *attested delegation*, NOT `end_to_end_mtls`: the
+    /// load balancer witnesses proof-of-possession and stays in the trusted
+    /// computing base. Requires `--ingress-attestor-key`, `--ingress-identity`,
+    /// `--ingress-audience`, and the explicit `--ingress-pinned-mtls` acknowledgement.
+    AttestedIngress,
 }
 
 /// ONLINE client-cert OCSP revocation selection (#4030). The online sibling of
@@ -242,6 +252,26 @@ pub struct Config {
     /// only meaningful) when `binding == LbAssertion`; an unknown asserted key id
     /// fails closed. Empty for every other binding mode.
     pub ingress_lb_keys: Vec<(String, String)>,
+    /// ADR-MCPS-023 §C (Mode C): the trusted ingress-attestor verification keys for
+    /// `mcps/lb-ingress-assertion/v2` assertions, as `(key_id, base64url-ed25519-pub)`
+    /// pairs from repeatable `--ingress-attestor-key <keyid>:<base64-pub>`. Required
+    /// (and only meaningful) when `binding == AttestedIngress`; an unknown asserted
+    /// key id fails closed. Empty for every other binding mode.
+    pub ingress_attestor_keys: Vec<(String, String)>,
+    /// ADR-MCPS-023 §C (Mode C): the ingress identities the node trusts, from
+    /// repeatable `--ingress-identity <id>`. A v2 assertion whose `ingress_identity`
+    /// is not in this set fails closed. Required when `binding == AttestedIngress`.
+    pub ingress_identities: Vec<String>,
+    /// ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's `audience`
+    /// must equal it (route/audience binding). Set from `--ingress-audience`;
+    /// required when `binding == AttestedIngress`.
+    pub ingress_audience: Option<String>,
+    /// ADR-MCPS-023 §C2 (Mode C): the explicit operator acknowledgement, via
+    /// `--ingress-pinned-mtls`, that the attestor→node hop is a pinned mTLS channel
+    /// (or equivalent pinned workload identity). Mode C REQUIRES it — absent, the
+    /// proxy refuses to start (fail closed), so an attested-ingress posture can
+    /// never run without the pinned backend channel it depends on.
+    pub ingress_pinned_mtls: bool,
     /// Authorization-policy selection.
     pub authz: AuthzKind,
     /// Offline policy-layer revocation deny-list paths (ADR-MCPS-013). Each
@@ -372,6 +402,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--crl-allow-unknown-status",
     "--ocsp-soft-fail",
     "--gcp-kms-use-metadata",
+    "--ingress-pinned-mtls",
     "--strict",
     "--production",
     // Value-taking flags.
@@ -414,6 +445,9 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--reverse-proxy-identity-header",
     "--reverse-proxy-header-format",
     "--ingress-lb-key",
+    "--ingress-attestor-key",
+    "--ingress-identity",
+    "--ingress-audience",
     "--authz",
     "--revocation-list",
     "--allow-empty-revocation",
@@ -490,6 +524,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPS-023 Tier 3 (issue #71): repeatable trusted LB verification keys for
     // request-bound ingress assertions, as (key_id, base64url-ed25519-pub) pairs.
     let mut ingress_lb_keys: Vec<(String, String)> = Vec::new();
+    // ADR-MCPS-023 §C (Mode C): attestor verification keys, trusted ingress
+    // identities, the node's expected audience, and the pinned-mTLS acknowledgement.
+    let mut ingress_attestor_keys: Vec<(String, String)> = Vec::new();
+    let mut ingress_identities: Vec<String> = Vec::new();
+    let mut ingress_audience: Option<String> = None;
+    let mut ingress_pinned_mtls = false;
     let mut authz = AuthzKind::Off;
     // ADR-MCPS-013 policy-layer revocation: zero or more offline deny-list files,
     // plus an explicit acknowledgement to run authz with an empty deny-list.
@@ -604,6 +644,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         // operator-supplied `MCPS_GCP_ACCESS_TOKEN`.
         if flag == "--gcp-kms-use-metadata" {
             gcp_kms_use_metadata = true;
+            i += 1;
+            continue;
+        }
+        // Valueless boolean flag (ADR-MCPS-023 §C2, Mode C): the explicit operator
+        // acknowledgement that the attestor→node hop is a pinned mTLS channel. Mode C
+        // REQUIRES it (checked below); absent, attested ingress refuses to start.
+        if flag == "--ingress-pinned-mtls" {
+            ingress_pinned_mtls = true;
             i += 1;
             continue;
         }
@@ -745,8 +793,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound
                     // ingress assertion. Honestly downgraded — NOT end_to_end_mtls.
                     "lb-assertion" => BindingKind::LbAssertion,
+                    // ADR-MCPS-023 §C (v0.10) Mode C: attested ingress. Strict-
+                    // ADMITTED, explicit opt-in; still NOT end_to_end_mtls.
+                    "attested-ingress" => BindingKind::AttestedIngress,
                     other => return Err(format!(
-                        "unknown --transport-binding '{other}' (none|exact|lb-assertion)"
+                        "unknown --transport-binding '{other}' \
+                         (none|exact|lb-assertion|attested-ingress)"
                     )),
                 }
             }
@@ -768,6 +820,42 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     ));
                 }
                 ingress_lb_keys.push((key_id.to_string(), key_b64.to_string()));
+            }
+            // ADR-MCPS-023 §C (Mode C): a trusted ingress-ATTESTOR verification key
+            // for `mcps/lb-ingress-assertion/v2` assertions, as
+            // `<keyid>:<base64url-ed25519-pub>`. Repeatable. Same shape as
+            // `--ingress-lb-key`, but a DISTINCT flag so a v1 LB key can never be
+            // mistaken for a Mode-C attestor key. Malformed body is rejected when the
+            // binding is built; an unknown key id fails closed at verification.
+            "--ingress-attestor-key" => {
+                let (key_id, key_b64) = value.split_once(':').ok_or_else(|| {
+                    format!(
+                        "invalid --ingress-attestor-key '{value}' \
+                         (expected <keyid>:<base64url-ed25519-pub>)"
+                    )
+                })?;
+                if key_id.is_empty() || key_b64.is_empty() {
+                    return Err(format!(
+                        "invalid --ingress-attestor-key '{value}' (empty key id or key body)"
+                    ));
+                }
+                ingress_attestor_keys.push((key_id.to_string(), key_b64.to_string()));
+            }
+            // ADR-MCPS-023 §C (Mode C): a trusted ingress identity. Repeatable. A v2
+            // assertion whose `ingress_identity` is not in this set fails closed.
+            "--ingress-identity" => {
+                if value.trim().is_empty() {
+                    return Err("--ingress-identity requires a non-empty ingress identity".to_string());
+                }
+                ingress_identities.push(value.clone());
+            }
+            // ADR-MCPS-023 §C (Mode C): the node's own audience; a v2 assertion's
+            // `audience` must equal it (route/audience binding).
+            "--ingress-audience" => {
+                if value.trim().is_empty() {
+                    return Err("--ingress-audience requires a non-empty audience".to_string());
+                }
+                ingress_audience = Some(value.clone());
             }
             "--transport-identity-source" => {
                 identity_source = match value.as_str() {
@@ -1197,6 +1285,109 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         }
     }
 
+    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
+    // boundary so an operator can never believe an attested-ingress control is in
+    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
+    // fully configured: attestor keys, trusted ingress identities, the expected
+    // audience, and the explicit pinned-mTLS acknowledgement.
+    //
+    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
+    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
+    if binding != BindingKind::AttestedIngress {
+        if !ingress_attestor_keys.is_empty() {
+            return Err(
+                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if !ingress_identities.is_empty() {
+            return Err(
+                "--ingress-identity has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_audience.is_some() {
+            return Err(
+                "--ingress-audience has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_pinned_mtls {
+            return Err(
+                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+    } else {
+        // (b) attested-ingress with NO trusted attestor key can never verify any
+        //     assertion — it would reject every request. Require at least one.
+        if ingress_attestor_keys.is_empty() {
+            return Err(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
+                 ingress-attestor verification key)"
+                    .to_string(),
+            );
+        }
+        // (c) attested-ingress with NO trusted ingress identity would reject every
+        //     assertion — require at least one.
+        if ingress_identities.is_empty() {
+            return Err(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-identity <id> (a trusted ingress identity)"
+                    .to_string(),
+            );
+        }
+        // (d) attested-ingress binds the assertion's audience to the node's own — it
+        //     must be configured.
+        if ingress_audience.is_none() {
+            return Err(
+                "--transport-binding attested-ingress requires --ingress-audience <aud> \
+                 (the node's expected assertion audience/route)"
+                    .to_string(),
+            );
+        }
+        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
+        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
+        //     refuses to start (fail closed) — an attested-ingress posture must never
+        //     run without the pinned backend channel it depends on.
+        if !ingress_pinned_mtls {
+            return Err(
+                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
+                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
+                 acknowledge it explicitly or do not enable attested ingress"
+                    .to_string(),
+            );
+        }
+        // (f) Mode C resolves identity from the signed v2 assertion, so a trusted
+        //     reverse-proxy identity header would be a second, silently-ignored
+        //     identity source — reject the combination.
+        if reverse_proxy_identity_header.is_some() {
+            return Err(
+                "--transport-binding attested-ingress resolves identity from the signed v2 \
+                 assertion and is mutually exclusive with --reverse-proxy-identity-header"
+                    .to_string(),
+            );
+        }
+        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
+        //     and key ids must be unique.
+        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (key_id, key_b64) in &ingress_attestor_keys {
+            if !seen_ids.insert(key_id.as_str()) {
+                return Err(format!(
+                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
+                     must be unique)"
+                ));
+            }
+            if mcps_core::VerificationKey::from_b64url(key_b64).is_err() {
+                return Err(format!(
+                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
+                     base64url-no-pad 32-byte Ed25519 public key"
+                ));
+            }
+        }
+    }
+
     // #4063 (MCPS-088) online-OCSP gating — fail CLOSED at the CLI trust boundary.
     // These arms ensure an operator can never believe an OCSP control is in force
     // when it is not, and that `require` is rejected outright in a build that
@@ -1296,6 +1487,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         reverse_proxy_identity_header,
         reverse_proxy_header_format,
         ingress_lb_keys,
+        ingress_attestor_keys,
+        ingress_identities,
+        ingress_audience,
+        ingress_pinned_mtls,
         authz,
         revocation_list_paths,
         allow_empty_revocation,
@@ -1781,6 +1976,42 @@ pub fn build_lb_assertion_binding(
             )
         })?;
         binding.add_key(key_id.clone(), key);
+    }
+    Ok(Some(binding))
+}
+
+/// Build the ADR-MCPS-023 §C (Mode C) attested-ingress verifier from `config`, or
+/// `Ok(None)` when `binding != AttestedIngress`. `parse_args` has already enforced
+/// that the attestor keys, ≥1 trusted ingress identity, the audience, and the
+/// pinned-mTLS acknowledgement are all present (fail closed) and that every attestor
+/// key is a valid Ed25519 public key — this only reconstructs the verifier, failing
+/// closed with a precise error if any invariant were ever violated.
+pub fn build_attested_ingress_binding(
+    config: &Config,
+) -> Result<Option<crate::transport::LbAssertionV2Binding>, String> {
+    if config.binding != BindingKind::AttestedIngress {
+        return Ok(None);
+    }
+    let source = match config.identity_source {
+        IdentityPolicy::UriSan => crate::transport::IdentitySource::UriSan,
+        IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
+        IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
+    };
+    let audience = config.ingress_audience.as_deref().ok_or(
+        "internal error: attested-ingress binding selected but no --ingress-audience set",
+    )?;
+    let mut binding = crate::transport::LbAssertionV2Binding::new(source, audience);
+    for (key_id, key_b64) in &config.ingress_attestor_keys {
+        let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
+            format!(
+                "invalid --ingress-attestor-key '{key_id}': the body must be a \
+                 base64url-no-pad 32-byte Ed25519 public key"
+            )
+        })?;
+        binding.add_key(key_id.clone(), key);
+    }
+    for ingress_identity in &config.ingress_identities {
+        binding.permit_ingress_identity(ingress_identity.clone());
     }
     Ok(Some(binding))
 }
@@ -2528,6 +2759,7 @@ impl InnerServer for SubprocessInner {
 
 #[cfg(test)]
 mod tests {
+    use super::build_attested_ingress_binding;
     use super::load_revocation_list;
     use super::load_trust;
     use super::parse_args;
@@ -3470,6 +3702,159 @@ mod tests {
             err.contains("lb-assertion") && err.contains("end-to-end"),
             "got: {err}"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress (MCPS-61).
+    // ---------------------------------------------------------------------
+
+    /// A distinct valid Ed25519 public key for `--ingress-attestor-key`.
+    fn attestor_pub_b64() -> String {
+        mcps_core::SigningKey::from_seed_bytes(&[9u8; 32])
+            .public_key()
+            .to_b64url()
+    }
+
+    /// The full, valid set of Mode-C flags (attestor key + ingress identity +
+    /// audience + pinned-mTLS ack). Prepend `--strict`/etc. as needed.
+    fn attested_ingress_flags() -> Vec<String> {
+        args(&[
+            "--transport-binding", "attested-ingress",
+            "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
+            "--ingress-identity", "spiffe://example.org/ingress-1",
+            "--ingress-audience", "did:example:server-1",
+            "--ingress-pinned-mtls",
+        ])
+    }
+
+    #[test]
+    fn parses_attested_ingress_binding_fully_configured() {
+        let mut a = minimal();
+        a.splice(0..0, attested_ingress_flags());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.binding, BindingKind::AttestedIngress);
+        assert_eq!(config.ingress_attestor_keys.len(), 1);
+        assert_eq!(config.ingress_identities, vec!["spiffe://example.org/ingress-1"]);
+        assert_eq!(config.ingress_audience.as_deref(), Some("did:example:server-1"));
+        assert!(config.ingress_pinned_mtls);
+        // The verifier builds.
+        assert!(build_attested_ingress_binding(&config).expect("build").is_some());
+    }
+
+    #[test]
+    fn attested_ingress_is_admitted_under_strict() {
+        // Unlike Mode B (lb-assertion), Mode C is a strict-ADMITTED explicit opt-in.
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        let mut flags = args(&["--strict"]);
+        flags.extend(attested_ingress_flags());
+        a.splice(0..0, flags);
+        let config = parse_args(&a).expect("Mode C must be admitted under --strict");
+        assert_eq!(config.binding, BindingKind::AttestedIngress);
+        assert!(
+            strict_violations(&config).is_empty(),
+            "Mode C is strict-admitted: it must raise no strict violations, got {:?}",
+            strict_violations(&config)
+        );
+    }
+
+    #[test]
+    fn attested_ingress_without_pinned_mtls_fails_closed() {
+        // §C2: the pinned attestor→node channel is load-bearing — absent the
+        // explicit acknowledgement, attested ingress refuses to start.
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--transport-binding", "attested-ingress",
+                "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
+                "--ingress-identity", "spiffe://example.org/ingress-1",
+                "--ingress-audience", "did:example:server-1",
+                // no --ingress-pinned-mtls
+            ]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--ingress-pinned-mtls"), "got: {err}");
+    }
+
+    #[test]
+    fn attested_ingress_requires_attestor_key_identity_and_audience() {
+        // Each missing piece fails closed with a precise error.
+        let base = args(&[
+            "--transport-binding", "attested-ingress",
+            "--ingress-pinned-mtls",
+        ]);
+        // Missing attestor key.
+        let mut a = minimal();
+        a.splice(0..0, base.clone());
+        assert!(parse_args(&a).unwrap_err().contains("--ingress-attestor-key"));
+        // Missing ingress identity.
+        let mut a = minimal();
+        let mut f = base.clone();
+        f.extend(args(&["--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64())]));
+        a.splice(0..0, f);
+        assert!(parse_args(&a).unwrap_err().contains("--ingress-identity"));
+        // Missing audience.
+        let mut a = minimal();
+        let mut f = base.clone();
+        f.extend(args(&[
+            "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
+            "--ingress-identity", "spiffe://example.org/ingress-1",
+        ]));
+        a.splice(0..0, f);
+        assert!(parse_args(&a).unwrap_err().contains("--ingress-audience"));
+    }
+
+    #[test]
+    fn attested_ingress_flags_dangle_without_binding() {
+        // Each Mode-C flag has no effect outside attested-ingress → reject.
+        for (flag, val) in [
+            ("--ingress-attestor-key", format!("attestor-1:{}", attestor_pub_b64())),
+            ("--ingress-identity", "spiffe://example.org/ingress-1".to_string()),
+            ("--ingress-audience", "did:example:server-1".to_string()),
+        ] {
+            let mut a = minimal();
+            a.splice(0..0, args(&[flag, &val]));
+            let err = parse_args(&a).unwrap_err();
+            assert!(err.contains("has no effect"), "flag {flag} → got: {err}");
+        }
+        // The pinned-mTLS boolean too.
+        let mut a = minimal();
+        a.splice(0..0, args(&["--ingress-pinned-mtls"]));
+        assert!(parse_args(&a).unwrap_err().contains("has no effect"));
+    }
+
+    #[test]
+    fn attested_ingress_invalid_attestor_key_errors() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--transport-binding", "attested-ingress",
+                "--ingress-attestor-key", "attestor-1:not-a-real-key",
+                "--ingress-identity", "spiffe://example.org/ingress-1",
+                "--ingress-audience", "did:example:server-1",
+                "--ingress-pinned-mtls",
+            ]),
+        );
+        assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
+    }
+
+    #[test]
+    fn attested_ingress_rejects_reverse_proxy_header() {
+        // Mode C resolves identity from the assertion; a reverse-proxy identity
+        // header would be a silently-ignored second source → reject the combination.
+        let mut a = minimal();
+        let mut flags = attested_ingress_flags();
+        // A reverse-proxy header disables the local client-cert path, so acknowledge
+        // that first — otherwise the cert-lifetime guard fires before the Mode-C one.
+        flags.extend(args(&[
+            "--reverse-proxy-identity-header", "x-forwarded-client-cert",
+            "--max-client-cert-lifetime", "none",
+        ]));
+        a.splice(0..0, flags);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("mutually exclusive"), "got: {err}");
     }
 
     #[test]

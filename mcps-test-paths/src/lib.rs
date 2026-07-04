@@ -132,6 +132,13 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCPS_SRC_KEYSET_ADMISSION" => {
             workspace_root.join("mcps-proxy/tests/keyset_admission_test.rs")
         }
+        // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): serve-level attested-ingress
+        // conformance vectors, plus the in-crate cli.rs Mode-C guards / Mode-B
+        // strict-rejection (read as src/*.rs, like the KMS negatives above).
+        "MCPS_SRC_PROXY_LB_ASSERTION" => {
+            workspace_root.join("mcps-proxy/tests/proxy_lb_assertion_test.rs")
+        }
+        "MCPS_SRC_CLI" => workspace_root.join("mcps-proxy/src/cli.rs"),
         // MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
         // unit tests, so the traceability guard reads their src/*.rs (not tests/*.rs).
         "MCPS_SRC_KMS_KEYSOURCE" => workspace_root.join("mcps-proxy/src/kms_keysource.rs"),

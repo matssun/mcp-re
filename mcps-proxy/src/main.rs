@@ -510,6 +510,55 @@ fn run() -> Result<(), String> {
             .with_transport_binding(Box::new(ExactMatchBinding::new()))
             .with_lb_assertion(lb_assertion);
     }
+    // ADR-MCPS-023 §C (v0.10) Mode C: attested ingress. A controlled ingress
+    // attestor signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the
+    // node verifies over the pinned attestor→node channel; the verified delegated
+    // client identity binds to the request signer through the SAME ExactMatchBinding
+    // the direct-TLS path uses. `parse_args` already required the attestor keys, ≥1
+    // ingress identity, the audience, and the `--ingress-pinned-mtls` acknowledgement.
+    // Strict-ADMITTED and explicit — but attested delegation, NOT end_to_end_mtls.
+    if config.binding == BindingKind::AttestedIngress {
+        let attested = cli::build_attested_ingress_binding(&config)?
+            .ok_or("internal error: attested-ingress selected but no verifier built")?;
+        let audience = config.ingress_audience.as_deref().unwrap_or("<unset>");
+        eprintln!(
+            "mcps-proxy: transport binding = attested ingress (Mode C) \
+             ({} trusted attestor key(s), {} trusted ingress identity(ies), guarantee '{}', \
+             audience '{audience}', identity field {:?}, header '{}'). This is ATTESTED \
+             DELEGATION, NOT end-to-end client-node mTLS: the load balancer witnesses \
+             proof-of-possession and stays in the trusted computing base; the node verifies \
+             the attestor signature + the request-hash binding over the pinned attestor-node \
+             channel, not the client's own key.",
+            config.ingress_attestor_keys.len(),
+            config.ingress_identities.len(),
+            mcps_proxy::LbAssertionV2Binding::GUARANTEE,
+            config.identity_source,
+            tls::MCP_INGRESS_ASSERTION_HEADER,
+        );
+        // ADR-MCPS-023 §C2: record the THREE trust facts, never fewer, as an
+        // operator posture diagnostic (canonical audit field names; the structured
+        // per-request surface lands with MCPS-62). `delegated_client_identity` is
+        // asserted per request (its value rides the v2 assertion); the other two are
+        // configured facts. Emitting all three prevents a later auditor from
+        // mistaking Mode C for end-to-end mTLS or for a single-component attestor.
+        eprintln!(
+            "mcps.ingress.posture binding=attested_ingress \
+             delegated_client_identity=per_request_asserted \
+             ingress_internal_hop=lb_to_attestor_trusted_pop_stays_with_lb \
+             backend_channel_binding=pinned_mtls trusted_ingress_identities={}",
+            config.ingress_identities.len(),
+        );
+        // ADR-MCPS-023 §A1 revocation vocabulary: Mode C delivers dynamic mid-life
+        // revocation via the attestor's CRL (keyed on the client cert serial); the
+        // node treats the attestor's revocation_result as an opaque asserted fact.
+        eprintln!(
+            "mcps.revocation.posture revocation_mode=delegated_attestor_crl \
+             dynamic_revocation=true"
+        );
+        proxy = proxy
+            .with_transport_binding(Box::new(ExactMatchBinding::new()))
+            .with_attested_ingress(attested);
+    }
 
     // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
     // malformed CRL file fails closed here. OFFLINE revocation only — there is no
@@ -639,7 +688,14 @@ fn run() -> Result<(), String> {
     // assertion header (failing closed on a duplicate) instead of reading a local
     // client cert or a forwarded identity header. The three strategies are mutually
     // exclusive; the CLI forbids combining lb-assertion with a reverse-proxy header.
-    let identity_strategy = if config.binding == BindingKind::LbAssertion {
+    let identity_strategy = if config.binding == BindingKind::LbAssertion
+        || config.binding == BindingKind::AttestedIngress
+    {
+        // Both the v1 LB-assertion (Mode B) and the v2 attested-ingress (Mode C)
+        // paths carry identity in the signed assertion header — verified post-
+        // verification inside the proxy — not at the connection seam. The serve loop
+        // extracts the same `mcp-ingress-assertion` header (failing closed on a
+        // duplicate) for both.
         IdentityStrategy::LbAssertion
     } else {
         match &config.reverse_proxy_identity_header {

@@ -394,3 +394,35 @@ traceability-mapped green test, no proposal claim.**
 with this sign-off. The 0.5 proposal-readiness release gate is satisfied as of
 2026-06-23; any wire-envelope field gap is ejected to a separate `draft-02` ADR
 as post-0.5 work.
+
+## 11. Strict-mode ingress postures (ADR-MCPS-023 §C amendment, v0.10)
+
+Strict mode admits **two** ingress postures, with **different, honestly-labelled
+trust properties**:
+
+- **(A) `end_to_end_mtls` (default).** End-to-end client↔node mTLS: the node
+  terminates the client's mTLS itself and binds the verified transport peer to the
+  request signer. No load balancer sits in the identity path.
+- **(C) Attested Ingress (`attested_ingress`, explicit opt-in).** A controlled
+  ingress attestor terminates or receives validated client mTLS, checks certificate
+  revocation, and signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the
+  node verifies over a **pinned attestor→node channel**. Mode C is **attested
+  delegation**, explicit opt-in, and is **NOT** end-to-end client↔node binding — the
+  load balancer witnesses proof-of-possession and **remains in the trusted computing
+  base**. The node **binds** the assertion (signature, freshness, `request_hash`
+  equality, audience/route, ingress identity) and treats the attestor's
+  `revocation_result` / `cert_verification_result` as **opaque asserted facts** it
+  records/audits — it performs no certificate-path validation and no CRL-freshness
+  computation of its own. Mode C MUST NEVER be surfaced as `end_to_end_mtls`.
+
+The attestor is **two** trusted-computing-base components — the load balancer (the
+only proof-of-possession witness; forwards spoofable client-cert headers) and the
+operator-run signing filter (attests "the LB reported the cert verified"; does not
+witness PoP). Audit therefore records **three** trust facts, never fewer:
+`delegated_client_identity`, `ingress_internal_hop` (the LB→attestor trust
+assumption, PoP stays with the LB), and `backend_channel_binding = pinned_mtls`.
+
+**Raw forwarded-identity headers remain forbidden under strict.** The legacy
+`trusted_ingress_asserted` header (Tier 2) and plain `lb-assertion` (Tier 3, Mode B)
+paths are **strict-rejected** and are labelled legacy/migration only — never
+presented beside Mode A/C as an enterprise option.

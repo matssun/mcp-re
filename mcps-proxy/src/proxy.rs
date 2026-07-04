@@ -52,6 +52,7 @@ use crate::inner_launch::InnerLogEvent;
 use crate::inner_launch::InnerLogSink;
 use crate::key_source::ResponseSigner;
 use crate::transport::LbAssertionBinding;
+use crate::transport::LbAssertionV2Binding;
 use crate::transport::TransportBindingPolicy;
 use crate::transport::TransportIdentity;
 
@@ -118,6 +119,14 @@ pub struct Proxy {
     /// signer↔identity binding still applies. A `Proxy` built without this ignores
     /// the assertion header entirely.
     lb_assertion: Option<LbAssertionBinding>,
+    /// Optional ADR-MCPS-023 §C (v0.10, Mode C) attested-ingress verifier. The
+    /// Mode-C sibling of `lb_assertion`: it verifies a `mcps/lb-ingress-assertion/v2`
+    /// assertion (a distinct, strict-ADMITTED, explicit-opt-in posture) over the
+    /// pinned attestor→node channel, again AFTER object verification because it
+    /// binds `verified.request_hash`. On success the verified delegated client
+    /// identity feeds `transport_binding` exactly like the v1 path. Mutually
+    /// exclusive with `lb_assertion` (the CLI never sets both). NOT `end_to_end_mtls`.
+    attested_ingress: Option<LbAssertionV2Binding>,
     /// Optional MCPS-036 lifecycle-event sink for the two proxy-level events
     /// (`inner_request_forwarded`, `inner_response_signed`). Inner-process-level
     /// events (spawn/exit/stderr) are emitted by the `SubprocessInner` itself.
@@ -164,6 +173,7 @@ impl Proxy {
             policy: None,
             transport_binding: None,
             lb_assertion: None,
+            attested_ingress: None,
             log_sink: None,
         }
     }
@@ -260,6 +270,23 @@ impl Proxy {
         self
     }
 
+    /// Enable ADR-MCPS-023 §C (v0.10) Mode C **attested ingress**: a strict-
+    /// admitted, explicit-opt-in posture in which a controlled ingress attestor
+    /// signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the node
+    /// verifies over the pinned attestor→node channel. Like [`Self::with_lb_assertion`]
+    /// the presented assertion header is REQUIRED and checked AFTER object
+    /// verification (it binds `verified.request_hash`); on success the verified
+    /// delegated client identity feeds the configured transport-binding policy.
+    ///
+    /// This is **attested delegation**, NOT end-to-end client↔node mTLS
+    /// ([`LbAssertionV2Binding::GUARANTEE`]) — the load balancer witnesses proof-of-
+    /// possession and stays in the trusted computing base. Mutually exclusive with
+    /// [`Self::with_lb_assertion`]; a `Proxy` built without this ignores the header.
+    pub fn with_attested_ingress(mut self, attested_ingress: LbAssertionV2Binding) -> Self {
+        self.attested_ingress = Some(attested_ingress);
+        self
+    }
+
     /// Handle one inbound request without a transport identity (stdio / no mTLS).
     /// Equivalent to [`Proxy::handle_with_transport`] with `identity = None` and no
     /// LB-assertion header. When an LB-assertion verifier is configured this fails
@@ -340,48 +367,72 @@ impl Proxy {
                 // verification has ALREADY run above and is independent of this — a
                 // tampered object signature never reaches here regardless of a valid
                 // assertion.
-                let lb_verified_identity: Option<TransportIdentity> = match &self.lb_assertion {
-                    None => None,
-                    Some(lb) => {
-                        // Builder-composition guard (issue #135): the LB assertion
-                        // exists ONLY to SUPPLY the request-bound verified identity
-                        // that `transport_binding` then ties to `verified_signer`. If
-                        // no transport-binding policy is configured, the verified
-                        // identity below would be consumed by nothing — the
-                        // signer↔identity binding the assertion is verified to enforce
-                        // would be silently dropped. That is a misconfiguration, not a
-                        // weaker-but-valid mode: fail closed rather than admit a
-                        // request whose asserted identity is never bound. (The shipped
-                        // CLI always pairs the two; this closes the gap for any other
-                        // embedder/test that wires only the LB assertion.)
-                        if self.transport_binding.is_none() {
+                // The v1 LB-assertion (Tier 3, Mode B) and the v2 attested-ingress
+                // (Mode C) verifiers are mutually exclusive (the CLI never sets both)
+                // and share the same post-verification seam: both REQUIRE the presented
+                // assertion header, both bind `verified.request_hash`, and both supply
+                // a verified delegated identity into `transport_binding`. Whichever is
+                // configured yields `lb_verified_identity`; a missing header or any
+                // rejection fails closed before dispatch.
+                let lb_verified_identity: Option<TransportIdentity> = if let Some(lb) =
+                    &self.lb_assertion
+                {
+                    // Builder-composition guard (issue #135): the assertion exists ONLY
+                    // to SUPPLY the request-bound verified identity that
+                    // `transport_binding` then ties to `verified_signer`. Without a
+                    // transport-binding policy that identity would bind to nothing — a
+                    // misconfiguration, not a weaker-but-valid mode: fail closed.
+                    if self.transport_binding.is_none() {
+                        return json_rpc_error_object(&McpsError::TransportBindingFailed, &id_value);
+                    }
+                    let header = match lb_assertion_header {
+                        Some(value) => value,
+                        None => {
                             return json_rpc_error_object(
                                 &McpsError::TransportBindingFailed,
                                 &id_value,
-                            );
+                            )
                         }
-                        let header = match lb_assertion_header {
-                            Some(value) => value,
-                            // Required-but-absent assertion header → fail closed.
-                            None => {
-                                return json_rpc_error_object(
-                                    &McpsError::TransportBindingFailed,
-                                    &id_value,
-                                )
-                            }
-                        };
-                        match lb.verify(header, &verified.request_hash, now_unix) {
-                            Ok(identity) => Some(identity),
-                            // Any LbAssertionRejection maps to the transport-boundary
-                            // wire token; the inner server is never reached.
-                            Err(_rejection) => {
-                                return json_rpc_error_object(
-                                    &McpsError::TransportBindingFailed,
-                                    &id_value,
-                                )
-                            }
+                    };
+                    match lb.verify(header, &verified.request_hash, now_unix) {
+                        Ok(identity) => Some(identity),
+                        Err(_rejection) => {
+                            return json_rpc_error_object(
+                                &McpsError::TransportBindingFailed,
+                                &id_value,
+                            )
                         }
                     }
+                } else if let Some(attestor) = &self.attested_ingress {
+                    // ADR-MCPS-023 §C (Mode C): verify the v2 assertion over the pinned
+                    // attestor→node channel. Same builder-composition guard, same
+                    // required-header + fail-closed contract as the v1 path; the
+                    // attestor's recorded facts (cert/revocation verdicts, ingress
+                    // identity) are admitted inside `verify` (bind-not-interpret) and
+                    // the delegated client identity flows into `transport_binding`.
+                    if self.transport_binding.is_none() {
+                        return json_rpc_error_object(&McpsError::TransportBindingFailed, &id_value);
+                    }
+                    let header = match lb_assertion_header {
+                        Some(value) => value,
+                        None => {
+                            return json_rpc_error_object(
+                                &McpsError::TransportBindingFailed,
+                                &id_value,
+                            )
+                        }
+                    };
+                    match attestor.verify(header, &verified.request_hash, now_unix) {
+                        Ok(attested) => Some(attested.client_identity),
+                        Err(_rejection) => {
+                            return json_rpc_error_object(
+                                &McpsError::TransportBindingFailed,
+                                &id_value,
+                            )
+                        }
+                    }
+                } else {
+                    None
                 };
                 // Phase 6 (ADR-MCPS-014): bind the verified signer to the channel
                 // identity. With an LB assertion configured, the identity is the one
