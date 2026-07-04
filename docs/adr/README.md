@@ -54,6 +54,7 @@ maintainable as the project evolves.
 | [ADR-MCPS-046](adr-mcps-046.md) | Signed Rejection Receipts (Proposed, v0.7+) |
 | [ADR-MCPS-047](adr-mcps-047.md) | Stateless Multi-Round-Trip Continuation Evidence (Accepted, v0.8) |
 | [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
+| [ADR-MCPS-049](adr-mcps-049.md) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence (Proposed, v0.11) |
 
 ## Provenance
 
