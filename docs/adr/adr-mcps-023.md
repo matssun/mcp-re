@@ -281,6 +281,14 @@ client-identity headers and trust-by-network-location are forbidden."*
 
 ## v0.9/v0.10 Enterprise-Ingress Amendment (2026-07-03)
 
+**Status: Accepted.** Mode A (§A1) shipped in **v0.9.0**; Mode C — attested ingress
+(§C1–C4) — shipped in **v0.10.0** (2026-07-04): the `mcps/lb-ingress-assertion/v2`
+format + node verifier, `BindingKind::AttestedIngress` with the pinned-mTLS guards
+and three-fact audit, the offline conformance spine (with preimage invariance), and
+the non-normative Google Cloud cookbook are all implemented and green. The optional
+v0.10 tail (live revocation / OCSP cache / cross-cloud / FIPS-L3) stays deferred
+(MCPS-63).
+
 Outcome of the v0.9/v0.10 enterprise-hardening design review, adversarially
 verified against this repo. A **delta amendment** to this ADR — not a new ADR. It
 resolves what a *strict* enterprise ingress story is on a cloud L7 load balancer,
@@ -373,6 +381,10 @@ side-door-closing topology (internal ALB + Private Service Connect; Cloud Run
 signed per-request assertion (GCLB forwards unsigned headers; IAP signs user
 identity without cert/request-hash binding; the mesh conveys unsigned XFCC). The
 attestor is operator-built; the cookbook validates it, it is not a spec requirement.
+
+The cookbook lives at
+[`docs/mode-c-attested-ingress-gcp-cookbook.md`](../mode-c-attested-ingress-gcp-cookbook.md)
+(non-normative; v0.10).
 
 ### A1. Mode A mTLS certificate-revocation — honest, bounded, fail-closed (v0.9)
 
