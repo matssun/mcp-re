@@ -1513,6 +1513,34 @@ mod tests {
         );
     }
 
+    // ADR-MCPS-023 §A1 (v0.9, MCPS-58): an OCSP check that cannot run because the
+    // leaf carries no responder URL (no AIA, no operator override) yields an
+    // indeterminate result — `check` returns Unknown (fail closed), NEVER Good. A
+    // revocation check that never happened must not be recorded as a successful /
+    // "not revoked" check. The no-URL path returns before any network I/O, so this
+    // is fully offline.
+    #[test]
+    fn check_without_responder_url_is_unknown_not_good() {
+        let key = KeyPair::generate().expect("key");
+        let params =
+            CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
+        let leaf = params.self_signed(&key).expect("self-signed").der().clone();
+        let checker = OcspChecker::new(None, false); // no override, hard-fail
+        let status = checker
+            .check(leaf.as_ref(), leaf.as_ref())
+            .expect("the no-responder-URL path returns without network I/O");
+        assert_eq!(
+            status,
+            CertRevocationStatus::Unknown,
+            "a missing responder URL must be Unknown (fail closed)"
+        );
+        assert_ne!(
+            status,
+            CertRevocationStatus::Good,
+            "a check that could not run must never be recorded as Good"
+        );
+    }
+
     #[test]
     fn ocsp_request_der_round_trips() {
         let (issuer_der, _) = mint_issuer();

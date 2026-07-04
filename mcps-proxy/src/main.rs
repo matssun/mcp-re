@@ -164,13 +164,14 @@ fn run() -> Result<(), String> {
              online revocation a compromised client cert is usable until expiry. Set \
              --max-client-cert-lifetime (default 1h)."
         ),
-        // MCPS-3842: a lifetime > 1h is a RECOMMENDATION (the default is 1h), not
-        // an unsafe posture — a longer-but-still-enforced lifetime is a tradeoff,
-        // not a hole — so it stays a WARNING even under --strict. Only DISABLED
-        // enforcement (the `None` arm above) is rejected by strict mode.
+        // ADR-MCPS-023 §A1 (v0.9, MCPS-57): under --strict a lifetime above the 1h
+        // ceiling is REJECTED at parse time (see `cli::strict_violations`), so this
+        // arm is reached only in non-strict mode. There it stays a warning: the cert
+        // is still enforced, but is too long-lived to be audited as
+        // `short_lived_cert`. (Supersedes the earlier MCPS-3842 warning-only stance.)
         Some(d) if d.as_secs() > 3600 => eprintln!(
-            "mcps-proxy: WARNING: --max-client-cert-lifetime {}s exceeds the recommended 1h for the \
-             short-lived-cert revocation posture.",
+            "mcps-proxy: WARNING: --max-client-cert-lifetime {}s exceeds the 1h ceiling for the \
+             short-lived-cert revocation posture; under --strict this is rejected.",
             d.as_secs()
         ),
         Some(_) => {}
@@ -521,10 +522,81 @@ fn run() -> Result<(), String> {
             config.client_crl_paths.len(),
             if config.crl_allow_unknown_status { "ALLOWED (relaxed)" } else { "DENIED (fail closed)" },
         );
+        // ADR-MCPS-023 §A1 (MCPS-58): the verifier now enforces CRL nextUpdate, so
+        // a stale CRL fails every new handshake closed. Surface that at BOOT — under
+        // strict refuse to start; otherwise warn loudly — and warn while a CRL is
+        // near expiry so a refreshed CRL can be installed before the cutover
+        // ("restart before nextUpdate"; the in-process hot-reloader is a v0.10
+        // follow-up). A malformed CRL is a hard startup error (fail closed).
+        const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
+        for (i, crl) in client_crls.iter().enumerate() {
+            match tls::crl_freshness(crl.as_ref(), startup_now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
+                .map_err(|e| e.to_string())?
+            {
+                tls::CrlFreshness::Fresh => {}
+                tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
+                    "mcps-proxy: WARNING: client CRL #{i} is near expiry (nextUpdate={next_update_unix}); \
+                     install a refreshed CRL and restart before then, or new handshakes will fail closed."
+                ),
+                tls::CrlFreshness::Stale { next_update_unix } => {
+                    let msg = format!(
+                        "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= now={startup_now_unix}): \
+                         with CRL expiration enforced, every new client handshake fails closed. Install a \
+                         CRL published within its nextUpdate window."
+                    );
+                    if config.strict {
+                        return Err(format!(
+                            "--strict/--production refuses to start with a stale client CRL: {msg}"
+                        ));
+                    }
+                    eprintln!("mcps-proxy: WARNING: {msg}");
+                }
+            }
+        }
     } else if config.crl_allow_unknown_status {
         eprintln!(
             "mcps-proxy: WARNING: --crl-allow-unknown-status has no effect without --client-crl"
         );
+    }
+
+    // ADR-MCPS-023 §A1 (MCPS-58): operator-visible revocation POSTURE DIAGNOSTIC.
+    // This is a posture diagnostic, NOT a structured per-request audit guarantee —
+    // the structured evidence vocabulary (including `delegated_attestor_crl`, which
+    // does not exist yet) lands with Mode C attested ingress (MCPS-62). These lines
+    // deliberately use the canonical ADR field names so that future audit surface
+    // can reuse them verbatim. OCSP posture is per-request (no-AIA is a per-cert
+    // fact, not a config-load one) and likewise belongs to the MCPS-62 surface, not
+    // this startup line.
+    {
+        let exposure_window = match config.max_client_cert_lifetime {
+            Some(d) => format!("{}s", d.as_secs()),
+            None => "unbounded".to_string(),
+        };
+        if client_crls.is_empty() {
+            let max_lifetime = match config.max_client_cert_lifetime {
+                Some(d) => format!("{}s", d.as_secs()),
+                None => "none".to_string(),
+            };
+            eprintln!(
+                "mcps.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
+                 exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
+            );
+        } else {
+            for (i, crl) in client_crls.iter().enumerate() {
+                let posture = tls::crl_posture(crl.as_ref()).map_err(|e| e.to_string())?;
+                let next_update = posture
+                    .next_update_unix
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                eprintln!(
+                    "mcps.revocation.posture revocation_mode=static_crl_snapshot \
+                     dynamic_revocation=false stale_crl_policy=fail_closed crl_index={i} \
+                     crl_digest={} crl_this_update={} crl_next_update={} \
+                     exposure_window={exposure_window}",
+                    posture.crl_digest, posture.this_update_unix, next_update
+                );
+            }
+        }
     }
 
     // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives

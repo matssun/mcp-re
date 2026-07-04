@@ -11,6 +11,16 @@ Accepted (v0.3 — 2026-06-15). Both ingress modes are implemented in `mcps-prox
 (RFC2253-aware, cross-element-consistency and unterminated-quote fail-closed;
 issue #21). SEP-2243 routing headers remain untrusted in both modes (ADR-MCPS-025).
 
+**v0.9/v0.10 hardening amendment (2026-07-03):** the enterprise-ingress and
+mTLS-certificate-revocation deltas are recorded in the
+[**v0.9/v0.10 Enterprise-Ingress Amendment**](#v09v010-enterprise-ingress-amendment-2026-07-03)
+below. In short: strict admits exactly two postures — `end_to_end_mtls` (Mode A,
+default) and a new, explicit-opt-in **Attested Ingress** (Mode C, *attested
+delegation*, v0.10); the legacy header / plain-`lb-assertion` paths (Mode B) stay
+strict-rejected and out of the recommended cookbook. Mode A gains a v0.9
+cert-revocation honesty pass (short-lived-cert default, a strict cert-lifetime
+ceiling, static-CRL fail-closed-on-stale). No draft-02 wire change.
+
 ## Context
 
 ADR-MCPS-014 binds the verified request to the mTLS client-cert identity via the
@@ -268,3 +278,173 @@ client-identity headers and trust-by-network-location are forbidden."*
 - ~~Future Tier 3 (LB-signed request-bound assertion) — its own ADR when scoped.~~
   RESOLVED (issue #71, v0.4): Tier 3 is specified and implemented in this ADR's
   "Tier 3" section above (`LbAssertionBinding` + `--transport-binding lb-assertion`).
+
+## v0.9/v0.10 Enterprise-Ingress Amendment (2026-07-03)
+
+Outcome of the v0.9/v0.10 enterprise-hardening design review, adversarially
+verified against this repo. A **delta amendment** to this ADR — not a new ADR. It
+resolves what a *strict* enterprise ingress story is on a cloud L7 load balancer,
+and pins the mTLS-certificate-revocation domain (the counterpart to the
+signing-key domain in ADR-MCPS-021 §v0.9 addendum).
+
+### Framing: two strict postures, one demoted legacy path
+
+Strict (`--strict`/`--production`) admits **exactly two** ingress postures, with
+**different, honestly-labelled trust properties**:
+
+| Mode | Binding | Trust property | Strict | Release |
+|---|---|---|---|---|
+| **A** | `end_to_end_mtls` + `exact` (existing Tier 1) | client↔node mTLS; no LB in identity path | **default** | shipped |
+| **C** | `attested_ingress` (new Tier 4, below) | *attested delegation*: a controlled ingress attestor signs a request-bound assertion over a pinned channel; LB/attestor in TCB but cryptographically accountable | **explicit opt-in** | **v0.10** |
+| **B** | header `trusted_ingress_asserted` (Tier 2) / plain `lb-assertion` (Tier 3) | forwarded/asserted identity, LB in TCB, not request-attested-to-strict-bar | **REJECTED** | n/a (legacy/migration only) |
+
+Mode C is **not** trust-equivalent to Mode A and MUST NEVER be surfaced as
+`end_to_end_mtls` (this preserves the §Tier-3 "Honesty" rule). It is legitimately
+strict *because* it is explicit and cryptographically request-bound over a pinned
+channel — but it is *attested delegation*, a distinct and weaker property than
+end-to-end binding, recorded as such per request.
+
+### C1. Mode C is a NEW frozen-v2 assertion format — not an extension of Tier 3
+
+The shipped Tier-3 `LbAssertion` binds four fields (`key_id`,
+`asserted_client_identity`, `request_hash`, `validation_time`) under the **frozen**
+domain tag `mcps/lb-ingress-assertion/v1`. Mode C requires binding additional facts
+(certificate-verification result, revocation result + CRL freshness, route/audience/
+backend, `expires_at`, and a distinct ingress identity). Because the v1 preimage is
+frozen, this is a **new `mcps/lb-ingress-assertion/v2` format** — a new
+domain-separation tag, a new length-prefixed layout, and a new node-side verifier
+order — **not** an in-place extension. It is the epic's single largest engineering
+deliverable and is scoped to **v0.10**.
+
+**No nonce / no assertion-level replay.** The §Tier-3 replay rationale holds
+unchanged: a replayed assertion against a *different* request fails the
+`request_hash` check; a replay against the *same* request is caught by that
+request's own replay cache and the freshness window. The v2 assertion therefore
+adds **no independent nonce** and **no parallel assertion-replay cache** — adding one
+would reopen a gap the shipped design deliberately closed. (`expires_at` MAY be added
+only if a validity shorter than `validation_time`-freshness is genuinely required,
+with justification.)
+
+### C2. The attestor is TWO trusted-computing-base components — audit both
+
+"Controlled ingress attestor" is two distinct TCB components, and the ADR must not
+fold them into one:
+
+1. **The load balancer** terminates client mTLS and is the *only* component that
+   witnesses **proof-of-possession** of the client key. It forwards client-cert
+   metadata to the attestor as **spoofable headers**.
+2. **The signing filter** (operator-run) reads those headers, checks revocation,
+   and Ed25519-signs the v2 assertion. It attests *"the LB reported the cert
+   verified"* — it does **not** itself witness PoP.
+
+Consequences, normative:
+
+- The **LB→attestor hop MUST be authenticated/pinned** (or the attestor MUST
+  independently re-verify the forwarded full client-cert chain), **with public-side
+  header stripping**, so nothing reaching the filter directly can inject headers and
+  get an assertion minted. Proof-of-possession honestly **stays with the LB**.
+- The **attestor→node hop MUST be pinned mTLS** (or equivalent workload identity).
+- Audit records **three** trust facts, never fewer: `delegated_client_identity`
+  (from the attestor assertion), `ingress_internal_hop` (the LB→attestor trust
+  assumption), and `backend_channel_binding = pinned_mtls` (attestor→node). This
+  prevents a later auditor from mistaking Mode C for end-to-end mTLS or for a
+  single-component attestor.
+
+### C3. The node binds the assertion; it does NOT re-check the certificate
+
+Preserving §Decision "the node need not re-validate the client certificate": under
+Mode C the node verifies the **abstract signed-assertion contract only** — signature
+over the v2 preimage, freshness, `request_hash` equality against the in-hand hash,
+audience/route, and ingress identity, over the pinned channel. `revocation_result`
+and `cert_verification_result` are treated as **opaque asserted facts the node
+records/audits** (bind-not-interpret) — the node performs **no** CRL-freshness
+computation and pulls **no** certificate-revocation semantics back into itself.
+
+### C4. Normative contract vs. cookbook (SEP scope)
+
+The **ADR-023 normative surface** for Mode C is only the abstract contract: the v2
+assertion field set, the length-prefixed preimage + domain tag, the ordered
+fail-closed verifier, the pinned-channel requirement, and the three audit facts.
+**All Google-specific detail** — GCLB `client_cert_*` header semantics, the Envoy
+signing-filter (Wasm/Lua/ext_authz) implementation, CAS CRL lookup, and the
+side-door-closing topology (internal ALB + Private Service Connect; Cloud Run
+`internal-and-cloud-load-balancing` + disabled `run.app`) — lives in the
+**non-normative Google Cloud cookbook**, because **no native GCP primitive** emits a
+signed per-request assertion (GCLB forwards unsigned headers; IAP signs user
+identity without cert/request-hash binding; the mesh conveys unsigned XFCC). The
+attestor is operator-built; the cookbook validates it, it is not a spec requirement.
+
+### A1. Mode A mTLS certificate-revocation — honest, bounded, fail-closed (v0.9)
+
+Mode A terminates client mTLS at the node; on GCP the online-OCSP path is a no-op
+(non-default `online_ocsp` feature, and CAS is CRL-only with no OCSP AIA in the
+leaf), so Mode A's revocation posture is **short-lived certificates**, with two
+net-new v0.9 fail-closed items:
+
+- **Strict cert-lifetime ceiling (net-new).** Today `strict_violations`
+  (`cli.rs`) only rejects a *disabled* (`none`/`0`) lifetime and leaves a
+  too-long lifetime a warning. v0.9 adds a strict violation rejecting
+  `max_client_cert_lifetime > 3600s`, so the "short-lived" audit claim cannot be
+  emitted for a long-lived cert. Offline-testable
+  (`--strict --max-client-cert-lifetime 24h` ⇒ violation).
+- **Static `--client-crl` fails closed on stale (net-new enforcement).** Today
+  `build_client_verifier` calls `.with_crls()` with `ExpirationPolicy::Ignore`
+  (fails **open** on staleness), and CRLs load once with no reload hook. v0.9 ships
+  the `nextUpdate` staleness gate **together with** a minimal in-process reload
+  path (or a startup-fail-if-near-`nextUpdate` + documented "restart before
+  `nextUpdate`" operator contract). The gate **without** a reloader is a guaranteed
+  scheduled self-DoS on CAS's ~daily cadence, so the two are inseparable.
+- **OCSP-no-AIA never reports success.** An OCSP lookup that cannot run because the
+  leaf carries no responder URL MUST NOT be recorded as a successful revocation
+  check.
+
+**Audit revocation vocabulary** (three determinate values; records the *actual*
+configured lifetime, never a hardcoded `≤1h`):
+
+- `revocation_mode = short_lived_cert` — `exposure_window = <actual cert lifetime>`,
+  `dynamic_revocation = false`.
+- `revocation_mode = static_crl_snapshot` — `crl_digest`, `crl_this_update`,
+  `crl_next_update`, `dynamic_revocation = false`, `stale_crl_policy = fail_closed`.
+- `revocation_mode = delegated_attestor_crl` (Mode C) — `attestor_id`,
+  `client_cert_serial`, `crl_digest`, `crl_next_update`, `revocation_result`,
+  `dynamic_revocation = true`.
+
+Dynamic mid-life revocation is delivered by **Mode C's attestor** (CAS CRL keyed on
+`client_cert_serial`), not Mode A.
+
+### B1. Mode B demotion
+
+The header `trusted_ingress_asserted` (Tier 2) and plain `lb-assertion` (Tier 3)
+paths remain **strict-rejected** (existing `strict_violations` guards) and are
+excluded from the recommended Google Cloud cookbook. If retained for a concrete
+compatibility need they are labelled **legacy/migration compatibility — not strict,
+not recommended**, and a conformance test proves strict rejects them. They are never
+presented beside Mode A/C as an enterprise option.
+
+### Conformance Vectors (amendment)
+
+**v0.9 (Mode A, offline):** (a) `--strict --max-client-cert-lifetime 24h` → rejected;
+(b) a CRL whose `nextUpdate` is in the past → new handshakes fail closed (mint a
+past-`nextUpdate` CRL; assert rejection); (c) OCSP-no-AIA is not recorded as a
+successful revocation check; (d) `short_lived_cert` audit records the actual
+configured lifetime; (e) Mode B strict-rejected.
+
+**v0.10 (Mode C, offline):** node-side rejection when the v2 assertion carries
+`revocation_result = revoked`, or a stale CRL-freshness, or a bad signature, or a
+cross-request `request_hash` (extend `proxy_lb_assertion_test.rs`); `attested_ingress`
+without `--ingress-pinned-mtls` / trust-bundle / assertion-required → rejected; a
+forwarded draft-02 request preimage is byte-identical to Mode A (a `deny_unknown_fields`
+conformance check proving C-only facts ride the assertion, never the request
+preimage). The **live** GCP revoked-cert rejection is attestor QA, supporting-only,
+outside the MCP-S evidence spine.
+
+### Compliance and Enforcement (amendment)
+
+`security-boundary.md` gains: *"Strict mode admits two ingress postures. (A)
+end-to-end client↔node mTLS. (C) Attested Ingress: a controlled ingress attestor
+terminates or receives validated client mTLS, checks certificate revocation, and
+signs a request-bound assertion the node verifies over a pinned attestor→node
+channel. Mode C is attested delegation, explicit opt-in, and is NOT end-to-end
+client↔node binding — the load balancer witnesses proof-of-possession and remains in
+the trusted computing base. Raw forwarded-identity headers remain forbidden under
+strict."*
