@@ -132,6 +132,15 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCPS_SRC_KEYSET_ADMISSION" => {
             workspace_root.join("mcps-proxy/tests/keyset_admission_test.rs")
         }
+        // MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
+        // unit tests, so the traceability guard reads their src/*.rs (not tests/*.rs).
+        "MCPS_SRC_KMS_KEYSOURCE" => workspace_root.join("mcps-proxy/src/kms_keysource.rs"),
+        "MCPS_SRC_GCP_KMS_KEYSOURCE" => {
+            workspace_root.join("mcps-proxy/src/gcp_kms_keysource.rs")
+        }
+        "MCPS_SRC_AWS_KMS_KEYSOURCE" => {
+            workspace_root.join("mcps-proxy/src/aws_kms_keysource.rs")
+        }
         // ADR-MCPS-036 gate spine: the conformance-guard test sources the
         // traceability manifest maps for the audit (#151) and forbidden-claim
         // (#155) guards, plus the §A claim matrix read by the §A-coverage check.

@@ -339,6 +339,11 @@ nt_rust_test(
         "//mcps-proxy:tests/key_source_test.rs",
         "//mcps-proxy:tests/dev_env_key_source_test.rs",
         "//mcps-proxy:tests/keyset_admission_test.rs",
+        # MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
+        # unit tests, so the guard reads their src/*.rs (not tests/*.rs) from disk.
+        "//mcps-proxy:src/kms_keysource.rs",
+        "//mcps-proxy:src/gcp_kms_keysource.rs",
+        "//mcps-proxy:src/aws_kms_keysource.rs",
         "//mcps-demo:BUILD.bazel",
         "//mcps-demo:tests/demo_negative_e2e_test.rs",
         "//mcps-demo:tests/demo_transport_e2e_test.rs",
@@ -369,6 +374,9 @@ nt_rust_test(
         "MCPS_SRC_FORBIDDEN_CLAIM_GUARD": "$(rlocationpath tests/forbidden_claim_guard_test.rs)",
         "MCPS_SRC_HOST_SESSION": "$(rlocationpath //mcps-host:tests/host_session_test.rs)",
         "MCPS_SRC_KEYSET_ADMISSION": "$(rlocationpath //mcps-proxy:tests/keyset_admission_test.rs)",
+        "MCPS_SRC_KMS_KEYSOURCE": "$(rlocationpath //mcps-proxy:src/kms_keysource.rs)",
+        "MCPS_SRC_GCP_KMS_KEYSOURCE": "$(rlocationpath //mcps-proxy:src/gcp_kms_keysource.rs)",
+        "MCPS_SRC_AWS_KMS_KEYSOURCE": "$(rlocationpath //mcps-proxy:src/aws_kms_keysource.rs)",
         "MCPS_SRC_PERSISTENT_SCOPE": "$(rlocationpath //mcps-proxy:tests/persistent_scope_test.rs)",
         "MCPS_SRC_PERSISTENT_INNER": "$(rlocationpath //mcps-proxy:tests/persistent_inner_test.rs)",
         "MCPS_SRC_PERSISTENT_SESSION": "$(rlocationpath //mcps-proxy:tests/persistent_session_test.rs)",
