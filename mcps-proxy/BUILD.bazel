@@ -102,11 +102,14 @@ _PROXY_LIB_SRCS = [
 _PROXY_LIB_DEPS = [
     "//mcps-core:mcps_core",
     "//mcps-policy:mcps_policy",
+    # MCPS-58 (ADR-023 §A1): CRL parsing for the static --client-crl freshness gate.
+    "@crates_mcps//:der",
     "@crates_mcps//:libc",
     "@crates_mcps//:rustls",
     "@crates_mcps//:rustls-pki-types",
     "@crates_mcps//:serde_json",
     "@crates_mcps//:thiserror",
+    "@crates_mcps//:x509-cert",
     "@crates_mcps//:x509-parser",
     # MCPS-076 (audit gap G-3): scrub raw-seed temporaries in key_source.
     "@crates_mcps//:zeroize",
@@ -144,9 +147,9 @@ _PROXY_EXT_CRATES = [
     "@crates_mcps//:hmac",
     "@crates_mcps//:base64",
     "@crates_mcps//:x509-ocsp",
-    "@crates_mcps//:der",
+    # NOTE: der + x509-cert moved to _PROXY_LIB_DEPS — the base crate's static-CRL
+    # freshness gate (MCPS-58, tls.rs) now uses them, so ext inherits them via LIB.
     "@crates_mcps//:spki",
-    "@crates_mcps//:x509-cert",
     "@crates_mcps//:sha2",
     # #4063 (MCPS-088): OS CSPRNG for the per-request OCSP nonce.
     "@crates_mcps//:getrandom",
