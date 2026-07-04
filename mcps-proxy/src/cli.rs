@@ -374,6 +374,18 @@ pub struct Config {
     /// about become HARD startup errors ("reject, not warn"). Default `false`
     /// keeps the legacy warn-only behavior unchanged.
     pub strict: bool,
+    /// Horizontally-scaled deployment posture (MCPS-79, ADR-MCPS-049 clause 1,
+    /// `--fleet`). ORTHOGONAL to [`strict`](Config::strict): `strict` is the
+    /// security posture, `fleet` is the deployment topology. Under `--strict`
+    /// ALONE the node is a single verifier, so single-node durable replay
+    /// (`--replay-cache file`, ADR-MCPS-014) is valid. Under `--strict --fleet`
+    /// a replayable request may reach a DIFFERENT verifier than the one that saw
+    /// the first nonce during the evidence-acceptance window, so node-local
+    /// replay caches (`memory` and `file`) are REJECTED and a shared replay
+    /// cache with a strict-production durability tier is required. `--fleet`
+    /// does NOT imply `--strict`; the production guarantee is `--strict --fleet`
+    /// (using `--fleet` without `--strict` only warns — see `main.rs`).
+    pub fleet: bool,
     /// Whether `--inner-sandbox off` was passed EXPLICITLY (#4082, M09). The
     /// inner-sandbox default is also `Off`, but no kernel backend ships in this
     /// build, so a blanket strict `enforce` requirement would fail closed
@@ -405,6 +417,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--ingress-pinned-mtls",
     "--strict",
     "--production",
+    "--fleet",
     // Value-taking flags.
     "--bind",
     "--audience",
@@ -575,6 +588,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // MCPS-3842 strict/production posture: off by default (warn-only). When set,
     // insecure-posture configs are rejected at startup instead of merely warned.
     let mut strict = false;
+    // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
+    // default. Orthogonal to `strict`; `--strict --fleet` is the fleet
+    // strict-production posture that rejects node-local replay caches.
+    let mut fleet = false;
     // #4082 (M09): track whether `--inner-sandbox off` was given EXPLICITLY, so
     // strict can reject a deliberate no-containment request without rejecting the
     // (identical-valued) default that ships when the flag is omitted.
@@ -660,6 +677,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         // `strict` flag was never set, so `strict_violations` below was dead.
         if flag == "--strict" || flag == "--production" {
             strict = true;
+            i += 1;
+            continue;
+        }
+        // Valueless boolean flag (MCPS-79, ADR-MCPS-049): horizontally-scaled
+        // deployment topology. Orthogonal to `--strict`; the production guarantee
+        // is `--strict --fleet`.
+        if flag == "--fleet" {
+            fleet = true;
             i += 1;
             continue;
         }
@@ -1515,6 +1540,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_command,
         inner_launch,
         strict,
+        fleet,
         sandbox_explicitly_off,
     };
 
@@ -1724,6 +1750,34 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
                 ));
             }
         }
+    }
+    // MCPS-79 (ADR-MCPS-049 clause 1): the FLEET dimension is orthogonal to the
+    // security posture. `--strict` alone is single-node strict, where the node is
+    // the sole verifier and `--replay-cache file` (ADR-MCPS-014, single-node
+    // durable) is a valid, self-consistent replay store. `--strict --fleet`
+    // declares the horizontally-scaled posture: a replayable request may reach a
+    // DIFFERENT verifier than the one that admitted the first nonce during the
+    // evidence-acceptance window, so a node-local cache (`memory`, lost on
+    // restart; or `file`, unshareable across processes) cannot maintain the
+    // cross-verifier replay guarantee. Both are rejected (not warned) so a fleet
+    // cannot silently run on node-local replay state. The required `shared` tier's
+    // quorum/durability strength is enforced by the block above; here we only
+    // reject the node-local KINDS, which is exactly what the `ReplayKind` seam
+    // (not the injected cache's coarse durability CLASS) can distinguish.
+    if config.fleet
+        && (config.replay == ReplayKind::Memory || config.replay == ReplayKind::File)
+    {
+        violations.push(format!(
+            "--fleet requires a shared replay cache: --replay-cache {} is node-local, so a \
+             request replayed to a peer verifier during the acceptance window would not be seen \
+             as a replay; use --replay-cache shared with a redis-wait-quorum:<quorum>:<timeout_ms> \
+             or linearizable durability tier",
+            match config.replay {
+                ReplayKind::Memory => "memory",
+                ReplayKind::File => "file",
+                ReplayKind::Shared => unreachable!(),
+            }
+        ));
     }
     // #4082 (M09): a DELIBERATE `--inner-sandbox off` asks for zero inner
     // containment against a potentially hostile inner server. Only the EXPLICIT
@@ -5388,6 +5442,95 @@ mod tests {
                 .all(|v| !v.contains("replay-durability-tier")),
             "wait-quorum must not be a replay-tier strict violation"
         );
+    }
+
+    // MCPS-79 (ADR-MCPS-049 clause 1): under --strict --fleet a node-local FILE
+    // replay cache is rejected — it is durable on ONE node but unshareable across
+    // verifiers, so a peer would not see a replayed nonce. Contrast
+    // `strict_without_fleet_accepts_file_replay_cache`: the same file cache is
+    // valid under --strict ALONE (single verifier). This is the orthogonality of
+    // the two flags made executable.
+    #[test]
+    fn strict_fleet_rejects_file_replay_cache() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict", "--fleet"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--fleet"), "got: {err}");
+        assert!(err.contains("node-local"), "got: {err}");
+        assert!(err.contains("shared"), "got: {err}");
+    }
+
+    // MCPS-79: under --strict --fleet the node-local in-memory cache is likewise
+    // rejected (it is also rejected as non-durable under plain --strict, #90 — but
+    // the --fleet reason must be present so the operator learns the cross-verifier
+    // property, not just the restart-durability one).
+    #[test]
+    fn strict_fleet_rejects_memory_replay_cache() {
+        let mut a = minimal(); // default replay backend is in-memory
+        a.splice(0..0, args(&["--strict", "--fleet"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--fleet"), "got: {err}");
+        assert!(err.contains("node-local"), "got: {err}");
+    }
+
+    // MCPS-79: --strict --fleet ACCEPTS a shared cache at a strict-production
+    // durability tier — the one posture that maintains cross-verifier replay
+    // state. No fleet violation must remain.
+    #[test]
+    fn strict_fleet_accepts_shared_wait_quorum() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--strict",
+                "--fleet",
+                "--replay-cache",
+                "shared",
+                "--replay-redis-url",
+                "redis://127.0.0.1:6379",
+                "--replay-durability-tier",
+                "redis-wait-quorum:2:500",
+            ]),
+        );
+        let config = parse_args(&a).expect("--strict --fleet + shared wait-quorum must parse");
+        assert!(config.fleet && config.strict);
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("--fleet")),
+            "shared wait-quorum must not be a --fleet strict violation"
+        );
+    }
+
+    // MCPS-79 (orthogonality): --strict WITHOUT --fleet is single-node strict, so
+    // the durable FILE cache (ADR-MCPS-014) remains valid — the node is the sole
+    // verifier. The --fleet rejection must NOT fire here.
+    #[test]
+    fn strict_without_fleet_accepts_file_replay_cache() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict"]));
+        let config = parse_args(&a).expect("single-node strict must accept a durable file cache");
+        assert!(config.strict && !config.fleet);
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("--fleet")),
+            "single-node strict must have no --fleet violation"
+        );
+    }
+
+    // MCPS-79: --fleet does NOT imply --strict and does NOT hard-reject on its own
+    // (warn-only, emitted in main.rs). A node-local cache under --fleet alone still
+    // parses Ok; the production guarantee requires BOTH flags.
+    #[test]
+    fn fleet_without_strict_parses_ok_warn_only() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--fleet"]));
+        let config = parse_args(&a).expect("--fleet without --strict must parse (warn-only)");
+        assert!(config.fleet && !config.strict);
     }
 
     // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable

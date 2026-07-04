@@ -130,6 +130,34 @@ fn run() -> Result<(), String> {
              to the process tree. Use --key-source file in production."
         );
     }
+    // MCPS-79 (ADR-MCPS-049): `--fleet` declares horizontally-scaled topology but
+    // is orthogonal to the security posture. The node-local-replay REJECTION is a
+    // hard guard only under `--strict --fleet` (see `cli::strict_violations`);
+    // `--fleet` alone cannot fail closed without also asserting `--strict`. Warn
+    // so the operator does not mistake `--fleet` alone for the production
+    // guarantee, and point specifically at a node-local cache if one is selected.
+    if config.fleet && !config.strict {
+        let node_local = matches!(config.replay, ReplayKind::Memory | ReplayKind::File);
+        eprintln!(
+            "mcps-proxy: WARNING: --fleet was given WITHOUT --strict; the horizontally-scaled \
+             replay guarantee is NOT enforced (node-local replay caches are rejected only under \
+             --strict --fleet).{} The production posture for a multi-verifier deployment is \
+             --strict --fleet with --replay-cache shared and a quorum durability tier.",
+            if node_local {
+                format!(
+                    " The selected --replay-cache {} is node-local: a request replayed to a peer \
+                     verifier during the acceptance window would NOT be detected as a replay.",
+                    match config.replay {
+                        ReplayKind::Memory => "memory",
+                        ReplayKind::File => "file",
+                        ReplayKind::Shared => "",
+                    }
+                )
+            } else {
+                String::new()
+            }
+        );
+    }
     // MCPS-3840 reverse-proxy ingress trust assumption — emit LOUDLY. When the
     // identity is read from a trusted forwarded header, mTLS is terminated by an
     // upstream proxy and the local client certificate is NOT consulted for
