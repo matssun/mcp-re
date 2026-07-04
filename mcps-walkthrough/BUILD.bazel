@@ -85,3 +85,23 @@ nt_rust_test(
         "@crates_mcps//:serde_json",
     ],
 )
+
+# SDK driver matrix — runs the T0 base case against every configured client SDK
+# driver (ADR-MCPS-045 pluggable client-leg seam). The Rust reference driver
+# (mcps-client-proxy-cli) is always present via the shared _TIER_DATA runfiles;
+# the optional external SDK drivers join only when their MCPS_DRIVER_* env keys
+# are set (skip-not-fail), so under Bazel this runs the always-on Rust lane.
+# (MCPS-77: was gate-tracked drift — a cargo test with no Bazel target.)
+nt_rust_test(
+    name = "sdk_driver_matrix",
+    srcs = ["tests/sdk_driver_matrix.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = _TIER_DATA,
+    edition = "2021",
+    env = _TIER_ENV,
+    deps = [
+        ":mcps_walkthrough",
+        "@crates_mcps//:serde_json",
+    ],
+)
