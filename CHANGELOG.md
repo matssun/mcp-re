@@ -9,6 +9,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [0.10.0] — 2026-07-04
+
+**Mode C — attested ingress.** v0.10 adds the second strict-mode ingress posture:
+a controlled ingress attestor terminates or receives validated client mTLS, checks
+certificate revocation, and Ed25519-signs a request-bound assertion the
+`mcps-proxy` node verifies over a pinned attestor→node channel. Mode C is
+*attested delegation*, an explicit opt-in — **not** end-to-end client↔node mTLS
+(the load balancer witnesses proof-of-possession and stays in the trusted computing
+base). It never widens the wire: **zero draft-02 preimage change** — every Mode-C
+fact rides the assertion, never the request. Built on top of v0.9.0
+(ADR-023 §C, epic #245).
+
+### Added in v0.10
+
+- **`mcps/lb-ingress-assertion/v2` assertion format + node verifier**
+  (`mcps-proxy`). A new frozen, domain-separated, length-prefixed assertion
+  (the Tier-3 v1 preimage is untouched). v2 binds a distinct ingress identity,
+  the audience/route, the attestor's opaque certificate-verification and revocation
+  verdicts (explicit enums — a stale attestor CRL is an explicit `StaleCrl` verdict,
+  never a sentinel), a recorded-only CRL `nextUpdate`, and an optional `expires_at`.
+  The verifier is **bind-not-interpret** (§C3): it checks signature, freshness,
+  `request_hash`, audience, and ingress identity, and admits the attestor's opaque
+  verdicts by fail-closed policy — performing no certificate-path validation and no
+  CRL-freshness computation of its own. No nonce, no assertion-replay cache.
+- **`--transport-binding attested-ingress`** (`mcps-proxy`,
+  `BindingKind::AttestedIngress`). Wires Mode C through proxy dispatch with
+  fail-closed configuration guards: missing attestor keys, trusted ingress
+  identity, audience, or the explicit `--ingress-pinned-mtls` acknowledgement each
+  refuse to start (§C2 — the pinned attestor→node channel is load-bearing). Mode C
+  is strict-**admitted** (explicit opt-in), unlike Mode B (`lb-assertion`, Tier-2
+  header) which remains strict-**rejected**. The node records the three §C2 audit
+  trust facts (`delegated_client_identity`, `ingress_internal_hop`,
+  `backend_channel_binding = pinned_mtls`) and `revocation_mode = delegated_attestor_crl`.
+- **Offline conformance spine** (`mcps-proxy` / `mcps-conformance`). Serve-level
+  node-side rejection of a v2 assertion carrying `revocation_result = revoked`, a
+  stale-CRL verdict, a bad signature, a cross-request `request_hash`, an untrusted
+  ingress identity, a mismatched audience, or a missing header — plus a
+  **preimage-invariance** proof that the forwarded draft-02 request is byte-identical
+  to Mode A. Eight GREEN-OFFLINE entries added to the traceability manifest.
+- **Non-normative Google Cloud cookbook** (§C4,
+  [`docs/mode-c-attested-ingress-gcp-cookbook.md`](docs/mode-c-attested-ingress-gcp-cookbook.md)).
+  The operator guide for building the attestor on GCP: the Envoy signing filter, GCLB
+  `client_cert_*` headers with public-side stripping, CAS CRL lookup keyed on the cert
+  serial, and the side-door-closing topology (internal ALB + Private Service Connect;
+  Cloud Run `internal-and-cloud-load-balancing`).
+- ADR-023 §C (attested ingress) is promoted to Accepted for v0.10; the
+  `security-boundary.md` §11 two-posture (Mode A / Mode C) statement is added.
+
+### Not in v0.10 (gaps / deferred)
+
+- **Optional v0.10 tail** — live revocation, an OCSP response cache, cross-cloud
+  attestors, and FIPS-140-2 L3 via PKCS#11 — stays deferred / HITL (MCPS-63, #243).
+- **Live-cloud attestor QA is supporting-only.** Presenting a genuinely revoked
+  client certificate and watching the GCP attestor reject it is operator QA of your
+  build, outside the offline MCP-S evidence spine.
+- Carried over from v0.9: the live-GCP HSM Ed25519 fact-check (MCPS-59, #239) and the
+  in-process CRL hot-reloader (MCPS-66, #246) remain open.
+
 ## [0.9.0] — 2026-07-04
 
 **Enterprise hardening — KMS key custody + Mode-A revocation honesty — on a

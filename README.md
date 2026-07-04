@@ -79,7 +79,7 @@ Current implementation claim:
 > proven end-to-end client-integration path (client-side proxy + Python/TypeScript
 > SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
-### Recent releases (0.6 → 0.9)
+### Recent releases (0.6 → 0.10)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -103,6 +103,15 @@ in [`docs/adr/`](docs/adr/). In brief:
   KMS-lifecycle-vs-trust-policy custody negatives (ADR-MCPS-021/023/028) — and
   moved the dual Cargo/Bazel build to a **generated-first graph** with a CI
   semantic-drift gate (ADR-MCPS-048), killing the #220 parity-rot class.
+- **0.10** added **Mode C — attested ingress** (ADR-MCPS-023 §C): a controlled
+  ingress attestor signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the
+  node verifies over a pinned attestor→node channel, admitted under `--strict` as an
+  explicit opt-in — *attested delegation*, **not** end-to-end mTLS, with the load
+  balancer in the trusted computing base. The node binds the assertion
+  (bind-not-interpret) and records three trust facts; the forwarded request is
+  byte-identical to Mode A (**zero draft-02 preimage change**). Ships with an offline
+  rejection-conformance spine and a non-normative
+  [Google Cloud cookbook](docs/mode-c-attested-ingress-gcp-cookbook.md).
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
