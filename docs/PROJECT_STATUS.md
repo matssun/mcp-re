@@ -8,6 +8,11 @@ MCP-S is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
+**Current release: v0.10.0** (2026-07-04). The frozen wire envelope is the
+`draft-02` runtime-evidence profile (frozen at v0.6.0; served end-to-end since
+v0.7.0). Per-release detail is in [`CHANGELOG.md`](../CHANGELOG.md); the design
+lines are in [`docs/adr/`](adr/).
+
 ## Current implementation claim
 
 The current implementation may claim:
@@ -30,6 +35,43 @@ The current demonstration and live-validation package proves:
 - a persistent inner MCP server handles multiple requests; denied requests never
   reach it; responses are signed and bound to the request hash; HostSession
   verifies the response signature.
+
+### Four-hop client-to-server path as separate OS processes (v0.7)
+
+- A plain-MCP client → `mcps-client-proxy` (the local adoption bridge, signs
+  `draft-02` requests + verifies responses) → mTLS → `mcps-proxy` server PEP →
+  unmodified inner MCP server, organized as a runnable persona ladder
+  (ADR-MCPS-045), with scoped deny-before-dispatch authorization and
+  transport-identity binding on the wire.
+
+### Client SDKs — Python and TypeScript (v0.7 / v0.8)
+
+- Both SDKs bind to the SAME audited `mcps-client-core` (the Python SDK via
+  maturin/PyO3, the TypeScript SDK via napi-rs), so the signed preimage is
+  byte-identical across languages, and both are exercised through the real
+  four-hop matrix. Non-exporting custody (HSM/KMS-style callback signer) is proven
+  byte-identical to the direct software path.
+
+### Stateless multi-round-trip continuation (v0.8)
+
+- Request-associated elicitation folded into strict MCP-S as signed
+  multi-round-trip continuation evidence (ADR-MCPS-047), fail-closed on arbitrary
+  server push.
+
+### Enterprise ingress — two honest postures (v0.9 / v0.10)
+
+- **Mode A (`end_to_end_mtls`, default)** — the node terminates client mTLS and
+  binds the verified peer to the request signer, with a v0.9 certificate-revocation
+  honesty pass: a strict short-lived-cert lifetime ceiling and static-CRL
+  fail-closed-on-stale (ADR-MCPS-023 §A1).
+- **Mode C (`attested_ingress`, explicit opt-in, v0.10)** — a controlled ingress
+  attestor signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the node
+  verifies over a pinned attestor→node channel. This is **attested delegation**,
+  NOT end-to-end mTLS (the load balancer witnesses proof-of-possession and stays in
+  the trusted computing base); the node binds the assertion (bind-not-interpret)
+  and records three trust facts. The forwarded request is byte-identical to Mode A
+  (zero `draft-02` preimage change). See the non-normative
+  [Google Cloud cookbook](mode-c-attested-ingress-gcp-cookbook.md).
 
 ### Live Google Cloud KMS validation (v0.5.1)
 
@@ -60,7 +102,12 @@ MCP-S does not currently claim:
 - broad multi-cloud live validation: GCP Cloud KMS is live-proven; the AWS KMS
   adapter is shipped but **not** yet live-proven, so multi-cloud custody is not
   claimed until AWS is also live-proven;
-- horizontally scaled replay protection, full CRL/OCSP revocation, OS-level
+- **zero-window certificate revocation.** Mode A enforces short-lived certs plus a
+  static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
+  revocation via the attestor's CRL (keyed on the client cert serial) — but online
+  OCSP stays non-default, and revocation latency is bounded by the CRL cadence, not
+  zero;
+- horizontally scaled replay protection beyond the shipped durable tiers, OS-level
   sandboxing of wrapped servers, and signed tool-manifest enforcement (gated on
   the high-assurance cargo features — see the README deployment profiles).
 

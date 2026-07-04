@@ -62,16 +62,41 @@ Think of it as the layer that makes "this exact call, authorized this way, at
 this time" cryptographically checkable — and it stacks with the identity,
 policy, and isolation layers around it.
 
-## What does v0.5.1 prove?
+## What does v0.10.0 prove?
 
-**Single-node Rust-native end-to-end path (demonstrated).** HostSession signs a
-request → mTLS → `mcps-proxy` verifies signature, freshness, replay, and
-delegated authorization → strips caller context, injects sidecar context →
-persistent inner MCP server handles it → signed, request-bound response →
-HostSession verifies the response. Denied requests never reach the inner server.
+The wire envelope is the frozen `draft-02` runtime-evidence profile (frozen at
+v0.6.0). On top of it the current package proves:
 
-**Live Google Cloud KMS validation (new in v0.5.1).** Against *real* Cloud KMS,
-not an emulator:
+**End-to-end path as separate OS processes.** A plain-MCP client →
+`mcps-client-proxy` (the local adoption bridge — signs `draft-02` requests,
+verifies responses) → mTLS → `mcps-proxy` server PEP → unmodified inner MCP server.
+The proxy verifies signature, freshness, replay, and delegated authorization,
+strips caller context and injects sidecar context, and forwards to a persistent
+inner server; the signed, request-bound response is verified back at the client.
+Denied requests never reach the inner server (four-hop, v0.7; persona ladder,
+ADR-MCPS-045).
+
+**Two client SDKs, one audited core.** Python (maturin/PyO3) and TypeScript
+(napi-rs) both bind to the same `mcps-client-core`, so the signed preimage is
+byte-identical across languages, and both run through the real four-hop matrix
+(v0.7 / v0.8). Non-exporting HSM/KMS-style custody is proven byte-identical to the
+software path.
+
+**Stateless multi-round-trip continuation.** Request-associated elicitation folded
+into strict MCP-S as signed continuation evidence, fail-closed on arbitrary server
+push (ADR-MCPS-047, v0.8).
+
+**Enterprise ingress — two honest, strict-mode postures.** *Mode A*
+(`end_to_end_mtls`, default): the node terminates client mTLS and binds the peer to
+the request signer, with a short-lived-cert lifetime ceiling and static-CRL
+fail-closed-on-stale (v0.9). *Mode C* (`attested_ingress`, explicit opt-in, v0.10):
+a controlled ingress attestor signs a request-bound `mcps/lb-ingress-assertion/v2`
+assertion the node verifies over a pinned attestor→node channel — **attested
+delegation, not end-to-end mTLS** (the load balancer witnesses proof-of-possession
+and stays in the trusted computing base). The forwarded request is byte-identical
+to Mode A (zero `draft-02` preimage change).
+
+**Live Google Cloud KMS validation.** Against *real* Cloud KMS, not an emulator:
 
 - **Object signing** with an `EC_SIGN_ED25519` key: signatures produced by a live
   `asymmetricSign` and verified by `mcps-core`. The private key never leaves KMS
@@ -84,9 +109,6 @@ not an emulator:
   a leaf not bound to the KMS key, and an untrusted client certificate all
   reject — with the correct frozen wire codes.
 
-This is evidence and test surface, not new protocol mechanism: the `draft-01`
-request/response envelopes are unchanged.
-
 ## What does it not claim?
 
 - official MCP extension status;
@@ -97,7 +119,11 @@ request/response envelopes are unchanged.
 - broad multi-cloud live validation — **GCP Cloud KMS is live-proven; the AWS KMS
   adapter is shipped but not yet live-proven**, so multi-cloud custody is not
   claimed until AWS is also live-proven;
-- horizontally scaled replay protection, full CRL/OCSP revocation, OS-level
+- **zero-window certificate revocation** — Mode A enforces short-lived certs plus a
+  static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
+  revocation via the attestor's CRL, but online OCSP stays non-default and
+  revocation latency is bounded by the CRL cadence, not zero;
+- horizontally scaled replay protection beyond the shipped durable tiers, OS-level
   sandboxing of wrapped servers, and signed tool-manifest enforcement — these are
   gated on the high-assurance cargo features and are **not** in the lean default
   build.
@@ -130,7 +156,7 @@ for full setup and exit criteria.
 - **Specification briefs:** [`docs/spec/`](spec/) — the core spec, the
   [security boundary](spec/security-boundary.md), the
   [v0.5 claim matrix](spec/v0.5-claim-matrix.md), and
-  [proposal scope](spec/proposal-scope.md) (the `draft-01` freeze).
+  [proposal scope](spec/proposal-scope.md) (the wire-envelope freeze).
 - **Architecture decisions:** [`docs/adr/`](adr/) — start with
   [ADR-MCPS-001](adr/adr-mcps-001.md) (trust model) and
   [ADR-MCPS-011](adr/adr-mcps-011.md) (core firewall).
