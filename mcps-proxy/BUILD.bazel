@@ -51,13 +51,6 @@ _PROXY_LIB_SRCS = [
     "src/lib.rs",
     "src/persistent_inner.rs",
     "src/proxy.rs",
-    # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
-    # "pkcs11_keysource")]; cfg'd out of the default build).
-    "src/pkcs11_keysource.rs",
-    # Issue #4034 supply-chain follow-up: the OWNED safe wrapper over the raw
-    # cryptoki-sys FFI bindings (replaces the high-level cryptoki crate +
-    # transitive unmaintained `paste`). Same `pkcs11_keysource` feature gate.
-    "src/pkcs11_native.rs",
     # Issue #4030: online OCSP client-cert revocation (behind #[cfg(feature =
     # "online_ocsp")]; cfg'd out of the default build).
     "src/ocsp.rs",
@@ -139,10 +132,6 @@ _PROXY_LINUX_SANDBOX_DEPS = select({
 # cannot contain a select(), so test targets reuse this and inherit the
 # target-gated sandbox crates transitively via the linked `:mcps_proxy_ext`.
 _PROXY_EXT_CRATES = [
-    # #4034 supply-chain fix: the raw PKCS#11 FFI bindings (libloading only, no
-    # transitive `paste`). The high-level `cryptoki` crate is replaced by the
-    # owned safe wrapper in src/pkcs11_native.rs.
-    "@crates_mcps//:cryptoki-sys",
     "@crates_mcps//:redis",
     "@crates_mcps//:ureq",
     # ADR-MCPS-028 §B: SigV4 HMAC-SHA256 + KMS standard-base64 message/signature
@@ -167,7 +156,6 @@ _PROXY_EXT_DEPS = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + _PROXY_LINUX_SANDBOX_DEP
 # `:mcps_proxy_ext` flavor and its tests. (Sandbox enforcement is target-gated,
 # not feature-gated, so it is NOT in this list.)
 _PROXY_EXT_FEATURES = [
-    "pkcs11_keysource",
     "redis_replay",
     # #69 (epic #68 v0.4 Axis 1): etcd-backed CP / LINEARIZABLE shared replay store.
     "cpstore_etcd",
@@ -632,7 +620,7 @@ nt_rust_library(
 
 # Inline #[cfg(feature = ...)] unit tests for the external backends (ocsp.rs
 # network-free codec/policy tests + the RFC 6960 §3.2 responder-SIGNATURE
-# acceptance tests, cli.rs feature-gated flag tests, redis/pkcs11 inline tests).
+# acceptance tests, cli.rs feature-gated flag tests, redis inline tests).
 # Built WITH the production external-backend features against the ext flavor so
 # they actually compile + run on every `bazel test //...` (Mac included).
 #
@@ -793,38 +781,6 @@ nt_rust_test(
         # The live TTL probe base64-encodes the key + drives the etcd v3 gateway.
         "@crates_mcps//:base64",
         "@crates_mcps//:ureq",
-    ],
-)
-
-# #4034: PKCS#11 sign+verify against an INDEPENDENT SoftHSM2 token. Self-skips
-# unless MCPS_TEST_PKCS11_MODULE (+ PIN/TOKEN_LABEL/KEY_LABEL) is set.
-nt_rust_test(
-    name = "pkcs11_keysource_e2e_test",
-    srcs = ["tests/pkcs11_keysource_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCPS_TEST_PKCS11_MODULE",
-        "MCPS_TEST_PKCS11_PIN",
-        "MCPS_TEST_PKCS11_TOKEN_LABEL",
-        "MCPS_TEST_PKCS11_KEY_LABEL",
-        # SoftHSM2 reads its token store location from SOFTHSM2_CONF; inherited so
-        # the e2e can be pointed at a SCRATCH token directory (never a host store).
-        "SOFTHSM2_CONF",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
-        "MCPS_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcps_proxy_ext",  # keep
-        "//mcps-core:mcps_core",
-        # #220 (ADR-048): the e2e mints a CA/leaf + rustls config to drive a real
-        # mTLS handshake against the PKCS#11 signer; these test deps match Cargo.toml.
-        "@crates_mcps//:rcgen",
-        "@crates_mcps//:rustls",
-        "@crates_mcps//:rustls-pki-types",
-        "@crates_mcps//:serde_json",
     ],
 )
 

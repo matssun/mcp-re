@@ -101,13 +101,6 @@ rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"]
 # OPTIONAL/feature- or target-gated so the DEFAULT (Mac dev) closure is unchanged
 # and stays lean (ADR-MCPS-018). All SYNC — the proxy is a blocking serve loop
 # (ADR-MCPS-014), so no async runtime is pulled in.
-# HSM/KMS key custody via standard PKCS#11 (vendor-neutral; tested against
-# an INDEPENDENT SoftHSM2 token — never the host security system). We bind the
-# RAW FFI crate `cryptoki-sys` (libloading only) and own a small safe wrapper in
-# mcps-proxy/src/pkcs11_native.rs, rather than the high-level `cryptoki` crate
-# which transitively pulls the UNMAINTAINED `paste` (RUSTSEC-2024-0436) and fails
-# the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
-cryptoki-sys = "0.1.8"
 # Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
 redis = { version = "0.27", default-features = false }
 # Online OCSP/CRL revocation: x509-ocsp = pure-Rust ASN.1 OCSP req/resp

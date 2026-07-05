@@ -9,6 +9,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
+## [Unreleased]
+
+### Removed
+
+- **On-prem PKCS#11 / HSM key custody.** Removed the `pkcs11_keysource` cargo
+  feature, `Pkcs11KeySource`, the `cryptoki-sys` binding + `pkcs11_native.rs` FFI
+  wrapper, the `--key-source pkcs11` / `--pkcs11-*` CLI flags, and the
+  SoftHSM2-backed live e2e lane. MCP-S does not claim on-prem PKCS#11/HSM custody
+  as a product capability — no PRD or ratified ADR authorized it and it was off by
+  default. Non-exporting key custody remains available via the native cloud-KMS
+  backends (`aws_kms_keysource` / `gcp_kms_keysource`, ADR-MCPS-028); response
+  signing and TLS are unaffected. See the removal amendments in ADR-MCPS-019 and
+  ADR-MCPS-028.
+
 ## [0.10.0] — 2026-07-04
 
 **Mode C — attested ingress.** v0.10 adds the second strict-mode ingress posture:

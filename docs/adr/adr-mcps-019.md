@@ -9,6 +9,15 @@ monorepo (referenced inline in `Cargo.toml` and source comments). Recorded here
 for completeness; expected to be ratified and published as a full ADR in a
 future revision of this repository.
 
+**Amendment (2026-07-05): PKCS#11 backend removed.** The on-prem PKCS#11/HSM key
+custody backend (`pkcs11_keysource` feature, `cryptoki-sys`, `Pkcs11KeySource`,
+`pkcs11_native.rs`) and its SoftHSM2 test fixture were removed. MCP-S does not
+claim on-prem HSM custody as a product capability — no PRD or ratified decision
+ever authorized it, and the code was off by default. Non-exporting key custody is
+delivered via the cloud-KMS backends (AWS KMS / GCP Cloud KMS, ADR-MCPS-028).
+References to PKCS#11 in the sections below are superseded by this amendment and
+retained only as the historical Phase-7 record.
+
 ## Context
 
 Phase 7 introduced the three high-assurance external-backend integrations the
@@ -23,9 +32,10 @@ dependency graph is reproducible from a single `Cargo.lock`.
 
 The three Phase 7 backends are:
 
-1. **HSM/KMS key custody via standard PKCS#11** (`pkcs11_keysource` feature,
-   `cryptoki-sys` crate). Vendor-neutral PKCS#11 binding; tested against
-   independent SoftHSM2 token.
+1. ~~**HSM/KMS key custody via standard PKCS#11**~~ **— REMOVED 2026-07-05 (see
+   the Status amendment).** The `pkcs11_keysource` feature and `cryptoki-sys`
+   binding were removed; non-exporting key custody is provided by the cloud-KMS
+   backends (AWS KMS / GCP Cloud KMS, ADR-MCPS-028) instead.
 2. **Shared atomic ReplayCache** via Redis (`redis_replay` feature, `redis`
    crate, `default-features = false`, sync-only, no async runtime). Server-side
    atomic insert-if-absent with a real-clock TTL window (see audit-v0.2
@@ -36,7 +46,7 @@ The three Phase 7 backends are:
    audit-v0.2 Critical findings C-1…C-4 and High findings H-2…H-7).
 
 Each backend is `#[cfg(feature = "...")]`-gated so a build without the feature
-links no Redis / no PKCS#11 / no OCSP code at all. A CI guard
+links no Redis / no OCSP code at all. A CI guard
 (`lean-closure job`) uses `bazel cquery` to enforce this for the default
 `mcps_proxy` binary.
 
@@ -47,12 +57,13 @@ and is excluded from non-Linux builds entirely.
 ## Compliance and Enforcement
 
 - Lean-closure CI guard asserts the default `mcps_proxy` binary does not pull
-  in `redis`, `cryptoki-sys`, `x509-ocsp`, `landlock`, or `seccompiler`.
+  in `redis`, `x509-ocsp`, `landlock`, or `seccompiler`.
 - The `mcps_proxy_ext` production artifact enables `redis_replay`,
-  `pkcs11_keysource`, `online_ocsp` together and is the only binary expected
-  to be deployed in a multi-node or HSM-backed configuration.
+  `online_ocsp` (and the cloud-KMS custody features, ADR-MCPS-028) together and
+  is the only binary expected to be deployed in a multi-node or KMS-backed
+  configuration.
 - Source references: `Cargo.toml` Phase 7 dependency block; `mcps-proxy/src/`
-  modules `ocsp.rs`, `redis_store.rs`, `pkcs11_keysource.rs`, `sandbox_linux.rs`.
+  modules `ocsp.rs`, `redis_store.rs`, `sandbox_linux.rs`.
 
 ## Related
 

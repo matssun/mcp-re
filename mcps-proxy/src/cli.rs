@@ -46,18 +46,12 @@ pub enum KeySourceKind {
     File,
     /// Environment variables (locations are variable names).
     Env,
-    /// PKCS#11 token (issue #4034): the Ed25519 response-signing key lives on a
-    /// hardware/software token and is exercised only via `C_Sign` — it never
-    /// leaves the device. The TLS cert/key/CA still come from files in this
-    /// build. Honored ONLY in a build with the `pkcs11_keysource` feature; a
-    /// default build parses it but FAILS CLOSED at construction (mirrors `Env`).
-    Pkcs11,
     /// AWS KMS (ADR-MCPS-028 §B): the Ed25519 response-signing key lives in AWS KMS
     /// and is exercised only via `Sign` — it never leaves KMS. The TLS cert/key/CA
     /// still come from files in this build (`--signing-key-seed` is accepted but
-    /// UNUSED, as with `Pkcs11`). Credentials come from the standard AWS env vars.
+    /// UNUSED). Credentials come from the standard AWS env vars.
     /// Honored ONLY in a build with the `aws_kms_keysource` feature; a default build
-    /// parses it but FAILS CLOSED at construction (mirrors `Pkcs11`).
+    /// parses it but FAILS CLOSED at construction (mirrors `Env`).
     AwsKms,
     /// GCP Cloud KMS (ADR-MCPS-028 §C): the Ed25519 response-signing key lives in
     /// Cloud KMS and is exercised only via `asymmetricSign`. TLS material is from
@@ -354,26 +348,6 @@ pub struct Config {
     /// production authority. Mirrors `allow_env_keysource` — when set it is also a
     /// strict-production violation.
     pub allow_reference_authz: bool,
-    /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
-    /// `key_source == Pkcs11` (issue #4034).
-    pub pkcs11_module: Option<String>,
-    /// PKCS#11 token User PIN (SENSITIVE). Required when `key_source == Pkcs11`.
-    pub pkcs11_pin: Option<String>,
-    /// PKCS#11 token label selecting the slot whose token holds the signing key
-    /// (token labels are stable across reboots; slot ids are not). Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_token_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 signing-key object on the token. Required when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_key_label: Option<String>,
-    /// CKA_LABEL of the Ed25519 TLS-key object on the token (issue #59,
-    /// ADR-MCPS-028 §G). OPTIONAL and independent of `pkcs11_key_label` — a separate
-    /// security principal. When `Some`, the TLS handshake is DELEGATED to the
-    /// token-resident TLS key (the TLS private key never leaves the device) and an
-    /// exported `--tls-key` is rejected by [`validate_tls_signing_exclusivity`].
-    /// `None` keeps the file-backed TLS path (issue #4034). Only meaningful when
-    /// `key_source == Pkcs11`.
-    pub pkcs11_tls_key_label: Option<String>,
     /// AWS region for the AWS KMS key source. Required when `key_source == AwsKms`
     /// (ADR-MCPS-028 §B).
     pub aws_kms_region: Option<String>,
@@ -484,11 +458,6 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--expected-version-policy",
     "--key-source",
     "--inner-session",
-    "--pkcs11-module",
-    "--pkcs11-pin",
-    "--pkcs11-token-label",
-    "--pkcs11-key-label",
-    "--pkcs11-tls-key-label",
     // ADR-MCPS-028 §B/§C: cloud-KMS response-signing key sources.
     "--aws-kms-region",
     "--aws-kms-key-id",
@@ -620,15 +589,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // for the one-shot-shaped fileserver); persistent fronts a long-lived server.
     let mut inner_mode = InnerModeKind::OneShot;
     let mut allow_env_keysource = false;
-    // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
-    // and signing-key object label. Required only when `--key-source pkcs11`.
-    let mut pkcs11_module: Option<String> = None;
-    let mut pkcs11_pin: Option<String> = None;
-    let mut pkcs11_token_label: Option<String> = None;
-    let mut pkcs11_key_label: Option<String> = None;
-    // #59 PKCS#11 delegated TLS: optional SECOND token object holding the Ed25519
-    // TLS key. When set, TLS signing is delegated to the token (no exported key).
-    let mut pkcs11_tls_key_label: Option<String> = None;
     // ADR-MCPS-028 §B AWS KMS: region + key id required when `--key-source aws-kms`;
     // endpoint optional (emulator). Credentials come from AWS_* env vars.
     let mut aws_kms_region: Option<String> = None;
@@ -775,23 +735,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 key_source = match value.as_str() {
                     "file" => KeySourceKind::File,
                     "env" => KeySourceKind::Env,
-                    "pkcs11" => KeySourceKind::Pkcs11,
                     "aws-kms" => KeySourceKind::AwsKms,
                     "gcp-kms" => KeySourceKind::GcpKms,
                     other => {
                         return Err(format!(
-                            "unknown --key-source '{other}' (file|env|pkcs11|aws-kms|gcp-kms)"
+                            "unknown --key-source '{other}' (file|env|aws-kms|gcp-kms)"
                         ))
                     }
                 }
             }
-            // #4034 PKCS#11 key source. `--pkcs11-pin` is SENSITIVE: prefer a
-            // mechanism that keeps it off the argv visible via `ps`/`/proc`.
-            "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            "--pkcs11-pin" => pkcs11_pin = Some(value.clone()),
-            "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
-            "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
-            "--pkcs11-tls-key-label" => pkcs11_tls_key_label = Some(value.clone()),
             // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
             "--aws-kms-region" => aws_kms_region = Some(value.clone()),
             "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
@@ -1252,33 +1204,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 .to_string(),
         );
     }
-    // #4034 PKCS#11 key source: the module path, User PIN, token label, and
-    // signing-key object label are all required when this source is selected.
-    // Each is checked here (not in build_key_source) so a missing flag is a clear
-    // parse error regardless of which feature the binary was built with.
-    if key_source == KeySourceKind::Pkcs11 {
-        if pkcs11_module.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
-        }
-        if pkcs11_pin.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-pin <pin>".to_string());
-        }
-        if pkcs11_token_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
-        }
-        if pkcs11_key_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
-        }
-    }
-    // #59: the TLS-key label selects the SEPARATE token object that custodies the
-    // TLS key. It only has meaning for the PKCS#11 source; a dangling label on any
-    // other source would silently do nothing (a false belief that the TLS key is
-    // token-resident), so reject it (fail closed).
-    if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
-        return Err(
-            "--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string(),
-        );
-    }
     // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
     // selected (credentials come from AWS_* env vars; the endpoint is optional).
     // Checked here so a missing flag is a clear parse error regardless of feature.
@@ -1295,7 +1220,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #60: the TLS-key id selects the SEPARATE KMS key that custodies the TLS key.
     // It only has meaning for the AWS KMS source; a dangling id on any other source
     // would silently do nothing (a false belief that the TLS key is KMS-resident),
-    // so reject it (fail closed) — mirrors the `--pkcs11-tls-key-label` guard.
+    // so reject it (fail closed).
     if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
         return Err(
             "--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string(),
@@ -1313,7 +1238,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // custodies the TLS key. It only has meaning for the GCP KMS source; a dangling
     // version on any other source would silently do nothing (a false belief that the
     // TLS key is KMS-resident), so reject it (fail closed) — mirrors the
-    // `--aws-kms-tls-key-id` / `--pkcs11-tls-key-label` guards.
+    // `--aws-kms-tls-key-id` guard.
     if gcp_kms_tls_key_version.is_some() && key_source != KeySourceKind::GcpKms {
         return Err(
             "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms".to_string(),
@@ -1541,16 +1466,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         );
     }
 
-    // ADR-MCPS-028 §G / issue #58+#59+#60+#61: a source's TLS key is EITHER delegated
-    // to a non-exporting device/KMS XOR exported from a file — never both. The
-    // delegated selectors are `--pkcs11-tls-key-label` (#59, token-resident),
-    // `--aws-kms-tls-key-id` (#60, AWS-KMS-resident) and `--gcp-kms-tls-key-version`
-    // (#61, Cloud-KMS-resident); any makes the TLS key non-exporting, so an exported
-    // `--tls-key` alongside it is contradictory (the operator would believe the key
-    // never leaves the device while a file copy also exists) and fails closed here,
-    // before the proxy is constructed.
-    let has_delegated_tls = pkcs11_tls_key_label.is_some()
-        || aws_kms_tls_key_id.is_some()
+    // ADR-MCPS-028 §G / issue #58+#60+#61: a source's TLS key is EITHER delegated
+    // to a non-exporting KMS XOR exported from a file — never both. The delegated
+    // selectors are `--aws-kms-tls-key-id` (#60, AWS-KMS-resident) and
+    // `--gcp-kms-tls-key-version` (#61, Cloud-KMS-resident); either makes the TLS
+    // key non-exporting, so an exported `--tls-key` alongside it is contradictory
+    // (the operator would believe the key never leaves the device while a file copy
+    // also exists) and fails closed here, before the proxy is constructed.
+    let has_delegated_tls = aws_kms_tls_key_id.is_some()
         || gcp_kms_tls_key_version.is_some();
     let has_exported_tls_key = tls_key.is_some();
     validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key)?;
@@ -1622,11 +1545,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         allow_reference_authz,
         inner_mode,
         allow_env_keysource,
-        pkcs11_module,
-        pkcs11_pin,
-        pkcs11_token_label,
-        pkcs11_key_label,
-        pkcs11_tls_key_label,
         aws_kms_region,
         aws_kms_key_id,
         aws_kms_endpoint,
@@ -2199,43 +2117,6 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError>
              --features dev_env_key_source (production must use --key-source file)"
                 .to_string(),
         )),
-        // #4034 PKCS#11 token-backed source. `parse_args` already guaranteed the
-        // four pkcs11 flags are present when this kind is selected, so unwrapping
-        // them here cannot be reached with a `None`; surface a clear error rather
-        // than panicking if that invariant is ever violated.
-        #[cfg(feature = "pkcs11_keysource")]
-        KeySourceKind::Pkcs11 => {
-            let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
-                opt.clone()
-                    .ok_or_else(|| KeyError::NotFound(format!("--key-source pkcs11 requires {flag}")))
-            };
-            let module = require(&config.pkcs11_module, "--pkcs11-module")?;
-            let pin = require(&config.pkcs11_pin, "--pkcs11-pin")?;
-            let token_label = require(&config.pkcs11_token_label, "--pkcs11-token-label")?;
-            let key_label = require(&config.pkcs11_key_label, "--pkcs11-key-label")?;
-            // #59: an optional SECOND token object holds the Ed25519 TLS key. When
-            // present, `open` builds the delegated TLS signer and the proxy never
-            // reads `--tls-key` from disk (the exclusivity guard already forbade it).
-            Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
-                &module,
-                &pin,
-                &token_label,
-                &key_label,
-                &config.tls_cert,
-                &config.tls_key,
-                &config.client_ca,
-                config.pkcs11_tls_key_label.as_deref(),
-            )?))
-        }
-        // Default build: the PKCS#11 backend is not compiled, so `--key-source
-        // pkcs11` FAILS CLOSED here (mirrors the env-keysource gate). The flag
-        // still PARSES so the message is precise; no token-backed key is built.
-        #[cfg(not(feature = "pkcs11_keysource"))]
-        KeySourceKind::Pkcs11 => Err(KeyError::NotFound(
-            "pkcs11 key source requires the pkcs11_keysource feature (build with \
-             --features pkcs11_keysource); not available in this build"
-                .to_string(),
-        )),
         // ADR-MCPS-028 §B: AWS KMS object-signing key, TLS material from files. The
         // response-signing key never leaves KMS. `parse_args` guaranteed region +
         // key id are present; surface a clear error rather than panic if not.
@@ -2288,7 +2169,7 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError>
             }
         }
         // Default build: the AWS KMS backend is not compiled, so `--key-source
-        // aws-kms` FAILS CLOSED here (mirrors the pkcs11 gate). The flag still PARSES.
+        // aws-kms` FAILS CLOSED here (mirrors the env-keysource gate). The flag still PARSES.
         #[cfg(not(feature = "aws_kms_keysource"))]
         KeySourceKind::AwsKms => Err(KeyError::NotFound(
             "aws-kms key source requires the aws_kms_keysource feature (build with \
@@ -4119,87 +4000,12 @@ mod tests {
         );
     }
 
-    // --- #4034 PKCS#11 key source (CLI parsing + fail-closed gate) -----------
-
-    /// The four pkcs11 flags that `--key-source pkcs11` requires.
-    fn pkcs11_flags() -> Vec<String> {
-        args(&[
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/usr/lib/softhsm/libsofthsm2.so",
-            "--pkcs11-pin", "1234",
-            "--pkcs11-token-label", "mcps-test",
-            "--pkcs11-key-label", "mcps-response-signing",
-        ])
-    }
-
     #[test]
-    fn parses_pkcs11_key_source_flags() {
-        let mut a = minimal();
-        a.splice(0..0, pkcs11_flags());
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Pkcs11);
-        assert_eq!(
-            config.pkcs11_module.as_deref(),
-            Some("/usr/lib/softhsm/libsofthsm2.so")
-        );
-        assert_eq!(config.pkcs11_pin.as_deref(), Some("1234"));
-        assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcps-test"));
-        assert_eq!(
-            config.pkcs11_key_label.as_deref(),
-            Some("mcps-response-signing")
-        );
-    }
-
-    #[test]
-    fn pkcs11_key_source_requires_each_flag() {
-        // Drop one required flag at a time; each omission is a clear parse error
-        // naming the missing flag. (File/env arms are unchanged: --signing-key-seed
-        // and the TLS paths are supplied by `minimal()`.)
-        for missing in [
-            "--pkcs11-module",
-            "--pkcs11-pin",
-            "--pkcs11-token-label",
-            "--pkcs11-key-label",
-        ] {
-            let mut flags = pkcs11_flags();
-            // Remove the flag and its value.
-            let idx = flags.iter().position(|f| f == missing).expect("flag present");
-            flags.drain(idx..idx + 2);
-            let mut a = minimal();
-            a.splice(0..0, flags);
-            let err = parse_args(&a).unwrap_err();
-            assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
-        }
-    }
-
-    #[test]
-    fn unknown_key_source_lists_pkcs11() {
+    fn unknown_key_source_lists_valid_kinds() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "yubikey"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("file|env|pkcs11"), "got: {err}");
-    }
-
-    // In a DEFAULT build (no `pkcs11_keysource` feature) the PKCS#11 backend is
-    // not compiled and `build_key_source` must FAIL CLOSED on
-    // `KeySourceKind::Pkcs11` with a clear, actionable error — `--key-source
-    // pkcs11` still parses so the message is precise, but no token-backed key is
-    // built. Mirrors `default_build_rejects_env_key_source`.
-    #[cfg(not(feature = "pkcs11_keysource"))]
-    #[test]
-    fn default_build_rejects_pkcs11_key_source() {
-        let mut a = minimal();
-        a.splice(0..0, pkcs11_flags());
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Pkcs11);
-        let err = super::build_key_source(&config)
-            .err()
-            .expect("default build must refuse a pkcs11 key source");
-        let rendered = err.to_string();
-        assert!(
-            rendered.contains("pkcs11_keysource") && rendered.contains("not available in this build"),
-            "expected a clear feature-rebuild message; got: {rendered}"
-        );
+        assert!(err.contains("file|env|aws-kms|gcp-kms"), "got: {err}");
     }
 
     // MCPS-076: the File key source is always constructible (default + dev builds).
@@ -4443,7 +4249,7 @@ mod tests {
     }
 
     // Default build (no cloud-KMS feature): the flags PARSE so the message is
-    // precise, but `build_key_source` FAILS CLOSED — mirrors the pkcs11 gate.
+    // precise, but `build_key_source` FAILS CLOSED — mirrors the env-keysource gate.
     #[cfg(not(feature = "aws_kms_keysource"))]
     #[test]
     fn default_build_rejects_aws_kms_key_source() {
@@ -6375,130 +6181,6 @@ mod tests {
         assert!(
             err.contains("delegated XOR exported"),
             "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
-    /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no
-    /// `--inner-command`). Tests append the #59 toggles and then `--inner-command`
-    /// LAST, so any proxy flag lands BEFORE the inner-command tail (the tail scan
-    /// would otherwise — correctly — reject a proxy flag placed after it).
-    fn pkcs11_lead_no_tls_key() -> Vec<String> {
-        args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
-            "--pkcs11-pin", "1234",
-            "--pkcs11-token-label", "mcps-test",
-            "--pkcs11-key-label", "mcps-response-signing",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-        ])
-    }
-
-    fn with_inner_command(mut a: Vec<String>) -> Vec<String> {
-        a.push("--inner-command".to_string());
-        a.push("my-server".to_string());
-        a
-    }
-
-    /// #59: with `--pkcs11-tls-key-label`, the TLS handshake is DELEGATED to the
-    /// token, so `--tls-key` is NOT required (it must not be read from disk) — the
-    /// config parses and carries the TLS label.
-    #[test]
-    fn pkcs11_tls_label_makes_tls_key_optional() {
-        let mut a = pkcs11_lead_no_tls_key();
-        a.push("--pkcs11-tls-key-label".to_string());
-        a.push("mcps-tls".to_string());
-        let config = parse_args(&with_inner_command(a))
-            .expect("delegated TLS path parses without --tls-key");
-        assert_eq!(config.pkcs11_tls_key_label.as_deref(), Some("mcps-tls"));
-        assert_eq!(config.key_source, super::KeySourceKind::Pkcs11);
-    }
-
-    /// #59 / #58: `--pkcs11-tls-key-label` (delegated) PLUS an exported `--tls-key`
-    /// is contradictory and fails closed via the XOR exclusivity guard.
-    #[test]
-    fn pkcs11_tls_label_with_exported_tls_key_is_rejected() {
-        let mut a = pkcs11_lead_no_tls_key();
-        a.push("--pkcs11-tls-key-label".to_string());
-        a.push("mcps-tls".to_string());
-        a.push("--tls-key".to_string());
-        a.push("/exported-key".to_string());
-        let err = parse_args(&with_inner_command(a))
-            .expect_err("delegated + exported TLS key must be rejected");
-        assert!(
-            err.contains("delegated XOR exported"),
-            "the rejection must name the XOR rule, got: {err}"
-        );
-    }
-
-    /// #59: the TLS-key label only has meaning for the PKCS#11 source. A dangling
-    /// `--pkcs11-tls-key-label` on a file source would silently do nothing (a false
-    /// belief the TLS key is token-resident), so it fails closed.
-    #[test]
-    fn pkcs11_tls_label_without_pkcs11_source_is_rejected() {
-        let a = args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--signing-key-seed", "/seed",
-            "--tls-cert", "/cert",
-            "--tls-key", "/key",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--pkcs11-tls-key-label", "mcps-tls",
-            "--inner-command", "my-server",
-        ]);
-        let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
-        assert!(
-            err.contains("--pkcs11-tls-key-label has no effect without --key-source pkcs11"),
-            "got: {err}"
-        );
-    }
-
-    /// #59: without a TLS-key label the PKCS#11 source keeps the exported-TLS-key
-    /// path, so `--tls-key` is STILL required (no silent fallback to a delegated
-    /// path that was not requested).
-    #[test]
-    fn pkcs11_without_tls_label_still_requires_tls_key() {
-        let err = parse_args(&with_inner_command(pkcs11_lead_no_tls_key()))
-            .expect_err("non-delegated pkcs11 must still require --tls-key");
-        assert!(err.contains("--tls-key"), "got: {err}");
-    }
-
-    /// #59: a misplaced `--pkcs11-tls-key-label` AFTER `--inner-command` is caught by
-    /// the known-proxy-flag tail scan (it would otherwise be silently swallowed into
-    /// the inner server's argv, dropping the delegated-TLS control).
-    #[test]
-    fn pkcs11_tls_label_after_inner_command_is_rejected() {
-        // Build argv with the label deliberately placed AFTER --inner-command.
-        let a = args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
-            "--pkcs11-pin", "1234",
-            "--pkcs11-token-label", "mcps-test",
-            "--pkcs11-key-label", "mcps-response-signing",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--inner-command", "my-server",
-            "--pkcs11-tls-key-label", "mcps-tls",
-        ]);
-        let err = parse_args(&a).expect_err("a proxy flag after --inner-command must be rejected");
-        assert!(
-            err.contains("--pkcs11-tls-key-label") && err.contains("AFTER --inner-command"),
-            "got: {err}"
         );
     }
 

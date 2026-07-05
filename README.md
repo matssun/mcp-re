@@ -154,21 +154,24 @@ Build with:
 cargo build --release -p mcps-proxy
 ```
 
-### High-assurance profile (`--features pkcs11_keysource,redis_replay,online_ocsp`)
+### High-assurance profile (`--features redis_replay,online_ocsp`)
 
-Enables the three high-assurance backends:
+Enables the high-assurance backends:
 
 - **distributed replay protection** via a shared atomic Redis ReplayCache
   (`redis_replay`);
-- **HSM/KMS-backed key custody** via a PKCS#11 key source (`pkcs11_keysource`);
 - **online certificate revocation** via OCSP (`online_ocsp`), alongside the
   offline CRL path available in both flavors.
+
+For non-exporting key custody — the response-signing / TLS key never leaving the
+device — add a **cloud-KMS** backend: AWS KMS (`aws_kms_keysource`) or GCP Cloud
+KMS (`gcp_kms_keysource`); see the deployment guides.
 
 Build with:
 
 ```sh
 cargo build --release -p mcps-proxy \
-    --features pkcs11_keysource,redis_replay,online_ocsp
+    --features redis_replay,online_ocsp
 ```
 
 **Multi-node MCP-S deployments MUST use the high-assurance profile** with
@@ -188,10 +191,10 @@ The current implementation does not claim:
   "no-submodule, lockfile-reproducible with network access to crates.io", not
   offline-hermetic).
 
-Horizontal-scale replay protection, HSM/KMS-backed key custody, full CRL/OCSP
+Horizontal-scale replay protection, cloud-KMS-backed key custody, full CRL/OCSP
 certificate revocation, OS-level sandboxing of wrapped servers, and signed
-tool-manifest enforcement are gated on the
-`pkcs11_keysource,redis_replay,online_ocsp` cargo features (see Deployment
+tool-manifest enforcement are gated on the `redis_replay,online_ocsp` (and the
+`aws_kms_keysource` / `gcp_kms_keysource` custody) cargo features (see Deployment
 profiles); they are **not** linked into the lean default build and must not be
 implied for it.
 

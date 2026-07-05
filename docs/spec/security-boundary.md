@@ -329,8 +329,8 @@ Accepted); supported tiers implemented ✅; this composition section signed ✅;
 conformance manifest lists the tiers + tests ✅ (`drift_guard_test` green); claim
 matrix states allowed/forbidden per tier ✅; **CI green** ✅ — `.github/workflows/ci.yml`
 (blocking `cargo build`/`cargo test --workspace` + feature-gated backend job) and
-the nightly `live-infra-e2e` lane (Redis primary+replica, SoftHSM2 PKCS#11, OpenSSL
-OCSP) are green on `main`. The v0.3 multi-node claim is **active** as of 2026-06-15.
+the nightly `live-infra-e2e` lane (Redis primary+replica, OpenSSL OCSP) are green
+on `main`. The v0.3 multi-node claim is **active** as of 2026-06-15.
 
 ---
 
