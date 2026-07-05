@@ -9,7 +9,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
 
-## [Unreleased]
+## [0.10.1] — 2026-07-05
+
+Horizontally-scaled fleet deployment posture (ADR-MCPS-049) — lifting the
+single-node ceiling over proven cross-replica coherence — plus a hermetic PKCS#11
+test provider. No wire-envelope or public-API changes; the frozen v0.3 envelope is
+unchanged.
+
+### Added
+
+- **Horizontally-scaled fleet posture (ADR-MCPS-049).** MCP-S may now run as N
+  identical replicas behind a load balancer without weakening any security claim,
+  gated behind an explicit `--fleet` flag (orthogonal to `--strict`):
+  - `--fleet` rejects node-local replay caches — a replica must use a shared,
+    cross-replica ReplayCache (Redis) so a nonce a second verifier could accept is
+    never silently allowed (MCPS-79).
+  - `--inner-session` self-declared statefulness field, so a stateful inner server
+    is pinned/handled correctly under fan-out (MCPS-83).
+  - Redis-backed trust-epoch invalidation source for the ADR-021 Push tier, so a
+    revocation propagates across replicas (MCPS-84), with per-tier cross-replica
+    revocation-lag bounds (MCPS-85).
+  - Graceful `SIGTERM`/`SIGINT` shutdown for rolling fleet deploys (MCPS-88).
+  - Cross-replica replay- and trust-revocation-coherence e2e proofs
+    (MCPS-80/81/86) and a fleet PEP throughput / added-latency benchmark harness
+    (MCPS-89).
+  - Kubernetes/Helm fleet deployment reference + guide (MCPS-87).
 
 ### Changed
 
