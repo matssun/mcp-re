@@ -199,6 +199,7 @@ jobs:
           --test redis_replay_e2e_test
           --test fleet_replay_e2e_test
           --test redis_trust_epoch_e2e_test
+          --test fleet_trust_epoch_e2e_test
           --test pkcs11_keysource_e2e_test
           --test ocsp_e2e_test
 
