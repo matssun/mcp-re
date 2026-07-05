@@ -9,9 +9,10 @@
 //! `cryptoki-sys` FFI bindings — the high-level `cryptoki` crate was dropped
 //! because it transitively pulled the UNMAINTAINED `paste` crate
 //! (RUSTSEC-2024-0436). It references NO host security system — it is tested
-//! against an INDEPENDENT [SoftHSM2] token (see
-//! `tests/pkcs11_keysource_e2e_test.rs` for the `softhsm2-util` provisioning
-//! commands).
+//! against an in-tree mock PKCS#11 provider (see
+//! `tests/pkcs11_keysource_e2e_test.rs`, which builds and loads a hermetic
+//! `cdylib` implementing exactly the Cryptoki surface this source calls — no
+//! external token or tooling required).
 //!
 //! The private key is located ON the token by label and used ONLY via `C_Sign`
 //! with `CKM_EDDSA`; the 64-byte raw Ed25519 signature comes back from the
@@ -41,8 +42,6 @@
 //! This entire module compiles ONLY under the non-default `pkcs11_keysource`
 //! cargo feature, so a default build is byte-for-byte unchanged and gains zero
 //! dependencies.
-//!
-//! [SoftHSM2]: https://github.com/opendnssec/SoftHSMv2
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -100,7 +99,7 @@ enum SessionOpError {
 /// Open a fresh logged-in session of type `S`. Implemented for the real
 /// [`Pkcs11KeySource`] (opens a Cryptoki R/W session + `C_Login`) and, in tests,
 /// by a counting fake — so the amortization decision is provable WITHOUT a live
-/// token (no SoftHSM dependency for the unit proof).
+/// token (no PKCS#11 provider dependency for the unit proof).
 trait LoginSessionFactory {
     /// The session handle type this factory produces.
     type Session;
@@ -917,7 +916,7 @@ mod tests {
 
     /// A counting [`LoginSessionFactory`] fake: every `open_logged_in` is one
     /// "login" (incrementing `logins`), modelling the per-operation `C_Login` the
-    /// M16 amortization must eliminate. No SoftHSM, no PKCS#11 — runs everywhere.
+    /// M16 amortization must eliminate. No provider, no live token — runs everywhere.
     struct CountingFactory {
         /// Total logins performed (each `open_logged_in` call).
         logins: Cell<u32>,
@@ -948,7 +947,7 @@ mod tests {
         }
     }
 
-    /// M16 — the load-bearing proof, runs EVERYWHERE (no SoftHSM): driving the sign
+    /// M16 — the load-bearing proof, runs EVERYWHERE (no live token): driving the sign
     /// path N times through the amortized session performs FAR FEWER than N logins.
     /// With the per-operation-login bug this would be N logins; with amortization it
     /// is exactly one (first use), and every op observes the SAME reused session.

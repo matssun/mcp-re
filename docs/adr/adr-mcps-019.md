@@ -24,8 +24,8 @@ dependency graph is reproducible from a single `Cargo.lock`.
 The three Phase 7 backends are:
 
 1. **HSM/KMS key custody via standard PKCS#11** (`pkcs11_keysource` feature,
-   `cryptoki-sys` crate). Vendor-neutral PKCS#11 binding; tested against
-   independent SoftHSM2 token.
+   `cryptoki-sys` crate). Vendor-neutral PKCS#11 binding; tested against an
+   in-tree mock PKCS#11 provider (hermetic `cdylib`, no external token).
 2. **Shared atomic ReplayCache** via Redis (`redis_replay` feature, `redis`
    crate, `default-features = false`, sync-only, no async runtime). Server-side
    atomic insert-if-absent with a real-clock TTL window (see audit-v0.2

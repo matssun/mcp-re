@@ -796,8 +796,10 @@ nt_rust_test(
     ],
 )
 
-# #4034: PKCS#11 sign+verify against an INDEPENDENT SoftHSM2 token. Self-skips
-# unless MCPS_TEST_PKCS11_MODULE (+ PIN/TOKEN_LABEL/KEY_LABEL) is set.
+# #4034: PKCS#11 sign+verify against a HERMETIC in-tree mock provider
+# (tests/mock-pkcs11). Under `cargo` the test builds + loads the mock and RUNS for
+# real; under the Bazel sandbox (no `cargo`) it self-skips. The mock is not a Bazel
+# target — it is built on demand by the test — so no extra srcs/deps are wired here.
 nt_rust_test(
     name = "pkcs11_keysource_e2e_test",
     srcs = ["tests/pkcs11_keysource_e2e_test.rs"],
@@ -806,14 +808,7 @@ nt_rust_test(
     crate_features = _PROXY_EXT_FEATURES,
     edition = "2021",
     env_inherit = [
-        "MCPS_TEST_PKCS11_MODULE",
-        "MCPS_TEST_PKCS11_PIN",
-        "MCPS_TEST_PKCS11_TOKEN_LABEL",
-        "MCPS_TEST_PKCS11_KEY_LABEL",
-        # SoftHSM2 reads its token store location from SOFTHSM2_CONF; inherited so
-        # the e2e can be pointed at a SCRATCH token directory (never a host store).
-        "SOFTHSM2_CONF",
-        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        # CI opt-in: when set, a missing-mock SKIP HARD-FAILS instead of passing.
         "MCPS_REQUIRE_LIVE_INFRA",
     ],
     deps = [

@@ -27,9 +27,10 @@ MCP-S signs every response with Ed25519 over the canonical JCS preimage, **direc
 backend drive the full response-signing path without ever surrendering the private
 key: `sign_response(preimage) -> Base64URL-no-pad(sig)` + `response_public_key() ->
 VerificationKey`. `Pkcs11KeySource` implements this against any PKCS#11 token
-(SoftHSM2 in CI; equally AWS CloudHSM, GCP via its PKCS#11 library, Azure Managed
-HSM, Luna/Thales, YubiHSM). So HSM custody — the response-signing key never leaving
-the device — is **already delivered and live-tested** via the generic PKCS#11 path.
+(a hermetic in-tree mock provider in CI; equally AWS CloudHSM, GCP via its PKCS#11
+library, Azure Managed HSM, Luna/Thales, YubiHSM). So HSM custody — the response-signing
+key never leaving the device — is **implemented and e2e-tested** via the generic PKCS#11
+path; end-to-end coverage against a specific hardware device is wired in per-deployment.
 
 What is missing is **native managed-KMS** custody for operators who use a cloud
 KMS's own REST API rather than a PKCS#11 endpoint.
@@ -170,7 +171,7 @@ trait; no internal specifics enter this repo.
 
 ## Verification (no-gaming)
 
-Per the live-infra-lane discipline already used for Redis / SoftHSM2 / OCSP, each
+Per the live-infra-lane discipline already used for Redis / OCSP, each
 adapter is proven by a black-box live test under `MCPS_REQUIRE_LIVE_INFRA=1`:
 
 - **AWS** — LocalStack KMS emulator in CI (creates an `ECC_NIST_EDWARDS25519` key);

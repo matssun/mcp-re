@@ -1,55 +1,31 @@
-//! Black-box end-to-end test for the PKCS#11-backed response signer (issue
-//! #4034), exercised against an INDEPENDENT SoftHSM2 token.
+//! Black-box end-to-end test for the PKCS#11-backed response signer + delegated
+//! TLS signer (issue #4034 / issue #59), exercised against a HERMETIC in-tree MOCK
+//! PKCS#11 provider (`tests/mock-pkcs11/`).
 //!
-//! This proves the real device path: open a token, sign a preimage with the
-//! Ed25519 key that NEVER leaves the token (`CKM_EDDSA` / `C_Sign`), then verify
-//! the returned signature against the token's exported public key using
-//! `mcps_core`'s ordinary verifier — exactly what a relying party does. It also
-//! proves a tampered preimage does NOT verify.
+//! This proves the real device path with NO external token or tooling: the test
+//! builds the mock `cdylib`, points the PKCS#11 client at it, and drives the full
+//! Cryptoki surface (`C_Initialize` … `C_Sign` (`CKM_EDDSA`) … `C_GetAttributeValue`
+//! (`CKA_EC_POINT`)). The mock holds deterministic in-memory Ed25519 keys, so a
+//! signature it produces verifies under the public point it exports — exactly what a
+//! relying party checks. Because the mock is a real, dynamically-loaded PKCS#11
+//! module, the client's libloading / function-list / FFI dispatch is genuinely
+//! exercised; only the token is a controllable fake.
 //!
-//! # Environment gating
-//! The test runs ONLY when `MCPS_TEST_PKCS11_MODULE` is set; otherwise it prints
-//! a skip notice and returns success (not every environment has SoftHSM2
-//! provisioned, and this build does not bundle a token). When run, it reads:
-//!   * `MCPS_TEST_PKCS11_MODULE`      — path to the PKCS#11 provider module
-//!     (e.g. `/usr/lib/softhsm/libsofthsm2.so` or
-//!     `/opt/homebrew/lib/softhsm/libsofthsm2.so`).
-//!   * `MCPS_TEST_PKCS11_PIN`         — the token User PIN.
-//!   * `MCPS_TEST_PKCS11_TOKEN_LABEL` — the token label.
-//!   * `MCPS_TEST_PKCS11_KEY_LABEL`   — the CKA_LABEL of the Ed25519 key pair.
+//! # How the mock is provisioned
+//! `mock_module()` runs a nested `cargo build` of `tests/mock-pkcs11` (into that
+//! crate's OWN target dir, so it never contends the workspace build lock) and
+//! returns the resulting library path. Objects are seeded per test through two env
+//! vars the mock reads at `C_Initialize` (`MOCK_PKCS11_TOKEN_LABEL`,
+//! `MOCK_PKCS11_OBJECTS`) — see [`MockToken`]. When the mock cannot be built here —
+//! e.g. under the Bazel test sandbox, which has no `cargo` — the test self-skips
+//! (honoring `MCPS_REQUIRE_LIVE_INFRA`: set → a skip becomes a hard failure). A
+//! `cargo`-present build FAILURE, by contrast, panics loudly and is never skipped.
 //!
-//! # Provisioning a test token (run once by a human / CI, NOT by this test)
-//! ```sh
-//! # 1. Point SoftHSM2 at a scratch token directory (so this never touches a
-//! #    host/production token store):
-//! export SOFTHSM2_CONF="$PWD/softhsm2.conf"
-//! mkdir -p "$PWD/softhsm-tokens"
-//! printf 'directories.tokendir = %s/softhsm-tokens\n' "$PWD" > "$SOFTHSM2_CONF"
-//!
-//! # 2. Initialise a fresh token:
-//! softhsm2-util --init-token --free \
-//!     --label mcps-test --so-pin 0000 --pin 1234
-//!
-//! # 3. Generate an Ed25519 key pair ON the token (private key non-extractable),
-//! #    labelled so the key source can find it. Using pkcs11-tool (OpenSC):
-//! softhsm2-util --show-slots   # note the assigned slot id, e.g. 12345
-//! pkcs11-tool --module "$MCPS_TEST_PKCS11_MODULE" \
-//!     --login --pin 1234 --slot <SLOT_ID> \
-//!     --keypairgen --key-type EC:edwards25519 \
-//!     --label mcps-response-signing --id 01
-//!
-//! # 4. Export the env vars this test reads:
-//! export MCPS_TEST_PKCS11_MODULE="$MCPS_TEST_PKCS11_MODULE"
-//! export MCPS_TEST_PKCS11_PIN=1234
-//! export MCPS_TEST_PKCS11_TOKEN_LABEL=mcps-test
-//! export MCPS_TEST_PKCS11_KEY_LABEL=mcps-response-signing
-//!
-//! # 5. Run the feature-gated test:
-//! cargo test -p mcps-proxy --features pkcs11_keysource \
-//!     --test pkcs11_keysource_e2e_test
-//! ```
-//! SoftHSM2 is an INDEPENDENT software token; nothing here references any host
-//! security system.
+//! The keygen-on-token flow (never import a private key) that the delegated-TLS
+//! tests rely on is preserved: the mock GENERATES the key, the test reads its public
+//! key back off the token and mints the matching leaf from it via a rcgen
+//! [`rcgen::RemoteKeyPair`] ([`TokenPublicKey`] / [`remote_subject_key_from_spki`]),
+//! so the private key never leaves the token.
 #![cfg(feature = "pkcs11_keysource")]
 
 use std::io::Read as _;
@@ -59,7 +35,10 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::thread;
 
 use mcps_core::verify_ed25519_with;
@@ -86,51 +65,160 @@ use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use rustls_pki_types::ServerName;
 
-/// Read all four env vars; `None` (skip) unless `MCPS_TEST_PKCS11_MODULE` is set.
-/// The other three default to the values used by the provisioning recipe above so
-/// a minimal `MCPS_TEST_PKCS11_MODULE=... cargo test` works against a token built
-/// with those labels/PIN.
-fn pkcs11_env() -> Option<(String, String, String, String)> {
-    let Ok(module) = std::env::var("MCPS_TEST_PKCS11_MODULE") else {
-        if std::env::var("MCPS_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
-            panic!(
-                "MCPS_REQUIRE_LIVE_INFRA is set but MCPS_TEST_PKCS11_MODULE is unavailable \
-                 — this live e2e MUST run under CI, not skip"
-            );
-        }
-        return None;
-    };
-    let pin = std::env::var("MCPS_TEST_PKCS11_PIN").unwrap_or_else(|_| "1234".to_string());
-    let token_label =
-        std::env::var("MCPS_TEST_PKCS11_TOKEN_LABEL").unwrap_or_else(|_| "mcps-test".to_string());
-    let key_label = std::env::var("MCPS_TEST_PKCS11_KEY_LABEL")
-        .unwrap_or_else(|_| "mcps-response-signing".to_string());
-    Some((module, pin, token_label, key_label))
+// ===========================================================================
+// Hermetic mock PKCS#11 provider: build once, seed per test.
+// ===========================================================================
+
+/// Build the mock provider `cdylib` once per test process and cache its path.
+/// `None` means the mock could not be built HERE (no `cargo` / source absent — e.g.
+/// the Bazel sandbox), which self-skips. A `cargo`-present build error panics.
+fn mock_module() -> Option<String> {
+    static MODULE: OnceLock<Option<String>> = OnceLock::new();
+    MODULE.get_or_init(build_mock_module).clone()
 }
 
-/// The TLS material paths are not exercised by this signing test (the token
-/// custodies only the response-signing key), but `Pkcs11KeySource::open` takes
-/// them; point them at this crate's own `Cargo.toml` (a file that always exists)
-/// so `open` does not need real TLS fixtures. The TLS accessors are NOT called
-/// here, so the file contents are never parsed.
+fn build_mock_module() -> Option<String> {
+    let mock_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mock-pkcs11");
+    let manifest = mock_dir.join("Cargo.toml");
+    if !manifest.exists() {
+        eprintln!(
+            "SKIP: mock PKCS#11 provider source not present at {} (sandboxed build); \
+             the PKCS#11 client logic is still covered by the unit tests.",
+            manifest.display()
+        );
+        return None;
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(&cargo)
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .output();
+    match output {
+        // `cargo` not spawnable (e.g. Bazel sandbox): self-skip cleanly.
+        Err(e) => {
+            eprintln!("SKIP: cannot spawn `{cargo}` to build the mock PKCS#11 provider: {e}");
+            return None;
+        }
+        // `cargo` present but the mock failed to COMPILE: a real regression — fail loud.
+        Ok(o) if !o.status.success() => panic!(
+            "mock PKCS#11 provider failed to build:\n{}",
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Ok(_) => {}
+    }
+    let lib_name = if cfg!(target_os = "macos") {
+        "libmock_pkcs11.dylib"
+    } else {
+        "libmock_pkcs11.so"
+    };
+    let path = mock_dir.join("target/debug").join(lib_name);
+    path.exists()
+        .then(|| path.to_string_lossy().into_owned())
+}
+
+/// The decision for every test: a built mock module path, or `None` to self-skip.
+/// Honors `MCPS_REQUIRE_LIVE_INFRA` (set → a skip becomes a hard failure, so CI
+/// cannot silently lose the coverage).
+fn require_mock_or_skip(test: &str) -> Option<String> {
+    match mock_module() {
+        Some(m) => Some(m),
+        None => {
+            if std::env::var("MCPS_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
+                panic!(
+                    "MCPS_REQUIRE_LIVE_INFRA is set but the mock PKCS#11 provider could not be \
+                     built — the PKCS#11 e2e MUST run under CI, not skip"
+                );
+            }
+            eprintln!("SKIP {test}: mock PKCS#11 provider unavailable in this environment.");
+            None
+        }
+    }
+}
+
+/// Serializes the tests. Each sets the PROCESS-wide `MOCK_PKCS11_*` env that the
+/// mock reads at `C_Initialize`, so they must NOT run concurrently (cargo runs tests
+/// multi-threaded by default). Holding this lock for the whole test body makes each
+/// "seed token → open → use" sequence atomic w.r.t. the others. A poisoned lock (a
+/// prior test panicked) is recovered — the panic is already the reported failure.
+fn provisioning_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// A seeded mock token: owns the object spec and exports the `MOCK_PKCS11_*` env the
+/// mock reads. Provisioning is pure in-process env seeding — no external token or
+/// tooling and no on-disk key store.
+struct MockToken {
+    token_label: String,
+    pin: String,
+    /// `label,keytype,id` object entries, mirrored into `MOCK_PKCS11_OBJECTS`.
+    objects: Vec<String>,
+}
+
+impl MockToken {
+    /// Seed a fresh, empty token and point the mock's env at it. The label is unique
+    /// per token so successive tests never observe a stale object set.
+    fn init() -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let token_label = format!(
+            "mcps-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        // SAFETY: every test holds `provisioning_lock()` for its whole body, so only
+        // one token's env is live at a time — these set_var calls never race.
+        std::env::set_var("MOCK_PKCS11_TOKEN_LABEL", &token_label);
+        std::env::set_var("MOCK_PKCS11_OBJECTS", "");
+        MockToken {
+            token_label,
+            pin: "1234".to_string(),
+            objects: Vec::new(),
+        }
+    }
+
+    /// Generate a key pair of `key_type` ON the token under `label`/`id`. `key_type`
+    /// takes the standard PKCS#11 `--key-type` spellings (`EC:edwards25519`,
+    /// `EC:prime256v1`), mapped to the mock's object model. The private key is never
+    /// extractable and never imported: the mock generates it.
+    fn keygen(&mut self, key_type: &str, label: &str, id: &str) {
+        let kt = match key_type {
+            "EC:edwards25519" | "ed25519" => "ed25519",
+            "EC:prime256v1" | "ec" => "ec",
+            other => panic!("unsupported mock key type {other:?}"),
+        };
+        self.objects.push(format!("{label},{kt},{id}"));
+        // SAFETY: see `init` — serialized by `provisioning_lock()`.
+        std::env::set_var("MOCK_PKCS11_OBJECTS", self.objects.join(";"));
+    }
+
+    /// Convenience: generate an Ed25519 key pair on the token.
+    fn keygen_ed25519(&mut self, label: &str, id: &str) {
+        self.keygen("ed25519", label, id);
+    }
+}
+
+/// The TLS material paths are not exercised by the response-signing test (the token
+/// custodies only the response-signing key), but `Pkcs11KeySource::open` takes them;
+/// point them at this crate's own `Cargo.toml` (a file that always exists) so `open`
+/// does not need real TLS fixtures. The TLS accessors are NOT called there, so the
+/// file contents are never parsed.
 const PLACEHOLDER_TLS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
 
 #[test]
 fn pkcs11_sign_verifies_against_token_public_key() {
-    let Some((module, pin, token_label, key_label)) = pkcs11_env() else {
-        eprintln!(
-            "SKIP pkcs11_sign_verifies_against_token_public_key: \
-             MCPS_TEST_PKCS11_MODULE is unset (no SoftHSM2 token provisioned). \
-             See this test's module doc for softhsm2-util provisioning commands."
-        );
+    let Some(module) = require_mock_or_skip("pkcs11_sign_verifies_against_token_public_key") else {
         return;
     };
+    let _guard = provisioning_lock();
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-response-signing", "01");
 
     let source = Pkcs11KeySource::open(
         &module,
-        &pin,
-        &token_label,
-        &key_label,
+        &token.pin,
+        &token.token_label,
+        "mcps-response-signing",
         PLACEHOLDER_TLS_PATH,
         PLACEHOLDER_TLS_PATH,
         PLACEHOLDER_TLS_PATH,
@@ -171,208 +259,21 @@ fn pkcs11_sign_verifies_against_token_public_key() {
 }
 
 // ===========================================================================
-// Issue #59 (ADR-MCPS-028 §G): PKCS#11-DELEGATED TLS signing — live SoftHSM2 lane.
+// Issue #59 (ADR-MCPS-028 §G): PKCS#11-DELEGATED TLS signing.
 //
 // These prove the real device path for the TLS key: a SECOND Ed25519 token object
 // (distinct label from the response-signing key) custodies the TLS server key, the
 // proxy reads NO TLS key from disk, and a real rustls client completing an mTLS
 // handshake verifies a CertificateVerify signature the token produced over the
-// transcript. The lane is SELF-PROVISIONING: when `softhsm2-util` (token init) and
-// `pkcs11-tool` (on-token keygen) are available it builds a fresh SCRATCH token (its own
-// tokendir via `SOFTHSM2_CONF`, never a host/production store) and GENERATES the key
-// objects ON the token — it never imports a private key. (`softhsm2-util --import`
-// cannot parse an Ed25519 PKCS#8 key, so the flow is inverted: keygen on the token, read
-// the public key back off the token, and mint the matching TLS leaf from it.) It
-// SELF-SKIPS when the tooling is not installed, honoring `MCPS_REQUIRE_LIVE_INFRA`
-// (set → a skip becomes a hard failure, so CI cannot silently lose the coverage).
+// transcript. Keys are GENERATED on the token (never imported): the flow reads each
+// public key back off the token and mints the matching leaf from it.
 // ===========================================================================
-
-/// Serializes the #59 live tests. Each provisions its own scratch token and sets
-/// the PROCESS-wide `SOFTHSM2_CONF`, so they must NOT run concurrently (cargo runs
-/// tests multi-threaded by default). Holding this lock for the whole test body makes
-/// each "init token → import → open → handshake" sequence atomic w.r.t. the others.
-/// A poisoned lock (a prior test panicked) is recovered — the panic is already the
-/// reported failure; we still want the remaining tests to run serially.
-fn provisioning_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|p| p.into_inner())
-}
-
-/// Canonical SoftHSM2 module locations probed when `MCPS_TEST_PKCS11_MODULE` is
-/// unset (Homebrew on macOS, common Linux package paths).
-const SOFTHSM2_MODULE_CANDIDATES: &[&str] = &[
-    "/opt/homebrew/lib/softhsm/libsofthsm2.so",
-    "/usr/local/lib/softhsm/libsofthsm2.so",
-    "/usr/lib/softhsm/libsofthsm2.so",
-    "/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
-];
-
-/// Resolve the SoftHSM2 module path: explicit env override, else the first existing
-/// canonical candidate.
-fn softhsm2_module() -> Option<String> {
-    if let Ok(m) = std::env::var("MCPS_TEST_PKCS11_MODULE") {
-        return Path::new(&m).exists().then_some(m);
-    }
-    SOFTHSM2_MODULE_CANDIDATES
-        .iter()
-        .find(|p| Path::new(p).exists())
-        .map(|p| p.to_string())
-}
-
-/// `true` if `softhsm2-util` is on PATH (needed to initialise the scratch token).
-fn softhsm2_util_available() -> bool {
-    Command::new("softhsm2-util")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// `true` if `pkcs11-tool` (OpenSC) is on PATH — needed to keygen the on-token keys.
-/// SoftHSM2's own `softhsm2-util` can neither import nor generate Ed25519 keys, so the
-/// keys are generated through `pkcs11-tool`. `.output()` errors only when the binary
-/// cannot be spawned (not on PATH); a non-zero exit still means it exists.
-fn pkcs11_tool_available() -> bool {
-    Command::new("pkcs11-tool").arg("--help").output().is_ok()
-}
-
-/// The decision for every #59 live test: a resolved module path + a usable
-/// `softhsm2-util` (token init) + `pkcs11-tool` (on-token keygen), or `None` to
-/// self-skip. Honors `MCPS_REQUIRE_LIVE_INFRA`.
-fn require_softhsm2_or_skip(test: &str) -> Option<String> {
-    let module = softhsm2_module();
-    let ok = module.is_some() && softhsm2_util_available() && pkcs11_tool_available();
-    if !ok {
-        if std::env::var("MCPS_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
-            panic!(
-                "MCPS_REQUIRE_LIVE_INFRA is set but SoftHSM2 (module + softhsm2-util) or \
-                 pkcs11-tool (OpenSC) is unavailable — the #59 delegated-TLS live lane MUST \
-                 run under CI, not skip"
-            );
-        }
-        eprintln!(
-            "SKIP {test}: SoftHSM2 + pkcs11-tool not available (set MCPS_TEST_PKCS11_MODULE \
-             and install softhsm2-util + opensc). The #59 delegated-TLS path is exercised by \
-             the unit tests; this lane needs a live token."
-        );
-        return None;
-    }
-    module
-}
-
-/// A provisioned scratch SoftHSM2 token: owns the temp dir (best-effort cleaned on
-/// drop) and exports the `SOFTHSM2_CONF` that points the module at it. The PROCESS
-/// env `SOFTHSM2_CONF` is set so the in-process module load finds this token.
-struct ScratchToken {
-    dir: PathBuf,
-    token_label: String,
-    pin: String,
-}
-
-impl ScratchToken {
-    /// Initialise a fresh token in a unique temp dir and point `SOFTHSM2_CONF` at it.
-    fn init() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("mcps-pkcs11-tls-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(dir.join("tokens")).expect("create tokendir");
-        let conf = dir.join("softhsm2.conf");
-        std::fs::write(
-            &conf,
-            format!("directories.tokendir = {}/tokens\n", dir.display()),
-        )
-        .expect("write softhsm2.conf");
-        // SAFETY: the module reads SOFTHSM2_CONF at C_Initialize. The #59 live tests
-        // hold `provisioning_lock()` for their whole body, so only ONE scratch token
-        // is being provisioned/opened at a time — this set_var never races a
-        // concurrent token in another test thread.
-        std::env::set_var("SOFTHSM2_CONF", &conf);
-
-        // SoftHSM2 caps the token label at 32 chars; keep it short + unique (the low
-        // bits of the nanosecond clock plus the pid suffice for in-run uniqueness).
-        let token_label = format!("mcps-{}-{}", std::process::id(), (nanos as u64) % 1_000_000);
-        let pin = "1234".to_string();
-        let out = Command::new("softhsm2-util")
-            .args([
-                "--init-token",
-                "--free",
-                "--label",
-                &token_label,
-                "--so-pin",
-                "0000",
-                "--pin",
-                &pin,
-            ])
-            .output()
-            .expect("run softhsm2-util --init-token");
-        assert!(
-            out.status.success(),
-            "softhsm2-util --init-token failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        ScratchToken {
-            dir,
-            token_label,
-            pin,
-        }
-    }
-
-    /// Generate a key pair of `key_type` (a `pkcs11-tool --key-type` value, e.g.
-    /// `EC:edwards25519` or `EC:prime256v1`) directly ON the token under `label`/`id`,
-    /// its private key non-extractable. This REPLACES the removed `--import` path:
-    /// `softhsm2-util --import` cannot parse an Ed25519 PKCS#8 key (it reports the file
-    /// as unreadable / "maybe encrypted"), so the test never imports — it keygens on the
-    /// token (the path SoftHSM2 fully supports) and reads the public key back for cert
-    /// minting. Uses `pkcs11-tool` (OpenSC), the same command the live CI lane uses.
-    fn keygen(&self, module: &str, key_type: &str, label: &str, id: &str) {
-        let out = Command::new("pkcs11-tool")
-            .args([
-                "--module",
-                module,
-                "--token-label",
-                &self.token_label,
-                "--login",
-                "--pin",
-                &self.pin,
-                "--keypairgen",
-                "--key-type",
-                key_type,
-                "--label",
-                label,
-                "--id",
-                id,
-            ])
-            .output()
-            .expect("run pkcs11-tool --keypairgen");
-        assert!(
-            out.status.success(),
-            "pkcs11-tool --keypairgen ({label}, {key_type}) failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    /// Convenience: keygen an Ed25519 key pair on the token.
-    fn keygen_ed25519(&self, module: &str, label: &str, id: &str) {
-        self.keygen(module, "EC:edwards25519", label, id);
-    }
-}
-
-impl Drop for ScratchToken {
-    fn drop(&mut self) {
-        // Best-effort cleanup of the scratch tokendir; failure to remove a temp dir
-        // is not a test failure (it lives under the OS temp dir).
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
 
 /// A freshly generated LOCAL Ed25519 key pair (rcgen). Used ONLY where a cert must be
 /// minted from a key that is DELIBERATELY DIFFERENT from the token's TLS key (the
 /// cert↔signer mismatch test). Token-resident keys are never generated here — they are
-/// generated ON the token (see [`ScratchToken::keygen_ed25519`]) and their public key
-/// is read back for cert minting via [`remote_subject_key_from_spki`].
+/// generated ON the token (see [`MockToken::keygen_ed25519`]) and their public key is
+/// read back for cert minting via [`remote_subject_key_from_spki`].
 fn gen_ed25519() -> KeyPair {
     KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key")
 }
@@ -383,8 +284,7 @@ fn gen_ed25519() -> KeyPair {
 /// ISSUER key and uses the subject key solely for its public key — it NEVER calls the
 /// subject key's `sign()`. So this holds only the owned 32-byte public key read off the
 /// token; `sign()` is unreachable. This is what lets a leaf's SPKI match the token TLS
-/// object WITHOUT importing a private key: `softhsm2-util --import` cannot parse an
-/// Ed25519 PKCS#8 key, so the flow is INVERTED — keygen on the token, read the public
+/// object WITHOUT importing a private key: the flow is keygen-on-token, read the public
 /// key, mint the cert from it. The private key never leaves the token.
 struct TokenPublicKey {
     /// 32-byte raw Edwards point — the format rcgen's `public_key_raw` expects.
@@ -518,14 +418,12 @@ fn client_round_trip(
     Ok(response[pos..].to_vec())
 }
 
-/// A path under the scratch dir that is GUARANTEED not to exist — used as the
-/// `--tls-key` argument to prove the delegated path NEVER reads it from disk.
-fn nonexistent_tls_key_path(token: &ScratchToken) -> String {
-    token
-        .dir
-        .join("THIS-TLS-KEY-MUST-NEVER-BE-READ.pem")
-        .to_string_lossy()
-        .into_owned()
+/// A path GUARANTEED not to exist — used as the `--tls-key` argument to prove the
+/// delegated path NEVER reads it from disk.
+fn nonexistent_tls_key_path() -> String {
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("THIS-TLS-KEY-MUST-NEVER-BE-READ.pem");
+    p.to_string_lossy().into_owned()
 }
 
 /// (a) Without a TLS-key label, `tls_delegated_signer()` is `None` (file-backed TLS);
@@ -533,14 +431,13 @@ fn nonexistent_tls_key_path(token: &ScratchToken) -> String {
 /// Ed25519 SPKI matching the token object.
 #[test]
 fn pkcs11_tls_delegated_signer_none_then_some() {
-    let Some(module) = require_softhsm2_or_skip("pkcs11_tls_delegated_signer_none_then_some")
-    else {
+    let Some(module) = require_mock_or_skip("pkcs11_tls_delegated_signer_none_then_some") else {
         return;
     };
     let _guard = provisioning_lock();
-    let token = ScratchToken::init();
-    token.keygen_ed25519(&module, "mcps-sign", "01");
-    token.keygen_ed25519(&module, "mcps-tls", "02");
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-sign", "01");
+    token.keygen_ed25519("mcps-tls", "02");
 
     // No TLS label → None (file-backed TLS path preserved). Scoped so this source
     // (and its module `C_Initialize`) is fully DROPPED before opening the next one —
@@ -571,7 +468,7 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
         &token.token_label,
         "mcps-sign",
         PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(&token),
+        &nonexistent_tls_key_path(),
         PLACEHOLDER_TLS_PATH,
         Some("mcps-tls"),
     )
@@ -604,14 +501,13 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
 /// presented leaf certificate's key does NOT match the token's TLS key.
 #[test]
 fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
-    let Some(module) = require_softhsm2_or_skip("pkcs11_tls_cert_signer_mismatch_fails_closed")
-    else {
+    let Some(module) = require_mock_or_skip("pkcs11_tls_cert_signer_mismatch_fails_closed") else {
         return;
     };
     let _guard = provisioning_lock();
-    let token = ScratchToken::init();
-    token.keygen_ed25519(&module, "mcps-sign", "01");
-    token.keygen_ed25519(&module, "mcps-tls", "02");
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-sign", "01");
+    token.keygen_ed25519("mcps-tls", "02");
 
     let source = Pkcs11KeySource::open(
         &module,
@@ -619,7 +515,7 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
         &token.token_label,
         "mcps-sign",
         PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(&token),
+        &nonexistent_tls_key_path(),
         PLACEHOLDER_TLS_PATH,
         Some("mcps-tls"),
     )
@@ -647,16 +543,15 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
 /// has no Ed25519 object under that label).
 #[test]
 fn pkcs11_tls_non_ed25519_fails_closed() {
-    let Some(module) = require_softhsm2_or_skip("pkcs11_tls_non_ed25519_fails_closed") else {
+    let Some(module) = require_mock_or_skip("pkcs11_tls_non_ed25519_fails_closed") else {
         return;
     };
     let _guard = provisioning_lock();
-    let token = ScratchToken::init();
-    token.keygen_ed25519(&module, "mcps-sign", "01");
-
-    // Generate an ECDSA P-256 key (a NON-Ed25519 key) ON the token under the TLS
-    // label; `open` must reject a TLS key that is not Ed25519.
-    token.keygen(&module, "EC:prime256v1", "mcps-tls", "02");
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-sign", "01");
+    // A non-Ed25519 (EC P-256) object under the TLS label; `open` must reject a TLS
+    // key that is not Ed25519 (the Ed25519-typed find never matches it).
+    token.keygen("EC:prime256v1", "mcps-tls", "02");
 
     let result = Pkcs11KeySource::open(
         &module,
@@ -664,7 +559,7 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
         &token.token_label,
         "mcps-sign",
         PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(&token),
+        &nonexistent_tls_key_path(),
         PLACEHOLDER_TLS_PATH,
         Some("mcps-tls"),
     );
@@ -678,15 +573,15 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
 /// guess which key is the TLS credential).
 #[test]
 fn pkcs11_tls_multiple_objects_fails_closed() {
-    let Some(module) = require_softhsm2_or_skip("pkcs11_tls_multiple_objects_fails_closed") else {
+    let Some(module) = require_mock_or_skip("pkcs11_tls_multiple_objects_fails_closed") else {
         return;
     };
     let _guard = provisioning_lock();
-    let token = ScratchToken::init();
-    token.keygen_ed25519(&module, "mcps-sign", "01");
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-sign", "01");
     // Two DISTINCT Ed25519 keypairs (different ids) sharing the SAME TLS label.
-    token.keygen_ed25519(&module, "mcps-tls", "02");
-    token.keygen_ed25519(&module, "mcps-tls", "03");
+    token.keygen_ed25519("mcps-tls", "02");
+    token.keygen_ed25519("mcps-tls", "03");
 
     let result = Pkcs11KeySource::open(
         &module,
@@ -694,7 +589,7 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
         &token.token_label,
         "mcps-sign",
         PLACEHOLDER_TLS_PATH,
-        &nonexistent_tls_key_path(&token),
+        &nonexistent_tls_key_path(),
         PLACEHOLDER_TLS_PATH,
         Some("mcps-tls"),
     );
@@ -712,14 +607,14 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
 #[test]
 fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     let Some(module) =
-        require_softhsm2_or_skip("pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read")
+        require_mock_or_skip("pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read")
     else {
         return;
     };
     let _guard = provisioning_lock();
-    let token = ScratchToken::init();
-    token.keygen_ed25519(&module, "mcps-sign", "01");
-    token.keygen_ed25519(&module, "mcps-tls", "02");
+    let mut token = MockToken::init();
+    token.keygen_ed25519("mcps-sign", "01");
+    token.keygen_ed25519("mcps-tls", "02");
 
     let server_ca = make_ca();
     let client_ca = make_ca();
@@ -732,7 +627,7 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
         PLACEHOLDER_TLS_PATH,
         // GUARANTEED-MISSING TLS key file: if the delegated path ever read it, open
         // or the handshake would fail. It must not be touched.
-        &nonexistent_tls_key_path(&token),
+        &nonexistent_tls_key_path(),
         PLACEHOLDER_TLS_PATH,
         Some("mcps-tls"),
     )

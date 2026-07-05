@@ -4125,7 +4125,7 @@ mod tests {
     fn pkcs11_flags() -> Vec<String> {
         args(&[
             "--key-source", "pkcs11",
-            "--pkcs11-module", "/usr/lib/softhsm/libsofthsm2.so",
+            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
             "--pkcs11-pin", "1234",
             "--pkcs11-token-label", "mcps-test",
             "--pkcs11-key-label", "mcps-response-signing",
@@ -4140,7 +4140,7 @@ mod tests {
         assert_eq!(config.key_source, KeySourceKind::Pkcs11);
         assert_eq!(
             config.pkcs11_module.as_deref(),
-            Some("/usr/lib/softhsm/libsofthsm2.so")
+            Some("/opt/pkcs11/libmock_pkcs11.so")
         );
         assert_eq!(config.pkcs11_pin.as_deref(), Some("1234"));
         assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcps-test"));
@@ -6389,7 +6389,7 @@ mod tests {
             "--server-signer", "did:example:server-1",
             "--server-key-id", "server-key-1",
             "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
+            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
             "--pkcs11-pin", "1234",
             "--pkcs11-token-label", "mcps-test",
             "--pkcs11-key-label", "mcps-response-signing",
@@ -6484,7 +6484,7 @@ mod tests {
             "--server-signer", "did:example:server-1",
             "--server-key-id", "server-key-1",
             "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/softhsm/libsofthsm2.so",
+            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
             "--pkcs11-pin", "1234",
             "--pkcs11-token-label", "mcps-test",
             "--pkcs11-key-label", "mcps-response-signing",

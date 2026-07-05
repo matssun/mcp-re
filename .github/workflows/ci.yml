@@ -15,10 +15,11 @@
 #     modules, so without this job the v0.3 hardening that lives behind them
 #     (the Redis WAIT-quorum fake-connection harness, the PKCS#11 sign-loop
 #     proof, the OCSP AIA-SSRF inet_aton parser, the env-key-source no-mutation
-#     contract) would have zero cargo-CI coverage. The live-infra e2e tests
-#     (real Redis / SoftHSM2 / OCSP responder) self-skip cleanly when their
-#     MCPS_TEST_* env vars are unset; they hard-fail only when
-#     MCPS_REQUIRE_LIVE_INFRA is set, which this job deliberately leaves unset.
+#     contract) would have zero cargo-CI coverage. The PKCS#11 sign+verify e2e
+#     runs against a hermetic in-tree mock provider, so it needs no external
+#     token. The remaining live-infra e2e tests (real Redis / OCSP responder)
+#     self-skip cleanly when their MCPS_TEST_* env vars are unset; they hard-fail
+#     only when MCPS_REQUIRE_LIVE_INFRA is set, which this job leaves unset.
 #   - ADVISORY (continue-on-error): `cargo fmt --check` and `cargo clippy`. The
 #     repository was not developed under `cargo fmt`/`clippy -D warnings`, so these
 #     surface drift without blocking. Promote them to blocking once a one-time

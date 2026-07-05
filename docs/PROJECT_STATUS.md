@@ -8,7 +8,8 @@ MCP-S is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**Current release: v0.10.0** (2026-07-04). The frozen wire envelope is the
+**Current release: v0.10.1** (2026-07-05) — horizontally-scaled fleet posture
+(ADR-MCPS-049) over the v0.10.0 Mode C ingress base. The frozen wire envelope is the
 `draft-02` runtime-evidence profile (frozen at v0.6.0; served end-to-end since
 v0.7.0). Per-release detail is in [`CHANGELOG.md`](../CHANGELOG.md); the design
 lines are in [`docs/adr/`](adr/).

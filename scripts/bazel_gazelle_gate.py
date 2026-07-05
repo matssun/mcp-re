@@ -97,6 +97,19 @@ ALLOW_NON_HERMETIC = {
     "no_tracked_secrets",
 }
 
+# Cargo-only test-support crates: a Cargo package that exists ONLY to be built
+# on-demand by a cargo test (via a nested `cargo build`) and loaded at runtime —
+# it is DELIBERATELY outside the Bazel graph (its own detached `[workspace]`), so
+# it must never gain a Bazel target. Under the Bazel sandbox the consuming e2e
+# self-skips (no `cargo`), so no Bazel coverage is lost. Structurally cargo-only,
+# not "not yet wired".
+ALLOW_CARGO_ONLY_FIXTURE = {
+    # mcps-proxy/tests/mock-pkcs11: hermetic mock PKCS#11 provider `cdylib` built
+    # + dlopen'd by pkcs11_keysource_e2e_test. A Bazel target would pull cryptoki-sys/
+    # ed25519-dalek into a fixture the sandbox can't even run. See [[no-onprem-hsm-custody]].
+    "mock_pkcs11",
+}
+
 # Tracked known drift: genuine missing Bazel targets whose Bazel wiring needs a
 # dedicated fixture/runfile bridge. Filed as issues; allowlisted so the gate is
 # GREEN-but-honest until each is wired, and NEW untracked drift still fails.
@@ -109,7 +122,11 @@ ALLOW_TRACKED_DRIFT = {
 }
 
 ALLOWLIST = (
-    ALLOW_NAMING_COLLISION | ALLOW_HITL_LIVE | ALLOW_NON_HERMETIC | set(ALLOW_TRACKED_DRIFT)
+    ALLOW_NAMING_COLLISION
+    | ALLOW_HITL_LIVE
+    | ALLOW_NON_HERMETIC
+    | ALLOW_CARGO_ONLY_FIXTURE
+    | set(ALLOW_TRACKED_DRIFT)
 )
 
 # A quoted Bazel label at line start (first-party //, third-party @crates_mcps//:,
