@@ -279,7 +279,22 @@ The claim is **tiered, not unconditional**, and is read off the
   proxy surfaces that tier's own guarantee and cannot over-claim. Strict
   production requires `REDIS_WAIT_QUORUM` or stronger.
 - **Trust propagation** (ADR-MCPS-021) — revocation enforced fleet-wide within the
-  bounded window `T` (default 60s); zero-window revocation is **not** claimed.
+  bounded window `T` (default 60s); zero-window revocation is **not** claimed. The
+  cross-replica revocation-lag bound is stated **per tier** (ADR-MCPS-049 clause 3,
+  MCPS-85), because the two tiers have physically different cadences:
+  - **Trust key-status (signer revocation/rotation)** — with a networked
+    trust-epoch source (`--revocation-tier push` + `--trust-epoch-redis-url`,
+    MCPS-84) the lag is near-zero when the source is healthy (a sibling flushes and
+    re-resolves on its next request after the epoch advances) and degrades to the
+    bounded window `T` on a source read-outage (fail-closed, never zero-window);
+    without a networked source it is the bounded `T`.
+  - **Client-certificate CRL** — bounded by the CRL `nextUpdate` / in-process
+    reload cadence (MCPS-66), **not** zero; a cert revoked mid-life is honored only
+    on replicas that have reloaded the newer CRL, so a fleet's CRL-rollout window
+    is the bound.
+
+  Both bounds are surfaced from real config at startup (`mcps.revocation.posture`
+  and the tier guarantee line), not asserted in prose.
 - **Key custody** (ADR-MCPS-022) — `per_node_keyset` (default; tight blast radius,
   explicit authorized key set) or `shared_remote_signer` (higher custody, not
   smaller blast radius). A copied shared private key is forbidden.

@@ -696,6 +696,42 @@ fn run() -> Result<(), String> {
         }
     }
 
+    // MCPS-85 (ADR-MCPS-049 clause 3): under --fleet, state the PER-TIER
+    // cross-replica revocation-lag bounds explicitly, derived from real config
+    // (the two tiers have different cadences). Zero-window revocation is never
+    // claimed on either.
+    if config.fleet {
+        let trust_bound = match (&config.revocation_tier, config.trust_epoch_redis_url.is_some()) {
+            (RevocationTier::Push { t_secs }, true) => format!(
+                "near-zero when the trust-epoch source is healthy (flush on the next request after \
+                 an epoch advance), bounded {t_secs}s on a source read-outage (fail-closed)"
+            ),
+            (RevocationTier::Push { t_secs }, false) => {
+                format!("bounded {t_secs}s (no --trust-epoch-redis-url; the push channel is inert)")
+            }
+            (RevocationTier::BoundedCache { t_secs }, _) => format!("bounded {t_secs}s"),
+            (RevocationTier::Live, _) => {
+                "per-request live re-resolution (no positive cache)".to_string()
+            }
+        };
+        let crl_bound = if client_crls.is_empty() {
+            let window = config
+                .max_client_cert_lifetime
+                .map(|d| format!("{}s", d.as_secs()))
+                .unwrap_or_else(|| "unbounded".to_string());
+            format!("short-lived-cert only (exposure_window {window}); no client CRL")
+        } else {
+            "the CRL nextUpdate / in-process reload cadence (reload needs a restart until \
+             MCPS-66) — a fleet's CRL-rollout window"
+                .to_string()
+        };
+        eprintln!(
+            "mcps-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
+             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
+             NOT claimed"
+        );
+    }
+
     // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
     // the handshake signature through the device/KMS signer (TLS private key never
     // exported); the validated builder fails closed at construction if the leaf cert
