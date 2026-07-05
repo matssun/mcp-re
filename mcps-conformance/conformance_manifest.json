@@ -54,7 +54,7 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 65
+    "bazel_test_targets": 69
   },
   "bazel_test_targets": [
     "//mcps-conformance:acceptance_test",
@@ -99,6 +99,9 @@
     "//mcps-proxy:cpstore_etcd_e2e_test",
     "//mcps-proxy:dev_env_key_source_test",
     "//mcps-proxy:fault_injection_test",
+    "//mcps-proxy:fleet_replay_e2e_test",
+    "//mcps-proxy:fleet_throughput_bench",
+    "//mcps-proxy:fleet_trust_epoch_e2e_test",
     "//mcps-proxy:full_stack_test",
     "//mcps-proxy:key_source_test",
     "//mcps-proxy:keyset_admission_test",
@@ -116,6 +119,7 @@
     "//mcps-proxy:proxy_unit_test",
     "//mcps-proxy:proxy_version_policy_test",
     "//mcps-proxy:redis_replay_e2e_test",
+    "//mcps-proxy:redis_trust_epoch_e2e_test",
     "//mcps-proxy:sandbox_linux_e2e_test",
     "//mcps-proxy:secret_in_logs_test",
     "//mcps-proxy:tls_test",
