@@ -848,6 +848,13 @@ where
     H: FnOnce(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8>,
 {
     let (tcp, _peer) = listener.accept()?;
+    // MCPS-88: the production serve loop sets the LISTENER non-blocking so it can
+    // poll for a shutdown signal between connections. Accepted connection sockets
+    // inherit O_NONBLOCK on some platforms (BSD/macOS) but not others (Linux), so
+    // force this one back to blocking — the bounded read/write phase below relies
+    // on blocking semantics (plus the socket timeouts applied next). Harmless when
+    // the listener is already blocking.
+    tcp.set_nonblocking(false)?;
     apply_socket_timeouts(&tcp, &options.limits)?;
     let conn = ServerConnection::new(config).map_err(|e| io::Error::other(e.to_string()))?;
     // AGGREGATE wall-clock deadline over the WHOLE read phase (handshake + header/

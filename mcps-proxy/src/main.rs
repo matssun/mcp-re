@@ -7,8 +7,12 @@
 //! async). All wiring/parsing logic lives in `cli` (and is unit-tested there);
 //! this shell parses, builds, and runs.
 
+use std::io;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -780,11 +784,23 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("local_addr after bind {}: {e}", config.bind))?;
     eprintln!("mcps-proxy: listening on {} (PEP; inner = {:?})", local_addr, config.inner_command);
 
-    // Blocking single-threaded serve loop: the Proxy's replay cache is single-
-    // threaded interior state, so connections are handled one at a time.
-    loop {
+    // MCPS-88 (ADR-MCPS-049 W3): graceful shutdown for fleet rollouts. Install the
+    // SIGTERM/SIGINT handler and make the listener non-blocking so the loop polls
+    // between connections and observes a shutdown signal within
+    // `SHUTDOWN_POLL_INTERVAL` even when idle. `serve_once_with_assertion` forces
+    // each ACCEPTED connection socket back to blocking, so the per-connection read/
+    // response phase is unchanged.
+    install_shutdown_handlers();
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("set_nonblocking on listener {}: {e}", config.bind))?;
+
+    // Single-threaded serve loop: the Proxy's replay cache is single-threaded
+    // interior state, so connections are handled one at a time. Runs until a
+    // shutdown signal is observed, then returns for a clean (exit 0) drain.
+    while !SHUTDOWN.load(Ordering::SeqCst) {
         let config_arc = Arc::clone(&server_config);
-        if let Err(e) = tls::serve_once_with_assertion(
+        match tls::serve_once_with_assertion(
             &listener,
             config_arc,
             &serve_options,
@@ -792,10 +808,56 @@ fn run() -> Result<(), String> {
                 proxy.handle_with_transport(request, now_unix(), identity.as_ref(), assertion)
             },
         ) {
+            Ok(_) => {}
+            // No connection is pending on the non-blocking listener: nap briefly so
+            // a shutdown signal is observed promptly, then re-check the loop guard.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
+            }
             // A single rejected/aborted connection (e.g. failed mTLS) must not
             // bring the server down — log and keep serving.
-            eprintln!("mcps-proxy: connection error: {e}");
+            Err(e) => eprintln!("mcps-proxy: connection error: {e}"),
         }
+    }
+    // Reached only via SIGTERM/SIGINT. Any in-flight request already completed
+    // above (inline, on this thread); dropping `proxy` here tears down a persistent
+    // inner child. Exit 0 so an orchestrator reads the rollout as a clean stop.
+    eprintln!("mcps-proxy: shutdown signal received; stopped accepting, drained, exiting cleanly");
+    Ok(())
+}
+
+/// MCPS-88 (ADR-MCPS-049 W3): set on SIGTERM/SIGINT so the serve loop stops
+/// accepting NEW connections and returns for a clean exit. Graceful drain in the
+/// single-threaded inline model is exact: at most one request is ever in flight
+/// (on this same thread), and it always runs to completion — bounded by the
+/// existing per-request read/response deadlines (`ServerLimits`) — before the loop
+/// re-checks this flag. There is therefore no queue to drain and no in-flight
+/// request to abandon.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// How long the loop naps between `accept()` polls when no connection is pending,
+/// bounding how late a shutdown signal is observed under an idle listener.
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Async-signal-safe handler: a lone atomic store (on the async-signal-safe list).
+extern "C" fn handle_shutdown_signal(_sig: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+/// Install the graceful-shutdown handler for SIGTERM (k8s rollout / `docker stop`)
+/// and SIGINT (Ctrl-C). Best-effort: a failure to install leaves the previous
+/// (default-terminate) disposition, which is still safe — just not graceful.
+fn install_shutdown_handlers() {
+    // SAFETY: `sigaction` with a zeroed struct and a static `extern "C"` handler
+    // that only performs an atomic store. No `SA_RESTART`, so a signal interrupts
+    // the poll nap promptly.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = handle_shutdown_signal as *const () as libc::sighandler_t;
+        libc::sigemptyset(&mut action.sa_mask);
+        action.sa_flags = 0;
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
     }
 }
 
