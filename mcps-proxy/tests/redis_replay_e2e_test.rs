@@ -23,7 +23,20 @@ use mcps_core::ReplayCacheError;
 use mcps_core::ReplayDecision;
 
 const AUD: &str = "did:example:verifier";
-const EXPIRES: i64 = 1_779_998_700;
+
+/// A fresh `expires_at` a bounded window into the future from the REAL system
+/// clock. The Redis store derives its `PX` TTL from its own wall clock and rejects
+/// a past `retain_until` PRE-store (MCPS-08, fail closed), so a FIXED timestamp
+/// would make these tests fail on any date past it. Clock-relative keeps them
+/// date-independent (the same reason the PTTL / wait-quorum tests below already
+/// anchor on the real clock).
+fn expires_soon() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_secs() as i64;
+    now + 3600
+}
 const SKEW: i64 = 30;
 
 /// The composite key `SharedReplayCache` derives, recomputed here so the PTTL
@@ -96,12 +109,12 @@ fn cross_node_insert_via_a_is_replay_via_b() {
     let mut node_b = node(&url);
 
     assert_eq!(
-        node_a.check_and_insert(signer, AUD, nonce, EXPIRES),
+        node_a.check_and_insert(signer, AUD, nonce, expires_soon()),
         Ok(ReplayDecision::Fresh),
         "first sight on node A must be Fresh"
     );
     assert_eq!(
-        node_b.check_and_insert(signer, AUD, nonce, EXPIRES),
+        node_b.check_and_insert(signer, AUD, nonce, expires_soon()),
         Ok(ReplayDecision::Replay),
         "node B must reject a nonce first seen on node A — shared Redis replay state"
     );
@@ -124,12 +137,12 @@ fn single_node_fresh_then_replay() {
 
     let mut cache = node(&url);
     assert_eq!(
-        cache.check_and_insert(signer, AUD, nonce, EXPIRES),
+        cache.check_and_insert(signer, AUD, nonce, expires_soon()),
         Ok(ReplayDecision::Fresh),
         "first sight is Fresh"
     );
     assert_eq!(
-        cache.check_and_insert(signer, AUD, nonce, EXPIRES),
+        cache.check_and_insert(signer, AUD, nonce, expires_soon()),
         Ok(ReplayDecision::Replay),
         "second sight on the same node is a Replay"
     );

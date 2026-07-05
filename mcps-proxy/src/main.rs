@@ -7,8 +7,12 @@
 //! async). All wiring/parsing logic lives in `cli` (and is unit-tested there);
 //! this shell parses, builds, and runs.
 
+use std::io;
 use std::process::ExitCode;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -240,25 +244,41 @@ fn run() -> Result<(), String> {
         "mcps-proxy: {}",
         config.revocation_tier.startup_audit_line("trust-store")
     );
+    // MCPS-83 (ADR-MCPS-049 clause 2): surface the declared inner-session posture so
+    // the routing consequence is auditable at startup. Verification is unaffected;
+    // this only tells an operator/LB whether sticky routing is required.
+    eprintln!(
+        "mcps-proxy: {}",
+        config.inner_session.startup_audit_line()
+    );
     // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
     // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
     // trust to T; Tier 2 consults the store live every request; Tier 3 evicts on a
     // pushed event, else falls back to bounded T). Without this wrapping the tier
     // line above would be a claim the resolver does not enforce.
+    // MCPS-84: connect the networked trust-epoch invalidation channel if one is
+    // configured (only under --revocation-tier push; enforced at parse time).
+    let push_channel = build_trust_epoch_channel(&config)?;
     if let RevocationTier::Push { .. } = config.revocation_tier {
-        // Honesty (Tier 3): no networked event source ships yet, so the in-process
-        // reference channel is inert — Tier 3 currently runs at its bounded-`T`
-        // fallback (already reflected in the tier's `guarantee()` string above). It
-        // does NOT operate an active near-zero push channel until a push backend
-        // ships.
-        eprintln!(
-            "mcps-proxy: NOTE: revocation-tier PUSH has no networked event source in this \
-             build, so it runs at its bounded-T fallback (no active near-zero push channel \
-             ships yet); a push backend is a follow-up."
-        );
+        if push_channel.is_none() {
+            // Honesty (Tier 3): with no networked source wired, the in-process
+            // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
+            // (already reflected in the tier's `guarantee()` string above), NOT an
+            // active near-zero push channel. Configure --trust-epoch-redis-url to
+            // activate the networked source (MCPS-84).
+            eprintln!(
+                "mcps-proxy: NOTE: revocation-tier PUSH has no networked event source (no \
+                 --trust-epoch-redis-url), so it runs at its bounded-T fallback; set \
+                 --trust-epoch-redis-url to activate the trust-epoch push source."
+            );
+        }
     }
-    let resolver =
-        cli::build_revocation_resolver(&config.revocation_tier, Box::new(base_resolver), trust_clock());
+    let resolver = cli::build_revocation_resolver_with_channel(
+        &config.revocation_tier,
+        Box::new(base_resolver),
+        trust_clock(),
+        push_channel,
+    );
 
     // Inner-server environment minimization (MCPS-035, ADR-MCPS-016). By default
     // the child environment is cleared and only the explicit allowlist is passed,
@@ -676,6 +696,42 @@ fn run() -> Result<(), String> {
         }
     }
 
+    // MCPS-85 (ADR-MCPS-049 clause 3): under --fleet, state the PER-TIER
+    // cross-replica revocation-lag bounds explicitly, derived from real config
+    // (the two tiers have different cadences). Zero-window revocation is never
+    // claimed on either.
+    if config.fleet {
+        let trust_bound = match (&config.revocation_tier, config.trust_epoch_redis_url.is_some()) {
+            (RevocationTier::Push { t_secs }, true) => format!(
+                "near-zero when the trust-epoch source is healthy (flush on the next request after \
+                 an epoch advance), bounded {t_secs}s on a source read-outage (fail-closed)"
+            ),
+            (RevocationTier::Push { t_secs }, false) => {
+                format!("bounded {t_secs}s (no --trust-epoch-redis-url; the push channel is inert)")
+            }
+            (RevocationTier::BoundedCache { t_secs }, _) => format!("bounded {t_secs}s"),
+            (RevocationTier::Live, _) => {
+                "per-request live re-resolution (no positive cache)".to_string()
+            }
+        };
+        let crl_bound = if client_crls.is_empty() {
+            let window = config
+                .max_client_cert_lifetime
+                .map(|d| format!("{}s", d.as_secs()))
+                .unwrap_or_else(|| "unbounded".to_string());
+            format!("short-lived-cert only (exposure_window {window}); no client CRL")
+        } else {
+            "the CRL nextUpdate / in-process reload cadence (reload needs a restart until \
+             MCPS-66) — a fleet's CRL-rollout window"
+                .to_string()
+        };
+        eprintln!(
+            "mcps-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
+             trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
+             NOT claimed"
+        );
+    }
+
     // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
     // the handshake signature through the device/KMS signer (TLS private key never
     // exported); the validated builder fails closed at construction if the leaf cert
@@ -773,11 +829,23 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("local_addr after bind {}: {e}", config.bind))?;
     eprintln!("mcps-proxy: listening on {} (PEP; inner = {:?})", local_addr, config.inner_command);
 
-    // Blocking single-threaded serve loop: the Proxy's replay cache is single-
-    // threaded interior state, so connections are handled one at a time.
-    loop {
+    // MCPS-88 (ADR-MCPS-049 W3): graceful shutdown for fleet rollouts. Install the
+    // SIGTERM/SIGINT handler and make the listener non-blocking so the loop polls
+    // between connections and observes a shutdown signal within
+    // `SHUTDOWN_POLL_INTERVAL` even when idle. `serve_once_with_assertion` forces
+    // each ACCEPTED connection socket back to blocking, so the per-connection read/
+    // response phase is unchanged.
+    install_shutdown_handlers();
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("set_nonblocking on listener {}: {e}", config.bind))?;
+
+    // Single-threaded serve loop: the Proxy's replay cache is single-threaded
+    // interior state, so connections are handled one at a time. Runs until a
+    // shutdown signal is observed, then returns for a clean (exit 0) drain.
+    while !SHUTDOWN.load(Ordering::SeqCst) {
         let config_arc = Arc::clone(&server_config);
-        if let Err(e) = tls::serve_once_with_assertion(
+        match tls::serve_once_with_assertion(
             &listener,
             config_arc,
             &serve_options,
@@ -785,11 +853,97 @@ fn run() -> Result<(), String> {
                 proxy.handle_with_transport(request, now_unix(), identity.as_ref(), assertion)
             },
         ) {
+            Ok(_) => {}
+            // No connection is pending on the non-blocking listener: nap briefly so
+            // a shutdown signal is observed promptly, then re-check the loop guard.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
+            }
             // A single rejected/aborted connection (e.g. failed mTLS) must not
             // bring the server down — log and keep serving.
-            eprintln!("mcps-proxy: connection error: {e}");
+            Err(e) => eprintln!("mcps-proxy: connection error: {e}"),
         }
     }
+    // Reached only via SIGTERM/SIGINT. Any in-flight request already completed
+    // above (inline, on this thread); dropping `proxy` here tears down a persistent
+    // inner child. Exit 0 so an orchestrator reads the rollout as a clean stop.
+    eprintln!("mcps-proxy: shutdown signal received; stopped accepting, drained, exiting cleanly");
+    Ok(())
+}
+
+/// MCPS-88 (ADR-MCPS-049 W3): set on SIGTERM/SIGINT so the serve loop stops
+/// accepting NEW connections and returns for a clean exit. Graceful drain in the
+/// single-threaded inline model is exact: at most one request is ever in flight
+/// (on this same thread), and it always runs to completion — bounded by the
+/// existing per-request read/response deadlines (`ServerLimits`) — before the loop
+/// re-checks this flag. There is therefore no queue to drain and no in-flight
+/// request to abandon.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// How long the loop naps between `accept()` polls when no connection is pending,
+/// bounding how late a shutdown signal is observed under an idle listener.
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Async-signal-safe handler: a lone atomic store (on the async-signal-safe list).
+extern "C" fn handle_shutdown_signal(_sig: libc::c_int) {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+/// Install the graceful-shutdown handler for SIGTERM (k8s rollout / `docker stop`)
+/// and SIGINT (Ctrl-C). Best-effort: a failure to install leaves the previous
+/// (default-terminate) disposition, which is still safe — just not graceful.
+fn install_shutdown_handlers() {
+    // SAFETY: `sigaction` with a zeroed struct and a static `extern "C"` handler
+    // that only performs an atomic store. No `SA_RESTART`, so a signal interrupts
+    // the poll nap promptly.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = handle_shutdown_signal as *const () as libc::sighandler_t;
+        libc::sigemptyset(&mut action.sa_mask);
+        action.sa_flags = 0;
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
+}
+
+/// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
+/// for the ADR-021 Push tier when `--trust-epoch-redis-url` is configured. Under
+/// the `redis_replay` feature this connects the Redis trust-epoch source; without
+/// it, a configured URL fails closed (a networked backend was requested but not
+/// compiled in). Returns `None` when no URL is set (Push runs inert / bounded-`T`).
+#[cfg(feature = "redis_replay")]
+fn build_trust_epoch_channel(
+    config: &cli::Config,
+) -> Result<Option<Box<dyn mcps_proxy::InvalidationChannel + Send + Sync>>, String> {
+    match &config.trust_epoch_redis_url {
+        Some(url) => {
+            let key = config
+                .trust_epoch_key
+                .as_deref()
+                .unwrap_or(mcps_proxy::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
+            let source = mcps_proxy::trust_epoch::redis_trust_epoch_source(url, key)
+                .map_err(|e| format!("trust-epoch source: {e}"))?;
+            eprintln!(
+                "mcps-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
+                 epoch key {key:?}); the trust cache flushes on an epoch advance and reverts to \
+                 the bounded-T guarantee on a read outage."
+            );
+            Ok(Some(Box::new(source)))
+        }
+        None => Ok(None),
+    }
+}
+
+#[cfg(not(feature = "redis_replay"))]
+fn build_trust_epoch_channel(
+    config: &cli::Config,
+) -> Result<Option<Box<dyn mcps_proxy::InvalidationChannel + Send + Sync>>, String> {
+    if config.trust_epoch_redis_url.is_some() {
+        return Err(
+            "--trust-epoch-redis-url requires a build with the `redis_replay` feature".to_string(),
+        );
+    }
+    Ok(None)
 }
 
 fn main() -> ExitCode {

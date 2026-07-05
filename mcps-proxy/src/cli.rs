@@ -68,6 +68,49 @@ pub enum KeySourceKind {
     GcpKms,
 }
 
+/// Whether the wrapped inner MCP server holds per-session state across requests
+/// (MCPS-83, ADR-MCPS-049 clause 2). This is a self-declared, auditable operator
+/// assertion about the inner server's own behavior; MCP-S does NOT inspect the
+/// inner server to verify it. It changes NO request verification — it exists so a
+/// fleet deployment can key its routing guidance off a config fact: a `Stateful`
+/// inner (the fail-safe default) requires a logical session to be routed to a
+/// stable replica (sticky routing), because each replica owns an independent inner
+/// subprocess and MCP-S ships no cross-replica inner-session replication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InnerSessionKind {
+    /// The inner server keeps per-session state (cursors, subscriptions,
+    /// `initialize` handshake, MRT `requestState`). Any replica may serve a given
+    /// logical session only if the deployment pins that session to it. This is the
+    /// DEFAULT: absent an explicit operator assertion, affinity is assumed so the
+    /// deployment fails toward correctness rather than silent session breakage.
+    #[default]
+    Stateful,
+    /// The operator asserts the inner server holds NO cross-request session state,
+    /// so any replica may serve any request and a stateless load balancer is safe.
+    Stateless,
+}
+
+impl InnerSessionKind {
+    /// Lowercase wire name matching the `--inner-session` flag values.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            InnerSessionKind::Stateful => "stateful",
+            InnerSessionKind::Stateless => "stateless",
+        }
+    }
+
+    /// One-line startup-audit statement of the routing consequence.
+    pub fn startup_audit_line(&self) -> &'static str {
+        match self {
+            InnerSessionKind::Stateful => "inner-session=stateful: a logical session MUST be \
+                 routed to a stable replica (sticky routing); MCP-S replicates no inner-session \
+                 state across the fleet",
+            InnerSessionKind::Stateless => "inner-session=stateless (operator-asserted): any \
+                 replica may serve any request; a stateless load balancer is safe",
+        }
+    }
+}
+
 /// Replay-cache backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayKind {
@@ -209,6 +252,15 @@ pub struct Config {
     /// Shared replay-store connection URL (required when `replay == Shared` and the
     /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
     pub replay_redis_url: Option<String>,
+    /// MCPS-84 (ADR-MCPS-049 W2): Redis URL for the networked trust-epoch
+    /// invalidation source (ADR-021 Tier 3 / `--revocation-tier push`). When set,
+    /// the Push tier watches this Redis's monotonic epoch key and flushes the trust
+    /// cache on an advance; when `None`, Push runs at its inert bounded-`T`
+    /// fallback. Consumed only under the `redis_replay` feature.
+    pub trust_epoch_redis_url: Option<String>,
+    /// The Redis key holding the monotonic trust epoch (default
+    /// [`crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY`]).
+    pub trust_epoch_key: Option<String>,
     /// CP / linearizable replay-store (etcd v3 JSON gateway) endpoint, e.g.
     /// `http://127.0.0.1:2379` (issue #69, epic #68 v0.4 Axis 1). REQUIRED when the
     /// declared durability tier is `LINEARIZABLE`, and meaningless otherwise — a
@@ -386,6 +438,11 @@ pub struct Config {
     /// does NOT imply `--strict`; the production guarantee is `--strict --fleet`
     /// (using `--fleet` without `--strict` only warns — see `main.rs`).
     pub fleet: bool,
+    /// Operator-declared inner-server session statefulness (MCPS-83,
+    /// ADR-MCPS-049 clause 2, `--inner-session`). Defaults to
+    /// [`InnerSessionKind::Stateful`] (fail-safe: affinity assumed). Drives fleet
+    /// routing guidance only; changes no request verification.
+    pub inner_session: InnerSessionKind,
     /// Whether `--inner-sandbox off` was passed EXPLICITLY (#4082, M09). The
     /// inner-sandbox default is also `Off`, but no kernel backend ships in this
     /// build, so a blanket strict `enforce` requirement would fail closed
@@ -426,6 +483,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--max-clock-skew",
     "--expected-version-policy",
     "--key-source",
+    "--inner-session",
     "--pkcs11-module",
     "--pkcs11-pin",
     "--pkcs11-token-label",
@@ -453,6 +511,8 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--cpstore-etcd-endpoint",
     "--replay-durability-tier",
     "--revocation-tier",
+    "--trust-epoch-redis-url",
+    "--trust-epoch-key",
     "--transport-binding",
     "--transport-identity-source",
     "--reverse-proxy-identity-header",
@@ -521,6 +581,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
     let mut replay_redis_url = None;
+    // MCPS-84: networked trust-epoch invalidation backend (optional; only under
+    // --revocation-tier push).
+    let mut trust_epoch_redis_url = None;
+    let mut trust_epoch_key = None;
     // #69 (epic #68 v0.4 Axis 1): the CP/etcd endpoint for the LINEARIZABLE tier.
     let mut cpstore_etcd_endpoint: Option<String> = None;
     let mut replay_durability_tier: Option<crate::replay_tier::ReplayDurabilityTier> = None;
@@ -592,6 +656,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // default. Orthogonal to `strict`; `--strict --fleet` is the fleet
     // strict-production posture that rejects node-local replay caches.
     let mut fleet = false;
+    // MCPS-83 (ADR-MCPS-049 clause 2): inner-server session statefulness, fail-safe
+    // default `Stateful` (assume sticky-routing affinity unless the operator asserts
+    // the inner server is stateless).
+    let mut inner_session = InnerSessionKind::Stateful;
     // #4082 (M09): track whether `--inner-sandbox off` was given EXPLICITLY, so
     // strict can reject a deliberate no-containment request without rejecting the
     // (identical-valued) default that ships when the flag is omitted.
@@ -794,6 +862,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--replay-path" => replay_path = Some(value.clone()),
             "--replay-redis-url" => replay_redis_url = Some(value.clone()),
+            "--trust-epoch-redis-url" => trust_epoch_redis_url = Some(value.clone()),
+            "--trust-epoch-key" => trust_epoch_key = Some(value.clone()),
             // #69: the CP / etcd endpoint for the LINEARIZABLE durability tier.
             "--cpstore-etcd-endpoint" => {
                 if value.trim().is_empty() {
@@ -1036,6 +1106,17 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // #3865 OS sandbox profile: top-level mode. `enforce` REQUIRES kernel
             // containment or refuses to start (fail closed); `off` (default) keeps
             // today's no-containment behavior exactly.
+            "--inner-session" => {
+                inner_session = match value.as_str() {
+                    "stateful" => InnerSessionKind::Stateful,
+                    "stateless" => InnerSessionKind::Stateless,
+                    other => {
+                        return Err(format!(
+                            "unknown --inner-session '{other}' (stateful|stateless)"
+                        ))
+                    }
+                }
+            }
             "--inner-sandbox" => {
                 inner_launch.sandbox.mode = match value.as_str() {
                     "off" => {
@@ -1474,6 +1555,23 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let has_exported_tls_key = tls_key.is_some();
     validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key)?;
 
+    // MCPS-84: a networked trust-epoch backend is only consumed by the Push
+    // revocation tier. Reject (not silently ignore) a `--trust-epoch-redis-url`
+    // paired with any other tier, so the operator does not believe a networked
+    // trust invalidation is active when it is inert.
+    if trust_epoch_redis_url.is_some()
+        && !matches!(
+            revocation_tier,
+            crate::revocation_tier::RevocationTier::Push { .. }
+        )
+    {
+        return Err(
+            "--trust-epoch-redis-url requires --revocation-tier push:<T> (the trust-epoch source \
+             drives the ADR-021 Tier-3 push cache; it is inert under any other tier)"
+                .to_string(),
+        );
+    }
+
     let config = Config {
         bind: require(bind, "--bind")?,
         audience: require(audience, "--audience")?,
@@ -1504,6 +1602,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         replay,
         replay_path,
         replay_redis_url,
+        trust_epoch_redis_url,
+        trust_epoch_key,
         cpstore_etcd_endpoint,
         replay_durability_tier,
         revocation_tier,
@@ -1541,6 +1641,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_launch,
         strict,
         fleet,
+        inner_session,
         sandbox_explicitly_off,
     };
 
@@ -2451,6 +2552,21 @@ pub fn build_revocation_resolver(
     base: Box<dyn mcps_core::TrustResolver + Send + Sync>,
     clock: crate::trust_cache::UnixClock,
 ) -> Box<dyn mcps_core::TrustResolver + Send + Sync> {
+    build_revocation_resolver_with_channel(tier, base, clock, None)
+}
+
+/// As [`build_revocation_resolver`], but for the [`RevocationTier::Push`]
+/// (ADR-MCPS-021 Tier 3) tier a caller may inject a networked
+/// [`InvalidationChannel`](crate::push_trust::InvalidationChannel) — e.g. the
+/// MCPS-84 Redis trust-epoch source. When `push_channel` is `None` the Push tier
+/// falls back to the inert in-process reference channel (today's default:
+/// bounded-`T`, no networked pushes). Non-Push tiers ignore `push_channel`.
+pub fn build_revocation_resolver_with_channel(
+    tier: &crate::revocation_tier::RevocationTier,
+    base: Box<dyn mcps_core::TrustResolver + Send + Sync>,
+    clock: crate::trust_cache::UnixClock,
+    push_channel: Option<Box<dyn crate::push_trust::InvalidationChannel + Send + Sync>>,
+) -> Box<dyn mcps_core::TrustResolver + Send + Sync> {
     let negative_ttl_secs = crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
     match tier {
         crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => {
@@ -2465,16 +2581,19 @@ pub fn build_revocation_resolver(
             Box::new(crate::live_trust::LiveTrustResolver::new(base))
         }
         crate::revocation_tier::RevocationTier::Push { t_secs } => {
-            // Tier 3 over the in-process reference channel: with no networked event
-            // source wired, the channel is inert and the cache runs at its bounded-`T`
-            // fallback (the honest guarantee). A real push backend would inject its
-            // own channel here in place of the in-memory reference.
+            // Tier 3: use the injected networked channel (MCPS-84 Redis trust-epoch
+            // source) when present; otherwise the in-process reference channel is
+            // inert and the cache runs at its bounded-`T` fallback (the honest
+            // guarantee when no push backend is wired).
+            let channel = push_channel.unwrap_or_else(|| {
+                Box::new(crate::push_trust::InMemoryInvalidationChannel::new())
+            });
             Box::new(crate::push_trust::PushInvalidationTrustCache::new(
                 base,
                 *t_secs,
                 negative_ttl_secs,
                 clock,
-                Box::new(crate::push_trust::InMemoryInvalidationChannel::new()),
+                channel,
             ))
         }
     }
@@ -2824,6 +2943,7 @@ mod tests {
     use super::ReverseProxyHeaderFormat;
     use super::InnerLaunchConfig;
     use super::InnerModeKind;
+    use super::InnerSessionKind;
     use super::InnerServer;
     use super::KeySourceKind;
     use super::OcspKind;
@@ -5531,6 +5651,89 @@ mod tests {
         a.splice(0..0, args(&["--fleet"]));
         let config = parse_args(&a).expect("--fleet without --strict must parse (warn-only)");
         assert!(config.fleet && !config.strict);
+    }
+
+    // MCPS-83 (ADR-MCPS-049 clause 2): inner-session defaults to the fail-safe
+    // `Stateful` (affinity assumed) when the flag is omitted.
+    #[test]
+    fn inner_session_defaults_to_stateful() {
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(config.inner_session, InnerSessionKind::Stateful);
+    }
+
+    // MCPS-83: the operator can assert a stateless inner explicitly.
+    #[test]
+    fn inner_session_stateless_parses() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-session", "stateless"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.inner_session, InnerSessionKind::Stateless);
+        assert_eq!(config.inner_session.wire_name(), "stateless");
+    }
+
+    // MCPS-83: an unknown value is a fail-closed parse error.
+    #[test]
+    fn inner_session_unknown_value_rejected() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-session", "sometimes"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--inner-session"), "got: {err}");
+        assert!(err.contains("stateful|stateless"), "got: {err}");
+    }
+
+    // MCPS-83: inner-session is orthogonal to the security posture — declaring it
+    // (either value) is never a strict violation.
+    #[test]
+    fn inner_session_is_not_a_strict_violation() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict", "--inner-session", "stateless"]));
+        let config = parse_args(&a).expect("parse");
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("inner-session")),
+            "inner-session must not be a strict violation"
+        );
+    }
+
+    // MCPS-84: a trust-epoch backend is only consumed by the Push tier; pairing it
+    // with any other tier is a fail-closed misconfiguration (not silently ignored).
+    #[test]
+    fn trust_epoch_url_without_push_tier_is_rejected() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&["--trust-epoch-redis-url", "redis://127.0.0.1:6379"]),
+        );
+        // Default tier is bounded-cache, not push.
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--trust-epoch-redis-url"), "got: {err}");
+        assert!(err.contains("push"), "got: {err}");
+    }
+
+    // MCPS-84: under --revocation-tier push the trust-epoch URL/key parse and land
+    // on the config.
+    #[test]
+    fn trust_epoch_url_with_push_tier_parses() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--revocation-tier",
+                "push:60",
+                "--trust-epoch-redis-url",
+                "redis://127.0.0.1:6379",
+                "--trust-epoch-key",
+                "mcps:trust:epoch",
+            ]),
+        );
+        let config = parse_args(&a).expect("push + trust-epoch must parse");
+        assert_eq!(
+            config.trust_epoch_redis_url.as_deref(),
+            Some("redis://127.0.0.1:6379")
+        );
+        assert_eq!(config.trust_epoch_key.as_deref(), Some("mcps:trust:epoch"));
     }
 
     // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable

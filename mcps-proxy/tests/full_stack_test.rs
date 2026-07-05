@@ -143,7 +143,13 @@ fn dns(value: &str) -> SanType {
 // --- temp key material on disk ------------------------------------------------
 
 fn tmp(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("mcps_fullstack_{}_{name}", std::process::id()))
+    // Per-call sequence so two Material sets minted in the SAME test process (e.g.
+    // two #[test]s running concurrently in this binary) get distinct paths and do
+    // not clobber — or Drop-delete — each other's key files. Process id alone is
+    // not unique across concurrent same-binary tests.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("mcps_fullstack_{}_{seq}_{name}", std::process::id()))
 }
 
 /// Write all key material the CLI needs and return their paths.
@@ -508,4 +514,69 @@ fn full_stack_cli_security_matrix() {
         assert_eq!(error_message(&body), "mcps.transport_binding_failed");
         drop(proxy2);
     }
+}
+
+/// MCPS-88 (ADR-MCPS-049 W3): SIGTERM triggers a GRACEFUL shutdown — the proxy
+/// stops accepting and exits 0 (a clean rollout stop), rather than being left
+/// running or dying by signal. After the signal the listening port stops
+/// accepting. In-flight completion is guaranteed BY CONSTRUCTION and so is not
+/// separately asserted here: the serve loop is single-threaded and inline, so at
+/// most one request is ever in flight and it always runs to completion (bounded by
+/// the per-request read/response deadlines) before the loop re-checks the shutdown
+/// flag.
+#[cfg(unix)]
+#[test]
+fn sigterm_drains_gracefully_and_exits_zero() {
+    let material = write_material();
+    let mut proxy = spawn_proxy(&material, "60");
+    let addr = proxy.addr;
+
+    // The port is accepting before the signal.
+    assert!(
+        TcpStream::connect(addr).is_ok(),
+        "proxy should be accepting before SIGTERM"
+    );
+
+    // Send SIGTERM (no libc dev-dep — shell out to `kill`).
+    let pid = proxy.child.id();
+    let killed = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()
+        .expect("run kill -TERM");
+    assert!(killed.success(), "kill -TERM should succeed");
+
+    // The process must exit CLEANLY (code 0) within a bounded drain window — not be
+    // left running, and not die by signal (which would yield code() == None).
+    let mut status = None;
+    for _ in 0..100 {
+        match proxy.child.try_wait().expect("try_wait") {
+            Some(s) => {
+                status = Some(s);
+                break;
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let status = status.expect("proxy must exit within the drain window after SIGTERM");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "graceful shutdown must exit 0 (not be killed), got {status:?}"
+    );
+
+    // After exit the listening socket is gone: new connections are refused. Poll
+    // briefly to avoid racing the OS teardown right at process exit.
+    let mut refused = false;
+    for _ in 0..40 {
+        if TcpStream::connect(addr).is_err() {
+            refused = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(refused, "after graceful shutdown the port must stop accepting");
+
+    drop(proxy); // Drop re-kills/waits — harmless on an already-reaped child.
+    drop(material);
 }
