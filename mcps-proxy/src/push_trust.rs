@@ -42,15 +42,24 @@ use mcps_core::VerificationKey;
 use crate::trust_cache::BoundedTrustCache;
 use crate::trust_cache::UnixClock;
 
-/// One pushed revocation event: the `(signer, key_id)` whose cached trust state
-/// must be evicted immediately. A real channel would carry sequence/ordering
-/// metadata; the reference event is just the identity to evict.
+/// One pushed invalidation event. A real channel would carry sequence/ordering
+/// metadata; the reference events are just the invalidation to apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidationEvent {
-    /// The signer whose binding is revoked.
-    pub signer: String,
-    /// The key id whose binding is revoked.
-    pub key_id: String,
+pub enum InvalidationEvent {
+    /// Evict one `(signer, key_id)` binding — a precise, per-key revocation (the
+    /// in-process reference channel's granularity).
+    Evict {
+        /// The signer whose binding is revoked.
+        signer: String,
+        /// The key id whose binding is revoked.
+        key_id: String,
+    },
+    /// Evict ALL cached positive trust (MCPS-84). A COARSE, fleet-wide
+    /// invalidation: a networked source (e.g. a monotonic trust-epoch key, see
+    /// `redis_trust_epoch.rs`) knows the trust store changed but not which key, so
+    /// it flushes the whole positive cache and every entry re-resolves live. Can
+    /// only tighten trust, never widen it.
+    FlushAll,
 }
 
 /// An injected source of revocation push events plus a health signal.
@@ -104,10 +113,18 @@ impl InMemoryInvalidationChannel {
     /// drain (and thus the next cache lookup) evicts the affected entry.
     pub fn push_revocation(&self, signer: &str, key_id: &str) {
         if let Ok(mut q) = self.pending.lock() {
-            q.push_back(InvalidationEvent {
+            q.push_back(InvalidationEvent::Evict {
                 signer: signer.to_string(),
                 key_id: key_id.to_string(),
             });
+        }
+    }
+
+    /// Push a coarse flush-all invalidation (evict every cached binding on the next
+    /// drain). The networked-source analogue of a trust-epoch advance.
+    pub fn push_flush_all(&self) {
+        if let Ok(mut q) = self.pending.lock() {
+            q.push_back(InvalidationEvent::FlushAll);
         }
     }
 
@@ -177,8 +194,17 @@ impl PushInvalidationTrustCache {
         let events = self.channel.drain_pending();
         let mut evicted = 0;
         for event in events {
-            if self.cache.evict(&event.signer, &event.key_id) {
-                evicted += 1;
+            match event {
+                InvalidationEvent::Evict { signer, key_id } => {
+                    if self.cache.evict(&signer, &key_id) {
+                        evicted += 1;
+                    }
+                }
+                // Coarse fleet-wide invalidation: drop the whole positive cache so
+                // every subsequent lookup re-resolves live (tighten-only).
+                InvalidationEvent::FlushAll => {
+                    evicted += self.cache.clear();
+                }
             }
         }
         evicted
@@ -318,6 +344,43 @@ mod tests {
         // The eviction forced a re-consult of the inner store (proves it was not a
         // stale cache hit).
         assert_eq!(inner.calls(), 2, "the pushed eviction forced a re-resolve");
+    }
+
+    #[test]
+    fn flush_all_evicts_every_cached_binding_forcing_re_resolve() {
+        // MCPS-84: a coarse FlushAll (the trust-epoch analogue) drops EVERY cached
+        // positive entry, so all subsequent lookups re-resolve live — a
+        // just-revoked key is then re-checked and denied even though the push named
+        // no specific key.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let channel = InMemoryInvalidationChannel::new();
+        let cache = push_cache_over(inner.clone(), clock, channel.clone());
+
+        // Prime two distinct bindings (2 inner consults).
+        cache.resolve("did:host", "key-1").expect("active");
+        cache.resolve("did:other", "key-9").expect("active");
+        assert_eq!(inner.calls(), 2);
+
+        // A single flush-all (epoch advanced), still well within T.
+        inner.set(Err(TrustResolverError::Revoked));
+        channel.push_flush_all();
+        now.store(1000 + 1, Ordering::SeqCst);
+
+        // BOTH keys re-resolve (were evicted) and are now denied — 2 more consults.
+        assert_eq!(
+            cache.resolve("did:host", "key-1").unwrap_err(),
+            TrustResolverError::Revoked
+        );
+        assert_eq!(
+            cache.resolve("did:other", "key-9").unwrap_err(),
+            TrustResolverError::Revoked
+        );
+        assert_eq!(
+            inner.calls(),
+            4,
+            "flush-all evicted BOTH cached bindings, forcing a re-resolve of each"
+        );
     }
 
     #[test]

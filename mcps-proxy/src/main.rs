@@ -256,20 +256,29 @@ fn run() -> Result<(), String> {
     // trust to T; Tier 2 consults the store live every request; Tier 3 evicts on a
     // pushed event, else falls back to bounded T). Without this wrapping the tier
     // line above would be a claim the resolver does not enforce.
+    // MCPS-84: connect the networked trust-epoch invalidation channel if one is
+    // configured (only under --revocation-tier push; enforced at parse time).
+    let push_channel = build_trust_epoch_channel(&config)?;
     if let RevocationTier::Push { .. } = config.revocation_tier {
-        // Honesty (Tier 3): no networked event source ships yet, so the in-process
-        // reference channel is inert — Tier 3 currently runs at its bounded-`T`
-        // fallback (already reflected in the tier's `guarantee()` string above). It
-        // does NOT operate an active near-zero push channel until a push backend
-        // ships.
-        eprintln!(
-            "mcps-proxy: NOTE: revocation-tier PUSH has no networked event source in this \
-             build, so it runs at its bounded-T fallback (no active near-zero push channel \
-             ships yet); a push backend is a follow-up."
-        );
+        if push_channel.is_none() {
+            // Honesty (Tier 3): with no networked source wired, the in-process
+            // reference channel is inert — Tier 3 runs at its bounded-`T` fallback
+            // (already reflected in the tier's `guarantee()` string above), NOT an
+            // active near-zero push channel. Configure --trust-epoch-redis-url to
+            // activate the networked source (MCPS-84).
+            eprintln!(
+                "mcps-proxy: NOTE: revocation-tier PUSH has no networked event source (no \
+                 --trust-epoch-redis-url), so it runs at its bounded-T fallback; set \
+                 --trust-epoch-redis-url to activate the trust-epoch push source."
+            );
+        }
     }
-    let resolver =
-        cli::build_revocation_resolver(&config.revocation_tier, Box::new(base_resolver), trust_clock());
+    let resolver = cli::build_revocation_resolver_with_channel(
+        &config.revocation_tier,
+        Box::new(base_resolver),
+        trust_clock(),
+        push_channel,
+    );
 
     // Inner-server environment minimization (MCPS-035, ADR-MCPS-016). By default
     // the child environment is cleared and only the explicit allowlist is passed,
@@ -859,6 +868,46 @@ fn install_shutdown_handlers() {
         libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
         libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
     }
+}
+
+/// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
+/// for the ADR-021 Push tier when `--trust-epoch-redis-url` is configured. Under
+/// the `redis_replay` feature this connects the Redis trust-epoch source; without
+/// it, a configured URL fails closed (a networked backend was requested but not
+/// compiled in). Returns `None` when no URL is set (Push runs inert / bounded-`T`).
+#[cfg(feature = "redis_replay")]
+fn build_trust_epoch_channel(
+    config: &cli::Config,
+) -> Result<Option<Box<dyn mcps_proxy::InvalidationChannel + Send + Sync>>, String> {
+    match &config.trust_epoch_redis_url {
+        Some(url) => {
+            let key = config
+                .trust_epoch_key
+                .as_deref()
+                .unwrap_or(mcps_proxy::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
+            let source = mcps_proxy::trust_epoch::redis_trust_epoch_source(url, key)
+                .map_err(|e| format!("trust-epoch source: {e}"))?;
+            eprintln!(
+                "mcps-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
+                 epoch key {key:?}); the trust cache flushes on an epoch advance and reverts to \
+                 the bounded-T guarantee on a read outage."
+            );
+            Ok(Some(Box::new(source)))
+        }
+        None => Ok(None),
+    }
+}
+
+#[cfg(not(feature = "redis_replay"))]
+fn build_trust_epoch_channel(
+    config: &cli::Config,
+) -> Result<Option<Box<dyn mcps_proxy::InvalidationChannel + Send + Sync>>, String> {
+    if config.trust_epoch_redis_url.is_some() {
+        return Err(
+            "--trust-epoch-redis-url requires a build with the `redis_replay` feature".to_string(),
+        );
+    }
+    Ok(None)
 }
 
 fn main() -> ExitCode {

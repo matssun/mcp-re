@@ -255,6 +255,25 @@ impl BoundedTrustCache {
             Err(_) => false,
         }
     }
+
+    /// Evict ALL cached positive entries (MCPS-84, ADR-MCPS-021 Tier-3 COARSE
+    /// invalidation). A monotonic trust-epoch advance signals "something in the
+    /// trust store changed" without naming the key, so the honest response is to
+    /// drop every cached binding and force each subsequent lookup to re-resolve
+    /// live against the inner store. A flush can therefore only TIGHTEN trust
+    /// (a revoked key is re-checked and denied), never widen it. Returns the number
+    /// of entries removed. A poisoned lock clears nothing and returns 0 — the
+    /// bounded-`T` fallback still caps the exposure window.
+    pub fn clear(&self) -> usize {
+        match self.cache.lock() {
+            Ok(mut cache) => {
+                let n = cache.len();
+                cache.clear();
+                n
+            }
+            Err(_) => 0,
+        }
+    }
 }
 
 impl TrustResolver for BoundedTrustCache {
