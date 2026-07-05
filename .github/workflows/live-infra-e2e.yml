@@ -197,6 +197,7 @@ jobs:
           cargo test -p mcps-proxy
           --features redis_replay,pkcs11_keysource,online_ocsp
           --test redis_replay_e2e_test
+          --test fleet_replay_e2e_test
           --test pkcs11_keysource_e2e_test
           --test ocsp_e2e_test
 
