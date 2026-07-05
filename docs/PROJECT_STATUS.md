@@ -74,6 +74,30 @@ The current demonstration and live-validation package proves:
   (zero `draft-02` preimage change). See the non-normative
   [Google Cloud cookbook](mode-c-attested-ingress-gcp-cookbook.md).
 
+### Horizontally-scaled fleet deployment (v0.10.1)
+
+MCP-S runs as N identical replicas behind a load balancer with no security claim
+weakened, behind an explicit `--fleet` flag that is orthogonal to `--strict`
+(ADR-MCPS-049). The heavy replay/trust primitives already existed (v0.3 shared
+tiers); v0.10.1 composes, *proves*, and documents the fleet and closes the
+node-local coherence gaps:
+
+- **Cross-replica replay coherence** — `--fleet` rejects node-local (memory/file)
+  replay caches, so a replica must use a shared, cross-replica ReplayCache (Redis).
+  A two-replica e2e proves a nonce accepted by one replica is rejected by a sibling
+  (MCPS-79/80/81).
+- **Cross-replica trust revocation** — a Redis-backed trust-epoch source flushes the
+  ADR-021 Push-tier trust cache across replicas on an epoch advance, reverting to the
+  bounded-staleness guarantee on a read outage, with explicit per-tier
+  revocation-lag bounds. An e2e proves a revocation reaches a sibling, with a
+  negative control (MCPS-84/85/86).
+- **Fleet operations** — self-declared inner-session statefulness (`--inner-session`)
+  driving Service session affinity (MCPS-83); graceful `SIGTERM`/`SIGINT` drain for
+  rolling deploys (MCPS-88); a fleet PEP throughput / added-latency benchmark
+  (MCPS-89).
+- **Kubernetes/Helm reference** + deployment guide (MCPS-87), with a fail-closed
+  guardrail that refuses a `--fleet` deployment wired to a weak (node-local) tier.
+
 ### Live Google Cloud KMS validation (v0.5.1)
 
 - **Object signing against real Cloud KMS** (`EC_SIGN_ED25519`): signatures
@@ -108,9 +132,14 @@ MCP-S does not currently claim:
   revocation via the attestor's CRL (keyed on the client cert serial) — but online
   OCSP stays non-default, and revocation latency is bounded by the CRL cadence, not
   zero;
-- horizontally scaled replay protection beyond the shipped durable tiers, OS-level
-  sandboxing of wrapped servers, and signed tool-manifest enforcement (gated on
-  the high-assurance cargo features — see the README deployment profiles).
+- OS-level sandboxing of wrapped servers, and signed tool-manifest enforcement
+  (gated on the high-assurance cargo features — see the README deployment
+  profiles);
+- a **fully retired single-node ceiling.** The v0.10.1 fleet posture
+  (ADR-MCPS-049) proves cross-replica replay and trust-revocation coherence, but
+  the dedicated proof that a multi-round-trip continuation survives a replica switch
+  (MCPS-82) and live multi-node (GKE) validation are still pending, so the
+  single-node non-claim is lifted only conditionally, not fully retired.
 
 ## Proposal readiness
 

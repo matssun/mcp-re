@@ -62,7 +62,7 @@ Think of it as the layer that makes "this exact call, authorized this way, at
 this time" cryptographically checkable — and it stacks with the identity,
 policy, and isolation layers around it.
 
-## What does v0.10.0 prove?
+## What does v0.10.1 prove?
 
 The wire envelope is the frozen `draft-02` runtime-evidence profile (frozen at
 v0.6.0). On top of it the current package proves:
@@ -96,6 +96,14 @@ delegation, not end-to-end mTLS** (the load balancer witnesses proof-of-possessi
 and stays in the trusted computing base). The forwarded request is byte-identical
 to Mode A (zero `draft-02` preimage change).
 
+**Horizontally-scaled fleet deployment.** Behind an explicit `--fleet` flag
+(orthogonal to `--strict`), MCP-S runs as N identical replicas behind a load
+balancer with no security claim weakened (ADR-MCPS-049, v0.10.1): `--fleet` rejects
+node-local replay caches so replicas share a cross-replica ReplayCache (Redis), a
+Redis-backed trust-epoch source propagates revocation across replicas, and graceful
+drain supports rolling deploys — replay and trust-revocation coherence are each
+proven by a cross-replica e2e. A Kubernetes/Helm reference ships with it.
+
 **Live Google Cloud KMS validation.** Against *real* Cloud KMS, not an emulator:
 
 - **Object signing** with an `EC_SIGN_ED25519` key: signatures produced by a live
@@ -123,10 +131,12 @@ to Mode A (zero `draft-02` preimage change).
   static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
   revocation via the attestor's CRL, but online OCSP stays non-default and
   revocation latency is bounded by the CRL cadence, not zero;
-- horizontally scaled replay protection beyond the shipped durable tiers, OS-level
-  sandboxing of wrapped servers, and signed tool-manifest enforcement — these are
-  gated on the high-assurance cargo features and are **not** in the lean default
-  build.
+- OS-level sandboxing of wrapped servers and signed tool-manifest enforcement —
+  these are gated on the high-assurance cargo features and are **not** in the lean
+  default build;
+- a fully retired single-node ceiling — the v0.10.1 fleet posture proves
+  cross-replica replay and trust-revocation coherence, but the multi-round-trip-
+  survives-replica-switch proof and live multi-node validation are still pending.
 
 ## How do I run the demo?
 
