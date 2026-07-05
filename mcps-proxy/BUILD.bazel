@@ -92,6 +92,9 @@ _PROXY_LIB_SRCS = [
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
+    # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is
+    # redis_replay-gated inside the module).
+    "src/trust_epoch.rs",
 ]
 
 # Single source of truth for the mcps_proxy library deps. All three library
@@ -190,6 +193,10 @@ nt_rust_binary(
         # never listed it, which is the head of the #220 fail-to-build cascade.
         "//mcps-core:mcps_core",
         "//mcps-policy:mcps_policy",
+        # MCPS-88 (ADR-MCPS-049 W3): main.rs installs a SIGTERM/SIGINT handler via
+        # libc::sigaction for graceful drain, so the binary must link libc (the
+        # Cargo build resolves it by manifest; the Bazel binary target must list it).
+        "@crates_mcps//:libc",
     ],
 )
 
@@ -674,6 +681,91 @@ nt_rust_test(
         # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
         # inserted, to confirm the bounded-window TTL (not the now=0 epoch TTL).
         "@crates_mcps//:redis",
+    ],
+)
+
+# MCPS-80/81 (ADR-MCPS-049 W1, proof a): fleet replay coherence — two serving
+# Proxy replicas over one shared Redis; skip-when-absent like redis_replay_e2e.
+nt_rust_test(
+    name = "fleet_replay_e2e_test",
+    srcs = ["tests/fleet_replay_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_REDIS_URL",
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",  # keep
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-89 (ADR-MCPS-049 W3): fleet PEP throughput/added-latency benchmark harness
+# (#[ignore], run explicitly). Same feature/skip gating as the fleet replay test.
+nt_rust_test(
+    name = "fleet_throughput_bench",
+    srcs = ["tests/fleet_throughput_bench.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_REDIS_URL",
+        "MCPS_REQUIRE_LIVE_INFRA",
+        "MCPS_BENCH_REQUESTS",
+        "MCPS_BENCH_REPLICAS",
+    ],
+    deps = [
+        ":mcps_proxy_ext",  # keep
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
+        "@crates_mcps//:serde_json",
+    ],
+)
+
+# MCPS-84 (ADR-MCPS-049 W2): live Redis trust-epoch source — an INCR on another
+# connection surfaces as FlushAll.
+nt_rust_test(
+    name = "redis_trust_epoch_e2e_test",
+    srcs = ["tests/redis_trust_epoch_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_REDIS_URL",
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",  # keep
+        "@crates_mcps//:redis",
+    ],
+)
+
+# MCPS-86 (ADR-MCPS-049 W1, proof b): fleet trust-revocation coherence — a
+# revocation takes effect on a sibling replica when the trust epoch advances.
+nt_rust_test(
+    name = "fleet_trust_epoch_e2e_test",
+    srcs = ["tests/fleet_trust_epoch_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCPS_TEST_REDIS_URL",
+        "MCPS_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcps_proxy_ext",  # keep
+        "//mcps-core:mcps_core",
+        "//mcps-host:mcps_host_test_fixtures",  # keep
+        "@crates_mcps//:redis",
+        "@crates_mcps//:serde_json",
     ],
 )
 
