@@ -240,6 +240,13 @@ fn run() -> Result<(), String> {
         "mcps-proxy: {}",
         config.revocation_tier.startup_audit_line("trust-store")
     );
+    // MCPS-83 (ADR-MCPS-049 clause 2): surface the declared inner-session posture so
+    // the routing consequence is auditable at startup. Verification is unaffected;
+    // this only tells an operator/LB whether sticky routing is required.
+    eprintln!(
+        "mcps-proxy: {}",
+        config.inner_session.startup_audit_line()
+    );
     // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
     // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
     // trust to T; Tier 2 consults the store live every request; Tier 3 evicts on a

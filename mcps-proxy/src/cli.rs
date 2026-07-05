@@ -68,6 +68,49 @@ pub enum KeySourceKind {
     GcpKms,
 }
 
+/// Whether the wrapped inner MCP server holds per-session state across requests
+/// (MCPS-83, ADR-MCPS-049 clause 2). This is a self-declared, auditable operator
+/// assertion about the inner server's own behavior; MCP-S does NOT inspect the
+/// inner server to verify it. It changes NO request verification — it exists so a
+/// fleet deployment can key its routing guidance off a config fact: a `Stateful`
+/// inner (the fail-safe default) requires a logical session to be routed to a
+/// stable replica (sticky routing), because each replica owns an independent inner
+/// subprocess and MCP-S ships no cross-replica inner-session replication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InnerSessionKind {
+    /// The inner server keeps per-session state (cursors, subscriptions,
+    /// `initialize` handshake, MRT `requestState`). Any replica may serve a given
+    /// logical session only if the deployment pins that session to it. This is the
+    /// DEFAULT: absent an explicit operator assertion, affinity is assumed so the
+    /// deployment fails toward correctness rather than silent session breakage.
+    #[default]
+    Stateful,
+    /// The operator asserts the inner server holds NO cross-request session state,
+    /// so any replica may serve any request and a stateless load balancer is safe.
+    Stateless,
+}
+
+impl InnerSessionKind {
+    /// Lowercase wire name matching the `--inner-session` flag values.
+    pub fn wire_name(&self) -> &'static str {
+        match self {
+            InnerSessionKind::Stateful => "stateful",
+            InnerSessionKind::Stateless => "stateless",
+        }
+    }
+
+    /// One-line startup-audit statement of the routing consequence.
+    pub fn startup_audit_line(&self) -> &'static str {
+        match self {
+            InnerSessionKind::Stateful => "inner-session=stateful: a logical session MUST be \
+                 routed to a stable replica (sticky routing); MCP-S replicates no inner-session \
+                 state across the fleet",
+            InnerSessionKind::Stateless => "inner-session=stateless (operator-asserted): any \
+                 replica may serve any request; a stateless load balancer is safe",
+        }
+    }
+}
+
 /// Replay-cache backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayKind {
@@ -386,6 +429,11 @@ pub struct Config {
     /// does NOT imply `--strict`; the production guarantee is `--strict --fleet`
     /// (using `--fleet` without `--strict` only warns — see `main.rs`).
     pub fleet: bool,
+    /// Operator-declared inner-server session statefulness (MCPS-83,
+    /// ADR-MCPS-049 clause 2, `--inner-session`). Defaults to
+    /// [`InnerSessionKind::Stateful`] (fail-safe: affinity assumed). Drives fleet
+    /// routing guidance only; changes no request verification.
+    pub inner_session: InnerSessionKind,
     /// Whether `--inner-sandbox off` was passed EXPLICITLY (#4082, M09). The
     /// inner-sandbox default is also `Off`, but no kernel backend ships in this
     /// build, so a blanket strict `enforce` requirement would fail closed
@@ -426,6 +474,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--max-clock-skew",
     "--expected-version-policy",
     "--key-source",
+    "--inner-session",
     "--pkcs11-module",
     "--pkcs11-pin",
     "--pkcs11-token-label",
@@ -592,6 +641,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // default. Orthogonal to `strict`; `--strict --fleet` is the fleet
     // strict-production posture that rejects node-local replay caches.
     let mut fleet = false;
+    // MCPS-83 (ADR-MCPS-049 clause 2): inner-server session statefulness, fail-safe
+    // default `Stateful` (assume sticky-routing affinity unless the operator asserts
+    // the inner server is stateless).
+    let mut inner_session = InnerSessionKind::Stateful;
     // #4082 (M09): track whether `--inner-sandbox off` was given EXPLICITLY, so
     // strict can reject a deliberate no-containment request without rejecting the
     // (identical-valued) default that ships when the flag is omitted.
@@ -1036,6 +1089,17 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // #3865 OS sandbox profile: top-level mode. `enforce` REQUIRES kernel
             // containment or refuses to start (fail closed); `off` (default) keeps
             // today's no-containment behavior exactly.
+            "--inner-session" => {
+                inner_session = match value.as_str() {
+                    "stateful" => InnerSessionKind::Stateful,
+                    "stateless" => InnerSessionKind::Stateless,
+                    other => {
+                        return Err(format!(
+                            "unknown --inner-session '{other}' (stateful|stateless)"
+                        ))
+                    }
+                }
+            }
             "--inner-sandbox" => {
                 inner_launch.sandbox.mode = match value.as_str() {
                     "off" => {
@@ -1541,6 +1605,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_launch,
         strict,
         fleet,
+        inner_session,
         sandbox_explicitly_off,
     };
 
@@ -2824,6 +2889,7 @@ mod tests {
     use super::ReverseProxyHeaderFormat;
     use super::InnerLaunchConfig;
     use super::InnerModeKind;
+    use super::InnerSessionKind;
     use super::InnerServer;
     use super::KeySourceKind;
     use super::OcspKind;
@@ -5531,6 +5597,50 @@ mod tests {
         a.splice(0..0, args(&["--fleet"]));
         let config = parse_args(&a).expect("--fleet without --strict must parse (warn-only)");
         assert!(config.fleet && !config.strict);
+    }
+
+    // MCPS-83 (ADR-MCPS-049 clause 2): inner-session defaults to the fail-safe
+    // `Stateful` (affinity assumed) when the flag is omitted.
+    #[test]
+    fn inner_session_defaults_to_stateful() {
+        let config = parse_args(&minimal()).expect("parse");
+        assert_eq!(config.inner_session, InnerSessionKind::Stateful);
+    }
+
+    // MCPS-83: the operator can assert a stateless inner explicitly.
+    #[test]
+    fn inner_session_stateless_parses() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-session", "stateless"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.inner_session, InnerSessionKind::Stateless);
+        assert_eq!(config.inner_session.wire_name(), "stateless");
+    }
+
+    // MCPS-83: an unknown value is a fail-closed parse error.
+    #[test]
+    fn inner_session_unknown_value_rejected() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-session", "sometimes"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--inner-session"), "got: {err}");
+        assert!(err.contains("stateful|stateless"), "got: {err}");
+    }
+
+    // MCPS-83: inner-session is orthogonal to the security posture — declaring it
+    // (either value) is never a strict violation.
+    #[test]
+    fn inner_session_is_not_a_strict_violation() {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a.splice(0..0, args(&["--strict", "--inner-session", "stateless"]));
+        let config = parse_args(&a).expect("parse");
+        assert!(
+            strict_violations(&config)
+                .iter()
+                .all(|v| !v.contains("inner-session")),
+            "inner-session must not be a strict violation"
+        );
     }
 
     // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable
