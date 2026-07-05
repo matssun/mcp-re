@@ -177,10 +177,13 @@ fn pkcs11_sign_verifies_against_token_public_key() {
 // (distinct label from the response-signing key) custodies the TLS server key, the
 // proxy reads NO TLS key from disk, and a real rustls client completing an mTLS
 // handshake verifies a CertificateVerify signature the token produced over the
-// transcript. The lane is SELF-PROVISIONING: when `softhsm2-util` and `openssl`-free
-// rcgen key material are available it builds a fresh SCRATCH token (its own tokendir
-// via `SOFTHSM2_CONF`, never a host/production store) with the two objects. It
-// SELF-SKIPS when SoftHSM2 is not installed, honoring `MCPS_REQUIRE_LIVE_INFRA`
+// transcript. The lane is SELF-PROVISIONING: when `softhsm2-util` (token init) and
+// `pkcs11-tool` (on-token keygen) are available it builds a fresh SCRATCH token (its own
+// tokendir via `SOFTHSM2_CONF`, never a host/production store) and GENERATES the key
+// objects ON the token — it never imports a private key. (`softhsm2-util --import`
+// cannot parse an Ed25519 PKCS#8 key, so the flow is inverted: keygen on the token, read
+// the public key back off the token, and mint the matching TLS leaf from it.) It
+// SELF-SKIPS when the tooling is not installed, honoring `MCPS_REQUIRE_LIVE_INFRA`
 // (set → a skip becomes a hard failure, so CI cannot silently lose the coverage).
 // ===========================================================================
 
@@ -216,7 +219,7 @@ fn softhsm2_module() -> Option<String> {
         .map(|p| p.to_string())
 }
 
-/// `true` if `softhsm2-util` is on PATH (needed to provision the scratch token).
+/// `true` if `softhsm2-util` is on PATH (needed to initialise the scratch token).
 fn softhsm2_util_available() -> bool {
     Command::new("softhsm2-util")
         .arg("--version")
@@ -225,22 +228,32 @@ fn softhsm2_util_available() -> bool {
         .unwrap_or(false)
 }
 
+/// `true` if `pkcs11-tool` (OpenSC) is on PATH — needed to keygen the on-token keys.
+/// SoftHSM2's own `softhsm2-util` can neither import nor generate Ed25519 keys, so the
+/// keys are generated through `pkcs11-tool`. `.output()` errors only when the binary
+/// cannot be spawned (not on PATH); a non-zero exit still means it exists.
+fn pkcs11_tool_available() -> bool {
+    Command::new("pkcs11-tool").arg("--help").output().is_ok()
+}
+
 /// The decision for every #59 live test: a resolved module path + a usable
-/// `softhsm2-util`, or `None` to self-skip. Honors `MCPS_REQUIRE_LIVE_INFRA`.
+/// `softhsm2-util` (token init) + `pkcs11-tool` (on-token keygen), or `None` to
+/// self-skip. Honors `MCPS_REQUIRE_LIVE_INFRA`.
 fn require_softhsm2_or_skip(test: &str) -> Option<String> {
     let module = softhsm2_module();
-    let ok = module.is_some() && softhsm2_util_available();
+    let ok = module.is_some() && softhsm2_util_available() && pkcs11_tool_available();
     if !ok {
         if std::env::var("MCPS_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
             panic!(
-                "MCPS_REQUIRE_LIVE_INFRA is set but SoftHSM2 (module + softhsm2-util) is \
-                 unavailable — the #59 delegated-TLS live lane MUST run under CI, not skip"
+                "MCPS_REQUIRE_LIVE_INFRA is set but SoftHSM2 (module + softhsm2-util) or \
+                 pkcs11-tool (OpenSC) is unavailable — the #59 delegated-TLS live lane MUST \
+                 run under CI, not skip"
             );
         }
         eprintln!(
-            "SKIP {test}: SoftHSM2 not available (set MCPS_TEST_PKCS11_MODULE or install \
-             softhsm2-util). The #59 delegated-TLS path is exercised by the unit tests; this \
-             lane needs a live token."
+            "SKIP {test}: SoftHSM2 + pkcs11-tool not available (set MCPS_TEST_PKCS11_MODULE \
+             and install softhsm2-util + opensc). The #59 delegated-TLS path is exercised by \
+             the unit tests; this lane needs a live token."
         );
         return None;
     }
@@ -307,30 +320,43 @@ impl ScratchToken {
         }
     }
 
-    /// Import an Ed25519 keypair (PKCS#8 PEM) under `label`/`id` onto the token.
-    fn import_ed25519(&self, pkcs8_pem: &str, label: &str, id: &str) {
-        let key_path = self.dir.join(format!("{label}.pem"));
-        std::fs::write(&key_path, pkcs8_pem).expect("write key pem");
-        let out = Command::new("softhsm2-util")
+    /// Generate a key pair of `key_type` (a `pkcs11-tool --key-type` value, e.g.
+    /// `EC:edwards25519` or `EC:prime256v1`) directly ON the token under `label`/`id`,
+    /// its private key non-extractable. This REPLACES the removed `--import` path:
+    /// `softhsm2-util --import` cannot parse an Ed25519 PKCS#8 key (it reports the file
+    /// as unreadable / "maybe encrypted"), so the test never imports — it keygens on the
+    /// token (the path SoftHSM2 fully supports) and reads the public key back for cert
+    /// minting. Uses `pkcs11-tool` (OpenSC), the same command the live CI lane uses.
+    fn keygen(&self, module: &str, key_type: &str, label: &str, id: &str) {
+        let out = Command::new("pkcs11-tool")
             .args([
-                "--import",
-                key_path.to_str().expect("key path utf8"),
-                "--token",
+                "--module",
+                module,
+                "--token-label",
                 &self.token_label,
+                "--login",
+                "--pin",
+                &self.pin,
+                "--keypairgen",
+                "--key-type",
+                key_type,
                 "--label",
                 label,
                 "--id",
                 id,
-                "--pin",
-                &self.pin,
             ])
             .output()
-            .expect("run softhsm2-util --import");
+            .expect("run pkcs11-tool --keypairgen");
         assert!(
             out.status.success(),
-            "softhsm2-util --import ({label}) failed: {}",
+            "pkcs11-tool --keypairgen ({label}, {key_type}) failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    /// Convenience: keygen an Ed25519 key pair on the token.
+    fn keygen_ed25519(&self, module: &str, label: &str, id: &str) {
+        self.keygen(module, "EC:edwards25519", label, id);
     }
 }
 
@@ -342,19 +368,53 @@ impl Drop for ScratchToken {
     }
 }
 
-/// A freshly generated Ed25519 credential: the rcgen `KeyPair` (so a matching cert
-/// can be minted) plus its PKCS#8 PEM (for token import). The token object and any
-/// cert minted from `key` therefore share the SAME public key — which is exactly
-/// what the validated delegated-build cert↔signer match requires.
-struct Ed25519Cred {
-    key: KeyPair,
-    pkcs8_pem: String,
+/// A freshly generated LOCAL Ed25519 key pair (rcgen). Used ONLY where a cert must be
+/// minted from a key that is DELIBERATELY DIFFERENT from the token's TLS key (the
+/// cert↔signer mismatch test). Token-resident keys are never generated here — they are
+/// generated ON the token (see [`ScratchToken::keygen_ed25519`]) and their public key
+/// is read back for cert minting via [`remote_subject_key_from_spki`].
+fn gen_ed25519() -> KeyPair {
+    KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key")
 }
 
-fn gen_ed25519() -> Ed25519Cred {
-    let key = KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key");
-    let pkcs8_pem = key.serialize_pem();
-    Ed25519Cred { key, pkcs8_pem }
+/// A rcgen [`rcgen::RemoteKeyPair`] carrying ONLY the token's Ed25519 PUBLIC key.
+///
+/// Minting a CA-signed leaf (`CertificateParams::signed_by`) signs the leaf with the
+/// ISSUER key and uses the subject key solely for its public key — it NEVER calls the
+/// subject key's `sign()`. So this holds only the owned 32-byte public key read off the
+/// token; `sign()` is unreachable. This is what lets a leaf's SPKI match the token TLS
+/// object WITHOUT importing a private key: `softhsm2-util --import` cannot parse an
+/// Ed25519 PKCS#8 key, so the flow is INVERTED — keygen on the token, read the public
+/// key, mint the cert from it. The private key never leaves the token.
+struct TokenPublicKey {
+    /// 32-byte raw Edwards point — the format rcgen's `public_key_raw` expects.
+    raw: Vec<u8>,
+}
+
+impl rcgen::RemoteKeyPair for TokenPublicKey {
+    fn public_key(&self) -> &[u8] {
+        &self.raw
+    }
+    fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
+        // Unreachable: a CA-signed leaf is signed by the ISSUER key, never the subject
+        // key. Fail loudly if a future rcgen ever changes that contract.
+        Err(rcgen::Error::RemoteKeyError)
+    }
+    fn algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
+        &rcgen::PKCS_ED25519
+    }
+}
+
+/// Build a rcgen SUBJECT `KeyPair` from the token's exported 44-byte RFC 8410 Ed25519
+/// SPKI (12-byte prefix + 32-byte point). The minted leaf's SPKI then equals the token
+/// TLS object, so the validated delegated build's cert↔signer match succeeds — with the
+/// private key never leaving the token.
+fn remote_subject_key_from_spki(spki: &[u8]) -> KeyPair {
+    assert_eq!(spki.len(), 44, "RFC 8410 Ed25519 SPKI is 12 + 32 bytes");
+    KeyPair::from_remote(Box::new(TokenPublicKey {
+        raw: spki[12..].to_vec(),
+    }))
+    .expect("build a rcgen KeyPair from the token's exported public key")
 }
 
 /// A self-signed CA (rcgen) used to issue the client + server leaves below.
@@ -479,10 +539,8 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
     };
     let _guard = provisioning_lock();
     let token = ScratchToken::init();
-    let signing = gen_ed25519();
-    let tls = gen_ed25519();
-    token.import_ed25519(&signing.pkcs8_pem, "mcps-sign", "01");
-    token.import_ed25519(&tls.pkcs8_pem, "mcps-tls", "02");
+    token.keygen_ed25519(&module, "mcps-sign", "01");
+    token.keygen_ed25519(&module, "mcps-tls", "02");
 
     // No TLS label → None (file-backed TLS path preserved). Scoped so this source
     // (and its module `C_Initialize`) is fully DROPPED before opening the next one —
@@ -526,10 +584,12 @@ fn pkcs11_tls_delegated_signer_none_then_some() {
         .expect("export token TLS public key");
     assert_eq!(spki.len(), 44, "RFC 8410 Ed25519 SPKI is 12 + 32 bytes");
 
-    // The token TLS key equals the rcgen key, so a cert minted from that key
-    // validates against the signer (cert↔signer match) under the #58 build path.
+    // A leaf minted from the TOKEN's OWN public key (read back from the token, never
+    // imported) validates against the signer (cert↔signer match) under the #58 build
+    // path — the private key stays on the token.
+    let server_key = remote_subject_key_from_spki(&spki);
     let ca = make_ca();
-    let server_cert = make_server_leaf_for(&ca, &tls.key);
+    let server_cert = make_server_leaf_for(&ca, &server_key);
     build_server_config_delegated_validated(
         vec![server_cert],
         signer,
@@ -550,10 +610,8 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
     };
     let _guard = provisioning_lock();
     let token = ScratchToken::init();
-    let signing = gen_ed25519();
-    let tls = gen_ed25519();
-    token.import_ed25519(&signing.pkcs8_pem, "mcps-sign", "01");
-    token.import_ed25519(&tls.pkcs8_pem, "mcps-tls", "02");
+    token.keygen_ed25519(&module, "mcps-sign", "01");
+    token.keygen_ed25519(&module, "mcps-tls", "02");
 
     let source = Pkcs11KeySource::open(
         &module,
@@ -568,10 +626,10 @@ fn pkcs11_tls_cert_signer_mismatch_fails_closed() {
     .expect("open with a TLS label");
     let signer = source.tls_delegated_signer().expect("delegated signer");
 
-    // A cert minted from a DIFFERENT Ed25519 key than the token's TLS key.
+    // A cert minted from a DIFFERENT (local) Ed25519 key than the token's TLS key.
     let other = gen_ed25519();
     let ca = make_ca();
-    let mismatching_cert = make_server_leaf_for(&ca, &other.key);
+    let mismatching_cert = make_server_leaf_for(&ca, &other);
     let result = build_server_config_delegated_validated(
         vec![mismatching_cert],
         signer,
@@ -594,12 +652,11 @@ fn pkcs11_tls_non_ed25519_fails_closed() {
     };
     let _guard = provisioning_lock();
     let token = ScratchToken::init();
-    let signing = gen_ed25519();
-    token.import_ed25519(&signing.pkcs8_pem, "mcps-sign", "01");
+    token.keygen_ed25519(&module, "mcps-sign", "01");
 
-    // Import an ECDSA P-256 key (a NON-Ed25519 key) under the TLS label.
-    let ecdsa = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).expect("ecdsa key");
-    token.import_ed25519(&ecdsa.serialize_pem(), "mcps-tls", "02");
+    // Generate an ECDSA P-256 key (a NON-Ed25519 key) ON the token under the TLS
+    // label; `open` must reject a TLS key that is not Ed25519.
+    token.keygen(&module, "EC:prime256v1", "mcps-tls", "02");
 
     let result = Pkcs11KeySource::open(
         &module,
@@ -626,11 +683,10 @@ fn pkcs11_tls_multiple_objects_fails_closed() {
     };
     let _guard = provisioning_lock();
     let token = ScratchToken::init();
-    let signing = gen_ed25519();
-    token.import_ed25519(&signing.pkcs8_pem, "mcps-sign", "01");
-    // Two DISTINCT Ed25519 keypairs sharing the SAME TLS label.
-    token.import_ed25519(&gen_ed25519().pkcs8_pem, "mcps-tls", "02");
-    token.import_ed25519(&gen_ed25519().pkcs8_pem, "mcps-tls", "03");
+    token.keygen_ed25519(&module, "mcps-sign", "01");
+    // Two DISTINCT Ed25519 keypairs (different ids) sharing the SAME TLS label.
+    token.keygen_ed25519(&module, "mcps-tls", "02");
+    token.keygen_ed25519(&module, "mcps-tls", "03");
 
     let result = Pkcs11KeySource::open(
         &module,
@@ -662,15 +718,10 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     };
     let _guard = provisioning_lock();
     let token = ScratchToken::init();
-    let signing = gen_ed25519();
-    let tls = gen_ed25519();
-    token.import_ed25519(&signing.pkcs8_pem, "mcps-sign", "01");
-    token.import_ed25519(&tls.pkcs8_pem, "mcps-tls", "02");
+    token.keygen_ed25519(&module, "mcps-sign", "01");
+    token.keygen_ed25519(&module, "mcps-tls", "02");
 
-    // The TLS server cert is minted from the SAME key now resident on the token, so
-    // its SPKI matches the token object — the delegated handshake signature verifies.
     let server_ca = make_ca();
-    let server_cert = make_server_leaf_for(&server_ca, &tls.key);
     let client_ca = make_ca();
 
     let source = Pkcs11KeySource::open(
@@ -690,6 +741,14 @@ fn pkcs11_tls_full_mtls_handshake_token_resident_no_disk_read() {
     let signer = source
         .tls_delegated_signer()
         .expect("delegated TLS signer present");
+    // The TLS server cert is minted from the token's OWN public key (read back off the
+    // token, never imported), so its SPKI matches the token object — the delegated
+    // handshake signature the token produces verifies against it.
+    let spki = signer
+        .tls_public_key_spki_der()
+        .expect("export token TLS public key");
+    let server_key = remote_subject_key_from_spki(&spki);
+    let server_cert = make_server_leaf_for(&server_ca, &server_key);
     let server_config = Arc::new(
         build_server_config_delegated_validated(
             vec![server_cert],
