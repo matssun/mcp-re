@@ -116,7 +116,7 @@ hand-maintain a second copy of a fact Cargo already owns.
 
 ### Negative
 - `gazelle_rust` is less battle-tested than gazelle-for-Go; feature-gated deps
-  (`#[cfg(feature = "gcp_kms_keysource")]`, `aws_kms_keysource`, `online_ocsp`),
+  (`#[cfg(feature = "gcp_kms_keysource")]`, `pkcs11_keysource`, `online_ocsp`),
   proc-macros, and build scripts still need occasional gazelle directives/annotations.
   Realistically "~95% generated, a few annotated exceptions," not literally zero.
 - One-time setup cost: wire `gazelle_rust`, annotate the feature-gated crates once,

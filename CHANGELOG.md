@@ -11,17 +11,19 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
-### Removed
+### Changed
 
-- **On-prem PKCS#11 / HSM key custody.** Removed the `pkcs11_keysource` cargo
-  feature, `Pkcs11KeySource`, the `cryptoki-sys` binding + `pkcs11_native.rs` FFI
-  wrapper, the `--key-source pkcs11` / `--pkcs11-*` CLI flags, and the
-  SoftHSM2-backed live e2e lane. MCP-S does not claim on-prem PKCS#11/HSM custody
-  as a product capability — no PRD or ratified ADR authorized it and it was off by
-  default. Non-exporting key custody remains available via the native cloud-KMS
-  backends (`aws_kms_keysource` / `gcp_kms_keysource`, ADR-MCPS-028); response
-  signing and TLS are unaffected. See the removal amendments in ADR-MCPS-019 and
-  ADR-MCPS-028.
+- **PKCS#11 e2e now runs against a hermetic in-tree mock provider.** The
+  `pkcs11_keysource` sign+verify and delegated-TLS end-to-end tests
+  (`tests/pkcs11_keysource_e2e_test.rs`) previously exercised the token path only
+  in a nightly lane backed by an external SoftHSM2 software token; under plain
+  `cargo test` they self-skipped. They now build and load a small test-only
+  Cryptoki `cdylib` (`tests/mock-pkcs11/`, deterministic in-memory Ed25519 keys)
+  that implements exactly the surface the client calls, so the full FFI /
+  `C_Sign` (`CKM_EDDSA`) / delegated-mTLS-handshake path runs for real in the
+  blocking `cargo` job — no external token or tooling. The mock is a test double,
+  not a shipped key store; the vendor-neutral PKCS#11 client interface is
+  unchanged. Removed the SoftHSM2 provisioning from the live-infra CI lane.
 
 ## [0.10.0] — 2026-07-04
 

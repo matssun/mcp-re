@@ -31,6 +31,7 @@ zeroize = { workspace = true }
 # flags below, and — crucially — the DEFAULT `:mcps_proxy` Bazel target does NOT
 # list these in its `deps`, so the production (Bazel) closure stays lean
 # (ADR-MCPS-018); only `:mcps_proxy_ext` and its tests link them.
+cryptoki-sys = { workspace = true }
 redis = { workspace = true }
 # ureq is the blocking HTTP client for both the OCSP path (plain HTTP) and the AWS
 # KMS signer (HTTPS). The `tls` feature (rustls + webpki-roots) is what gives the
@@ -88,6 +89,8 @@ fault_accept_any_client = []
 # The backend crates are always available (declared non-optional above for
 # crate_universe visibility); these flags toggle ONLY the adapter code, and the
 # default `:mcps_proxy` Bazel target neither sets the flag nor links the crates.
+# #4034 PKCS#11-backed KeySource (response-signing key never leaves the token).
+pkcs11_keysource = []
 # ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer. Blocking HTTPS via ureq
 # + an audited minimal SigV4 signer — intentionally NO `aws-sdk-kms`/tokio/Smithy
 # (ADR-MCPS-018 lean-sync firewall). Narrow surface: only KMS `GetPublicKey` +

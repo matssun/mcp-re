@@ -73,6 +73,18 @@ pub mod kms_keysource;
 #[cfg(feature = "online_ocsp")]
 pub mod ocsp;
 pub mod persistent_inner;
+// Issue #4034: the PKCS#11-backed response-signing key source (the real,
+// non-exporting backend behind the #3838 delegation seam — the response-signing
+// key never leaves the token). Compiled ONLY under the non-default
+// `pkcs11_keysource` feature so the default build is unchanged.
+#[cfg(feature = "pkcs11_keysource")]
+pub mod pkcs11_keysource;
+// Issue #4034 supply-chain follow-up: a small, OWNED safe wrapper over the raw
+// `cryptoki-sys` FFI bindings, replacing the high-level `cryptoki` crate (which
+// transitively pulled the unmaintained `paste`, RUSTSEC-2024-0436). Compiled ONLY
+// under the same non-default `pkcs11_keysource` feature.
+#[cfg(feature = "pkcs11_keysource")]
+pub mod pkcs11_native;
 pub mod proxy;
 // Issue #69 (epic #68 v0.4 Axis 1): the etcd-backed CP / LINEARIZABLE shared
 // replay backend that makes `--replay-durability-tier linearizable` declarable
@@ -175,6 +187,9 @@ pub use ocsp::OcspChecker;
 #[cfg(feature = "online_ocsp")]
 pub use ocsp::OcspError;
 pub use persistent_inner::PersistentSubprocessInner;
+// Issue #4034: the PKCS#11 key source (feature-gated).
+#[cfg(feature = "pkcs11_keysource")]
+pub use pkcs11_keysource::Pkcs11KeySource;
 pub use proxy::InnerServer;
 pub use proxy::Proxy;
 // Issue #4028: the Redis shared replay backend (feature-gated).

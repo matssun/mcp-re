@@ -29,10 +29,11 @@
 //! labeled **software-protection custody** and MUST NOT be presented as
 //! FIPS-140-2 Level 3 / HSM-backed. A FIPS-L3 custody claim requires PROVING HSM
 //! protection for the specific key version — a live-infra fact still to be
-//! verified (ADR-MCPS-028 §L). The wire profile stays Ed25519-only (ADR-MCPS-004):
-//! if a deployment cannot obtain an HSM-protected Ed25519 key, the high-assurance
-//! claim is scoped OUT for that deployment rather than met by adding a second
-//! curve (P-256).
+//! verified (ADR-MCPS-028 §L) — and the established HSM-Ed25519 custody path is
+//! the PKCS#11 `CKM_EDDSA` token (`pkcs11_keysource`), NOT this native REST
+//! adapter. The wire profile stays Ed25519-only (ADR-MCPS-004): if a deployment
+//! cannot obtain an HSM-protected Ed25519 key, the high-assurance claim is scoped
+//! OUT for that deployment rather than met by adding a second curve (P-256).
 
 use std::io::Read;
 use std::sync::Mutex;

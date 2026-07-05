@@ -84,7 +84,7 @@ rust.toolchain(
 ########################################
 # Cross C++ toolchain (zig) for OCI image builds
 ########################################
-# Hermetic zig-based cc toolchain so the proxy's C FFI deps (ring, etc.)
+# Hermetic zig-based cc toolchain so the proxy's C FFI deps (cryptoki-sys, etc.)
 # cross-compile to the linux/amd64 image platform from a darwin host.
 
 zig_toolchains = use_extension(
@@ -115,7 +115,7 @@ use_repo(crate, "crates_mcps")
 # OCI base image (distroless glibc + libstdc++ for the C FFI deps)
 ########################################
 # The proxy binary is x86_64-unknown-linux-gnu (glibc) with C FFI dependencies
-# (ring), so the base must provide glibc + a C runtime — distroless
+# (cryptoki-sys, ring), so the base must provide glibc + a C runtime — distroless
 # cc (gcr.io/distroless/cc-debian12). linux/amd64 only for the v1 single-arch
 # image. Digest-pinned to mirror the root monorepo's digest-pinning convention.
 

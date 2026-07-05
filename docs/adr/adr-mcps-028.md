@@ -26,20 +26,14 @@ MCP-S signs every response with Ed25519 over the canonical JCS preimage, **direc
 `ResponseSigner` seam (`mcps-proxy/src/key_source.rs`) already lets a non-exporting
 backend drive the full response-signing path without ever surrendering the private
 key: `sign_response(preimage) -> Base64URL-no-pad(sig)` + `response_public_key() ->
-VerificationKey`, so a non-exporting backend drives response signing without ever
-surrendering the private key.
+VerificationKey`. `Pkcs11KeySource` implements this against any PKCS#11 token
+(a hermetic in-tree mock provider in CI; equally AWS CloudHSM, GCP via its PKCS#11
+library, Azure Managed HSM, Luna/Thales, YubiHSM). So HSM custody — the response-signing
+key never leaving the device — is **implemented and e2e-tested** via the generic PKCS#11
+path; end-to-end coverage against a specific hardware device is wired in per-deployment.
 
-> **Amendment (2026-07-05): the PKCS#11 path was removed.** This ADR originally
-> sourced HSM-Ed25519 custody from a generic PKCS#11 backend (`Pkcs11KeySource`,
-> `cryptoki-sys`, SoftHSM2 in CI). That backend was removed — MCP-S does not claim
-> on-prem PKCS#11/HSM custody as a product capability (no PRD or ratified decision
-> authorized it; it was off by default). Non-exporting custody is delivered solely
-> by the **native cloud-KMS** adapters below (AWS KMS §B, GCP Cloud KMS §C). Any
-> reference to `Pkcs11KeySource` / `CKM_EDDSA` / "already delivered via PKCS#11" in
-> the historical text below is superseded by this amendment.
-
-What the native managed-KMS adapters below add is custody for operators who use a
-cloud KMS's own REST API.
+What is missing is **native managed-KMS** custody for operators who use a cloud
+KMS's own REST API rather than a PKCS#11 endpoint.
 
 ### Provider Ed25519 support (the compatibility-critical fact)
 
@@ -51,7 +45,7 @@ signature over raw bytes** — byte-identical to what `SigningKey::sign` /
 |---|---|---|---|
 | **AWS KMS** | **Yes** (since 2025-11-07) | key spec `ECC_NIST_EDWARDS25519`, alg `ED25519_SHA_512`, **`MessageType: RAW`** (PureEdDSA) — **not** `ED25519_PH_SHA_512`/`DIGEST` (that is Ed25519ph, forbidden) | **In scope** |
 | **GCP Cloud KMS** | **Yes** | purpose `ASYMMETRIC_SIGN`, algorithm `EC_SIGN_ED25519` (PureEdDSA on Edwards25519, raw data input) | **In scope** |
-| ~~**PKCS#11 HSM**~~ | Yes (`CKM_EDDSA`) | — | **Removed 2026-07-05** (see amendment) |
+| **PKCS#11 HSM** (incl. AWS CloudHSM, Azure Managed HSM) | Yes (`CKM_EDDSA`) | already implemented (`Pkcs11KeySource`) | **Done** |
 | **Azure Key Vault / Managed HSM (native REST)** | **No** (RSA + EC NIST P-curves/secp256k1 only as of current docs) | — | **Unsupported** (see Decision E) |
 
 An earlier internal analysis claimed AWS KMS could not sign Ed25519. That premise
@@ -177,7 +171,7 @@ trait; no internal specifics enter this repo.
 
 ## Verification (no-gaming)
 
-Per the live-infra-lane discipline already used for Redis / SoftHSM2 / OCSP, each
+Per the live-infra-lane discipline already used for Redis / OCSP, each
 adapter is proven by a black-box live test under `MCPS_REQUIRE_LIVE_INFRA=1`:
 
 - **AWS** — LocalStack KMS emulator in CI (creates an `ECC_NIST_EDWARDS25519` key);
