@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Live-infrastructure e2e lane (issue #39). The feature-gated *_e2e_test suites
-# self-skip unless their MCPS_TEST_* vars are set, and only HARD-FAIL under
-# MCPS_REQUIRE_LIVE_INFRA. The default CI never provisions backends, so the Redis
+# self-skip unless their MCP_RE_TEST_* vars are set, and only HARD-FAIL under
+# MCP_RE_REQUIRE_LIVE_INFRA. The default CI never provisions backends, so the Redis
 # replay store and the OCSP revocation path otherwise have unit coverage but no
 # live verification. This lane provisions real backends and sets
-# MCPS_REQUIRE_LIVE_INFRA=1 so a missing backend FAILS the build (never a silent
+# MCP_RE_REQUIRE_LIVE_INFRA=1 so a missing backend FAILS the build (never a silent
 # green skip).
 #
 # Cadence (per #39): NIGHTLY + manual dispatch, non-blocking — it is NOT in the
@@ -43,9 +43,9 @@ jobs:
     # (it cannot be started as a replica of another). Both are launched on
     # localhost in a step below instead.
     env:
-      MCPS_REQUIRE_LIVE_INFRA: "1"
-      MCPS_TEST_REDIS_URL: "redis://127.0.0.1:6379"
-      MCPS_TEST_REDIS_REPLICA_URL: "redis://127.0.0.1:6380"
+      MCP_RE_REQUIRE_LIVE_INFRA: "1"
+      MCP_RE_TEST_REDIS_URL: "redis://127.0.0.1:6379"
+      MCP_RE_TEST_REDIS_REPLICA_URL: "redis://127.0.0.1:6380"
       RUST_TEST_THREADS: "1"
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +86,7 @@ jobs:
         run: rustup show && rustc --version && cargo --version
 
       # Provision an INDEPENDENT OpenSSL test OCSP responder + a good/revoked leaf
-      # pair. This follows the recipe documented in mcps-proxy/tests/ocsp_e2e_test.rs,
+      # pair. This follows the recipe documented in mcp-re-proxy/tests/ocsp_e2e_test.rs,
       # with CI-oriented adjustments for OpenSSL 3.x and GitHub Actions YAML (no heredoc).
       # Readiness is polled (no blind sleep) and the responder is kept alive for the
       # subsequent test step.
@@ -98,7 +98,7 @@ jobs:
           mkdir -p "$workdir"
           cd "$workdir"
           openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt \
-            -subj "/CN=mcps-ocsp-test-ca" -days 2 -addext "keyUsage=keyCertSign,cRLSign"
+            -subj "/CN=mcp-re-ocsp-test-ca" -days 2 -addext "keyUsage=keyCertSign,cRLSign"
           : > index.txt; echo 01 > serial; echo 1000 > crlnumber
           {
             echo '[ ca ]'
@@ -149,17 +149,17 @@ jobs:
           fi
           for f in ca good revoked; do openssl x509 -in "$f.crt" -outform DER -out "$f.der"; done
           {
-            echo "MCPS_TEST_OCSP_RESPONDER_URL=http://127.0.0.1:8888"
-            echo "MCPS_TEST_OCSP_ISSUER_DER=$workdir/ca.der"
-            echo "MCPS_TEST_OCSP_GOOD_DER=$workdir/good.der"
-            echo "MCPS_TEST_OCSP_REVOKED_DER=$workdir/revoked.der"
+            echo "MCP_RE_TEST_OCSP_RESPONDER_URL=http://127.0.0.1:8888"
+            echo "MCP_RE_TEST_OCSP_ISSUER_DER=$workdir/ca.der"
+            echo "MCP_RE_TEST_OCSP_GOOD_DER=$workdir/good.der"
+            echo "MCP_RE_TEST_OCSP_REVOKED_DER=$workdir/revoked.der"
           } >> "$GITHUB_ENV"
 
       # Run the live-infra e2e binaries (avoids building cross-crate demo fixtures).
-      # MCPS_REQUIRE_LIVE_INFRA=1 turns a missing backend into a failure.
+      # MCP_RE_REQUIRE_LIVE_INFRA=1 turns a missing backend into a failure.
       - name: Run live-infra e2e (Redis replay + OCSP revocation)
         run: >-
-          cargo test -p mcps-proxy
+          cargo test -p mcp-re-proxy
           --features redis_replay,online_ocsp
           --test redis_replay_e2e_test
           --test fleet_replay_e2e_test
@@ -170,6 +170,6 @@ jobs:
       - name: Stop OpenSSL OCSP responder
         if: always()
         run: |
-          if [ -n "${MCPS_OCSP_RESPONDER_PID:-}" ]; then
-            kill "${MCPS_OCSP_RESPONDER_PID}" 2>/dev/null || true
+          if [ -n "${MCP_RE_OCSP_RESPONDER_PID:-}" ]; then
+            kill "${MCP_RE_OCSP_RESPONDER_PID}" 2>/dev/null || true
           fi

@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Security — audits and remediation
+# MCP-RE Security — audits and remediation
 
 This directory is the public record of the security review process applied to
-MCP-S before its initial public release as v0.2.0.
+MCP-RE before its initial public release as v0.2.0.
 
 ## Documents
 
@@ -49,7 +49,7 @@ clusters is meaningfully reduced:
   with a fail-closed correctness gap that does not admit unauthorized
   requests.
 
-MCP-S v0.2.0 ships as **experimental / incubating** — a third-party security
+MCP-RE v0.2.0 ships as **experimental / incubating** — a third-party security
 extension proposal for the Model Context Protocol, not an official MCP
 extension. See the [SECURITY_BOUNDARY](../../docs/spec/security-boundary.md)
 for the authoritative statement of what the current implementation claims and
@@ -60,7 +60,7 @@ what it explicitly does not.
 The two deferred Mediums from the v0.2 audit are filed as separate GitHub
 issues in this repository for forward traceability, both labelled
 `security` / `deferred` / `medium` / `v0.3` and grouped under the
-[`MCP-S v0.3 hardening`](https://github.com/users/matssun/projects/26)
+[`MCP-RE v0.3 hardening`](https://github.com/users/matssun/projects/26)
 project:
 
 1. **Issue #1 — M-01** (`OnBehalfOfMissing` / P005 serde_json prefix coupling).
@@ -94,8 +94,8 @@ verify only what is genuinely new.
   titles; line numbers and exact wording are deliberately excluded. The
   `file-basename` (not the full crate-relative path) is used on purpose so a
   finding survives a file move within the tree. The bounded cost: two findings in
-  same-named files in different crates (e.g. `mcps-core/src/lib.rs` vs
-  `mcps-proxy/src/lib.rs`) that *also* share the same significant title tokens
+  same-named files in different crates (e.g. `mcp-re-core/src/lib.rs` vs
+  `mcp-re-proxy/src/lib.rs`) that *also* share the same significant title tokens
   would collide. In practice the title-token sets differ across crates, so the
   current ledger has **zero fingerprint collisions**; and reconcile never
   auto-suppresses on fingerprint alone — a same-file/same-category match it cannot

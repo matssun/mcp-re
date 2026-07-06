@@ -12,7 +12,7 @@ set -euo pipefail
 #
 # DO NOT commit a filled-in copy. The real account/project identifiers are
 # personal; keep them only in the gitignored work/ copy. A tracked-file leak
-# guard (cargo test -p mcps-walkthrough --test no_tracked_secrets) asserts none of
+# guard (cargo test -p mcp-re-walkthrough --test no_tracked_secrets) asserts none of
 # the real identifiers ever land in a tracked file.
 # ─────────────────────────────────────────────────────────────────────────────
 #
@@ -26,11 +26,11 @@ set -euo pipefail
 
 export PROJECT_ID="your-project-id"
 export LOCATION="global"
-export KEY_RING="mcps-test-ring"
-export KEY_NAME="mcps-ed25519-object"        # server response-signing identity
-export CLIENT_KEY_NAME="mcps-ed25519-client" # client request-signing identity (T4)
-export RSA_KEY_NAME="mcps-rsa-object"
-export TLS_KEY_NAME="mcps-ed25519-tls"
+export KEY_RING="mcp-re-test-ring"
+export KEY_NAME="mcp-re-ed25519-object"        # server response-signing identity
+export CLIENT_KEY_NAME="mcp-re-ed25519-client" # client request-signing identity (T4)
+export RSA_KEY_NAME="mcp-re-rsa-object"
+export TLS_KEY_NAME="mcp-re-ed25519-tls"
 
 gcloud config set project "$PROJECT_ID"
 gcloud services enable cloudkms.googleapis.com
@@ -85,34 +85,34 @@ ensure_ed25519_key "$TLS_KEY_NAME"
 key_version() {
   echo "projects/$PROJECT_ID/locations/$LOCATION/keyRings/$KEY_RING/cryptoKeys/$1/cryptoKeyVersions/1"
 }
-export MCPS_GCP_KEY_VERSION="$(key_version "$KEY_NAME")"
-export MCPS_GCP_KEY_VERSION_CLIENT="$(key_version "$CLIENT_KEY_NAME")"
-export MCPS_GCP_KEY_VERSION_RSA="$(key_version "$RSA_KEY_NAME")"
-export MCPS_GCP_KEY_VERSION_TLS="$(key_version "$TLS_KEY_NAME")"
-export MCPS_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
+export MCP_RE_GCP_KEY_VERSION="$(key_version "$KEY_NAME")"
+export MCP_RE_GCP_KEY_VERSION_CLIENT="$(key_version "$CLIENT_KEY_NAME")"
+export MCP_RE_GCP_KEY_VERSION_RSA="$(key_version "$RSA_KEY_NAME")"
+export MCP_RE_GCP_KEY_VERSION_TLS="$(key_version "$TLS_KEY_NAME")"
+export MCP_RE_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
 
 cd "$(git rev-parse --show-toplevel)"
 
 # Run ONLY the GCP live test targets -> no "0 tests" wall from other binaries.
 
 # 1. SERVER object-signing lane (positive + 3 negatives).
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_live_test -- --ignored --nocapture
 
 # 2. SERVER delegated-TLS lane: the TLS private key stays in GCP KMS; a real mTLS
 #    handshake completes only if the cloud signed it.
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_delegated_tls_live_test -- --ignored --nocapture
 
 # 3. SERVER draft-02 (v0.6) envelope lane: Cloud KMS signs a COMPLETE draft-02
 #    request and response that the unmodified draft-02 verifier accepts.
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_draft02_live_test -- --ignored --nocapture
 
 # 4. CLIENT-side KMS signer (ADR-MCPS-045 Phase 4 / Tier T4): the client request
-#    signer's private key lives in Cloud KMS. Uses MCPS_GCP_KEY_VERSION_CLIENT.
-MCPS_GCP_KEY_VERSION="$MCPS_GCP_KEY_VERSION_CLIENT" \
-cargo test -p mcps-client-proxy-cli --features gcp_kms \
+#    signer's private key lives in Cloud KMS. Uses MCP_RE_GCP_KEY_VERSION_CLIENT.
+MCP_RE_GCP_KEY_VERSION="$MCP_RE_GCP_KEY_VERSION_CLIENT" \
+cargo test -p mcp-re-client-proxy-cli --features gcp_kms \
   -- --ignored --nocapture
 
 # 5. INTEGRATED four-hop (ADR-MCPS-045 Tier T4 / #218): the client request signer
@@ -121,18 +121,18 @@ cargo test -p mcps-client-proxy-cli --features gcp_kms \
 #    Build both CLIs WITH their KMS features so the walkthrough harness spawns
 #    KMS-capable binaries; the harness fetches both KMS public keys to wire trust
 #    (the client key into the server's --trust, the server key into the client's
-#    --server-pubkey). Uses MCPS_GCP_KEY_VERSION (server) + _CLIENT (client).
-cargo build -p mcps-client-proxy-cli --features gcp_kms
-cargo build -p mcps-proxy            --features gcp_kms_keysource
-cargo test -p mcps-walkthrough --features gcp_kms \
+#    --server-pubkey). Uses MCP_RE_GCP_KEY_VERSION (server) + _CLIENT (client).
+cargo build -p mcp-re-client-proxy-cli --features gcp_kms
+cargo build -p mcp-re-proxy            --features gcp_kms_keysource
+cargo test -p mcp-re-walkthrough --features gcp_kms \
   --test t4_enterprise_kms_custody -- --ignored --nocapture
 
 # 6. INTEGRATED four-hop, PYTHON client leg over Cloud KMS (#218, cross-language):
-#    the Python MCP-S SDK signs requests with a NON-EXPORTING Cloud KMS key (its
+#    the Python MCP-RE SDK signs requests with a NON-EXPORTING Cloud KMS key (its
 #    Signer.non_exporting seam -> asymmetricSign); the Rust PEP signs responses with
 #    its own Cloud KMS key. Needs the Python SDK built into a venv (maturin develop)
-#    and MCPS_DRIVER_PYTHON pointing at that venv's python.
-cargo build -p mcps-proxy --features gcp_kms_keysource
-MCPS_DRIVER_PYTHON="${MCPS_DRIVER_PYTHON:-python3 -m mcps_sdk.driver}" \
-cargo test -p mcps-walkthrough --features gcp_kms \
+#    and MCP_RE_DRIVER_PYTHON pointing at that venv's python.
+cargo build -p mcp-re-proxy --features gcp_kms_keysource
+MCP_RE_DRIVER_PYTHON="${MCP_RE_DRIVER_PYTHON:-python3 -m mcp_re_sdk.driver}" \
+cargo test -p mcp-re-walkthrough --features gcp_kms \
   --test t4_python_kms_custody -- --ignored --nocapture

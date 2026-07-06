@@ -1,22 +1,22 @@
-# MCP-S Mode C — Attested Ingress on Google Cloud (Cookbook)
+# MCP-RE Mode C — Attested Ingress on Google Cloud (Cookbook)
 
-**Audience:** an operator or security reviewer standing up MCP-S **Mode C
-(attested ingress)** in front of an `mcps-proxy` node on Google Cloud, and anyone
+**Audience:** an operator or security reviewer standing up MCP-RE **Mode C
+(attested ingress)** in front of an `mcp-re-proxy` node on Google Cloud, and anyone
 reviewing what that posture does and does **not** prove.
 
 **Status: NON-NORMATIVE.** This cookbook is the Google-specific companion to
 [ADR-MCPS-023 §C](adr/adr-mcps-023.md) (§C4). The **normative** surface is only the
-abstract contract in the ADR: the `mcps/lb-ingress-assertion/v2` field set, the
+abstract contract in the ADR: the `mcp-re/lb-ingress-assertion/v2` field set, the
 length-prefixed preimage + domain tag, the ordered fail-closed node verifier, the
 pinned-channel requirement, and the three audit facts. Everything below — GCLB
 header semantics, the Envoy signing filter, CAS CRL lookup, the side-door-closing
 topology — is one **operator-built** way to satisfy that contract on GCP. It is
 validated here; it is **not** a spec requirement, and nothing in it is unique to
-Google. MCP-S is experimental and unofficial; this cookbook implies no Google or
+Google. MCP-RE is experimental and unofficial; this cookbook implies no Google or
 Anthropic endorsement.
 
 **Why a cookbook at all — no native GCP primitive fits.** Mode C needs a *signed,
-per-request assertion that binds the client identity to the exact MCP-S request
+per-request assertion that binds the client identity to the exact MCP-RE request
 hash*. No stock GCP component emits one: the external HTTPS load balancer (GCLB)
 forwards **unsigned** `client_cert_*` headers; IAP signs a **user** identity with
 no client-certificate or request-hash binding; the service mesh conveys **unsigned**
@@ -83,7 +83,7 @@ this cookbook keep them separate:
                                                   └────────────┬─────────────┘
                                 pinned mTLS (attestor→node)     │
                                                   ┌────────────▼─────────────┐
-                                                  │  (3) mcps-proxy NODE      │
+                                                  │  (3) mcp-re-proxy NODE      │
                                                   │  - verifies the v2        │
                                                   │    assertion (bind-only)  │
                                                   │  - records 3 trust facts  │
@@ -112,9 +112,9 @@ requirements of this whole cookbook:
 
 ## 3. The assertion the attestor must mint
 
-The node verifies `mcps/lb-ingress-assertion/v2`. This is the exact contract the
+The node verifies `mcp-re/lb-ingress-assertion/v2`. This is the exact contract the
 signing filter has to produce; it is frozen and version-tagged. (See
-`mcps-proxy/src/transport.rs` `LbAssertionV2` for the reference encoder/verifier.)
+`mcp-re-proxy/src/transport.rs` `LbAssertionV2` for the reference encoder/verifier.)
 
 ### 3.1 Fields
 
@@ -123,7 +123,7 @@ signing filter has to produce; it is frozen and version-tagged. (See
 | `key_id` | Names the attestor verification key the node trusts (`--ingress-attestor-key <key_id>:<pub>`). |
 | `ingress_identity` | The attestor's own identity, **distinct** from `key_id`. The node admits only identities in its trusted set (`--ingress-identity`). |
 | `asserted_client_identity` | The delegated client identity (e.g. a SPIFFE URI SAN from the client cert). Becomes `delegated_client_identity`. |
-| `request_hash` | The MCP-S request hash (`sha256:<base64url>`) of the exact request being admitted. **This is the per-request binding.** |
+| `request_hash` | The MCP-RE request hash (`sha256:<base64url>`) of the exact request being admitted. **This is the per-request binding.** |
 | `audience` | The node's audience/route; must equal the node's configured `--ingress-audience`. |
 | `cert_verification_result` | Opaque attestor verdict: `Verified` (disc `1`) or `Failed` (`2`). Node admits only `Verified`. |
 | `revocation_result` | Opaque attestor verdict: `Good` (`1`), `Revoked` (`2`), `Unknown` (`3`), `StaleCrl` (`4`). Node admits only `Good`. |
@@ -142,7 +142,7 @@ delimiter-joining, so no field value can collide with a separator to forge a
 different field split:
 
 ```
-"mcps/lb-ingress-assertion/v2"
+"mcp-re/lb-ingress-assertion/v2"
 || u64_be(len(key_id))                   || key_id
 || u64_be(len(ingress_identity))         || ingress_identity
 || u64_be(len(asserted_client_identity)) || asserted_client_identity
@@ -212,7 +212,7 @@ your operational model prefers. On each request the filter MUST:
    client-cert headers. If you cannot pin the LB→attestor hop, the filter MUST
    instead independently re-verify the **full forwarded client-cert chain** before
    trusting any identity from it.
-2. **Compute the MCP-S `request_hash`** of the request body it is about to admit,
+2. **Compute the MCP-RE `request_hash`** of the request body it is about to admit,
    exactly as the node will (`sha256:<base64url>` over the canonical request; the
    `signature.value` field is excluded from the hash preimage, so it matches the
    node's in-hand hash).
@@ -227,7 +227,7 @@ your operational model prefers. On each request the filter MUST:
    request forwarded to the node.
 
 The attestor's Ed25519 private key should live in a non-exporting store (Cloud KMS
-`EC_SIGN_ED25519`, or an HSM via PKCS#11 `CKM_EDDSA`) — the same custody bar MCP-S
+`EC_SIGN_ED25519`, or an HSM via PKCS#11 `CKM_EDDSA`) — the same custody bar MCP-RE
 applies to response signers. The node only ever holds the **public** half.
 
 ### 4.3 Closing the side door — pin the LB→attestor hop and strip public headers
@@ -258,18 +258,18 @@ the leaf, so there is nothing to online-check. The attestor fetches the CAS CRL,
 keys the lookup on the client certificate serial, and asserts the verdict. Because
 the CRL has a `nextUpdate` (~daily cadence), the filter MUST treat a CRL past
 `nextUpdate` as `StaleCrl` (fail closed) rather than silently trusting a stale
-snapshot. Dynamic mid-life revocation in MCP-S is delivered **here**, at the Mode-C
+snapshot. Dynamic mid-life revocation in MCP-RE is delivered **here**, at the Mode-C
 attestor, not at the Mode-A node.
 
 ---
 
 ## 5. Configuring the node
 
-Run the `mcps-proxy` node with the attested-ingress binding and its required,
+Run the `mcp-re-proxy` node with the attested-ingress binding and its required,
 fail-closed inputs:
 
 ```
-mcps-proxy \
+mcp-re-proxy \
   --strict \
   --transport-binding attested-ingress \
   --ingress-attestor-key attestor-1:<base64url-ed25519-public-key> \
@@ -339,9 +339,9 @@ keyed on the client cert serial.
 
 ## 7. Validating your deployment
 
-MCP-S proves Mode C **offline**, node-side, in the evidence spine
-(`mcps-proxy/tests/proxy_lb_assertion_test.rs`, mapped in
-`mcps-conformance/security_traceability_manifest.json`): a v2 assertion carrying
+MCP-RE proves Mode C **offline**, node-side, in the evidence spine
+(`mcp-re-proxy/tests/proxy_lb_assertion_test.rs`, mapped in
+`mcp-re-conformance/security_traceability_manifest.json`): a v2 assertion carrying
 `revocation_result = revoked`, a stale-CRL verdict, a bad signature, or a
 cross-request `request_hash` is **rejected before dispatch**, and the forwarded
 draft-02 request preimage is **byte-identical** to Mode A (the Mode-C facts ride the
@@ -349,7 +349,7 @@ assertion, never the request).
 
 Your **live** GCP validation — presenting a genuinely revoked client cert and
 watching the attestor emit `Revoked` — is **attestor QA**. It is supporting evidence
-for your operator build, and it sits **outside** the MCP-S evidence spine (the spine
+for your operator build, and it sits **outside** the MCP-RE evidence spine (the spine
 is the offline node-side rejection above). Recommended live checks:
 
 - a valid client cert round-trips and reaches the inner server;

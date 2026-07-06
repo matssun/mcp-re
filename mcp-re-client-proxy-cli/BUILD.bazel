@@ -1,0 +1,43 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ADR-MCPS-045 Phase 3: the binary front-end for the local client-side MCP-RE
+# proxy. A plain-MCP stdio endpoint that signs draft-02 requests via
+# mcp-re-client-core and forwards them to a remote MCP-RE server/proxy over verifying
+# mTLS (mcp-re-transport). The pure mcp-re-client-proxy library leaves the listener,
+# the per-call freshness/nonce wiring, and the concrete RemoteTransport to this
+# mode-specific binary; src/transport.rs is the mTLS adapter, src/main.rs the
+# stdio loop. The OS-CSPRNG nonce source is reused from mcp-re-host.
+nt_rust_binary(
+    name = "mcp_re_client_proxy_cli",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_client_proxy_cli",
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# Inline crate unit tests: arg parsing (defaults + required flags), the 6-field
+# audience parser, and the 128-bit b64url nonce / freshness-window helper.
+nt_rust_test(
+    name = "mcp_re_client_proxy_cli_test",
+    crate = ":mcp_re_client_proxy_cli",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

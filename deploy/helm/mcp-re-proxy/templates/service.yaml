@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-re-proxy.fullname" . }}
+  labels:
+    {{- include "mcp-re-proxy.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  # MCPS-83 (ADR-MCPS-049 clause 2): a `stateful` inner server holds per-session
+  # state that lives on ONE replica (no cross-replica inner-session replication),
+  # so a logical session MUST be pinned to a replica — ClientIP sticky routing. A
+  # `stateless` inner allows plain round-robin. The MCP-RE authenticity checks run
+  # identically on every replica either way; affinity is only about inner session
+  # continuity.
+  {{- if eq .Values.innerSession "stateful" }}
+  sessionAffinity: ClientIP
+  {{- else }}
+  sessionAffinity: None
+  {{- end }}
+  selector:
+    {{- include "mcp-re-proxy.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: mcp-re
+      port: {{ .Values.bindPort }}
+      targetPort: mcp-re
+      protocol: TCP

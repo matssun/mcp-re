@@ -1,0 +1,16 @@
+MCP-RE proxy fleet "{{ .Release.Name }}" installed: {{ .Values.replicaCount }} replica(s).
+
+Posture:
+  strict / fleet     : {{ .Values.strict }} / {{ .Values.fleet }}
+  inner-session      : {{ .Values.innerSession }}{{ if eq .Values.innerSession "stateful" }} (Service sessionAffinity=ClientIP — sticky routing REQUIRED){{ else }} (stateless — plain round-robin){{ end }}
+  replay tier        : shared, {{ .Values.replay.durabilityTier }}
+  revocation tier    : {{ .Values.revocation.tier }}{{ if .Values.revocation.trustEpochRedisUrl }} + networked trust-epoch source (near-zero cross-replica revocation lag){{ else }} (inert push — bounded-T lag){{ end }}
+
+Reach the fleet:
+  kubectl get svc {{ include "mcp-re-proxy.fullname" . }}
+
+The Secret "{{ .Values.tls.secretName }}" MUST provide: tls.crt, tls.key,
+client-ca.pem, trust.json, signing-seed.
+
+This is a NON-NORMATIVE reference. Live-cluster validation is MCPS-90 (HITL). See
+docs/fleet-deployment-guide.md.

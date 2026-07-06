@@ -1,0 +1,76 @@
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-014: client-side ambassador. Pure library — depends only on the
+# verification crate plus serde_json (request construction). No networking/async.
+nt_rust_library(
+    name = "mcp_re_host",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_host",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        # MCPS-033: OS CSPRNG for the production nonce source. Not networking/async.
+        "@crates_mcp_re//:getrandom",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPS-048 / #220 (feature-flavor handling, cf. MCPS-69): a `test-fixtures`-enabled
+# flavor of the SAME crate. FixedClock / SeededNonceSource are cfg'd behind
+# `#[cfg(any(test, feature = "test-fixtures"))]` (audit #81 — kept off the production
+# surface). In-workspace demo/test targets that consume those deterministic fixtures
+# depend on THIS flavor, matching the Cargo `mcp-re-host = { features = ["test-fixtures"] }`
+# dev-dep. Same `crate_name`, so consumers still `use mcp_re_host::…`; a target links
+# EITHER this or `:mcp_re_host`, never both (one crate name). The plain `:mcp_re_host`
+# stays fixture-free for production consumers.
+nt_rust_library(
+    name = "mcp_re_host_test_fixtures",
+    srcs = glob(["src/**/*.rs"]),
+    crate_features = ["test-fixtures"],
+    crate_name = "mcp_re_host",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:getrandom",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# Host signs a request a verifier accepts; host verifies the bound response.
+nt_rust_test(
+    name = "host_test",
+    srcs = ["tests/host_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_host",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-033 (ADR-MCPS-015): HostSession end-to-end — signs with injected clock+RNG
+# (deterministic), correlates request_hash by JSON-RPC id, verifies the bound
+# response against the STORED hash.
+nt_rust_test(
+    name = "host_session_test",
+    srcs = ["tests/host_session_test.rs"],
+    # MCPS-034 (#3854): the transport-free guard reads the committed Cargo.toml +
+    # BUILD.bazel at compile time (include_str!) and fails on any networking/async
+    # crate in the declared deps. They must be compile inputs in the sandbox.
+    compile_data = [
+        "Cargo.toml",
+        "BUILD.bazel",
+    ],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_host_test_fixtures",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reference values for a horizontally-scaled MCP-RE proxy fleet (ADR-MCPS-049).
+# Every security-relevant default here is the FAIL-SAFE one; relax deliberately.
+
+# Number of proxy replicas behind the Service. >1 is the point of --fleet; the
+# shared replay + trust-epoch backends keep them coherent.
+replicaCount: 3
+
+image:
+  repository: mcp-re-proxy
+  # Pin to a digest in production; a tag is shown here for readability.
+  tag: "0.11.0"
+  pullPolicy: IfNotPresent
+
+# The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
+# probes target this port.
+bindPort: 8443
+
+# Security posture (ADR-MCPS-049 clause 1). BOTH are required for the fleet
+# strict-production guarantee: strict rejects insecure config; fleet rejects
+# node-local replay caches. Do not set fleet=true with a memory/file replay cache.
+strict: true
+fleet: true
+
+# Inner-server session statefulness (ADR-MCPS-049 clause 2). Drives the Service's
+# sessionAffinity below: a `stateful` inner REQUIRES sticky routing (a logical
+# session pinned to one replica); `stateless` allows a plain round-robin LB.
+# Default `stateful` fails toward correctness.
+innerSession: stateful
+
+# Shared replay store (ADR-MCPS-020). MUST be a shared tier at >= REDIS_WAIT_QUORUM
+# under --fleet, or the proxy refuses to start.
+replay:
+  redisUrl: "redis://mcp-re-redis:6379"
+  durabilityTier: "redis-wait-quorum:2:2000"
+
+# Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
+# source gives near-zero cross-replica revocation lag (bounded T on outage). Set
+# trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
+revocation:
+  tier: "push:60"
+  trustEpochRedisUrl: "redis://mcp-re-redis:6379"
+  trustEpochKey: "mcp-re:trust:epoch"
+
+# Client-certificate lifetime ceiling (short-lived-cert revocation posture).
+maxClientCertLifetimeSeconds: 3600
+
+# The proxy's server identity (response signing + expected audience).
+identity:
+  audience: "did:example:server-1"
+  serverSigner: "did:example:server-1"
+  serverKeyId: "server-key-1"
+
+# The wrapped inner MCP server command (argv). Replace with your server.
+# --inner-command consumes the remainder of argv, so it is rendered LAST.
+inner:
+  command:
+    - "/usr/local/bin/echo-inner"
+
+# TLS + trust material, mounted from a Secret. The Secret MUST provide these keys:
+#   tls.crt, tls.key, client-ca.pem, trust.json, signing-seed
+tls:
+  secretName: "mcp-re-proxy-material"
+  mountPath: "/etc/mcp-re"
+
+# Graceful drain: the proxy stops accepting on SIGTERM and finishes the in-flight
+# request (MCPS-88). Give the kubelet headroom over the request deadline.
+drainGracePeriodSeconds: 30
+
+resources: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

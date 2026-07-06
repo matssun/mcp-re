@@ -1,0 +1,7 @@
+{
+  "expected": "mcp-re.canonicalization_failed",
+  "kind": "raw",
+  "name": "jcs_03_unsafe_integer_arguments",
+  "raw_text": "{\"arguments\":{\"amount\":9007199254740993}}",
+  "requires_pipeline": false
+}

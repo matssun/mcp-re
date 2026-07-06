@@ -3,7 +3,7 @@
  *
  * CorrelationStore binds an outgoing signed request to exactly ONE acceptable returning
  * response, and rejects late, replayed, uncorrelatable, nonce-reused, or expired
- * responses — fail-closed with the frozen mcps.* wire code. The clock is the caller's:
+ * responses — fail-closed with the frozen mcp-re.* wire code. The clock is the caller's:
  * every method takes nowUnix. Wire codes come from the oracle fixture, never hard-coded.
  */
 import { describe, expect, it } from "vitest";

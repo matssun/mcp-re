@@ -1,4 +1,4 @@
-name: mcps-codeql-config
+name: mcp-re-codeql-config
 
 # Shared config for the advanced-setup CodeQL workflow (.github/workflows/codeql.yml).
 #

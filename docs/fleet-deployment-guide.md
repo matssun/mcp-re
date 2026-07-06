@@ -1,15 +1,15 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Fleet Deployment Guide (horizontally-scaled)
+# MCP-RE Fleet Deployment Guide (horizontally-scaled)
 
-**Audience:** an operator running the MCP-S policy-enforcement proxy as a
+**Audience:** an operator running the MCP-RE policy-enforcement proxy as a
 **fleet** of replicas behind a load balancer, rather than a single node.
 
 **Status:** NON-NORMATIVE reference, mirroring the
 [Mode-C GCP cookbook](mode-c-attested-ingress-gcp-cookbook.md). The design is
 [ADR-MCPS-049](adr/adr-mcps-049.md). Live-cluster validation is tracked
 separately (MCPS-90, HITL); this guide + the Helm chart under
-[`deploy/helm/mcps-proxy`](../deploy/helm/mcps-proxy) are the reference, and the
+[`deploy/helm/mcp-re-proxy`](../deploy/helm/mcp-re-proxy) are the reference, and the
 coherence properties are proven by the CI-gated e2e tests named below.
 
 For single-node deployment read the
@@ -21,7 +21,7 @@ adds the horizontal-scale concerns.
 A single verifier owns all of its state locally. A fleet of verifiers behind a
 load balancer does not: a replayable request may reach a **different** verifier
 than the one that admitted the first nonce, and a revocation applied at one node
-must reach the others. MCP-S closes both with **shared state**, and the proxy
+must reach the others. MCP-RE closes both with **shared state**, and the proxy
 **fails closed** if you ask for a fleet without it.
 
 The two posture flags are orthogonal (ADR-MCPS-049 clause 1):
@@ -42,19 +42,19 @@ cannot see a peer's nonces).
    One Redis serves both; there is no second dependency.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
-3. A container image of `mcps-proxy` built with the `redis_replay` feature.
+3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.
 
 ## Install
 
 ```sh
-helm install my-fleet deploy/helm/mcps-proxy \
+helm install my-fleet deploy/helm/mcp-re-proxy \
   --set replicaCount=3 \
-  --set replay.redisUrl=redis://mcps-redis:6379 \
+  --set replay.redisUrl=redis://mcp-re-redis:6379 \
   --set replay.durabilityTier=redis-wait-quorum:2:2000 \
   --set revocation.tier=push:60 \
-  --set revocation.trustEpochRedisUrl=redis://mcps-redis:6379 \
+  --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
   --set innerSession=stateful \
-  --set tls.secretName=mcps-proxy-material \
+  --set tls.secretName=mcp-re-proxy-material \
   --set-json 'inner.command=["/usr/local/bin/your-mcp-server"]'
 ```
 
@@ -91,7 +91,7 @@ Proven by `fleet_trust_epoch_e2e_test.rs`, which includes a negative control
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 
-MCP-S replicates **no** inner-server session state across replicas. Declare the
+MCP-RE replicates **no** inner-server session state across replicas. Declare the
 wrapped server's statefulness with `--inner-session`:
 
 - `stateful` (default) — a logical session holds state on one replica; the chart
@@ -100,7 +100,7 @@ wrapped server's statefulness with `--inner-session`:
 - `stateless` — any replica may serve any request; the chart uses plain
   round-robin.
 
-The MCP-S authenticity checks are identical on every replica either way; affinity
+The MCP-RE authenticity checks are identical on every replica either way; affinity
 is only about inner-session continuity. MRT continuations are replica-independent
 by construction (ADR-MCPS-047) — the continuation rides the signed preimage — so
 a mid-continuation replica switch still verifies (proven at the proxy layer).
@@ -110,7 +110,7 @@ a mid-continuation replica switch still verifies (proven at the proxy layer).
 On `SIGTERM` (a rollout / `kubectl delete pod`) the proxy stops accepting, lets
 the single in-flight request finish (bounded by the request deadline), and exits
 0. Set `drainGracePeriodSeconds` above your request deadline. Health probes are
-**tcpSocket** against the bind port — the proxy speaks MCP-S over TLS, not HTTP,
+**tcpSocket** against the bind port — the proxy speaks MCP-RE over TLS, not HTTP,
 so "port accepting" is the honest readiness signal (no synthetic `/healthz`).
 
 ## Capacity
@@ -123,7 +123,7 @@ fleet. The dominant per-request cost at scale is the shared-store round-trip.
 
 - **zero-window revocation** — the per-tier bounds above are windows, not zero.
 - **cross-replica inner-session replication** — stateful inners need sticky
-  routing; MCP-S does not move inner state between replicas.
+  routing; MCP-RE does not move inner state between replicas.
 - **multi-tenant isolation between mutually distrusting operators** — the fleet
   is one trust domain / one operator (see
   [security boundary §8](spec/security-boundary.md)).

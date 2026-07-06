@@ -2,13 +2,13 @@
 
 # Quickstart — live Google Cloud KMS validation
 
-This proves **v0.5.1's live enterprise key-custody path**: MCP-S signing keys can
+This proves **v0.5.1's live enterprise key-custody path**: MCP-RE signing keys can
 live entirely inside Google Cloud KMS and never leave it, while a fully-validating
 signature and mTLS handshake still complete against *real* Cloud KMS — not an
 emulator.
 
 It exercises the already-shipped `GcpKmsKeySource` adapter
-(`mcps-proxy/src/gcp_kms_keysource.rs`). No protocol change is involved; the
+(`mcp-re-proxy/src/gcp_kms_keysource.rs`). No protocol change is involved; the
 `draft-01` request/response envelopes are unchanged. This is evidence and test
 surface.
 
@@ -34,8 +34,8 @@ credits — ample for this proof (KMS crypto ops run ~$0.03 per 10,000).
 
 **Object signing through Cloud KMS** (`gcp_kms_live_test.rs`)
 
-- A signature is produced by a live `asymmetricSign` over the raw canonical MCP-S
-  preimage (PureEdDSA, not a digest) and verified by `mcps-core`.
+- A signature is produced by a live `asymmetricSign` over the raw canonical MCP-RE
+  preimage (PureEdDSA, not a digest) and verified by `mcp-re-core`.
 - The private key never leaves KMS — only `getPublicKey` and `asymmetricSign`
   appear in the request log.
 
@@ -59,13 +59,13 @@ credits — ample for this proof (KMS crypto ops run ~$0.03 per 10,000).
 ## Exit criteria
 
 A clean run shows: the public key fetched with algorithm asserted
-`EC_SIGN_ED25519`; signatures produced by Cloud KMS and verified by `mcps-core`;
+`EC_SIGN_ED25519`; signatures produced by Cloud KMS and verified by `mcp-re-core`;
 a live KMS-signed mTLS handshake completing; every negative case rejected with
 the correct frozen wire code; and the private key never leaving KMS.
 
 ## What this does *not* claim
 
-- **AWS** — the AWS KMS adapter (`mcps-proxy/src/aws_kms_keysource.rs`) is shipped
+- **AWS** — the AWS KMS adapter (`mcp-re-proxy/src/aws_kms_keysource.rs`) is shipped
   but **not** yet live-proven. Multi-cloud custody is not claimed until AWS is
   also live-proven.
 - **SIEM / Security Command Center integration** — the audit taxonomy is frozen
@@ -77,4 +77,4 @@ the correct frozen wire code; and the private key never leaving KMS.
 - [`docs/security/google-validation-plan.md`](security/google-validation-plan.md) — the full staged plan and cost reality.
 - [`docs/security/gcloud-kms-validation.sh`](security/gcloud-kms-validation.sh) — the harness.
 - [`docs/adr/adr-mcps-028.md`](adr/adr-mcps-028.md) — native Cloud-KMS response signers (AWS + GCP).
-- `mcps-proxy/src/gcp_kms_keysource.rs` — the adapter under test.
+- `mcp-re-proxy/src/gcp_kms_keysource.rs` — the adapter under test.

@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Contributing to MCP-S
+# Contributing to MCP-RE
 
-Thank you for considering a contribution to MCP-S.
+Thank you for considering a contribution to MCP-RE.
 
-MCP-S is an experimental third-party security extension proposal for the Model Context Protocol. Contributions should preserve the project's security boundaries and must avoid implying official MCP status unless the extension is accepted through the official MCP process.
+MCP-RE is an experimental third-party security extension proposal for the Model Context Protocol. Contributions should preserve the project's security boundaries and must avoid implying official MCP status unless the extension is accepted through the official MCP process.
 
 ## Licensing of contributions
 
@@ -16,7 +16,7 @@ By submitting a contribution, you represent that you have the right to submit it
 
 Contributions should:
 
-- preserve the distinction between MCP-S Core, policy profiles, transport hardening, and deployment-specific integrations;
+- preserve the distinction between MCP-RE Core, policy profiles, transport hardening, and deployment-specific integrations;
 - include tests for security-relevant behavior;
 - fail closed on malformed, unknown, or unsupported security inputs;
 - avoid broadening the project's public claims without updating the Security Boundary Document;
@@ -42,7 +42,7 @@ Security-sensitive changes should include positive tests, negative/fail-closed t
 
 ## Experimental status
 
-MCP-S is incubating under a third-party extension identifier. Do not describe it as an official MCP extension unless accepted through the official MCP governance process.
+MCP-RE is incubating under a third-party extension identifier. Do not describe it as an official MCP extension unless accepted through the official MCP governance process.
 
 ## Developer workflow
 
@@ -52,4 +52,4 @@ Suggested baseline check before opening a PR:
 bazel test //...
 ```
 
-Use the repository-specific MCP-S conformance guide when available.
+Use the repository-specific MCP-RE conformance guide when available.

@@ -4,7 +4,7 @@
 
 > **MCP Runtime Evidence (MCP-RE)** is an object-level runtime-evidence layer for
 > high-value MCP tool calls. *(Formerly **MCP-S**; renamed to avoid confusion
-> with the unrelated SEP-2395 / "MCPS (MCP Secure)" work — see [#289](https://github.com/matssun/mcps/issues/289).)*
+> with the unrelated SEP-2395 / "MCPS (MCP Secure)" work — see [#289](https://github.com/matssun/mcp-re/issues/289).)*
 
 ## Why should I care?
 
@@ -24,7 +24,7 @@ full audit-receipt format, **not** Agent Passports, **not** an L0–L4 trust
 framework, **not** tool-definition signing, and **not** a Trust Authority. It
 composes with those layers rather than replacing them.
 
-See [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) for the one-page
+See [`docs/MCP-RE-IN-ONE-PAGE.md`](docs/MCP-RE-IN-ONE-PAGE.md) for the one-page
 overview and [`CHANGELOG.md`](CHANGELOG.md) for what each release proved.
 
 ## Overview
@@ -43,7 +43,7 @@ It provides a reference implementation and conformance package for protecting MC
 - sidecar-based protection of ordinary MCP stdio servers;
 - signed response verification on the host/client side, via a client-side proxy
   **or** a native SDK (**Python and TypeScript**, both bound to the same audited
-  `mcps-client-core` so the signed evidence is byte-identical across languages).
+  `mcp-re-client-core` so the signed evidence is byte-identical across languages).
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
@@ -58,19 +58,19 @@ or unbound calls — no cloud credentials:
 ```
 
 Expected final line: `OK: MCP-RE local demo completed`. The two bins also run
-directly under Cargo (`cargo run -p mcps-demo --bin demo_positive` /
+directly under Cargo (`cargo run -p mcp-re-demo --bin demo_positive` /
 `demo_negative`, after `cargo build --workspace --bins`) or Bazel
-(`bazel run //mcps-demo:demo_negative`) with no env setup.
+(`bazel run //mcp-re-demo:demo_negative`) with no env setup.
 
 Full walkthrough, the grouped fail-closed output, and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
 KMS key-custody path (optional, separate): [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md).
 
 For the **end-to-end four-hop** path (an unmodified plain-MCP client → client-side
-proxy/SDK → mTLS → server-side proxy → inner MCP server) the `mcps-walkthrough`
+proxy/SDK → mTLS → server-side proxy → inner MCP server) the `mcp-re-walkthrough`
 crate runs the full topology as separate OS processes, and the same tiers drive
-the **Python** and **TypeScript** SDKs interchangeably (`MCPS_DRIVER_PYTHON` /
-`MCPS_DRIVER_TS`). See [`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript).
+the **Python** and **TypeScript** SDKs interchangeably (`MCP_RE_DRIVER_PYTHON` /
+`MCP_RE_DRIVER_TS`). See [`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript).
 
 ## Project status
 
@@ -92,7 +92,7 @@ in [`docs/adr/`](docs/adr/). In brief:
 - **0.6** froze the **`draft-02` runtime-evidence** wire envelope — the canonical
   signed preimage that every later release builds on.
 - **0.7** proved the real **end-to-end four-hop** path as separate OS processes
-  (plain-MCP client → `mcps-client-proxy` → mTLS → `mcps-proxy` server PEP →
+  (plain-MCP client → `mcp-re-client-proxy` → mTLS → `mcp-re-proxy` server PEP →
   unmodified inner server), organized as a runnable persona ladder
   (ADR-MCPS-045), with scoped deny-before-dispatch authorization,
   transport-identity binding, integrated Cloud-KMS custody on both signing legs,
@@ -100,7 +100,7 @@ in [`docs/adr/`](docs/adr/). In brief:
 - **0.8** added **stateless multi-round-trip continuation** — request-associated
   elicitation folded into strict MCP-RE as signed evidence, fail-closed on
   arbitrary server push (ADR-MCPS-047) — and shipped the **TypeScript SDK**,
-  bound to the same audited `mcps-client-core` as Python so the signed preimage
+  bound to the same audited `mcp-re-client-core` as Python so the signed preimage
   is byte-identical across languages. Both SDKs are exercised through the real
   four-hop matrix.
 - **0.9** hardened the **enterprise operational envelope** — a strict Mode-A
@@ -109,7 +109,7 @@ in [`docs/adr/`](docs/adr/). In brief:
   moved the dual Cargo/Bazel build to a **generated-first graph** with a CI
   semantic-drift gate (ADR-MCPS-048), killing the #220 parity-rot class.
 - **0.10** added **Mode C — attested ingress** (ADR-MCPS-023 §C): a controlled
-  ingress attestor signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the
+  ingress attestor signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the
   node verifies over a pinned attestor→node channel, admitted under `--strict` as an
   explicit opt-in — *attested delegation*, **not** end-to-end mTLS, with the load
   balancer in the trusted computing base. The node binds the assertion
@@ -127,9 +127,9 @@ The current implementation demonstrates a complete end-to-end **four-hop** path:
 
 ```text
 plain-MCP client (unmodified)
-  -> mcps-client-proxy / Python or TypeScript SDK  (signs draft-02, binds authz)
+  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs draft-02, binds authz)
   -> mTLS transport
-  -> mcps-proxy  (server-side PEP)
+  -> mcp-re-proxy  (server-side PEP)
   -> Core signature / freshness / replay verification
   -> delegated authorization (deny-before-dispatch)
   -> verified-context injection
@@ -140,7 +140,7 @@ plain-MCP client (unmodified)
 
 ## Deployment profiles
 
-`mcps-proxy` is one binary. The cargo features you compile it with determine
+`mcp-re-proxy` is one binary. The cargo features you compile it with determine
 which controls are available — do not conflate the lean default with the
 production high-assurance profile.
 
@@ -156,7 +156,7 @@ production high-assurance profile.
 Build with:
 
 ```sh
-cargo build --release -p mcps-proxy
+cargo build --release -p mcp-re-proxy
 ```
 
 ### High-assurance profile (`--features pkcs11_keysource,redis_replay,online_ocsp`)
@@ -172,7 +172,7 @@ Enables the three high-assurance backends:
 Build with:
 
 ```sh
-cargo build --release -p mcps-proxy \
+cargo build --release -p mcp-re-proxy \
     --features pkcs11_keysource,redis_replay,online_ocsp
 ```
 
@@ -205,7 +205,7 @@ implied for it.
 During incubation, MCP-RE should use a controlled third-party identifier, for example:
 
 ```text
-se.syncom/mcps
+se.syncom/mcp-re
 ```
 
 Do not use:
@@ -261,23 +261,23 @@ NOTICE.md                  Required Apache-2.0 attributions.
 Cargo.toml                 Workspace manifest.
 MODULE.bazel               Bazel module definition.
 
-mcps-core/                 Pure verification crate (no networking/async/fs).
-mcps-host/                 Client-side ambassador (signing + bound verify).
-mcps-transport/            Verifying mTLS client.
-mcps-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
-mcps-policy/               Delegated-authorization profiles (Phase 5).
-mcps-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
-mcps-client-proxy/         Local client-side MCP-RE proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
-mcps-client-proxy-cli/     Binary front-end for the client proxy (plain-MCP stdio -> sign draft-02 -> mTLS to remote).
-mcps-conformance/          Black-box conformance harness.
-mcps-walkthrough/          End-to-end four-hop persona-ladder walkthrough (ADR-MCPS-045).
-mcps-demo/                 Single-node demo harness.
-mcps-demo-server/          Long-lived stdio MCP server (demo target).
-mcps-demo-fileserver/      Minimal stdio MCP server (demo target).
-mcps-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
+mcp-re-core/                 Pure verification crate (no networking/async/fs).
+mcp-re-host/                 Client-side ambassador (signing + bound verify).
+mcp-re-transport/            Verifying mTLS client.
+mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
+mcp-re-policy/               Delegated-authorization profiles (Phase 5).
+mcp-re-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
+mcp-re-client-proxy/         Local client-side MCP-RE proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
+mcp-re-client-proxy-cli/     Binary front-end for the client proxy (plain-MCP stdio -> sign draft-02 -> mTLS to remote).
+mcp-re-conformance/          Black-box conformance harness.
+mcp-re-walkthrough/          End-to-end four-hop persona-ladder walkthrough (ADR-MCPS-045).
+mcp-re-demo/                 Single-node demo harness.
+mcp-re-demo-server/          Long-lived stdio MCP server (demo target).
+mcp-re-demo-fileserver/      Minimal stdio MCP server (demo target).
+mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
-sdk/python/                Python SDK — maturin/PyO3 binding to mcps-client-core (ADR-MCPS-044).
-sdk/typescript/            TypeScript SDK — napi-rs binding to mcps-client-core (byte-identical evidence).
+sdk/python/                Python SDK — maturin/PyO3 binding to mcp-re-client-core (ADR-MCPS-044).
+sdk/typescript/            TypeScript SDK — napi-rs binding to mcp-re-client-core (byte-identical evidence).
 
 docs/adr/                  Architecture decision records (ADR-MCPS-001..047).
 docs/spec/                 Spec briefs (core spec, security boundary, claim matrix, proposal scope).
@@ -298,7 +298,7 @@ requires (motivation/threat model, security boundary, envelope and signature
 rules, replay/freshness model, authorization profile, transport hardening,
 conformance, reference implementation, demos, and non-goals):
 
-1. **One page** — [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md):
+1. **One page** — [`docs/MCP-RE-IN-ONE-PAGE.md`](docs/MCP-RE-IN-ONE-PAGE.md):
    what it is, the threat, where it sits, what the current release proves, and what
    it does not claim.
 2. **Security boundary** — [`docs/spec/security-boundary.md`](docs/spec/security-boundary.md):
@@ -318,7 +318,7 @@ conformance, reference implementation, demos, and non-goals):
 
 ## Documentation index
 
-- **One-page overview:** [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) —
+- **One-page overview:** [`docs/MCP-RE-IN-ONE-PAGE.md`](docs/MCP-RE-IN-ONE-PAGE.md) —
   what MCP-RE is, the threat it addresses, where it sits relative to EMA/OAuth, and
   what the current release proves.
 - **Quickstarts:** [`docs/quickstart-local.md`](docs/quickstart-local.md)

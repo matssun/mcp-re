@@ -1,7 +1,7 @@
-# MCP-S Cargo workspace root.
+# MCP-RE Cargo workspace root.
 #
 # Per-crate BUILD.bazel files live under each member directory. These exports
-# let the isolated `crates_mcps` crate_universe hub reference the workspace
+# let the isolated `crates_mcp_re` crate_universe hub reference the workspace
 # manifest AND lockfile (ADR-MCPS-012).
 
 load("@gazelle//:def.bzl", "gazelle")
@@ -12,7 +12,7 @@ package(default_visibility = ["//visibility:public"])
 #
 # Directives (apply to this package and all subpackages):
 #   * rust_cargo_lockfile / rust_crates_prefix — resolve third-party `use`
-#     paths to the existing `@crates_mcps//:...` crate_universe hub.
+#     paths to the existing `@crates_mcp_re//:...` crate_universe hub.
 #   * map_kind — emit the house `nt_rust_*` macros (from //bazel:defs.bzl)
 #     instead of the raw rules_rust rules, so generated targets keep the
 #     workspace's lint/edition/stamp/test-harness policy. gazelle manages the
@@ -37,21 +37,21 @@ package(default_visibility = ["//visibility:public"])
 # gazelle:rust_default_edition 2021
 #
 # gazelle:rust_cargo_lockfile Cargo.lock
-# gazelle:rust_crates_prefix @crates_mcps//:
+# gazelle:rust_crates_prefix @crates_mcp_re//:
 # gazelle:map_kind rust_library nt_rust_library //bazel:defs.bzl
 # gazelle:map_kind rust_binary nt_rust_binary //bazel:defs.bzl
 # gazelle:map_kind rust_test nt_rust_test //bazel:defs.bzl
 #
 # Feature-flavor disambiguation: several crates publish >1 target with the same
-# `crate_name` (a plain flavor plus feature-gated ones — e.g. mcps_host +
-# mcps_host_test_fixtures; mcps_proxy + _fault/_dev_env/_ext; mcps_transport +
-# _fault). gazelle can't tell from `use mcps_proxy::X` which flavor an importer
+# `crate_name` (a plain flavor plus feature-gated ones — e.g. mcp_re_host +
+# mcp_re_host_test_fixtures; mcp_re_proxy + _fault/_dev_env/_ext; mcp_re_transport +
+# _fault). gazelle can't tell from `use mcp_re_proxy::X` which flavor an importer
 # wants, so these `resolve` directives pin the DEFAULT (plain) target. Importers
 # that need a specific flavor keep that edge hand-written with a `# keep` comment
 # — the flavor-selection logic is MCPS-69's job. (See ADR-MCPS-048.)
-# gazelle:resolve rust mcps_host //mcps-host:mcps_host
-# gazelle:resolve rust mcps_proxy //mcps-proxy:mcps_proxy
-# gazelle:resolve rust mcps_transport //mcps-transport:mcps_transport
+# gazelle:resolve rust mcp_re_host //mcp-re-host:mcp_re_host
+# gazelle:resolve rust mcp_re_proxy //mcp-re-proxy:mcp_re_proxy
+# gazelle:resolve rust mcp_re_transport //mcp-re-transport:mcp_re_transport
 
 # Run with: bazel run //:gazelle -- -mode diff   (dry-run; prints the diff)
 #

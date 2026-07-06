@@ -1,4 +1,4 @@
-# MCP-S Upstream Proposal Brief
+# MCP-RE Upstream Proposal Brief
 
 > **STATUS: PREPARED FOR REVIEW — NOT POSTED UPSTREAM.**
 > Publication to the Model Context Protocol community is a separate, explicit
@@ -9,22 +9,22 @@
 **Audience:** Model Context Protocol (MCP) community reviewers and implementers
 evaluating a Zero-Trust security profile for MCP tool calls.
 
-This brief is a public-facing explanation of **MCP-S** — what it is, the problem
+This brief is a public-facing explanation of **MCP-RE** — what it is, the problem
 it addresses, how it is designed, and — equally important — exactly what it does
 and does **not** claim. It is deliberately conservative: every positive claim is
 bounded by the project's honesty gate, the
 [Security Boundary document](./security-boundary.md), and every design rule cites
 the ADR that records *why* it is so. Where this brief and any other document
-disagree, the [MCP-S Core Specification](./mcps-core-spec.md) and the cited ADRs
+disagree, the [MCP-RE Core Specification](./mcp-re-core-spec.md) and the cited ADRs
 win.
 
 Tracking issue: MCPS-041.
 
 ---
 
-## 1. What MCP-S is
+## 1. What MCP-RE is
 
-MCP-S is a **clean-room, public Zero-Trust security profile** for the Model
+MCP-RE is a **clean-room, public Zero-Trust security profile** for the Model
 Context Protocol. It adds, to ordinary MCP tool calls:
 
 - **object-level signing** — the complete JSON-RPC request/response object is
@@ -40,7 +40,7 @@ Streamable HTTP) and is implemented as a **sidecar Policy Enforcement Point
 (PEP)** that wraps an ordinary MCP server, so existing servers gain these
 properties without being rewritten.
 
-MCP-S is built clean-room with a controlled, explicitly **non-official**
+MCP-RE is built clean-room with a controlled, explicitly **non-official**
 vocabulary; it does not claim adoption by or endorsement from the MCP project.
 See [Section 5](#5-incubation-status).
 
@@ -58,7 +58,7 @@ the server assumes it is legitimate; there is no in-band cryptographic proof of:
 - **WHETHER** that signer is **authorized** to perform the call at all.
 
 A TLS tunnel proves the *peer*, but not the *signer*, and says nothing about
-authorization. MCP-S supplies the missing object-level proofs **independent of
+authorization. MCP-RE supplies the missing object-level proofs **independent of
 transport**, so the guarantee survives proxies, relays, and transport changes.
 
 These are three **separate** proofs and none substitutes for another:
@@ -76,18 +76,18 @@ automatically authorized.
 ## 3. Design summary
 
 The design rules below are normative in the
-[MCP-S Core Specification](./mcps-core-spec.md); each cites the ADR that records
+[MCP-RE Core Specification](./mcp-re-core-spec.md); each cites the ADR that records
 why. The full ADR index lives in that spec.
 
 ### 3.1 Metadata-envelope approach
 
-MCP-S rides inside the MCP `_meta` extension space under controlled keys
+MCP-RE rides inside the MCP `_meta` extension space under controlled keys
 ([ADR-MCPS-002](../adr/adr-mcps-002.md)):
 
 ```text
-se.syncom/mcps.request     # signed request envelope
-se.syncom/mcps.response    # signed response envelope
-se.syncom/mcps.verified    # sidecar -> inner server only, NEVER signed
+se.syncom/mcp-re.request     # signed request envelope
+se.syncom/mcp-re.response    # signed response envelope
+se.syncom/mcp-re.verified    # sidecar -> inner server only, NEVER signed
 ```
 
 The request envelope carries `signer`, `on_behalf_of`, `audience`,
@@ -103,7 +103,7 @@ The **complete JSON-RPC object** is signed, not just the envelope
 preimage is the full object with `signature.value` removed (but `alg` and
 `key_id` retained), canonicalized with **RFC 8785 / JCS** to UTF-8 bytes, and
 signed **directly** with Ed25519 (no pre-hash). Canonicalization is implemented
-in-house in `mcps-core` so the preimage is fully auditable, and its correctness
+in-house in `mcp-re-core` so the preimage is fully auditable, and its correctness
 is pinned by committed conformance vectors. The `request_hash` that binds a
 response is the SHA-256 of the verified request signing preimage — not the hash
 of the transmitted bytes.
@@ -134,7 +134,7 @@ distinct from a replay verdict. The shipped durable cache is **single-node**
 **first** failing step, with cheap structural checks (batch / notification /
 domain / envelope / version / required fields) ordered before the expensive
 crypto, and the replay insert last
-([Core Spec §9](./mcps-core-spec.md)). `verify_response` symmetrically verifies
+([Core Spec §9](./mcp-re-core-spec.md)). `verify_response` symmetrically verifies
 the response signature and that its `request_hash` matches the locally verified
 request hash. Batches, security-relevant notifications, and unknown envelope
 fields are all rejected
@@ -162,7 +162,7 @@ yet delivered.
 
 ### 3.8 Rust-native transport hardening
 
-`mcps-proxy` terminates TLS itself (`RustlsDirectProvider`, rustls + ring), binds
+`mcp-re-proxy` terminates TLS itself (`RustlsDirectProvider`, rustls + ring), binds
 the verified transport peer to the object signer (**transport binding**), and
 enforces a maximum client-cert lifetime as its v1 revocation posture
 ([ADR-MCPS-014](../adr/adr-mcps-014.md)). This is
@@ -199,8 +199,8 @@ The **authoritative enumeration and counts** live in a drift-guarded manifest,
 not in prose
 ([ADR-MCPS-018](../adr/adr-mcps-018.md)):
 
-- Manifest: `mcps-conformance/conformance_manifest.json`
-- Drift guard: `//mcps-conformance:drift_guard_test`
+- Manifest: `mcp-re-conformance/conformance_manifest.json`
+- Drift guard: `//mcp-re-conformance:drift_guard_test`
 
 The guard re-derives every count from the on-disk fixtures and BUILD files and
 fails if they drift. This brief therefore **does not hardcode** vector or
@@ -212,10 +212,10 @@ run it from a fresh clone.
 
 ## 5. Incubation status
 
-The extension identifier `se.syncom/mcps` is an **INCUBATION
+The extension identifier `se.syncom/mcp-re` is an **INCUBATION
 identifier**, not a claim of official MCP adoption or endorsement
 ([ADR-MCPS-010](../adr/adr-mcps-010.md)). It is a
-controlled, explicitly **non-official** namespace chosen so MCP-S can be developed
+controlled, explicitly **non-official** namespace chosen so MCP-RE can be developed
 and reviewed without squatting on an official identifier.
 
 Because these strings live inside the **signed** `_meta` keys, they are part of
@@ -274,7 +274,7 @@ capability addable later, **not** that the capability is present:
 The build is **lockfile-reproducible with crates.io network access**, CI-enforced
 on every relevant PR — it is **not** offline-hermetic, and a fully submodule-free
 cold clone is not yet achieved (#3852,
-blocked on #3841). MCP-S is **not**
+blocked on #3841). MCP-RE is **not**
 a Granian plugin and does not depend on Granian.
 
 ---
@@ -284,7 +284,7 @@ a Granian plugin and does not depend on Granian.
 Review of this design is welcome **in-repo**. The feedback most valuable to the
 project, roughly in priority order:
 
-1. **Envelope key naming** — the `se.syncom/mcps.{request,response,verified}`
+1. **Envelope key naming** — the `se.syncom/mcp-re.{request,response,verified}`
    `_meta` keys and the preimage-stability consequence of changing them
    ([Section 5](#5-incubation-status)). Is the incubation-namespace approach the
    right way to avoid squatting on an official identifier, and is the migration

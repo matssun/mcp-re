@@ -1,0 +1,41 @@
+[package]
+name = "mcp-re-host"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-RE client-side ambassador: request envelope injection/signing and response verification (the model never holds keys)."
+
+[dependencies]
+# MCPS-014: client-side signing + response verification. Pure — depends only on
+# mcp-re-core plus serde_json for building the request object. No networking/async.
+mcp-re-core = { path = "../mcp-re-core" }
+serde_json = { workspace = true }
+# MCPS-033 (ADR-MCPS-015): production nonce entropy for HostSession's default
+# NonceSource. OS CSPRNG wrapper only — no networking/async; transport-free.
+getrandom = { workspace = true }
+
+[features]
+# Audit #81 (MEDIUM): the deterministic test fixtures `SeededNonceSource` (no real
+# entropy) and `FixedClock` (frozen time) are compiled ONLY under `cfg(test)` or
+# this explicit, non-default feature — an ENFORCED boundary so they cannot link
+# into a production binary and let a misconfigured deployment construct a
+# `HostSession` with predictable nonces. Dependent crates that need the fixtures
+# enable `mcp-re-host/test-fixtures` (as a dev-dependency feature for test-only use,
+# or a normal feature where deterministic demo binaries require them). OFF by
+# default: a plain `mcp-re-host` build does not expose either type.
+default = []
+test-fixtures = []
+
+# This crate's OWN integration tests (in `tests/`) link the public, NON-test
+# build of the library, where `cfg(test)` is false — so they need the
+# `test-fixtures` feature to see `FixedClock` / `SeededNonceSource`. A crate
+# enables a feature for its own integration/doc tests by depending on itself as a
+# dev-dependency with that feature; this does NOT affect the default library
+# build (the feature stays off for downstream production consumers).
+[dev-dependencies]
+mcp-re-host = { path = ".", features = ["test-fixtures"] }
+
+[lib]
+name = "mcp_re_host"
+path = "src/lib.rs"

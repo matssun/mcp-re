@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
+import mcp_re_sdk
 
 # Frozen wire constant (the request envelope key under params._meta).
-REQUEST_META_KEY = "se.syncom/mcps.request"
+REQUEST_META_KEY = "se.syncom/mcp-re.request"
 SEED = bytes(range(32))
 DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
 
@@ -32,7 +32,7 @@ CLIENT_RH = VEC["client_request_hash"]
 
 
 def _sign(**continuation):
-    return mcps_sdk.sign_request(
+    return mcp_re_sdk.sign_request(
         '"req-1"',
         "tools/call",
         '{"name":"echo","arguments":{}}',
@@ -56,7 +56,7 @@ def _envelope(signed):
 
 
 def _resolver():
-    r = mcps_sdk.TrustResolver()
+    r = mcp_re_sdk.TrustResolver()
     r.insert_public_key(
         SERVER["signer_id"], SERVER["key_id"], bytes.fromhex(SERVER["public_key_hex"])
     )
@@ -95,7 +95,7 @@ def test_one_sided_continuation_is_rejected():
 
 def test_verify_classifies_input_required():
     s = _input_required_scenario()
-    res = mcps_sdk.verify_response(
+    res = mcp_re_sdk.verify_response(
         s["response_bytes"].encode(),
         resolver=_resolver(),
         expected_request_hash=s["params"]["expected_request_hash"],
@@ -109,7 +109,7 @@ def test_verify_classifies_input_required():
 
 def test_terminal_response_is_not_input_required():
     valid = next(s for s in VEC["scenarios"] if s["name"] == "valid")
-    res = mcps_sdk.verify_response(
+    res = mcp_re_sdk.verify_response(
         valid["response_bytes"].encode(),
         resolver=_resolver(),
         expected_request_hash=valid["params"]["expected_request_hash"],
@@ -124,7 +124,7 @@ def test_terminal_response_is_not_input_required():
 
 
 def test_record_input_required_retains_and_returns_binding():
-    store = mcps_sdk.CorrelationStore()
+    store = mcp_re_sdk.CorrelationStore()
     store.register(
         correlation_id="c1",
         request_hash=CLIENT_RH,
@@ -145,7 +145,7 @@ def test_record_input_required_retains_and_returns_binding():
 
 def test_end_to_end_continuation_round_trip():
     s = _input_required_scenario()
-    res = mcps_sdk.verify_response(
+    res = mcp_re_sdk.verify_response(
         s["response_bytes"].encode(),
         resolver=_resolver(),
         expected_request_hash=CLIENT_RH,
@@ -153,7 +153,7 @@ def test_end_to_end_continuation_round_trip():
     )
     assert res.input_required
 
-    store = mcps_sdk.CorrelationStore()
+    store = mcp_re_sdk.CorrelationStore()
     store.register(
         correlation_id="c1",
         request_hash=CLIENT_RH,

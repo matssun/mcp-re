@@ -1,12 +1,12 @@
-# MCP-S supply-chain policy — cargo-deny (audit gap G-4, MCPS-077, issue #3980)
+# MCP-RE supply-chain policy — cargo-deny (audit gap G-4, MCPS-077, issue #3980)
 #
-# This is the authoritative supply-chain policy for the firewalled MCP-S module.
-# It is enforced by the CI gate `.github/workflows/mcps-supply-chain.yml`
+# This is the authoritative supply-chain policy for the firewalled MCP-RE module.
+# It is enforced by the CI gate `.github/workflows/mcp-re-supply-chain.yml`
 # (`cargo deny check {licenses,bans,sources,advisories}`), NOT by Bazel:
 # cargo-deny needs network (advisory-DB fetch) and a prebuilt binary, so it is a
 # CI policy gate by design, not a hermetic Bazel test (per the G-4 remediation
 # decision — Option 1). It is deliberately NOT added to any Cargo.toml and NOT
-# pulled into the `crates_mcps` crate universe.
+# pulled into the `crates_mcp_re` crate universe.
 #
 # The policy travels WITH the module: this repository is self-contained
 # (ADR-MCPS-001/012) and intended for future standalone extraction to a public
@@ -22,7 +22,7 @@
 # [graph] — the dependency surface that every check below is evaluated against.
 # ---------------------------------------------------------------------------
 [graph]
-# Restrict evaluation to the platforms MCP-S actually ships/runs on. This PRUNES
+# Restrict evaluation to the platforms MCP-RE actually ships/runs on. This PRUNES
 # target-conditional crates that are pulled in only for other targets (in this
 # tree: the `wasi` crate and the whole `windows-*` family, and transitively any
 # wasm32 wit-bindgen/wasm-encoder crates) so they are not assessed for licenses

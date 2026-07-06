@@ -660,50 +660,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
-name = "mcps-client-core"
+name = "mcp-re-client-core"
 version = "0.10.1"
 dependencies = [
- "mcps-core",
+ "mcp-re-core",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-client-proxy"
+name = "mcp-re-client-proxy"
 version = "0.10.1"
 dependencies = [
- "mcps-client-core",
- "mcps-core",
+ "mcp-re-client-core",
+ "mcp-re-core",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-client-proxy-cli"
+name = "mcp-re-client-proxy-cli"
 version = "0.10.1"
 dependencies = [
- "mcps-client-core",
- "mcps-client-proxy",
- "mcps-core",
- "mcps-host",
- "mcps-proxy",
- "mcps-transport",
+ "mcp-re-client-core",
+ "mcp-re-client-proxy",
+ "mcp-re-core",
+ "mcp-re-host",
+ "mcp-re-proxy",
+ "mcp-re-transport",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-conformance"
+name = "mcp-re-conformance"
 version = "0.10.1"
 dependencies = [
- "mcps-client-core",
- "mcps-core",
- "mcps-host",
- "mcps-proxy",
- "mcps-test-paths",
+ "mcp-re-client-core",
+ "mcp-re-core",
+ "mcp-re-host",
+ "mcp-re-proxy",
+ "mcp-re-test-paths",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-core"
+name = "mcp-re-core"
 version = "0.10.1"
 dependencies = [
  "base64",
@@ -717,15 +717,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-demo"
+name = "mcp-re-demo"
 version = "0.10.1"
 dependencies = [
- "mcps-core",
- "mcps-host",
- "mcps-policy",
- "mcps-proxy",
- "mcps-test-paths",
- "mcps-transport",
+ "mcp-re-core",
+ "mcp-re-host",
+ "mcp-re-policy",
+ "mcp-re-proxy",
+ "mcp-re-test-paths",
+ "mcp-re-transport",
  "rcgen",
  "rustls",
  "rustls-pki-types",
@@ -734,48 +734,48 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-demo-fileserver"
+name = "mcp-re-demo-fileserver"
 version = "0.10.1"
 dependencies = [
- "mcps-test-paths",
+ "mcp-re-test-paths",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "mcps-demo-server"
+name = "mcp-re-demo-server"
 version = "0.10.1"
 dependencies = [
- "mcps-test-paths",
+ "mcp-re-test-paths",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "mcps-host"
+name = "mcp-re-host"
 version = "0.10.1"
 dependencies = [
  "getrandom 0.2.17",
- "mcps-core",
- "mcps-host",
+ "mcp-re-core",
+ "mcp-re-host",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-policy"
+name = "mcp-re-policy"
 version = "0.10.1"
 dependencies = [
- "mcps-core",
- "mcps-host",
+ "mcp-re-core",
+ "mcp-re-host",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "mcps-proxy"
+name = "mcp-re-proxy"
 version = "0.10.1"
 dependencies = [
  "asn1-rs",
@@ -787,11 +787,11 @@ dependencies = [
  "hmac",
  "landlock",
  "libc",
- "mcps-client-core",
- "mcps-core",
- "mcps-host",
- "mcps-policy",
- "mcps-test-paths",
+ "mcp-re-client-core",
+ "mcp-re-core",
+ "mcp-re-host",
+ "mcp-re-policy",
+ "mcp-re-test-paths",
  "rcgen",
  "redis",
  "rustls",
@@ -809,14 +809,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-test-paths"
+name = "mcp-re-test-paths"
 version = "0.10.1"
 
 [[package]]
-name = "mcps-transport"
+name = "mcp-re-transport"
 version = "0.10.1"
 dependencies = [
- "mcps-proxy",
+ "mcp-re-proxy",
  "rcgen",
  "rustls",
  "rustls-pki-types",
@@ -825,14 +825,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-walkthrough"
+name = "mcp-re-walkthrough"
 version = "0.10.1"
 dependencies = [
- "mcps-client-core",
- "mcps-core",
- "mcps-demo",
- "mcps-proxy",
- "mcps-test-paths",
+ "mcp-re-client-core",
+ "mcp-re-core",
+ "mcp-re-demo",
+ "mcp-re-proxy",
+ "mcp-re-test-paths",
  "serde_json",
 ]
 

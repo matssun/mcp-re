@@ -1,16 +1,16 @@
-"""Live mTLS/HTTP MCP-S interop: Python SDK <-> the REAL production mcps-proxy.
+"""Live mTLS/HTTP MCP-RE interop: Python SDK <-> the REAL production mcp-re-proxy.
 
 This is step (i) — the real mTLS/HTTP interop proof, deliberately NOT the full
-ClientSession proof. The production `mcps-proxy` speaks one HTTP/1.1 POST per mTLS
-connection (`Connection: close`; mcps-proxy/src/tls.rs::serve_once), so this drives
-ONE signed MCP-S request per connection at the wire level:
+ClientSession proof. The production `mcp-re-proxy` speaks one HTTP/1.1 POST per mTLS
+connection (`Connection: close`; mcp-re-proxy/src/tls.rs::serve_once), so this drives
+ONE signed MCP-RE request per connection at the wire level:
 
     Python signs a draft-02 tools/call
       -> one mTLS connection (client cert; server cert verified as proxy.internal)
-      -> POST / HTTP/1.1  (MCP-S request body)
-      -> REAL mcps-proxy   verifies signature + freshness + audience, strips envelope
-      -> REAL mcps-demo-fileserver  executes read_file
-      -> mcps-proxy signs the draft-02 response
+      -> POST / HTTP/1.1  (MCP-RE request body)
+      -> REAL mcp-re-proxy   verifies signature + freshness + audience, strips envelope
+      -> REAL mcp-re-demo-fileserver  executes read_file
+      -> mcp-re-proxy signs the draft-02 response
       -> Python verifies the signature + request_hash binding, strips to plain MCP
 
 Full `ClientSession.initialize()` over this request/response HTTP transport is the
@@ -19,7 +19,7 @@ SEPARATE, larger adapter slice (step ii) — it is NOT exercised here.
 Materials come from `DemoFixtures` via the `emit_mtls_fixtures` example (TLS certs
 vary per run; identities/seeds/audience are the deterministic defaults). Needs the
 built binaries + cargo:
-    cargo build -p mcps-proxy && cargo build -p mcps-demo-fileserver
+    cargo build -p mcp-re-proxy && cargo build -p mcp-re-demo-fileserver
 """
 
 import json
@@ -36,16 +36,16 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
+import mcp_re_sdk
 
 ROOT = Path(__file__).resolve().parents[3]
-PROXY = ROOT / "target" / "debug" / "mcps-proxy"
-FILESERVER = ROOT / "target" / "debug" / "mcps-demo-fileserver"
+PROXY = ROOT / "target" / "debug" / "mcp-re-proxy"
+FILESERVER = ROOT / "target" / "debug" / "mcp-re-demo-fileserver"
 
 if not (PROXY.exists() and FILESERVER.exists() and shutil.which("cargo")):
     pytest.skip(
-        "needs cargo + built mcps-proxy and mcps-demo-fileserver "
-        "(cargo build -p mcps-proxy -p mcps-demo-fileserver)",
+        "needs cargo + built mcp-re-proxy and mcp-re-demo-fileserver "
+        "(cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver)",
         allow_module_level=True,
     )
 
@@ -62,11 +62,11 @@ FILE_TEXT = "hello from the inner fileserver\n"
 
 @pytest.fixture(scope="module")
 def proxy():
-    out = tempfile.mkdtemp(prefix="mcps_mtls_fx_")
-    demo = tempfile.mkdtemp(prefix="mcps_demo_root_")
+    out = tempfile.mkdtemp(prefix="mcp_re_mtls_fx_")
+    demo = tempfile.mkdtemp(prefix="mcp_re_demo_root_")
     (Path(demo) / "greeting.txt").write_text(FILE_TEXT)
     subprocess.run(
-        ["cargo", "run", "-q", "-p", "mcps-demo", "--example", "emit_mtls_fixtures", "--", out],
+        ["cargo", "run", "-q", "-p", "mcp-re-demo", "--example", "emit_mtls_fixtures", "--", out],
         cwd=ROOT, check=True, capture_output=True,
     )
     p = subprocess.Popen(
@@ -95,7 +95,7 @@ def proxy():
     threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
     if port is None:
         p.terminate()
-        pytest.fail("mcps-proxy did not report a listening port")
+        pytest.fail("mcp-re-proxy did not report a listening port")
     try:
         yield {"port": port, "out": out, "demo": demo}
     finally:
@@ -111,9 +111,9 @@ def proxy():
 def _sign(tool, arguments):
     now = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
-    signer = mcps_sdk.Signer.software(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY)
-    policy = mcps_sdk.SignerPolicy(SIGNER, environment="dev-test", require_mcps=True)
-    return mcps_sdk.sign_request_with_signer(
+    signer = mcp_re_sdk.Signer.software(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY)
+    policy = mcp_re_sdk.SignerPolicy(SIGNER, environment="dev-test", require_mcp_re=True)
+    return mcp_re_sdk.sign_request_with_signer(
         '"req-1"', "tools/call", json.dumps({"name": tool, "arguments": arguments}),
         on_behalf_of=ON_BEHALF_OF, audience=AUDIENCE,
         binding_digest_alg="sha256", binding_digest_value=AUTHZ_DIGEST,
@@ -130,12 +130,12 @@ def _sign_non_exporting(tool, arguments):
     evidence exactly as for a software signer (same key, same signature)."""
     now = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
-    device = mcps_sdk.SigningDevice.from_seed(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY)
-    signer = mcps_sdk.Signer.non_exporting(signer_id=SIGNER, key_id=SIGNER_KEY, sign_callback=device.sign)
-    policy = mcps_sdk.SignerPolicy(
-        SIGNER, environment="production", require_mcps=True
+    device = mcp_re_sdk.SigningDevice.from_seed(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY)
+    signer = mcp_re_sdk.Signer.non_exporting(signer_id=SIGNER, key_id=SIGNER_KEY, sign_callback=device.sign)
+    policy = mcp_re_sdk.SignerPolicy(
+        SIGNER, environment="production", require_mcp_re=True
     ).require_non_exporting()
-    return mcps_sdk.sign_request_with_signer(
+    return mcp_re_sdk.sign_request_with_signer(
         '"req-1"', "tools/call", json.dumps({"name": tool, "arguments": arguments}),
         on_behalf_of=ON_BEHALF_OF, audience=AUDIENCE,
         binding_digest_alg="sha256", binding_digest_value=AUTHZ_DIGEST,
@@ -169,50 +169,50 @@ def _post(out, port, body):
 
 
 def _trusting_resolver():
-    r = mcps_sdk.TrustResolver()
+    r = mcp_re_sdk.TrustResolver()
     r.insert_dev_seed(SERVER, SERVER_KEY, SERVER_SEED)
     return r
 
 
 def test_mtls_roundtrip_real_proxy_and_fileserver(proxy):
-    """A signed read_file is accepted by the real mcps-proxy over real mTLS, the
+    """A signed read_file is accepted by the real mcp-re-proxy over real mTLS, the
     real fileserver executes it, and the production-signed response is verified +
     correlated back to a plain MCP result with the file's content."""
     signed = _sign("read_file", {"path": "greeting.txt"})
     body = _post(proxy["out"], proxy["port"], signed.wire_bytes)
 
-    res = mcps_sdk.verify_response(
+    res = mcp_re_sdk.verify_response(
         body, resolver=_trusting_resolver(),
         expected_request_hash=signed.request_hash, expected_server_signer=SERVER,
-        enforcement_mode="require_mcps",
+        enforcement_mode="require_mcp_re",
     )
     assert res.accepted and res.decision == "accept"
     assert res.server_signer == SERVER
     assert res.request_hash == signed.request_hash
 
     obj = json.loads(body)
-    obj.get("result", {}).get("_meta", {}).pop(mcps_sdk.response_meta_key(), None)
+    obj.get("result", {}).get("_meta", {}).pop(mcp_re_sdk.response_meta_key(), None)
     assert obj["result"]["content"][0]["text"] == FILE_TEXT
     assert "_meta" not in obj["result"] or obj["result"]["_meta"] == {}
 
 
 def test_mtls_roundtrip_non_exporting_signer(proxy):
     """A request signed via a non-exporting (device-delegated) signer under the
-    production hardening profile is accepted by the real mcps-proxy over real mTLS,
+    production hardening profile is accepted by the real mcp-re-proxy over real mTLS,
     the fileserver executes it, and the production-signed response verifies — proving
     the non-exporting custody path produces genuine, proxy-accepted evidence."""
     signed = _sign_non_exporting("read_file", {"path": "greeting.txt"})
     body = _post(proxy["out"], proxy["port"], signed.wire_bytes)
 
-    res = mcps_sdk.verify_response(
+    res = mcp_re_sdk.verify_response(
         body, resolver=_trusting_resolver(),
         expected_request_hash=signed.request_hash, expected_server_signer=SERVER,
-        enforcement_mode="require_mcps",
+        enforcement_mode="require_mcp_re",
     )
     assert res.accepted and res.decision == "accept"
 
     obj = json.loads(body)
-    obj.get("result", {}).get("_meta", {}).pop(mcps_sdk.response_meta_key(), None)
+    obj.get("result", {}).get("_meta", {}).pop(mcp_re_sdk.response_meta_key(), None)
     assert obj["result"]["content"][0]["text"] == FILE_TEXT
 
 
@@ -221,9 +221,9 @@ def test_mtls_response_fails_closed_when_server_untrusted(proxy):
     its signer the SDK fails closed — proving verification is real, over real mTLS."""
     signed = _sign("read_file", {"path": "greeting.txt"})
     body = _post(proxy["out"], proxy["port"], signed.wire_bytes)
-    res = mcps_sdk.verify_response(
-        body, resolver=mcps_sdk.TrustResolver(),  # empty: server signer cannot resolve
-        expected_request_hash=signed.request_hash, enforcement_mode="require_mcps",
+    res = mcp_re_sdk.verify_response(
+        body, resolver=mcp_re_sdk.TrustResolver(),  # empty: server signer cannot resolve
+        expected_request_hash=signed.request_hash, enforcement_mode="require_mcp_re",
     )
     assert res.decision == "fail-closed"
-    assert res.reason == "mcps.actor_binding_failed"
+    assert res.reason == "mcp-re.actor_binding_failed"

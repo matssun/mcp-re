@@ -1,0 +1,34 @@
+{
+  "id": "req-1",
+  "jsonrpc": "2.0",
+  "result": {
+    "_meta": {
+      "se.syncom/mcp-re.response": {
+        "canonicalization_id": "mcp-re-jcs-int53-json-v1",
+        "issued_at": "2026-05-28T20:00:01Z",
+        "request_hash": "sha256:7VGgOz58QFHHfuhEJkaqo688BWZBY0QD_w35dsk7oJQ",
+        "server_signer": "did:example:server-1",
+        "signature": {
+          "alg": "Ed25519",
+          "key_id": "server-key-1",
+          "value": "w-RXW0HPTWWBn_CvLvvbglIn8PSL73n0fEFfBaWhpChplmeMexKhqrP8MiAMIhuFq_VE2kxnDHR4j8fXO4LWCA"
+        },
+        "version": "draft-02"
+      }
+    },
+    "content": [
+      {
+        "text": "hello",
+        "type": "text"
+      }
+    ],
+    "inputRequests": {
+      "confirm": {
+        "message": "Delete 3 files?",
+        "type": "elicitation"
+      }
+    },
+    "requestState": "eyJzdGVwIjoxfQ",
+    "resultType": "inputRequired"
+  }
+}

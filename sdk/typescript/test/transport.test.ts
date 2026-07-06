@@ -4,21 +4,21 @@
  * The adapter's security core is two sync functions: signOutbound (sign + register) and
  * verifyInbound (correlate + verify + strip). These are tested against the same golden
  * vectors as the bindings, proving the adapter writes byte-identical signed requests and
- * verifies responses exactly. Two async tests drive the McpsTransport pumps over an
+ * verifies responses exactly. Two async tests drive the McpReTransport pumps over an
  * in-memory byte channel (no live subprocess, no MCP SDK needed — the transport speaks
  * plain JSON-RPC objects).
  */
 import { describe, expect, it } from "vitest";
 import {
   CorrelationStore,
-  McpsTransport,
-  McpsVerificationError,
+  McpReTransport,
+  McpReVerificationError,
   Signer,
   SignerPolicy,
   TrustResolver,
   signOutbound,
   verifyInbound,
-  type McpsConfig,
+  type McpReConfig,
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, SIGN_VECTOR, scenario } from "./fixtures.js";
 import { pushableStream } from "./helpers.js";
@@ -29,7 +29,7 @@ const SERVER = RESPONSE_VECTORS.server;
 const NOW = Math.floor(Date.parse("2026-06-30T20:00:00Z") / 1000);
 const TTL = 300;
 
-function config(overrides: Partial<McpsConfig> = {}): McpsConfig {
+function config(overrides: Partial<McpReConfig> = {}): McpReConfig {
   const resolver = new TrustResolver();
   resolver.insertPublicKey(SERVER.signer_id, SERVER.key_id, Buffer.from(SERVER.public_key_hex, "hex"));
   return {
@@ -98,27 +98,27 @@ describe("sync security core", () => {
       nowUnix: NOW + 1,
     });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.response_sig_invalid");
+    expect(out.reason).toBe("mcp-re.response_sig_invalid");
   });
 
   it("verifyInbound is uncorrelatable without a pending request", () => {
     const out = verifyInbound(validResponse(), config(), new CorrelationStore(), { nowUnix: NOW + 1 });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.response_hash_mismatch");
+    expect(out.reason).toBe("mcp-re.response_hash_mismatch");
   });
 
   it("rejects a server notification by default", () => {
     const notif = Buffer.from(JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { x: 1 } }));
     const out = verifyInbound(notif, config(), new CorrelationStore(), { nowUnix: NOW });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.notification_forbidden");
+    expect(out.reason).toBe("mcp-re.notification_forbidden");
   });
 
   it("rejects a server request by default", () => {
     const req = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: "s-1", method: "sampling/createMessage", params: {} }));
     const out = verifyInbound(req, config(), new CorrelationStore(), { nowUnix: NOW });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.missing_envelope");
+    expect(out.reason).toBe("mcp-re.missing_envelope");
   });
 
   it("passes a server notification through when allowed", () => {
@@ -151,7 +151,7 @@ describe("async pump wiring", () => {
     };
     const lines = pushableStream();
     const corr = new CorrelationStore();
-    const transport = new McpsTransport(byteSend, lines.iterable, config(), {
+    const transport = new McpReTransport(byteSend, lines.iterable, config(), {
       correlation: corr,
       clock: () => NOW,
       nonceFactory: () => REQ.nonce,
@@ -169,7 +169,7 @@ describe("async pump wiring", () => {
     const lines = pushableStream();
     const corr = new CorrelationStore();
     registerForValid(corr);
-    const transport = new McpsTransport(async () => {}, lines.iterable, config(), {
+    const transport = new McpReTransport(async () => {}, lines.iterable, config(), {
       correlation: corr,
       clock: () => NOW + 1,
     });
@@ -188,7 +188,7 @@ describe("async pump wiring", () => {
     const lines = pushableStream();
     const corr = new CorrelationStore();
     registerForValid(corr);
-    const transport = new McpsTransport(async () => {}, lines.iterable, config(), {
+    const transport = new McpReTransport(async () => {}, lines.iterable, config(), {
       correlation: corr,
       clock: () => NOW + 1,
     });
@@ -198,8 +198,8 @@ describe("async pump wiring", () => {
     await transport.start();
     lines.push(Buffer.from(scenario("tampered_signature").response_bytes));
     const err = await errored;
-    expect(err).toBeInstanceOf(McpsVerificationError);
-    expect((err as McpsVerificationError).reason).toBe("mcps.response_sig_invalid");
+    expect(err).toBeInstanceOf(McpReVerificationError);
+    expect((err as McpReVerificationError).reason).toBe("mcp-re.response_sig_invalid");
     lines.close();
     await transport.close();
   });

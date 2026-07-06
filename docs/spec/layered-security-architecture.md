@@ -7,7 +7,7 @@
 | Field | Value |
 |---|---|
 | Status | **Draft v0.1 — for IG review** |
-| Author | Mats Sundvall ([github.com/matssun/mcps](https://github.com/matssun/mcps)) |
+| Author | Mats Sundvall ([github.com/matssun/mcp-re](https://github.com/matssun/mcp-re)) |
 | Taxonomy contributor | Maaz Khan (Interlock) |
 | Created | 2026-06-07 |
 | Intended outcome | GitHub Discussion in [modelcontextprotocol/modelcontextprotocol/discussions](https://github.com/modelcontextprotocol/modelcontextprotocol/discussions) → possible Informational SEP |
@@ -18,7 +18,7 @@
 
 ## Abstract
 
-The Model Context Protocol community has several active security proposals — SMCP / SEAL, ATSA (SEP-2809), ACTA signed receipts (IETF Internet-Draft), MCP-S, the Interceptors WG, and continuous schema-drift monitoring — that overlap in surprising ways without obviously colliding. Each proposal carries the implicit risk of "owning the whole stack" because the security domain has no agreed decomposition.
+The Model Context Protocol community has several active security proposals — SMCP / SEAL, ATSA (SEP-2809), ACTA signed receipts (IETF Internet-Draft), MCP-RE, the Interceptors WG, and continuous schema-drift monitoring — that overlap in surprising ways without obviously colliding. Each proposal carries the implicit risk of "owning the whole stack" because the security domain has no agreed decomposition.
 
 This document proposes a **five-layer decomposition** of the MCP security space, derived from the Security IG conversation on 2026-06-06: **admission / identity**, **caller governance**, **runtime security evidence**, **interception / enforcement**, and **audit / receipts**. For each layer it defines the architectural question that layer answers, the responsibilities it must carry, and the responsibilities it must NOT carry. It then specifies the **composition contracts** between adjacent layers — the data each layer produces for the next and the assumptions each layer is permitted to make about its neighbors.
 
@@ -30,7 +30,7 @@ The document does NOT propose new features for any layer. It is a map of the ter
 
 ### 1.1 What this document is
 
-MCP's security space is currently being filled by multiple incomplete proposals. Each proposal has chosen a sensible scope, but the scopes overlap in ways that are not visible without careful reading. A reader of the Security IG could be forgiven for thinking that SMCP, ATSA, MCP-S, and ACTA are partly competing — they are not, but the absence of an explicit decomposition makes it hard to see why.
+MCP's security space is currently being filled by multiple incomplete proposals. Each proposal has chosen a sensible scope, but the scopes overlap in ways that are not visible without careful reading. A reader of the Security IG could be forgiven for thinking that SMCP, ATSA, MCP-RE, and ACTA are partly competing — they are not, but the absence of an explicit decomposition makes it hard to see why.
 
 This document is a **map**. It says where each layer's responsibility begins and ends, what its outputs look like at a contract level, and what the layer above and below it is permitted to assume. It is intentionally NOT a specification of any individual layer. The specifications of the layers themselves live in their own proposals.
 
@@ -88,7 +88,7 @@ The taxonomy was proposed by Maaz Khan (Interlock) in the Security IG Discord th
 
 - **ATSA (SEP-2809)** by Alfredo Metere — Attested Tool-Server Admission. Signed clearance assertion at a well-known URI, verified against a locally pinned trust root before dispatch. Active in review.
 - **SEAL / SMCP** by Jeshua ben Joseph — workload identity attestation (container ID / process ID) before JWT issuance. Also covers parts of layers 2-3.
-- **mTLS-based identity** as used by MCP-S — pins identity to the transport-layer certificate; light-weight but does not produce an explicit "admitted" assertion.
+- **mTLS-based identity** as used by MCP-RE — pins identity to the transport-layer certificate; light-weight but does not produce an explicit "admitted" assertion.
 
 **Open questions:**
 
@@ -116,7 +116,7 @@ The taxonomy was proposed by Maaz Khan (Interlock) in the Security IG Discord th
 
 **Known work in this layer:**
 
-- **MCP-S** — `mcps-policy` crate, with the `AuthorizationProfile` abstraction. The Reference Signed Authorization Profile is the v1 concrete profile; the abstraction is intended to admit OAuth-style, capability-style, or policy-language profiles (Cedar, OPA, etc.) without changing the evaluator.
+- **MCP-RE** — `mcp-re-policy` crate, with the `AuthorizationProfile` abstraction. The Reference Signed Authorization Profile is the v1 concrete profile; the abstraction is intended to admit OAuth-style, capability-style, or policy-language profiles (Cedar, OPA, etc.) without changing the evaluator.
 - **SEAL / SMCP** — JWT-based 1-hour security tokens, deny-by-default capability model with path/command/domain allowlists.
 - **MCP OAuth flows** (existing in the spec) — partially overlapping where the authorization grant is OAuth-style.
 
@@ -151,20 +151,20 @@ A specialized form of runtime evidence answers a different question: *"Has the t
 
 This is **complementary** to per-call signature verification. The signature verifies *that the call really was made by who we think made it*. Drift evidence verifies *that what was approved is still what is being executed*. The two compose:
 
-- MCP-S's per-call evidence answers: "was this call authentic and authorized?"
+- MCP-RE's per-call evidence answers: "was this call authentic and authorized?"
 - A drift evidence stream answers: "is the tool/capability surface still the one that was approved?"
 
 Both feed layer 5. Neither replaces the other.
 
 **Known work in this layer:**
 
-- **MCP-S** — `mcps-core` (pure verification) + `mcps-host` (request signing, bound response verification) + `mcps-transport` (verifying mTLS). Per-call freshness, replay, response binding, verified-context propagation.
+- **MCP-RE** — `mcp-re-core` (pure verification) + `mcp-re-host` (request signing, bound response verification) + `mcp-re-transport` (verifying mTLS). Per-call freshness, replay, response binding, verified-context propagation.
 - **SEAL / SMCP** — JWT-validated request envelopes, 30-second freshness window, audit logging. No response-binding in v1.0 (deferred to Future Work).
 - **Continuous drift monitoring** (Maaz Khan / Interlock) — baseline tool schemas at first-observation, diff subsequent declarations against the baseline, anchor baselines to the admitted identity from layer 1.
 
 **Open questions:**
 
-- What is the canonical preimage shape for signing? (JCS-based, as in MCP-S? Something else?)
+- What is the canonical preimage shape for signing? (JCS-based, as in MCP-RE? Something else?)
 - How is the verified-context block carried — in the JSON-RPC `_meta` block, in a transport header, both?
 - Should drift evidence be carried in the same wire format as per-call evidence, or as a separate channel?
 
@@ -188,7 +188,7 @@ Both feed layer 5. Neither replaces the other.
 
 **Known work in this layer:**
 
-- **MCP-S** — `mcps-proxy` is the interceptor: TLS termination → object signature verification → freshness/replay check → authorization evaluation → verified-context propagation → dispatch to an unmodified inner MCP server.
+- **MCP-RE** — `mcp-re-proxy` is the interceptor: TLS termination → object signature verification → freshness/replay check → authorization evaluation → verified-context propagation → dispatch to an unmodified inner MCP server.
 - **SEAL / SMCP** — `aegis-seal-gateway` plays the same architectural role.
 - **Interceptors WG** (kicked off 2026-04-22) — formalizing the interceptor architecture as a first-class MCP concept.
 
@@ -220,7 +220,7 @@ Both feed layer 5. Neither replaces the other.
 
 - **ACTA signed receipts** — `draft-farley-acta-signed-receipts-01` (IETF Internet-Draft) by tommylauren. Portable Ed25519-signed receipt format, issuer-blind verification, lifecycle receipts for multi-agent swarms. Reference implementation at `protect-mcp` (npm).
 - **Tamper-evident audit record** (Scott Rhodes, factored out of ATSA SEP-2809 into its own effort).
-- **MCP-S verified-context blocks** — structured per-call evidence that an ACTA-style receipt can be built FROM, but not itself a portable receipt.
+- **MCP-RE verified-context blocks** — structured per-call evidence that an ACTA-style receipt can be built FROM, but not itself a portable receipt.
 
 **Open questions:**
 
@@ -292,7 +292,7 @@ Where current proposals fit in the five-layer decomposition. **Strong** = the pr
 | Proposal | Layer 1 (admission) | Layer 2 (governance) | Layer 3 (runtime evidence) | Layer 4 (interception) | Layer 5 (audit/receipts) |
 |---|---|---|---|---|---|
 | **ATSA (SEP-2809)** | Strong | Partial (clearance includes sensitivity) | — | — | — |
-| **MCP-S** | Partial (mTLS identity verification) | Strong (AuthorizationProfile + Reference Signed Profile) | Strong (per-call sign/verify, freshness, replay, response binding, verified-context) | Strong (mcps-proxy) | Partial (primitives, no portable receipt format) |
+| **MCP-RE** | Partial (mTLS identity verification) | Strong (AuthorizationProfile + Reference Signed Profile) | Strong (per-call sign/verify, freshness, replay, response binding, verified-context) | Strong (mcp-re-proxy) | Partial (primitives, no portable receipt format) |
 | **SEAL / SMCP** | Partial (workload attestation) | Strong (deny-by-default capability scopes) | Partial (request sign/verify, no response binding in v1.0) | Strong (aegis-seal-gateway) | Partial (audit log, not portable receipts) |
 | **ACTA signed receipts** | — | — | — | — | Strong |
 | **Drift monitoring** | — | — | Strong (complementary evidence stream) | — | Partial (drift events feed receipts) |
@@ -303,8 +303,8 @@ Reading the table:
 
 - No proposal currently covers ALL five layers. This is the intended state — single-proposal completeness is an anti-pattern (§6.1).
 - Layers 1 and 5 each have a clear specialist (ATSA, ACTA respectively). Layer 4 has an institutional home (Interceptors WG).
-- Layers 2, 3, and 4 are currently most-fully realized in MCP-S.
-- SEAL / SMCP and MCP-S occupy the same architectural slot at layers 2-4 with different design choices (JWT-based session tokens vs. per-call signing); they are alternative implementations of the same layers rather than complementary ones.
+- Layers 2, 3, and 4 are currently most-fully realized in MCP-RE.
+- SEAL / SMCP and MCP-RE occupy the same architectural slot at layers 2-4 with different design choices (JWT-based session tokens vs. per-call signing); they are alternative implementations of the same layers rather than complementary ones.
 
 ---
 
@@ -339,7 +339,7 @@ A proposal allows the caller to populate a field that the receiver treats as aut
 ## 7. Open questions for the IG
 
 1. **Is this the right taxonomy?** The five layers are derived from a single conversation. They appear load-bearing but have not been stress-tested against e.g. multi-region deployments, MCP-over-HTTP, or sandboxed sub-agents.
-2. **Should layer 4 (interception/enforcement) be the home for inner-server isolation (sandbox, rlimits)?** MCP-S's `mcps-proxy` implements this today; the Interceptors WG charter may or may not include it.
+2. **Should layer 4 (interception/enforcement) be the home for inner-server isolation (sandbox, rlimits)?** MCP-RE's `mcp-re-proxy` implements this today; the Interceptors WG charter may or may not include it.
 3. **Are admission and authorization always separable?** Some deployment models (e.g., capability-based ones) blur the two. Should the layered model accommodate that, or assert separability as a normative property?
 4. **What is the right home for this document?** A GitHub Discussion (per §1.1's intent) gives community visibility but no version control; an Informational SEP gives durability but is a heavier commitment.
 5. **Do existing proposals agree their mapping in §5 is fair?** Especially: ATSA author (Alfredo Metere), ACTA author (tommylauren), SEAL/SMCP author (Jeshua ben Joseph), Interceptors WG leads.
@@ -355,12 +355,12 @@ Specific proposals referenced:
 - **ATSA (SEP-2809)** — Alfredo Metere (Enclawed). PR: [#2809](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2809). Preprint: [Zenodo 10.5281/zenodo.20349263](https://doi.org/10.5281/zenodo.20349263).
 - **ACTA signed receipts** — tommylauren. IETF Internet-Draft: `draft-farley-acta-signed-receipts-01`. Reference impl: `protect-mcp` on npm.
 - **SEAL / SMCP** — Jeshua ben Joseph (100monkeys.ai). Discussion: [modelcontextprotocol/discussions/689](https://github.com/orgs/modelcontextprotocol/discussions/689). Repos: [`seal-protocol`](https://github.com/100monkeys-ai/seal-protocol) (SDKs), [`aegis-seal-gateway`](https://github.com/100monkeys-ai/aegis-seal-gateway) (Rust gateway).
-- **MCP-S** — Mats Sundvall. Repo: [github.com/matssun/mcps](https://github.com/matssun/mcps).
+- **MCP-RE** — Mats Sundvall. Repo: [github.com/matssun/mcp-re](https://github.com/matssun/mcp-re).
 - **Annotations (SEP-1913)** — referenced as substrate.
 - **Continuous drift monitoring** — Maaz Khan (Interlock).
 - **Interceptors WG** — kicked off 2026-04-22.
 
-This document is offered under Apache-2.0 by its primary author. Contributions via pull request to the [MCP-S repository](https://github.com/matssun/mcps) are welcome at this stage; if the document advances to a GitHub Discussion or Informational SEP, contribution moves to the relevant MCP project venue.
+This document is offered under Apache-2.0 by its primary author. Contributions via pull request to the [MCP-RE repository](https://github.com/matssun/mcp-re) are welcome at this stage; if the document advances to a GitHub Discussion or Informational SEP, contribution moves to the relevant MCP project venue.
 
 ---
 
@@ -368,7 +368,7 @@ This document is offered under Apache-2.0 by its primary author. Contributions v
 
 | Phase | Status | Venue |
 |---|---|---|
-| 0. Private draft in MCP-S repo | **In progress** (this file) | `docs/spec/layered-security-architecture.md` |
+| 0. Private draft in MCP-RE repo | **In progress** (this file) | `docs/spec/layered-security-architecture.md` |
 | 1. Layer-author review | Pending | Direct outreach to ATSA, ACTA, SMCP, drift authors |
 | 2. v0.2 with author confirmations | Pending | This file |
 | 3. Public draft as GitHub Discussion | Pending | `modelcontextprotocol/modelcontextprotocol/discussions` |

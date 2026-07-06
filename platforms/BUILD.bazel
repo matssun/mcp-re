@@ -1,6 +1,6 @@
 # platforms/BUILD.bazel
 #
-# Cross-compilation platform definitions for the mcps module's OCI image
+# Cross-compilation platform definitions for the mcp-re module's OCI image
 # packaging. Mirrors the root monorepo //platforms package; the OCI image build
 # transitions the proxy binary onto linux_x86_64 (linux/amd64) here.
 

@@ -1,0 +1,38 @@
+[package]
+name = "mcp-re-transport"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-RE client-side mTLS transport: a blocking rustls client that presents a client certificate AND verifies the proxy's server certificate + identity against a configured server CA."
+
+# Phase 6.6 (MCPS-053): the reusable, verifying mTLS CLIENT transport. The
+# server side (RustlsDirectProvider, serve/serve_once) lives in mcp-re-proxy; this
+# crate is the symmetric client and depends on NEITHER mcp-re-proxy NOR the
+# transport-free mcp-re-host (ADR-MCPS-015). Blocking std::net + rustls (ring),
+# NO async runtime — mirroring the proxy's blocking HTTP/1.1 framing.
+[dependencies]
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+thiserror = { workspace = true }
+
+# MCPS-071 ("test of the tests" / fault injection). The `fault_accept_any_server`
+# feature is a DELIBERATE BREAK of the server-authentication control, used ONLY by
+# the periodic/pre-release fault-injection harness to prove the server-auth guard
+# is load-bearing. It is OFF by default, never enabled by any production target,
+# and never enabled by the default `bazel test //...`. When OFF the code is
+# identical to the verifying build (the faulted path is behind `#[cfg(feature = ...)]`).
+[features]
+default = []
+fault_accept_any_server = []
+
+[dev-dependencies]
+# Mint a server CA + leaves (trusted / untrusted / wrong-name) and a client CA +
+# leaf in-process for the mutual-TLS round-trip tests (no committed key fixtures).
+rcgen = { workspace = true }
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+serde_json = { workspace = true }
+
+[lib]
+name = "mcp_re_transport"
+path = "src/lib.rs"

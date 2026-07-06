@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Release Checklist
+# MCP-RE Release Checklist
 
 Use this checklist before a public release or MCP proposal submission.
 

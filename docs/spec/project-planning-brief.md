@@ -1,28 +1,28 @@
-# MCP-S Project Planning Brief
+# MCP-RE Project Planning Brief
 
 ## A Zero Trust Security Profile for the Model Context Protocol
 
 **Status:** Planning Draft
-**Working name:** MCP-S / MCP Secure
+**Working name:** MCP Runtime Evidence (MCP-RE)
 **Initial implementation language:** Rust
-**Initial crate family:** `mcps-core`, `mcps-proxy`, `mcps-host`, `mcps-conformance`
+**Initial crate family:** `mcp-re-core`, `mcp-re-proxy`, `mcp-re-host`, `mcp-re-conformance`
 **Current objective:** Prepare the project for engineering planning, implementation scoping, and open-source discussion.
 
 ---
 
 ## 1. Executive Summary
 
-MCP-S is proposed as a hardened, transport-agnostic security profile for the Model Context Protocol.
+MCP-RE is proposed as a hardened, transport-agnostic security profile for the Model Context Protocol.
 
 The goal is not to replace MCP. The goal is to make MCP usable in production-grade agent systems where tool calls must be attributable, tamper-evident, replay-protected, auditable, and eventually bound to delegated authority.
 
 The core design decision is:
 
-> MCP-S secures the MCP JSON-RPC object itself, not only the transport.
+> MCP-RE secures the MCP JSON-RPC object itself, not only the transport.
 
-This is necessary because MCP supports both local `stdio` and remote Streamable HTTP transports. HTTP headers alone cannot secure stdio-based MCP. MCP-S therefore places a signed security envelope inside MCP request and response metadata, making the invocation self-protecting across transports.
+This is necessary because MCP supports both local `stdio` and remote Streamable HTTP transports. HTTP headers alone cannot secure stdio-based MCP. MCP-RE therefore places a signed security envelope inside MCP request and response metadata, making the invocation self-protecting across transports.
 
-The first implementation should focus narrowly on **MCP-S Core**:
+The first implementation should focus narrowly on **MCP-RE Core**:
 
 * signed MCP requests;
 * signed MCP responses;
@@ -70,7 +70,7 @@ The main risks are:
 
 ## 3. Project Goal
 
-The project goal is to define and implement an MCP-S Core profile that can be proposed to the open-source MCP community.
+The project goal is to define and implement an MCP-RE Core profile that can be proposed to the open-source MCP community.
 
 The first project outcome should be:
 
@@ -80,9 +80,9 @@ The first project outcome should be:
 
 ## 4. Scope
 
-### 4.1 In Scope for MCP-S Core
+### 4.1 In Scope for MCP-RE Core
 
-MCP-S Core includes:
+MCP-RE Core includes:
 
 * transport-agnostic request security envelope;
 * transport-agnostic response security envelope;
@@ -102,9 +102,9 @@ MCP-S Core includes:
 * standardized JSON-RPC error objects;
 * conformance vectors and black-box tests.
 
-### 4.2 Explicit Non-Goals for MCP-S Core
+### 4.2 Explicit Non-Goals for MCP-RE Core
 
-MCP-S Core does not define:
+MCP-RE Core does not define:
 
 * full delegated authorization semantics;
 * Biscuit, UCAN, macaroon, or OAuth token validation;
@@ -125,14 +125,14 @@ These belong in later profiles or adjacent systems.
 
 The earlier VAEP discussion was useful because it identified the broader trust model: signed events, provenance, delegated authority, auditable actions, and human-agent collaboration.
 
-However, MCP-S should not try to implement VAEP.
+However, MCP-RE should not try to implement VAEP.
 
 The correct relationship is:
 
 * **VAEP**: broader agent communication, memory, audit, and human-decision substrate.
-* **MCP-S**: narrower hardened profile for MCP tool/resource/prompt invocation.
+* **MCP-RE**: narrower hardened profile for MCP tool/resource/prompt invocation.
 
-MCP-S events may later be recorded into a VAEP-style ledger, but that is not part of MCP-S Core.
+MCP-RE events may later be recorded into a VAEP-style ledger, but that is not part of MCP-RE Core.
 
 ---
 
@@ -143,7 +143,7 @@ MCP-S events may later be recorded into a VAEP-style ledger, but that is not par
 During incubation, examples use:
 
 ```text
-com.example/mcps-security
+com.example/mcp-re-security
 ```
 
 This identifier is only valid for examples and non-public conformance fixtures.
@@ -151,15 +151,15 @@ This identifier is only valid for examples and non-public conformance fixtures.
 Before public release, it must be replaced by a controlled reversed-domain identifier, for example:
 
 ```text
-org.<controlled-domain>/mcps-security
-se.<controlled-domain>/mcps-security
-com.<controlled-domain>/mcps-security
+org.<controlled-domain>/mcp-re-security
+se.<controlled-domain>/mcp-re-security
+com.<controlled-domain>/mcp-re-security
 ```
 
 The Rust crate should remain named separately:
 
 ```text
-mcps-core
+mcp-re-core
 ```
 
 The protocol extension should not be named after the implementation crate.
@@ -171,13 +171,13 @@ The protocol extension should not be named after the implementation crate.
 Request metadata key:
 
 ```text
-com.example/mcps-security.request
+com.example/mcp-re-security.request
 ```
 
 Response metadata key:
 
 ```text
-com.example/mcps-security.response
+com.example/mcp-re-security.response
 ```
 
 These keys are placeholders until a controlled public extension identifier is chosen.
@@ -186,7 +186,7 @@ These keys are placeholders until a controlled public extension identifier is ch
 
 ### 6.3 Signature Algorithm
 
-MCP-S Core defines only:
+MCP-RE Core defines only:
 
 ```text
 alg = "Ed25519"
@@ -205,7 +205,7 @@ Unknown algorithms must be rejected unless explicitly negotiated by a future pro
 For request signing:
 
 1. Start with the complete MCP JSON-RPC request object.
-2. Ensure the MCP-S request envelope is present.
+2. Ensure the MCP-RE request envelope is present.
 3. Ensure `signature.alg` and `signature.key_id` are present.
 4. Ensure `signature.value` is absent.
 5. Canonicalize the complete JSON-RPC object using RFC 8785/JCS.
@@ -223,7 +223,7 @@ For request verification:
 
 The same transformation applies symmetrically to signed responses.
 
-The complete JSON-RPC object is signed, not merely the MCP-S envelope. This means the tool name, arguments, ordinary MCP metadata, JSON-RPC `id`, and MCP-S metadata are all integrity-protected.
+The complete JSON-RPC object is signed, not merely the MCP-RE envelope. This means the tool name, arguments, ordinary MCP metadata, JSON-RPC `id`, and MCP-RE metadata are all integrity-protected.
 
 ---
 
@@ -257,7 +257,7 @@ It is not the hash of the transmitted signed JSON object.
 
 ### 6.7 Response Integrity
 
-Signed responses are required for all verified request/response methods covered by MCP-S Core.
+Signed responses are required for all verified request/response methods covered by MCP-RE Core.
 
 Response verification order:
 
@@ -272,7 +272,7 @@ Errors generated before request verification may be unsigned but should include 
 
 ### 6.8 Notifications
 
-MCP-S Core may allow non-mutating notifications if local policy permits.
+MCP-RE Core may allow non-mutating notifications if local policy permits.
 
 However, notifications must not cause:
 
@@ -288,7 +288,7 @@ Operations with security consequences must use JSON-RPC requests with IDs so tha
 
 ### 6.9 Batch Messages
 
-MCP-S Core rejects all JSON-RPC batch messages.
+MCP-RE Core rejects all JSON-RPC batch messages.
 
 Batch signing is deferred to a future profile.
 
@@ -296,11 +296,11 @@ Batch signing is deferred to a future profile.
 
 ### 6.10 Unknown Fields
 
-MCP-S Core should fail closed on unknown fields inside the MCP-S security envelope unless a negotiated extension explicitly permits them.
+MCP-RE Core should fail closed on unknown fields inside the MCP-RE security envelope unless a negotiated extension explicitly permits them.
 
 Recommended rule:
 
-> Unknown fields inside `com.example/mcps-security.request` or `com.example/mcps-security.response` must be rejected by Core implementations.
+> Unknown fields inside `com.example/mcp-re-security.request` or `com.example/mcp-re-security.response` must be rejected by Core implementations.
 
 If extension data is needed later, reserve an explicit field such as:
 
@@ -323,7 +323,7 @@ If extension data is needed later, reserve an explicit field such as:
       "text": "hello"
     },
     "_meta": {
-      "com.example/mcps-security.request": {
+      "com.example/mcp-re-security.request": {
         "version": "draft-01",
         "actor": "did:example:agent-1",
         "audience": "did:example:server-1",
@@ -359,7 +359,7 @@ If extension data is needed later, reserve an explicit field such as:
       }
     ],
     "_meta": {
-      "com.example/mcps-security.response": {
+      "com.example/mcp-re-security.response": {
         "request_hash": "sha256:4YRTQPdgAvwKnmzU67RAKWhs8frL7MKL8C7C3pvlHIY",
         "server_actor": "did:example:server-1",
         "trust_label": "internal-verified",
@@ -379,7 +379,7 @@ If extension data is needed later, reserve an explicit field such as:
 
 ## 9. Trust Resolution
 
-MCP-S Core does not mandate a specific identity system.
+MCP-RE Core does not mandate a specific identity system.
 
 The verifier resolves:
 
@@ -397,18 +397,18 @@ Example resolver entry:
 }
 ```
 
-`mcps.actor_binding_failed` means either:
+`mcp-re.actor_binding_failed` means either:
 
 * the actor/key pair could not be resolved; or
 * the resolved key did not verify the signature.
 
-Enterprise identity, DID resolution, SPIFFE/SPIRE, X.509, and key transparency can be considered later. MCP-S Core only needs the abstract resolver interface.
+Enterprise identity, DID resolution, SPIFFE/SPIRE, X.509, and key transparency can be considered later. MCP-RE Core only needs the abstract resolver interface.
 
 ---
 
 ## 10. Structural Authority Bindings
 
-MCP-S Core includes:
+MCP-RE Core includes:
 
 ```text
 on_behalf_of
@@ -433,7 +433,7 @@ Delegation profiles will later define:
 
 ## 11. Context Propagation to Inner MCP Servers
 
-A sidecar can verify MCP-S at the boundary, but it cannot fully prevent confused-deputy problems if the inner MCP server uses broad downstream credentials.
+A sidecar can verify MCP-RE at the boundary, but it cannot fully prevent confused-deputy problems if the inner MCP server uses broad downstream credentials.
 
 Therefore, when a sidecar forwards a verified request to an inner MCP server, it should provide verified context:
 
@@ -453,7 +453,7 @@ For Streamable HTTP inner hops, headers may be used only on private loopback or 
 
 ## 12. Standard Error Object
 
-MCP-S errors are returned as JSON-RPC error objects.
+MCP-RE errors are returned as JSON-RPC error objects.
 
 Example:
 
@@ -462,9 +462,9 @@ Example:
   "jsonrpc": "2.0",
   "error": {
     "code": -32003,
-    "message": "mcps.invalid_signature",
+    "message": "mcp-re.invalid_signature",
     "data": {
-      "mcps_error": "mcps.invalid_signature",
+      "mcp_re_error": "mcp-re.invalid_signature",
       "policy": "core",
       "retryable": false,
       "details": "Ed25519 signature verification failed against the JCS preimage."
@@ -483,34 +483,34 @@ If the ID cannot be determined, `id` should be `null`.
 Core error constants:
 
 ```text
-mcps.missing_envelope
-mcps.unsupported_version
-mcps.invalid_signature
-mcps.canonicalization_failed
-mcps.expired_request
-mcps.replay_detected
-mcps.invalid_audience
-mcps.actor_binding_failed
-mcps.transport_binding_failed
-mcps.capability_hash_missing
-mcps.missing_principal
-mcps.invalid_principal_format
-mcps.response_sig_invalid
-mcps.response_hash_mismatch
-mcps.downgrade_forbidden
-mcps.batch_forbidden
-mcps.notification_forbidden
-mcps.unknown_envelope_field
+mcp-re.missing_envelope
+mcp-re.unsupported_version
+mcp-re.invalid_signature
+mcp-re.canonicalization_failed
+mcp-re.expired_request
+mcp-re.replay_detected
+mcp-re.invalid_audience
+mcp-re.actor_binding_failed
+mcp-re.transport_binding_failed
+mcp-re.capability_hash_missing
+mcp-re.missing_principal
+mcp-re.invalid_principal_format
+mcp-re.response_sig_invalid
+mcp-re.response_hash_mismatch
+mcp-re.downgrade_forbidden
+mcp-re.batch_forbidden
+mcp-re.notification_forbidden
+mcp-re.unknown_envelope_field
 ```
 
 Delegation-specific errors should not be part of Core. They belong in later profiles:
 
 ```text
-mcps.capability_malformed
-mcps.capability_expired
-mcps.capability_revoked
-mcps.capability_scope_denied
-mcps.principal_binding_failed
+mcp-re.capability_malformed
+mcp-re.capability_expired
+mcp-re.capability_revoked
+mcp-re.capability_scope_denied
+mcp-re.principal_binding_failed
 ```
 
 ---
@@ -520,11 +520,11 @@ mcps.principal_binding_failed
 Recommended repository:
 
 ```text
-mcps/
+mcp-re/
   Cargo.toml
 
   crates/
-    mcps-core/
+    mcp-re-core/
       envelope structs
       JCS canonicalization
       Ed25519 signing and verification
@@ -534,21 +534,21 @@ mcps/
       request/response verification
       test vectors
 
-    mcps-proxy/
+    mcp-re-proxy/
       server-side sidecar
       stdio wrapper
       Streamable HTTP wrapper
       fail-closed dispatch
       verified context propagation
 
-    mcps-host/
+    mcp-re-host/
       client-side ambassador
       request signing
       response verification
       tool filtering
       local token/authority context interface
 
-    mcps-conformance/
+    mcp-re-conformance/
       black-box conformance runner
       valid vector tests
       tamper tests
@@ -556,14 +556,14 @@ mcps/
       response binding tests
       stdio and HTTP harnesses
 
-    mcps-policy/
+    mcp-re-policy/
       future delegation layer
       Biscuit profile
       UCAN profile
       policy evaluation
 ```
 
-`mcps-core` should not depend on networking, async runtimes, filesystem access, or MCP server implementations.
+`mcp-re-core` should not depend on networking, async runtimes, filesystem access, or MCP server implementations.
 
 It should be usable by:
 
@@ -592,12 +592,12 @@ Deliverables:
 
 Exit criteria:
 
-* team agrees that MCP-S Core is narrow and implementable;
-* no further architecture expansion before `mcps-core`.
+* team agrees that MCP-RE Core is narrow and implementable;
+* no further architecture expansion before `mcp-re-core`.
 
 ---
 
-### Phase 1 — `mcps-core`
+### Phase 1 — `mcp-re-core`
 
 Goal: implement the pure cryptographic verification crate.
 
@@ -623,7 +623,7 @@ Exit criteria:
 
 ---
 
-### Phase 2 — `mcps-conformance`
+### Phase 2 — `mcp-re-conformance`
 
 Goal: create a black-box conformance runner.
 
@@ -643,18 +643,18 @@ Deliverables:
 Example intended command:
 
 ```text
-mcps-conformance --server-exec ./target/release/example-mcp-server --profile core
+mcp-re-conformance --server-exec ./target/release/example-mcp-server --profile core
 ```
 
 Exit criteria:
 
-* runner can test a native MCP-S server;
+* runner can test a native MCP-RE server;
 * runner can test a sidecar-wrapped ordinary MCP server;
 * results are deterministic and machine-readable.
 
 ---
 
-### Phase 3 — `mcps-proxy`
+### Phase 3 — `mcp-re-proxy`
 
 Goal: implement a server-side sidecar.
 
@@ -676,7 +676,7 @@ Exit criteria:
 
 ---
 
-### Phase 4 — `mcps-host`
+### Phase 4 — `mcp-re-host`
 
 Goal: implement client-side ambassador behavior.
 
@@ -692,8 +692,8 @@ Deliverables:
 Exit criteria:
 
 * LLM never manages private keys;
-* LLM never constructs MCP-S signatures;
-* ordinary MCP tool intent is converted into signed MCP-S requests by the host layer.
+* LLM never constructs MCP-RE signatures;
+* ordinary MCP tool intent is converted into signed MCP-RE requests by the host layer.
 
 ---
 
@@ -746,7 +746,7 @@ These should remain outside Core.
 The current vector set contains:
 
 1. valid signed request;
-2. modified request argument producing `mcps.invalid_signature`;
+2. modified request argument producing `mcp-re.invalid_signature`;
 3. valid signed response;
 4. response bound to wrong request hash.
 
@@ -761,7 +761,7 @@ Purpose:
 * produce a response with a wrong `request_hash`;
 * sign it correctly with the server key;
 * expect signature verification to pass;
-* expect `request_hash` comparison to fail with `mcps.response_hash_mismatch`.
+* expect `request_hash` comparison to fail with `mcp-re.response_hash_mismatch`.
 
 Suggested wrong request hash:
 
@@ -772,7 +772,7 @@ sha256:y3G62cwbgVaTteUzP7Ax8cRUbTvBPZOQ9psEgeS-6xA
 JCS response preimage:
 
 ```text
-{"id":1,"jsonrpc":"2.0","result":{"_meta":{"com.example/mcps-security.response":{"issued_at":"2026-05-28T20:00:02Z","request_hash":"sha256:y3G62cwbgVaTteUzP7Ax8cRUbTvBPZOQ9psEgeS-6xA","server_actor":"did:example:server-1","signature":{"alg":"Ed25519","key_id":"server-key-1"},"trust_label":"internal-verified"}},"content":[{"text":"hello","type":"text"}]}}
+{"id":1,"jsonrpc":"2.0","result":{"_meta":{"com.example/mcp-re-security.response":{"issued_at":"2026-05-28T20:00:02Z","request_hash":"sha256:y3G62cwbgVaTteUzP7Ax8cRUbTvBPZOQ9psEgeS-6xA","server_actor":"did:example:server-1","signature":{"alg":"Ed25519","key_id":"server-key-1"},"trust_label":"internal-verified"}},"content":[{"text":"hello","type":"text"}]}}
 ```
 
 SHA-256 hash of this response preimage:
@@ -790,10 +790,10 @@ PPpXbTooOOJzbuqvdoSNjJSkbYj9uon-Kpa9UdeVjNM7jzNa3N39Ncy_MhavcEf0esIE4lY0sHJXlJ16
 Expected result:
 
 ```text
-mcps.response_hash_mismatch
+mcp-re.response_hash_mismatch
 ```
 
-This vector is important because merely modifying `request_hash` without re-signing would usually fail earlier as `mcps.response_sig_invalid`.
+This vector is important because merely modifying `request_hash` without re-signing would usually fail earlier as `mcp-re.response_sig_invalid`.
 
 ---
 
@@ -801,7 +801,7 @@ This vector is important because merely modifying `request_hash` without re-sign
 
 Recommended agenda for the first project planning session:
 
-1. Confirm project goal: MCP-S Core, not VAEP, not full delegation.
+1. Confirm project goal: MCP-RE Core, not VAEP, not full delegation.
 2. Choose project repository structure.
 3. Choose controlled extension identifier.
 4. Approve request and response metadata keys.
@@ -814,10 +814,10 @@ Recommended agenda for the first project planning session:
 11. Approve test vector set, including Vector 4B.
 12. Assign owners for:
 
-    * `mcps-core`;
-    * `mcps-conformance`;
-    * `mcps-proxy`;
-    * `mcps-host`;
+    * `mcp-re-core`;
+    * `mcp-re-conformance`;
+    * `mcp-re-proxy`;
+    * `mcp-re-host`;
     * draft specification.
 13. Decide first target MCP server for sidecar wrapping.
 14. Decide whether the first public artifact is:
@@ -850,7 +850,7 @@ The team must decide:
 
 Do not start with the proxy.
 
-Start with `mcps-core`.
+Start with `mcp-re-core`.
 
 First concrete task:
 
@@ -871,7 +871,7 @@ The first pull request should contain:
 Success condition:
 
 ```text
-cargo test -p mcps-core
+cargo test -p mcp-re-core
 ```
 
 passes all valid and invalid vectors.
@@ -880,7 +880,7 @@ passes all valid and invalid vectors.
 
 ## 20. Success Criteria for the Project
 
-MCP-S Core succeeds if:
+MCP-RE Core succeeds if:
 
 1. A normal MCP request can be signed without changing MCP’s JSON-RPC structure.
 2. The same signed request works over stdio and Streamable HTTP.
@@ -892,7 +892,7 @@ MCP-S Core succeeds if:
 8. A response from the server is signed and bound to the verified request.
 9. A response bound to the wrong request is rejected.
 10. Ordinary MCP servers can be protected by a sidecar without rewriting their internals.
-11. Native MCP-S servers can pass the same conformance suite.
+11. Native MCP-RE servers can pass the same conformance suite.
 12. The LLM never sees or manages private keys.
 13. The design can be presented upstream as a narrow MCP security profile rather than a competing protocol.
 
@@ -902,9 +902,9 @@ MCP-S Core succeeds if:
 
 The public framing should be modest and precise:
 
-> MCP-S is a proposed Zero Trust security profile for MCP. It signs MCP JSON-RPC requests and responses in-band using transport-agnostic metadata, making MCP tool calls attributable, tamper-evident, replay-protected, and auditable across stdio and Streamable HTTP.
+> MCP-RE is a proposed Zero Trust security profile for MCP. It signs MCP JSON-RPC requests and responses in-band using transport-agnostic metadata, making MCP tool calls attributable, tamper-evident, replay-protected, and auditable across stdio and Streamable HTTP.
 
-Avoid claiming that MCP-S:
+Avoid claiming that MCP-RE:
 
 * solves all MCP security problems;
 * prevents prompt injection;
@@ -917,7 +917,7 @@ Avoid claiming that MCP-S:
 
 The strongest argument for adoption is compatibility:
 
-> MCP-S can protect existing MCP servers through a sidecar while allowing future MCP servers to implement the profile natively.
+> MCP-RE can protect existing MCP servers through a sidecar while allowing future MCP servers to implement the profile natively.
 
 ---
 
@@ -935,4 +935,4 @@ Implementation should begin only after the planning group approves:
 6. initial vector suite including Vector 4B;
 7. Rust workspace structure.
 
-After those are approved, start with `mcps-core` and the conformance vectors before building any proxy or host behavior.
+After those are approved, start with `mcp-re-core` and the conformance vectors before building any proxy or host behavior.

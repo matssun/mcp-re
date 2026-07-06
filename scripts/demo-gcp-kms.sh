@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-S — optional live Google Cloud KMS demo (thin wrapper).
+# MCP-RE — optional live Google Cloud KMS demo (thin wrapper).
 #
 # Cloud KMS validation is OPTIONAL and is NOT a dependency of the local demo
 # (./scripts/demo-local.sh). Run this only if you want to prove the live,

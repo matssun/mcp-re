@@ -11,12 +11,12 @@ Two pins are emitted:
 
   manifest_sha256
       SHA-256 over the exact bytes of
-      ``mcps-core/tests/vectors/draft-02/manifest.json``. A convenience
+      ``mcp-re-core/tests/vectors/draft-02/manifest.json``. A convenience
       single-file pin for the corpus index.
 
   draft02_file_hash_list_digest
       SHA-256 over a deterministic file-hash list covering EVERY regular file
-      in ``mcps-core/tests/vectors/draft-02`` (the manifest included). The list
+      in ``mcp-re-core/tests/vectors/draft-02`` (the manifest included). The list
       is built as follows:
 
         * walk the corpus directory recursively;
@@ -49,7 +49,7 @@ from pathlib import Path
 
 # Repository root is the parent of the scripts/ directory this file lives in.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CORPUS_DIR = REPO_ROOT / "mcps-core" / "tests" / "vectors" / "draft-02"
+CORPUS_DIR = REPO_ROOT / "mcp-re-core" / "tests" / "vectors" / "draft-02"
 MANIFEST = CORPUS_DIR / "manifest.json"
 
 

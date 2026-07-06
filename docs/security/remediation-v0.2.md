@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S v0.2 — Remediation Status
+# MCP-RE v0.2 — Remediation Status
 
 This document tracks the remediation status of every finding from the two
 multi-agent Claude Opus 4.8 security audits ([v0.1](audit-v0.1.md) and
@@ -53,14 +53,14 @@ closes all four.
 
 | ID | Topic | Status | Fix |
 |---|---|---|---|
-| C-1 | OCSP responder signature never verified (general lens) | **Addressed** | `verify_responder_signature()` at `mcps-proxy/src/ocsp.rs:689`; wired into the verification pipeline at `ocsp.rs:646`. RSA + ECDSA algorithm-agnostic verification, delegated-responder chain + `id-kp-OCSPSigning` EKU. |
+| C-1 | OCSP responder signature never verified (general lens) | **Addressed** | `verify_responder_signature()` at `mcp-re-proxy/src/ocsp.rs:689`; wired into the verification pipeline at `ocsp.rs:646`. RSA + ECDSA algorithm-agnostic verification, delegated-responder chain + `id-kp-OCSPSigning` EKU. |
 | C-2 | Same defect (security lens) | **Addressed** | Same fix. |
 | C-3 | Same defect (security/MITM framing) | **Addressed** | Same fix. |
 | C-4 | Same defect (conformance lens) | **Addressed** | Same fix. |
 
 **Verification:** the fixture-acceptance test that originally accepted an empty
 signature has been removed/inverted; the OCSP e2e tests in
-`mcps-proxy/tests/ocsp_e2e_test.rs` now exercise a real OpenSSL responder with
+`mcp-re-proxy/tests/ocsp_e2e_test.rs` now exercise a real OpenSSL responder with
 positive and negative signature cases. The OCSP module rustdoc at the top of
 `ocsp.rs:25-58` documents the full RFC 6960 §3.2 trust property: signature →
 responder identity → CertID binding → freshness window → nonce.
@@ -75,10 +75,10 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-1 — Manifest pin atomicity (duplicate tool names)
 
-- **Crate / location:** `mcps-policy` · `manifest_verifier.rs:119-132`
+- **Crate / location:** `mcp-re-policy` · `manifest_verifier.rs:119-132`
 - **Status:** **Addressed**
 - **Fix:** explicit in-manifest duplicate-name dedup using `BTreeSet<&str>` at
-  `mcps-policy/src/manifest_verifier.rs:160` before the commit loop. The
+  `mcp-re-policy/src/manifest_verifier.rs:160` before the commit loop. The
   verifier now rejects a manifest with duplicate tool names with
   `ManifestMalformed`, leaving the pin store unchanged. Module rustdoc updated
   at line 33 to state the contract.
@@ -87,7 +87,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-2, H-4, H-6 — OCSP nonce missing
 
-- **Crate / location:** `mcps-proxy` · `ocsp.rs:310-322`
+- **Crate / location:** `mcp-re-proxy` · `ocsp.rs:310-322`
 - **Status:** **Addressed**
 - **Fix:** every OCSP request now carries a fresh 16-byte CSPRNG nonce
   (`random_nonce()` at `ocsp.rs:279`); the response nonce is verified by
@@ -98,7 +98,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-3, H-7 — CertID + responder identity binding
 
-- **Crate / location:** `mcps-proxy` · `ocsp.rs:258-265`
+- **Crate / location:** `mcp-re-proxy` · `ocsp.rs:258-265`
 - **Status:** **Addressed**
 - **Fix:** `responder_id_matches()` at `ocsp.rs:817` validates the
   `tbs_response_data.responder_id` against the signer chosen by the signature
@@ -110,7 +110,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-5 — thisUpdate/nextUpdate freshness
 
-- **Crate / location:** `mcps-proxy` · `ocsp.rs:257-265`
+- **Crate / location:** `mcp-re-proxy` · `ocsp.rs:257-265`
 - **Status:** **Addressed**
 - **Fix:** freshness window enforced at `ocsp.rs:667` with a configurable skew
   (`OCSP_SKEW`, default 5 minutes); a response with `thisUpdate` in the future
@@ -120,7 +120,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-8, H-9 — Redis TTL computed against hard-coded now_unix=0 (DoS)
 
-- **Crate / location:** `mcps-proxy` · `shared_replay.rs:168-169` + `redis_store.rs:79-82`
+- **Crate / location:** `mcp-re-proxy` · `shared_replay.rs:168-169` + `redis_store.rs:79-82`
 - **Status:** **Addressed**
 - **Fix:** `RedisAtomicReplayStore` now carries its own injected `UnixClock`
   (`redis_store.rs:37`, constructor `system_clock()` at line 54). The PX TTL is
@@ -130,7 +130,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-10 — Redis no socket timeouts (hung Redis hangs the serve loop)
 
-- **Crate / location:** `mcps-proxy` · `redis_store.rs:53-57, 93-102`
+- **Crate / location:** `mcp-re-proxy` · `redis_store.rs:53-57, 93-102`
 - **Status:** **Addressed**
 - **Fix:** `RedisConnectParams` carries `connect_timeout` / `read_timeout` /
   `write_timeout` (`redis_store.rs:91-95`). Initial connect uses
@@ -141,7 +141,7 @@ covered by the same fixes as H-2…H-7 and H-8…H-10 respectively.
 
 ### H-11 — `--strict` swallowed after `--inner-command`
 
-- **Crate / location:** `mcps-proxy` · `cli.rs:284-287`
+- **Crate / location:** `mcp-re-proxy` · `cli.rs:284-287`
 - **Status:** **Addressed**
 - **Fix:** `parse_args` now scans the inner-command tail for any recognized
   proxy flag and hard-errors with a clear "proxy flag {misplaced} appears AFTER
@@ -172,7 +172,7 @@ the same theme were addressed by the same code change.
 ### Theme 2 — `--strict` posture coverage (M07, M08, M09, M10, M11, M12)
 
 All six findings are gaps in `--strict`'s rejection set. **All Addressed** in
-`mcps-proxy/src/cli.rs`:
+`mcp-re-proxy/src/cli.rs`:
 
 - **M07** (`--ocsp-soft-fail` with no `--client-ocsp require` silently accepted): hard error.
 - **M08** (`--ocsp-responder-url` with no `--client-ocsp require` silently accepted): hard error.
@@ -184,7 +184,7 @@ All six findings are gaps in `--strict`'s rejection set. **All Addressed** in
 ### Theme 3 — OCSP trust chain residuals (M13, M14, M21)
 
 - **M13** (CertID match): **Addressed** by the same fix as **H-3** (`responder_id_matches` + matching `SingleResponse` by request CertID).
-- **M14** (AIA URL has no scheme/SSRF guard): **Addressed** at `mcps-proxy/src/ocsp.rs:410` by `aia_responder_url_is_safe()` — scheme allowlist (`http`/`https`) plus private-IP block; operator-supplied responder URLs get the scheme allowlist only (operator may legitimately point at an internal responder).
+- **M14** (AIA URL has no scheme/SSRF guard): **Addressed** at `mcp-re-proxy/src/ocsp.rs:410` by `aia_responder_url_is_safe()` — scheme allowlist (`http`/`https`) plus private-IP block; operator-supplied responder URLs get the scheme allowlist only (operator may legitimately point at an internal responder).
 - **M21** (OCSP rejection hook timeout / Unknown→fail-closed): **Addressed** in the same OCSP overhaul; the rejection hook now carries a mandatory timeout and maps `Unknown` to hard deny.
 
 ### Theme 4 — Signed-response coverage (M17, M18, M25, M26, M27)
@@ -192,7 +192,7 @@ All six findings are gaps in `--strict`'s rejection set. **All Addressed** in
 All five findings are the same defect (the proxy signed only OBJECT inner
 results, leaving NON-OBJECT and ERROR inner responses unsigned, which would let
 a hostile inner suppress the client's request-binding guarantee). **All
-Addressed** by `build_signed_response()` at `mcps-proxy/src/proxy.rs:328-380`,
+Addressed** by `build_signed_response()` at `mcp-re-proxy/src/proxy.rs:328-380`,
 which wraps all four inner shapes into a signed envelope bound to the verified
 `request_hash` and to the request `id`. The proxy.rs documentation explicitly
 references findings M17/M18/M25/M26/M27 in the rustdoc block.
@@ -204,15 +204,15 @@ references findings M17/M18/M25/M26/M27 in the rustdoc block.
 
 ### Theme 6 — Identity / FD hardening (M15, M16, M22, M23)
 
-- **M15** (inherited file descriptors not closed before exec; seccomp socket-denial does not revoke pre-fork FDs): **Addressed** in the inner-launch hardening pass at `mcps-proxy/src/persistent_inner.rs` and `mcps-proxy/src/sandbox.rs`: explicit FD-close-on-exec sweep before the inner subprocess is launched.
-- **M16** (PKCS#11 per-operation login is a latency/availability hazard): **Addressed** at `mcps-proxy/src/pkcs11_keysource.rs`: login is performed once per session and cached; failure is surfaced as `KeyError`.
-- **M22** (reverse-proxy ingress trust is operator-asserted): **Addressed** at `mcps-proxy/src/transport.rs:185-197, 319-332` by making reverse-proxy ingress an explicit opt-in mode that is rejected by `--strict` (also M10).
-- **M23** (XFCC Subject vs. direct-TLS CN parity): **Addressed** at `mcps-proxy/src/transport.rs:282-316` + `tls.rs:308-317`: XFCC Subject extraction now yields the same shape as the direct-TLS path under `cn_legacy`; identity parity is asserted by tests.
+- **M15** (inherited file descriptors not closed before exec; seccomp socket-denial does not revoke pre-fork FDs): **Addressed** in the inner-launch hardening pass at `mcp-re-proxy/src/persistent_inner.rs` and `mcp-re-proxy/src/sandbox.rs`: explicit FD-close-on-exec sweep before the inner subprocess is launched.
+- **M16** (PKCS#11 per-operation login is a latency/availability hazard): **Addressed** at `mcp-re-proxy/src/pkcs11_keysource.rs`: login is performed once per session and cached; failure is surfaced as `KeyError`.
+- **M22** (reverse-proxy ingress trust is operator-asserted): **Addressed** at `mcp-re-proxy/src/transport.rs:185-197, 319-332` by making reverse-proxy ingress an explicit opt-in mode that is rejected by `--strict` (also M10).
+- **M23** (XFCC Subject vs. direct-TLS CN parity): **Addressed** at `mcp-re-proxy/src/transport.rs:282-316` + `tls.rs:308-317`: XFCC Subject extraction now yields the same shape as the direct-TLS path under `cn_legacy`; identity parity is asserted by tests.
 
 ### Theme 7 — Integration test compile + DoS test coverage (M24, M28, M29, M30)
 
-- **M24** (`mcps-proxy` integration/seam test suite did not compile at audit HEAD): **Addressed** — `cargo check --workspace` is clean across all 9 crates in the current tree.
-- **M28** (handshake stall defense is only per-read-bounded): **Addressed** in `mcps-transport/src/lib.rs` (`complete_io` now bounded by an aggregate deadline) with regression coverage at `mcps-transport/tests/dos_hardening_test.rs:325` (`handshake_byte_trickle_aborts_at_aggregate_deadline`).
+- **M24** (`mcp-re-proxy` integration/seam test suite did not compile at audit HEAD): **Addressed** — `cargo check --workspace` is clean across all 9 crates in the current tree.
+- **M28** (handshake stall defense is only per-read-bounded): **Addressed** in `mcp-re-transport/src/lib.rs` (`complete_io` now bounded by an aggregate deadline) with regression coverage at `mcp-re-transport/tests/dos_hardening_test.rs:325` (`handshake_byte_trickle_aborts_at_aggregate_deadline`).
 - **M29** (response read has no wall-clock deadline against slow-trickle peer): **Addressed** by the same aggregate-deadline mechanism; regression test `slow_trickle_response_aborts_at_aggregate_deadline` at `dos_hardening_test.rs:241`.
 - **M30** (DoS test coverage gap — trickle case not exercised): **Addressed** — both M28 and M29 regression tests added explicitly to close this gap.
 
@@ -222,7 +222,7 @@ references findings M17/M18/M25/M26/M27 in the rustdoc block.
 
 ### M01 / M02 — serde_json error-message prefix matching for taxonomy tokens
 
-- **Crate / location:** `mcps-core` · `constraints.rs:145-167`
+- **Crate / location:** `mcp-re-core` · `constraints.rs:145-167`
 - **Status:** **Deferred to v0.3**
 - **Fail mode:** **fail-closed but wrong taxonomy token.** The current code uses
   `err.to_string().starts_with("missing field …")` to distinguish the
@@ -256,10 +256,10 @@ now fully closed in the v0.2.0 tree:**
 
 | 0.1 finding | v0.2 audit status | v0.2.0 tree status | Evidence |
 |---|---|---|---|
-| **H-1 / H-2** — unbounded recursion in public canonicalize/parse (serializer surface) | PARTIAL | **CLOSED** | `MAX_PARSE_DEPTH = 128` is now enforced inside `write_value` at `mcps-core/src/canonical.rs:199, 207, 220`, with a regression test on a deeply-nested adversarial `JcsValue`. |
-| **H-3** — persistent inner blocking pipe I/O (write side) | PARTIAL | **CLOSED** | `write_all_until_deadline` + `POLLOUT`-based deadline polling at `mcps-proxy/src/persistent_inner.rs:323-335, 539-577`. A hostile inner that refuses to drain stdin can no longer wedge the serve loop. |
+| **H-1 / H-2** — unbounded recursion in public canonicalize/parse (serializer surface) | PARTIAL | **CLOSED** | `MAX_PARSE_DEPTH = 128` is now enforced inside `write_value` at `mcp-re-core/src/canonical.rs:199, 207, 220`, with a regression test on a deeply-nested adversarial `JcsValue`. |
+| **H-3** — persistent inner blocking pipe I/O (write side) | PARTIAL | **CLOSED** | `write_all_until_deadline` + `POLLOUT`-based deadline polling at `mcp-re-proxy/src/persistent_inner.rs:323-335, 539-577`. A hostile inner that refuses to drain stdin can no longer wedge the serve loop. |
 | **M-2** — `authorization_hash` presence-check (cross-omission case) | PARTIAL | **CLOSED** (addressed by the same M01/M02 remediation cluster; the structural-absence mapping handles cross-omission correctly) | `constraints.rs:159-161`. |
-| **M-3 / M-6** — client transport aggregate read deadline | PARTIAL | **CLOSED** | Aggregate read deadline now enforced by `complete_io`/`read_response_bounded` in `mcps-transport/src/lib.rs`, with the slow-trickle regression tests in M28/M29 above as proof. |
+| **M-3 / M-6** — client transport aggregate read deadline | PARTIAL | **CLOSED** | Aggregate read deadline now enforced by `complete_io`/`read_response_bounded` in `mcp-re-transport/src/lib.rs`, with the slow-trickle regression tests in M28/M29 above as proof. |
 
 ---
 

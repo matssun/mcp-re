@@ -1,17 +1,17 @@
-# MCP-S Sidecar Deployment Guide
+# MCP-RE Sidecar Deployment Guide
 
 **Audience:** an operator who wants to wrap an ordinary stdio MCP server with the
-MCP-S production sidecar so requests are verified before they reach the inner
+MCP-RE production sidecar so requests are verified before they reach the inner
 server.
 
-This guide explains **how to run** the `mcps-proxy` production CLI. The rules it
-enforces are in the [MCP-S Core Specification](spec/mcps-core-spec.md);
+This guide explains **how to run** the `mcp-re-proxy` production CLI. The rules it
+enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md);
 the rationale is in ADR-MCPS-014
 ([view](adr/adr-mcps-014.md), transport hardening)
 and ADR-MCPS-016 ([view](adr/adr-mcps-016.md),
 inner-server isolation boundary). The proofs are the
-`//mcps-proxy:*` test targets (see the
-[conformance manifest](../mcps-conformance/conformance_manifest.json)).
+`//mcp-re-proxy:*` test targets (see the
+[conformance manifest](../mcp-re-conformance/conformance_manifest.json)).
 
 For TLS/mTLS, transport binding, key sources, and the replay cache in depth, read
 the companion [Transport Hardening Guide](transport-hardening-guide.md). This
@@ -19,19 +19,19 @@ guide focuses on **wrapping a server** and the inner-launch flags.
 
 ## What the sidecar does
 
-Source: [`cli.rs`](../mcps-proxy/src/cli.rs), [`main.rs`](../mcps-proxy/src/main.rs),
-[`inner_launch.rs`](../mcps-proxy/src/inner_launch.rs).
+Source: [`cli.rs`](../mcp-re-proxy/src/cli.rs), [`main.rs`](../mcp-re-proxy/src/main.rs),
+[`inner_launch.rs`](../mcp-re-proxy/src/inner_launch.rs).
 
-The `:mcps_proxy_cli` binary is the **policy-enforcement point**. For each
+The `:mcp_re_proxy_cli` binary is the **policy-enforcement point**. For each
 connection it: terminates TLS itself, verifies the mTLS client certificate,
-verifies the MCP-S object signature, optionally evaluates authorization (Phase 5)
+verifies the MCP-RE object signature, optionally evaluates authorization (Phase 5)
 and transport binding (Phase 6), and only then forwards the verified request to
 an inner MCP server **subprocess**, signing the response. The inner server's
 stdin receives the request bytes and its **stdout** is read back as the protocol
 response. The serve loop is blocking and single-threaded (no async).
 
 An invalid request never reaches the inner server — verification happens first,
-and a failure returns a signed/`mcps.*` error instead of dispatching.
+and a failure returns a signed/`mcp-re.*` error instead of dispatching.
 
 ## The inner-server boundary (be honest about it)
 
@@ -47,12 +47,12 @@ kernel, filesystem, or network sandbox (ADR-MCPS-016). Specifically:
 - The bounded stderr capture is size-bounded, not secrets-safe.
 
 If you need true isolation, run the sidecar + inner server inside an OS sandbox
-(container, namespace, jail) — that is out of MCP-S's scope and is the deployment
+(container, namespace, jail) — that is out of MCP-RE's scope and is the deployment
 operator's responsibility.
 
 ## The flags
 
-Run `:mcps_proxy_cli` via Bazel. Required and optional flags below are parsed by
+Run `:mcp_re_proxy_cli` via Bazel. Required and optional flags below are parsed by
 `cli::parse_args`; defaults shown are the real defaults from that parser.
 
 ### Core / required
@@ -161,23 +161,23 @@ Wrap an inner stdio server (`/usr/local/bin/my-mcp-server --config /etc/mcp.toml
 behind a fully-hardened sidecar:
 
 ```bash
-bazel run //mcps-proxy:mcps_proxy_cli -- \
+bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8443 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
   --server-key-id server-key-1 \
   --key-source file \
-  --signing-key-seed /etc/mcps/signing.seed \
-  --tls-cert /etc/mcps/server-chain.pem \
-  --tls-key /etc/mcps/server-key.pem \
-  --client-ca /etc/mcps/client-ca.pem \
-  --trust /etc/mcps/trust.json \
+  --signing-key-seed /etc/mcp-re/signing.seed \
+  --tls-cert /etc/mcp-re/server-chain.pem \
+  --tls-key /etc/mcp-re/server-key.pem \
+  --client-ca /etc/mcp-re/client-ca.pem \
+  --trust /etc/mcp-re/trust.json \
   --authz reference \
-  --revocation-list /etc/mcps/revoked.txt \
+  --revocation-list /etc/mcp-re/revoked.txt \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
-  --replay-cache file --replay-path /var/lib/mcps/replay.json \
+  --replay-cache file --replay-path /var/lib/mcp-re/replay.json \
   --inner-working-dir /srv/inner \
   --inner-env MCP_MODE=prod \
   --inner-env-allow PATH \

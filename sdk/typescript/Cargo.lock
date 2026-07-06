@@ -284,16 +284,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-client-core"
-version = "0.10.0"
+name = "mcp-re-client-core"
+version = "0.10.1"
 dependencies = [
- "mcps-core",
+ "mcp-re-core",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-core"
-version = "0.10.0"
+name = "mcp-re-core"
+version = "0.10.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -304,11 +304,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-typescript-sdk"
+name = "mcp-re-typescript-sdk"
 version = "0.1.0"
 dependencies = [
- "mcps-client-core",
- "mcps-core",
+ "mcp-re-client-core",
+ "mcp-re-core",
  "napi",
  "napi-build",
  "napi-derive",

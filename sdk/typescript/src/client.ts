@@ -1,5 +1,5 @@
 /**
- * High-level entry points: build an MCP-S-secured `Transport` for an MCP `Client`.
+ * High-level entry points: build an MCP-RE-secured `Transport` for an MCP `Client`.
  *
  * Unlike the Python SDK (whose `connect` yields a `ClientSession`), the MCP TypeScript
  * SDK's idiom is `await new Client(...).connect(transport)`. These helpers build the
@@ -7,16 +7,16 @@
  * verified, with application code otherwise unchanged from ordinary MCP.
  *
  * - {@link connectStdio} builds a byte channel from a subprocess (the common MCP stdio
- *   case): the subprocess must speak the MCP-S wire (a server-side MCP-S proxy/server).
+ *   case): the subprocess must speak the MCP-RE wire (a server-side MCP-RE proxy/server).
  * - {@link connectMtlsHttp} builds the request/response transport whose every request
- *   is one MCP-S-signed mTLS POST to the production `mcps-proxy`.
+ *   is one MCP-RE-signed mTLS POST to the production `mcp-re-proxy`.
  */
 
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
-import { McpsConfig, McpsTransport, TransportHooks } from "./transport.js";
-import { McpsHttpTransport, type PostFn } from "./httpTransport.js";
+import { McpReConfig, McpReTransport, TransportHooks } from "./transport.js";
+import { McpReHttpTransport, type PostFn } from "./httpTransport.js";
 
 /** Split a byte `Readable` (stdout) into newline-delimited lines (MCP stdio framing). */
 async function* byteLines(stream: Readable): AsyncGenerator<Buffer> {
@@ -33,18 +33,18 @@ async function* byteLines(stream: Readable): AsyncGenerator<Buffer> {
 }
 
 /**
- * Spawn an MCP-S endpoint subprocess and build a secured transport over its stdio.
+ * Spawn an MCP-RE endpoint subprocess and build a secured transport over its stdio.
  *
- * The subprocess must speak the MCP-S wire (a server-side MCP-S proxy/server). The
+ * The subprocess must speak the MCP-RE wire (a server-side MCP-RE proxy/server). The
  * returned transport owns the child process: `transport.close()` terminates it. Hand it
  * to `await new Client(...).connect(transport)`.
  */
 export function connectStdio(
   command: string,
   args: string[],
-  config: McpsConfig,
+  config: McpReConfig,
   opts: { env?: NodeJS.ProcessEnv; hooks?: TransportHooks } = {},
-): McpsTransport {
+): McpReTransport {
   const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "inherit"],
     // Merge over the parent environment so callers that set a few vars don't drop PATH
@@ -55,7 +55,7 @@ export function connectStdio(
     new Promise((resolve, reject) => {
       child.stdin.write(data, (err) => (err ? reject(err) : resolve()));
     });
-  const transport = new McpsTransport(byteSend, byteLines(child.stdout), config, opts.hooks);
+  const transport = new McpReTransport(byteSend, byteLines(child.stdout), config, opts.hooks);
   const close = transport.close.bind(transport);
   transport.close = async (): Promise<void> => {
     child.kill();
@@ -65,8 +65,8 @@ export function connectStdio(
 }
 
 /**
- * Build a transport whose every request is one MCP-S-signed mTLS POST to the production
- * `mcps-proxy` (verified server-signed response).
+ * Build a transport whose every request is one MCP-RE-signed mTLS POST to the production
+ * `mcp-re-proxy` (verified server-signed response).
  *
  * The proxy serves one HTTP/1.1 POST per mTLS connection (`Connection: close`), so each
  * `Client` request opens its own connection. `initialize` round-trips as a normal
@@ -74,13 +74,13 @@ export function connectStdio(
  * fire-and-forget channel and the minimal proxy never pushes).
  *
  * The client authenticates with `clientCert` / `clientKey` (the cert's URI SAN is the
- * MCP-S signer DID) and verifies the proxy's server certificate against `serverCa` for
+ * MCP-RE signer DID) and verifies the proxy's server certificate against `serverCa` for
  * `serverName`.
  */
 export function connectMtlsHttp(
   host: string,
   port: number,
-  config: McpsConfig,
+  config: McpReConfig,
   tls: {
     serverCa: string | Buffer;
     clientCert: string | Buffer;
@@ -89,15 +89,15 @@ export function connectMtlsHttp(
     timeoutMs?: number;
   },
   hooks?: TransportHooks,
-): McpsHttpTransport {
+): McpReHttpTransport {
   // `serverName` is interpolated into the raw HTTP `Host:` header — reject any control
   // character (CR/LF especially) up front so a caller-supplied name can't inject headers.
   if (/[\u0000-\u001f\u007f]/.test(tls.serverName)) {
-    throw new Error("mcps: serverName must not contain control characters (CR/LF header injection)");
+    throw new Error("mcp-re: serverName must not contain control characters (CR/LF header injection)");
   }
   const timeoutMs = tls.timeoutMs ?? 15000;
   const post: PostFn = (body: Buffer) => oneMtlsPost(host, port, body, tls, timeoutMs);
-  return new McpsHttpTransport(post, config, hooks);
+  return new McpReHttpTransport(post, config, hooks);
 }
 
 /** One mTLS HTTP/1.1 POST; resolves `{ contentType, body }`. */
@@ -136,7 +136,7 @@ function oneMtlsPost(
       socket.write(Buffer.concat([head, body]));
     });
     socket.on("data", (d: Buffer) => chunks.push(d));
-    socket.on("timeout", () => fail(new Error("mcps.transport_error: mTLS POST timed out")));
+    socket.on("timeout", () => fail(new Error("mcp-re.transport_error: mTLS POST timed out")));
     socket.on("error", fail);
     socket.on("end", () => {
       if (settled) return;

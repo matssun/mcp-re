@@ -1,24 +1,24 @@
-# MCP-S Dogfood Runbook — wrapping the real `intelli_code_mcp` server
+# MCP-RE Dogfood Runbook — wrapping the real `intelli_code_mcp` server
 
 > **Note for public-repo readers.** This runbook documents an internal dogfood
 > exercise: wrapping the author's private `intelli_code_mcp` server (not present
-> in this repository) with `mcps_proxy_cli`. It is preserved as a worked example
-> of how to dogfood the MCP-S sidecar around any real MCP stdio server — adapt
+> in this repository) with `mcp_re_proxy_cli`. It is preserved as a worked example
+> of how to dogfood the MCP-RE sidecar around any real MCP stdio server — adapt
 > the inner-command path and the 12 acceptance checks for your own inner.
 > References to `applications/...` paths are to the author's monorepo and are
 > not resolvable here.
 
-**Audience:** the operator who will execute and **record** the MCP-S dogfood for
+**Audience:** the operator who will execute and **record** the MCP-RE dogfood for
 #3862 (MCPS-042). This is a
 **human-in-the-loop (HITL)** acceptance task: it requires running the production
-`mcps_proxy_cli` around the **real** `intelli_code_mcp` stdio server over mTLS
+`mcp_re_proxy_cli` around the **real** `intelli_code_mcp` stdio server over mTLS
 with signed requests, then observing and recording the 12 acceptance checks.
 
 This document is the turnkey procedure. It does **not** claim the dogfood has been
 run — running, observing, and signing off are the operator's job. The mechanical
 reference is the already-passing full-stack test
-[`mcps-proxy/tests/full_stack_test.rs`](../mcps-proxy/tests/full_stack_test.rs),
-which wires `mcps_proxy_cli` around a real inner subprocess over real mTLS with
+[`mcp-re-proxy/tests/full_stack_test.rs`](../mcp-re-proxy/tests/full_stack_test.rs),
+which wires `mcp_re_proxy_cli` around a real inner subprocess over real mTLS with
 signed requests and walks the same security matrix. **The dogfood is "do what
 `full_stack_test` does, but with `intelli_code_mcp` as the inner, and walk the 12
 checks by hand."**
@@ -28,7 +28,7 @@ The CLI flags are documented in the
 truth for flag semantics; this runbook links to it rather than duplicating it.
 Host-side response verification is documented in the
 [Host Integration Guide](host-integration-guide.md). The rules being exercised
-are in the [MCP-S Core Specification](spec/mcps-core-spec.md).
+are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md).
 
 > **Scope note.** This is the dogfood for. The flagship
 > `accounting_workflow_mcp` (author's private monorepo)
@@ -43,7 +43,7 @@ are in the [MCP-S Core Specification](spec/mcps-core-spec.md).
 ## 0. The mental model
 
 ```text
-HostSession (mcps-host)                mcps_proxy_cli (PEP)              inner stdio server
+HostSession (mcp-re-host)                mcp_re_proxy_cli (PEP)              inner stdio server
   sign_tool_call  ── signed bytes ──▶  terminate TLS + verify mTLS  ──▶  intelli_code_mcp
                                        verify object signature           (mcp_server py_binary)
                                        (authz, transport binding)
@@ -54,7 +54,7 @@ HostSession (mcps-host)                mcps_proxy_cli (PEP)              inner s
 ```
 
 The proxy is the policy-enforcement point: an invalid request is rejected with a
-signed / `mcps.*` error and **never** reaches the inner. The inner's **stdout** is
+signed / `mcp-re.*` error and **never** reaches the inner. The inner's **stdout** is
 the protocol stream; its **stderr** is captured separately into a bounded log.
 
 ---
@@ -76,7 +76,7 @@ not required here.
 
 ```bash
 # The production policy-enforcement point.
-bazel build //mcps-proxy:mcps_proxy_cli
+bazel build //mcp-re-proxy:mcp_re_proxy_cli
 
 # The real inner MCP server.
 bazel build //applications/intelli_code/intelli_code_mcp:mcp_server
@@ -131,7 +131,7 @@ authorization-issuer key.
 ```
 
 > **Minting keys.** The simplest reproducible source is the same code the test
-> uses: `mcps_core::SigningKey::from_seed_bytes(..)` for the signing keys (write
+> uses: `mcp_re_core::SigningKey::from_seed_bytes(..)` for the signing keys (write
 > `b64url_encode(seed)` to the seed file and the matching `public_key().to_b64url()`
 > into the trust file) and `rcgen` for the CA + leaves (`KeyPair::generate`,
 > `CertificateParams` with `ExtendedKeyUsagePurpose::ClientAuth` and a URI SAN ==
@@ -148,7 +148,7 @@ issued by the authorization-issuer key in the trust file. For the **happy-path**
 checks you need a request whose authorization is **accepted**; for check #9 you
 need one that is **rejected** (e.g. a request whose authorization artifact does
 not authorize the called tool / on-behalf-of). Construct both with the host
-tooling used in the Phase-5 vectors (`mcps-policy` Reference profile fixtures);
+tooling used in the Phase-5 vectors (`mcp-re-policy` Reference profile fixtures);
 the `authorization_hash` you pass to `HostSession::sign_tool_call` must match the
 artifact the issuer signed.
 
@@ -163,7 +163,7 @@ durable replay cache, env minimization, an explicit working dir, stderr caps, an
 rlimits, and wraps the real `intelli_code_mcp` inner.
 
 ```bash
-bazel run //mcps-proxy:mcps_proxy_cli -- \
+bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8443 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
@@ -257,7 +257,7 @@ not assume.**
 
 ### 2.3 Driving the proxy (the host side)
 
-Use `mcps-host` `HostSession` to sign requests and verify responses, exactly as
+Use `mcp-re-host` `HostSession` to sign requests and verify responses, exactly as
 `full_stack_test::signed_request` / `verify_response` do, and present the trusted
 client certificate (URI SAN == request `signer`) on the mTLS connection. You can:
 
@@ -279,17 +279,17 @@ the host verifies. Record each in the §4 template.
 
 | # | Check | How to exercise + observe | Pass criterion |
 | --- | --- | --- | --- |
-| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcps-proxy: listening on 127.0.0.1:8443 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcps_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
+| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcp-re-proxy: listening on 127.0.0.1:8443 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcp_re_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
 | 2 | **`bazel run` / built inner starts under env-minimization (allowlist, not disable)** | Use the §2.2 allowlist (e.g. `--inner-env-allow PATH`) with the **default** `--inherit-env false`. Send a request; the inner must start and answer. | The inner starts and produces a valid protocol frame **with** minimization on and **without** `--inherit-env true`. Record the exact allowlist used. |
 | 3 | **Explicit working dir** | Pass `--inner-working-dir "$INNERWD"`. Read the startup line `inner working dir = $INNERWD (controlled start dir ...)`. | The effective working dir is the explicit `$INNERWD`, never silently the proxy's cwd. (A bogus dir must fail startup — optional negative spot-check.) |
 | 4 | **Required env allowlisted, not inherited** | With `--inherit-env false`, confirm the inner sees **only** the allowlisted vars. Spot-check: put a secret-looking var in the proxy env (as an env KeySource would) and confirm the inner cannot see it. | The inner runs with only the §2.2 allowlist; non-allowlisted proxy vars (incl. any secret) are **not** visible to the inner. |
-| 5 | **Caller-supplied `.verified` is stripped** | From the host, send a `tools/call` that maliciously includes its own `_meta["se.syncom/mcps.verified"]` block (forged context). | The inner receives the **proxy-injected** `.verified`, not the caller's — the caller's block is discarded regardless of its contents (proxy `build_forwarded_request` strips then injects). |
-| 6 | **Sidecar-injected `.verified` reaches the inner** | Send a valid signed+authorized request. Have the inner echo / log the `_meta` it received (or read it via a tool that surfaces `_meta`). | The inner's request `_meta` contains `se.syncom/mcps.verified` with `verified_signer`, `key_id`, `on_behalf_of`, `audience`, `request_hash`, etc., derived only from the verification result. |
+| 5 | **Caller-supplied `.verified` is stripped** | From the host, send a `tools/call` that maliciously includes its own `_meta["se.syncom/mcp-re.verified"]` block (forged context). | The inner receives the **proxy-injected** `.verified`, not the caller's — the caller's block is discarded regardless of its contents (proxy `build_forwarded_request` strips then injects). |
+| 6 | **Sidecar-injected `.verified` reaches the inner** | Send a valid signed+authorized request. Have the inner echo / log the `_meta` it received (or read it via a tool that surfaces `_meta`). | The inner's request `_meta` contains `se.syncom/mcp-re.verified` with `verified_signer`, `key_id`, `on_behalf_of`, `audience`, `request_hash`, etc., derived only from the verification result. |
 | 7 | **Valid signed + authorized request succeeds** | Valid client cert (URI SAN == signer), request signed by the matching signer, valid `authorization_hash`, fresh nonce, called via mTLS. | The host receives a non-error response; the inner produced a real `query_codebase` result; the proxy logged `inner_request_forwarded` + `inner_response_signed`. |
-| 8 | **Invalid signature rejected before the inner** | Tamper one byte of the signed request body after signing (e.g. mutate an argument), keep the cert valid. | Response error message is `mcps.invalid_signature`; **no** `inner_spawned` for this request — rejection precedes dispatch. (Matches `full_stack_test` case 4.) |
-| 9 | **Failed Phase-5 authorization rejected before the inner** | Send a validly-signed request whose authorization artifact does **not** authorize the called tool / `on_behalf_of` (or omit/garble the `authorization_hash` binding) with `--authz reference` on. | Response is a `mcps.*` authorization-failure error; the inner is **not** invoked for this request. |
-| 10 | **Response signed by the proxy/server side** | On the happy path (#7), inspect the response bytes. | The response carries the `se.syncom/mcps.response` block; `server_signer` == `--server-signer`; signature verifies against the server key in the resolver. |
-| 11 | **`HostSession` verifies the response via `request_hash` correlation** | Call `session.verify_response(&response_bytes, &resolver)` on the host for the #7 response. | `verify_response` succeeds: the response's `request_hash` equals the **stored** hash for that JSON-RPC id, and the server signature verifies. A response over a wrong hash must fail `mcps.response_hash_mismatch` (optional negative spot-check). |
+| 8 | **Invalid signature rejected before the inner** | Tamper one byte of the signed request body after signing (e.g. mutate an argument), keep the cert valid. | Response error message is `mcp-re.invalid_signature`; **no** `inner_spawned` for this request — rejection precedes dispatch. (Matches `full_stack_test` case 4.) |
+| 9 | **Failed Phase-5 authorization rejected before the inner** | Send a validly-signed request whose authorization artifact does **not** authorize the called tool / `on_behalf_of` (or omit/garble the `authorization_hash` binding) with `--authz reference` on. | Response is a `mcp-re.*` authorization-failure error; the inner is **not** invoked for this request. |
+| 10 | **Response signed by the proxy/server side** | On the happy path (#7), inspect the response bytes. | The response carries the `se.syncom/mcp-re.response` block; `server_signer` == `--server-signer`; signature verifies against the server key in the resolver. |
+| 11 | **`HostSession` verifies the response via `request_hash` correlation** | Call `session.verify_response(&response_bytes, &resolver)` on the host for the #7 response. | `verify_response` succeeds: the response's `request_hash` equals the **stored** hash for that JSON-RPC id, and the server signature verifies. A response over a wrong hash must fail `mcp-re.response_hash_mismatch` (optional negative spot-check). |
 | 12 | **stderr captured separately, stdout protocol-clean** | Drive any request; inspect the proxy's stderr log vs the bytes returned as the protocol response. | Inner stderr appears only in the proxy's bounded structured log (never on the protocol stream); the protocol response is a clean JSON-RPC frame with no inner stderr bleed. If the inner is noisy past the cap, an `inner_stderr_truncated` event is emitted. |
 
 > Checks #8 and #9 are the "rejected before the inner" guarantees — confirm by
@@ -314,7 +314,7 @@ this file or attach them to the issue.
 | 5 — caller `.verified` stripped | | | | |
 | 6 — sidecar `.verified` reaches inner | | | | |
 | 7 — valid signed + authorized succeeds | | | | |
-| 8 — invalid signature → `mcps.invalid_signature` (no spawn) | | | | |
+| 8 — invalid signature → `mcp-re.invalid_signature` (no spawn) | | | | |
 | 9 — failed Phase-5 authz rejected (no spawn) | | | | |
 | 10 — response signed by server side | | | | |
 | 11 — `HostSession` verifies via `request_hash` | | | | |
@@ -331,11 +331,11 @@ inner launcher path `________`, final `--inner-env-allow` set `________`, OS
 
 ## 5. References
 
-- Mechanical reference (authoritative): [`full_stack_test.rs`](../mcps-proxy/tests/full_stack_test.rs)
+- Mechanical reference (authoritative): [`full_stack_test.rs`](../mcp-re-proxy/tests/full_stack_test.rs)
 - CLI flag semantics: [Sidecar Deployment Guide](sidecar-deployment-guide.md)
 - TLS / mTLS / binding / KeySource / replay: [Transport Hardening Guide](transport-hardening-guide.md)
 - Host signing + response verification: [Host Integration Guide](host-integration-guide.md)
-- Verified-context keys + verification pipeline: [MCP-S Core Specification](spec/mcps-core-spec.md)
+- Verified-context keys + verification pipeline: [MCP-RE Core Specification](spec/mcp-re-core-spec.md)
 - Inner: `intelli_code_mcp` (author's private monorepo; not in this repository)
 </content>
 </invoke>

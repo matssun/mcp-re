@@ -1,13 +1,13 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-S — Google Cloud KMS validation harness (Stage 1 of the Google Validation
+# MCP-RE — Google Cloud KMS validation harness (Stage 1 of the Google Validation
 # Plan, see docs/security/google-validation-plan.md).
 #
 # WHAT THIS PROVES, against a LIVE Google Cloud KMS, with the private keys never
 # leaving the cloud:
 #   1. Response signing  — a real EC_SIGN_ED25519 asymmetricSign verifies under
-#      the unmodified mcps-core verifier (+ wrong-identity, bad-token, and
+#      the unmodified mcp-re-core verifier (+ wrong-identity, bad-token, and
 #      non-Ed25519 negatives).
 #   2. Delegated TLS     — the proxy's TLS server key lives in KMS; a real mTLS
 #      handshake completes only because the cloud signed it (+ wrong-key-binding
@@ -38,13 +38,13 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 export PROJECT_ID="${PROJECT_ID:-REPLACE_WITH_YOUR_PROJECT_ID}"
 export LOCATION="${LOCATION:-global}"
-export KEY_RING="${KEY_RING:-mcps-test-ring}"
+export KEY_RING="${KEY_RING:-mcp-re-test-ring}"
 
 # Three keys: object-signing (Ed25519), a NON-Ed25519 key to prove rejection,
 # and a SECOND, DISTINCT Ed25519 key for delegated TLS (ADR-MCPS-028 §G).
-export KEY_NAME="${KEY_NAME:-mcps-ed25519-object}"
-export RSA_KEY_NAME="${RSA_KEY_NAME:-mcps-rsa-object}"
-export TLS_KEY_NAME="${TLS_KEY_NAME:-mcps-ed25519-tls}"
+export KEY_NAME="${KEY_NAME:-mcp-re-ed25519-object}"
+export RSA_KEY_NAME="${RSA_KEY_NAME:-mcp-re-rsa-object}"
+export TLS_KEY_NAME="${TLS_KEY_NAME:-mcp-re-ed25519-tls}"
 
 # ---------------------------------------------------------------------------
 # Preflight — fail loudly on an unconfigured or unauthenticated environment.
@@ -117,13 +117,13 @@ fi
 # ---------------------------------------------------------------------------
 # Credentials + key-version resource paths the tests read from the environment.
 # An operator OAuth2 token is used here; on a GCE/GKE host you can instead set
-# MCPS_GCP_USE_METADATA=1 and drop MCPS_GCP_ACCESS_TOKEN.
+# MCP_RE_GCP_USE_METADATA=1 and drop MCP_RE_GCP_ACCESS_TOKEN.
 # ---------------------------------------------------------------------------
 KV_BASE="projects/$PROJECT_ID/locations/$LOCATION/keyRings/$KEY_RING/cryptoKeys"
-export MCPS_GCP_KEY_VERSION="$KV_BASE/$KEY_NAME/cryptoKeyVersions/1"
-export MCPS_GCP_KEY_VERSION_RSA="$KV_BASE/$RSA_KEY_NAME/cryptoKeyVersions/1"
-export MCPS_GCP_KEY_VERSION_TLS="$KV_BASE/$TLS_KEY_NAME/cryptoKeyVersions/1"
-export MCPS_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
+export MCP_RE_GCP_KEY_VERSION="$KV_BASE/$KEY_NAME/cryptoKeyVersions/1"
+export MCP_RE_GCP_KEY_VERSION_RSA="$KV_BASE/$RSA_KEY_NAME/cryptoKeyVersions/1"
+export MCP_RE_GCP_KEY_VERSION_TLS="$KV_BASE/$TLS_KEY_NAME/cryptoKeyVersions/1"
+export MCP_RE_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
 
 # ---------------------------------------------------------------------------
 # Run ONLY the live GCP test targets (the `#[ignore]` lanes) so the output is
@@ -132,12 +132,12 @@ export MCPS_GCP_ACCESS_TOKEN="$(gcloud auth print-access-token)"
 cd "$REPO_ROOT"
 
 # 1. Object-signing lane: positive verify + wrong-identity + bad-token + non-Ed25519.
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_live_test -- --ignored --nocapture --test-threads=1
 
 # 2. Delegated-TLS lane: real mTLS handshake signed by KMS + wrong-key-binding +
 #    untrusted-client negatives.
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_delegated_tls_live_test -- --ignored --nocapture --test-threads=1
 
 # 3. Draft-02 (v0.6) envelope lane: Cloud KMS signs a COMPLETE draft-02 request
@@ -145,7 +145,7 @@ cargo test -p mcps-proxy --features gcp_kms_keysource \
 #    authorization_binding preimage — that the unmodified draft-02 verifier
 #    (verify_request_draft02 / verify_response_draft02) accepts, with tamper and
 #    wrong-key negatives.
-cargo test -p mcps-proxy --features gcp_kms_keysource \
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_draft02_live_test -- --ignored --nocapture --test-threads=1
 
 echo

@@ -1,13 +1,13 @@
 /**
  * Authorization-binding providers — bind real evidence, never a magic constant.
  *
- * MCP-S **binds, never interprets** authorization evidence (bind-not-interpret): the
+ * MCP-RE **binds, never interprets** authorization evidence (bind-not-interpret): the
  * client includes a typed `authorizationBinding` in the signed request preimage so a
- * later verifier can tie the request to the authorization artifact, without MCP-S ever
+ * later verifier can tie the request to the authorization artifact, without MCP-RE ever
  * reading the artifact's meaning. The cryptographic digest MUST be computed over the
  * *actual* artifact — handing in a precomputed `digestValue` defeats the point.
  *
- * These providers mirror `mcps-client-core::authz` and delegate digest computation to
+ * These providers mirror `mcp-re-client-core::authz` and delegate digest computation to
  * the audited core (`AuthorizationBinding`), so the binding is produced in one place,
  * identically to the proxy and the Python SDK:
  *
@@ -18,9 +18,9 @@
  *   self-contained digest plus its cross-audit reference, via a resolver.
  * - {@link StaticAuthorizationProvider} — wraps one prebuilt binding.
  *
- * Wire one into `McpsConfig.authorization`; the transport calls `provide(ctx)` per
+ * Wire one into `McpReConfig.authorization`; the transport calls `provide(ctx)` per
  * request with a real {@link BindingRequestContext}, then enforces the optional
- * `McpsConfig.authorizationPolicy` (fails closed on a disallowed binding type).
+ * `McpReConfig.authorizationPolicy` (fails closed on a disallowed binding type).
  */
 
 import * as core from "../native/binding.js";
@@ -84,7 +84,7 @@ export class AuthzSystemReferenceProvider implements AuthorizationBindingProvide
     if (this.resolver === undefined) {
       // No resolver: the mandatory binding is missing — fail closed with the frozen
       // taxonomy reason (matches the Rust provider's posture).
-      throw new Error("mcps.authorization_binding_missing");
+      throw new Error("mcp-re.authorization_binding_missing");
     }
     const ref = this.resolver(ctx);
     return core.AuthorizationBinding.authzSystemReference(

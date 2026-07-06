@@ -1,12 +1,12 @@
 /**
- * MCP-S request/response transport — one signed POST per `Client` request.
+ * MCP-RE request/response transport — one signed POST per `Client` request.
  *
  * A dedicated transport that maps the MCP `Client`'s persistent-stream model onto the
- * production `mcps-proxy`'s wire, which is **one HTTP/1.1 POST per (mTLS) connection,
+ * production `mcp-re-proxy`'s wire, which is **one HTTP/1.1 POST per (mTLS) connection,
  * `Connection: close`** — a pure request/response channel with NO server push
- * (`mcps-proxy/src/tls.rs::serve_once`).
+ * (`mcp-re-proxy/src/tls.rs::serve_once`).
  *
- * The byte-level security is the SAME audited pipeline the stdio {@link McpsTransport}
+ * The byte-level security is the SAME audited pipeline the stdio {@link McpReTransport}
  * uses — {@link signOutbound} (sign + register correlation) and
  * {@link verifyInboundMessages} (correlate + verify + strip). What differs is the
  * *shape*: every outbound **request** becomes exactly one `post(requestBytes) ->
@@ -22,11 +22,11 @@
  *   fire-and-forget message — the proxy treats every POST as a signed request that MUST
  *   verify and MUST get a response — so notifications are **dropped**.
  * - A **fail-closed** verification is delivered as a **JSON-RPC error correlated to the
- *   request id**, carrying the frozen `mcps.*` reason — so the awaiting `Client` call
+ *   request id**, carrying the frozen `mcp-re.*` reason — so the awaiting `Client` call
  *   rejects cleanly rather than hanging.
  *
  * The TLS/socket specifics live OUTSIDE this module: the caller supplies an async
- * `post(requestBytes) -> { contentType, body }` (mirroring how {@link McpsTransport}
+ * `post(requestBytes) -> { contentType, body }` (mirroring how {@link McpReTransport}
  * takes `byteSend` / `byteLines`). See {@link connectMtlsHttp} for the mTLS wiring.
  */
 
@@ -35,7 +35,7 @@ import type { CorrelationStore } from "../native/binding.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { randomBytes } from "node:crypto";
-import { McpsConfig, MrtStore, signOutbound, TransportHooks } from "./transport.js";
+import { McpReConfig, MrtStore, signOutbound, TransportHooks } from "./transport.js";
 import { verifyInboundMessages } from "./streamable.js";
 
 /**
@@ -47,10 +47,10 @@ import { verifyInboundMessages } from "./streamable.js";
 export type PostFn = (requestBytes: Buffer) => Promise<{ contentType: string; body: Buffer }>;
 
 /**
- * JSON-RPC server-error code carrying a fail-closed MCP-S rejection back to the awaiting
+ * JSON-RPC server-error code carrying a fail-closed MCP-RE rejection back to the awaiting
  * `Client` call (reserved server-error range, -32000..-32099).
  */
-export const MCPS_REJECTED_CODE = -32099;
+export const MCP_RE_REJECTED_CODE = -32099;
 
 const DEFAULT_TTL = 300;
 
@@ -62,24 +62,24 @@ const DEFAULT_TTL = 300;
  * fire-and-forget channel); a rejected response is delivered as a JSON-RPC error
  * correlated to the request id so the awaiting call rejects.
  */
-export class McpsHttpTransport implements Transport {
+export class McpReHttpTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
 
   private readonly post: PostFn;
-  private readonly config: McpsConfig;
+  private readonly config: McpReConfig;
   private readonly correlation: CorrelationStore;
   private readonly clock: () => number;
   private readonly nonceFactory: () => string;
   // ADR-MCPS-047 multi-round-trip state: requestState handle -> recorded continuation
   // binding, shared across POSTs so a verified InputRequiredResult (recorded on its
   // round trip) can be answered with a bound continuation on a later request. Without
-  // this, an answer leg would throw `mcps.continuation_malformed`.
+  // this, an answer leg would throw `mcp-re.continuation_malformed`.
   private readonly mrt: MrtStore = new Map();
   private closed = false;
 
-  constructor(post: PostFn, config: McpsConfig, hooks: TransportHooks = {}) {
+  constructor(post: PostFn, config: McpReConfig, hooks: TransportHooks = {}) {
     this.post = post;
     this.config = config;
     this.correlation = hooks.correlation ?? new core.CorrelationStore();
@@ -144,7 +144,7 @@ export class McpsHttpTransport implements Transport {
     } catch (err) {
       // signOutbound already registered correlation; a transport failure must not leak it.
       this.correlation.cancel(String(rid));
-      this.onmessage?.(this.rejectMessage(rid, `mcps.transport_error: ${err instanceof Error ? err.message : err}`));
+      this.onmessage?.(this.rejectMessage(rid, `mcp-re.transport_error: ${err instanceof Error ? err.message : err}`));
       return;
     }
     if (this.closed) {
@@ -176,14 +176,14 @@ export class McpsHttpTransport implements Transport {
         // A reject AFTER the correlated response was already delivered (e.g. a forbidden
         // server-initiated message interleaved in an SSE body). Emitting a second response
         // for this id would violate JSON-RPC — surface it out-of-band instead.
-        this.onerror?.(new Error(`mcps inbound message rejected: ${outcome.reason ?? "mcps.verification_failed"}`));
+        this.onerror?.(new Error(`mcp-re inbound message rejected: ${outcome.reason ?? "mcp-re.verification_failed"}`));
       }
     }
     if (!answered) {
       // No correlated response decoded (empty body, or only server-initiated messages):
       // fail closed to `rid` so the awaiting call rejects instead of hanging.
       this.correlation.cancel(String(rid));
-      this.onmessage?.(this.rejectMessage(rid, "mcps.missing_envelope"));
+      this.onmessage?.(this.rejectMessage(rid, "mcp-re.missing_envelope"));
     }
   }
 
@@ -191,7 +191,7 @@ export class McpsHttpTransport implements Transport {
     return {
       jsonrpc: "2.0",
       id: rid as string | number,
-      error: { code: MCPS_REJECTED_CODE, message: reason ?? "mcps.verification_failed" },
+      error: { code: MCP_RE_REJECTED_CODE, message: reason ?? "mcp-re.verification_failed" },
     } as unknown as JSONRPCMessage;
   }
 }

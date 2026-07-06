@@ -1,0 +1,34 @@
+{
+  "expected": "mcp-re.response_hash_mismatch",
+  "kind": "response",
+  "message": {
+    "id": "req-1",
+    "jsonrpc": "2.0",
+    "result": {
+      "_meta": {
+        "se.syncom/mcp-re.response": {
+          "issued_at": "2026-05-28T20:00:01Z",
+          "request_hash": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "server_signer": "did:example:server-1",
+          "signature": {
+            "alg": "Ed25519",
+            "key_id": "server-key-1",
+            "value": "r6lV2fmNk5_ZjuCX4sl90vcRBTCjLnrgaFHF7zWBgW3ULsPPuIAax_Ed5QLXS0IiFfVsUIV5bLWLpyAJC1MYAQ"
+          }
+        }
+      },
+      "content": [
+        {
+          "text": "hello",
+          "type": "text"
+        }
+      ]
+    }
+  },
+  "name": "v4b_signed_wrong_hash_response",
+  "requires_pipeline": true,
+  "resolver": {
+    "public_key_b64url": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "signer_key": "did:example:server-1#server-key-1"
+  }
+}

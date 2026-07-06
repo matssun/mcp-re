@@ -1,10 +1,10 @@
-# MCP-S Conformance Guide
+# MCP-RE Conformance Guide
 
-**Audience:** an engineer who wants to RUN the MCP-S conformance suite from a
+**Audience:** an engineer who wants to RUN the MCP-RE conformance suite from a
 fresh clone and understand what it proves.
 
 This guide explains **how to build and run** the suite. It does not restate the
-protocol rules (those live in the [MCP-S Core Specification](spec/mcps-core-spec.md))
+protocol rules (those live in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md))
 or the rationale (those live in the ADRs the spec cites). Per the project
 convention: the spec states the rule, the ADR records why, this guide explains
 how to use it, and the tests prove it.
@@ -22,15 +22,15 @@ The vectors fall into three categories:
 - **Core** — the frozen wire vocabulary, signing rule, JCS-safe value domain,
   freshness/replay, trust resolution, message constraints, and the
   request/response verification pipelines. Fixtures live under
-  `mcps-core/tests/vectors/`.
+  `mcp-re-core/tests/vectors/`.
 - **Phase-5 authorization** — the delegated-authorization profile
   (`PolicyEvaluator` + Reference Signed Authorization Profile, ADR-MCPS-013,
   [view](adr/adr-mcps-013.md)). Fixtures live in
-  `mcps-policy/tests/vectors/phase5_vectors.json`.
+  `mcp-re-policy/tests/vectors/phase5_vectors.json`.
 - **Phase-6 transport** — mTLS, transport binding, durable replay, and the
   client-cert lifetime posture (ADR-MCPS-014,
   [view](adr/adr-mcps-014.md)). These are exercised
-  by the `mcps-proxy` test targets and by re-running the Core corpus over the
+  by the `mcp-re-proxy` test targets and by re-running the Core corpus over the
   HTTP harness.
 
 ### Counts live in the manifest, not here
@@ -38,9 +38,9 @@ The vectors fall into three categories:
 The authoritative enumeration of every vector and every Bazel test target — and
 their counts — is the drift-guarded conformance manifest:
 
-- Manifest: [`mcps-conformance/conformance_manifest.json`](../mcps-conformance/conformance_manifest.json)
-- Drift guard: `//mcps-conformance:drift_guard_test`
-  (source: [`tests/drift_guard_test.rs`](../mcps-conformance/tests/drift_guard_test.rs))
+- Manifest: [`mcp-re-conformance/conformance_manifest.json`](../mcp-re-conformance/conformance_manifest.json)
+- Drift guard: `//mcp-re-conformance:drift_guard_test`
+  (source: [`tests/drift_guard_test.rs`](../mcp-re-conformance/tests/drift_guard_test.rs))
 
 This guide deliberately quotes **no** vector or target counts. To learn the
 current numbers, read the manifest's `counts` block. The guard re-derives every
@@ -67,8 +67,8 @@ gate used in CI.
 bazel test //... --test_output=errors
 ```
 
-That builds `mcps-core`, `mcps-conformance`, `mcps-host`, `mcps-policy`, and
-`mcps-proxy` and runs every `rust_test` target enumerated in the manifest. A
+That builds `mcp-re-core`, `mcp-re-conformance`, `mcp-re-host`, `mcp-re-policy`, and
+`mcp-re-proxy` and runs every `rust_test` target enumerated in the manifest. A
 failure fails the check and blocks merge.
 
 ## Running a subset
@@ -80,13 +80,13 @@ labels are real, but always cross-check against the manifest):
 
 ```bash
 # Just the Core crate + its vector replay.
-bazel test //mcps-core/...
+bazel test //mcp-re-core/...
 
 # Just the conformance harnesses (object / stdio / HTTP / acceptance).
-bazel test //mcps-conformance/...
+bazel test //mcp-re-conformance/...
 
 # The drift guard alone (fast; proves the manifest matches reality).
-bazel test //mcps-conformance:drift_guard_test
+bazel test //mcp-re-conformance:drift_guard_test
 ```
 
 If you add or remove a vector fixture, or add/remove an `nt_rust_test` target,
@@ -97,7 +97,7 @@ alters the corpus.
 ## What a green run proves
 
 - Each Core vector reaches its recorded outcome (`verify_ok` or an exact
-  `mcps.*` error token) — and reaches the **same** outcome as an object, over
+  `mcp-re.*` error token) — and reaches the **same** outcome as an object, over
   stdio, and over HTTP (transport parity).
 - The Phase-5 authorization vectors exercise the `PolicyEvaluator` + Reference
   Profile to their recorded allow/deny verdicts.
@@ -121,7 +121,7 @@ Two pins, both recomputed from the checked-in corpus bytes by
 [`scripts/corpus_digest.py`](../scripts/corpus_digest.py):
 
 - **`manifest.json` SHA-256** — SHA-256 over the exact bytes of
-  `mcps-core/tests/vectors/draft-02/manifest.json`:
+  `mcp-re-core/tests/vectors/draft-02/manifest.json`:
 
   ```
   a1e7812772975f80aa628048081a354a1a52f7cc1bbe3de306ae69b706bfd7db
@@ -129,7 +129,7 @@ Two pins, both recomputed from the checked-in corpus bytes by
 
 - **`draft02_file_hash_list_digest`** — SHA-256 over a deterministic file-hash
   list covering **every** regular file in
-  `mcps-core/tests/vectors/draft-02` (the manifest included), sorted by
+  `mcp-re-core/tests/vectors/draft-02` (the manifest included), sorted by
   repository-relative path, one LF-terminated `\<path\>  sha256:\<hex\>` line per
   file:
 

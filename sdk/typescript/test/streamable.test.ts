@@ -3,7 +3,7 @@
  * `test_streamable.py`).
  *
  * Covers the SSE framing parser, the content-type-aware decodeInbound, and that EVERY
- * decode site (direct JSON and SSE) routes through the same MCP-S verification and
+ * decode site (direct JSON and SSE) routes through the same MCP-RE verification and
  * server-initiated policy.
  */
 import { describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import {
   decodeInbound,
   sseDataEvents,
   verifyInboundMessages,
-  type McpsConfig,
+  type McpReConfig,
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, SIGN_VECTOR, scenario } from "./fixtures.js";
 
@@ -24,7 +24,7 @@ const SERVER = RESPONSE_VECTORS.server;
 const NOW = Math.floor(Date.parse("2026-06-30T20:00:00Z") / 1000);
 const TTL = 300;
 
-function config(overrides: Partial<McpsConfig> = {}): McpsConfig {
+function config(overrides: Partial<McpReConfig> = {}): McpReConfig {
   const resolver = new TrustResolver();
   resolver.insertPublicKey(SERVER.signer_id, SERVER.key_id, Buffer.from(SERVER.public_key_hex, "hex"));
   return {
@@ -123,7 +123,7 @@ describe("uniform verification across decode sites", () => {
       nowUnix: NOW,
     });
     expect(outcomes[0].kind).toBe("reject");
-    expect(outcomes[0].reason).toBe("mcps.notification_forbidden");
+    expect(outcomes[0].reason).toBe("mcp-re.notification_forbidden");
   });
 
   it("SSE interleaved response and server message", () => {
@@ -132,7 +132,7 @@ describe("uniform verification across decode sites", () => {
       nowUnix: NOW + 1,
     });
     expect(outcomes.map((o) => o.kind)).toEqual(["accept", "reject"]);
-    expect(outcomes[1].reason).toBe("mcps.notification_forbidden");
+    expect(outcomes[1].reason).toBe("mcp-re.notification_forbidden");
   });
 
   it("SSE server-initiated passthrough when allowed", () => {
@@ -153,6 +153,6 @@ describe("uniform verification across decode sites", () => {
       nowUnix: NOW,
     });
     expect(outcomes[0].kind).toBe("reject");
-    expect(outcomes[0].reason).toBe("mcps.missing_envelope");
+    expect(outcomes[0].reason).toBe("mcp-re.missing_envelope");
   });
 });

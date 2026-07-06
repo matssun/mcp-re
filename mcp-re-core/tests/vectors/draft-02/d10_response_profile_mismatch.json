@@ -1,0 +1,26 @@
+{
+  "id": "req-1",
+  "jsonrpc": "2.0",
+  "result": {
+    "_meta": {
+      "se.syncom/mcp-re.response": {
+        "canonicalization_id": "mcp-re-jcs-int53-json-v1",
+        "issued_at": "2026-05-28T20:00:01Z",
+        "request_hash": "sha256:7VGgOz58QFHHfuhEJkaqo688BWZBY0QD_w35dsk7oJQ",
+        "server_signer": "did:example:server-1",
+        "signature": {
+          "alg": "Ed25519",
+          "key_id": "server-key-1",
+          "value": "1-0ZlQZDb0d_QNZOR-7MnHGqzxVw1P6rnPGaIHJrz8s9xr3ZhF3fmK-BzoMXIXUSEjwnEwfu7wmUL_gOSWaIDQ"
+        },
+        "version": "draft-02"
+      }
+    },
+    "content": [
+      {
+        "text": "hello",
+        "type": "text"
+      }
+    ]
+  }
+}

@@ -1,23 +1,23 @@
 /**
- * MCP-S TypeScript SDK — runtime-evidence security for the MCP TypeScript SDK.
+ * MCP-RE TypeScript SDK — runtime-evidence security for the MCP TypeScript SDK.
  *
  * Architecture (ADR-MCPS-044 §SDK wrap-or-fork rule; ADR-MCPS-047 v0.8)::
  *
  *     application code
- *       -> new Client(...).connect(transport)   (plain MCP; unaware of MCP-S)
- *       -> McpsTransport / McpsHttpTransport     (signs outbound bytes, verifies inbound)
- *       -> native mcps-sdk-core (napi-rs)         (the AUDITED mcps-client-core logic, in Rust)
- *       -> remote MCP-S server / proxy
+ *       -> new Client(...).connect(transport)   (plain MCP; unaware of MCP-RE)
+ *       -> McpReTransport / McpReHttpTransport     (signs outbound bytes, verifies inbound)
+ *       -> native mcp-re-sdk-core (napi-rs)         (the AUDITED mcp-re-client-core logic, in Rust)
+ *       -> remote MCP-RE server / proxy
  *
  * The spike verdict (Python, #199) was **transport adapter**, not a transparent
  * wrapper: the MCP SDK serializes JSON-RPC *inside* each transport, so the only place
  * with exact-byte control is the transport itself. We ship our own implementation of
  * the SDK's public `Transport` interface and delegate every security decision to the
- * Rust core — one implementation of the signed preimage, shared with `mcps-client-proxy`
+ * Rust core — one implementation of the signed preimage, shared with `mcp-re-client-proxy`
  * and the Python SDK. See `README.md`.
  */
 
-// --- the audited native core (napi-rs binding to mcps-client-core) ---------
+// --- the audited native core (napi-rs binding to mcp-re-client-core) ---------
 export {
   coreVersion,
   canonicalizationId,
@@ -46,13 +46,13 @@ export type {
 
 // --- the transport adapter + policy (plain TypeScript) ---------------------
 export {
-  McpsTransport,
-  McpsVerificationError,
+  McpReTransport,
+  McpReVerificationError,
   signOutbound,
   verifyInbound,
 } from "./transport.js";
 export type {
-  McpsConfig,
+  McpReConfig,
   InboundOutcome,
   AuthorizationBindingProvider,
   BindingRequestContext,
@@ -63,7 +63,7 @@ export type {
   TransportHooks,
 } from "./transport.js";
 
-export { McpsHttpTransport, MCPS_REJECTED_CODE } from "./httpTransport.js";
+export { McpReHttpTransport, MCP_RE_REJECTED_CODE } from "./httpTransport.js";
 export type { PostFn } from "./httpTransport.js";
 
 export { decodeInbound, sseDataEvents, verifyInboundMessages } from "./streamable.js";

@@ -2,7 +2,7 @@
 /* eslint-disable */
 /**
  * A typed authorization-evidence binding bound into the signed request preimage
- * (bind-not-interpret). Built through the AUDITED `mcps-client-core` providers so the
+ * (bind-not-interpret). Built through the AUDITED `mcp-re-client-core` providers so the
  * digest is computed in one place — never a caller-supplied magic constant.
  */
 export declare class AuthorizationBinding {
@@ -31,8 +31,8 @@ export declare class AuthorizationBinding {
 
 /**
  * Per-route policy: which authorization-binding base forms a route permits (mirrors
- * `mcps-client-core::authz::AuthorizationBindingPolicy`). A binding of a non-permitted
- * type fails closed with `mcps.authorization_binding_type_unsupported`.
+ * `mcp-re-client-core::authz::AuthorizationBindingPolicy`). A binding of a non-permitted
+ * type fails closed with `mcp-re.authorization_binding_type_unsupported`.
  */
 export declare class AuthorizationBindingPolicy {
   /** Permit both base forms (the common v0.6 default). */
@@ -46,7 +46,7 @@ export declare class AuthorizationBindingPolicy {
   /** Whether this policy permits `binding`'s base form. */
   permits(binding: AuthorizationBinding): boolean
   /**
-   * Fail closed (`mcps.authorization_binding_type_unsupported`) if `binding`'s base
+   * Fail closed (`mcp-re.authorization_binding_type_unsupported`) if `binding`'s base
    * form is not permitted on this route; otherwise return.
    */
   enforce(binding: AuthorizationBinding): void
@@ -57,7 +57,7 @@ export declare class AuthorizationBindingPolicy {
  * exactly one acceptable returning response, with nonce-reuse prevention and an
  * expiry sweep. The clock is the caller's: every method takes `nowUnix`. Failures
  * (duplicate id, nonce reuse, late/uncorrelatable, expired) throw an `Error` carrying
- * the frozen `mcps.*` wire code.
+ * the frozen `mcp-re.*` wire code.
  */
 export declare class CorrelationStore {
   constructor()
@@ -103,14 +103,14 @@ export declare class CorrelationStore {
 /**
  * A client signing identity (the custody seam). Construct via `Signer.software`
  * (a held-private software key — acceptable in production), `Signer.devFile` (an
- * unprotected dev/test key — rejected under production `require_mcps`), or
+ * unprotected dev/test key — rejected under production `require_mcp_re`), or
  * `Signer.nonExporting` (custody `NonExporting`, the hardening profile — signs via
  * an external device, the only class `SignerPolicy.requireNonExporting` accepts).
  */
 export declare class Signer {
   /** In-process software signer (custody class software-held-private). */
   static software(seed: Buffer, signerId: string, keyId: string): Signer
-  /** Unprotected dev/test file signer (rejected under production `require_mcps`). */
+  /** Unprotected dev/test file signer (rejected under production `require_mcp_re`). */
   static devFile(seed: Buffer, signerId: string, keyId: string): Signer
   /**
    * NON-EXPORTING signer (custody class `NonExporting`, the hardening profile): the
@@ -132,7 +132,7 @@ export declare class Signer {
  */
 export declare class SignerPolicy {
   /** Bind `expectedSigner` for `environment` ("production" | "dev-test") and mode. */
-  constructor(expectedSigner: string, environment: string, requireMcps: boolean)
+  constructor(expectedSigner: string, environment: string, requireMcpRe: boolean)
   /** A copy with `keyId` marked revoked (signing through it fails closed). */
   revokeKeyId(keyId: string): SignerPolicy
   /** A copy requiring the hardening profile (only non-exporting custody accepted). */
@@ -195,7 +195,7 @@ export interface ContinuationBinding {
   inputRequiredResponseHash: string
 }
 
-/** The MCP-S protocol version this core verifies/signs against (draft-02). */
+/** The MCP-RE protocol version this core verifies/signs against (draft-02). */
 export declare function coreVersion(): string
 
 /**
@@ -233,7 +233,7 @@ export interface RegisterOptions {
 }
 
 /**
- * The `params._meta` / `result._meta` key under which the MCP-S response envelope
+ * The `params._meta` / `result._meta` key under which the MCP-RE response envelope
  * lives — the adapter strips it before handing a plain response up to the app.
  */
 export declare function responseMetaKey(): string
@@ -250,8 +250,8 @@ export interface SignedRequest {
 }
 
 /**
- * Sign an ordinary MCP request into a draft-02 MCP-S request via the audited
- * `mcps-client-core`, using a raw 32-byte Ed25519 seed (DEV/TEST custody only — no
+ * Sign an ordinary MCP request into a draft-02 MCP-RE request via the audited
+ * `mcp-re-client-core`, using a raw 32-byte Ed25519 seed (DEV/TEST custody only — no
  * policy gate). For the production custody gate use `signRequestWithSigner`.
  */
 export declare function signRequest(idJson: string, method: string, paramsJson: string, options: SignRequestOptions, authorizationBinding?: AuthorizationBinding | undefined | null): SignedRequest
@@ -314,7 +314,7 @@ export interface VerifyResponseOptions {
   expectedRequestHash: string
   expectedCanonicalizationId?: string
   expectedServerSigner?: string
-  /** "require_mcps" (default) | "allow_legacy_explicit". */
+  /** "require_mcp_re" (default) | "allow_legacy_explicit". */
   enforcementMode?: string
   legacyAllowed?: boolean
 }
@@ -323,16 +323,16 @@ export interface VerifyResponseOptions {
  * The structured outcome of `verifyResponse`: the enforcement decision plus the
  * audit-facing path/outcome/reason and (on a verified exchange) the server identity
  * and bound `requestHash`. A fail-closed verification is a RESULT here (with the
- * frozen `mcps.*` wire reason), not a thrown error.
+ * frozen `mcp-re.*` wire reason), not a thrown error.
  */
 export interface VerifyResult {
   /** "accept" | "fallback" | "fail-closed". */
   decision: string
-  /** "mcps-verified" | "legacy-explicit". */
+  /** "mcp-re-verified" | "legacy-explicit". */
   path: string
   /** "accepted" | "fell-back" | "rejected". */
   outcome: string
-  /** Frozen `McpsError::wire_code()` token on a fail-closed rejection; else null. */
+  /** Frozen `McpReError::wire_code()` token on a fail-closed rejection; else null. */
   reason?: string
   /** The absence reason that made a legacy fallback eligible (local); else null. */
   legacyReason?: string
@@ -342,7 +342,7 @@ export interface VerifyResult {
   keyId?: string
   /** The bound `request_hash` (on a verified exchange); else null. */
   requestHash?: string
-  /** Convenience: true iff the decision was AcceptMcps. */
+  /** Convenience: true iff the decision was AcceptMcpRe. */
   accepted: boolean
   /**
    * ADR-MCPS-047 classification of the SIGNED result body: "terminal" or

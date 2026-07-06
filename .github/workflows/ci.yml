@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-S continuous integration. The Rust toolchain is pinned by the committed
+# MCP-RE continuous integration. The Rust toolchain is pinned by the committed
 # rust-toolchain.toml (1.94.1, matching the Bazel build), so rustup installs and
 # selects it automatically on the first cargo invocation — CI and local dev share
 # one toolchain.
 #
 # Gating policy:
 #   - BLOCKING: `cargo build` + `cargo test` over the whole workspace (this
-#     includes the mcps-conformance suite + the conformance drift guard, which
-#     resolve their fixtures via the cargo runfiles fallback in mcps-test-paths).
-#   - BLOCKING: `cargo test` over mcps-proxy with the four NON-DEFAULT feature
+#     includes the mcp-re-conformance suite + the conformance drift guard, which
+#     resolve their fixtures via the cargo runfiles fallback in mcp-re-test-paths).
+#   - BLOCKING: `cargo test` over mcp-re-proxy with the four NON-DEFAULT feature
 #     gates enabled (dev_env_key_source, pkcs11_keysource, redis_replay,
 #     online_ocsp). The default `cargo test --workspace` does NOT compile these
 #     modules, so without this job the v0.3 hardening that lives behind them
@@ -18,8 +18,8 @@
 #     contract) would have zero cargo-CI coverage. The PKCS#11 sign+verify e2e
 #     runs against a hermetic in-tree mock provider, so it needs no external
 #     token. The remaining live-infra e2e tests (real Redis / OCSP responder)
-#     self-skip cleanly when their MCPS_TEST_* env vars are unset; they hard-fail
-#     only when MCPS_REQUIRE_LIVE_INFRA is set, which this job leaves unset.
+#     self-skip cleanly when their MCP_RE_TEST_* env vars are unset; they hard-fail
+#     only when MCP_RE_REQUIRE_LIVE_INFRA is set, which this job leaves unset.
 #   - ADVISORY (continue-on-error): `cargo fmt --check` and `cargo clippy`. The
 #     repository was not developed under `cargo fmt`/`clippy -D warnings`, so these
 #     surface drift without blocking. Promote them to blocking once a one-time
@@ -88,7 +88,7 @@ jobs:
   cargo-features:
     name: cargo test (feature-gated backends, 1.94.1)
     runs-on: ubuntu-latest
-    # No live infra is provisioned here, so MCPS_REQUIRE_LIVE_INFRA is left unset
+    # No live infra is provisioned here, so MCP_RE_REQUIRE_LIVE_INFRA is left unset
     # and the *_e2e_test suites self-skip. This job exercises the feature-gated
     # UNIT tests + adapter compilation only.
     steps:
@@ -101,19 +101,19 @@ jobs:
       - name: Select pinned toolchain (from rust-toolchain.toml)
         run: rustup show && rustc --version && cargo --version
 
-      # Build the WHOLE workspace (not just -p mcps-proxy): the proxy's
+      # Build the WHOLE workspace (not just -p mcp-re-proxy): the proxy's
       # integration tests (persistent_inner_test, persistent_scope_test) spawn
-      # the cross-crate `mcps-demo-server` fixture binary, which cargo does NOT
+      # the cross-crate `mcp-re-demo-server` fixture binary, which cargo does NOT
       # auto-build for another crate's integration tests. `--workspace` puts it
-      # (and the echo-inner fixture) in target/debug for mcps-test-paths to find.
+      # (and the echo-inner fixture) in target/debug for mcp-re-test-paths to find.
       - name: Build (workspace, all feature gates)
         run: >-
           cargo build --workspace --all-targets
           --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
 
-      - name: Test (mcps-proxy, all feature gates; e2e self-skip without live infra)
+      - name: Test (mcp-re-proxy, all feature gates; e2e self-skip without live infra)
         run: >-
-          cargo test -p mcps-proxy
+          cargo test -p mcp-re-proxy
           --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
 
   bazel:
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     # ADR-MCPS-048 / MCPS-71 — the pip downloader path. sdk/python is its OWN
     # Cargo workspace (empty [workspace] table) linking the audited
-    # mcps-client-core / mcps-core via path deps; the pyo3 layer is abi3-py39, so
+    # mcp-re-client-core / mcp-re-core via path deps; the pyo3 layer is abi3-py39, so
     # ONE wheel serves any CPython >= 3.9. No cryptoki/openssl in the SDK closure,
     # so no libclang is needed. Bazel is neither installed nor invoked.
     defaults:
@@ -187,15 +187,15 @@ jobs:
 
       # Clean-env smoke install: a fresh venv gets ONLY the built wheel plus the
       # upstream MCP SDK + pytest — never an editable install and never the
-      # source python/ tree on sys.path, so `import mcps_sdk` resolves to the
-      # INSTALLED wheel (its native mcps_sdk._core), proving the downloader
+      # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
+      # INSTALLED wheel (its native mcp_re_sdk._core), proving the downloader
       # artifact stands on its own.
       - name: Clean-env install (wheel only) + smoke import
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
           /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8"
-          /tmp/venv/bin/python -c "import mcps_sdk, mcps_sdk._core; print('wheel import OK')"
+          /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
       # Run the SDK suite against the installed wheel from the repo root so the
       # source package cannot shadow it. The e2e/mtls tests self-skip (no built
@@ -208,7 +208,7 @@ jobs:
     name: downloader — TypeScript napi package (no Bazel)
     runs-on: ubuntu-latest
     # ADR-MCPS-048 / MCPS-71 — the npm downloader path. sdk/typescript is its OWN
-    # Cargo workspace (empty [workspace] table) linking mcps-client-core via a
+    # Cargo workspace (empty [workspace] table) linking mcp-re-client-core via a
     # path dep; @napi-rs/cli builds the Node native addon. Bazel is neither
     # installed nor invoked.
     defaults:
@@ -242,8 +242,8 @@ jobs:
       - name: Pack + clean-dir install smoke
         run: |
           npm pack --pack-destination /tmp
-          TGZ=$(ls -t /tmp/mcps-sdk-*.tgz | head -1)
+          TGZ=$(ls -t /tmp/mcp-re-sdk-*.tgz | head -1)
           mkdir -p /tmp/npm-smoke && cd /tmp/npm-smoke
           npm init -y >/dev/null
           npm install --no-audit --no-fund "$TGZ"
-          node -e "const m=require('@mcps/sdk'); if(typeof m.signRequest!=='function'){throw new Error('napi package export missing');} console.log('npm package require OK')"
+          node -e "const m=require('@mcp-re/sdk'); if(typeof m.signRequest!=='function'){throw new Error('napi package export missing');} console.log('npm package require OK')"

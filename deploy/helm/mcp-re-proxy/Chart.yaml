@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: mcp-re-proxy
+description: >-
+  Horizontally-scaled MCP-RE policy-enforcement proxy fleet (ADR-MCPS-049). Runs N
+  mcp-re-proxy replicas behind a Service, sharing one Redis for cross-verifier replay
+  state and trust-epoch revocation. NON-NORMATIVE reference — see
+  docs/fleet-deployment-guide.md.
+type: application
+# Chart version is independent of the app; bump on chart changes.
+version: 0.1.0
+# The mcp-re-proxy release this reference targets.
+appVersion: "0.11.0"
+keywords:
+  - mcp
+  - mcp-s
+  - security
+  - policy-enforcement
+home: https://github.com/matssun/mcp-re
