@@ -75,7 +75,21 @@ _Avoid_: treating any discovery advert (initialize capabilities or unsigned `_me
 
 _Avoid_: putting `mcp-re-client-core` logic in `mcp-re-core`; a parallel client error taxonomy; calling a proxy an orchestrator; hardware/KMS-only as the base custody rule; claiming a transparent SDK wrapper without byte/preimage control.
 
+### Standards-alignment pivot (v0.11 grill, signed off 2026-07-06)
+
+- **MCP-RE evidence model** — The transport-agnostic security properties (authenticity, integrity, freshness, replay resistance, audience/authorization/response binding, verified security context), independent of carrier; the umbrella term.
+- **MCP-RE native profile** — The draft-02 `_meta` envelope carrier, usable on any transport; publicly "conformance-gated migration bridge and native transport profile", **never "experimental"**.
+- **MCP-RE HTTP standards profile** — The RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest carrier (plus DPoP/mTLS/RAR artifact bindings) for HTTP transports; the SEP-facing target; profile id/tag `mcp-re-http-v1`, signature labels `mcp-re` / `mcp-re-response` (rejections reuse the response label).
+- **No new MCP-RE HTTP headers** — HTTP-profile header surface is standard fields only (Content-Type, Content-Digest, Signature-Input, Signature, plus authorization/dpop when present); all MCP evidence travels in body `_meta` blocks (`se.syncom/mcp-re.http.request` / `.http.response`) covered by the signed Content-Digest.
+- **Request evidence handle (`request_evidence`)** — Per-profile digest committing to the request evidence preimage (native: JCS preimage; HTTP: RFC 9421 signature base), split form `{digest_alg, digest_value}`; the HTTP-profile successor of `request_hash`.
+- **Artifact binding (`artifact_bindings[]`)** — Generalization of authorization binding: bind-not-interpret over external decision artifacts (authorization tokens via DPoP `ath`/mTLS `x5t#S256`, RAR details, PDP/DTR decisions, classifier results, human approvals); `artifact_type` (what kind) and `binding_type` (how bound) are separate axes; next-wire-version vocabulary — draft-02 keeps the frozen v0.6 names.
+- **Parity gate** — The machine-checked HTTP-profile vector corpus (positive + negative, incl. cross-profile downgrade both directions) that must be green before any draft-02 wire element may be deprecated; deprecation itself is a separate later ADR.
+- **Signed rejection (HTTP-first)** — The HTTP standards profile is the first signed-rejection implementation and rejection signing is REQUIRED conformance behavior; ADR-MCPS-046's native envelope is re-scoped native-only (trigger: first non-HTTP conforming consumer requiring trusted rejection reasons). `wire_code` lives only in `error.data.mcp_re_error`; `error.message` stays human-readable.
+
+_Avoid_: "experimental profile" for draft-02; the wrong spelling `mcps-jcs-int53-json-v1` (code authority: `mcp-re-jcs-int53-json-v1`); conflating `server_signer` (TrustResolver identity) with `keyid` (key selector); per-direction RFC 9421 tag values; new `mcp-re-*` HTTP header fields; prefix-form digests on new fields (split `digest_alg`/`digest_value` is the convention).
+
 ## Flagged ambiguities
 
 - **`documents/mcp-re/security-boundary.md`** (canonical doc §7) — stale path reference; rename to `docs/spec/security-boundary.md`. Fix in 0.5.
 - **`v0.3-claim-matrix.md` contains v0.4+ content** — filename lies about contents (epic #68/#69/#70/#71 v0.4 results live there). Fix in 0.5 by folding into `v0.5-claim-matrix.md` §B and stubbing the v0.3 file.
+- **`mcp-re-v0.11-seed.md` needs corrections** (v0.11 grill findings): canonicalization id spelling (`mcps-` → `mcp-re-jcs-int53-json-v1`); "signed rejection semantics" listed among proven properties (ADR-046 is design-only — must say designed-not-implemented); mapping line `server_signer -> HTTP Signature keyid` conflates two distinct fields.
