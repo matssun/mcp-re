@@ -349,7 +349,8 @@ fn expire_pending_is_id_selective_after_a_partial_cleanup() {
         FixedClock::new(NOW_UNIX),
         SeededNonceSource::new(&[0xABu8; 32]),
         100,
-    );
+    )
+    .expect("100s is a valid lifetime");
     let a = Value::String("a".to_string());
     let b = Value::String("b".to_string());
     session
@@ -433,7 +434,8 @@ fn custom_lifetime_drives_expires_at() {
         FixedClock::new(NOW_UNIX),
         SeededNonceSource::new(&[0xABu8; 32]),
         60,
-    );
+    )
+    .expect("60s is a valid lifetime");
     let id = Value::String("req-1".to_string());
     let bytes = session
         .sign_tool_call(&id, "echo", json!({ "text": "hello" }), ON_BEHALF_OF, AUDIENCE, AUTH_HASH)
@@ -446,22 +448,111 @@ fn custom_lifetime_drives_expires_at() {
 
 #[test]
 fn freshness_window_overflow_fails_closed_instead_of_panicking() {
-    // An extreme request lifetime plus a near-i64::MAX clock would overflow the
-    // `issued_unix + request_lifetime_secs` add: a debug build panics, a release
-    // build wraps to a stale-past expires_at. The session must instead refuse to
-    // sign (fail closed), never emit a request with a wrapped/past expiry.
+    // Even the MAX-allowed lifetime plus a pathological near-i64::MAX clock would
+    // overflow the `issued_unix + request_lifetime_secs` add: a debug build
+    // panics, a release build wraps to a stale-past expires_at. The session must
+    // instead refuse to sign (fail closed), never emit a request with a
+    // wrapped/past expiry. (An over-cap lifetime is now rejected earlier, at
+    // construction, so the clock is what drives the overflow here.)
     let mut session = HostSession::new(
         host_signer(),
         FixedClock::new(i64::MAX),
         SeededNonceSource::new(&[0xABu8; 32]),
-        i64::MAX,
-    );
+        mcp_re_host::MAX_REQUEST_LIFETIME_SECS,
+    )
+    .expect("MAX_REQUEST_LIFETIME_SECS is a valid lifetime");
     let id = Value::String("req-overflow".to_string());
     let result =
         session.sign_tool_call(&id, "echo", json!({ "text": "x" }), ON_BEHALF_OF, AUDIENCE, AUTH_HASH);
     assert_eq!(result.err(), Some(McpReError::CanonicalizationFailed));
     // Fail-closed signing leaves no pending entry behind.
     assert_eq!(session.pending_count(), 0);
+}
+
+// --- ADR-MCPS-015 request-lifetime ceiling (producer-side, audit LOW) ---------
+//
+// The verifier's `check_freshness` imposes no maximum window span, so the
+// ≤ 5-minute ceiling is a producer obligation: `HostSession::new` must refuse a
+// non-positive or over-cap lifetime rather than let a mis-configured host mint a
+// long-lived window a compliant verifier would accept.
+
+fn a_clock() -> FixedClock {
+    FixedClock::new(NOW_UNIX)
+}
+
+fn a_nonce() -> SeededNonceSource {
+    SeededNonceSource::new(&[0xABu8; 32])
+}
+
+#[test]
+fn new_rejects_a_lifetime_over_the_adr_ceiling() {
+    let over = mcp_re_host::MAX_REQUEST_LIFETIME_SECS + 1;
+    // `HostSession` has no `Debug`, so match the error arm rather than expect_err.
+    match HostSession::new(host_signer(), a_clock(), a_nonce(), over) {
+        Ok(_) => panic!("an over-cap lifetime must be refused at construction"),
+        Err(e) => assert!(e.contains("exceeds"), "got: {e}"),
+    }
+}
+
+#[test]
+fn new_rejects_a_nonpositive_lifetime() {
+    for bad in [0i64, -1, i64::MIN] {
+        assert!(
+            HostSession::new(host_signer(), a_clock(), a_nonce(), bad).is_err(),
+            "lifetime {bad} must be refused"
+        );
+    }
+}
+
+#[test]
+fn new_accepts_the_ceiling_and_below() {
+    for ok in [1i64, 60, mcp_re_host::MAX_REQUEST_LIFETIME_SECS] {
+        assert!(
+            HostSession::new(host_signer(), a_clock(), a_nonce(), ok).is_ok(),
+            "lifetime {ok} must be accepted"
+        );
+    }
+}
+
+// --- MCP_RE_SPEC §4 id domain (producer-side, audit LOW) ------------------------
+//
+// A JSON-RPC id must be a string or a safe integer. An out-of-domain id must be
+// refused before signing, not merely relied upon to trip a downstream check.
+
+#[test]
+fn sign_request_rejects_out_of_domain_ids() {
+    let out_of_domain = [
+        json!(null),
+        json!(true),
+        json!(1.5),
+        json!([1, 2, 3]),
+        json!({ "not": "an id" }),
+    ];
+    for id in out_of_domain {
+        let mut session = HostSession::with_defaults(host_signer(), a_clock(), a_nonce());
+        let result =
+            session.sign_tool_call(&id, "echo", json!({ "text": "x" }), ON_BEHALF_OF, AUDIENCE, AUTH_HASH);
+        assert_eq!(
+            result.err(),
+            Some(McpReError::CanonicalizationFailed),
+            "id {id} is out of the §4 domain and must be refused"
+        );
+        // Nothing was signed, so no pending entry is left behind.
+        assert_eq!(session.pending_count(), 0);
+    }
+}
+
+#[test]
+fn sign_request_accepts_string_and_integer_ids() {
+    for id in [json!("req-1"), json!(1), json!(0), json!(-1)] {
+        let mut session = HostSession::with_defaults(host_signer(), a_clock(), a_nonce());
+        assert!(
+            session
+                .sign_tool_call(&id, "echo", json!({ "text": "x" }), ON_BEHALF_OF, AUDIENCE, AUTH_HASH)
+                .is_ok(),
+            "id {id} is in the §4 domain and must be accepted"
+        );
+    }
 }
 
 // --- transport-free guard (ADR-MCPS-015 "Compliance and Enforcement") --------

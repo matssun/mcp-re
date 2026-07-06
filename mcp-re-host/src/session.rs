@@ -41,6 +41,13 @@ use crate::verified_result::VerifiedResult;
 /// The conservative default request lifetime in seconds (ADR-MCPS-015: ≤ 5 min).
 pub const DEFAULT_REQUEST_LIFETIME_SECS: i64 = 300;
 
+/// The maximum request lifetime the session will sign (ADR-MCPS-015 / MCP_RE_SPEC
+/// §5: the freshness window is ≤ 5 minutes). The verifier's `check_freshness`
+/// enforces no maximum span, so the ceiling is a producer-side obligation: a
+/// mis-configured host must not be able to mint a long-lived (over-cap) window
+/// that a compliant verifier would nonetheless accept.
+pub const MAX_REQUEST_LIFETIME_SECS: i64 = DEFAULT_REQUEST_LIFETIME_SECS;
+
 /// A stateful client session that signs MCP-RE requests and verifies the bound
 /// responses, generic over the injected [`Clock`] and [`NonceSource`].
 ///
@@ -60,20 +67,45 @@ pub struct HostSession<C, N> {
 
 impl<C: Clock, N: NonceSource> HostSession<C, N> {
     /// Construct a session with an explicit request lifetime (seconds).
-    pub fn new(signer: HostSigner, clock: C, nonce_source: N, request_lifetime_secs: i64) -> Self {
-        HostSession {
+    ///
+    /// Fails closed (`Err`) on a lifetime that violates the ADR-MCPS-015 window
+    /// contract: a non-positive value (a request that is already expired at
+    /// issue, or a degenerate/negative window) or one exceeding
+    /// [`MAX_REQUEST_LIFETIME_SECS`] (the ≤ 5-minute ceiling). Enforcing this at
+    /// construction keeps a mis-configured host from silently minting an over-cap
+    /// window that a compliant verifier — which imposes no maximum span — accepts.
+    pub fn new(
+        signer: HostSigner,
+        clock: C,
+        nonce_source: N,
+        request_lifetime_secs: i64,
+    ) -> Result<Self, String> {
+        if request_lifetime_secs <= 0 {
+            return Err(format!(
+                "request_lifetime_secs must be positive (ADR-MCPS-015), got {request_lifetime_secs}"
+            ));
+        }
+        if request_lifetime_secs > MAX_REQUEST_LIFETIME_SECS {
+            return Err(format!(
+                "request_lifetime_secs {request_lifetime_secs} exceeds the ADR-MCPS-015 \
+                 ceiling of {MAX_REQUEST_LIFETIME_SECS}s (≤ 5-minute freshness window)"
+            ));
+        }
+        Ok(HostSession {
             signer,
             clock,
             nonce_source,
             request_lifetime_secs,
             pending: BTreeMap::new(),
-        }
+        })
     }
 
     /// Construct a session with the conservative default lifetime
-    /// ([`DEFAULT_REQUEST_LIFETIME_SECS`]).
+    /// ([`DEFAULT_REQUEST_LIFETIME_SECS`]). Infallible: the default is within the
+    /// [`MAX_REQUEST_LIFETIME_SECS`] ceiling by construction.
     pub fn with_defaults(signer: HostSigner, clock: C, nonce_source: N) -> Self {
         Self::new(signer, clock, nonce_source, DEFAULT_REQUEST_LIFETIME_SECS)
+            .expect("DEFAULT_REQUEST_LIFETIME_SECS is within the ADR-MCPS-015 ceiling")
     }
 
     /// The signer identity (public — an identity, not a secret).
@@ -96,6 +128,13 @@ impl<C: Clock, N: NonceSource> HostSession<C, N> {
         audience: &str,
         authorization_hash: &str,
     ) -> Result<Vec<u8>, McpReError> {
+        // Enforce the MCP_RE_SPEC §4 id domain at the producer: a JSON-RPC id must
+        // be a string or a safe integer. A Null/array/object/float id would be
+        // signed and keyed (via `id_key`) despite being out of domain, and would
+        // only be caught — if at all — downstream. Reject it here, before drawing
+        // a nonce or signing, so the host never mints an out-of-domain id.
+        reject_out_of_domain_id(id)?;
+
         // Fail closed BEFORE drawing a nonce or signing: a second request that
         // reuses an in-flight id is a replay of that id. Clobbering the stored
         // hash would let a response bind to the wrong request, so refuse rather
@@ -253,9 +292,30 @@ impl<C: Clock, N: NonceSource> HostSession<C, N> {
     }
 }
 
+/// Reject a JSON-RPC id outside the MCP_RE_SPEC §4 domain (a string or a safe
+/// integer). A `Null`, boolean, array, object, or non-integer/unsafe-integer
+/// number id is out of domain and must not be signed.
+///
+/// Fails closed with [`McpReError::CanonicalizationFailed`]: an out-of-domain id
+/// is a protected-message value-domain violation (the same class as an unsafe
+/// integer or non-integer number the code already rejects there), and the frozen
+/// taxonomy carries no dedicated invalid-id code.
+fn reject_out_of_domain_id(id: &Value) -> Result<(), McpReError> {
+    match id {
+        Value::String(_) => Ok(()),
+        // A safe integer serializes as an i64 or u64; a fractional or
+        // out-of-i64/u64-range number does not, so it is rejected.
+        Value::Number(n) if n.is_i64() || n.is_u64() => Ok(()),
+        _ => Err(McpReError::CanonicalizationFailed),
+    }
+}
+
 /// Canonical map key for a JSON-RPC id. The MCP-RE id domain is a string or a
 /// safe integer (MCP_RE_SPEC §4); serializing the `Value` gives a stable key that
-/// distinguishes `"1"` (string) from `1` (number).
+/// distinguishes `"1"` (string) from `1` (number). Callers on the signing path
+/// pre-validate the id with [`reject_out_of_domain_id`], so the `unwrap_or_default`
+/// fallback is unreachable for a validated id (and a stable "" key for any
+/// hypothetical unserializable id still fails closed downstream).
 fn id_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_default()
 }

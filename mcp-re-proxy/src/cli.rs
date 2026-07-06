@@ -2515,9 +2515,21 @@ pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
     let array = value.as_array().ok_or("trust file must be a JSON array")?;
     let mut resolver = InMemoryTrustResolver::new();
+    // Fail closed on a duplicate (signer, key_id): the resolver's `insert` is
+    // last-write-wins, so a second entry sharing the key coordinate — with a
+    // DIFFERENT public_key — would silently swap the trusted key. Reject at load
+    // rather than trust the file ordering, mirroring the duplicate-header rigor
+    // applied elsewhere.
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for entry in array {
         let signer = entry["signer"].as_str().ok_or("trust entry missing signer")?;
         let key_id = entry["key_id"].as_str().ok_or("trust entry missing key_id")?;
+        if !seen.insert((signer.to_string(), key_id.to_string())) {
+            return Err(format!(
+                "trust file: duplicate entry for {signer}#{key_id} (last-write-wins \
+                 key substitution refused)"
+            ));
+        }
         let pk = entry["public_key"]
             .as_str()
             .ok_or("trust entry missing public_key")?;
@@ -5468,6 +5480,48 @@ mod tests {
     fn trust_file_with_bad_key_errors() {
         let json = r#"[{"signer":"s","key_id":"k","public_key":"!!!not-base64"}]"#;
         assert!(load_trust(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn trust_file_with_duplicate_key_id_is_rejected() {
+        // Audit LOW (ledger `54aadf7b6257f126`): two entries sharing (signer,key_id)
+        // but DIFFERENT public_key must fail closed, not silently last-write-wins
+        // (a key-substitution primitive via an appended entry).
+        let k1 = SigningKey::from_seed_bytes(&[1u8; 32]).public_key().to_b64url();
+        let k2 = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        let json = format!(
+            r#"[{{"signer":"s","key_id":"k","public_key":"{k1}"}},
+                {{"signer":"s","key_id":"k","public_key":"{k2}"}}]"#
+        );
+        let err = load_trust(json.as_bytes()).expect_err("duplicate (signer,key_id) must be refused");
+        assert!(err.contains("duplicate entry"), "got: {err}");
+    }
+
+    #[test]
+    fn trust_file_duplicate_same_key_is_also_rejected() {
+        // Uniform posture: even an exact-duplicate entry is a malformed file, not a
+        // silently-tolerated redundancy.
+        let k = SigningKey::from_seed_bytes(&[3u8; 32]).public_key().to_b64url();
+        let json = format!(
+            r#"[{{"signer":"s","key_id":"k","public_key":"{k}"}},
+                {{"signer":"s","key_id":"k","public_key":"{k}"}}]"#
+        );
+        assert!(load_trust(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn trust_file_same_signer_distinct_key_ids_is_fine() {
+        // The dedup is on the (signer,key_id) PAIR — one signer legitimately holds
+        // multiple key ids (rotation), which must still load.
+        let k1 = SigningKey::from_seed_bytes(&[4u8; 32]).public_key().to_b64url();
+        let k2 = SigningKey::from_seed_bytes(&[5u8; 32]).public_key().to_b64url();
+        let json = format!(
+            r#"[{{"signer":"s","key_id":"k1","public_key":"{k1}"}},
+                {{"signer":"s","key_id":"k2","public_key":"{k2}"}}]"#
+        );
+        let resolver = load_trust(json.as_bytes()).expect("distinct key ids load");
+        assert!(resolver.resolve("s", "k1").is_ok());
+        assert!(resolver.resolve("s", "k2").is_ok());
     }
 
     // --- MCPS-3842 strict/production posture ("reject, not warn") ------------

@@ -134,6 +134,20 @@ fn run() -> Result<(), String> {
              to the process tree. Use --key-source file in production."
         );
     }
+    // Audit LOW (ledger `4307bd95f2296d67`): the default in-memory replay cache is
+    // volatile — admitted nonces are lost on restart, reopening a replay window for
+    // the freshness interval across a bounce. `--strict` REJECTS it outright (below);
+    // a NON-strict operator otherwise gets no signal, so warn unconditionally here,
+    // mirroring the other non-strict posture warnings. (The `--fleet` warning below
+    // covers the orthogonal cross-verifier concern.)
+    if config.replay == ReplayKind::Memory && !config.strict {
+        eprintln!(
+            "mcp-re-proxy: WARNING: --replay-cache memory is volatile (single-process reference): \
+             admitted nonces are held only in memory, so a restart reopens a replay window for \
+             the freshness interval. Use --replay-cache file (single-node durable) or \
+             --replay-cache shared (fleet) in production; --strict refuses this cache."
+        );
+    }
     // MCPS-79 (ADR-MCPS-049): `--fleet` declares horizontally-scaled topology but
     // is orthogonal to the security posture. The node-local-replay REJECTION is a
     // hard guard only under `--strict --fleet` (see `cli::strict_violations`);

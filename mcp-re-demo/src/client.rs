@@ -42,15 +42,18 @@ pub struct DemoHostClient<C, N> {
 
 impl<C: Clock, N: NonceSource> DemoHostClient<C, N> {
     /// Construct a demo client with an explicit request lifetime (seconds).
+    ///
+    /// Fails closed if `request_lifetime_secs` violates the ADR-MCPS-015 window
+    /// contract (see [`HostSession::new`]).
     pub fn new(
         signer: HostSigner,
         clock: C,
         nonce_source: N,
         request_lifetime_secs: i64,
-    ) -> Self {
-        DemoHostClient {
-            session: HostSession::new(signer, clock, nonce_source, request_lifetime_secs),
-        }
+    ) -> Result<Self, String> {
+        Ok(DemoHostClient {
+            session: HostSession::new(signer, clock, nonce_source, request_lifetime_secs)?,
+        })
     }
 
     /// Construct a demo client with the session's conservative default lifetime.
