@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Licensing Policy
+# MCP-RE Licensing Policy
 
 ## Recommended project license
 
-MCP-S uses the Apache License, Version 2.0, for:
+MCP-RE uses the Apache License, Version 2.0, for:
 
 - source code;
 - reference implementation;

@@ -1,0 +1,17 @@
+{
+  "expected": "mcp-re.missing_envelope",
+  "kind": "request",
+  "message": {
+    "id": "req-missing",
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "arguments": {
+        "text": "hello"
+      },
+      "name": "echo"
+    }
+  },
+  "name": "missing_envelope_request",
+  "requires_pipeline": true
+}

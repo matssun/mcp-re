@@ -171,16 +171,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
-name = "mcps-client-core"
-version = "0.10.0"
+name = "mcp-re-client-core"
+version = "0.10.1"
 dependencies = [
- "mcps-core",
+ "mcp-re-core",
  "serde_json",
 ]
 
 [[package]]
-name = "mcps-core"
-version = "0.10.0"
+name = "mcp-re-core"
+version = "0.10.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -191,11 +191,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcps-python-sdk"
+name = "mcp-re-python-sdk"
 version = "0.1.0"
 dependencies = [
- "mcps-client-core",
- "mcps-core",
+ "mcp-re-client-core",
+ "mcp-re-core",
  "pyo3",
  "serde_json",
 ]

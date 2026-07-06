@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
+import mcp_re_sdk
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sign_request_vector.json"
 INPUTS = json.loads(FIXTURE.read_text())["inputs"]
@@ -23,7 +23,7 @@ KEY_ID = INPUTS["key_id"]
 
 
 def _sign_with(signer, policy):
-    return mcps_sdk.sign_request_with_signer(
+    return mcp_re_sdk.sign_request_with_signer(
         INPUTS["id_json"],
         INPUTS["method"],
         INPUTS["params_json"],
@@ -40,16 +40,16 @@ def _sign_with(signer, policy):
 
 
 def _software_signer():
-    return mcps_sdk.Signer.software(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
+    return mcp_re_sdk.Signer.software(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
 
 
 def _dev_file_signer():
-    return mcps_sdk.Signer.dev_file(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
+    return mcp_re_sdk.Signer.dev_file(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
 
 
-def _policy(*, environment="production", require_mcps=True, expected=SIGNER_ID):
-    return mcps_sdk.SignerPolicy(
-        expected, environment=environment, require_mcps=require_mcps
+def _policy(*, environment="production", require_mcp_re=True, expected=SIGNER_ID):
+    return mcp_re_sdk.SignerPolicy(
+        expected, environment=environment, require_mcp_re=require_mcp_re
     )
 
 
@@ -69,14 +69,14 @@ def test_signer_path_matches_parity_vector():
     assert signed.request_hash == EXPECTED["expected_request_hash"]
 
 
-def test_software_signer_accepted_under_require_mcps_production():
+def test_software_signer_accepted_under_require_mcp_re_production():
     """Software-held-private custody is acceptable for the base production posture."""
     signed = _sign_with(_software_signer(), _policy())
     assert signed.request_hash.startswith("sha256:")
 
 
-def test_dev_file_signer_rejected_under_require_mcps_production():
-    """An unprotected dev file key fails closed under production `require_mcps`."""
+def test_dev_file_signer_rejected_under_require_mcp_re_production():
+    """An unprotected dev file key fails closed under production `require_mcp_re`."""
     with pytest.raises(ValueError, match="ActorBindingFailed"):
         _sign_with(_dev_file_signer(), _policy())
 
@@ -111,12 +111,12 @@ def test_hardening_profile_rejects_software_key():
 # --- non-exporting custody path (the hardening profile ACCEPT side) ---------
 
 def _device():
-    return mcps_sdk.SigningDevice.from_seed(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
+    return mcp_re_sdk.SigningDevice.from_seed(SEED, signer_id=SIGNER_ID, key_id=KEY_ID)
 
 
 def _non_exporting_signer(sign_callback=None):
     # The key lives in the device; the signer holds only the device's sign callback.
-    return mcps_sdk.Signer.non_exporting(
+    return mcp_re_sdk.Signer.non_exporting(
         signer_id=SIGNER_ID, key_id=KEY_ID, sign_callback=sign_callback or _device().sign
     )
 
@@ -166,4 +166,4 @@ def test_signing_device_exposes_no_key_getter():
 
 def test_unknown_environment_rejected():
     with pytest.raises(ValueError, match="environment must be"):
-        mcps_sdk.SignerPolicy(SIGNER_ID, environment="staging", require_mcps=True)
+        mcp_re_sdk.SignerPolicy(SIGNER_ID, environment="staging", require_mcp_re=True)

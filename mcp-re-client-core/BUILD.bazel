@@ -1,0 +1,155 @@
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-40 (ADR-MCPS-044 §mcp-re-client-core): the client-side shared seam consumed
+# by the local proxy and the SDK. Pure library — depends only on the verification
+# crate plus serde_json (request construction). No networking/async/fs: those are
+# the mode-specific layers ABOVE this seam.
+nt_rust_library(
+    name = "mcp_re_client_core",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_client_core",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# Inline crate unit tests (request / response / enforcement / authz / signer /
+# correlation #[cfg(test)] modules).
+nt_rust_test(
+    name = "mcp_re_client_core_test",
+    crate = ":mcp_re_client_core",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# An ordinary MCP request signed by the client core verifies against the
+# server-side mcp-re-core draft-02 verifier; the client request_hash equals the
+# verifier's response-binding handle (the MCPS-40 cross-side oracle).
+nt_rust_test(
+    name = "signed_request_vectors_test",
+    srcs = ["tests/signed_request_vectors_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-41: full client round-trip — sign a request, the server signs the bound
+# response, the client verifies it back over the public API.
+nt_rust_test(
+    name = "response_roundtrip_test",
+    srcs = ["tests/response_roundtrip_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-42: the enforcement engine accepts a genuinely-verified exchange in both
+# normative modes (the AcceptMcpRe path needs a real VerifiedResponse).
+nt_rust_test(
+    name = "enforcement_accept_test",
+    srcs = ["tests/enforcement_accept_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-45: a provider's authorization binding is signed verbatim into the preimage
+# and recovered unchanged by the server-side verifier (bind-not-interpret).
+nt_rust_test(
+    name = "authz_binding_preimage_test",
+    srcs = ["tests/authz_binding_preimage_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-46: a request built through the ClientSigner custody seam (with the policy
+# gate) verifies server-side and the evidence names the actual signer.
+nt_rust_test(
+    name = "signer_custody_test",
+    srcs = ["tests/signer_custody_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-43: the audience tuple discriminates tenants/routes sharing one signer
+# (wildcard SaaS) — hostname alone is insufficient.
+nt_rust_test(
+    name = "signer_audience_binding_test",
+    srcs = ["tests/signer_audience_binding_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-44: the first verified exchange is proof+discovery; a stripped/tampered
+# advisory advert never changes the capability verdict (no downgrade).
+nt_rust_test(
+    name = "discovery_test",
+    srcs = ["tests/discovery_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPS-047 continuation-binding cross-side oracle: a continuation request
+# signed by mcp-re-client-core (with a `continuation` binding in the signed
+# preimage) is accepted by the server-side mcp_re_core::verify_request_draft02.
+# (MCPS-70: gate-discovered #220 drift — cargo ran it, Bazel had no target.)
+nt_rust_test(
+    name = "continuation_roundtrip_test",
+    srcs = ["tests/continuation_roundtrip_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

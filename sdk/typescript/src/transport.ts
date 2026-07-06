@@ -1,5 +1,5 @@
 /**
- * MCP-S transport adapter — signs outbound / verifies inbound at the byte boundary.
+ * MCP-RE transport adapter — signs outbound / verifies inbound at the byte boundary.
  *
  * The MCP TypeScript SDK serializes JSON-RPC *inside* each transport (the `Protocol`
  * layer hands the transport parsed `JSONRPCMessage` objects, and each transport does
@@ -7,12 +7,12 @@
  * transport itself — exactly as the Python spike (#199) found for the Python SDK.
  * This adapter therefore OWNS the wire: a `Client` talks plain MCP through the
  * `Transport` interface, and the adapter signs every outbound request and verifies
- * every inbound response against the audited `mcps-client-core` binding.
+ * every inbound response against the audited `mcp-re-client-core` binding.
  *
  * The security core is two synchronous, deterministic functions — {@link signOutbound}
  * (steps 1-4 of the proxy pipeline: sign + register correlation) and
  * {@link verifyInbound} (steps 5-9: correlate + verify + strip envelope). The
- * {@link McpsTransport} class is thin async glue that pumps those over a byte channel.
+ * {@link McpReTransport} class is thin async glue that pumps those over a byte channel.
  */
 
 import * as core from "../native/binding.js";
@@ -29,21 +29,21 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { randomBytes } from "node:crypto";
 
 /**
- * Raised/surfaced when an inbound response fails closed. Carries the frozen `mcps.*`
+ * Raised/surfaced when an inbound response fails closed. Carries the frozen `mcp-re.*`
  * wire reason. For a correlated response the adapter instead delivers a JSON-RPC error
  * bound to the request id (so the awaiting `Client` call rejects); this error type is
  * surfaced via `transport.onerror` for uncorrelatable/server-initiated rejections.
  */
-export class McpsVerificationError extends Error {
+export class McpReVerificationError extends Error {
   readonly reason: string | undefined;
   constructor(reason: string | undefined) {
-    super(`MCP-S response rejected: ${reason}`);
-    this.name = "McpsVerificationError";
+    super(`MCP-RE response rejected: ${reason}`);
+    this.name = "McpReVerificationError";
     this.reason = reason;
   }
 }
 
-/** An authorization-binding provider (mirrors `mcps_sdk.authorization`). */
+/** An authorization-binding provider (mirrors `mcp_re_sdk.authorization`). */
 export interface AuthorizationBindingProvider {
   provide(ctx: BindingRequestContext): AuthorizationBinding;
 }
@@ -57,8 +57,8 @@ export interface BindingRequestContext {
   readonly deadlineUnix: number;
 }
 
-/** Per-connection MCP-S policy + identity the adapter signs/verifies under. */
-export interface McpsConfig {
+/** Per-connection MCP-RE policy + identity the adapter signs/verifies under. */
+export interface McpReConfig {
   signer: Signer;
   policy: SignerPolicy;
   resolver: TrustResolver;
@@ -83,16 +83,16 @@ export interface McpsConfig {
   routeId?: string;
   /**
    * Inbound policy for SERVER-INITIATED messages (a server->client request or
-   * notification — NOT a response to one of our signed requests). The MCP-S evidence
+   * notification — NOT a response to one of our signed requests). The MCP-RE evidence
    * model binds a server's signature to the client's `request_hash`; a server-initiated
-   * message has none, so `mcps-client-core` cannot verify it. STRICT MCP-S is the
+   * message has none, so `mcp-re-client-core` cannot verify it. STRICT MCP-RE is the
    * client-initiated request/response subset (extended to signed multi-round-trip
    * continuation by ADR-MCPS-047; ARBITRARY server push stays out of scope): the safe
    * default FAILS CLOSED.
    *
    * `true` is a DEGRADED / MIGRATION policy ONLY — an explicit operator opt-OUT of the
    * guarantee for the server-initiated channel. The message is then delivered but
-   * audited as NO-EVIDENCE. It is NOT strict enterprise MCP-S. Leave it off for strict
+   * audited as NO-EVIDENCE. It is NOT strict enterprise MCP-RE. Leave it off for strict
    * deployments.
    */
   allowUnverifiedServerInitiated?: boolean;
@@ -101,10 +101,10 @@ export interface McpsConfig {
 const DEFAULT_TTL = 300;
 const DEFAULT_ROUTE = "default";
 
-function ttlSeconds(config: McpsConfig): number {
+function ttlSeconds(config: McpReConfig): number {
   return config.ttlSeconds ?? DEFAULT_TTL;
 }
-function routeId(config: McpsConfig): string {
+function routeId(config: McpReConfig): string {
   return config.routeId ?? DEFAULT_ROUTE;
 }
 
@@ -170,7 +170,7 @@ function requestFields(message: JSONRPCMessage): RequestFields {
  * shortcut (dev/test).
  */
 function bindingArgs(
-  config: McpsConfig,
+  config: McpReConfig,
   method: string,
   params: unknown,
   deadlineUnix: number,
@@ -230,7 +230,7 @@ export interface SignOutboundOptions {
  */
 export function signOutbound(
   message: JSONRPCMessage,
-  config: McpsConfig,
+  config: McpReConfig,
   correlation: CorrelationStore,
   opts: SignOutboundOptions,
 ): Buffer {
@@ -245,7 +245,7 @@ export function signOutbound(
     const entry = opts.mrt?.get(requestState);
     if (entry === undefined) {
       throw new Error(
-        "mcps.continuation_malformed: no recorded multi-round-trip state for the " +
+        "mcp-re.continuation_malformed: no recorded multi-round-trip state for the " +
           "answered InputRequiredResult (unknown or already-used requestState)",
       );
     }
@@ -254,7 +254,7 @@ export function signOutbound(
     // context too so a continuation cannot be replayed onto another route/audience.
     if (entry.routeId !== routeId(config) || entry.audience !== config.audience) {
       throw new Error(
-        "mcps.continuation_malformed: continuation route/audience does not match the " +
+        "mcp-re.continuation_malformed: continuation route/audience does not match the " +
           "recorded InputRequiredResult exchange",
       );
     }
@@ -299,10 +299,10 @@ export function signOutbound(
 export interface InboundOutcome {
   kind: "accept" | "reject" | "passthrough";
   message?: JSONRPCMessage; // a plain message on accept/passthrough
-  reason?: string; // the mcps.* wire reason on reject
+  reason?: string; // the mcp-re.* wire reason on reject
 }
 
-/** Remove the MCP-S response envelope from `result._meta` so the app sees plain MCP. */
+/** Remove the MCP-RE response envelope from `result._meta` so the app sees plain MCP. */
 function stripEnvelope(obj: Record<string, unknown>): Record<string, unknown> {
   const result = obj.result as Record<string, unknown> | undefined;
   const meta = result && typeof result === "object" ? (result._meta as Record<string, unknown> | undefined) : undefined;
@@ -325,7 +325,7 @@ export interface VerifyInboundOptions {
  * Correlate + verify one inbound line.
  *
  * A response to one of our requests (has `id`, no `method`) is correlated and verified;
- * on accept the MCP-S envelope is stripped and a plain message is returned. A
+ * on accept the MCP-RE envelope is stripped and a plain message is returned. A
  * late/uncorrelatable/expired correlation or a failed verification is a fail-closed
  * reject.
  *
@@ -339,12 +339,12 @@ export interface VerifyInboundOptions {
  * A SERVER-INITIATED message (it carries a `method`) is NOT a response to one of our
  * requests, so there is no `request_hash` to bind it and the core cannot verify it. The
  * `allowUnverifiedServerInitiated` policy decides: fail closed under the safe default
- * (`mcps.missing_envelope` for an id-bearing server request, `mcps.notification_forbidden`
+ * (`mcp-re.missing_envelope` for an id-bearing server request, `mcp-re.notification_forbidden`
  * for a notification), or pass it through unverified (audited as no-evidence).
  */
 export function verifyInbound(
   line: Buffer | string,
-  config: McpsConfig,
+  config: McpReConfig,
   correlation: CorrelationStore,
   opts: VerifyInboundOptions,
 ): InboundOutcome {
@@ -361,14 +361,14 @@ export function verifyInbound(
     if (config.allowUnverifiedServerInitiated) {
       return { kind: "passthrough", message: obj as unknown as JSONRPCMessage };
     }
-    const reason = rid !== undefined && rid !== null ? "mcps.missing_envelope" : "mcps.notification_forbidden";
+    const reason = rid !== undefined && rid !== null ? "mcp-re.missing_envelope" : "mcp-re.notification_forbidden";
     return { kind: "reject", reason };
   }
 
   if (rid === undefined || rid === null) {
     // Neither a method nor an id: not a correlatable JSON-RPC response. Fail closed
     // rather than deliver an uncorrelatable, unverifiable message.
-    return { kind: "reject", reason: "mcps.missing_envelope" };
+    return { kind: "reject", reason: "mcp-re.missing_envelope" };
   }
 
   // A response to one of our outstanding requests. PEEK (do not consume yet): the
@@ -377,7 +377,7 @@ export function verifyInbound(
   try {
     entry = correlation.peekForResponse(String(rid), opts.nowUnix);
   } catch (exc) {
-    // late / uncorrelatable / expired -> fail closed. Normalize to the bare mcps.*
+    // late / uncorrelatable / expired -> fail closed. Normalize to the bare mcp-re.*
     // wire code so reject reasons are consistent with the verify path.
     return { kind: "reject", reason: lastWireCode(exc) };
   }
@@ -385,7 +385,7 @@ export function verifyInbound(
   const result = core.verifyResponse(Buffer.from(raw), config.resolver, {
     expectedRequestHash: entry.requestHash,
     expectedServerSigner: config.expectedServerSigner,
-    enforcementMode: config.enforcementMode ?? "require_mcps",
+    enforcementMode: config.enforcementMode ?? "require_mcp_re",
     legacyAllowed: config.legacyAllowed ?? false,
   });
 
@@ -420,7 +420,7 @@ export function verifyInbound(
   return { kind: "reject", reason: result.reason };
 }
 
-/** Extract the bare `mcps.*` wire code from a thrown correlation `Error` message. */
+/** Extract the bare `mcp-re.*` wire code from a thrown correlation `Error` message. */
 export function lastWireCode(exc: unknown): string {
   const msg = exc instanceof Error ? exc.message : String(exc);
   const idx = msg.lastIndexOf(": ");
@@ -456,14 +456,14 @@ export interface TransportHooks {
  * `Client` call rejects, not hangs); an uncorrelatable/server-initiated rejection is
  * surfaced via `onerror`.
  */
-export class McpsTransport implements Transport {
+export class McpReTransport implements Transport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
 
   private readonly byteSend: ByteSend;
   private readonly byteLines: AsyncIterable<Buffer>;
-  private readonly config: McpsConfig;
+  private readonly config: McpReConfig;
   private readonly correlation: CorrelationStore;
   private readonly clock: () => number;
   private readonly nonceFactory: () => string;
@@ -473,7 +473,7 @@ export class McpsTransport implements Transport {
   private started = false;
   private closed = false;
 
-  constructor(byteSend: ByteSend, byteLines: AsyncIterable<Buffer>, config: McpsConfig, hooks: TransportHooks = {}) {
+  constructor(byteSend: ByteSend, byteLines: AsyncIterable<Buffer>, config: McpReConfig, hooks: TransportHooks = {}) {
     this.byteSend = byteSend;
     this.byteLines = byteLines;
     this.config = config;
@@ -483,7 +483,7 @@ export class McpsTransport implements Transport {
   }
 
   async start(): Promise<void> {
-    if (this.started) throw new Error("McpsTransport already started");
+    if (this.started) throw new Error("McpReTransport already started");
     this.started = true;
     void this.readerLoop();
   }
@@ -518,16 +518,16 @@ export class McpsTransport implements Transport {
         } catch {
           // A single malformed line (bad JSON / non-UTF-8) must not tear down the whole
           // reader — fail closed for THIS line and keep reading subsequent messages.
-          this.onerror?.(new McpsVerificationError("mcps.missing_envelope"));
+          this.onerror?.(new McpReVerificationError("mcp-re.missing_envelope"));
           continue;
         }
         if (outcome.kind === "accept" || outcome.kind === "passthrough") {
           this.onmessage?.(outcome.message as JSONRPCMessage);
         } else {
           // Fail closed: surface via onerror. (For a request/response transport prefer
-          // McpsHttpTransport, which binds the reject to the request id so the call
+          // McpReHttpTransport, which binds the reject to the request id so the call
           // rejects.)
-          this.onerror?.(new McpsVerificationError(outcome.reason));
+          this.onerror?.(new McpReVerificationError(outcome.reason));
         }
       }
     } catch (err) {

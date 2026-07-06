@@ -37,8 +37,8 @@ function signWith(signer: Signer, policy: SignerPolicy): SignedRequest {
 
 const softwareSigner = (): Signer => Signer.software(SEED, SIGNER_ID, KEY_ID);
 const devFileSigner = (): Signer => Signer.devFile(SEED, SIGNER_ID, KEY_ID);
-const policy = (opts: { environment?: string; requireMcps?: boolean; expected?: string } = {}): SignerPolicy =>
-  new SignerPolicy(opts.expected ?? SIGNER_ID, opts.environment ?? "production", opts.requireMcps ?? true);
+const policy = (opts: { environment?: string; requireMcpRe?: boolean; expected?: string } = {}): SignerPolicy =>
+  new SignerPolicy(opts.expected ?? SIGNER_ID, opts.environment ?? "production", opts.requireMcpRe ?? true);
 
 describe("signer metadata", () => {
   it("reports identity + custody class", () => {
@@ -57,11 +57,11 @@ describe("custody gate", () => {
     expect(signed.requestHash).toBe(SIGN_VECTOR.expected_request_hash);
   });
 
-  it("software custody is accepted under production require_mcps", () => {
+  it("software custody is accepted under production require_mcp_re", () => {
     expect(signWith(softwareSigner(), policy()).requestHash.startsWith("sha256:")).toBe(true);
   });
 
-  it("dev-file is rejected under production require_mcps", () => {
+  it("dev-file is rejected under production require_mcp_re", () => {
     expect(() => signWith(devFileSigner(), policy())).toThrow(/ActorBindingFailed/);
   });
 

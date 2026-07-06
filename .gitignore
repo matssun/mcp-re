@@ -4,7 +4,7 @@
 
 # Bazel (build artifacts; symlinks point into ~/Library/Caches/bazel/)
 /bazel-bin
-/bazel-mcps
+/bazel-mcp-re
 /bazel-out
 /bazel-testlogs
 

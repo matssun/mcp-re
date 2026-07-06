@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Code & Security Re-Audit — 0.5
+# MCP-RE Code & Security Re-Audit — 0.5
 
 > **Note for public-repo readers.** This is the audit record for the 0.5
 > proposal-readiness release, produced by the same multi-agent review workflow
@@ -12,7 +12,7 @@
 | Field | Value |
 |---|---|
 | Audit date | 2026-06-23 |
-| Subject | MCP-S Rust workspace |
+| Subject | MCP-RE Rust workspace |
 | Revision audited | `main @ 622ee5f` (release commit `afe9a43` is the docs/version bump only) |
 | Target version | 0.5.0 |
 | Predecessor | [0.2 re-audit (2026-06-02)](./audit-v0.2.md) |
@@ -52,15 +52,15 @@ key-reference scope #133, LB-assertion transport binding #135, bounded
 replay-cache growth #140, non-positive-TTL rejection #142):
 
 ```
-mcps-core/src/audit.rs            mcps-proxy/src/durable_replay.rs
-mcps-core/src/crypto.rs           mcps-proxy/src/etcd_store.rs
-mcps-core/src/pipeline.rs         mcps-proxy/src/kms_keysource.rs
-mcps-policy/src/reference.rs      mcps-proxy/src/ocsp.rs
-mcps-proxy/src/pkcs11_keysource.rs mcps-proxy/src/proxy.rs
-mcps-proxy/src/redis_store.rs     mcps-proxy/src/shared_replay.rs
+mcp-re-core/src/audit.rs            mcp-re-proxy/src/durable_replay.rs
+mcp-re-core/src/crypto.rs           mcp-re-proxy/src/etcd_store.rs
+mcp-re-core/src/pipeline.rs         mcp-re-proxy/src/kms_keysource.rs
+mcp-re-policy/src/reference.rs      mcp-re-proxy/src/ocsp.rs
+mcp-re-proxy/src/pkcs11_keysource.rs mcp-re-proxy/src/proxy.rs
+mcp-re-proxy/src/redis_store.rs     mcp-re-proxy/src/shared_replay.rs
 ```
 
-Conformance `tests/` and `mcps-test-paths` were excluded as test code.
+Conformance `tests/` and `mcp-re-test-paths` were excluded as test code.
 
 Each changed file was audited by an independent find agent under the
 security lens (general / conformance / security lenses, security lens applied
@@ -78,7 +78,7 @@ One candidate was raised and **suppressed** on two independent grounds:
 
 | File | Title | Disposition | Why |
 |---|---|---|---|
-| `mcps-proxy/src/durable_replay.rs` | Global `MAX_ENTRIES` ceiling lets a client wedge the replay cache into a restart-persistent fail-closed state | Suppressed (not reported) | (1) DoS / resource-exhaustion — a hard-excluded class; (2) reconciled as **tracked** against the ledger (the bounded-growth tradeoff was dispositioned when the #140 prune cap landed). |
+| `mcp-re-proxy/src/durable_replay.rs` | Global `MAX_ENTRIES` ceiling lets a client wedge the replay cache into a restart-persistent fail-closed state | Suppressed (not reported) | (1) DoS / resource-exhaustion — a hard-excluded class; (2) reconciled as **tracked** against the ledger (the bounded-growth tradeoff was dispositioned when the #140 prune cap landed). |
 
 ## 4. Caveat
 

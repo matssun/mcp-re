@@ -21,7 +21,7 @@ import {
   TrustResolver,
   signOutbound,
   type BindingRequestContext,
-  type McpsConfig,
+  type McpReConfig,
 } from "../dist/index.js";
 import { SIGN_VECTOR } from "./fixtures.js";
 
@@ -87,7 +87,7 @@ describe("per-route policy fails closed", () => {
     const ref = AuthorizationBinding.authzSystemReference("s", "sc", "r", "d");
     const policy = AuthorizationBindingPolicy.opaqueOnly();
     expect(policy.permits(ref)).toBe(false);
-    expect(() => policy.enforce(ref)).toThrow(/mcps.authorization_binding_type_unsupported/);
+    expect(() => policy.enforce(ref)).toThrow(/mcp-re.authorization_binding_type_unsupported/);
   });
 
   it("closed rejects everything", () => {
@@ -116,7 +116,7 @@ describe("providers", () => {
 
   it("reference provider without a resolver fails closed", () => {
     expect(() => new AuthzSystemReferenceProvider().provide(ctx())).toThrow(
-      /mcps.authorization_binding_missing/,
+      /mcp-re.authorization_binding_missing/,
     );
   });
 
@@ -146,7 +146,7 @@ describe("the provider digest lands in the signed preimage", () => {
   it("signOutbound embeds the provider-computed digest, not the legacy constant", () => {
     const req = SIGN_VECTOR.inputs;
     const token = Buffer.from("the-actual-capability-bytes");
-    const config: McpsConfig = {
+    const config: McpReConfig = {
       signer: Signer.software(Buffer.from(req.seed_hex, "hex"), req.signer, req.key_id),
       policy: new SignerPolicy(req.signer, "dev-test", true),
       resolver: new TrustResolver(),
@@ -167,7 +167,7 @@ describe("the provider digest lands in the signed preimage", () => {
       nonce: "n",
       expiresUnix: now + 300,
     });
-    const envelope = JSON.parse(wire.toString("utf-8")).params._meta["se.syncom/mcps.request"];
+    const envelope = JSON.parse(wire.toString("utf-8")).params._meta["se.syncom/mcp-re.request"];
     const binding = envelope.authorization_binding;
     expect(binding.binding_type).toBe("opaque-bytes");
     expect(binding.digest_value).toBe(expectedOpaque(token));

@@ -1,8 +1,8 @@
 /**
- * Live full-transport MCP-S over mTLS (mirrors Python `test_e2e_mtls_session.py`).
+ * Live full-transport MCP-RE over mTLS (mirrors Python `test_e2e_mtls_session.py`).
  *
- * Drives the real {@link McpsHttpTransport} the production {@link connectMtlsHttp} builds,
- * against the REAL `mcps-proxy` fronting the REAL `mcps-demo-fileserver`. Two tests:
+ * Drives the real {@link McpReHttpTransport} the production {@link connectMtlsHttp} builds,
+ * against the REAL `mcp-re-proxy` fronting the REAL `mcp-re-demo-fileserver`. Two tests:
  *
  *  1. a `read_file` call round-trips (one signed mTLS POST, verified server-signed result);
  *  2. an ADR-047 `delete_files` continuation: the server elicits an InputRequiredResult and
@@ -18,7 +18,7 @@
  * `tools/call` directly, as the conformance matrix proves.
  *
  * Needs cargo + the built binaries (skips cleanly otherwise):
- *   cargo build -p mcps-proxy -p mcps-demo-fileserver
+ *   cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -26,17 +26,17 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  McpsHttpTransport,
+  McpReHttpTransport,
   Signer,
   SignerPolicy,
   TrustResolver,
   connectMtlsHttp,
-  type McpsConfig,
+  type McpReConfig,
 } from "../dist/index.js";
 
 const ROOT = resolve(__dirname, "..", "..", "..");
-const PROXY = join(ROOT, "target", "debug", "mcps-proxy");
-const FILESERVER = join(ROOT, "target", "debug", "mcps-demo-fileserver");
+const PROXY = join(ROOT, "target", "debug", "mcp-re-proxy");
+const FILESERVER = join(ROOT, "target", "debug", "mcp-re-demo-fileserver");
 const HAVE_CARGO = spawnSync("cargo", ["--version"]).status === 0;
 const RUNNABLE = existsSync(PROXY) && existsSync(FILESERVER) && HAVE_CARGO;
 
@@ -61,7 +61,7 @@ let outDir = "";
 let demoDir = "";
 let port = 0;
 
-function config(): McpsConfig {
+function config(): McpReConfig {
   const resolver = new TrustResolver();
   resolver.insertDevSeed(SERVER, SERVER_KEY, SERVER_SEED);
   return {
@@ -73,12 +73,12 @@ function config(): McpsConfig {
     bindingDigestAlg: "sha256",
     bindingDigestValue: AUTHZ_DIGEST,
     expectedServerSigner: SERVER,
-    enforcementMode: "require_mcps",
+    enforcementMode: "require_mcp_re",
     ttlSeconds: 300,
   };
 }
 
-function transport(): McpsHttpTransport {
+function transport(): McpReHttpTransport {
   return connectMtlsHttp("127.0.0.1", port, config(), {
     serverCa: readFileSync(join(outDir, "server_ca.pem")),
     clientCert: readFileSync(join(outDir, "client_cert.pem")),
@@ -88,7 +88,7 @@ function transport(): McpsHttpTransport {
 }
 
 /** A serialized inbox over `onmessage`: `next()` resolves with the next delivered message. */
-function inbox(t: McpsHttpTransport): () => Promise<any> {
+function inbox(t: McpReHttpTransport): () => Promise<any> {
   const queued: any[] = [];
   const waiters: Array<(m: any) => void> = [];
   t.onmessage = (m: any) => {
@@ -111,13 +111,13 @@ const req = (id: string, params: Record<string, unknown>): any => ({
 
 beforeAll(async () => {
   if (!RUNNABLE) return;
-  outDir = mkdtempSync(join(tmpdir(), "mcps_ts_sess_fx_"));
-  demoDir = mkdtempSync(join(tmpdir(), "mcps_ts_sess_root_"));
+  outDir = mkdtempSync(join(tmpdir(), "mcp_re_ts_sess_fx_"));
+  demoDir = mkdtempSync(join(tmpdir(), "mcp_re_ts_sess_root_"));
   writeFileSync(join(demoDir, "greeting.txt"), FILE_TEXT);
 
   const emit = spawnSync(
     "cargo",
-    ["run", "-q", "-p", "mcps-demo", "--example", "emit_mtls_fixtures", "--", outDir],
+    ["run", "-q", "-p", "mcp-re-demo", "--example", "emit_mtls_fixtures", "--", outDir],
     { cwd: ROOT, encoding: "utf-8" },
   );
   if (emit.status !== 0) throw new Error(`emit_mtls_fixtures failed: ${emit.stderr}`);
@@ -138,7 +138,7 @@ beforeAll(async () => {
   );
 
   port = await new Promise<number>((resolvePort, rejectPort) => {
-    const timer = setTimeout(() => rejectPort(new Error("mcps-proxy did not report a listening port")), 30000);
+    const timer = setTimeout(() => rejectPort(new Error("mcp-re-proxy did not report a listening port")), 30000);
     let buf = "";
     proc!.stderr!.on("data", (d: Buffer) => {
       buf += d.toString();
@@ -150,7 +150,7 @@ beforeAll(async () => {
     });
     proc!.on("exit", (code) => {
       clearTimeout(timer);
-      rejectPort(new Error(`mcps-proxy exited early (code ${code})`));
+      rejectPort(new Error(`mcp-re-proxy exited early (code ${code})`));
     });
   });
 }, 120000);
@@ -161,7 +161,7 @@ afterAll(() => {
   if (demoDir) rmSync(demoDir, { recursive: true, force: true });
 });
 
-describe.skipIf(!RUNNABLE)("live full-transport MCP-S over mTLS", () => {
+describe.skipIf(!RUNNABLE)("live full-transport MCP-RE over mTLS", () => {
   it("round-trips a read_file call over real mTLS", async () => {
     const t = transport();
     const next = inbox(t);
@@ -170,7 +170,7 @@ describe.skipIf(!RUNNABLE)("live full-transport MCP-S over mTLS", () => {
     const result = await next();
     expect(result.result.isError).toBe(false);
     expect(result.result.content[0].text).toBe(FILE_TEXT);
-    expect("_meta" in result.result).toBe(false); // the MCP-S envelope is stripped
+    expect("_meta" in result.result).toBe(false); // the MCP-RE envelope is stripped
     await t.close();
   });
 

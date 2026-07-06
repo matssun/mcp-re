@@ -34,7 +34,7 @@ read — `all_crate_deps(...)`, a `_VAR + [...]` concat, or `glob(...)` for srcs
 is emitted by gazelle as a whole-attribute replacement, which this gate skips (it
 is representation, not a clean inserted edge). Edges in such targets are therefore
 not edge-gated. In practice that is safe here: the only `all_crate_deps` target is
-the leaf `mcps-core` (no first-party deps; `all_crate_deps` auto-covers its
+the leaf `mcp-re-core` (no first-party deps; `all_crate_deps` auto-covers its
 crates.io deps, so a new dep is picked up with no BUILD edit). Every crate that
 carries first-party edges uses an explicit `deps = [...]` list, which gazelle
 merges — so a forgotten first-party edge (the #220 failure) IS caught. Missing
@@ -58,17 +58,17 @@ from collections import Counter
 
 # Naming collisions: gazelle names a crate's lib/bin/crate-test after the Cargo
 # package name (with dashes) or `<crate>_test`; the repo already ships the SAME
-# unit under a hand-chosen target name (e.g. `mcps_proxy_cli`, `proxy_unit_test`).
+# unit under a hand-chosen target name (e.g. `mcp_re_proxy_cli`, `proxy_unit_test`).
 # Adopting gazelle's name would duplicate, not add coverage.
 ALLOW_NAMING_COLLISION = {
-    "mcps-client-proxy-cli",       # == :mcps_client_proxy_cli (bin)
-    "mcps-client-proxy-cli_test",  # == crate unit test of the cli
-    "mcps-conformance",            # == conformance lib/bin, hand-named
-    "mcps-stdio-server",           # == :mcps_stdio_server (bin)
-    "mcps-demo-fileserver",        # == hand-named demo bin
-    "mcps-demo-server",            # == hand-named demo bin
-    "mcps-proxy",                  # == :mcps_proxy_cli (bin over src/main.rs)
-    "mcps_proxy_test",             # == :proxy_unit_test (crate=:mcps_proxy)
+    "mcp-re-client-proxy-cli",       # == :mcp_re_client_proxy_cli (bin)
+    "mcp-re-client-proxy-cli_test",  # == crate unit test of the cli
+    "mcp-re-conformance",            # == conformance lib/bin, hand-named
+    "mcp-re-stdio-server",           # == :mcp_re_stdio_server (bin)
+    "mcp-re-demo-fileserver",        # == hand-named demo bin
+    "mcp-re-demo-server",            # == hand-named demo bin
+    "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
+    "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
     "echo-inner",                  # == hand-named inner echo bin
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }
@@ -104,7 +104,7 @@ ALLOW_NON_HERMETIC = {
 # self-skips (no `cargo`), so no Bazel coverage is lost. Structurally cargo-only,
 # not "not yet wired".
 ALLOW_CARGO_ONLY_FIXTURE = {
-    # mcps-proxy/tests/mock-pkcs11: hermetic mock PKCS#11 provider `cdylib` built
+    # mcp-re-proxy/tests/mock-pkcs11: hermetic mock PKCS#11 provider `cdylib` built
     # + dlopen'd by pkcs11_keysource_e2e_test. A Bazel target would pull cryptoki-sys/
     # ed25519-dalek into a fixture the sandbox can't even run. See [[no-onprem-hsm-custody]].
     "mock_pkcs11",
@@ -129,7 +129,7 @@ ALLOWLIST = (
     | set(ALLOW_TRACKED_DRIFT)
 )
 
-# A quoted Bazel label at line start (first-party //, third-party @crates_mcps//:,
+# A quoted Bazel label at line start (first-party //, third-party @crates_mcp_re//:,
 # or local :). Captures the bare label value so trailing commas AND inline
 # comments (e.g. `"//x:y",  # #220 …`) don't defeat reorder-cancellation.
 LABEL_TOKEN_RE = re.compile(r'^"((?://|@|:)[^"]+)"')
@@ -176,10 +176,10 @@ def parse_per_file(diff: str) -> dict[str, list[tuple[str, str]]]:
 
 
 # Plain-form crate names whose `use` is satisfied by a KEPT feature-flavor dep
-# (MCPS-69): gazelle's `resolve` points `use mcps_host` at `:mcps_host`, but the
-# target already carries `:mcps_host_test_fixtures  # keep`, so a proposed plain
+# (MCPS-69): gazelle's `resolve` points `use mcp_re_host` at `:mcp_re_host`, but the
+# target already carries `:mcp_re_host_test_fixtures  # keep`, so a proposed plain
 # edge is a flavor artifact, not a missing edge.
-FLAVOR_PLAIN = {"mcps_host", "mcps_proxy", "mcps_transport"}
+FLAVOR_PLAIN = {"mcp_re_host", "mcp_re_proxy", "mcp_re_transport"}
 ATTR_OPEN_RE = re.compile(r"^\w+ = \[$")  # e.g. `deps = [`, `srcs = [`
 
 

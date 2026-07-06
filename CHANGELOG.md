@@ -2,12 +2,37 @@
 
 # Changelog
 
-All notable changes to MCP-S are recorded here. The format follows
+All notable changes to MCP Runtime Evidence (MCP-RE, formerly MCP-S) are
+recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until
 1.0 the public surface is explicitly unstable: minor versions may break API
 or wire-format compatibility while the design lines from
 [`docs/adr/`](docs/adr/) settle.
+
+## [Unreleased]
+
+### Changed
+
+- **Project renamed: MCP-S / MCPS → MCP Runtime Evidence (MCP-RE)** (#289,
+  Stages 2–4). A full identity rename, including the wire format:
+  - Crates and directories: `mcps-*` → `mcp-re-*`; Rust lib/module names
+    `mcps_*` → `mcp_re_*`; types `Mcps*` → `McpRe*`.
+  - **Wire format (BREAKING, pre-1.0):** envelope `_meta` namespaces
+    `se.syncom/mcps.*` → `se.syncom/mcp-re.*`, error tokens `mcps.*` →
+    `mcp-re.*`, canonicalization id `mcps-jcs-int53-json-v1` →
+    `mcp-re-jcs-int53-json-v1`, and the response-preimage domain-separation
+    tag. All conformance vectors and SDK oracle fixtures regenerated; peers
+    speaking the old vocabulary do not interoperate.
+  - Environment variables: `MCPS_*` → `MCP_RE_*`.
+  - Bazel module `mcps` → `mcp-re`; crate-universe hub `crates_mcps` →
+    `crates_mcp_re`; Helm chart `mcps-proxy` → `mcp-re-proxy`; SDK packages
+    `@mcps/sdk` → `@mcp-re/sdk` (npm) and `mcps-sdk` → `mcp-re-sdk` (PyPI,
+    Python module `mcp_re_sdk`).
+  - Preserved as historical record: `ADR-MCPS-NNN` / `MCPS-NNN` work-item
+    IDs and dated ADR filenames, grilling-seed docs, dated security scans,
+    prior CHANGELOG entries, and the published demo-video sources under
+    `demo/video/mcps-intro/`.
 
 ## [0.10.1] — 2026-07-05
 

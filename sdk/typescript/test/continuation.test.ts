@@ -18,7 +18,7 @@ import {
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, scenario } from "./fixtures.js";
 
-const REQUEST_META_KEY = "se.syncom/mcps.request";
+const REQUEST_META_KEY = "se.syncom/mcp-re.request";
 const SEED = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
 const DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
 const SERVER = RESPONSE_VECTORS.server;

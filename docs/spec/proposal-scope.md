@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Proposal Scope
+# MCP-RE Proposal Scope
 
-Purpose: state what MCP-S 0.5 proposal-readiness includes and excludes over draft-01.
+Purpose: state what MCP-RE 0.5 proposal-readiness includes and excludes over draft-01.
 
-**MCP-S can protect messages that carry extension data, but does not define the semantics of those extensions.**
+**MCP-RE can protect messages that carry extension data, but does not define the semantics of those extensions.**
 
 ## Scope statement
 
-MCP-S 0.5 is a proposal-readiness release. Its work is documentation, conformance,
+MCP-RE 0.5 is a proposal-readiness release. Its work is documentation, conformance,
 and claim hardening over the existing `draft-01` wire envelope — making every
 claim reviewable and traceable to a green test — not new protocol mechanism. It
 adds no capability that `draft-01` cannot already carry, and it reuses the existing
@@ -16,7 +16,7 @@ ADRs for any decision it touches rather than re-deciding them.
 
 ## draft-01 freeze
 
-**MCP-S 0.5 is proposal-readiness over draft-01. No wire-envelope changes. Field
+**MCP-RE 0.5 is proposal-readiness over draft-01. No wire-envelope changes. Field
 gaps become draft-02 work.**
 
 0.5 adds zero wire-envelope fields; request and response envelopes are unchanged.
@@ -30,7 +30,7 @@ field change.
 ## Authorization — bind, not interpret
 
 Authorization in 0.5 is wording only; it adds no new authorization mechanism.
-MCP-S Core *binds* authorization and leaves *interpretation* to a configured
+MCP-RE Core *binds* authorization and leaves *interpretation* to a configured
 profile ([ADR-MCPS-013](../adr/adr-mcps-013.md)):
 
 - **Core binds `authorization_hash`.** Core carries the opaque

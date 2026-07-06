@@ -1,6 +1,6 @@
-# MCP-S — nested Bazel module (clean-room build-graph firewall)
+# MCP-RE — nested Bazel module (clean-room build-graph firewall)
 #
-# This MODULE.bazel makes the MCP-S Cargo workspace at components/mcps
+# This MODULE.bazel makes the MCP-RE Cargo workspace at components/mcp-re
 # buildable via Bazel with ZERO submodules and no parent monorepo. It
 # enforces the ADR-MCPS-001 clean-room firewall at the build-graph level:
 # the module sees only its own crates + the crates.io deps pinned in its
@@ -8,17 +8,17 @@
 #
 # It can be used in two ways:
 #
-#   1. Standalone: `cd components/mcps && bazel test //...`
+#   1. Standalone: `cd components/mcp-re && bazel test //...`
 #      Proves the subtree is self-contained — the canonical hermetic
-#      build/test for the publishable MCP-S workspace (ADR-MCPS-010/012).
+#      build/test for the publishable MCP-RE workspace (ADR-MCPS-010/012).
 #
 #   2. As a nested module of the root monorepo via:
-#          bazel_dep(name = "mcps", version = "0.0.1")
+#          bazel_dep(name = "mcp-re", version = "0.0.1")
 #          local_path_override(
-#              module_name = "mcps",
-#              path = "components/mcps",
+#              module_name = "mcp-re",
+#              path = "components/mcp-re",
 #          )
-#      Then targets become accessible as `@mcps//mcps-core:mcps_core`
+#      Then targets become accessible as `@mcp-re//mcp-re-core:mcp_re_core`
 #      from anywhere in the parent workspace.
 #
 # Versions and toolchain pin to the root monorepo's shared Rust pins
@@ -27,7 +27,7 @@
 # parent.
 
 module(
-    name = "mcps",
+    name = "mcp-re",
     version = "0.0.1",
 )
 
@@ -36,7 +36,7 @@ bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "platforms", version = "1.0.0")
 
-# OCI image packaging of the production proxy artifact (mcps_proxy_ext) — pinned
+# OCI image packaging of the production proxy artifact (mcp_re_proxy_ext) — pinned
 # to the SAME versions as the root monorepo (infrastructure/config/build) so the
 # nested module stays consistent with the parent's shared deps.
 bazel_dep(name = "rules_oci", version = "2.0.0")
@@ -97,19 +97,19 @@ use_repo(zig_toolchains, "zig_sdk")
 # Cargo dependencies via crate_universe
 ########################################
 #
-# Reads components/mcps' own Cargo.toml + Cargo.lock and exposes every
-# external crate as `@crates_mcps//:<crate-name>`. The hub MUST be named
-# `crates_mcps` so the existing `@crates_mcps//:...` references in the
+# Reads components/mcp-re' own Cargo.toml + Cargo.lock and exposes every
+# external crate as `@crates_mcp_re//:<crate-name>`. The hub MUST be named
+# `crates_mcp_re` so the existing `@crates_mcp_re//:...` references in the
 # per-crate BUILD files keep resolving unchanged whether the module is
 # built standalone or as a nested module of the root.
 
 crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
 crate.from_cargo(
-    name = "crates_mcps",
+    name = "crates_mcp_re",
     cargo_lockfile = "//:Cargo.lock",
     manifests = ["//:Cargo.toml"],
 )
-use_repo(crate, "crates_mcps")
+use_repo(crate, "crates_mcp_re")
 
 ########################################
 # OCI base image (distroless glibc + libstdc++ for the C FFI deps)
@@ -143,12 +143,12 @@ use_repo(
 # first-party `rust_*` targets and their first-party `deps` edges. Combined with
 # the `# gazelle:map_kind` directives in the root BUILD.bazel, generated targets
 # use the house `nt_rust_*` macros; third-party edges resolve to the existing
-# `@crates_mcps//:...` hub (see `# gazelle:rust_crates_prefix`). This makes the
+# `@crates_mcp_re//:...` hub (see `# gazelle:rust_crates_prefix`). This makes the
 # hand-maintained first-party deps surface — the entire #220 drift class —
 # generated instead of hand-written. A CI staleness gate (MCPS-70) makes it stick.
 #
 # These are dev/tooling-only bazel_deps (host-side gazelle binary); they do not
-# enter the runtime graph of any mcps crate or the published artifacts.
+# enter the runtime graph of any mcp-re crate or the published artifacts.
 
 bazel_dep(name = "gazelle", version = "0.51.3", dev_dependency = True)
 bazel_dep(name = "gazelle_rust", version = "0.1.0", dev_dependency = True)

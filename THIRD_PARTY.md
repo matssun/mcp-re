@@ -2,11 +2,11 @@
 
 # Third-Party Dependencies
 
-This document records the dependency-license policy for MCP-S.
+This document records the dependency-license policy for MCP-RE.
 
 ## Policy
 
-MCP-S should use dependencies that are compatible with Apache-2.0 distribution and with the goal of future MCP ecosystem adoption.
+MCP-RE should use dependencies that are compatible with Apache-2.0 distribution and with the goal of future MCP ecosystem adoption.
 
 Security-sensitive dependencies should be pinned through the repository's normal dependency-locking mechanism.
 
@@ -26,7 +26,7 @@ Fill this table from the repository's lockfiles and dependency manifests before 
 
 Before public release, replace `TBD` values with verified license information from package metadata.
 
-If a dependency has a restrictive or unclear license, resolve it before proposing MCP-S upstream.
+If a dependency has a restrictive or unclear license, resolve it before proposing MCP-RE upstream.
 
 ## Supply-chain note
 

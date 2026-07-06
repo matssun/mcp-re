@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Architecture Decision Records
+# MCP-RE Architecture Decision Records
 
-This directory holds the Architecture Decision Records that govern MCP-S.
+This directory holds the Architecture Decision Records that govern MCP-RE.
 
 Each ADR records the context, decision, rationale, alternatives, and
 consequences of one architectural choice. They are intentionally short — the
@@ -37,19 +37,19 @@ maintainable as the project evolves.
 | [ADR-MCPS-022](adr-mcps-022.md) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS (v0.3 sketch) |
 | [ADR-MCPS-023](adr-mcps-023.md) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion (v0.3 sketch) |
 | [ADR-MCPS-024](adr-mcps-024.md) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) — v0.3 RC delta |
-| [ADR-MCPS-025](adr-mcps-025.md) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 — v0.3 RC delta |
+| [ADR-MCPS-025](adr-mcps-025.md) | Untrusted Transport Routing Headers — MCP-RE Composition with SEP-2243 — v0.3 RC delta |
 | [ADR-MCPS-026](adr-mcps-026.md) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) — v0.3 RC delta |
-| [ADR-MCPS-027](adr-mcps-027.md) | Extension Identifier Reassignment to `se.syncom/mcps` (supersedes ADR-MCPS-010 identifier) |
+| [ADR-MCPS-027](adr-mcps-027.md) | Extension Identifier Reassignment to `se.syncom/mcp-re` (supersedes ADR-MCPS-010 identifier) |
 | [ADR-MCPS-028](adr-mcps-028.md) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) |
-| [ADR-MCPS-030](adr-mcps-030.md) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded (the former ADR-MCPS-029 manifest design was removed and relocated to `mcp-tool-catalog-integrity` ADR-MTCI-002) |
-| [ADR-MCPS-031](adr-mcps-031.md) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope (Proposed) |
+| [ADR-MCPS-030](adr-mcps-030.md) | MCP-RE Core Is Method-Transparent — Tool Catalog Integrity Is Excluded (the former ADR-MCPS-029 manifest design was removed and relocated to `mcp-tool-catalog-integrity` ADR-MTCI-002) |
+| [ADR-MCPS-031](adr-mcps-031.md) | MCP-RE 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope (Proposed) |
 | [ADR-MCPS-032](adr-mcps-032.md) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs (Proposed) |
 | [ADR-MCPS-033](adr-mcps-033.md) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A (Proposed) |
 | [ADR-MCPS-034](adr-mcps-034.md) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard (Proposed) |
-| [ADR-MCPS-035](adr-mcps-035.md) | MCP-S Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy (Proposed) |
+| [ADR-MCPS-035](adr-mcps-035.md) | MCP-RE Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy (Proposed) |
 | [ADR-MCPS-036](adr-mcps-036.md) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine (Proposed) |
-| [ADR-MCPS-043](adr-mcps-043.md) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy (Accepted, v0.7) |
-| [ADR-MCPS-044](adr-mcps-044.md) | Client-Side MCP-S Integration Model (Proposed, v0.7/v0.8) |
+| [ADR-MCPS-043](adr-mcps-043.md) | MCP-RE Discovery, Capability Advertisement, and Enforcement Policy (Accepted, v0.7) |
+| [ADR-MCPS-044](adr-mcps-044.md) | Client-Side MCP-RE Integration Model (Proposed, v0.7/v0.8) |
 | [ADR-MCPS-045](adr-mcps-045.md) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop (Accepted, v0.7) |
 | [ADR-MCPS-046](adr-mcps-046.md) | Signed Rejection Receipts (Proposed, v0.7+) |
 | [ADR-MCPS-047](adr-mcps-047.md) | Stateless Multi-Round-Trip Continuation Evidence (Accepted, v0.8) |

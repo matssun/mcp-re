@@ -1,0 +1,41 @@
+[package]
+name = "mcp-re-conformance"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-RE black-box conformance runner (object, stdio, and Streamable HTTP harnesses)."
+
+[dependencies]
+# Object/stdio/HTTP harnesses depend on mcp-re-core plus the serde subset. The
+# acceptance milestone (MCPS-017) also drives the sidecar, so the harness
+# library depends on mcp-re-proxy to build the documented proxy target.
+mcp-re-core = { path = "../mcp-re-core" }
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The acceptance test drives the harness end-to-end via the host-side signer.
+[dev-dependencies]
+mcp-re-host = { path = "../mcp-re-host" }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
+# MCPS-50 (#197): the discovery/enforcement conformance corpus exercises the real
+# client decision surface (response verify -> classify -> enforce -> capability).
+mcp-re-client-core = { path = "../mcp-re-client-core" }
+
+[lib]
+name = "mcp_re_conformance"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-re-conformance"
+path = "src/main.rs"
+
+# A documented stdio MCP-RE server (MCPS-012/017) used as a child process by the
+# stdio + acceptance conformance tests. In Bazel this is built as a separate
+# rust_binary and delivered to tests via runfiles; under Cargo we surface it as
+# a normal `[[bin]]` so the build.rs fallback can find it at
+# `target/<profile>/mcp-re-stdio-server` and the tests don't depend on Bazel.
+[[bin]]
+name = "mcp-re-stdio-server"
+path = "src/stdio_server_main.rs"

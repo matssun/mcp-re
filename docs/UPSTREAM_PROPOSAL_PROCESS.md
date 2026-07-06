@@ -1,17 +1,17 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Upstream Proposal Process
+# MCP-RE Upstream Proposal Process
 
-This document describes the intended path for proposing MCP-S to the MCP project.
+This document describes the intended path for proposing MCP-RE to the MCP project.
 
 ## Status
 
-MCP-S is currently an experimental third-party extension proposal. It should not be described as official MCP unless accepted through the relevant governance process.
+MCP-RE is currently an experimental third-party extension proposal. It should not be described as official MCP unless accepted through the relevant governance process.
 
 ## Recommended sequence
 
 1. Finish the internal security and test evidence package.
-2. Publish or prepare the MCP-S repository under a third-party extension identifier.
+2. Publish or prepare the MCP-RE repository under a third-party extension identifier.
 3. Clearly label the project as experimental and unofficial.
 4. Prepare a concise extension proposal brief.
 5. Open a discussion with the MCP community.
@@ -25,7 +25,7 @@ MCP-S is currently an experimental third-party extension proposal. It should not
 Incubation identifier:
 
 ```text
-se.syncom/mcps
+se.syncom/mcp-re
 ```
 
 Do not use official MCP-controlled identifiers unless accepted.

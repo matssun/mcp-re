@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Threat-Coverage Matrix
+# MCP-RE Threat-Coverage Matrix
 
-Purpose: map each external (NSA-identified) MCP-security concern to an MCP-S coverage
+Purpose: map each external (NSA-identified) MCP-security concern to an MCP-RE coverage
 level and the §A capability that backs it — **derived from [`v0.5-claim-matrix.md`](./v0.5-claim-matrix.md) §A**.
 
 This matrix carries **no independent conformance/test mapping**. It is one node on the
@@ -36,15 +36,15 @@ it (Out of scope). It does not restate claim wording — read the strength off t
 | Ingress / transport-identity spoofing at the edge | deployment-dependent | §A *Ingress binding* (*deployment-dependent; see §B Axis 4*) |
 | Signing-key compromise blast radius | deployment-dependent | §A *Key custody / blast radius* (*deployment-dependent; see §B Axis 3*) |
 | Confused-deputy / delegated-authority abuse (`on_behalf_of`, `authorization_hash`) | **Partial** | §A *Delegation / authorization binding* (coverage **Partial** — Core **binds**, the AuthorizationProfile interprets; [ADR-MCPS-013](../adr/adr-mcps-013.md)) |
-| Tool poisoning / malicious or drifted tool descriptors (rug pull) | **Out of scope** | Non-goal: MCP-S Core is method-transparent and does not interpret method semantics ([ADR-MCPS-030](../adr/adr-mcps-030.md)). Guard: method-transparency pair (verdict independent of JSON-RPC method) + the static drift guard banning concrete MCP method-name literals in `mcps-core/src` |
+| Tool poisoning / malicious or drifted tool descriptors (rug pull) | **Out of scope** | Non-goal: MCP-RE Core is method-transparent and does not interpret method semantics ([ADR-MCPS-030](../adr/adr-mcps-030.md)). Guard: method-transparency pair (verdict independent of JSON-RPC method) + the static drift guard banning concrete MCP method-name literals in `mcp-re-core/src` |
 | Unsafe / malicious tool *output* handling | **Out of scope** | Non-goal: §A *Tool safety* = **none, by design** ([ADR-MCPS-030](../adr/adr-mcps-030.md)). Guard: same method-transparency pair — Core makes no claim about an invoked tool's output |
-| Tool sandboxing / execution-environment isolation | **Out of scope** | Non-goal: tool-invocation policy and method-semantics enforcement live **outside** Core (MTCI / policy / host layer, each with its own ADR — [ADR-MCPS-030](../adr/adr-mcps-030.md)). Guard: the method-transparency drift guard keeps method-aware logic out of `mcps-core/src` |
+| Tool sandboxing / execution-environment isolation | **Out of scope** | Non-goal: tool-invocation policy and method-semantics enforcement live **outside** Core (MTCI / policy / host layer, each with its own ADR — [ADR-MCPS-030](../adr/adr-mcps-030.md)). Guard: the method-transparency drift guard keeps method-aware logic out of `mcp-re-core/src` |
 
 ## Scope note
 
 The three **Out of scope** rows are the adjacent tool-catalog / tool-execution domain that
-is most often confused with MCP-S scope. Per [ADR-MCPS-030](../adr/adr-mcps-030.md): MCP-S
+is most often confused with MCP-RE scope. Per [ADR-MCPS-030](../adr/adr-mcps-030.md): MCP-RE
 can protect messages that *carry* extension data (including tool-catalog data), but does not
 define the semantics of those extensions. Those concerns belong to a separate MCP extension
-or profile (MTCI / `mcps-policy` / the host layer) and compose with MCP-S without being part
+or profile (MTCI / `mcp-re-policy` / the host layer) and compose with MCP-RE without being part
 of Core.

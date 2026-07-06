@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: Apache-2.0
+{{- include "mcp-re-proxy.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-re-proxy.fullname" . }}
+  labels:
+    {{- include "mcp-re-proxy.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mcp-re-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-re-proxy.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # MCPS-88: SIGTERM triggers a graceful drain (stop accepting, finish the
+      # in-flight request, exit 0). Give the kubelet headroom over the request
+      # deadline so a rollout drains rather than kills.
+      terminationGracePeriodSeconds: {{ .Values.drainGracePeriodSeconds }}
+      containers:
+        - name: mcp-re-proxy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--bind"
+            - "0.0.0.0:{{ .Values.bindPort }}"
+            {{- if .Values.strict }}
+            - "--strict"
+            {{- end }}
+            {{- if .Values.fleet }}
+            - "--fleet"
+            {{- end }}
+            - "--inner-session"
+            - {{ .Values.innerSession | quote }}
+            - "--replay-cache"
+            - "shared"
+            - "--replay-redis-url"
+            - {{ .Values.replay.redisUrl | quote }}
+            - "--replay-durability-tier"
+            - {{ .Values.replay.durabilityTier | quote }}
+            - "--revocation-tier"
+            - {{ .Values.revocation.tier | quote }}
+            {{- if .Values.revocation.trustEpochRedisUrl }}
+            - "--trust-epoch-redis-url"
+            - {{ .Values.revocation.trustEpochRedisUrl | quote }}
+            - "--trust-epoch-key"
+            - {{ .Values.revocation.trustEpochKey | quote }}
+            {{- end }}
+            - "--max-client-cert-lifetime"
+            - "{{ .Values.maxClientCertLifetimeSeconds }}"
+            - "--audience"
+            - {{ .Values.identity.audience | quote }}
+            - "--server-signer"
+            - {{ .Values.identity.serverSigner | quote }}
+            - "--server-key-id"
+            - {{ .Values.identity.serverKeyId | quote }}
+            - "--key-source"
+            - "file"
+            - "--signing-key-seed"
+            - "{{ .Values.tls.mountPath }}/signing-seed"
+            - "--tls-cert"
+            - "{{ .Values.tls.mountPath }}/tls.crt"
+            - "--tls-key"
+            - "{{ .Values.tls.mountPath }}/tls.key"
+            - "--client-ca"
+            - "{{ .Values.tls.mountPath }}/client-ca.pem"
+            - "--trust"
+            - "{{ .Values.tls.mountPath }}/trust.json"
+            # --inner-command consumes the remainder of argv, so it is LAST.
+            - "--inner-command"
+            {{- range .Values.inner.command }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: mcp-re
+              containerPort: {{ .Values.bindPort }}
+          # MCPS-88: the proxy speaks MCP-RE over TLS (no HTTP server), so the
+          # honest probe is a tcpSocket check against the bind port — "port
+          # accepting" genuinely means "ready to serve".
+          readinessProbe:
+            tcpSocket:
+              port: mcp-re
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mcp-re
+            periodSeconds: 10
+          volumeMounts:
+            - name: material
+              mountPath: {{ .Values.tls.mountPath | quote }}
+              readOnly: true
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: material
+          secret:
+            secretName: {{ .Values.tls.secretName | quote }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

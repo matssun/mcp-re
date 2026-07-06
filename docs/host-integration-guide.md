@@ -1,20 +1,20 @@
-# MCP-S Host Integration Guide
+# MCP-RE Host Integration Guide
 
 **Audience:** an engineer integrating an MCP **host / client** (the agent's local
-ambassador) so it signs MCP-S requests and verifies the bound responses.
+ambassador) so it signs MCP-RE requests and verifies the bound responses.
 
-This guide explains **how to use** the `mcps-host` crate. The rules it enforces
-are in the [MCP-S Core Specification](spec/mcps-core-spec.md);
+This guide explains **how to use** the `mcp-re-host` crate. The rules it enforces
+are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md);
 the rationale is in ADR-MCPS-003
 ([view](adr/adr-mcps-003.md), signing locus) and
 ADR-MCPS-015 ([view](adr/adr-mcps-015.md),
 client host-session architecture). The proofs are the
-`//mcps-host:*` test targets (see the
-[conformance manifest](../mcps-conformance/conformance_manifest.json)).
+`//mcp-re-host:*` test targets (see the
+[conformance manifest](../mcp-re-conformance/conformance_manifest.json)).
 
 ## The two types
 
-Source: [`mcps-host/src/`](../mcps-host/src/).
+Source: [`mcp-re-host/src/`](../mcp-re-host/src/).
 
 - **`HostSigner`** (`signer.rs`) — the local key/actor context. It owns the
   agent's Ed25519 signing key privately and turns a request into signed wire
@@ -43,11 +43,11 @@ the deterministic providers (`FixedClock`, `SeededNonceSource`) in tests so
 signed output is reproducible.
 
 ```rust
-use mcps_host::HostSession;
-use mcps_host::HostSigner;
-use mcps_host::SystemClock;
-use mcps_host::SystemNonceSource;
-use mcps_core::SigningKey;
+use mcp_re_host::HostSession;
+use mcp_re_host::HostSigner;
+use mcp_re_host::SystemClock;
+use mcp_re_host::SystemNonceSource;
+use mcp_re_core::SigningKey;
 use serde_json::json;
 use serde_json::Value;
 
@@ -86,7 +86,7 @@ request/response correlation mechanism.
 ## Verifying a response
 
 ```rust
-use mcps_core::TrustResolver; // your resolver (e.g. InMemoryTrustResolver)
+use mcp_re_core::TrustResolver; // your resolver (e.g. InMemoryTrustResolver)
 
 let verified = session.verify_response(&response_bytes, &resolver)?;
 // `verified` is a VerifiedResponse; the pending entry for its id is now evicted.
@@ -104,9 +104,9 @@ correlation contract:
 
 | Situation | Result |
 | --- | --- |
-| Response signed over the **wrong** `request_hash` | rejected (`mcps.response_hash_mismatch`) even if the signature itself is valid |
-| Response whose `id` was **never signed** (unknown id) | `mcps.missing_envelope` — no stored hash to bind against, so it refuses to trust the response |
-| A second `sign_*` reusing an **in-flight** id | `mcps.replay_detected` — refuses to clobber the stored hash (which would let a response bind to the wrong request); the id is signable again only after eviction |
+| Response signed over the **wrong** `request_hash` | rejected (`mcp-re.response_hash_mismatch`) even if the signature itself is valid |
+| Response whose `id` was **never signed** (unknown id) | `mcp-re.missing_envelope` — no stored hash to bind against, so it refuses to trust the response |
+| A second `sign_*` reusing an **in-flight** id | `mcp-re.replay_detected` — refuses to clobber the stored hash (which would let a response bind to the wrong request); the id is signable again only after eviction |
 
 Eviction and introspection:
 
@@ -127,7 +127,7 @@ Eviction and introspection:
 If you manage freshness, nonces, and correlation yourself, call `HostSigner`
 directly. You then supply `nonce`, `issued_at`, and `expires_at` explicitly and
 must store the `request_hash` yourself for response verification (which you do
-with the re-exported `mcps_core::verify_response`). Prefer `HostSession` unless
+with the re-exported `mcp_re_core::verify_response`). Prefer `HostSession` unless
 you have a specific reason not to — it exists precisely so callers do not
 hand-roll these three responsibilities.
 

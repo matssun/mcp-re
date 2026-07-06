@@ -3,7 +3,7 @@
  *
  * `verifyResponse` runs the proxy's return-leg chain: verify_signed_response ->
  * classify_response_result -> decide -> audit_for_decision. A fail-closed verification
- * is a *result* (carrying the frozen `mcps.*` wire reason), not a thrown error. Each
+ * is a *result* (carrying the frozen `mcp-re.*` wire reason), not a thrown error. Each
  * scenario asserts the TS binding reproduces the oracle's decision exactly.
  */
 import { describe, expect, it } from "vitest";
@@ -49,7 +49,7 @@ describe("verifyResponse edge cases", () => {
   it("valid response is accepted and binds the request", () => {
     const res = run(scenario("valid"), resolverPublicKey());
     expect(res.accepted && res.decision === "accept").toBe(true);
-    expect(res.path).toBe("mcps-verified");
+    expect(res.path).toBe("mcp-re-verified");
     expect(res.serverSigner).toBe(SERVER.signer_id);
     expect(res.requestHash).toBe(RESPONSE_VECTORS.client_request_hash);
   });
@@ -65,7 +65,7 @@ describe("verifyResponse edge cases", () => {
   it("an empty resolver fails closed on the server signer", () => {
     const res = run(scenario("valid"), new TrustResolver());
     expect(res.decision).toBe("fail-closed");
-    expect(res.reason).toBe("mcps.actor_binding_failed");
+    expect(res.reason).toBe("mcp-re.actor_binding_failed");
   });
 
   it("rejects a bad public key length", () => {

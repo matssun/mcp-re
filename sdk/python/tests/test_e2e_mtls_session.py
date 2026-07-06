@@ -1,13 +1,13 @@
-"""Live full-`ClientSession` MCP-S over mTLS — step (ii).
+"""Live full-`ClientSession` MCP-RE over mTLS — step (ii).
 
 Where step (i) (`test_e2e_mtls.py`) drove ONE raw signed request per mTLS
 connection, this runs a REAL `mcp.ClientSession` — `initialize()` then
-`call_tool("read_file")` — through :func:`mcps_sdk.connect_mtls_http`, against the
-REAL production `mcps-proxy` fronting the REAL `mcps-demo-fileserver`:
+`call_tool("read_file")` — through :func:`mcp_re_sdk.connect_mtls_http`, against the
+REAL production `mcp-re-proxy` fronting the REAL `mcp-re-demo-fileserver`:
 
     ClientSession.initialize()
-      -> McpsHttpTransport signs the `initialize` request
-      -> one mTLS POST -> mcps-proxy verifies -> fileserver -> signed InitializeResult
+      -> McpReHttpTransport signs the `initialize` request
+      -> one mTLS POST -> mcp-re-proxy verifies -> fileserver -> signed InitializeResult
       -> verified + stripped -> ClientSession negotiates the protocol version
     ClientSession sends notifications/initialized
       -> dropped (no fire-and-forget channel; fileserver is stateless)
@@ -22,7 +22,7 @@ read-stream Exception would instead hang the call — see http_transport.py).
 
 Materials come from `DemoFixtures` via the `emit_mtls_fixtures` example; needs the
 built binaries + cargo (skips cleanly otherwise):
-    cargo build -p mcps-proxy && cargo build -p mcps-demo-fileserver
+    cargo build -p mcp-re-proxy && cargo build -p mcp-re-demo-fileserver
 """
 
 import json
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
+import mcp_re_sdk
 
 anyio = pytest.importorskip("anyio")
 pytest.importorskip("mcp")
@@ -44,13 +44,13 @@ from mcp.shared.message import SessionMessage  # noqa: E402
 from mcp.types import JSONRPCMessage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
-PROXY = ROOT / "target" / "debug" / "mcps-proxy"
-FILESERVER = ROOT / "target" / "debug" / "mcps-demo-fileserver"
+PROXY = ROOT / "target" / "debug" / "mcp-re-proxy"
+FILESERVER = ROOT / "target" / "debug" / "mcp-re-demo-fileserver"
 
 if not (PROXY.exists() and FILESERVER.exists() and shutil.which("cargo")):
     pytest.skip(
-        "needs cargo + built mcps-proxy and mcps-demo-fileserver "
-        "(cargo build -p mcps-proxy -p mcps-demo-fileserver)",
+        "needs cargo + built mcp-re-proxy and mcp-re-demo-fileserver "
+        "(cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver)",
         allow_module_level=True,
     )
 
@@ -66,11 +66,11 @@ FILE_TEXT = "hello from the inner fileserver\n"
 
 @pytest.fixture(scope="module")
 def proxy():
-    out = tempfile.mkdtemp(prefix="mcps_mtls_sess_fx_")
-    demo = tempfile.mkdtemp(prefix="mcps_mtls_sess_root_")
+    out = tempfile.mkdtemp(prefix="mcp_re_mtls_sess_fx_")
+    demo = tempfile.mkdtemp(prefix="mcp_re_mtls_sess_root_")
     (Path(demo) / "greeting.txt").write_text(FILE_TEXT)
     subprocess.run(
-        ["cargo", "run", "-q", "-p", "mcps-demo", "--example", "emit_mtls_fixtures", "--", out],
+        ["cargo", "run", "-q", "-p", "mcp-re-demo", "--example", "emit_mtls_fixtures", "--", out],
         cwd=ROOT, check=True, capture_output=True,
     )
     p = subprocess.Popen(
@@ -98,7 +98,7 @@ def proxy():
     threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
     if port is None:
         p.terminate()
-        pytest.fail("mcps-proxy did not report a listening port")
+        pytest.fail("mcp-re-proxy did not report a listening port")
     try:
         yield {"port": port, "out": out, "demo": demo}
     finally:
@@ -112,9 +112,9 @@ def proxy():
 
 
 def _config(resolver, expected_server_signer):
-    return mcps_sdk.McpsConfig(
-        signer=mcps_sdk.Signer.software(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY),
-        policy=mcps_sdk.SignerPolicy(SIGNER, environment="dev-test", require_mcps=True),
+    return mcp_re_sdk.McpReConfig(
+        signer=mcp_re_sdk.Signer.software(SIGNER_SEED, signer_id=SIGNER, key_id=SIGNER_KEY),
+        policy=mcp_re_sdk.SignerPolicy(SIGNER, environment="dev-test", require_mcp_re=True),
         resolver=resolver,
         audience=AUDIENCE,
         on_behalf_of=ON_BEHALF_OF,
@@ -122,22 +122,22 @@ def _config(resolver, expected_server_signer):
         # decoded capability bytes, computed by the audited core — not a constant.
         # The route is fail-closed to opaque-bytes only. The production proxy accepts
         # the well-formed binding (bind-not-interpret) over real mTLS.
-        authorization=mcps_sdk.OpaqueBytesProvider(b"demo-capability-token-decoded-bytes"),
-        authorization_policy=mcps_sdk.AuthorizationBindingPolicy.opaque_only(),
+        authorization=mcp_re_sdk.OpaqueBytesProvider(b"demo-capability-token-decoded-bytes"),
+        authorization_policy=mcp_re_sdk.AuthorizationBindingPolicy.opaque_only(),
         expected_server_signer=expected_server_signer,
-        enforcement_mode="require_mcps",
+        enforcement_mode="require_mcp_re",
         ttl_seconds=300,
     )
 
 
 def _trusting_resolver():
-    r = mcps_sdk.TrustResolver()
+    r = mcp_re_sdk.TrustResolver()
     r.insert_dev_seed(SERVER, SERVER_KEY, SERVER_SEED)
     return r
 
 
 def _conn(proxy, config):
-    return mcps_sdk.connect_mtls_http(
+    return mcp_re_sdk.connect_mtls_http(
         "127.0.0.1", proxy["port"], config,
         server_ca=f"{proxy['out']}/server_ca.pem",
         client_cert=f"{proxy['out']}/client_cert.pem",
@@ -156,7 +156,7 @@ def test_clientsession_initialize_and_call_over_mtls(proxy):
         with anyio.fail_after(30):
             async with _conn(proxy, config) as session:
                 init = await session.initialize()
-                assert init.serverInfo.name == "mcps-demo-fileserver"
+                assert init.serverInfo.name == "mcp-re-demo-fileserver"
                 assert init.protocolVersion == "2025-06-18"
                 result = await session.call_tool("read_file", {"path": "greeting.txt"})
                 assert result.content[0].text == FILE_TEXT
@@ -171,9 +171,9 @@ def _sm(rid, method, params):
 
 def test_http_transport_drives_delete_files_continuation_over_mtls(proxy):
     """ADR-047 continuation END TO END over real mTLS: `delete_files` elicits an
-    InputRequiredResult, then the client answers it. The real `mcps-proxy` signs BOTH
+    InputRequiredResult, then the client answers it. The real `mcp-re-proxy` signs BOTH
     responses over the actual runtime request hashes, so this exercises
-    `McpsHttpTransport`'s own MRT threading — `self._mrt` recorded on the elicit leg,
+    `McpReHttpTransport`'s own MRT threading — `self._mrt` recorded on the elicit leg,
     bound on the answer leg — against the production PEP (not a fixture stand-in).
 
     Driven at the transport level (not through `ClientSession`) because the elicitation
@@ -184,14 +184,14 @@ def test_http_transport_drives_delete_files_continuation_over_mtls(proxy):
 
     async def run():
         config = _config(_trusting_resolver(), expected_server_signer=SERVER)
-        post = mcps_sdk.make_mtls_post_sync(
+        post = mcp_re_sdk.make_mtls_post_sync(
             "127.0.0.1", proxy["port"],
             server_ca=f"{proxy['out']}/server_ca.pem",
             client_cert=f"{proxy['out']}/client_cert.pem",
             client_key=f"{proxy['out']}/client_key.pem",
             server_name=SERVER_NAME,
         )
-        transport = mcps_sdk.McpsHttpTransport(post, config)
+        transport = mcp_re_sdk.McpReHttpTransport(post, config)
         with anyio.fail_after(30):
             async with transport as (read_stream, write_stream):
                 # Leg 1 — elicit: no inputResponses, so the server returns an
@@ -203,7 +203,7 @@ def test_http_transport_drives_delete_files_continuation_over_mtls(proxy):
                 elicit = await read_stream.receive()
                 em = json.loads(elicit.message.model_dump_json(by_alias=True, exclude_none=True))
                 assert em["result"]["resultType"] == "inputRequired"
-                assert "_meta" not in em["result"], "the MCP-S envelope must be stripped"
+                assert "_meta" not in em["result"], "the MCP-RE envelope must be stripped"
                 state = em["result"]["requestState"]
 
                 # Leg 2 — answer: inputResponses + the echoed requestState. The transport
@@ -233,11 +233,11 @@ def test_clientsession_fails_closed_when_server_untrusted(proxy):
     to the initialize id, so `ClientSession.initialize()` raises (it does NOT hang)."""
 
     async def run():
-        config = _config(mcps_sdk.TrustResolver(), expected_server_signer=None)
+        config = _config(mcp_re_sdk.TrustResolver(), expected_server_signer=None)
         with anyio.fail_after(30):
             async with _conn(proxy, config) as session:
                 with pytest.raises(McpError) as excinfo:
                     await session.initialize()
-                assert excinfo.value.error.message == "mcps.actor_binding_failed"
+                assert excinfo.value.error.message == "mcp-re.actor_binding_failed"
 
     anyio.run(run)

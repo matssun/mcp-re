@@ -1,0 +1,36 @@
+{
+  "id": "req-2",
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "se.syncom/mcp-re.request": {
+        "audience": "did:example:server-1",
+        "authorization_binding": {
+          "authorization_system_id": "acme-authz",
+          "binding_type": "authz-system-reference",
+          "digest_alg": "sha256",
+          "digest_value": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+          "reference_scheme_id": "acme/decision-v1",
+          "reference_value": "decision-123"
+        },
+        "canonicalization_id": "mcp-re-jcs-int53-json-v1",
+        "expires_at": "2026-05-28T20:05:00Z",
+        "issued_at": "2026-05-28T20:00:00Z",
+        "nonce": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",
+        "on_behalf_of": "did:example:user-1",
+        "signature": {
+          "alg": "Ed25519",
+          "key_id": "key-1",
+          "value": "w-yeD6Gg2-wTdNRibLIRgmPbNZfQCyu-7SGOg_mwnCk-uCKN4bth-6R7LVqG0-tHYkGGalJYTz6dGSCf_-jYBA"
+        },
+        "signer": "did:example:agent-1",
+        "version": "draft-02"
+      }
+    },
+    "arguments": {
+      "text": "hello"
+    },
+    "name": "echo"
+  }
+}

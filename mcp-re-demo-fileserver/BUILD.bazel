@@ -1,0 +1,69 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-045 (MCP-RE-EPIC-P6.5): the minimal, MCP-RE-UNAWARE demo MCP server the
+# sidecar protects. Plain MCP JSON-RPC over stdio (initialize / tools/list /
+# tools/call) with four file tools — list_files/read_file/stat (scope
+# `protected`) and write_file (scope `admin`) — confined to a demo root. Self-
+# contained (ADR-MCPS-001): depends only on the pure serde subset + thiserror
+# from the isolated crates_mcp_re hub — no other in-repo crate, no async runtime.
+# MAY use std::fs / std::io (it is a file server); mcp-re-core stays pure.
+nt_rust_library(
+    name = "mcp_re_demo_fileserver",
+    srcs = [
+        "src/error.rs",
+        "src/lib.rs",
+        "src/server.rs",
+        "src/stdio.rs",
+    ],
+    crate_name = "mcp_re_demo_fileserver",
+    edition = "2021",
+    deps = [
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:thiserror",
+    ],
+)
+
+# The stdio entrypoint: `mcp-re-demo-fileserver --demo-root <DIR>
+# [--received-log <PATH>]`. Wrapped by mcp-re-proxy as the inner subprocess; the
+# optional received-log records each dispatched tools/call for deny tests.
+nt_rust_binary(
+    name = "mcp_re_demo_fileserver_bin",
+    srcs = ["src/main.rs"],
+    crate_name = "mcp_re_demo_fileserver_bin",
+    edition = "2021",
+    deps = [
+        ":mcp_re_demo_fileserver",
+    ],
+)
+
+# Committed deterministic fixture root: a few sample files + one subdirectory.
+# Exposed as a filegroup so the test can receive it via runfiles.
+filegroup(
+    name = "demo_root_fixture",
+    srcs = glob(["demo_root/**"]),
+)
+
+# Black-box server tests: initialize / tools/list / the four tools' happy paths,
+# the demo-root escape refusals (read + write), write round-trips, size/UTF-8
+# limits, and the received-log receipt. The read-only demo_root fixture is
+# delivered via runfiles (DEMO_ROOT_README/$(rlocationpath) resolved against
+# TEST_SRCDIR); write tests use Bazel's TEST_TMPDIR, never the fixture.
+nt_rust_test(
+    name = "server_test",
+    srcs = ["tests/server_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        ":demo_root_fixture",
+        "demo_root/readme.txt",
+    ],
+    edition = "2021",
+    env = {"DEMO_ROOT_README": "$(rlocationpath demo_root/readme.txt)"},
+    deps = [
+        ":mcp_re_demo_fileserver",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S Project Status
+# MCP-RE Project Status
 
 ## Current status
 
-MCP-S is an experimental third-party security extension proposal for MCP.
+MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
@@ -18,7 +18,7 @@ lines are in [`docs/adr/`](adr/).
 
 The current implementation may claim:
 
-> MCP-S is production-hardened for single-node Rust-native deployments.
+> MCP-RE is production-hardened for single-node Rust-native deployments.
 
 This claim is bounded and should not be broadened without additional implementation, tests, and documentation.
 
@@ -29,8 +29,8 @@ The current demonstration and live-validation package proves:
 ### Single-node Rust-native end-to-end path
 
 - HostSession signs outbound requests; client transport verifies server
-  certificate and identity; mTLS to `mcps-proxy`;
-- `mcps-proxy` verifies object signatures, freshness/replay, and delegated
+  certificate and identity; mTLS to `mcp-re-proxy`;
+- `mcp-re-proxy` verifies object signatures, freshness/replay, and delegated
   authorization before dispatch;
 - caller-supplied verified context is stripped, sidecar-owned context injected;
 - a persistent inner MCP server handles multiple requests; denied requests never
@@ -39,15 +39,15 @@ The current demonstration and live-validation package proves:
 
 ### Four-hop client-to-server path as separate OS processes (v0.7)
 
-- A plain-MCP client → `mcps-client-proxy` (the local adoption bridge, signs
-  `draft-02` requests + verifies responses) → mTLS → `mcps-proxy` server PEP →
+- A plain-MCP client → `mcp-re-client-proxy` (the local adoption bridge, signs
+  `draft-02` requests + verifies responses) → mTLS → `mcp-re-proxy` server PEP →
   unmodified inner MCP server, organized as a runnable persona ladder
   (ADR-MCPS-045), with scoped deny-before-dispatch authorization and
   transport-identity binding on the wire.
 
 ### Client SDKs — Python and TypeScript (v0.7 / v0.8)
 
-- Both SDKs bind to the SAME audited `mcps-client-core` (the Python SDK via
+- Both SDKs bind to the SAME audited `mcp-re-client-core` (the Python SDK via
   maturin/PyO3, the TypeScript SDK via napi-rs), so the signed preimage is
   byte-identical across languages, and both are exercised through the real
   four-hop matrix. Non-exporting custody (HSM/KMS-style callback signer) is proven
@@ -55,7 +55,7 @@ The current demonstration and live-validation package proves:
 
 ### Stateless multi-round-trip continuation (v0.8)
 
-- Request-associated elicitation folded into strict MCP-S as signed
+- Request-associated elicitation folded into strict MCP-RE as signed
   multi-round-trip continuation evidence (ADR-MCPS-047), fail-closed on arbitrary
   server push.
 
@@ -66,7 +66,7 @@ The current demonstration and live-validation package proves:
   honesty pass: a strict short-lived-cert lifetime ceiling and static-CRL
   fail-closed-on-stale (ADR-MCPS-023 §A1).
 - **Mode C (`attested_ingress`, explicit opt-in, v0.10)** — a controlled ingress
-  attestor signs a request-bound `mcps/lb-ingress-assertion/v2` assertion the node
+  attestor signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the node
   verifies over a pinned attestor→node channel. This is **attested delegation**,
   NOT end-to-end mTLS (the load balancer witnesses proof-of-possession and stays in
   the trusted computing base); the node binds the assertion (bind-not-interpret)
@@ -76,7 +76,7 @@ The current demonstration and live-validation package proves:
 
 ### Horizontally-scaled fleet deployment (v0.10.1)
 
-MCP-S runs as N identical replicas behind a load balancer with no security claim
+MCP-RE runs as N identical replicas behind a load balancer with no security claim
 weakened, behind an explicit `--fleet` flag that is orthogonal to `--strict`
 (ADR-MCPS-049). The heavy replay/trust primitives already existed (v0.3 shared
 tiers); v0.10.1 composes, *proves*, and documents the fleet and closes the
@@ -101,7 +101,7 @@ node-local coherence gaps:
 ### Live Google Cloud KMS validation (v0.5.1)
 
 - **Object signing against real Cloud KMS** (`EC_SIGN_ED25519`): signatures
-  produced by a live `asymmetricSign` and verified by `mcps-core`; the private
+  produced by a live `asymmetricSign` and verified by `mcp-re-core`; the private
   key never leaves KMS (`getPublicKey`/`asymmetricSign` only).
 - **Delegated TLS server-signing against real Cloud KMS**: a fully-validating
   rustls mTLS handshake completes only because a live KMS `asymmetricSign`
@@ -114,10 +114,10 @@ node-local coherence gaps:
 
 ## Not yet claimed
 
-MCP-S does not currently claim:
+MCP-RE does not currently claim:
 
 - official MCP extension status;
-- universal enterprise authorization (MCP-S binds authorization decisions; it
+- universal enterprise authorization (MCP-RE binds authorization decisions; it
   does not interpret or replace an enterprise authz system);
 - an EMA (enterprise-managed authorization) implementation;
 - portable audit receipts;
@@ -143,4 +143,4 @@ MCP-S does not currently claim:
 
 ## Proposal readiness
 
-Before submitting MCP-S as an MCP extension proposal, ensure that the repository contains a clear specification, security boundary, test traceability document or manifest, runnable reference implementation, conformance vectors, demo evidence, explicit non-claims, and license/contribution files.
+Before submitting MCP-RE as an MCP extension proposal, ensure that the repository contains a clear specification, security boundary, test traceability document or manifest, runnable reference implementation, conformance vectors, demo evidence, explicit non-claims, and license/contribution files.

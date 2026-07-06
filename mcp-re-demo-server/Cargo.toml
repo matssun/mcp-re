@@ -1,0 +1,30 @@
+[package]
+name = "mcp-re-demo-server"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Ordinary, MCP-RE-unaware, LONG-LIVED stdio MCP server (demo target for the MCP-RE sidecar)."
+
+# MCPS-062 (MCP-RE-EPIC-P6.6B): an ORDINARY MCP server that knows nothing about
+# MCP-RE signing/envelopes/verified-context. Unlike the one-shot-friendly
+# `mcp-re-demo-fileserver`, this one models the full MCP lifecycle and is
+# LONG-LIVED: a single process serves an `initialize` handshake followed by
+# many `tools/list` / `tools/call` requests, staying alive until stdin EOF (or
+# a modelled `shutdown`). It depends only on the pure serde subset plus
+# thiserror — no other in-repo crate, no async runtime, no fs/network/DB.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
+
+[lib]
+name = "mcp_re_demo_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-re-demo-server"
+path = "src/main.rs"

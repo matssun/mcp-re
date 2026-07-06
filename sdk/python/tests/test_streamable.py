@@ -1,8 +1,8 @@
 """Streamable-HTTP multi-path inbound decode + uniform verification.
 
 Covers the SSE framing parser, the content-type-aware `decode_inbound`, and that
-EVERY decode site (direct JSON and SSE) routes through the same MCP-S verification
-and server-initiated policy. The production `mcps-proxy` is JSON-only, so these are
+EVERY decode site (direct JSON and SSE) routes through the same MCP-RE verification
+and server-initiated policy. The production `mcp-re-proxy` is JSON-only, so these are
 unit tests over golden response vectors (the same fixtures the transport uses) plus
 synthesized SSE framing — the decoder is the verification-correct layer a future
 streaming transport plugs into.
@@ -12,8 +12,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import mcps_sdk
-from mcps_sdk.streamable import decode_inbound, sse_data_events, verify_inbound_messages
+import mcp_re_sdk
+from mcp_re_sdk.streamable import decode_inbound, sse_data_events, verify_inbound_messages
 
 FIX = Path(__file__).parent / "fixtures"
 REQ = json.loads((FIX / "sign_request_vector.json").read_text())["inputs"]
@@ -24,15 +24,15 @@ TTL = 300
 
 
 def _config(**kw):
-    resolver = mcps_sdk.TrustResolver()
+    resolver = mcp_re_sdk.TrustResolver()
     resolver.insert_public_key(
         SERVER["signer_id"], SERVER["key_id"], bytes.fromhex(SERVER["public_key_hex"])
     )
     base = dict(
-        signer=mcps_sdk.Signer.software(
+        signer=mcp_re_sdk.Signer.software(
             bytes.fromhex(REQ["seed_hex"]), signer_id=REQ["signer"], key_id=REQ["key_id"]
         ),
-        policy=mcps_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcps=True),
+        policy=mcp_re_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcp_re=True),
         resolver=resolver,
         audience=REQ["audience"],
         on_behalf_of=REQ["on_behalf_of"],
@@ -42,7 +42,7 @@ def _config(**kw):
         ttl_seconds=TTL,
     )
     base.update(kw)
-    return mcps_sdk.McpsConfig(**base)
+    return mcp_re_sdk.McpReConfig(**base)
 
 
 def _valid_response() -> str:
@@ -50,7 +50,7 @@ def _valid_response() -> str:
 
 
 def _registered():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     corr.register(
         correlation_id="req-1",
         request_hash=RESP["client_request_hash"],
@@ -145,10 +145,10 @@ def test_sse_framed_response_verifies_identically():
 def test_sse_server_initiated_notification_fails_closed():
     notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}})
     outcomes = verify_inbound_messages(
-        "text/event-stream", _sse(notif), _config(), mcps_sdk.CorrelationStore(), now_unix=NOW
+        "text/event-stream", _sse(notif), _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW
     )
     assert outcomes[0].kind == "reject"
-    assert outcomes[0].reason == "mcps.notification_forbidden"
+    assert outcomes[0].reason == "mcp-re.notification_forbidden"
 
 
 def test_sse_interleaved_response_and_server_message():
@@ -160,14 +160,14 @@ def test_sse_interleaved_response_and_server_message():
         "text/event-stream", _sse(_valid_response(), notif), _config(), _registered(), now_unix=NOW + 1
     )
     assert [o.kind for o in outcomes] == ["accept", "reject"]
-    assert outcomes[1].reason == "mcps.notification_forbidden"
+    assert outcomes[1].reason == "mcp-re.notification_forbidden"
 
 
 def test_sse_server_initiated_passthrough_when_allowed():
     notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}})
     outcomes = verify_inbound_messages(
         "text/event-stream", _sse(notif),
-        _config(allow_unverified_server_initiated=True), mcps_sdk.CorrelationStore(), now_unix=NOW,
+        _config(allow_unverified_server_initiated=True), mcp_re_sdk.CorrelationStore(), now_unix=NOW,
     )
     assert outcomes[0].kind == "passthrough"
 
@@ -178,7 +178,7 @@ def test_sse_server_initiated_request_fails_closed():
     path — proving the SSE site handles id-bearing server requests, not just notifications."""
     req = json.dumps({"jsonrpc": "2.0", "id": "s-9", "method": "sampling/createMessage", "params": {}})
     outcomes = verify_inbound_messages(
-        "text/event-stream", _sse(req), _config(), mcps_sdk.CorrelationStore(), now_unix=NOW
+        "text/event-stream", _sse(req), _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW
     )
     assert outcomes[0].kind == "reject"
-    assert outcomes[0].reason == "mcps.missing_envelope"
+    assert outcomes[0].reason == "mcp-re.missing_envelope"

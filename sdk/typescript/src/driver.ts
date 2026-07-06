@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * MCP-S conformance driver — the TypeScript SDK as an interchangeable client leg.
+ * MCP-RE conformance driver — the TypeScript SDK as an interchangeable client leg.
  *
  * This is the TypeScript side of the multi-SDK test architecture (see
- * `mcps-walkthrough` `ClientDriver`), a drop-in for the Rust reference
- * `mcps-client-proxy-cli` and the Python `mcps_sdk.driver`. It is a thin stdio bridge:
+ * `mcp-re-walkthrough` `ClientDriver`), a drop-in for the Rust reference
+ * `mcp-re-client-proxy-cli` and the Python `mcp_re_sdk.driver`. It is a thin stdio bridge:
  * it reads one plain MCP JSON-RPC request per line on stdin, signs it with the SDK,
- * POSTs it over mTLS to the `mcps-proxy` PEP, verifies the server-signed response,
- * strips the MCP-S envelope, and writes one plain MCP JSON-RPC response per line on
+ * POSTs it over mTLS to the `mcp-re-proxy` PEP, verifies the server-signed response,
+ * strips the MCP-RE envelope, and writes one plain MCP JSON-RPC response per line on
  * stdout.
  *
- * The signing/verification is the AUDITED `mcps-client-core` logic via the SDK's napi
+ * The signing/verification is the AUDITED `mcp-re-client-core` logic via the SDK's napi
  * core (`signRequestWithSigner` / `verifyResponse`). No `@modelcontextprotocol/sdk`
  * dependency: the harness IS the MCP client, so this bridge never opens a session; it
  * only signs the raw JSON-RPC it is handed.
  *
  * Run it as the walkthrough harness's TypeScript client leg::
  *
- *     MCPS_DRIVER_TS="node dist/driver.js" \
- *       cargo test -p mcps-walkthrough --test sdk_driver_matrix -- --nocapture
+ *     MCP_RE_DRIVER_TS="node dist/driver.js" \
+ *       cargo test -p mcp-re-walkthrough --test sdk_driver_matrix -- --nocapture
  *
  * The harness appends the shared client CLI arg surface (`--remote-addr` …). The
  * file/software key source is fully in-process; the `--key-source gcp-kms` path signs
@@ -39,8 +39,8 @@ import * as core from "../native/binding.js";
 // accepted; this one is proven against the real proxy.
 const AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
 
-// JSON-RPC server-error code carrying a fail-closed MCP-S rejection back to the harness.
-const MCPS_REJECTED_CODE = -32099;
+// JSON-RPC server-error code carrying a fail-closed MCP-RE rejection back to the harness.
+const MCP_RE_REJECTED_CODE = -32099;
 
 interface Args {
   remoteAddr: string;
@@ -85,7 +85,7 @@ function readSeed(spec: string): Buffer {
 }
 
 /**
- * Reproduce `mcps_client_core::AudienceTuple::to_audience_string` from the 6-field
+ * Reproduce `mcp_re_client_core::AudienceTuple::to_audience_string` from the 6-field
  * `--audience` form (`scheme,host,port,tenant,route,realm`). A drift makes the round
  * trip fail closed (audience mismatch), never silently pass.
  */
@@ -96,12 +96,12 @@ function canonicalAudience(sixField: string): string {
   }
   const [scheme, host, port, tenant, route, realm] = parts;
   return (
-    `mcps-audience:v1:scheme=${scheme};host=${host};port=${port};` +
+    `mcp-re-audience:v1:scheme=${scheme};host=${host};port=${port};` +
     `tenant=${tenant};route=${route};realm=${realm}`
   );
 }
 
-/** The OAuth2 bearer for Cloud KMS: the GCE metadata server or `MCPS_GCP_ACCESS_TOKEN`. */
+/** The OAuth2 bearer for Cloud KMS: the GCE metadata server or `MCP_RE_GCP_ACCESS_TOKEN`. */
 function gcpAccessToken(useMetadata: boolean): string {
   if (useMetadata) {
     const out = execFileSync(
@@ -116,10 +116,10 @@ function gcpAccessToken(useMetadata: boolean): string {
     );
     return JSON.parse(out).access_token as string;
   }
-  const token = process.env.MCPS_GCP_ACCESS_TOKEN ?? "";
+  const token = process.env.MCP_RE_GCP_ACCESS_TOKEN ?? "";
   if (!token) {
     throw new Error(
-      "MCPS_GCP_ACCESS_TOKEN must be set for --key-source gcp-kms (or pass --gcp-kms-use-metadata on GCE)",
+      "MCP_RE_GCP_ACCESS_TOKEN must be set for --key-source gcp-kms (or pass --gcp-kms-use-metadata on GCE)",
     );
   }
   return token;
@@ -179,7 +179,7 @@ function continuationState(params: unknown): string | null {
   return null;
 }
 
-/** Remove the MCP-S response envelope from `result._meta` so the harness sees plain MCP. */
+/** Remove the MCP-RE response envelope from `result._meta` so the harness sees plain MCP. */
 function stripEnvelope(obj: Record<string, unknown>): Record<string, unknown> {
   const result = obj.result as Record<string, unknown> | undefined;
   if (result && typeof result === "object") {
@@ -263,7 +263,7 @@ function reject(rid: unknown, reason: string | undefined): Record<string, unknow
   return {
     jsonrpc: "2.0",
     id: rid ?? null,
-    error: { code: MCPS_REJECTED_CODE, message: reason ?? "mcps.verification_failed" },
+    error: { code: MCP_RE_REJECTED_CODE, message: reason ?? "mcp-re.verification_failed" },
   };
 }
 
@@ -293,7 +293,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     const rid = request.id;
     const method = request.method;
     if (typeof method !== "string") {
-      emit(reject(rid, "mcps.missing_envelope"));
+      emit(reject(rid, "mcp-re.missing_envelope"));
       continue;
     }
     const params = request.params ?? {};
@@ -308,7 +308,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     if (requestState !== null) {
       const entry = mrt.get(requestState);
       if (entry === undefined) {
-        emit(reject(rid, "mcps.continuation_malformed"));
+        emit(reject(rid, "mcp-re.continuation_malformed"));
         continue;
       }
       mrt.delete(requestState);
@@ -341,7 +341,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const result = core.verifyResponse(body, resolver, {
         expectedRequestHash: signed.requestHash,
         expectedServerSigner: args.serverSigner,
-        enforcementMode: "require_mcps",
+        enforcementMode: "require_mcp_re",
       });
       if (result.accepted) {
         const plain = stripEnvelope(JSON.parse(body.toString("utf-8")));
@@ -360,7 +360,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         emit(reject(rid, result.reason));
       }
     } catch (exc) {
-      emit(reject(rid, `mcps.driver_error: ${exc instanceof Error ? exc.message : exc}`));
+      emit(reject(rid, `mcp-re.driver_error: ${exc instanceof Error ? exc.message : exc}`));
     }
   }
   return 0;

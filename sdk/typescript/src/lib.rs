@@ -1,8 +1,8 @@
-//! `mcps-sdk-core` — the napi-rs native addon for the MCP-S TypeScript SDK.
+//! `mcp-re-sdk-core` — the napi-rs native addon for the MCP-RE TypeScript SDK.
 //!
 //! ADR-MCPS-044 (SDK wrap-or-fork rule) + ADR-MCPS-047 (v0.8 continuation). The
 //! transport-adapter verdict means the TypeScript SDK owns serialization at the byte
-//! boundary and delegates ALL security logic here, to the audited `mcps-client-core`.
+//! boundary and delegates ALL security logic here, to the audited `mcp-re-client-core`.
 //! This is the exact analog of the Python SDK's PyO3 binding (`sdk/python/src/lib.rs`)
 //! — same audited core, same canonical signed preimage, byte-identical wire.
 //!
@@ -10,7 +10,7 @@
 //! `sign_request` -> `signRequest`); option structs (`#[napi(object)]`) mirror
 //! Python's keyword-only arguments. A fail-closed *verification* is a RESULT
 //! (`VerifyResult`), never a thrown error; malformed *inputs* and custody/correlation
-//! failures throw an `Error` whose message carries the frozen `mcps.*` wire code.
+//! failures throw an `Error` whose message carries the frozen `mcp-re.*` wire code.
 
 #![deny(clippy::all)]
 
@@ -20,11 +20,11 @@ extern crate napi_derive;
 use napi::bindgen_prelude::{Buffer, Function, FunctionRef};
 use napi::{Env, Error, Result, Status};
 
-use mcps_client_core::authz::{
+use mcp_re_client_core::authz::{
     binding_tag, AuthorizationBindingPolicy as CoreBindingPolicy, AuthorizationBindingProvider,
     BindingRequestContext, BindingTypeTag, OpaqueBytesProvider,
 };
-use mcps_client_core::{
+use mcp_re_client_core::{
     audit_for_decision, build_signed_request, build_signed_request_with_signer,
     classify_response_result, decide, verify_and_classify_response, AbsenceReason, ClientOutcome,
     ClientPath, ClientSigner, CorrelationError, CorrelationStore as CoreCorrelationStore,
@@ -32,12 +32,12 @@ use mcps_client_core::{
     PendingRequest as CorePendingRequest, RequestSigningInputs, ResponseExpectation,
     SignerPolicy as CoreSignerPolicy, SoftwareSigner,
 };
-use mcps_core::ids::{
+use mcp_re_core::ids::{
     BINDING_TYPE_AUTHZ_SYSTEM_REFERENCE, BINDING_TYPE_OPAQUE_BYTES, DIGEST_ALG_SHA256,
 };
-use mcps_core::{
+use mcp_re_core::{
     build_mcp_mrt_continuation, AuthorizationBinding as CoreAuthorizationBinding,
-    Continuation as CoreContinuation, InMemoryTrustResolver, McpsError, ResultClass, SigningKey,
+    Continuation as CoreContinuation, InMemoryTrustResolver, McpReError, ResultClass, SigningKey,
     VerificationKey,
 };
 use serde_json::{Map, Value};
@@ -46,8 +46,8 @@ use serde_json::{Map, Value};
 
 /// Map a core error to a JS `Error` (kept inside the frozen wire taxonomy — the
 /// `{:?}` form carries the variant name, e.g. `ActorBindingFailed`).
-fn to_js_err(e: McpsError) -> Error {
-    Error::new(Status::GenericFailure, format!("mcps-client-core: {e:?}"))
+fn to_js_err(e: McpReError) -> Error {
+    Error::new(Status::GenericFailure, format!("mcp-re-client-core: {e:?}"))
 }
 
 /// A JS `Error` with a plain message (invalid-argument style, mirrors PyValueError).
@@ -111,10 +111,10 @@ fn parse_env(s: &str) -> Result<Environment> {
 
 fn parse_mode(s: &str) -> Result<EnforcementMode> {
     match s {
-        "require_mcps" => Ok(EnforcementMode::RequireMcps),
+        "require_mcp_re" => Ok(EnforcementMode::RequireMcpRe),
         "allow_legacy_explicit" => Ok(EnforcementMode::AllowLegacyExplicit),
         other => Err(value_err(format!(
-            "enforcement_mode must be 'require_mcps' or 'allow_legacy_explicit', got {other:?}"
+            "enforcement_mode must be 'require_mcp_re' or 'allow_legacy_explicit', got {other:?}"
         ))),
     }
 }
@@ -132,30 +132,30 @@ fn absence_str(reason: AbsenceReason) -> &'static str {
 /// expired -> expired request).
 fn corr_err(e: CorrelationError) -> Error {
     value_err(format!(
-        "mcps-client-core correlation: {}",
-        e.to_mcps_error().wire_code()
+        "mcp-re-client-core correlation: {}",
+        e.to_mcp_re_error().wire_code()
     ))
 }
 
 // --- protocol constants ----------------------------------------------------
 
-/// The MCP-S protocol version this core verifies/signs against (draft-02).
+/// The MCP-RE protocol version this core verifies/signs against (draft-02).
 #[napi]
 pub fn core_version() -> &'static str {
-    mcps_core::VERSION_DRAFT_02
+    mcp_re_core::VERSION_DRAFT_02
 }
 
 /// The canonicalization id of the signed preimage the SDK reproduces exactly.
 #[napi]
 pub fn canonicalization_id() -> &'static str {
-    mcps_core::CANONICALIZATION_ID_INT53_V1
+    mcp_re_core::CANONICALIZATION_ID_INT53_V1
 }
 
-/// The `params._meta` / `result._meta` key under which the MCP-S response envelope
+/// The `params._meta` / `result._meta` key under which the MCP-RE response envelope
 /// lives — the adapter strips it before handing a plain response up to the app.
 #[napi]
 pub fn response_meta_key() -> &'static str {
-    mcps_core::RESPONSE_META_KEY
+    mcp_re_core::RESPONSE_META_KEY
 }
 
 // --- signed request --------------------------------------------------------
@@ -171,7 +171,7 @@ pub struct SignedRequest {
 }
 
 impl SignedRequest {
-    fn from_core(signed: mcps_client_core::SignedRequest) -> Self {
+    fn from_core(signed: mcp_re_client_core::SignedRequest) -> Self {
         SignedRequest {
             wire_bytes: signed.wire_bytes().to_vec().into(),
             request_hash: signed.request_hash().to_string(),
@@ -195,7 +195,7 @@ enum SignerKind {
 /// The private key lives in an external device (HSM / KMS / remote signer) and NEVER
 /// enters the SDK; signing is delegated to the JS callback borrowed back with the
 /// call's `Env`. A callback that throws or returns a non-string fails closed
-/// (`mcps.actor_binding_failed`) — a signer that cannot sign never yields a
+/// (`mcp-re.actor_binding_failed`) — a signer that cannot sign never yields a
 /// placeholder.
 struct DelegatedCall<'a> {
     signer_id: &'a str,
@@ -213,16 +213,16 @@ impl ClientSigner for DelegatedCall<'_> {
     fn custody(&self) -> CustodyClass {
         CustodyClass::NonExporting
     }
-    fn sign_preimage(&self, preimage: &[u8]) -> std::result::Result<String, McpsError> {
+    fn sign_preimage(&self, preimage: &[u8]) -> std::result::Result<String, McpReError> {
         self.func
             .call(preimage.to_vec().into())
-            .map_err(|_| McpsError::ActorBindingFailed)
+            .map_err(|_| McpReError::ActorBindingFailed)
     }
 }
 
 /// A client signing identity (the custody seam). Construct via `Signer.software`
 /// (a held-private software key — acceptable in production), `Signer.devFile` (an
-/// unprotected dev/test key — rejected under production `require_mcps`), or
+/// unprotected dev/test key — rejected under production `require_mcp_re`), or
 /// `Signer.nonExporting` (custody `NonExporting`, the hardening profile — signs via
 /// an external device, the only class `SignerPolicy.requireNonExporting` accepts).
 #[napi]
@@ -256,7 +256,7 @@ impl Signer {
         })
     }
 
-    /// Unprotected dev/test file signer (rejected under production `require_mcps`).
+    /// Unprotected dev/test file signer (rejected under production `require_mcp_re`).
     #[napi(factory)]
     pub fn dev_file(seed: Buffer, signer_id: String, key_id: String) -> Result<Self> {
         Ok(Signer {
@@ -352,9 +352,9 @@ pub struct SignerPolicy {
 impl SignerPolicy {
     /// Bind `expectedSigner` for `environment` ("production" | "dev-test") and mode.
     #[napi(constructor)]
-    pub fn new(expected_signer: String, environment: String, require_mcps: bool) -> Result<Self> {
+    pub fn new(expected_signer: String, environment: String, require_mcp_re: bool) -> Result<Self> {
         Ok(SignerPolicy {
-            inner: CoreSignerPolicy::new(&expected_signer, parse_env(&environment)?, require_mcps),
+            inner: CoreSignerPolicy::new(&expected_signer, parse_env(&environment)?, require_mcp_re),
         })
     }
 
@@ -412,8 +412,8 @@ pub struct SignWithSignerOptions {
     pub continuation_input_required_response_hash: Option<String>,
 }
 
-/// Sign an ordinary MCP request into a draft-02 MCP-S request via the audited
-/// `mcps-client-core`, using a raw 32-byte Ed25519 seed (DEV/TEST custody only — no
+/// Sign an ordinary MCP request into a draft-02 MCP-RE request via the audited
+/// `mcp-re-client-core`, using a raw 32-byte Ed25519 seed (DEV/TEST custody only — no
 /// policy gate). For the production custody gate use `signRequestWithSigner`.
 #[napi]
 pub fn sign_request(
@@ -578,16 +578,16 @@ impl TrustResolver {
 /// The structured outcome of `verifyResponse`: the enforcement decision plus the
 /// audit-facing path/outcome/reason and (on a verified exchange) the server identity
 /// and bound `requestHash`. A fail-closed verification is a RESULT here (with the
-/// frozen `mcps.*` wire reason), not a thrown error.
+/// frozen `mcp-re.*` wire reason), not a thrown error.
 #[napi(object)]
 pub struct VerifyResult {
     /// "accept" | "fallback" | "fail-closed".
     pub decision: String,
-    /// "mcps-verified" | "legacy-explicit".
+    /// "mcp-re-verified" | "legacy-explicit".
     pub path: String,
     /// "accepted" | "fell-back" | "rejected".
     pub outcome: String,
-    /// Frozen `McpsError::wire_code()` token on a fail-closed rejection; else null.
+    /// Frozen `McpReError::wire_code()` token on a fail-closed rejection; else null.
     pub reason: Option<String>,
     /// The absence reason that made a legacy fallback eligible (local); else null.
     pub legacy_reason: Option<String>,
@@ -597,7 +597,7 @@ pub struct VerifyResult {
     pub key_id: Option<String>,
     /// The bound `request_hash` (on a verified exchange); else null.
     pub request_hash: Option<String>,
-    /// Convenience: true iff the decision was AcceptMcps.
+    /// Convenience: true iff the decision was AcceptMcpRe.
     pub accepted: bool,
     /// ADR-MCPS-047 classification of the SIGNED result body: "terminal" or
     /// "input_required". Read only from verified bytes; "terminal" when unverified.
@@ -617,7 +617,7 @@ pub struct VerifyResponseOptions {
     pub expected_request_hash: String,
     pub expected_canonicalization_id: Option<String>,
     pub expected_server_signer: Option<String>,
-    /// "require_mcps" (default) | "allow_legacy_explicit".
+    /// "require_mcp_re" (default) | "allow_legacy_explicit".
     pub enforcement_mode: Option<String>,
     pub legacy_allowed: Option<bool>,
 }
@@ -635,12 +635,12 @@ pub fn verify_response(
     let canon = options
         .expected_canonicalization_id
         .as_deref()
-        .unwrap_or(mcps_core::CANONICALIZATION_ID_INT53_V1);
+        .unwrap_or(mcp_re_core::CANONICALIZATION_ID_INT53_V1);
     let mut expectation = ResponseExpectation::new(&options.expected_request_hash, canon);
     if let Some(signer) = options.expected_server_signer.as_deref() {
         expectation = expectation.with_expected_server_signer(signer);
     }
-    let mode = parse_mode(options.enforcement_mode.as_deref().unwrap_or("require_mcps"))?;
+    let mode = parse_mode(options.enforcement_mode.as_deref().unwrap_or("require_mcp_re"))?;
     let legacy_allowed = options.legacy_allowed.unwrap_or(false);
 
     let classified = verify_and_classify_response(&raw_bytes, &resolver.inner, &expectation);
@@ -669,12 +669,12 @@ pub fn verify_response(
     let audit = audit_for_decision(&decision);
 
     let (decision_str, accepted) = match &decision {
-        EnforcementDecision::AcceptMcps => ("accept", true),
+        EnforcementDecision::AcceptMcpRe => ("accept", true),
         EnforcementDecision::FallBackToLegacy { .. } => ("fallback", false),
         EnforcementDecision::FailClosed(_) => ("fail-closed", false),
     };
     let path = match audit.path {
-        ClientPath::McpsVerified => "mcps-verified",
+        ClientPath::McpReVerified => "mcp-re-verified",
         ClientPath::LegacyExplicit => "legacy-explicit",
     };
     let outcome_str = match audit.outcome {
@@ -770,7 +770,7 @@ pub struct RegisterOptions {
 /// exactly one acceptable returning response, with nonce-reuse prevention and an
 /// expiry sweep. The clock is the caller's: every method takes `nowUnix`. Failures
 /// (duplicate id, nonce reuse, late/uncorrelatable, expired) throw an `Error` carrying
-/// the frozen `mcps.*` wire code.
+/// the frozen `mcp-re.*` wire code.
 #[napi]
 pub struct CorrelationStore {
     inner: CoreCorrelationStore,
@@ -807,10 +807,10 @@ impl CorrelationStore {
             expected_server_signers: options.expected_server_signers.unwrap_or_default(),
             version: options
                 .version
-                .unwrap_or_else(|| mcps_core::VERSION_DRAFT_02.to_string()),
+                .unwrap_or_else(|| mcp_re_core::VERSION_DRAFT_02.to_string()),
             canonicalization_id: options
                 .canonicalization_id
-                .unwrap_or_else(|| mcps_core::CANONICALIZATION_ID_INT53_V1.to_string()),
+                .unwrap_or_else(|| mcp_re_core::CANONICALIZATION_ID_INT53_V1.to_string()),
             authz_digest: options.authz_digest.unwrap_or_default(),
         };
         self.inner
@@ -901,7 +901,7 @@ impl CorrelationStore {
 // --- authorization binding (MCPS-45) ---------------------------------------
 
 /// A typed authorization-evidence binding bound into the signed request preimage
-/// (bind-not-interpret). Built through the AUDITED `mcps-client-core` providers so the
+/// (bind-not-interpret). Built through the AUDITED `mcp-re-client-core` providers so the
 /// digest is computed in one place — never a caller-supplied magic constant.
 #[napi]
 #[derive(Clone)]
@@ -1009,8 +1009,8 @@ impl AuthorizationBinding {
 }
 
 /// Per-route policy: which authorization-binding base forms a route permits (mirrors
-/// `mcps-client-core::authz::AuthorizationBindingPolicy`). A binding of a non-permitted
-/// type fails closed with `mcps.authorization_binding_type_unsupported`.
+/// `mcp-re-client-core::authz::AuthorizationBindingPolicy`). A binding of a non-permitted
+/// type fails closed with `mcp-re.authorization_binding_type_unsupported`.
 #[napi]
 #[derive(Clone)]
 pub struct AuthorizationBindingPolicy {
@@ -1057,7 +1057,7 @@ impl AuthorizationBindingPolicy {
         self.inner.permits(binding_tag(&binding.inner))
     }
 
-    /// Fail closed (`mcps.authorization_binding_type_unsupported`) if `binding`'s base
+    /// Fail closed (`mcp-re.authorization_binding_type_unsupported`) if `binding`'s base
     /// form is not permitted on this route; otherwise return.
     #[napi]
     pub fn enforce(&self, binding: &AuthorizationBinding) -> Result<()> {
@@ -1065,7 +1065,7 @@ impl AuthorizationBindingPolicy {
             Ok(())
         } else {
             Err(value_err(
-                McpsError::AuthorizationBindingTypeUnsupported
+                McpReError::AuthorizationBindingTypeUnsupported
                     .wire_code()
                     .to_string(),
             ))

@@ -1,4 +1,4 @@
-# MCP-S Bazel configuration.
+# MCP-RE Bazel configuration.
 #
 # Host-OS-specific config is opt-in via --enable_platform_specific_config, which
 # auto-applies the `build:linux` / `build:macos` stanzas based on the HOST OS.

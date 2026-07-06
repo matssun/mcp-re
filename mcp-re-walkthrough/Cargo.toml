@@ -1,0 +1,33 @@
+[package]
+name = "mcp-re-walkthrough"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The MCP-RE persona-ladder walkthrough (ADR-MCPS-045): runnable, real-subprocess four-hop tiers (T0..T3) that each demonstrate one new security concept. The README is the ladder."
+
+[dependencies]
+# The harness reuses the demo building blocks rather than duplicating them:
+# DemoFixtures mints the mTLS material + trust file + seeds; AudienceTuple builds
+# the canonical audience string both proxies must agree on; mcp-re-test-paths
+# resolves the proxy + fileserver binaries under Bazel runfiles OR cargo.
+mcp-re-demo = { path = "../mcp-re-demo" }
+mcp-re-client-core = { path = "../mcp-re-client-core" }
+mcp-re-core = { path = "../mcp-re-core" }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
+serde_json = { workspace = true }
+# Tier T4 ONLY (optional): the live-cloud four-hop fetches both Ed25519 PUBLIC
+# keys from GCP Cloud KMS to wire trust (the client KMS key into the server's
+# `--trust`, the server KMS key into the client's `--server-pubkey`). It reuses
+# the SAME backend the proxy uses, so the public key the harness wires is exactly
+# the one that signs. OFF by default — a normal `cargo test` never pulls it.
+mcp-re-proxy = { path = "../mcp-re-proxy", optional = true }
+
+[features]
+# Build the Tier T4 integrated four-hop (`t4_enterprise_kms_custody`, #[ignore]):
+# pulls the proxy's Cloud-KMS backend for public-key fetch + trust wiring.
+gcp_kms = ["dep:mcp-re-proxy", "mcp-re-proxy/gcp_kms_keysource"]
+
+[lib]
+name = "mcp_re_walkthrough"
+path = "src/lib.rs"

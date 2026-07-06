@@ -1,0 +1,46 @@
+[package]
+name = "mcp-re-demo"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-RE single-node demo harness: the host-side HostSession demo client (the model never holds keys)."
+
+# MCPS-046 (MCP-RE-EPIC-P6.5): the demo client drives the EXISTING mcp-re-host
+# HostSession to sign requests and verify the bound responses. It depends only on
+# sibling in-workspace crates (mcp-re-host, mcp-re-core) plus serde_json for building
+# request params — no crate outside the workspace, no async runtime. Transport
+# stays in this crate; mcp-re-host remains networking-free (ADR-MCPS-015).
+[dependencies]
+# The deterministic demo BINARIES (src/bin/demo_positive.rs, demo_negative.rs,
+# demo_mtls_client.rs) and the integration tests use mcp-re-host's `FixedClock` /
+# `SeededNonceSource` fixtures, compiled only under its `test-fixtures` feature
+# (audit #81). Because the consumers are normal (non-test) bin targets, the
+# feature is enabled on the NORMAL dependency here. mcp-re-demo is itself the
+# demo/test harness crate (not a production-deployable), so this does not widen
+# any production surface; the demo lib uses only SystemClock/SystemNonceSource.
+mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
+mcp-re-core = { path = "../mcp-re-core" }
+mcp-re-policy = { path = "../mcp-re-policy" }
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+mcp-re-transport = { path = "../mcp-re-transport" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# MCPS-055 (MCP-RE-EPIC-P6.6): the shared demo fixtures helper mints the demo's
+# security material (server/client CAs + leaves, trust.json, signing seed) with
+# rcgen. It is a NORMAL (non-dev) dependency because the demo bin generates certs
+# at RUNTIME for `bazel run`. rcgen stays OUT of mcp-re-core/mcp-re-host (pure /
+# transport-free).
+rcgen = { workspace = true }
+
+# Integration tests build a real rustls TLS stack against the proxy, so the
+# transport-layer crates are dev-dependencies of the test binaries even though
+# the library itself never imports rustls directly.
+[dev-dependencies]
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+mcp-re-test-paths = { path = "../mcp-re-test-paths" }
+
+[lib]
+name = "mcp_re_demo"
+path = "src/lib.rs"

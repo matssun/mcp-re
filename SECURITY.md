@@ -2,17 +2,17 @@
 
 # Security Policy
 
-MCP-S is a security-sensitive project. Please report suspected vulnerabilities responsibly.
+MCP-RE is a security-sensitive project. Please report suspected vulnerabilities responsibly.
 
 ## Supported status
 
-MCP-S is currently an experimental/incubating third-party MCP security extension proposal.
+MCP-RE is currently an experimental/incubating third-party MCP security extension proposal.
 
 The current implementation claim is limited to:
 
 > production-hardened for single-node Rust-native deployments.
 
-Do not assume that MCP-S currently provides:
+Do not assume that MCP-RE currently provides:
 
 - horizontally scaled replay protection;
 - HSM/KMS-backed key custody;
@@ -83,7 +83,7 @@ from memory as soon as they are no longer needed:
   secret scalar on drop. `SigningKey::from_seed_bytes` only BORROWS the seed, so
   the key is constructed and the `Zeroizing` seed temporaries then drop scrubbed.
 
-This is verified by `//mcps-proxy:dev_env_key_source_test` (the canonical
+This is verified by `//mcp-re-proxy:dev_env_key_source_test` (the canonical
 `Zeroizing` heap-scrub sentinel check) and by the `KeyError`-no-leak tests (a
 malformed seed never appears in an error's `Display`/`Debug`).
 

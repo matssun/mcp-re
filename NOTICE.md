@@ -2,15 +2,15 @@
 
 # NOTICE
 
-MCP-S
+MCP-RE
 
 Copyright 2026 Mats Sundvall and contributors.
 
 This project is an experimental third-party security extension proposal for the Model Context Protocol.
 
-MCP-S is not an official MCP extension unless and until it is accepted through the MCP governance and proposal process.
+MCP-RE is not an official MCP extension unless and until it is accepted through the MCP governance and proposal process.
 
-MCP-S is not endorsed by Anthropic, the MCP project, or any MCP maintainer unless such endorsement is explicitly granted through the relevant public governance process.
+MCP-RE is not endorsed by Anthropic, the MCP project, or any MCP maintainer unless such endorsement is explicitly granted through the relevant public governance process.
 
 ## Names and marks
 

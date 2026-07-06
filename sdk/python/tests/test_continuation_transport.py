@@ -24,15 +24,15 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
-from mcps_sdk.transport import McpsConfig, McpsTransport, sign_outbound, verify_inbound
+import mcp_re_sdk
+from mcp_re_sdk.transport import McpReConfig, McpReTransport, sign_outbound, verify_inbound
 
 anyio = pytest.importorskip("anyio")
 pytest.importorskip("mcp.types")
 from mcp.shared.message import SessionMessage  # noqa: E402
 from mcp.types import JSONRPCMessage  # noqa: E402
 
-REQUEST_META_KEY = "se.syncom/mcps.request"
+REQUEST_META_KEY = "se.syncom/mcp-re.request"
 FIX = Path(__file__).parent / "fixtures"
 REQ = json.loads((FIX / "sign_request_vector.json").read_text())["inputs"]
 RESP = json.loads((FIX / "verify_response_vectors.json").read_text())
@@ -46,11 +46,11 @@ STATE = "eyJzdGVwIjoxfQ"
 
 
 def _config(**kw):
-    signer = mcps_sdk.Signer.software(
+    signer = mcp_re_sdk.Signer.software(
         bytes.fromhex(REQ["seed_hex"]), signer_id=REQ["signer"], key_id=REQ["key_id"]
     )
-    policy = mcps_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcps=True)
-    resolver = mcps_sdk.TrustResolver()
+    policy = mcp_re_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcp_re=True)
+    resolver = mcp_re_sdk.TrustResolver()
     resolver.insert_public_key(
         SERVER["signer_id"], SERVER["key_id"], bytes.fromhex(SERVER["public_key_hex"])
     )
@@ -66,7 +66,7 @@ def _config(**kw):
         ttl_seconds=TTL,
     )
     base.update(kw)
-    return McpsConfig(**base)
+    return McpReConfig(**base)
 
 
 def _scenario(name):
@@ -119,13 +119,13 @@ def _receive_elicitation(corr, mrt):
 
 
 def test_input_required_delivered_plain_and_retained():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     mrt = {}
     out = _receive_elicitation(corr, mrt)
     assert out.kind == "accept"
     dumped = json.loads(out.message.message.model_dump_json(by_alias=True, exclude_none=True))
     assert dumped["result"]["resultType"] == "inputRequired"
-    assert "_meta" not in dumped["result"], "MCP-S envelope must be stripped"
+    assert "_meta" not in dumped["result"], "MCP-RE envelope must be stripped"
     # Retained as non-terminal (D7), NOT consumed as a terminal response.
     assert corr.outstanding == 0
     assert corr.non_terminal_outstanding == 1
@@ -137,7 +137,7 @@ def test_input_required_delivered_plain_and_retained():
 
 
 def test_answer_leg_signed_with_continuation_binding():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     mrt = {}
     _receive_elicitation(corr, mrt)
     wire = sign_outbound(
@@ -164,20 +164,20 @@ def test_first_round_response_cannot_be_replayed_after_input_required():
     so it cannot be retargeted to the continuation id) — cannot correlate. It fails
     closed, so a first-round response can never be spliced in as the continuation's
     terminal."""
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     mrt = {}
     _receive_elicitation(corr, mrt)
     assert corr.non_terminal_outstanding == 1 and corr.outstanding == 0
     out = verify_inbound(_scenario("valid")["response_bytes"].encode(), _config(), corr, now_unix=NOW + 2)
     assert out.kind == "reject"
-    assert out.reason == "mcps.response_hash_mismatch"
+    assert out.reason == "mcp-re.response_hash_mismatch"
 
 
 # --- 5: tampered / mismatched requestState fails closed ---------------------
 
 
 def test_tampered_request_state_fails_closed():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     mrt = {}
     _receive_elicitation(corr, mrt)
     # The client echoes a DIFFERENT requestState than the one bound to the exchange.
@@ -197,7 +197,7 @@ def test_tampered_request_state_fails_closed():
 
 
 def test_answer_without_recorded_state_fails_closed():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     with pytest.raises(ValueError, match="no recorded multi-round-trip state"):
         sign_outbound(
             _answer(), _config(), corr, now_unix=NOW + 2, nonce="answernoncefresh1", expires_unix=NOW + 2 + TTL, mrt={}
@@ -208,7 +208,7 @@ def test_answer_without_recorded_state_fails_closed():
 
 
 def test_replayed_continuation_fails_closed():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     mrt = {}
     _receive_elicitation(corr, mrt)
     sign_outbound(
@@ -233,13 +233,13 @@ def test_replayed_continuation_fails_closed():
 def test_server_initiated_elicitation_request_still_fails_closed():
     """A legitimate elicitation arrives as a RESPONSE (InputRequiredResult). A
     server that PUSHES an elicitation as a method-bearing request is arbitrary push
-    (D9) — no request_hash binding — and fails closed under require_mcps."""
+    (D9) — no request_hash binding — and fails closed under require_mcp_re."""
     push = json.dumps(
         {"jsonrpc": "2.0", "id": "s-1", "method": "elicitation/create", "params": {"message": "hi"}}
     ).encode()
-    out = verify_inbound(push, _config(), mcps_sdk.CorrelationStore(), now_unix=NOW)
+    out = verify_inbound(push, _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "reject"
-    assert out.reason == "mcps.missing_envelope"
+    assert out.reason == "mcp-re.missing_envelope"
 
 
 # --- async end to end: reader records, writer binds (shared self._mrt) -------
@@ -253,9 +253,9 @@ def test_async_transport_drives_elicitation_round_trip():
             sent.append(b)
 
         send_lines, recv_lines = anyio.create_memory_object_stream(10)
-        corr = mcps_sdk.CorrelationStore()
+        corr = mcp_re_sdk.CorrelationStore()
         _register_first(corr)
-        transport = McpsTransport(
+        transport = McpReTransport(
             byte_send, recv_lines, _config(), corr,
             clock=lambda: NOW + 1, nonce_factory=lambda: "asyncanswernonce1",
         )
@@ -282,10 +282,10 @@ def test_async_transport_drives_elicitation_round_trip():
 
 
 def test_http_transport_drives_elicitation_round_trip():
-    """ADR-047 continuation through :class:`McpsHttpTransport` — the one-POST-per-request
+    """ADR-047 continuation through :class:`McpReHttpTransport` — the one-POST-per-request
     wire the production ``connect_mtls_http`` uses. Proves the transport's own MRT
     threading (``self._mrt`` recorded on the InputRequiredResult leg, bound on the answer
-    leg): without it the answer POST would fail closed as ``mcps.continuation_malformed``.
+    leg): without it the answer POST would fail closed as ``mcp-re.continuation_malformed``.
 
     The stdio async test above injects the server IRR into a passive byte pump; the HTTP
     transport has no such channel — every inbound message is the response to a POST — so a
@@ -293,7 +293,7 @@ def test_http_transport_drives_elicitation_round_trip():
     leg's wire. As in that test, the first-round hash is stood in for by the pre-registered
     ``H1`` (the fixture IRR binds it); the first leg carries a DISTINCT id so its own
     correlation entry does not clobber that pre-registration."""
-    from mcps_sdk.http_transport import McpsHttpTransport
+    from mcp_re_sdk.http_transport import McpReHttpTransport
 
     posted: list = []
 
@@ -307,9 +307,9 @@ def test_http_transport_drives_elicitation_round_trip():
     nonces = iter([f"httpnonce{i}" for i in range(8)])
 
     async def scenario():
-        corr = mcps_sdk.CorrelationStore()
+        corr = mcp_re_sdk.CorrelationStore()
         _register_first(corr)  # the pre-registered first-round (H1) the fixture IRR binds
-        transport = McpsHttpTransport(
+        transport = McpReHttpTransport(
             fake_post,
             _config(),
             corr,

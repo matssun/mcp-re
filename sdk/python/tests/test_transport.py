@@ -3,7 +3,7 @@
 The adapter's security core is two sync functions: sign_outbound (sign + register)
 and verify_inbound (correlate + verify + strip). These are tested against the same
 golden vectors as the bindings, proving the adapter writes byte-identical signed
-requests and verifies responses exactly. Two async tests drive the McpsTransport
+requests and verifies responses exactly. Two async tests drive the McpReTransport
 pumps over in-memory byte channels via anyio.run (no live subprocess needed).
 
 Requires `mcp` installed (Python >= 3.10).
@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
-from mcps_sdk.transport import (
-    McpsConfig,
-    McpsTransport,
-    McpsVerificationError,
+import mcp_re_sdk
+from mcp_re_sdk.transport import (
+    McpReConfig,
+    McpReTransport,
+    McpReVerificationError,
     sign_outbound,
     verify_inbound,
 )
@@ -44,11 +44,11 @@ TTL = 300
 
 
 def _config(**kw):
-    signer = mcps_sdk.Signer.software(
+    signer = mcp_re_sdk.Signer.software(
         bytes.fromhex(REQ["seed_hex"]), signer_id=REQ["signer"], key_id=REQ["key_id"]
     )
-    policy = mcps_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcps=True)
-    resolver = mcps_sdk.TrustResolver()
+    policy = mcp_re_sdk.SignerPolicy(REQ["signer"], environment="dev-test", require_mcp_re=True)
+    resolver = mcp_re_sdk.TrustResolver()
     resolver.insert_public_key(
         SERVER["signer_id"], SERVER["key_id"], bytes.fromhex(SERVER["public_key_hex"])
     )
@@ -64,7 +64,7 @@ def _config(**kw):
         ttl_seconds=TTL,
     )
     base.update(kw)
-    return McpsConfig(**base)
+    return McpReConfig(**base)
 
 
 def _sm_request(rid, method, params):
@@ -81,7 +81,7 @@ def _valid_response_bytes():
 def test_sign_outbound_matches_request_vector():
     """The adapter's writer produces byte-identical signed bytes to the golden
     request vector, and registers the request for correlation."""
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     sm = _sm_request("req-1", "tools/call", {"name": "echo", "arguments": {"text": "hello"}})
     wire = sign_outbound(sm, _config(), corr, now_unix=NOW, nonce=REQ["nonce"], expires_unix=NOW + TTL)
     assert wire.decode() == REQ_EXPECTED_WIRE
@@ -89,7 +89,7 @@ def test_sign_outbound_matches_request_vector():
 
 
 def test_sign_outbound_passes_through_notification():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     notif = SessionMessage(
         JSONRPCMessage.model_validate_json('{"jsonrpc":"2.0","method":"notifications/cancelled"}')
     )
@@ -109,47 +109,47 @@ def _register_for_valid(corr):
 
 
 def test_verify_inbound_accepts_and_strips_envelope():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     _register_for_valid(corr)
     out = verify_inbound(_valid_response_bytes(), _config(), corr, now_unix=NOW + 1)
     assert out.kind == "accept"
     dumped = json.loads(out.message.message.model_dump_json(by_alias=True, exclude_none=True))
-    assert "_meta" not in dumped.get("result", {}), "MCP-S envelope must be stripped"
+    assert "_meta" not in dumped.get("result", {}), "MCP-RE envelope must be stripped"
     assert corr.outstanding == 0  # correlation consumed
 
 
 def test_verify_inbound_rejects_tampered():
-    corr = mcps_sdk.CorrelationStore()
+    corr = mcp_re_sdk.CorrelationStore()
     _register_for_valid(corr)
     tampered = next(s for s in RESP["scenarios"] if s["name"] == "tampered_signature")
     out = verify_inbound(tampered["response_bytes"].encode(), _config(), corr, now_unix=NOW + 1)
     assert out.kind == "reject"
-    assert out.reason == "mcps.response_sig_invalid"
+    assert out.reason == "mcp-re.response_sig_invalid"
 
 
 def test_verify_inbound_uncorrelatable_without_pending():
     """A response with no registered request fails closed (uncorrelatable)."""
-    out = verify_inbound(_valid_response_bytes(), _config(), mcps_sdk.CorrelationStore(), now_unix=NOW + 1)
+    out = verify_inbound(_valid_response_bytes(), _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW + 1)
     assert out.kind == "reject"
-    assert out.reason == "mcps.response_hash_mismatch"
+    assert out.reason == "mcp-re.response_hash_mismatch"
 
 
 def test_verify_inbound_rejects_server_notification_by_default():
     """A server-initiated NOTIFICATION (no id) has no request_hash binding, so the
     core cannot verify it; the safe default fails closed with the frozen reason."""
     notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/message", "params": {"x": 1}}).encode()
-    out = verify_inbound(notif, _config(), mcps_sdk.CorrelationStore(), now_unix=NOW)
+    out = verify_inbound(notif, _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "reject"
-    assert out.reason == "mcps.notification_forbidden"
+    assert out.reason == "mcp-re.notification_forbidden"
 
 
 def test_verify_inbound_rejects_server_request_by_default():
     """A server-initiated REQUEST (id + method, e.g. sampling) is likewise
     unverifiable (no request_hash we hold) and fails closed."""
     req = json.dumps({"jsonrpc": "2.0", "id": "s-1", "method": "sampling/createMessage", "params": {}}).encode()
-    out = verify_inbound(req, _config(), mcps_sdk.CorrelationStore(), now_unix=NOW)
+    out = verify_inbound(req, _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "reject"
-    assert out.reason == "mcps.missing_envelope"
+    assert out.reason == "mcp-re.missing_envelope"
 
 
 def test_verify_inbound_passes_through_server_initiated_when_allowed():
@@ -157,7 +157,7 @@ def test_verify_inbound_passes_through_server_initiated_when_allowed():
     (audited as no-evidence) instead of failing closed."""
     notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/message", "params": {"x": 1}}).encode()
     config = _config(allow_unverified_server_initiated=True)
-    out = verify_inbound(notif, config, mcps_sdk.CorrelationStore(), now_unix=NOW)
+    out = verify_inbound(notif, config, mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "passthrough"
     assert out.message.message.root.method == "notifications/message"
 
@@ -165,13 +165,13 @@ def test_verify_inbound_passes_through_server_initiated_when_allowed():
 def test_verify_inbound_passes_through_server_request_when_allowed():
     """The fourth cell of the server-initiated matrix: an id-bearing server REQUEST
     under the explicit degraded opt-in is delivered unverified (audited no-evidence),
-    keeping its id + method so a session could respond. Strict require_mcps still
+    keeping its id + method so a session could respond. Strict require_mcp_re still
     rejects it (test_verify_inbound_rejects_server_request_by_default)."""
     req = json.dumps(
         {"jsonrpc": "2.0", "id": "s-7", "method": "sampling/createMessage", "params": {"m": 1}}
     ).encode()
     config = _config(allow_unverified_server_initiated=True)
-    out = verify_inbound(req, config, mcps_sdk.CorrelationStore(), now_unix=NOW)
+    out = verify_inbound(req, config, mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "passthrough"
     assert out.message.message.root.method == "sampling/createMessage"
     assert str(out.message.message.root.id) == "s-7"
@@ -187,8 +187,8 @@ def test_transport_writer_pump_signs_to_wire():
             sent.append(b)
 
         _send_lines, recv_lines = anyio.create_memory_object_stream(0)
-        corr = mcps_sdk.CorrelationStore()
-        transport = McpsTransport(
+        corr = mcp_re_sdk.CorrelationStore()
+        transport = McpReTransport(
             byte_send, recv_lines, _config(), corr,
             clock=lambda: NOW, nonce_factory=lambda: REQ["nonce"],
         )
@@ -211,9 +211,9 @@ def test_transport_reader_pump_verifies_and_delivers():
         async def byte_send(_b):
             pass
 
-        corr = mcps_sdk.CorrelationStore()
+        corr = mcp_re_sdk.CorrelationStore()
         _register_for_valid(corr)
-        transport = McpsTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
+        transport = McpReTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
         async with transport as (read_stream, _write_stream):
             await send_lines.send(_valid_response_bytes())
             return await read_stream.receive()
@@ -230,14 +230,14 @@ def test_transport_reader_pump_surfaces_rejection_as_exception():
         async def byte_send(_b):
             pass
 
-        corr = mcps_sdk.CorrelationStore()
+        corr = mcp_re_sdk.CorrelationStore()
         _register_for_valid(corr)
         tampered = next(s for s in RESP["scenarios"] if s["name"] == "tampered_signature")
-        transport = McpsTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
+        transport = McpReTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
         async with transport as (read_stream, _write_stream):
             await send_lines.send(tampered["response_bytes"].encode())
             return await read_stream.receive()
 
     msg = anyio.run(scenario)
-    assert isinstance(msg, McpsVerificationError)
-    assert msg.reason == "mcps.response_sig_invalid"
+    assert isinstance(msg, McpReVerificationError)
+    assert msg.reason == "mcp-re.response_sig_invalid"

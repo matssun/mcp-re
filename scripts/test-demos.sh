@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-S — smoke test for the evaluator demo scripts.
+# MCP-RE — smoke test for the evaluator demo scripts.
 #
 # Proves the public demo entry points actually work, end to end, on a clean
 # checkout — so a stale binary, a moved fixture, or a broken path-resolution
@@ -10,7 +10,7 @@
 #   1. ./scripts/demo-local.sh exits 0 and prints the completion line;
 #   2. demo_positive's authorized call round-trips and the response verifies;
 #   3. demo_negative surfaces ALL ten fail-closed cases, each with its frozen
-#      mcps.* reason code (and the caller-verified strip/replace case);
+#      mcp-re.* reason code (and the caller-verified strip/replace case);
 #   4. ./scripts/demo-gcp-kms.sh fails closed (exit 2) when PROJECT_ID is unset,
 #      WITHOUT contacting any cloud — the guard is testable offline.
 #
@@ -25,19 +25,19 @@ cd "$REPO_ROOT"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok: $*"; }
 
-# The frozen mcps.* reason codes the negative demo must surface, plus the
+# The frozen mcp-re.* reason codes the negative demo must surface, plus the
 # non-denial strip/replace marker. Kept in sync with demo_negative.rs by this
 # test failing loudly if any goes missing.
 EXPECT=(
-  "mcps.invalid_signature"
-  "mcps.replay_detected"
-  "mcps.expired_request"
-  "mcps.invalid_audience"
-  "mcps.missing_envelope"
+  "mcp-re.invalid_signature"
+  "mcp-re.replay_detected"
+  "mcp-re.expired_request"
+  "mcp-re.invalid_audience"
+  "mcp-re.missing_envelope"
   "stripped+replaced"
-  "mcps.authorization_scope_denied"
-  "mcps.response_hash_mismatch"
-  "mcps.response_sig_invalid"
+  "mcp-re.authorization_scope_denied"
+  "mcp-re.response_hash_mismatch"
+  "mcp-re.response_sig_invalid"
 )
 
 echo "== 1. ./scripts/demo-local.sh (build + positive + negative) =="
@@ -52,7 +52,7 @@ if [[ $LOCAL_RC -ne 0 ]]; then
 fi
 pass "demo-local.sh exited 0"
 
-grep -q "OK: MCP-S local demo completed" <<<"$LOCAL_OUT" \
+grep -q "OK: MCP-RE local demo completed" <<<"$LOCAL_OUT" \
   || fail "missing final completion line"
 pass "completion line present"
 

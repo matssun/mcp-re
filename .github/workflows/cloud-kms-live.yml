@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Cloud-KMS live verification lanes (issue #62, §G Child 5; ADR-MCPS-028 §B/§C,
-# Verification §). These are the lanes that let MCP-S CLAIM AWS KMS / GCP Cloud KMS
+# Verification §). These are the lanes that let MCP-RE CLAIM AWS KMS / GCP Cloud KMS
 # support: a signature produced by a REAL KMS Sign / asymmetricSign MUST verify under
-# the UNMODIFIED mcps-core Ed25519 verifier, using the public key the same KMS reports
+# the UNMODIFIED mcp-re-core Ed25519 verifier, using the public key the same KMS reports
 # via GetPublicKey / getPublicKey. Compiling is NOT support; this live assertion is
-# (see mcps-proxy/tests/aws_kms_live_test.rs and gcp_kms_live_test.rs — both already
+# (see mcp-re-proxy/tests/aws_kms_live_test.rs and gcp_kms_live_test.rs — both already
 # assert verify_ed25519(preimage, sig, response_public_key()) and a tampered-preimage
 # negative).
 #
 # ─── FIDELITY FINDING (the honesty mandate, issue #62) ──────────────────────────────
 # Both backends are NIGHTLY-REAL-ONLY. No faithful local emulator exists for the EXACT
-# Ed25519 op MCPS uses, so there is NO required emulator PR lane — a lane that cannot
+# Ed25519 op MCP-RE uses, so there is NO required emulator PR lane — a lane that cannot
 # really exercise the backend must NOT report success as if it did.
 #
 #   AWS / LocalStack: LocalStack's KMS implementation supports KeySpecs
@@ -41,9 +41,9 @@
 # Anti-gaming (issue #62):
 #   * The lanes invoke the #[ignore] tests with `-- --ignored`. Those tests call
 #     require_env() on every required var and panic if absent — a missing backend
-#     HARD-FAILS the job, never a silent skip. (MCPS_REQUIRE_LIVE_INFRA=1 is set for
+#     HARD-FAILS the job, never a silent skip. (MCP_RE_REQUIRE_LIVE_INFRA=1 is set for
 #     parity with the live-infra-e2e lane; the cloud-KMS tests hard-fail regardless.)
-#   * The load-bearing assertion is mcps-core's verify_ed25519 over the EXACT canonical
+#   * The load-bearing assertion is mcp-re-core's verify_ed25519 over the EXACT canonical
 #     preimage using response_public_key() — NOT the provider's own Verify.
 #   * A deliberately-tampered preimage is asserted to FAIL to verify, so a broken lane
 #     cannot pass.
@@ -85,8 +85,8 @@ jobs:
       has_aws: ${{ steps.detect.outputs.has_aws }}
       has_gcp: ${{ steps.detect.outputs.has_gcp }}
     env:
-      HAS_AWS: ${{ secrets.MCPS_AWS_KMS_KEY_ID != '' }}
-      HAS_GCP: ${{ secrets.MCPS_GCP_KEY_VERSION != '' }}
+      HAS_AWS: ${{ secrets.MCP_RE_AWS_KMS_KEY_ID != '' }}
+      HAS_GCP: ${{ secrets.MCP_RE_GCP_KEY_VERSION != '' }}
     steps:
       - name: Detect backend secret presence
         id: detect
@@ -101,10 +101,10 @@ jobs:
           echo "AWS secrets present (lane will run real-endpoint test): ${HAS_AWS}"
           echo "GCP secrets present (lane will run real-endpoint test): ${HAS_GCP}"
           if [ "${HAS_AWS}" != "true" ]; then
-            echo "::warning title=aws-kms not exercised::MCPS_AWS_KMS_* secrets absent — AWS KMS NOT exercised this run. This is NOT coverage; provide secrets to run the real-endpoint lane."
+            echo "::warning title=aws-kms not exercised::MCP_RE_AWS_KMS_* secrets absent — AWS KMS NOT exercised this run. This is NOT coverage; provide secrets to run the real-endpoint lane."
           fi
           if [ "${HAS_GCP}" != "true" ]; then
-            echo "::warning title=gcp-kms not exercised::MCPS_GCP_* secrets absent — GCP Cloud KMS NOT exercised this run. This is NOT coverage; provide secrets to run the real-endpoint lane."
+            echo "::warning title=gcp-kms not exercised::MCP_RE_GCP_* secrets absent — GCP Cloud KMS NOT exercised this run. This is NOT coverage; provide secrets to run the real-endpoint lane."
           fi
 
   aws-kms-real:
@@ -116,15 +116,15 @@ jobs:
     if: ${{ github.event_name != 'pull_request' && needs.fidelity-notice.outputs.has_aws == 'true' }}
     env:
       # Parity with live-infra-e2e; the live test hard-fails on missing env regardless.
-      MCPS_REQUIRE_LIVE_INFRA: "1"
-      AWS_ACCESS_KEY_ID: ${{ secrets.MCPS_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.MCPS_AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.MCPS_AWS_SESSION_TOKEN }}
-      MCPS_AWS_KMS_KEY_ID: ${{ secrets.MCPS_AWS_KMS_KEY_ID }}
-      MCPS_AWS_KMS_REGION: ${{ secrets.MCPS_AWS_KMS_REGION }}
+      MCP_RE_REQUIRE_LIVE_INFRA: "1"
+      AWS_ACCESS_KEY_ID: ${{ secrets.MCP_RE_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.MCP_RE_AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.MCP_RE_AWS_SESSION_TOKEN }}
+      MCP_RE_AWS_KMS_KEY_ID: ${{ secrets.MCP_RE_AWS_KMS_KEY_ID }}
+      MCP_RE_AWS_KMS_REGION: ${{ secrets.MCP_RE_AWS_KMS_REGION }}
       # Optional endpoint override (e.g. an internal-platform real KMS endpoint). Left
       # empty by default => the real AWS endpoint. No emulator is used (none is faithful).
-      MCPS_AWS_KMS_ENDPOINT: ${{ secrets.MCPS_AWS_KMS_ENDPOINT }}
+      MCP_RE_AWS_KMS_ENDPOINT: ${{ secrets.MCP_RE_AWS_KMS_ENDPOINT }}
     steps:
       - uses: actions/checkout@v4
       - name: Why this is nightly-real-only
@@ -134,10 +134,10 @@ jobs:
         run: rustup show && rustc --version && cargo --version
       - name: Run AWS KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          cargo test -p mcps-proxy
+          cargo test -p mcp-re-proxy
           --features aws_kms_keysource
           --test aws_kms_live_test
-          -- --ignored aws_kms_signature_verifies_under_mcps_core
+          -- --ignored aws_kms_signature_verifies_under_mcp_re_core
 
   gcp-kms-real:
     name: gcp cloud kms live (real endpoint, nightly-real-only)
@@ -145,11 +145,11 @@ jobs:
     needs: fidelity-notice
     if: ${{ github.event_name != 'pull_request' && needs.fidelity-notice.outputs.has_gcp == 'true' }}
     env:
-      MCPS_REQUIRE_LIVE_INFRA: "1"
-      MCPS_GCP_KEY_VERSION: ${{ secrets.MCPS_GCP_KEY_VERSION }}
-      MCPS_GCP_ACCESS_TOKEN: ${{ secrets.MCPS_GCP_ACCESS_TOKEN }}
+      MCP_RE_REQUIRE_LIVE_INFRA: "1"
+      MCP_RE_GCP_KEY_VERSION: ${{ secrets.MCP_RE_GCP_KEY_VERSION }}
+      MCP_RE_GCP_ACCESS_TOKEN: ${{ secrets.MCP_RE_GCP_ACCESS_TOKEN }}
       # Optional endpoint override (real Cloud KMS by default; no faithful emulator).
-      MCPS_GCP_KMS_ENDPOINT: ${{ secrets.MCPS_GCP_KMS_ENDPOINT }}
+      MCP_RE_GCP_KMS_ENDPOINT: ${{ secrets.MCP_RE_GCP_KMS_ENDPOINT }}
     steps:
       - uses: actions/checkout@v4
       - name: Why this is nightly-real-only
@@ -159,16 +159,16 @@ jobs:
         run: rustup show && rustc --version && cargo --version
       - name: Run GCP Cloud KMS live verification (#[ignore] test, real endpoint)
         run: >-
-          cargo test -p mcps-proxy
+          cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
           --test gcp_kms_live_test
-          -- --ignored gcp_kms_signature_verifies_under_mcps_core
+          -- --ignored gcp_kms_signature_verifies_under_mcp_re_core
       - name: Run GCP Cloud KMS draft-02 (v0.6) envelope verification (#[ignore], real endpoint)
         # Cloud KMS signs a COMPLETE draft-02 request + response (over the
         # protected version + canonicalization_id + authorization_binding
         # preimage) that the unmodified draft-02 verifier accepts. Same secrets.
         run: >-
-          cargo test -p mcps-proxy
+          cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
           --test gcp_kms_draft02_live_test
           -- --ignored

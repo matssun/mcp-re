@@ -1,6 +1,6 @@
 """
 Vendored VERBATIM from infrastructure/bazel_defs/rust/defs.bzl to keep the
-mcps module self-contained / publishable (ADR-MCPS-010/012).
+mcp-re module self-contained / publishable (ADR-MCPS-010/012).
 
 @nt_bazel_defs//rust:defs.bzl — shared Rust macros.
 

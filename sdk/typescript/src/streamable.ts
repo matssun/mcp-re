@@ -1,5 +1,5 @@
 /**
- * Streamable-HTTP multi-path inbound decode — every decode site routes through MCP-S.
+ * Streamable-HTTP multi-path inbound decode — every decode site routes through MCP-RE.
  *
  * The MCP streamable-HTTP transport admits JSON-RPC messages at THREE inbound decode
  * sites, and a secure adapter must run EVERY one through the same verification +
@@ -25,7 +25,7 @@
  */
 
 import type { CorrelationStore } from "../native/binding.js";
-import { InboundOutcome, McpsConfig, MrtStore, verifyInbound } from "./transport.js";
+import { InboundOutcome, McpReConfig, MrtStore, verifyInbound } from "./transport.js";
 
 /**
  * Parse a `text/event-stream` body into the `data` payload of each event.
@@ -105,7 +105,7 @@ export function decodeInbound(contentType: string, body: Buffer | string): Buffe
 export function verifyInboundMessages(
   contentType: string,
   body: Buffer | string,
-  config: McpsConfig,
+  config: McpReConfig,
   correlation: CorrelationStore,
   opts: { nowUnix: number; mrt?: MrtStore },
 ): InboundOutcome[] {
@@ -120,7 +120,7 @@ export function verifyInboundMessages(
       outcomes.push(verifyInbound(payload, config, correlation, { nowUnix: opts.nowUnix, mrt: opts.mrt }));
     } catch {
       // Fail closed on any decode/parse failure.
-      outcomes.push({ kind: "reject", reason: "mcps.missing_envelope" });
+      outcomes.push({ kind: "reject", reason: "mcp-re.missing_envelope" });
     }
   }
   return outcomes;

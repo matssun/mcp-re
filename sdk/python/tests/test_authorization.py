@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-import mcps_sdk
-from mcps_sdk.authorization import (
+import mcp_re_sdk
+from mcp_re_sdk.authorization import (
     AuthzReference,
     AuthzSystemReferenceProvider,
     BindingRequestContext,
@@ -42,25 +42,25 @@ def _ctx():
 
 def test_opaque_digest_matches_independent_sha256():
     data = b"a-real-bearer-token's-decoded-bytes"
-    binding = mcps_sdk.AuthorizationBinding.opaque_bytes(data)
+    binding = mcp_re_sdk.AuthorizationBinding.opaque_bytes(data)
     assert binding.binding_type == "opaque-bytes"
     assert binding.digest_alg == "sha256"
     assert binding.digest_value == _expected_opaque(data)
 
 
 def test_opaque_digest_empty_bytes():
-    binding = mcps_sdk.AuthorizationBinding.opaque_bytes(b"")
+    binding = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"")
     assert binding.digest_value == _expected_opaque(b"")
 
 
 def test_different_bytes_yield_different_digest():
-    a = mcps_sdk.AuthorizationBinding.opaque_bytes(b"token-A")
-    b = mcps_sdk.AuthorizationBinding.opaque_bytes(b"token-B")
+    a = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"token-A")
+    b = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"token-B")
     assert a.digest_value != b.digest_value
 
 
 def test_authz_system_reference_fields():
-    binding = mcps_sdk.AuthorizationBinding.authz_system_reference(
+    binding = mcp_re_sdk.AuthorizationBinding.authz_system_reference(
         "sys-1", "scheme-1", "grant-1", "c29tZS1kaWdlc3Q"
     )
     assert binding.binding_type == "authz-system-reference"
@@ -71,7 +71,7 @@ def test_authz_system_reference_fields():
 
 
 def test_opaque_binding_has_no_reference_fields():
-    binding = mcps_sdk.AuthorizationBinding.opaque_bytes(b"x")
+    binding = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"x")
     assert binding.authorization_system_id is None
     assert binding.reference_value is None
 
@@ -79,27 +79,27 @@ def test_opaque_binding_has_no_reference_fields():
 # --- per-route policy fails closed -----------------------------------------
 
 def test_policy_both_forms_permits_and_enforces():
-    opaque = mcps_sdk.AuthorizationBinding.opaque_bytes(b"x")
-    ref = mcps_sdk.AuthorizationBinding.authz_system_reference("s", "sc", "r", "d")
-    both = mcps_sdk.AuthorizationBindingPolicy.both_base_forms()
+    opaque = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"x")
+    ref = mcp_re_sdk.AuthorizationBinding.authz_system_reference("s", "sc", "r", "d")
+    both = mcp_re_sdk.AuthorizationBindingPolicy.both_base_forms()
     assert both.permits(opaque) and both.permits(ref)
     both.enforce(opaque)  # no raise
     both.enforce(ref)
 
 
 def test_policy_opaque_only_rejects_reference():
-    ref = mcps_sdk.AuthorizationBinding.authz_system_reference("s", "sc", "r", "d")
-    policy = mcps_sdk.AuthorizationBindingPolicy.opaque_only()
+    ref = mcp_re_sdk.AuthorizationBinding.authz_system_reference("s", "sc", "r", "d")
+    policy = mcp_re_sdk.AuthorizationBindingPolicy.opaque_only()
     assert not policy.permits(ref)
     with pytest.raises(ValueError) as exc:
         policy.enforce(ref)
-    assert "mcps.authorization_binding_type_unsupported" in str(exc.value)
+    assert "mcp-re.authorization_binding_type_unsupported" in str(exc.value)
 
 
 def test_policy_closed_rejects_everything():
-    opaque = mcps_sdk.AuthorizationBinding.opaque_bytes(b"x")
+    opaque = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"x")
     with pytest.raises(ValueError):
-        mcps_sdk.AuthorizationBindingPolicy.closed().enforce(opaque)
+        mcp_re_sdk.AuthorizationBindingPolicy.closed().enforce(opaque)
 
 
 # --- providers -------------------------------------------------------------
@@ -125,7 +125,7 @@ def test_opaque_provider_callable_sees_context():
 def test_reference_provider_without_resolver_fails_closed():
     with pytest.raises(ValueError) as exc:
         AuthzSystemReferenceProvider().provide(_ctx())
-    assert "mcps.authorization_binding_missing" in str(exc.value)
+    assert "mcp-re.authorization_binding_missing" in str(exc.value)
 
 
 def test_reference_provider_with_resolver():
@@ -137,36 +137,36 @@ def test_reference_provider_with_resolver():
 
 
 def test_static_provider_returns_prebuilt_binding():
-    binding = mcps_sdk.AuthorizationBinding.opaque_bytes(b"y")
+    binding = mcp_re_sdk.AuthorizationBinding.opaque_bytes(b"y")
     assert StaticAuthorizationProvider(binding).provide(_ctx()) is binding
 
 
 # --- the provider digest actually lands in the signed preimage --------------
 
 def test_sign_outbound_embeds_provider_computed_digest():
-    """A provider-configured McpsConfig signs a request whose embedded
+    """A provider-configured McpReConfig signs a request whose embedded
     authorization_binding carries the provider's real digest — not the legacy
     constant — proving the provider path reaches the signed bytes."""
     pytest.importorskip("mcp.types")
     from mcp.shared.message import SessionMessage
     from mcp.types import JSONRPCMessage
 
-    from mcps_sdk.transport import McpsConfig, sign_outbound
+    from mcp_re_sdk.transport import McpReConfig, sign_outbound
 
     fix = json.loads((Path(__file__).parent / "fixtures" / "sign_request_vector.json").read_text())
     req = fix["inputs"]
     token = b"the-actual-capability-bytes"
 
-    config = McpsConfig(
-        signer=mcps_sdk.Signer.software(
+    config = McpReConfig(
+        signer=mcp_re_sdk.Signer.software(
             bytes.fromhex(req["seed_hex"]), signer_id=req["signer"], key_id=req["key_id"]
         ),
-        policy=mcps_sdk.SignerPolicy(req["signer"], environment="dev-test", require_mcps=True),
-        resolver=mcps_sdk.TrustResolver(),
+        policy=mcp_re_sdk.SignerPolicy(req["signer"], environment="dev-test", require_mcp_re=True),
+        resolver=mcp_re_sdk.TrustResolver(),
         audience=req["audience"],
         on_behalf_of=req["on_behalf_of"],
         authorization=OpaqueBytesProvider(token),
-        authorization_policy=mcps_sdk.AuthorizationBindingPolicy.opaque_only(),
+        authorization_policy=mcp_re_sdk.AuthorizationBindingPolicy.opaque_only(),
     )
     now = int(datetime(2026, 6, 30, 20, 0, 0, tzinfo=timezone.utc).timestamp())
     sm = SessionMessage(
@@ -175,8 +175,8 @@ def test_sign_outbound_embeds_provider_computed_digest():
             '"params":{"name":"read_file","arguments":{"path":"x"}}}'
         )
     )
-    wire = sign_outbound(sm, config, mcps_sdk.CorrelationStore(), now_unix=now, nonce="n", expires_unix=now + 300)
-    envelope = json.loads(wire)["params"]["_meta"]["se.syncom/mcps.request"]
+    wire = sign_outbound(sm, config, mcp_re_sdk.CorrelationStore(), now_unix=now, nonce="n", expires_unix=now + 300)
+    envelope = json.loads(wire)["params"]["_meta"]["se.syncom/mcp-re.request"]
     binding = envelope["authorization_binding"]
     assert binding["binding_type"] == "opaque-bytes"
     assert binding["digest_value"] == _expected_opaque(token)

@@ -1,7 +1,7 @@
 {
-  "name": "@mcps/sdk",
+  "name": "@mcp-re/sdk",
   "version": "0.1.0",
-  "description": "MCP-S TypeScript SDK — runtime-evidence security (signed requests, verified responses) for the MCP TypeScript SDK, via a transport adapter over the audited mcps-client-core.",
+  "description": "MCP-RE TypeScript SDK — runtime-evidence security (signed requests, verified responses) for the MCP TypeScript SDK, via a transport adapter over the audited mcp-re-client-core.",
   "license": "Apache-2.0",
   "author": "Mats Sundvall",
   "type": "commonjs",
@@ -14,7 +14,7 @@
     "native/*.node"
   ],
   "napi": {
-    "binaryName": "mcps-sdk-core",
+    "binaryName": "mcp-re-sdk-core",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",

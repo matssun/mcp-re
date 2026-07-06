@@ -70,13 +70,13 @@ function requireNative() {
   } else if (process.platform === 'android') {
     if (process.arch === 'arm64') {
       try {
-        return require('./mcps-sdk-core.android-arm64.node')
+        return require('./mcp-re-sdk-core.android-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-android-arm64')
-        const bindingPackageVersion = require('@mcps/sdk-android-arm64/package.json').version
+        const binding = require('@mcp-re/sdk-android-arm64')
+        const bindingPackageVersion = require('@mcp-re/sdk-android-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -86,13 +86,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./mcps-sdk-core.android-arm-eabi.node')
+        return require('./mcp-re-sdk-core.android-arm-eabi.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-android-arm-eabi')
-        const bindingPackageVersion = require('@mcps/sdk-android-arm-eabi/package.json').version
+        const binding = require('@mcp-re/sdk-android-arm-eabi')
+        const bindingPackageVersion = require('@mcp-re/sdk-android-arm-eabi/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -107,13 +107,13 @@ function requireNative() {
     if (process.arch === 'x64') {
       if ((process.config && process.config.variables && process.config.variables.shlib_suffix === 'dll.a') || (process.config && process.config.variables && process.config.variables.node_target_type === 'shared_library')) {
         try {
-        return require('./mcps-sdk-core.win32-x64-gnu.node')
+        return require('./mcp-re-sdk-core.win32-x64-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-win32-x64-gnu')
-        const bindingPackageVersion = require('@mcps/sdk-win32-x64-gnu/package.json').version
+        const binding = require('@mcp-re/sdk-win32-x64-gnu')
+        const bindingPackageVersion = require('@mcp-re/sdk-win32-x64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -123,13 +123,13 @@ function requireNative() {
       }
       } else {
         try {
-        return require('./mcps-sdk-core.win32-x64-msvc.node')
+        return require('./mcp-re-sdk-core.win32-x64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-win32-x64-msvc')
-        const bindingPackageVersion = require('@mcps/sdk-win32-x64-msvc/package.json').version
+        const binding = require('@mcp-re/sdk-win32-x64-msvc')
+        const bindingPackageVersion = require('@mcp-re/sdk-win32-x64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -140,13 +140,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ia32') {
       try {
-        return require('./mcps-sdk-core.win32-ia32-msvc.node')
+        return require('./mcp-re-sdk-core.win32-ia32-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-win32-ia32-msvc')
-        const bindingPackageVersion = require('@mcps/sdk-win32-ia32-msvc/package.json').version
+        const binding = require('@mcp-re/sdk-win32-ia32-msvc')
+        const bindingPackageVersion = require('@mcp-re/sdk-win32-ia32-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -156,13 +156,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./mcps-sdk-core.win32-arm64-msvc.node')
+        return require('./mcp-re-sdk-core.win32-arm64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-win32-arm64-msvc')
-        const bindingPackageVersion = require('@mcps/sdk-win32-arm64-msvc/package.json').version
+        const binding = require('@mcp-re/sdk-win32-arm64-msvc')
+        const bindingPackageVersion = require('@mcp-re/sdk-win32-arm64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -175,13 +175,13 @@ function requireNative() {
     }
   } else if (process.platform === 'darwin') {
     try {
-      return require('./mcps-sdk-core.darwin-universal.node')
+      return require('./mcp-re-sdk-core.darwin-universal.node')
     } catch (e) {
       loadErrors.push(e)
     }
     try {
-      const binding = require('@mcps/sdk-darwin-universal')
-      const bindingPackageVersion = require('@mcps/sdk-darwin-universal/package.json').version
+      const binding = require('@mcp-re/sdk-darwin-universal')
+      const bindingPackageVersion = require('@mcp-re/sdk-darwin-universal/package.json').version
       if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
@@ -191,13 +191,13 @@ function requireNative() {
     }
     if (process.arch === 'x64') {
       try {
-        return require('./mcps-sdk-core.darwin-x64.node')
+        return require('./mcp-re-sdk-core.darwin-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-darwin-x64')
-        const bindingPackageVersion = require('@mcps/sdk-darwin-x64/package.json').version
+        const binding = require('@mcp-re/sdk-darwin-x64')
+        const bindingPackageVersion = require('@mcp-re/sdk-darwin-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -207,13 +207,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./mcps-sdk-core.darwin-arm64.node')
+        return require('./mcp-re-sdk-core.darwin-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-darwin-arm64')
-        const bindingPackageVersion = require('@mcps/sdk-darwin-arm64/package.json').version
+        const binding = require('@mcp-re/sdk-darwin-arm64')
+        const bindingPackageVersion = require('@mcp-re/sdk-darwin-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -227,13 +227,13 @@ function requireNative() {
   } else if (process.platform === 'freebsd') {
     if (process.arch === 'x64') {
       try {
-        return require('./mcps-sdk-core.freebsd-x64.node')
+        return require('./mcp-re-sdk-core.freebsd-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-freebsd-x64')
-        const bindingPackageVersion = require('@mcps/sdk-freebsd-x64/package.json').version
+        const binding = require('@mcp-re/sdk-freebsd-x64')
+        const bindingPackageVersion = require('@mcp-re/sdk-freebsd-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -243,13 +243,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./mcps-sdk-core.freebsd-arm64.node')
+        return require('./mcp-re-sdk-core.freebsd-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-freebsd-arm64')
-        const bindingPackageVersion = require('@mcps/sdk-freebsd-arm64/package.json').version
+        const binding = require('@mcp-re/sdk-freebsd-arm64')
+        const bindingPackageVersion = require('@mcp-re/sdk-freebsd-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -264,13 +264,13 @@ function requireNative() {
     if (process.arch === 'x64') {
       if (isMusl()) {
         try {
-          return require('./mcps-sdk-core.linux-x64-musl.node')
+          return require('./mcp-re-sdk-core.linux-x64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-x64-musl')
-          const bindingPackageVersion = require('@mcps/sdk-linux-x64-musl/package.json').version
+          const binding = require('@mcp-re/sdk-linux-x64-musl')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-x64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -280,13 +280,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./mcps-sdk-core.linux-x64-gnu.node')
+          return require('./mcp-re-sdk-core.linux-x64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-x64-gnu')
-          const bindingPackageVersion = require('@mcps/sdk-linux-x64-gnu/package.json').version
+          const binding = require('@mcp-re/sdk-linux-x64-gnu')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -298,13 +298,13 @@ function requireNative() {
     } else if (process.arch === 'arm64') {
       if (isMusl()) {
         try {
-          return require('./mcps-sdk-core.linux-arm64-musl.node')
+          return require('./mcp-re-sdk-core.linux-arm64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-arm64-musl')
-          const bindingPackageVersion = require('@mcps/sdk-linux-arm64-musl/package.json').version
+          const binding = require('@mcp-re/sdk-linux-arm64-musl')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-arm64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -314,13 +314,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./mcps-sdk-core.linux-arm64-gnu.node')
+          return require('./mcp-re-sdk-core.linux-arm64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-arm64-gnu')
-          const bindingPackageVersion = require('@mcps/sdk-linux-arm64-gnu/package.json').version
+          const binding = require('@mcp-re/sdk-linux-arm64-gnu')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-arm64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -332,13 +332,13 @@ function requireNative() {
     } else if (process.arch === 'arm') {
       if (isMusl()) {
         try {
-          return require('./mcps-sdk-core.linux-arm-musleabihf.node')
+          return require('./mcp-re-sdk-core.linux-arm-musleabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-arm-musleabihf')
-          const bindingPackageVersion = require('@mcps/sdk-linux-arm-musleabihf/package.json').version
+          const binding = require('@mcp-re/sdk-linux-arm-musleabihf')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-arm-musleabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -348,13 +348,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./mcps-sdk-core.linux-arm-gnueabihf.node')
+          return require('./mcp-re-sdk-core.linux-arm-gnueabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-arm-gnueabihf')
-          const bindingPackageVersion = require('@mcps/sdk-linux-arm-gnueabihf/package.json').version
+          const binding = require('@mcp-re/sdk-linux-arm-gnueabihf')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-arm-gnueabihf/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -366,13 +366,13 @@ function requireNative() {
     } else if (process.arch === 'loong64') {
       if (isMusl()) {
         try {
-          return require('./mcps-sdk-core.linux-loong64-musl.node')
+          return require('./mcp-re-sdk-core.linux-loong64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-loong64-musl')
-          const bindingPackageVersion = require('@mcps/sdk-linux-loong64-musl/package.json').version
+          const binding = require('@mcp-re/sdk-linux-loong64-musl')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-loong64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -382,13 +382,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./mcps-sdk-core.linux-loong64-gnu.node')
+          return require('./mcp-re-sdk-core.linux-loong64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-loong64-gnu')
-          const bindingPackageVersion = require('@mcps/sdk-linux-loong64-gnu/package.json').version
+          const binding = require('@mcp-re/sdk-linux-loong64-gnu')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-loong64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -400,13 +400,13 @@ function requireNative() {
     } else if (process.arch === 'riscv64') {
       if (isMusl()) {
         try {
-          return require('./mcps-sdk-core.linux-riscv64-musl.node')
+          return require('./mcp-re-sdk-core.linux-riscv64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-riscv64-musl')
-          const bindingPackageVersion = require('@mcps/sdk-linux-riscv64-musl/package.json').version
+          const binding = require('@mcp-re/sdk-linux-riscv64-musl')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-riscv64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -416,13 +416,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./mcps-sdk-core.linux-riscv64-gnu.node')
+          return require('./mcp-re-sdk-core.linux-riscv64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@mcps/sdk-linux-riscv64-gnu')
-          const bindingPackageVersion = require('@mcps/sdk-linux-riscv64-gnu/package.json').version
+          const binding = require('@mcp-re/sdk-linux-riscv64-gnu')
+          const bindingPackageVersion = require('@mcp-re/sdk-linux-riscv64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -433,13 +433,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ppc64') {
       try {
-        return require('./mcps-sdk-core.linux-ppc64-gnu.node')
+        return require('./mcp-re-sdk-core.linux-ppc64-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-linux-ppc64-gnu')
-        const bindingPackageVersion = require('@mcps/sdk-linux-ppc64-gnu/package.json').version
+        const binding = require('@mcp-re/sdk-linux-ppc64-gnu')
+        const bindingPackageVersion = require('@mcp-re/sdk-linux-ppc64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -449,13 +449,13 @@ function requireNative() {
       }
     } else if (process.arch === 's390x') {
       try {
-        return require('./mcps-sdk-core.linux-s390x-gnu.node')
+        return require('./mcp-re-sdk-core.linux-s390x-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-linux-s390x-gnu')
-        const bindingPackageVersion = require('@mcps/sdk-linux-s390x-gnu/package.json').version
+        const binding = require('@mcp-re/sdk-linux-s390x-gnu')
+        const bindingPackageVersion = require('@mcp-re/sdk-linux-s390x-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -469,13 +469,13 @@ function requireNative() {
   } else if (process.platform === 'openharmony') {
     if (process.arch === 'arm64') {
       try {
-        return require('./mcps-sdk-core.openharmony-arm64.node')
+        return require('./mcp-re-sdk-core.openharmony-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-openharmony-arm64')
-        const bindingPackageVersion = require('@mcps/sdk-openharmony-arm64/package.json').version
+        const binding = require('@mcp-re/sdk-openharmony-arm64')
+        const bindingPackageVersion = require('@mcp-re/sdk-openharmony-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -485,13 +485,13 @@ function requireNative() {
       }
     } else if (process.arch === 'x64') {
       try {
-        return require('./mcps-sdk-core.openharmony-x64.node')
+        return require('./mcp-re-sdk-core.openharmony-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-openharmony-x64')
-        const bindingPackageVersion = require('@mcps/sdk-openharmony-x64/package.json').version
+        const binding = require('@mcp-re/sdk-openharmony-x64')
+        const bindingPackageVersion = require('@mcp-re/sdk-openharmony-x64/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -501,13 +501,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./mcps-sdk-core.openharmony-arm.node')
+        return require('./mcp-re-sdk-core.openharmony-arm.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@mcps/sdk-openharmony-arm')
-        const bindingPackageVersion = require('@mcps/sdk-openharmony-arm/package.json').version
+        const binding = require('@mcp-re/sdk-openharmony-arm')
+        const bindingPackageVersion = require('@mcp-re/sdk-openharmony-arm/package.json').version
         if (bindingPackageVersion !== '0.1.0' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.0 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -539,7 +539,7 @@ if (!nativeBinding || forceWasi) {
   let wasiBinding = null
   let wasiBindingError = null
   try {
-    wasiBinding = require('./mcps-sdk-core.wasi.cjs')
+    wasiBinding = require('./mcp-re-sdk-core.wasi.cjs')
     nativeBinding = wasiBinding
   } catch (err) {
     if (forceWasi) {
@@ -548,7 +548,7 @@ if (!nativeBinding || forceWasi) {
   }
   if (!nativeBinding || forceWasi) {
     try {
-      wasiBinding = require('@mcps/sdk-wasm32-wasi')
+      wasiBinding = require('@mcp-re/sdk-wasm32-wasi')
       nativeBinding = wasiBinding
     } catch (err) {
       if (forceWasi) {

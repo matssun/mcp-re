@@ -1,0 +1,425 @@
+load("@crates_mcp_re//:defs.bzl", "all_crate_deps")
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# MCPS-010 object conformance runner library: vector model + Target trait +
+# in-process ObjectTarget + RunReport. Depends on the pure mcp-re-core crate
+# (cross-crate label) plus serde/serde_json from the isolated crates_mcp_re hub.
+# mcp-re-conformance MAY use std::fs (loader); mcp-re-core stays pure (ADR-011/012).
+nt_rust_library(
+    name = "mcp_re_conformance_lib",
+    srcs = [
+        "src/echo_server.rs",
+        "src/fixtures.rs",
+        "src/http.rs",
+        "src/http_target.rs",
+        "src/lib.rs",
+        "src/loader.rs",
+        "src/runner.rs",
+        "src/server.rs",
+        "src/stdio.rs",
+        "src/stdio_target.rs",
+        "src/target.rs",
+        "src/vector.rs",
+    ],
+    crate_name = "mcp_re_conformance",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-proxy:mcp_re_proxy",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+nt_rust_binary(
+    name = "mcp_re_conformance",
+    srcs = ["src/main.rs"],
+    crate_name = "mcp_re_conformance_bin",
+    edition = "2021",
+    deps = [
+        ":mcp_re_conformance_lib",
+    ],
+)
+
+# MCPS-012: the documented MCP-RE echo server over stdio. The stdio harness test
+# launches this binary as a child process and drives signed JSON-RPC over its
+# stdin/stdout.
+nt_rust_binary(
+    name = "mcp_re_stdio_server",
+    srcs = ["src/stdio_server_main.rs"],
+    crate_name = "mcp_re_stdio_server_bin",
+    edition = "2021",
+    deps = [
+        ":mcp_re_conformance_lib",
+    ],
+)
+
+# Object suite test: loads the committed vectors (SINGLE SOURCE OF TRUTH in the
+# mcp-re-core package) via include_str! of the //mcp-re-core:vectors
+# filegroup placed in compile_data — no runfiles, no duplication, no abs paths.
+nt_rust_test(
+    name = "object_suite_test",
+    srcs = ["tests/object_suite_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcp-re-core:vectors"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-50 (#197): the 14 ADR-043 discovery/enforcement acceptance vectors over the
+# real mcp-re-client-core decision surface — the downgrade-resistance corpus.
+nt_rust_test(
+    name = "discovery_enforcement_conformance_test",
+    srcs = ["tests/discovery_enforcement_conformance_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-011: native MCP-RE echo server round-trip tests (in-process; no transport).
+nt_rust_test(
+    name = "echo_server_test",
+    srcs = ["tests/echo_server_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPS-034 (extends ADR-MCPS-030): method-transparency behavioral
+# equivalence proof. Varies ONLY the JSON-RPC method (re-signing each, since
+# method is in signing scope) across tools/list, tools/call, resources/list,
+# prompts/list, and a fabricated x/nonexistent/custom, and asserts the Core
+# verdict is IDENTICAL for an accepted envelope and (separately) a rejected one.
+nt_rust_test(
+    name = "method_transparency_test",
+    srcs = ["tests/method_transparency_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPS-034 (extends ADR-MCPS-030): static method-name drift guard. Scans the
+# NON-TEST mcp-re-core/src for banned concrete MCP method-name literals
+# (tools/list, tools/call, resources/list, resources/read, prompts/list,
+# prompts/get, sampling/createMessage, completion/complete) and FAILS if any is
+# added to production Core. The Core src tree is delivered as data (runfiles);
+# the guard resolves lib.rs and scans its parent dir from DISK, with the
+# mcp-re-test-paths cargo fallback — the same scheme as the drift_guard.
+nt_rust_test(
+    name = "method_name_drift_guard_test",
+    srcs = ["tests/method_name_drift_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcp-re-core:src_files",
+        "//mcp-re-core:src/lib.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_CORE_SRC_LIB": "$(rlocationpath //mcp-re-core:src/lib.rs)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPS-035: audit-evidence vocabulary drift guard. Asserts the MCP-RE audit
+# vocabulary (mcp-re-core/src/audit.rs) derives every rejection reason from the
+# frozen McpReError::wire_code() taxonomy (mcp-re-core/src/error.rs is the sole
+# authority) and that the success-event set is EXACTLY the two-item allowlist.
+# Both Core source files are delivered as data (runfiles); the guard reads them
+# from DISK (via $(rlocationpath), with the mcp-re-test-paths cargo fallback) — the
+# same scheme as the method-name drift guard — so a newly added McpReError variant
+# (new frozen wire_code) or an edited audit vocabulary is re-read from reality.
+nt_rust_test(
+    name = "audit_vocabulary_guard_test",
+    srcs = ["tests/audit_vocabulary_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//mcp-re-core:src_files",
+        "//mcp-re-core:src/error.rs",
+        "//mcp-re-core:src/audit.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_CORE_SRC_ERROR": "$(rlocationpath //mcp-re-core:src/error.rs)",
+        "MCP_RE_CORE_SRC_AUDIT": "$(rlocationpath //mcp-re-core:src/audit.rs)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+    ],
+)
+
+# ADR-MCPS-036 (gate item 4): forbidden-claim guard. Scans the proposal-facing
+# docs (security-boundary, v0.5 claim matrix, threat-coverage, composability,
+# proposal-scope) from DISK (via runfiles) and FAILS if any forbidden over-claim
+# wording appears as an ASSERTED (live) claim — a phrase inside a "Forbidden
+# claim" table column or a negated sentence is legitimately NAMING the non-goal
+# and is allowed. The optional add-on asserts docs/SECURITY_BOUNDARY.md is a
+# redirect stub with no live claim (ADR-MCPS-032). Docs delivered as data
+# ($(rlocationpath)), with the mcp-re-test-paths cargo fallback — the same scheme
+# as the drift_guard / method-name drift guard. Proposal-facing docs ONLY: no
+# historical ADRs, no v0.3 files, no fixtures.
+nt_rust_test(
+    name = "forbidden_claim_guard_test",
+    srcs = ["tests/forbidden_claim_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "//docs:SECURITY_BOUNDARY.md",
+        "//docs:spec/security-boundary.md",
+        "//docs:spec/v0.5-claim-matrix.md",
+        "//docs:spec/threat-coverage-matrix.md",
+        "//docs:spec/composability.md",
+        "//docs:spec/proposal-scope.md",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_DOC_SECURITY_BOUNDARY": "$(rlocationpath //docs:spec/security-boundary.md)",
+        "MCP_RE_DOC_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
+        "MCP_RE_DOC_THREAT_COVERAGE": "$(rlocationpath //docs:spec/threat-coverage-matrix.md)",
+        "MCP_RE_DOC_COMPOSABILITY": "$(rlocationpath //docs:spec/composability.md)",
+        "MCP_RE_DOC_PROPOSAL_SCOPE": "$(rlocationpath //docs:spec/proposal-scope.md)",
+        "MCP_RE_DOC_SECURITY_BOUNDARY_STUB": "$(rlocationpath //docs:SECURITY_BOUNDARY.md)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+    ],
+)
+
+# MCPS-013: Streamable HTTP harness — runs the documented echo server on a
+# loopback socket and drives the same outcome matrix over HTTP, then asserts
+# HTTP == stdio == object for every shared request vector (the transport-
+# agnostic headline claim). Needs the stdio server binary for the cross-
+# transport comparison, delivered via runfiles (same MCP_RE_STDIO_SERVER scheme).
+nt_rust_test(
+    name = "http_harness_test",
+    srcs = ["tests/http_harness_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcp-re-core:vectors"],
+    data = [":mcp_re_stdio_server"],
+    edition = "2021",
+    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-017: acceptance — a sidecar-wrapped ordinary server AND a native MCP-RE
+# server run the SAME outcome matrix over BOTH transports (stdio + HTTP) and must
+# produce identical Core outcomes. The host (which holds the key, not the model)
+# signs the requests. Needs the stdio server binary (native + proxy modes).
+nt_rust_test(
+    name = "acceptance_test",
+    srcs = ["tests/acceptance_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcp-re-core:vectors"],
+    data = [":mcp_re_stdio_server"],
+    edition = "2021",
+    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
+    deps = [
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-031: drift-guarded conformance manifest. The committed
+# conformance_manifest.json is the SINGLE SOURCE OF TRUTH for the conformance
+# corpus (every vector + every //... rust_test target). This
+# guard reads the manifest, the Core vector fixtures, the Phase 5 vectors, and
+# every BUILD.bazel from DISK (via runfiles) and FAILS on any drift: a vector on
+# disk missing from the manifest, a manifest entry with no vector, a stale
+# (hardcoded-and-rotted) count, or a rust_test target added/removed without a
+# manifest update. Counts are derived from reality, never trusted as written.
+nt_rust_test(
+    name = "drift_guard_test",
+    srcs = ["tests/drift_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "conformance_manifest.json",
+        "BUILD.bazel",
+        "//mcp-re-core:vectors",
+        "//mcp-re-core:tests/vectors/manifest.json",
+        "//mcp-re-core:BUILD.bazel",
+        "//mcp-re-host:BUILD.bazel",
+        "//mcp-re-policy:BUILD.bazel",
+        "//mcp-re-policy:tests/vectors/phase5_vectors.json",
+        "//mcp-re-proxy:BUILD.bazel",
+        "//mcp-re-demo:BUILD.bazel",
+        "//mcp-re-demo-server:BUILD.bazel",
+        "//mcp-re-transport:BUILD.bazel",
+        "//mcp-re-demo-fileserver:BUILD.bazel",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_MANIFEST": "$(rlocationpath conformance_manifest.json)",
+        "MCP_RE_CORE_MANIFEST": "$(rlocationpath //mcp-re-core:tests/vectors/manifest.json)",
+        "MCP_RE_PHASE5": "$(rlocationpath //mcp-re-policy:tests/vectors/phase5_vectors.json)",
+        "MCP_RE_BUILD_CONFORMANCE": "$(rlocationpath BUILD.bazel)",
+        "MCP_RE_BUILD_CORE": "$(rlocationpath //mcp-re-core:BUILD.bazel)",
+        "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
+        "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
+        "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
+        # MCPS-082: the four previously-unscanned packages.
+        "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
+        "MCP_RE_BUILD_DEMO_SERVER": "$(rlocationpath //mcp-re-demo-server:BUILD.bazel)",
+        "MCP_RE_BUILD_TRANSPORT": "$(rlocationpath //mcp-re-transport:BUILD.bazel)",
+        "MCP_RE_BUILD_FILESERVER": "$(rlocationpath //mcp-re-demo-fileserver:BUILD.bazel)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-070: security traceability manifest drift guard. The committed
+# security_traceability_manifest.json maps each MCP-RE security property
+# (P6.6A + P6.6B) to the Bazel test target + test fn that proves it. This guard
+# reads the manifest, every relevant BUILD.bazel, and every referenced test
+# source from DISK (via runfiles) and FAILS on drift: a manifest target no
+# BUILD.bazel declares as nt_rust_test, a manifest test_fn absent from its source
+# file, a source/target package mismatch, a stale recorded count, or a missing
+# server-auth case. Renames/removals are caught by re-reading reality.
+nt_rust_test(
+    name = "security_traceability_guard_test",
+    srcs = ["tests/security_traceability_guard_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        "security_traceability_manifest.json",
+        "BUILD.bazel",
+        "tests/object_suite_test.rs",
+        "tests/discovery_enforcement_conformance_test.rs",
+        "tests/method_transparency_test.rs",
+        "tests/method_name_drift_guard_test.rs",
+        "tests/audit_vocabulary_guard_test.rs",
+        "tests/forbidden_claim_guard_test.rs",
+        "//docs:spec/v0.5-claim-matrix.md",
+        "//mcp-re-core:BUILD.bazel",
+        "//mcp-re-host:BUILD.bazel",
+        "//mcp-re-host:tests/host_session_test.rs",
+        "//mcp-re-policy:BUILD.bazel",
+        "//mcp-re-proxy:BUILD.bazel",
+        "//mcp-re-proxy:tests/persistent_scope_test.rs",
+        "//mcp-re-proxy:tests/persistent_inner_test.rs",
+        "//mcp-re-proxy:tests/persistent_session_test.rs",
+        "//mcp-re-proxy:tests/proxy_test.rs",
+        "//mcp-re-proxy:tests/key_source_test.rs",
+        "//mcp-re-proxy:tests/dev_env_key_source_test.rs",
+        "//mcp-re-proxy:tests/keyset_admission_test.rs",
+        # MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): serve-level attested-ingress
+        # conformance vectors + the in-crate cli.rs Mode-C guards / Mode-B rejection.
+        "//mcp-re-proxy:tests/proxy_lb_assertion_test.rs",
+        "//mcp-re-proxy:src/cli.rs",
+        # MCPS-72 (#252): KMS-lifecycle offline negatives are in-crate #[cfg(test)]
+        # unit tests, so the guard reads their src/*.rs (not tests/*.rs) from disk.
+        "//mcp-re-proxy:src/kms_keysource.rs",
+        "//mcp-re-proxy:src/gcp_kms_keysource.rs",
+        "//mcp-re-proxy:src/aws_kms_keysource.rs",
+        "//mcp-re-demo:BUILD.bazel",
+        "//mcp-re-demo:tests/demo_negative_e2e_test.rs",
+        "//mcp-re-demo:tests/demo_transport_e2e_test.rs",
+        "//mcp-re-demo:tests/demo_e2e_persistent_test.rs",
+        "//mcp-re-demo:tests/demo_posture_e2e_test.rs",
+        "//mcp-re-demo-server:BUILD.bazel",
+        "//mcp-re-demo-server:tests/received_log_test.rs",
+        "//mcp-re-transport:BUILD.bazel",
+        "//mcp-re-transport:tests/mtls_client_test.rs",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_SECURITY_MANIFEST": "$(rlocationpath security_traceability_manifest.json)",
+        "MCP_RE_BUILD_CONFORMANCE": "$(rlocationpath BUILD.bazel)",
+        "MCP_RE_BUILD_CORE": "$(rlocationpath //mcp-re-core:BUILD.bazel)",
+        "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
+        "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
+        "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
+        "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
+        "MCP_RE_BUILD_DEMO_SERVER": "$(rlocationpath //mcp-re-demo-server:BUILD.bazel)",
+        "MCP_RE_BUILD_TRANSPORT": "$(rlocationpath //mcp-re-transport:BUILD.bazel)",
+        "MCP_RE_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
+        "MCP_RE_SRC_OBJECT_SUITE": "$(rlocationpath tests/object_suite_test.rs)",
+        "MCP_RE_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE": "$(rlocationpath tests/discovery_enforcement_conformance_test.rs)",
+        "MCP_RE_SRC_METHOD_TRANSPARENCY": "$(rlocationpath tests/method_transparency_test.rs)",
+        "MCP_RE_SRC_METHOD_NAME_DRIFT_GUARD": "$(rlocationpath tests/method_name_drift_guard_test.rs)",
+        "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD": "$(rlocationpath tests/audit_vocabulary_guard_test.rs)",
+        "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD": "$(rlocationpath tests/forbidden_claim_guard_test.rs)",
+        "MCP_RE_SRC_HOST_SESSION": "$(rlocationpath //mcp-re-host:tests/host_session_test.rs)",
+        "MCP_RE_SRC_KEYSET_ADMISSION": "$(rlocationpath //mcp-re-proxy:tests/keyset_admission_test.rs)",
+        "MCP_RE_SRC_PROXY_LB_ASSERTION": "$(rlocationpath //mcp-re-proxy:tests/proxy_lb_assertion_test.rs)",
+        "MCP_RE_SRC_CLI": "$(rlocationpath //mcp-re-proxy:src/cli.rs)",
+        "MCP_RE_SRC_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/kms_keysource.rs)",
+        "MCP_RE_SRC_GCP_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/gcp_kms_keysource.rs)",
+        "MCP_RE_SRC_AWS_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/aws_kms_keysource.rs)",
+        "MCP_RE_SRC_PERSISTENT_SCOPE": "$(rlocationpath //mcp-re-proxy:tests/persistent_scope_test.rs)",
+        "MCP_RE_SRC_PERSISTENT_INNER": "$(rlocationpath //mcp-re-proxy:tests/persistent_inner_test.rs)",
+        "MCP_RE_SRC_PERSISTENT_SESSION": "$(rlocationpath //mcp-re-proxy:tests/persistent_session_test.rs)",
+        "MCP_RE_SRC_PROXY": "$(rlocationpath //mcp-re-proxy:tests/proxy_test.rs)",
+        "MCP_RE_SRC_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/key_source_test.rs)",
+        "MCP_RE_SRC_DEV_ENV_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/dev_env_key_source_test.rs)",
+        "MCP_RE_SRC_DEMO_NEGATIVE_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_negative_e2e_test.rs)",
+        "MCP_RE_SRC_DEMO_TRANSPORT_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_transport_e2e_test.rs)",
+        "MCP_RE_SRC_DEMO_E2E_PERSISTENT": "$(rlocationpath //mcp-re-demo:tests/demo_e2e_persistent_test.rs)",
+        "MCP_RE_SRC_DEMO_POSTURE_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_posture_e2e_test.rs)",
+        "MCP_RE_SRC_RECEIVED_LOG": "$(rlocationpath //mcp-re-demo-server:tests/received_log_test.rs)",
+        "MCP_RE_SRC_MTLS_CLIENT": "$(rlocationpath //mcp-re-transport:tests/mtls_client_test.rs)",
+    },
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPS-012: stdio harness — launches the mcp_re_stdio_server child process and
+# drives the full outcome matrix over real stdin/stdout, asserting identical
+# Core outcomes to the in-process object target. The server binary is delivered
+# via runfiles; its path is passed through MCP_RE_STDIO_SERVER ($(rlocationpath))
+# and resolved against TEST_SRCDIR in the test (no runfiles-crate dependency).
+nt_rust_test(
+    name = "stdio_harness_test",
+    srcs = ["tests/stdio_harness_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = ["//mcp-re-core:vectors"],
+    data = [":mcp_re_stdio_server"],
+    edition = "2021",
+    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
+        ":mcp_re_conformance_lib",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

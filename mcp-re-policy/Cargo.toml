@@ -1,0 +1,31 @@
+[package]
+name = "mcp-re-policy"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP-RE delegated authorization (Phase 5): AuthorizationProfile abstraction + Reference Signed Authorization Profile. Pluggable Biscuit/UCAN/OAuth-bound profiles later."
+
+[dependencies]
+# Phase 5 (ADR-MCPS-013). Interprets the artifact behind Core's opaque
+# authorization_hash. Pure — depends only on mcp-re-core + serde. No networking/async.
+mcp-re-core = { path = "../mcp-re-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "mcp_re_policy"
+path = "src/lib.rs"
+
+[dev-dependencies]
+# Used only by the gen_phase5_vectors example to mint host-signed request
+# vectors. mcp-re-host depends only on mcp-re-core, so no dependency cycle.
+mcp-re-host = { path = "../mcp-re-host" }
+
+# Cargo entry point for the Phase 5 conformance-vector generator (the monorepo
+# drives the same source via Bazel: //components/mcp-re/mcp-re-policy:gen_phase5_vectors).
+# Run: cargo run -p mcp-re-policy --example gen_phase5_vectors > tests/vectors/phase5_vectors.json
+[[example]]
+name = "gen_phase5_vectors"
+path = "conformance/gen_vectors.rs"

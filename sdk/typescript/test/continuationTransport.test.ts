@@ -9,20 +9,20 @@
 import { describe, expect, it } from "vitest";
 import {
   CorrelationStore,
-  McpsHttpTransport,
-  McpsTransport,
+  McpReHttpTransport,
+  McpReTransport,
   Signer,
   SignerPolicy,
   TrustResolver,
   signOutbound,
   verifyInbound,
-  type McpsConfig,
+  type McpReConfig,
   type MrtStore,
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, SIGN_VECTOR, scenario } from "./fixtures.js";
 import { pushableStream } from "./helpers.js";
 
-const REQUEST_META_KEY = "se.syncom/mcps.request";
+const REQUEST_META_KEY = "se.syncom/mcp-re.request";
 const REQ = SIGN_VECTOR.inputs;
 const SERVER = RESPONSE_VECTORS.server;
 const H1 = RESPONSE_VECTORS.client_request_hash; // the first-round hash the IRR binds
@@ -30,7 +30,7 @@ const NOW = Math.floor(Date.parse("2026-06-30T20:00:00Z") / 1000);
 const TTL = 300;
 const STATE = "eyJzdGVwIjoxfQ"; // the requestState the generator's IRR carries
 
-function config(overrides: Partial<McpsConfig> = {}): McpsConfig {
+function config(overrides: Partial<McpReConfig> = {}): McpReConfig {
   const resolver = new TrustResolver();
   resolver.insertPublicKey(SERVER.signer_id, SERVER.key_id, Buffer.from(SERVER.public_key_hex, "hex"));
   return {
@@ -118,7 +118,7 @@ describe("fail-closed boundaries", () => {
     expect(corr.nonTerminalOutstanding === 1 && corr.outstanding === 0).toBe(true);
     const out = verifyInbound(Buffer.from(scenario("valid").response_bytes), config(), corr, { nowUnix: NOW + 2 });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.response_hash_mismatch");
+    expect(out.reason).toBe("mcp-re.response_hash_mismatch");
   });
 
   it("a tampered requestState fails closed", () => {
@@ -173,7 +173,7 @@ describe("fail-closed boundaries", () => {
     );
     const out = verifyInbound(push, config(), new CorrelationStore(), { nowUnix: NOW });
     expect(out.kind).toBe("reject");
-    expect(out.reason).toBe("mcps.missing_envelope");
+    expect(out.reason).toBe("mcp-re.missing_envelope");
   });
 });
 
@@ -186,7 +186,7 @@ describe("async transport drives the round trip", () => {
     const lines = pushableStream();
     const corr = new CorrelationStore();
     registerFirst(corr);
-    const transport = new McpsTransport(byteSend, lines.iterable, config(), {
+    const transport = new McpReTransport(byteSend, lines.iterable, config(), {
       correlation: corr,
       clock: () => NOW + 1,
       nonceFactory: () => "asyncanswernonce1",
@@ -212,10 +212,10 @@ describe("async transport drives the round trip", () => {
 
 describe("request/response (mTLS/HTTP) transport drives the round trip", () => {
   it("records on the elicit POST, binds on the answer POST (shared MRT state)", async () => {
-    // ADR-047 continuation through McpsHttpTransport — the one-POST-per-request wire the
+    // ADR-047 continuation through McpReHttpTransport — the one-POST-per-request wire the
     // production connectMtlsHttp uses. Proves the transport's own MRT threading (the
     // `this.mrt` map recorded on the InputRequiredResult leg, bound on the answer leg);
-    // without it the answer POST fails closed as `mcps.continuation_malformed`.
+    // without it the answer POST fails closed as `mcp-re.continuation_malformed`.
     //
     // The push-based transport has no channel to inject an unsolicited response, so a fake
     // `post` returns the (pre-signed) IRR for the first leg and captures the answer leg's
@@ -238,7 +238,7 @@ describe("request/response (mTLS/HTTP) transport drives the round trip", () => {
     const corr = new CorrelationStore();
     registerFirst(corr); // the pre-registered first-round (H1) the fixture IRR binds
     let nonce = 0;
-    const transport = new McpsHttpTransport(post, config(), {
+    const transport = new McpReHttpTransport(post, config(), {
       correlation: corr,
       clock: () => NOW + 1,
       nonceFactory: () => `httpnonce${nonce++}`, // distinct per leg (both legs sign here)

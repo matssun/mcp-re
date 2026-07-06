@@ -1,0 +1,20 @@
+[package]
+name = "mcp-re-client-proxy"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Local client-side MCP-RE proxy (first adoption bridge): plain-MCP endpoint -> sign via mcp-re-client-core -> forward -> verify signed response -> plain MCP. A security adapter, not an orchestrator."
+
+[dependencies]
+# MCPS-49 (ADR-MCPS-044 §Proxy transparency / §Security adapter scope): the
+# client proxy is the MODE-SPECIFIC layer above the pure mcp-re-client-core seam.
+# It owns the listener/route registry/transport adapter and wires the client-core
+# pieces; the transport is abstracted behind a trait so the library stays testable.
+mcp-re-client-core = { path = "../mcp-re-client-core" }
+mcp-re-core = { path = "../mcp-re-core" }
+serde_json = { workspace = true }
+
+[lib]
+name = "mcp_re_client_proxy"
+path = "src/lib.rs"

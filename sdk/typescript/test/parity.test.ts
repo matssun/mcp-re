@@ -2,7 +2,7 @@
  * Parity tests — the acceptance gate (mirrors Python `test_parity_stdio.py`).
  *
  * The TypeScript SDK MUST produce a byte-identical signed request to the Rust path for
- * the same input. Byte parity is the whole point of binding to `mcps-client-core`
+ * the same input. Byte parity is the whole point of binding to `mcp-re-client-core`
  * instead of reimplementing it — and it ties the TS SDK to the SAME oracle vector the
  * Python SDK and the proxy are checked against.
  */
