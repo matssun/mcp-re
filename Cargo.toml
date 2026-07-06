@@ -21,6 +21,7 @@ members = [
     "mcp-re-client-proxy-cli", # Binary front-end for mcp-re-client-proxy (ADR-MCPS-045 Phase 3) — plain-MCP stdio -> sign draft-02 -> mTLS to remote
     "mcp-re-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
     "mcp-re-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
+    "mcp-re-http-profile", # ADR-MCPRE-050 minimal proof path — RFC 9421 + RFC 9530 HTTP standards profile (pure: no networking/async/fs)
     "mcp-re-demo-fileserver", # Phase 6.5 demo target — ordinary MCP-RE-unaware stdio server
     "mcp-re-demo-server", # Phase 6.6B demo target — ordinary MCP-RE-unaware LONG-LIVED stdio server
     "mcp-re-demo",        # Phase 6.5 demo harness — host-side HostSession demo client

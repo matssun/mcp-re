@@ -696,6 +696,7 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-host",
+ "mcp-re-http-profile",
  "mcp-re-proxy",
  "mcp-re-test-paths",
  "serde",
@@ -761,6 +762,16 @@ dependencies = [
  "mcp-re-core",
  "mcp-re-host",
  "serde_json",
+]
+
+[[package]]
+name = "mcp-re-http-profile"
+version = "0.10.1"
+dependencies = [
+ "base64",
+ "mcp-re-core",
+ "serde",
+ "sha2",
 ]
 
 [[package]]

@@ -423,3 +423,26 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
     ],
 )
+
+# ADR-MCPRE-050 (seed Work Item 4): the HTTP standards-profile conformance
+# corpus — frozen fixtures + static oracle under tests/vectors/http-profile/,
+# verified black-box against the committed bytes (writer test is #[ignore]d).
+# Same dual-mode fixture bridge as mcp-re-core's draft-02 corpus: Bazel passes
+# the manifest rlocationpath; Cargo reads the source tree.
+nt_rust_test(
+    name = "http_profile_vectors_test",
+    srcs = ["tests/http_profile_vectors_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/http-profile/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/http-profile/manifest.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)

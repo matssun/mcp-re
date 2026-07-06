@@ -1,0 +1,14 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "verify_at_unix": 1700000100,
+  "fixtures": [
+    "h01_request_valid.json",
+    "h02_request_body_tamper.json",
+    "h03_request_missing_covered_component.json",
+    "h04_request_foreign_tag.json",
+    "h05_request_stale_window.json",
+    "h06_request_wrong_keyid.json",
+    "h07_response_valid.json",
+    "h08_response_splice.json"
+  ]
+}
