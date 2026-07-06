@@ -38,6 +38,7 @@ pub use nonce::NONCE_BYTES;
 pub use pending::PendingRequest;
 pub use session::HostSession;
 pub use session::DEFAULT_REQUEST_LIFETIME_SECS;
+pub use session::MAX_REQUEST_LIFETIME_SECS;
 pub use verified_result::VerifiedResult;
 
 // Response verification is exactly mcps-core's: the host re-exports it as the

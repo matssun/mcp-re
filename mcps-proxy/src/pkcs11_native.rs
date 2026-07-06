@@ -99,6 +99,18 @@ impl std::fmt::Display for Pkcs11Error {
 
 impl std::error::Error for Pkcs11Error {}
 
+/// Upper bound on a `C_Sign`-reported signature length before we allocate a
+/// buffer for it (audit LOW, ledger `8af4c26be9bccb3e`). This module only ever
+/// signs with `CKM_EDDSA` (Ed25519 → 64 bytes); 256 is a generous ceiling that
+/// still covers any Edwards variant while refusing an outsized allocation a
+/// faulty/hostile module could request via the two-call length idiom.
+const MAX_SIGNATURE_LEN: usize = 256;
+
+/// Upper bound on a `CKA_EC_POINT` attribute length before allocation (same
+/// ledger id). A DER-wrapped Edwards/EC point is tens of bytes (Ed25519 ≈ 34);
+/// 4 KiB is far above any real curve while bounding the module-returned length.
+const MAX_EC_POINT_LEN: usize = 4096;
+
 /// Map a raw `CK_RV` to `Ok(())` on `CKR_OK`, else a contextual [`Pkcs11Error`].
 fn check(rv: CK_RV, op: &str) -> Result<(), Pkcs11Error> {
     if rv == CKR_OK {
@@ -583,6 +595,14 @@ fn sign_eddsa_raw(
         check(rv, "C_Sign (length query)")?;
     }
 
+    // Bound the module-returned length before allocating: a faulty/hostile module
+    // must not be able to trigger an outsized allocation on this trusted boundary.
+    if sig_len as usize > MAX_SIGNATURE_LEN {
+        return Err(Pkcs11Error::Protocol(format!(
+            "C_Sign reported an implausible signature length {sig_len} (> {MAX_SIGNATURE_LEN}); \
+             refusing to allocate"
+        )));
+    }
     let mut signature: Vec<u8> = vec![0u8; sig_len as usize];
     // SAFETY: `signature` has capacity `sig_len`; we pass its pointer and the
     // SAME `sig_len`, which `C_Sign` may shrink (it writes the final length
@@ -637,6 +657,15 @@ fn get_ec_point_raw(
         return Err(Pkcs11Error::Protocol(
             "CKA_EC_POINT is unavailable on this object".to_string(),
         ));
+    }
+    // Bound the module-returned length before allocating (see MAX_EC_POINT_LEN):
+    // a real point is tens of bytes, so a multi-KiB+ length is a faulty/hostile
+    // module and must not drive an outsized allocation.
+    if len as usize > MAX_EC_POINT_LEN {
+        return Err(Pkcs11Error::Protocol(format!(
+            "CKA_EC_POINT reported an implausible length {len} (> {MAX_EC_POINT_LEN}); \
+             refusing to allocate"
+        )));
     }
 
     let mut value: Vec<u8> = vec![0u8; len as usize];

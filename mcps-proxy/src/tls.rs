@@ -1131,7 +1131,7 @@ fn read_http_request<S: Read>(stream: &mut S, limits: &ServerLimits) -> io::Resu
     let header_bytes = &buf[..header_end];
     reject_malformed_header_framing(header_bytes)?;
     let header_block = String::from_utf8_lossy(header_bytes).into_owned();
-    let content_length = parse_content_length(&header_block).unwrap_or(0);
+    let content_length = parse_content_length(&header_block)?.unwrap_or(0);
     if content_length > limits.max_body_bytes {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -1170,15 +1170,34 @@ fn write_http_response<S: Write>(stream: &mut S, body: &[u8]) -> io::Result<()> 
 }
 
 /// Parse the `Content-Length` header value (case-insensitive) from a header block.
-fn parse_content_length(headers: &str) -> Option<usize> {
+///
+/// Fails closed with `InvalidData` on a duplicated `Content-Length` header (a
+/// request-smuggling primitive: two lengths disagree on the body boundary) or a
+/// present-but-unparseable value, consistent with the other framing guards here.
+/// An absent header returns `Ok(None)` (the caller treats that as a zero-length
+/// body); only present-but-malformed / conflicting lengths are rejected.
+fn parse_content_length(headers: &str) -> io::Result<Option<usize>> {
+    let mut seen: Option<usize> = None;
     for line in headers.lines() {
         if let Some((name, value)) = line.split_once(':') {
             if name.trim().eq_ignore_ascii_case("content-length") {
-                return value.trim().parse().ok();
+                if seen.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "malformed HTTP header framing: duplicate Content-Length",
+                    ));
+                }
+                let parsed = value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "malformed HTTP header framing: unparseable Content-Length",
+                    )
+                })?;
+                seen = Some(parsed);
             }
         }
     }
-    None
+    Ok(seen)
 }
 
 /// Index of the first occurrence of `needle` in `haystack`.
@@ -1562,6 +1581,78 @@ mod aggregate_deadline_tests {
         let req = super::read_http_request(&mut stream, &limits)
             .expect("a complete request must parse when the aggregate deadline is disabled");
         assert!(req.body.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod content_length_framing_tests {
+    //! Audit LOW (ledger `84224733b1228db8`): a duplicated or unparseable
+    //! `Content-Length` must fail closed with `InvalidData` rather than silently
+    //! collapsing to a zero-length body. Two disagreeing lengths are a classic
+    //! request-smuggling primitive; every sibling duplicate-header guard here
+    //! already rejects, so this one must too.
+
+    use std::io;
+
+    use super::read_http_request;
+    use super::ServerLimits;
+
+    fn read(raw: &[u8]) -> io::Result<super::HttpRequest> {
+        let mut stream = io::Cursor::new(raw.to_vec());
+        read_http_request(&mut stream, &ServerLimits::default())
+    }
+
+    // `HttpRequest` intentionally has no `Debug`, so assert the error arm by hand
+    // rather than via `expect_err`.
+    fn assert_invalid_data(raw: &[u8], why: &str) {
+        match read(raw) {
+            Ok(_) => panic!("{why}"),
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData, "{why}: {e}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_content_length_is_rejected() {
+        // Two Content-Length lines that disagree on the body boundary: the smuggling
+        // case. Must fail closed rather than pick one (first-wins) silently.
+        let raw = b"POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 0\r\n\r\nhello";
+        assert_invalid_data(raw, "duplicate Content-Length must fail closed");
+    }
+
+    #[test]
+    fn duplicate_content_length_same_value_is_still_rejected() {
+        // Even agreeing duplicates are rejected — the strict, uniform posture (no
+        // "are they equal" special-case that a smuggler could probe).
+        let raw = b"POST / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n";
+        assert_invalid_data(raw, "any duplicate Content-Length must fail closed");
+    }
+
+    #[test]
+    fn unparseable_content_length_is_rejected() {
+        let raw = b"POST / HTTP/1.1\r\nContent-Length: not-a-number\r\n\r\n";
+        assert_invalid_data(raw, "unparseable Content-Length must fail closed");
+    }
+
+    #[test]
+    fn negative_content_length_is_rejected() {
+        // `usize` parse rejects the sign; previously this collapsed to 0.
+        let raw = b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n";
+        assert_invalid_data(raw, "negative Content-Length must fail closed");
+    }
+
+    #[test]
+    fn absent_content_length_is_a_zero_length_body() {
+        // Absent (not present-but-malformed) stays permissive: zero-length body.
+        let raw = b"POST / HTTP/1.1\r\n\r\n";
+        let req = read(raw).expect("absent Content-Length is a well-formed empty body");
+        assert!(req.body.is_empty());
+    }
+
+    #[test]
+    fn single_valid_content_length_parses() {
+        let raw = b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
+        let req = read(raw).expect("a single valid Content-Length must parse");
+        assert_eq!(req.body, b"hello");
     }
 }
 
