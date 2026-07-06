@@ -31,6 +31,37 @@ Trigger when the user wants their plan stress-tested before implementation — p
 
 9. **End when the tree is resolved.** Conclude with a compact summary of the decisions made, in the order they were resolved.
 
+## Codex-assisted mode (AFK with judge-gated oversight)
+
+Optional mode. When the user asks to run grill-me "with Codex", "AFK", or "have ChatGPT answer", the *answerer* is Codex/ChatGPT instead of the user, and oversight is preserved by a judge plus a per-branch human sign-off. The user is freed from being the copy/paste transport but still controls every branch.
+
+**Three roles:** Claude is the **griller** (drives the decision tree, asks one question per turn as usual). Codex is the **answerer** (stands in for the user on objective/technical questions). A **judge agent** decides, per answer, whether it matches how the user decides or must be escalated to the user.
+
+**Calibration source:** the user's decision stances live in `.claude/skills/pp-grill-me/stance-profile.md` (this repo's MCP-RE-scoped copy; deliberately divergent from other workspaces' profiles). Read it at session start. It is the judge's only rubric and is also used to prime Codex.
+
+**Per-question loop** (replaces waiting for the user's answer):
+
+1. **Ask** — Claude forms the question per the normal rules (recommendation + reasoning, codebase evidence first).
+2. **Answer** — send it to Codex, primed with the profile and read-only so it cannot mutate the repo:
+   ```bash
+   codex exec --skip-git-repo-check --sandbox read-only "<profile-stance preamble>\n\nQuestion: <Q>"
+   ```
+3. **Judge** — spawn a judge agent (general-purpose) whose only rubric is the profile; pass the `(question, Codex answer)` pair **plus the already-decided scope/branch context** (what earlier sign-offs put in/out, and which deferrals route to existing planned slices). Without that context the judge re-escalates settled deferrals as S1/S3 "don't-defer" violations (observed 2026-06-23 in another workspace's grill; recorded in the stance profile's Learning log). It returns `AUTO-ACCEPT` or `ESCALATE` + triggers + reason.
+4. **Branch:**
+   - `AUTO-ACCEPT` → record the decision with provenance `[Codex, judge-passed]` and move on. No user interruption.
+   - `ESCALATE` → ask the user via `AskUserQuestion`, surfacing the question, Codex's answer, and the judge's reason/triggers. Record with provenance `[user]` or `[Codex, user-confirmed]`.
+5. Continue until the branch is resolved.
+
+**Per-branch sign-off (mandatory).** At the end of each branch — before dependent branches build on it — present the whole branch's decisions with provenance and any judge reasoning, and require the user to sign off, redirect, or reopen. This is the safety net that catches a judge that wrongly auto-accepted: reopening an auto-accepted decision here is the highest-value learning signal.
+
+**Two artifacts.** Maintain (a) a full Claude↔Codex transcript file (skim-able) and (b) the compact decision summary with per-decision provenance tags. Decisions are never posted to a PRD/ADR until the user approves the summary (see [[review-before-publish]]).
+
+**Learning loop (human-confirmed, never silent).** At each branch sign-off, harvest corrections into the profile's Learning log:
+- escalation where the user overrode Codex → the firing stance was right; consider sharpening it.
+- escalation where the user sided with Codex → false alarm; consider loosening that trigger.
+- reopened auto-accept → a missing stance; add it.
+For each, ask the user one question: *was this case-specific, or a standing preference?* Only standing preferences become new/updated stances. Append entries in the Learning log's defined format; never mutate stances silently.
+
 ## Domain awareness — grill against the Ubiquitous Language
 
 Language precision is part of grilling, not a separate concern. Imprecise terms produce imprecise designs, so the interview challenges the user's vocabulary alongside their decisions. The shared vocabulary for the whole monorepo lives in `CONTEXT.md` at the repo root.
