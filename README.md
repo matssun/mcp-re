@@ -1,6 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# MCP-S
+# MCP Runtime Evidence (MCP-RE)
+
+> **MCP Runtime Evidence (MCP-RE)** is an object-level runtime-evidence layer for
+> high-value MCP tool calls. *(Formerly **MCP-S**; renamed to avoid confusion
+> with the unrelated SEP-2395 / "MCPS (MCP Secure)" work — see [#289](https://github.com/matssun/mcps/issues/289).)*
 
 ## Why should I care?
 
@@ -8,23 +12,24 @@
 stops it being forged, replayed, stripped of its authorization context, or
 answered by a tampered response.
 
-**MCP-S answer.** MCP-S protects *individual MCP calls* with object-level
+**MCP-RE answer.** MCP-RE protects *individual MCP calls* with object-level
 signatures, freshness, replay protection, delegated-authorization binding,
 response binding, and sidecar-injected verified context. It is proven end to end
 across a real multi-process path — an unmodified plain-MCP client → a client-side
-MCP-S proxy or SDK → mTLS → a server-side proxy that verifies and serves — and
+MCP-RE proxy or SDK → mTLS → a server-side proxy that verifies and serves — and
 against live Google Cloud KMS key custody (as of **v0.8.0**).
 
-**Non-goals.** MCP-S is **not** OAuth, **not** EMA, **not** sandboxing, **not** a
-full audit-receipt format. It composes with those layers rather than replacing
-them.
+**Non-goals.** MCP-RE is **not** OAuth, **not** EMA, **not** sandboxing, **not** a
+full audit-receipt format, **not** Agent Passports, **not** an L0–L4 trust
+framework, **not** tool-definition signing, and **not** a Trust Authority. It
+composes with those layers rather than replacing them.
 
 See [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) for the one-page
 overview and [`CHANGELOG.md`](CHANGELOG.md) for what each release proved.
 
 ## Overview
 
-MCP-S is an experimental third-party security extension proposal for the Model Context Protocol (MCP).
+MCP-RE is an experimental third-party security extension proposal for the Model Context Protocol (MCP).
 
 It provides a reference implementation and conformance package for protecting MCP tool calls with:
 
@@ -40,9 +45,9 @@ It provides a reference implementation and conformance package for protecting MC
   **or** a native SDK (**Python and TypeScript**, both bound to the same audited
   `mcps-client-core` so the signed evidence is byte-identical across languages).
 
-MCP-S is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
+MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
-## Quickstart — see MCP-S fail closed
+## Quickstart — see MCP-RE fail closed
 
 Run the single-node demo and watch the proxy accept exactly one valid signed
 call and fail closed on ten tampered, stale, replayed, mis-routed, unauthorized,
@@ -52,7 +57,7 @@ or unbound calls — no cloud credentials:
 ./scripts/demo-local.sh
 ```
 
-Expected final line: `OK: MCP-S local demo completed`. The two bins also run
+Expected final line: `OK: MCP-RE local demo completed`. The two bins also run
 directly under Cargo (`cargo run -p mcps-demo --bin demo_positive` /
 `demo_negative`, after `cargo build --workspace --bins`) or Bazel
 (`bazel run //mcps-demo:demo_negative`) with no env setup.
@@ -75,7 +80,7 @@ Current status:
 
 Current implementation claim:
 
-> MCP-S is production-hardened for single-node Rust-native deployments, with a
+> MCP-RE is production-hardened for single-node Rust-native deployments, with a
 > proven end-to-end client-integration path (client-side proxy + Python/TypeScript
 > SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
@@ -93,7 +98,7 @@ in [`docs/adr/`](docs/adr/). In brief:
   transport-identity binding, integrated Cloud-KMS custody on both signing legs,
   and the first **Python SDK** slice.
 - **0.8** added **stateless multi-round-trip continuation** — request-associated
-  elicitation folded into strict MCP-S as signed evidence, fail-closed on
+  elicitation folded into strict MCP-RE as signed evidence, fail-closed on
   arbitrary server push (ADR-MCPS-047) — and shipped the **TypeScript SDK**,
   bound to the same audited `mcps-client-core` as Python so the signed preimage
   is byte-identical across languages. Both SDKs are exercised through the real
@@ -171,12 +176,12 @@ cargo build --release -p mcps-proxy \
     --features pkcs11_keysource,redis_replay,online_ocsp
 ```
 
-**Multi-node MCP-S deployments MUST use the high-assurance profile** with
+**Multi-node MCP-RE deployments MUST use the high-assurance profile** with
 `--replay-cache shared --replay-redis-url redis://...` so all proxy nodes share
 replay state. A per-node cache (the lean default) does not prevent cross-node
 replays.
 
-## What MCP-S does not yet claim
+## What MCP-RE does not yet claim
 
 The current implementation does not claim:
 
@@ -197,7 +202,7 @@ implied for it.
 
 ## Extension identifier
 
-During incubation, MCP-S should use a controlled third-party identifier, for example:
+During incubation, MCP-RE should use a controlled third-party identifier, for example:
 
 ```text
 se.syncom/mcps
@@ -209,7 +214,7 @@ Do not use:
 io.modelcontextprotocol/...
 ```
 
-unless MCP-S is accepted through the official MCP extension process.
+unless MCP-RE is accepted through the official MCP extension process.
 
 ## Build and test
 
@@ -262,7 +267,7 @@ mcps-transport/            Verifying mTLS client.
 mcps-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcps-policy/               Delegated-authorization profiles (Phase 5).
 mcps-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
-mcps-client-proxy/         Local client-side MCP-S proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
+mcps-client-proxy/         Local client-side MCP-RE proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
 mcps-client-proxy-cli/     Binary front-end for the client proxy (plain-MCP stdio -> sign draft-02 -> mTLS to remote).
 mcps-conformance/          Black-box conformance harness.
 mcps-walkthrough/          End-to-end four-hop persona-ladder walkthrough (ADR-MCPS-045).
@@ -279,7 +284,7 @@ docs/spec/                 Spec briefs (core spec, security boundary, claim matr
 docs/security/             Multi-agent audit reports + per-finding remediation log + cross-round ledger.
 docs/LICENSING.md          Per-file licensing notes.
 docs/PROJECT_STATUS.md     Current stage and what "experimental" means here.
-docs/SECURITY_BOUNDARY.md  What MCP-S protects (and what it explicitly does not).
+docs/SECURITY_BOUNDARY.md  What MCP-RE protects (and what it explicitly does not).
 docs/UPSTREAM_PROPOSAL_PROCESS.md  Path from third-party extension to an MCP SEP.
 docs/RELEASE_CHECKLIST.md  Steps run before tagging a release.
 docs/*-guide.md            Operator runbooks (sidecar, host, transport, conformance, dogfood).
@@ -287,7 +292,7 @@ docs/*-guide.md            Operator runbooks (sidecar, host, transport, conforma
 
 ## For security reviewers
 
-If you are evaluating MCP-S, read these in order — they route through the same
+If you are evaluating MCP-RE, read these in order — they route through the same
 materials the [upstream-proposal package](docs/UPSTREAM_PROPOSAL_PROCESS.md)
 requires (motivation/threat model, security boundary, envelope and signature
 rules, replay/freshness model, authorization profile, transport hardening,
@@ -297,7 +302,7 @@ conformance, reference implementation, demos, and non-goals):
    what it is, the threat, where it sits, what the current release proves, and what
    it does not claim.
 2. **Security boundary** — [`docs/spec/security-boundary.md`](docs/spec/security-boundary.md):
-   what MCP-S protects and what it explicitly does not.
+   what MCP-RE protects and what it explicitly does not.
 3. **v0.5 claim matrix** — [`docs/spec/v0.5-claim-matrix.md`](docs/spec/v0.5-claim-matrix.md):
    every reviewer-facing claim, each traceable to a green test.
 4. **GCP KMS validation** — [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md)
@@ -306,7 +311,7 @@ conformance, reference implementation, demos, and non-goals):
 5. **Conformance guide** — [`docs/conformance-guide.md`](docs/conformance-guide.md):
    the black-box conformance harness and vectors.
 6. **EMA composition** — [`docs/spec/ema-composition.md`](docs/spec/ema-composition.md):
-   how MCP-S would compose with Enterprise-Managed Authorization (a **proposed**
+   how MCP-RE would compose with Enterprise-Managed Authorization (a **proposed**
    design note — EMA is not implemented or demoed).
 7. **Run it** — [`docs/quickstart-local.md`](docs/quickstart-local.md): the
    local fail-closed demo (`./scripts/demo-local.sh`), no cloud credentials.
@@ -314,7 +319,7 @@ conformance, reference implementation, demos, and non-goals):
 ## Documentation index
 
 - **One-page overview:** [`docs/MCP-S-IN-ONE-PAGE.md`](docs/MCP-S-IN-ONE-PAGE.md) —
-  what MCP-S is, the threat it addresses, where it sits relative to EMA/OAuth, and
+  what MCP-RE is, the threat it addresses, where it sits relative to EMA/OAuth, and
   what the current release proves.
 - **Quickstarts:** [`docs/quickstart-local.md`](docs/quickstart-local.md)
   (local fail-closed demo, no cloud) and
@@ -345,4 +350,4 @@ and [`docs/LICENSING.md`](docs/LICENSING.md).
 
 ## Disclaimer
 
-MCP-S is an independent experimental proposal. It is not endorsed by the MCP project, Anthropic, or any MCP maintainer unless explicitly accepted through the relevant public governance process.
+MCP-RE is an independent experimental proposal. It is not endorsed by the MCP project, Anthropic, or any MCP maintainer unless explicitly accepted through the relevant public governance process.
