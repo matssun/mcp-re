@@ -622,6 +622,41 @@ fn resolve_identity(
     }
 }
 
+/// Leaf-DER form of [`resolve_identity`] for the opt-in async serve path
+/// (ADR-MCPRE-051 §1): identical strategy dispatch, but `DirectTls` reads the peer
+/// identity from the leaf DER captured once at handshake (`hyper` owns the TLS
+/// stream thereafter) rather than from the live `ServerConnection`. `extract_identity`
+/// is the SAME extractor the blocking path's `connection_identity` calls, so the
+/// resolved identity is byte-identical.
+#[cfg_attr(not(feature = "async_serve"), allow(dead_code))]
+pub(crate) fn resolve_identity_from_leaf(
+    leaf_der: Option<&[u8]>,
+    options: &ServerOptions,
+    headers: &RequestHeaders,
+) -> Option<TransportIdentity> {
+    match &options.identity_strategy {
+        IdentityStrategy::DirectTls => extract_identity(leaf_der?, options.identity_policy),
+        IdentityStrategy::ReverseProxyHeader(provider) => provider.verified_identity(headers),
+        IdentityStrategy::LbAssertion => None,
+    }
+}
+
+/// Leaf-DER form of [`connection_rejection`] for the opt-in async serve path. In a
+/// default build this is exactly the cert-lifetime guard (byte-for-byte the same
+/// decision as the blocking path). NOTE: online-OCSP revocation
+/// (`#[cfg(feature = "online_ocsp")]`) needs the full peer chain from the live
+/// connection and is NOT yet wired on the async path — combining `async_serve`
+/// with `online_ocsp` is a tracked follow-up; the default and shared-replay tier
+/// builds have full parity.
+#[cfg_attr(not(feature = "async_serve"), allow(dead_code))]
+pub(crate) fn connection_rejection_for_leaf(
+    leaf_der: Option<&[u8]>,
+    options: &ServerOptions,
+    request: &[u8],
+) -> Option<Vec<u8>> {
+    cert_lifetime_rejection_for_leaf(leaf_der, options, request)
+}
+
 /// Extract the raw Tier-3 ingress-assertion header value to hand to the
 /// post-verification LB check (issue #71), under the [`IdentityStrategy::LbAssertion`]
 /// strategy ONLY. The header is fetched case-insensitively and fails CLOSED on a
@@ -633,7 +668,7 @@ fn resolve_identity(
 /// injection attempt — fail closed). The `None`-on-duplicate behaviour mirrors the
 /// reverse-proxy provider's duplicate-trust-header rule: the proxy's required-header
 /// guard turns the resulting `None` into a closed rejection.
-fn assertion_header<'a>(
+pub(crate) fn assertion_header<'a>(
     options: &ServerOptions,
     headers: &'a RequestHeaders,
 ) -> Option<&'a str> {
@@ -682,9 +717,25 @@ fn cert_lifetime_rejection(
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    let max = options.max_client_cert_lifetime?;
     let leaf = conn.peer_certificates()?.first()?;
-    let within_limit = leaf_cert_lifetime_secs(leaf.as_ref())
+    cert_lifetime_rejection_for_leaf(Some(leaf.as_ref()), options, request)
+}
+
+/// Leaf-DER core of [`cert_lifetime_rejection`], shared by the blocking serve loop
+/// (which reads the leaf from the live `ServerConnection`) and the opt-in async
+/// serve path (ADR-MCPRE-051 §1), which captures the peer leaf DER once at
+/// handshake because `hyper` takes ownership of the TLS stream for keep-alive/H2.
+/// The DECISION (lifetime vs. `max_client_cert_lifetime`) is byte-identical to the
+/// blocking path — only the leaf's provenance differs — so the blocking-path tests
+/// validate this core for both.
+pub(crate) fn cert_lifetime_rejection_for_leaf(
+    leaf_der: Option<&[u8]>,
+    options: &ServerOptions,
+    request: &[u8],
+) -> Option<Vec<u8>> {
+    let max = options.max_client_cert_lifetime?;
+    let leaf = leaf_der?;
+    let within_limit = leaf_cert_lifetime_secs(leaf)
         .is_some_and(|lifetime| lifetime <= max.as_secs() as i64);
     if within_limit {
         return None;
@@ -711,7 +762,7 @@ fn cert_lifetime_rejection(
 /// so this is anti-smuggling hygiene (ADR-MCPS-025 rule 4 applying the ADR-MCPS-023
 /// strict-header rules). A defect maps to `mcp-re.transport_binding_failed`, the same
 /// transport-boundary token the sibling cert-lifetime / OCSP rejections use.
-fn routing_header_rejection(headers: &RequestHeaders, request: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn routing_header_rejection(headers: &RequestHeaders, request: &[u8]) -> Option<Vec<u8>> {
     crate::transport::validate_routing_headers(headers)
         .err()
         .map(|_rejection| {
