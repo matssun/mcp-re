@@ -58,8 +58,41 @@ inner:
   command:
     - "/usr/local/bin/echo-inner"
 
+# Signing-key custody (ADR-MCPS-028). `fileSeed` mounts a raw Ed25519 seed from
+# the material Secret (dev / on-prem). `gcpKms` keeps the signing key in GCP
+# Cloud KMS and, on GKE, authenticates via Workload Identity (useMetadata) so no
+# key material ever lands in the pod. The image MUST be built with the
+# `gcp_kms_keysource` feature for `gcpKms`.
+keySource: fileSeed # fileSeed | gcpKms
+
+# GCP Cloud KMS custody (used only when keySource == gcpKms).
+gcpKms:
+  # KMS key-version resource path:
+  #   projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>/cryptoKeyVersions/<n>
+  keyVersion: ""
+  # Optional override of the cloudkms endpoint (blank = the public endpoint).
+  endpoint: ""
+  # Fetch the KMS access token from the GKE metadata server (Workload Identity).
+  # Leave true on GKE; set false only to supply an operator MCP_RE_GCP_ACCESS_TOKEN.
+  useMetadata: true
+  # Optional SECOND, DISTINCT KMS key for delegated TLS (the TLS server private
+  # key stays in KMS; the chart then omits --tls-key, which the proxy requires).
+  tlsKeyVersion: ""
+
+# Pod ServiceAccount. On GKE, annotate it to bind a Google Service Account via
+# Workload Identity so the gcpKms credential path needs no key file:
+#   annotations:
+#     iam.gke.io/gcp-service-account: <gsa>@<project>.iam.gserviceaccount.com
+# The bound GSA needs roles/cloudkms.signerVerifier on the signing key.
+serviceAccount:
+  create: true
+  # If empty, the fullname is used. Set to reuse an existing (WI-bound) account.
+  name: ""
+  annotations: {}
+
 # TLS + trust material, mounted from a Secret. The Secret MUST provide these keys:
-#   tls.crt, tls.key, client-ca.pem, trust.json, signing-seed
+#   tls.crt, tls.key, client-ca.pem, trust.json — plus signing-seed unless
+#   keySource is gcpKms, and minus tls.key when gcpKms.tlsKeyVersion is set.
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"

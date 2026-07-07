@@ -20,6 +20,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      serviceAccountName: {{ include "mcp-re-proxy.serviceAccountName" . }}
       # MCPS-88: SIGTERM triggers a graceful drain (stop accepting, finish the
       # in-flight request, exit 0). Give the kubelet headroom over the request
       # deadline so a rollout drains rather than kills.
@@ -61,14 +62,38 @@ spec:
             - {{ .Values.identity.serverSigner | quote }}
             - "--server-key-id"
             - {{ .Values.identity.serverKeyId | quote }}
+            {{- if eq .Values.keySource "gcpKms" }}
+            # Cloud KMS custody: the signing key never enters the pod. On GKE the
+            # token comes from the Workload-Identity metadata server (useMetadata).
+            - "--key-source"
+            - "gcp-kms"
+            - "--gcp-kms-key-version"
+            - {{ .Values.gcpKms.keyVersion | quote }}
+            {{- if .Values.gcpKms.endpoint }}
+            - "--gcp-kms-endpoint"
+            - {{ .Values.gcpKms.endpoint | quote }}
+            {{- end }}
+            {{- if .Values.gcpKms.useMetadata }}
+            - "--gcp-kms-use-metadata"
+            {{- end }}
+            {{- if .Values.gcpKms.tlsKeyVersion }}
+            # Delegated TLS: the TLS server private key also stays in KMS, so the
+            # exported --tls-key is omitted (the proxy rejects both together).
+            - "--gcp-kms-tls-key-version"
+            - {{ .Values.gcpKms.tlsKeyVersion | quote }}
+            {{- end }}
+            {{- else }}
             - "--key-source"
             - "file"
             - "--signing-key-seed"
             - "{{ .Values.tls.mountPath }}/signing-seed"
+            {{- end }}
             - "--tls-cert"
             - "{{ .Values.tls.mountPath }}/tls.crt"
+            {{- if not (and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion) }}
             - "--tls-key"
             - "{{ .Values.tls.mountPath }}/tls.key"
+            {{- end }}
             - "--client-ca"
             - "{{ .Values.tls.mountPath }}/client-ca.pem"
             - "--trust"
