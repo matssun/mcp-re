@@ -17,7 +17,6 @@
 //! The clock is injected (`now_unix`); the proxy never reads the system clock,
 //! so its behavior is deterministic and testable.
 
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use mcp_re_core::json_rpc_error_object;
@@ -81,7 +80,7 @@ where
 /// proxy's existing `TrustResolver`.
 struct PolicyEnforcement {
     evaluator: PolicyEvaluator,
-    revocation: Box<dyn RevocationSource>,
+    revocation: Box<dyn RevocationSource + Send + Sync>,
 }
 
 /// A verify-before-dispatch MCP-RE sidecar wrapping an inner server.
@@ -91,10 +90,10 @@ pub struct Proxy {
     /// capability, never the raw private key. An in-memory `SigningKey` satisfies
     /// `ResponseSigner` (so existing call sites are unchanged), and a non-exporting
     /// HSM/KMS-backed signer satisfies it without ever surrendering its key.
-    signer: Box<dyn ResponseSigner>,
+    signer: Box<dyn ResponseSigner + Send + Sync>,
     server_signer: String,
     key_id: String,
-    resolver: Box<dyn TrustResolver>,
+    resolver: Box<dyn TrustResolver + Send + Sync>,
     config: VerificationConfig,
     /// ADR-MCPS-039 (D1): the expected-version posture this proxy enforces on
     /// inbound requests. The default ([`ExpectedVersionPolicy::Draft01AndDraft02`])
@@ -105,10 +104,14 @@ pub struct Proxy {
     /// via [`Proxy::with_expected_version_policy`], at which point a draft-01
     /// envelope fails closed as `mcp-re.downgrade_forbidden`.
     version_policy: ExpectedVersionPolicy,
-    inner: Box<dyn InnerServer>,
-    replay: RefCell<Box<dyn ReplayCache>>,
+    inner: Box<dyn InnerServer + Send + Sync>,
+    /// The replay cache is held directly (no `RefCell`) and the trait's
+    /// `check_and_insert` takes `&self`, so a single `Proxy` is `Send + Sync`
+    /// and shareable across per-core serving tasks (ADR-MCPRE-051 §2). All
+    /// concrete caches carry their own interior synchronization.
+    replay: Box<dyn ReplayCache + Send + Sync>,
     policy: Option<PolicyEnforcement>,
-    transport_binding: Option<Box<dyn TransportBindingPolicy>>,
+    transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>>,
     /// Optional ADR-MCPS-023 Tier 3 (issue #71) LB-signed, request-bound ingress
     /// assertion verifier. Unlike `transport_binding` — whose identity is resolved
     /// from the connection BEFORE verification — an LB assertion binds
@@ -147,13 +150,13 @@ impl Proxy {
     /// * `inner` — the unmodified MCP server to protect.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        signer: impl ResponseSigner + 'static,
+        signer: impl ResponseSigner + Send + Sync + 'static,
         server_signer: impl Into<String>,
         key_id: impl Into<String>,
-        resolver: Box<dyn TrustResolver>,
+        resolver: Box<dyn TrustResolver + Send + Sync>,
         expected_audience: impl Into<String>,
         max_clock_skew_secs: i64,
-        inner: Box<dyn InnerServer>,
+        inner: Box<dyn InnerServer + Send + Sync>,
     ) -> Self {
         Proxy {
             signer: Box::new(signer),
@@ -169,7 +172,7 @@ impl Proxy {
             // `with_expected_version_policy` once draft-01 is retired.
             version_policy: ExpectedVersionPolicy::Draft01AndDraft02,
             inner,
-            replay: RefCell::new(Box::new(InMemoryReplayCache::new(max_clock_skew_secs))),
+            replay: Box::new(InMemoryReplayCache::new(max_clock_skew_secs)),
             policy: None,
             transport_binding: None,
             lb_assertion: None,
@@ -205,8 +208,8 @@ impl Proxy {
     /// Replace the default in-memory replay cache with an injected one (e.g. the
     /// durable file-backed cache). The cache is consulted only after signature
     /// verification; a cache failure fails closed.
-    pub fn with_replay_cache(mut self, cache: Box<dyn ReplayCache>) -> Self {
-        self.replay = RefCell::new(cache);
+    pub fn with_replay_cache(mut self, cache: Box<dyn ReplayCache + Send + Sync>) -> Self {
+        self.replay = cache;
         self
     }
 
@@ -218,7 +221,7 @@ impl Proxy {
     /// cache, closing the gap at the object level (defense in depth beneath the
     /// CLI-flag rejection of `--replay-cache memory`).
     pub fn replay_durability_class(&self) -> mcp_re_core::ReplayDurabilityClass {
-        self.replay.borrow().durability_class()
+        self.replay.durability_class()
     }
 
     /// Enable opt-in Phase 5 policy enforcement (ADR-MCPS-013). After a request
@@ -231,7 +234,7 @@ impl Proxy {
     pub fn with_policy_enforcement(
         mut self,
         evaluator: PolicyEvaluator,
-        revocation: Box<dyn RevocationSource>,
+        revocation: Box<dyn RevocationSource + Send + Sync>,
     ) -> Self {
         self.policy = Some(PolicyEnforcement {
             evaluator,
@@ -246,7 +249,10 @@ impl Proxy {
     /// a mismatch (or a required-but-absent identity) fails closed with
     /// `mcp-re.transport_binding_failed`. A `Proxy` built without this ignores the
     /// transport identity entirely.
-    pub fn with_transport_binding(mut self, policy: Box<dyn TransportBindingPolicy>) -> Self {
+    pub fn with_transport_binding(
+        mut self,
+        policy: Box<dyn TransportBindingPolicy + Send + Sync>,
+    ) -> Self {
         self.transport_binding = Some(policy);
         self
     }
@@ -321,17 +327,18 @@ impl Proxy {
             .and_then(|v| v.get("id").cloned())
             .unwrap_or(Value::Null);
 
-        let verify_result = match self.replay.try_borrow_mut() {
-            Ok(mut replay) => verify_request_dispatch(
-                request_bytes,
-                self.resolver.as_ref(),
-                &mut **replay,
-                &self.config,
-                now_unix,
-                self.version_policy,
-            ),
-            Err(_) => Err(McpReError::ReplayCacheUnavailable),
-        };
+        // The replay cache is shared via `&self` (interior-synchronized), so the
+        // dispatch borrows it directly — no `RefCell`, no per-request borrow that
+        // could fail. This is what lets a single `Proxy` serve concurrently
+        // across per-core tasks (ADR-MCPRE-051 §2).
+        let verify_result = verify_request_dispatch(
+            request_bytes,
+            self.resolver.as_ref(),
+            self.replay.as_ref(),
+            &self.config,
+            now_unix,
+            self.version_policy,
+        );
 
         match verify_result {
             // Fail closed: the inner server is never reached.
@@ -761,6 +768,17 @@ fn scrub_proxy_owned_meta(value: &mut Value) {
 mod tests {
     use super::scrub_proxy_owned_meta;
     use super::Proxy;
+
+    /// ADR-MCPRE-051 §2 / Phase 1 (MCPRE-111): a single `Proxy` must be
+    /// `Send + Sync` so the target per-core async data plane can share one over
+    /// the coherent stores. Compile-time assertion — the build fails if any field
+    /// reintroduces interior mutability (`RefCell`) or a non-thread-safe box.
+    #[test]
+    fn proxy_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Proxy>();
+    }
+
     use mcp_re_core::request_hash;
     use mcp_re_core::request_signing_preimage;
     use mcp_re_core::verify_response;

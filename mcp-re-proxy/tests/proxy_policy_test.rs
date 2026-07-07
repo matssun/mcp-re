@@ -6,8 +6,8 @@
 //! reached) with the matching `mcp-re.authorization_*` error. Without an evaluator
 //! the proxy behaves exactly as a pre-Phase-5 sidecar.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_core::canonicalize;
 use mcp_re_core::request_hash;
@@ -76,11 +76,11 @@ fn server_resolver() -> InMemoryTrustResolver {
     r
 }
 
-type Calls = Rc<RefCell<Vec<Value>>>;
+type Calls = Arc<Mutex<Vec<Value>>>;
 
 fn proxy_with_recorder(enforce: bool) -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses");
         let text = value["params"]["arguments"]["text"]
@@ -88,7 +88,7 @@ fn proxy_with_recorder(enforce: bool) -> (Proxy, Calls) {
             .unwrap_or("")
             .to_string();
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({
             "jsonrpc": "2.0", "id": id,
             "result": { "content": [ { "type": "text", "text": text } ] }
@@ -181,10 +181,10 @@ fn enforced_in_scope_request_is_allowed_and_signed() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 1, "in-scope request reaches the inner once");
+    assert_eq!(calls.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
     // The inner never sees the MCP-RE authorization block.
     assert!(
-        calls.borrow()[0]["params"]["_meta"]
+        calls.lock().unwrap()[0]["params"]["_meta"]
             .get(AUTHORIZATION_META_KEY)
             .is_none(),
         "authorization block stripped before forwarding"
@@ -202,7 +202,7 @@ fn enforced_out_of_scope_request_is_denied_before_dispatch() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 0, "denied request must NOT reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
 }
 
@@ -213,18 +213,18 @@ fn enforced_request_without_block_is_denied() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 0, "no authorization → inner never reached");
+    assert_eq!(calls.lock().unwrap().len(), 0, "no authorization → inner never reached");
     assert_eq!(error_message(&response), "mcp-re.authorization_block_missing");
 }
 
 #[test]
 fn enforced_revoked_grant_is_denied() {
     // Build a proxy whose revocation source revokes rev-1.
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).unwrap();
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": "req-1", "result": {} })).unwrap()
     };
     let mut revocation = InMemoryRevocationSource::new();
@@ -245,7 +245,7 @@ fn enforced_revoked_grant_is_denied() {
     let request = signed_request("nonce-revk-01", "echo", "echo", true);
     let response = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 0, "revoked grant → inner never reached");
+    assert_eq!(calls.lock().unwrap().len(), 0, "revoked grant → inner never reached");
     assert_eq!(error_message(&response), "mcp-re.authorization_revoked");
 }
 
@@ -258,9 +258,9 @@ fn unenforced_proxy_ignores_the_authorization_block_and_forwards() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 1, "without enforcement the request is forwarded");
+    assert_eq!(calls.lock().unwrap().len(), 1, "without enforcement the request is forwarded");
     assert!(
-        calls.borrow()[0]["params"]["_meta"]
+        calls.lock().unwrap()[0]["params"]["_meta"]
             .get(AUTHORIZATION_META_KEY)
             .is_none(),
         "authorization block is still stripped before forwarding"
@@ -284,7 +284,7 @@ fn satisfied_transport_binding_does_not_rescue_failed_authz() {
 
     let response = proxy.handle_with_transport(&request, now(), Some(&id), None);
 
-    assert_eq!(calls.borrow().len(), 0, "denied request must NOT reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
 }
 
@@ -315,11 +315,11 @@ fn enforced_unavailable_revocation_source_denies_with_distinct_token() {
         }
     }
 
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).unwrap();
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": "req-1", "result": {} })).unwrap()
     };
     let mut evaluator = PolicyEvaluator::new();
@@ -339,7 +339,7 @@ fn enforced_unavailable_revocation_source_denies_with_distinct_token() {
     let response = proxy.handle(&request, now());
 
     assert_eq!(
-        calls.borrow().len(),
+        calls.lock().unwrap().len(),
         0,
         "an unavailable revocation backend must fail closed; inner never reached"
     );

@@ -17,7 +17,7 @@
 //! ## Layering — profile semantics, not deployment machinery
 //!
 //! This is PROFILE-level wiring: it depends only on `mcp-re-core` and takes the
-//! replay cache as a `&mut dyn ReplayCache`. The richer runtime tier
+//! replay cache as a `&dyn ReplayCache`. The richer runtime tier
 //! classification (`ReplayDurabilityTier` / `meets_strict_production_minimum`)
 //! is a `mcp-re-proxy` deployment concern wired AROUND this seam as a follow-up,
 //! never imported here. The only durability signal this layer honestly knows is
@@ -134,7 +134,7 @@ pub struct DispatchOutcome {
 /// burned once every other check has passed.
 pub fn dispatch_request(
     verified: &VerifiedHttpRequestEvidence,
-    replay: &mut dyn ReplayCache,
+    replay: &dyn ReplayCache,
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &DispatchConfig,
 ) -> Result<DispatchOutcome, DispatchError> {

@@ -36,14 +36,14 @@ fn server_handle(request_bytes: &[u8]) -> Vec<u8> {
     let client_key = SigningKey::from_seed_bytes(&CLIENT_SEED);
     let mut req_resolver = InMemoryTrustResolver::new();
     req_resolver.insert(CLIENT_SIGNER, CLIENT_KEY_ID, client_key.public_key());
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let config = VerificationConfig {
         expected_audience: AUDIENCE.to_string(),
         max_clock_skew_secs: 60,
     };
     let now = parse_rfc3339_utc("2026-06-30T20:00:00Z").unwrap();
     let verified =
-        verify_request_draft02(request_bytes, &req_resolver, &mut replay, &config, now).unwrap();
+        verify_request_draft02(request_bytes, &req_resolver, &replay, &config, now).unwrap();
 
     let server_key = SigningKey::from_seed_bytes(&SERVER_SEED);
     let mut object = json!({

@@ -108,7 +108,7 @@ pub fn demo_inner_command(inner_binary: &str, demo_root: &str) -> Vec<String> {
 /// surfaced at construction, never silently at serve time.
 pub fn build_demo_proxy(
     config: DemoProxyConfig,
-    resolver: Box<dyn TrustResolver>,
+    resolver: Box<dyn TrustResolver + Send + Sync>,
     log_sink: Arc<dyn InnerLogSink + Send + Sync>,
 ) -> Result<Proxy, String> {
     let launch = demo_inner_launch(&config.demo_root);

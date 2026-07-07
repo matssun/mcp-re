@@ -62,6 +62,19 @@ or wire-format compatibility while the design lines from
 
 ### Changed
 
+- **Thread-readiness: `Proxy` is now `Send + Sync` (ADR-MCPRE-051 §2, Phase 1,
+  MCPRE-111).** Mechanical, no behavior change — the groundwork for the target
+  per-core async data plane where a single `Proxy` serves concurrently across
+  cores. `ReplayCache::check_and_insert` moved from `&mut self` to `&self`; the
+  in-memory reference cache and the file-backed `DurableReplayCache` gained
+  interior `Mutex` synchronization (each check-and-insert stays atomic — the
+  lock spans check+insert, so a race still yields exactly one `Fresh`); the
+  shared/atomic stores were already `&self`. The proxy now holds its replay
+  cache directly (the `RefCell` on the serving path is gone), and the boxed
+  custody/trust/inner/replay/policy trait-object seams carry `+ Send + Sync`. A
+  compile-time assertion (`proxy_is_send_and_sync`) locks the property. The
+  `ReplayCacheUnavailable` fail-closed taxonomy is unchanged; `mcp-re-core`
+  stays pure (the interior lock is `std::sync`, not I/O/async).
 - **Project renamed: MCP-S / MCPS → MCP Runtime Evidence (MCP-RE)** (#289,
   Stages 2–4). A full identity rename, including the wire format:
   - Crates and directories: `mcps-*` → `mcp-re-*`; Rust lib/module names

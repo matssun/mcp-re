@@ -19,8 +19,6 @@
 //! This is a TEST-ONLY change: it asserts existing production behavior. If any
 //! assertion fails, that is a real leak — the test must NOT be weakened.
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -244,11 +242,11 @@ fn assert_no_seed_artifact_arg(haystack: &[u8], ctx: &str) {
 fn proxy_recording(
     enforce: bool,
     inner_response: Vec<u8>,
-) -> (Proxy, Rc<RefCell<Vec<Vec<u8>>>>, RecordingSink) {
-    let forwarded: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
-    let forwarded_for_inner = Rc::clone(&forwarded);
+) -> (Proxy, Arc<Mutex<Vec<Vec<u8>>>>, RecordingSink) {
+    let forwarded: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+    let forwarded_for_inner = Arc::clone(&forwarded);
     let inner = move |request: &[u8]| -> Vec<u8> {
-        forwarded_for_inner.borrow_mut().push(request.to_vec());
+        forwarded_for_inner.lock().unwrap().push(request.to_vec());
         inner_response.clone()
     };
     let sink = RecordingSink::default();
@@ -290,7 +288,7 @@ fn request_verify_failure_leaks_no_secret() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(forwarded.borrow().len(), 0, "tampered request must NOT reach the inner");
+    assert_eq!(forwarded.lock().unwrap().len(), 0, "tampered request must NOT reach the inner");
     // SEED + ARTIFACT + ARG all absent in the returned error object.
     assert_no_seed_artifact_arg(&response, "request-verify returned error object");
     // SEED + ARTIFACT + ARG all absent in the captured log/stderr buffer.
@@ -307,7 +305,7 @@ fn authz_denial_leaks_no_secret() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(forwarded.borrow().len(), 0, "denied request must NOT reach the inner");
+    assert_eq!(forwarded.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     let value: Value = serde_json::from_slice(&response).unwrap();
     assert_eq!(
         value["error"]["message"].as_str(),
@@ -334,7 +332,7 @@ fn response_failure_leaks_no_secret() {
     let response = proxy.handle(&request, now());
 
     // The request IS forwarded (it is in-scope) — the failure is on the way back.
-    assert_eq!(forwarded.borrow().len(), 1, "in-scope request reaches the inner once");
+    assert_eq!(forwarded.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
     let value: Value = serde_json::from_slice(&response).expect("error object is valid JSON");
     assert!(value.get("error").is_some(), "response-path failure yields an error object");
     assert_no_seed_artifact_arg(&response, "response-failure returned error object");
@@ -354,8 +352,8 @@ fn forwarded_to_inner_strips_seed_and_artifact() {
 
     let response = proxy.handle(&request, now());
 
-    assert_eq!(forwarded.borrow().len(), 1, "in-scope request reaches the inner once");
-    let inner_bytes = forwarded.borrow()[0].clone();
+    assert_eq!(forwarded.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
+    let inner_bytes = forwarded.lock().unwrap()[0].clone();
 
     // The forwarded request legitimately carries the request ARG (the inner needs
     // its params), so ARG is NOT asserted absent here. SEED and ARTIFACT MUST be

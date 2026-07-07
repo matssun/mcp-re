@@ -54,13 +54,13 @@ fn verify_with(bytes: &[u8], expected_audience: &str) -> Result<(), McpReError> 
     let key = SigningKey::from_seed_bytes(&SEED);
     let mut resolver = InMemoryTrustResolver::new();
     resolver.insert(SIGNER, KEY_ID, key.public_key());
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let config = VerificationConfig {
         expected_audience: expected_audience.to_string(),
         max_clock_skew_secs: 60,
     };
     let now = parse_rfc3339_utc("2026-06-30T20:00:00Z").unwrap();
-    verify_request_draft02(bytes, &resolver, &mut replay, &config, now).map(|_| ())
+    verify_request_draft02(bytes, &resolver, &replay, &config, now).map(|_| ())
 }
 
 #[test]

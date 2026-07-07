@@ -2,8 +2,8 @@
 //! forwards only verified+stripped requests, injects a sole-writer verified
 //! context, and signs the inner server's response.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_core::request_hash;
 use mcp_re_core::verify_response;
@@ -59,12 +59,12 @@ fn server_resolver() -> InMemoryTrustResolver {
 }
 
 /// A captured record of every request the inner server received.
-type Calls = Rc<RefCell<Vec<Value>>>;
+type Calls = Arc<Mutex<Vec<Value>>>;
 
 /// Build a proxy wrapping a plain-MCP echo inner that records its calls.
 fn proxy_with_recorder() -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses request");
         let text = value["params"]["arguments"]["text"]
@@ -72,7 +72,7 @@ fn proxy_with_recorder() -> (Proxy, Calls) {
             .unwrap_or("")
             .to_string();
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         // Plain MCP response — the inner server knows nothing about MCP-RE.
         let response = json!({
             "jsonrpc": "2.0",
@@ -132,8 +132,8 @@ fn verified_request_is_forwarded_stripped_and_response_is_signed() {
     let response = proxy.handle(&request, now());
 
     // The inner server was reached exactly once.
-    assert_eq!(calls.borrow().len(), 1, "inner reached once");
-    let forwarded = &calls.borrow()[0];
+    assert_eq!(calls.lock().unwrap().len(), 1, "inner reached once");
+    let forwarded = &calls.lock().unwrap()[0];
 
     // The external transport envelope was stripped; the tool call is intact.
     let meta = &forwarded["params"]["_meta"];
@@ -177,7 +177,7 @@ fn unsigned_request_is_blocked_and_never_forwarded() {
 
     let response = proxy.handle(&plain, now());
 
-    assert_eq!(calls.borrow().len(), 0, "inner must NOT be reached");
+    assert_eq!(calls.lock().unwrap().len(), 0, "inner must NOT be reached");
     assert_eq!(error_message(&response), "mcp-re.missing_envelope");
 }
 
@@ -191,7 +191,7 @@ fn tampered_request_is_blocked_and_never_forwarded() {
 
     let response = proxy.handle(&tampered, now());
 
-    assert_eq!(calls.borrow().len(), 0, "inner must NOT be reached");
+    assert_eq!(calls.lock().unwrap().len(), 0, "inner must NOT be reached");
     assert_eq!(error_message(&response), "mcp-re.invalid_signature");
 }
 
@@ -225,8 +225,8 @@ fn caller_supplied_verified_context_is_stripped_even_when_signed() {
 
     let _ = proxy.handle(&request, now());
 
-    assert_eq!(calls.borrow().len(), 1, "verified request is forwarded");
-    let forwarded = &calls.borrow()[0];
+    assert_eq!(calls.lock().unwrap().len(), 1, "verified request is forwarded");
+    let forwarded = &calls.lock().unwrap()[0];
     let verified_ctx = &forwarded["params"]["_meta"][VERIFIED_META_KEY];
     assert_eq!(
         verified_ctx["verified_signer"].as_str(),

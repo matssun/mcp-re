@@ -2178,7 +2178,7 @@ pub fn build_attested_ingress_binding(
 /// not compile [`EnvKeySource`] at all and FAILS CLOSED here with a clear error —
 /// `--key-source env` still parses (so the message is precise), but no env-backed
 /// key can be constructed.
-pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource>, KeyError> {
+pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sync>, KeyError> {
     match config.key_source {
         KeySourceKind::File => Ok(Box::new(FileKeySource {
             signing_key_seed_path: config.signing_key_seed.clone(),
@@ -2385,7 +2385,7 @@ pub fn build_shared_replay_cache(
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache>, String> {
+) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
     use crate::replay_tier::ReplayDurabilityTier;
     // A disabled socket timeout would re-introduce the hang, so the connect
     // timeout is always bounded: prefer the configured read timeout, else a
@@ -2435,7 +2435,7 @@ pub fn build_shared_replay_cache(
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     tier: &crate::replay_tier::ReplayDurabilityTier,
-) -> Result<Box<dyn mcp_re_core::ReplayCache>, String> {
+) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
     let _ = (replay_redis_url, max_clock_skew, read_timeout, write_timeout, tier);
     Err("shared replay cache backend is not yet available in this build (the Redis \
          adapter is behind the non-default redis_replay feature; the etcd \
@@ -2468,7 +2468,7 @@ pub fn build_cpstore_replay_cache(
     max_clock_skew: i64,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache>, String> {
+) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
     // A disabled socket timeout would re-introduce the hang, so the per-op timeout
     // is always bounded: prefer the larger configured socket timeout, else a
     // bounded default.
@@ -2499,7 +2499,7 @@ pub fn build_cpstore_replay_cache(
     max_clock_skew: i64,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
-) -> Result<Box<dyn mcp_re_core::ReplayCache>, String> {
+) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
     let _ = (cpstore_etcd_endpoint, max_clock_skew, read_timeout, write_timeout);
     Err("LINEARIZABLE durability tier needs the cpstore_etcd feature, which is not \
          available in this build (rebuild with --features cpstore_etcd); the \

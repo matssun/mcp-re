@@ -135,13 +135,13 @@ fn verified_request(
 fn duplicate_nonce_same_actor_audience_profile_is_replay() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let cfg = DispatchConfig::default();
 
-    let first = dispatch_request(&ev, &mut cache, None, &cfg).expect("first admit");
+    let first = dispatch_request(&ev, &cache, None, &cfg).expect("first admit");
     assert!(!first.continuation_verified);
     // Re-present the identical verified evidence: same five-tuple → replay.
-    let err = dispatch_request(&ev, &mut cache, None, &cfg).expect_err("replay must be detected");
+    let err = dispatch_request(&ev, &cache, None, &cfg).expect_err("replay must be detected");
     assert_eq!(err, DispatchError::ReplayDetected);
     assert_eq!(err.wire_code(), "mcp-re.replay_detected");
 }
@@ -149,7 +149,7 @@ fn duplicate_nonce_same_actor_audience_profile_is_replay() {
 /// Acceptance #2: the same nonce under a different audience does not collide.
 #[test]
 fn same_nonce_different_audience_does_not_collide() {
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let cfg = DispatchConfig::default();
 
     let block_a = request_block(audience("verifier-1"), None);
@@ -157,24 +157,24 @@ fn same_nonce_different_audience_does_not_collide() {
     let block_b = request_block(audience("verifier-2"), None);
     let ev_b = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block_b);
 
-    dispatch_request(&ev_a, &mut cache, None, &cfg).expect("audience-1 admit");
+    dispatch_request(&ev_a, &cache, None, &cfg).expect("audience-1 admit");
     // Same actor, profile, nonce — different audience_hash: a distinct key.
-    dispatch_request(&ev_b, &mut cache, None, &cfg).expect("audience-2 must not collide");
+    dispatch_request(&ev_b, &cache, None, &cfg).expect("audience-2 must not collide");
 }
 
 /// Acceptance #3: the same nonce for a different resolved actor does not collide.
 #[test]
 fn same_nonce_different_resolved_actor_does_not_collide() {
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let cfg = DispatchConfig::default();
 
     let block = request_block(audience("verifier-1"), None);
     let ev_a = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let ev_b = verified_request(&client_b_key(), "client-key-2", "nonce-1", &block);
 
-    dispatch_request(&ev_a, &mut cache, None, &cfg).expect("actor-a admit");
+    dispatch_request(&ev_a, &cache, None, &cfg).expect("actor-a admit");
     // Same audience, profile, nonce — different actor_id: a distinct key.
-    dispatch_request(&ev_b, &mut cache, None, &cfg).expect("actor-b must not collide");
+    dispatch_request(&ev_b, &cache, None, &cfg).expect("actor-b must not collide");
 }
 
 // ---------- fleet-strict tier gate -----------------------------------------
@@ -185,7 +185,7 @@ struct DurableTestCache(InMemoryReplayCache);
 
 impl ReplayCache for DurableTestCache {
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
@@ -205,10 +205,10 @@ impl ReplayCache for DurableTestCache {
 fn fleet_strict_rejects_single_process_reference_cache() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let cfg = DispatchConfig { fleet_strict: true };
 
-    let err = dispatch_request(&ev, &mut cache, None, &cfg).expect_err("strict must refuse");
+    let err = dispatch_request(&ev, &cache, None, &cfg).expect_err("strict must refuse");
     assert_eq!(err, DispatchError::NonSharedReplayTier);
     assert_eq!(err.wire_code(), "mcp-re.replay_cache_unavailable");
 }
@@ -219,10 +219,10 @@ fn fleet_strict_rejects_single_process_reference_cache() {
 fn fleet_strict_admits_durable_cache() {
     let block = request_block(audience("verifier-1"), None);
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = DurableTestCache(InMemoryReplayCache::new(0));
+    let cache = DurableTestCache(InMemoryReplayCache::new(0));
     let cfg = DispatchConfig { fleet_strict: true };
 
-    dispatch_request(&ev, &mut cache, None, &cfg).expect("durable cache admitted under strict");
+    dispatch_request(&ev, &cache, None, &cfg).expect("durable cache admitted under strict");
 }
 
 // ---------- MRTR continuation ----------------------------------------------
@@ -245,9 +245,9 @@ fn matching_ctx() -> RetainedContinuation<'static> {
 fn continuation_round_trips_through_dispatch() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
 
-    let outcome = dispatch_request(&ev, &mut cache, Some(matching_ctx()), &DispatchConfig::default())
+    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &DispatchConfig::default())
         .expect("continuation must verify");
     assert!(outcome.continuation_verified);
 }
@@ -257,13 +257,13 @@ fn continuation_round_trips_through_dispatch() {
 fn continuation_changed_request_state_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let ctx = RetainedContinuation {
         request_state: b"tampered-request-state",
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &mut cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("changed requestState must fail");
     assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
     assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
@@ -274,13 +274,13 @@ fn continuation_changed_request_state_fails() {
 fn continuation_wrong_previous_request_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let ctx = RetainedContinuation {
         previous_request_base: b"a-different-previous-request",
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &mut cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("wrong previous-request evidence must fail");
     assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
 }
@@ -290,13 +290,13 @@ fn continuation_wrong_previous_request_evidence_fails() {
 fn continuation_wrong_input_required_response_evidence_fails() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let ctx = RetainedContinuation {
         input_required_response_base: b"a-different-input-required-response",
         ..matching_ctx()
     };
 
-    let err = dispatch_request(&ev, &mut cache, Some(ctx), &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("wrong input-required response evidence must fail");
     assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
 }
@@ -307,9 +307,9 @@ fn continuation_wrong_input_required_response_evidence_fails() {
 fn continuation_without_retained_context_fails_closed() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
 
-    let err = dispatch_request(&ev, &mut cache, None, &DispatchConfig::default())
+    let err = dispatch_request(&ev, &cache, None, &DispatchConfig::default())
         .expect_err("missing continuation context must fail closed");
     assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
 }
@@ -320,17 +320,17 @@ fn continuation_without_retained_context_fails_closed() {
 fn failed_continuation_does_not_burn_the_nonce() {
     let block = continuation_block();
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
-    let mut cache = InMemoryReplayCache::new(0);
+    let cache = InMemoryReplayCache::new(0);
     let bad_ctx = RetainedContinuation {
         request_state: b"tampered",
         ..matching_ctx()
     };
 
     // First attempt fails on the continuation, before the replay insert.
-    dispatch_request(&ev, &mut cache, Some(bad_ctx), &DispatchConfig::default())
+    dispatch_request(&ev, &cache, Some(bad_ctx), &DispatchConfig::default())
         .expect_err("spliced continuation fails");
     // The good re-presentation still admits: the nonce was never burned.
-    let outcome = dispatch_request(&ev, &mut cache, Some(matching_ctx()), &DispatchConfig::default())
+    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &DispatchConfig::default())
         .expect("nonce must still be fresh after a failed continuation");
     assert!(outcome.continuation_verified);
 }

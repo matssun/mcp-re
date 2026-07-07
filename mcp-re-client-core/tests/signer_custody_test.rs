@@ -69,14 +69,14 @@ fn signer_built_request_verifies_and_names_the_signer() {
         KEY_ID,
         SigningKey::from_seed_bytes(&SEED).public_key(),
     );
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let config = VerificationConfig {
         expected_audience: AUDIENCE.to_string(),
         max_clock_skew_secs: 60,
     };
     let now = parse_rfc3339_utc("2026-06-30T20:00:00Z").unwrap();
     let verified =
-        verify_request_draft02(signed.wire_bytes(), &resolver, &mut replay, &config, now).unwrap();
+        verify_request_draft02(signed.wire_bytes(), &resolver, &replay, &config, now).unwrap();
     assert_eq!(verified.verified_signer, SIGNER);
     assert_eq!(verified.key_id, KEY_ID);
 }
