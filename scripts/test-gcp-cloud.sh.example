@@ -109,6 +109,14 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_draft02_live_test -- --ignored --nocapture
 
+# 3b. SERVER HTTP standards profile (RFC 9421 + RFC 9530) lane (ADR-MCPRE-050 /
+#     MCPRE-106): Cloud KMS signs an RFC 9421 request AND response through the
+#     profile's external-signer seam (sign_request_with_signer /
+#     sign_response_with_signer) that the unmodified verify_request /
+#     verify_response accept, with tamper + wrong-key negatives.
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test gcp_kms_http_profile_live_test -- --ignored --nocapture
+
 # 4. CLIENT-side KMS signer (ADR-MCPS-045 Phase 4 / Tier T4): the client request
 #    signer's private key lives in Cloud KMS. Uses MCP_RE_GCP_KEY_VERSION_CLIENT.
 MCP_RE_GCP_KEY_VERSION="$MCP_RE_GCP_KEY_VERSION_CLIENT" \

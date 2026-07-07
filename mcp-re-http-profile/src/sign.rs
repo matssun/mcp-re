@@ -39,6 +39,49 @@ fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
     headers.push((name.to_owned(), value));
 }
 
+/// Bytes in a raw Ed25519 signature (RFC 8032). The external-signer seam MUST
+/// return exactly this — a KMS/HSM that hands back a DER-wrapped or truncated
+/// signature is a contract violation, caught here rather than emitted as a
+/// malformed `Signature` header.
+const ED25519_SIGNATURE_LEN: usize = 64;
+
+/// Shared signing tail: obtain the raw signature over `base` via `sign_base`,
+/// enforce the Ed25519 length, then emit the `Signature-Input` and `Signature`
+/// headers under `label`. Every signer — the local-key path and the external
+/// KMS/HSM custody seam alike — routes through here, so base construction,
+/// signature encoding, and header assembly stay owned by the profile.
+fn emit_signature(
+    headers: &mut Vec<(String, String)>,
+    label: &str,
+    components: &[CoveredComponent],
+    params: &SignatureParams,
+    base: &[u8],
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
+) -> Result<(), HttpProfileError> {
+    let sig_bytes = sign_base(base)?;
+    if sig_bytes.len() != ED25519_SIGNATURE_LEN {
+        return Err(HttpProfileError::InvalidSignature);
+    }
+    set_header(
+        headers,
+        "Signature-Input",
+        format!("{label}={}", params.serialize_with(components)),
+    );
+    set_header(
+        headers,
+        "Signature",
+        format!("{label}=:{}:", base64_standard_encode(&sig_bytes)),
+    );
+    Ok(())
+}
+
+/// The local-key signer closure: sign `base` with `key` and return the RAW
+/// Ed25519 bytes. The core signer emits base64url; decode so the seam's contract
+/// (raw 64-byte signature) holds identically for local and external signers.
+fn local_sig(key: &SigningKey, base: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
+    mcp_re_core::b64url_decode(&key.sign(base)).map_err(|_| HttpProfileError::InvalidSignature)
+}
+
 fn request_components(request: &HttpRequest) -> Result<Vec<CoveredComponent>, HttpProfileError> {
     let mut components: Vec<CoveredComponent> = REQUIRED_REQUEST_COMPONENTS
         .iter()
@@ -55,12 +98,42 @@ fn request_components(request: &HttpRequest) -> Result<Vec<CoveredComponent>, Ht
     Ok(components)
 }
 
-/// Sign `request` in place: emit `Content-Digest`, `Signature-Input`, and
-/// `Signature` (label `mcp-re`, tag `mcp-re-http-v1`). Returns the
-/// [`RequestEvidence`] handle derived from the exact signature base.
+/// Sign `request` in place with a local in-process [`SigningKey`]: emit
+/// `Content-Digest`, `Signature-Input`, and `Signature` (label `mcp-re`, tag
+/// `mcp-re-http-v1`). Returns the [`RequestEvidence`] handle derived from the
+/// exact signature base. A thin local-key wrapper over
+/// [`sign_request_with_signer`].
 pub fn sign_request(
     request: &mut HttpRequest,
     key: &SigningKey,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+    nonce: &str,
+) -> Result<RequestEvidence, HttpProfileError> {
+    sign_request_with_signer(
+        request,
+        |base| local_sig(key, base),
+        key_id,
+        created,
+        expires,
+        nonce,
+    )
+}
+
+/// Sign `request` in place with an EXTERNAL signer (Cloud KMS / HSM custody).
+///
+/// Additive, wire-identical to [`sign_request`]: the profile owns
+/// `Content-Digest`, covered-component selection, the RFC 9421 signature base,
+/// signature encoding, and header assembly — only the private-key operation is
+/// delegated. `sign_base` receives the EXACT signature-base bytes and MUST return
+/// exactly the 64 raw Ed25519 signature bytes (enforced; a DER-wrapped or
+/// truncated return is rejected as `invalid_signature`). This is the seam a
+/// production deployment uses to keep the signing key in a KMS/HSM where it never
+/// enters the process.
+pub fn sign_request_with_signer(
+    request: &mut HttpRequest,
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
     key_id: &str,
     created: i64,
     expires: i64,
@@ -83,25 +156,15 @@ pub fn sign_request(
         tag: Some(PROFILE_TAG.to_owned()),
     };
     let base = signature_base(&components, &params, &SourceMessage::Request(request))?;
-    let signature_b64url = key.sign(&base);
-    // RFC 9421 wire form: the Signature byte sequence is standard base64; the
-    // core signer returns base64url — transcode via the core codecs so the
-    // bytes stay identical.
-    let sig_bytes = mcp_re_core::b64url_decode(&signature_b64url)
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
-    let evidence = RequestEvidence::from_signature_base(&base);
-
-    set_header(
+    emit_signature(
         &mut request.headers,
-        "Signature-Input",
-        format!("{REQUEST_LABEL}={}", params.serialize_with(&components)),
-    );
-    set_header(
-        &mut request.headers,
-        "Signature",
-        format!("{REQUEST_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
-    );
-    Ok(evidence)
+        REQUEST_LABEL,
+        &components,
+        &params,
+        &base,
+        sign_base,
+    )?;
+    Ok(RequestEvidence::from_signature_base(&base))
 }
 
 /// Full-profile request signing (MCPRE-101): compose the request evidence block
@@ -162,6 +225,28 @@ pub fn sign_response(
     created: i64,
     expires: i64,
 ) -> Result<(), HttpProfileError> {
+    sign_response_with_signer(
+        response,
+        request,
+        |base| local_sig(key, base),
+        key_id,
+        created,
+        expires,
+    )
+}
+
+/// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),
+/// bound to `request` via the `;req` components. Additive, wire-identical to
+/// [`sign_response`]: `sign_base` receives the exact RFC 9421 signature base and
+/// MUST return exactly the 64 raw Ed25519 signature bytes (enforced).
+pub fn sign_response_with_signer(
+    response: &mut HttpResponse,
+    request: &HttpRequest,
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
     reject_content_encoding(&response.headers)?;
     set_header(
         &mut response.headers,
@@ -191,21 +276,14 @@ pub fn sign_response(
         &params,
         &SourceMessage::Response { response, request },
     )?;
-    let signature_b64url = key.sign(&base);
-    let sig_bytes = mcp_re_core::b64url_decode(&signature_b64url)
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
-
-    set_header(
+    emit_signature(
         &mut response.headers,
-        "Signature-Input",
-        format!("{RESPONSE_LABEL}={}", params.serialize_with(&components)),
-    );
-    set_header(
-        &mut response.headers,
-        "Signature",
-        format!("{RESPONSE_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
-    );
-    Ok(())
+        RESPONSE_LABEL,
+        &components,
+        &params,
+        &base,
+        sign_base,
+    )
 }
 
 /// Sign `response` in place with NO request binding — for a rejection emitted
@@ -239,21 +317,14 @@ pub fn sign_response_unbound(
         tag: Some(PROFILE_TAG.to_owned()),
     };
     let base = signature_base(&components, &params, &SourceMessage::ResponseOnly(response))?;
-    let signature_b64url = key.sign(&base);
-    let sig_bytes = mcp_re_core::b64url_decode(&signature_b64url)
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
-
-    set_header(
+    emit_signature(
         &mut response.headers,
-        "Signature-Input",
-        format!("{RESPONSE_LABEL}={}", params.serialize_with(&components)),
-    );
-    set_header(
-        &mut response.headers,
-        "Signature",
-        format!("{RESPONSE_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
-    );
-    Ok(())
+        RESPONSE_LABEL,
+        &components,
+        &params,
+        &base,
+        |b| local_sig(key, b),
+    )
 }
 
 pub(crate) fn base64_standard_encode(bytes: &[u8]) -> String {

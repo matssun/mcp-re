@@ -136,6 +136,9 @@ mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.
 mcp-re-test-paths = { path = "../mcp-re-test-paths" }
+# The HTTP-profile Cloud KMS custody lane (MCPRE-106) signs an RFC 9421 request/
+# response through the profile's external-signer seam backed by GcpKmsEd25519Backend.
+mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 
 [lib]
 name = "mcp_re_proxy"

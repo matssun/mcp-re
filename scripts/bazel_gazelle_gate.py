@@ -73,14 +73,18 @@ ALLOW_NAMING_COLLISION = {
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }
 
-# HITL / live-cloud: `#![cfg(feature="…kms…")]` + `#[ignore]`, run ONLY in the
-# manual live-infra lane against real AWS/GCP KMS. A generated Bazel target would
-# compile empty (misleading) or attempt real cloud calls in CI. Cargo-only.
+# HITL / live-cloud: `#![cfg(feature="…kms…")]`; the live cases are `#[ignore]`,
+# run ONLY in the manual/nightly live-infra lane against real AWS/GCP KMS. A
+# generated Bazel target would compile empty (misleading) or attempt real cloud
+# calls in CI. Cargo-only. Some (gcp_kms_http_profile_live_test) also carry a
+# hermetic `for_test_with_local_seed` offline lane that runs in the feature-gated
+# cargo CI job — still cargo-only because the KMS feature closure is not Bazel-wired.
 ALLOW_HITL_LIVE = {
     "aws_kms_live_test",
     "gcp_kms_live_test",
     "gcp_kms_draft02_live_test",
     "gcp_kms_delegated_tls_live_test",
+    "gcp_kms_http_profile_live_test",
     "t4_enterprise_kms_custody",
     "t4_python_kms_custody",
 }
