@@ -211,7 +211,7 @@ impl RecordingSink {
 /// seam only: it adds no behavior, so the wrapped persistent inner is driven
 /// exactly as in production.
 struct RecordingInner {
-    delegate: Box<dyn InnerServer>,
+    delegate: Box<dyn InnerServer + Send + Sync>,
     forwarded: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 impl InnerServer for RecordingInner {

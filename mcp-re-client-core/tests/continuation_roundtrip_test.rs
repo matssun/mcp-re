@@ -87,12 +87,12 @@ fn signed_continuation_is_accepted_by_the_server_verify_path() {
     assert_eq!(cont["previous_request_hash"], PREV_HASH);
     assert_eq!(cont["input_required_response_hash"], RESP_HASH);
 
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).unwrap();
     let verified = verify_request_draft02(
         signed.wire_bytes(),
         &resolver(&key),
-        &mut replay,
+        &replay,
         &config(),
         now,
     )
@@ -111,10 +111,10 @@ fn tampering_the_continuation_hash_breaks_the_signature() {
         json!(PREV_HASH);
     let tampered = serde_json::to_vec(&object).unwrap();
 
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).unwrap();
     assert_eq!(
-        verify_request_draft02(&tampered, &resolver(&key), &mut replay, &config(), now)
+        verify_request_draft02(&tampered, &resolver(&key), &replay, &config(), now)
             .unwrap_err(),
         McpReError::InvalidSignature
     );
@@ -133,10 +133,10 @@ fn structurally_malformed_continuation_fails_closed_before_signature() {
         .remove("previous_request_hash");
     let malformed = serde_json::to_vec(&object).unwrap();
 
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).unwrap();
     assert_eq!(
-        verify_request_draft02(&malformed, &resolver(&key), &mut replay, &config(), now)
+        verify_request_draft02(&malformed, &resolver(&key), &replay, &config(), now)
             .unwrap_err(),
         McpReError::ContinuationMalformed
     );

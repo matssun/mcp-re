@@ -52,13 +52,13 @@ impl RemoteTransport for McpReRemote {
         let client_key = SigningKey::from_seed_bytes(&CLIENT_SEED);
         let mut resolver = InMemoryTrustResolver::new();
         resolver.insert(CLIENT_SIGNER, CLIENT_KEY_ID, client_key.public_key());
-        let mut replay = InMemoryReplayCache::new(60);
+        let replay = InMemoryReplayCache::new(60);
         let config = VerificationConfig {
             expected_audience: audience().to_audience_string(),
             max_clock_skew_secs: 60,
         };
         let now = parse_rfc3339_utc(ISSUED_AT).unwrap();
-        let verified = verify_request_draft02(request_bytes, &resolver, &mut replay, &config, now)
+        let verified = verify_request_draft02(request_bytes, &resolver, &replay, &config, now)
             .map_err(|e| TransportError::new(format!("verify failed: {e}")))?;
 
         let server_key = SigningKey::from_seed_bytes(&SERVER_SEED);

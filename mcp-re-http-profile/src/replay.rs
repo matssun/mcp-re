@@ -67,7 +67,7 @@ impl HttpReplayKey {
     /// never as an admit.
     pub fn check_and_insert(
         &self,
-        cache: &mut dyn ReplayCache,
+        cache: &dyn ReplayCache,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
         cache.check_and_insert(
@@ -96,16 +96,16 @@ mod tests {
         }
     }
 
-    fn admit(cache: &mut InMemoryReplayCache, k: &HttpReplayKey) -> ReplayDecision {
+    fn admit(cache: &InMemoryReplayCache, k: &HttpReplayKey) -> ReplayDecision {
         k.check_and_insert(cache, EXPIRES)
             .expect("cache never errors")
     }
 
     #[test]
     fn first_insert_is_fresh_replay_is_detected() {
-        let mut cache = InMemoryReplayCache::new(0);
-        assert_eq!(admit(&mut cache, &key()), ReplayDecision::Fresh);
-        assert_eq!(admit(&mut cache, &key()), ReplayDecision::Replay);
+        let cache = InMemoryReplayCache::new(0);
+        assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh);
+        assert_eq!(admit(&cache, &key()), ReplayDecision::Replay);
     }
 
     /// Each of the five components discriminates: a request differing only in
@@ -124,16 +124,16 @@ mod tests {
             ("nonce", |k| k.nonce = "nonce-2".into()),
         ];
         for (name, mutate) in variants {
-            let mut cache = InMemoryReplayCache::new(0);
+            let cache = InMemoryReplayCache::new(0);
             assert_eq!(
-                admit(&mut cache, &key()),
+                admit(&cache, &key()),
                 ReplayDecision::Fresh,
                 "{name}: seed"
             );
             let mut other = key();
             mutate(&mut other);
             assert_eq!(
-                admit(&mut cache, &other),
+                admit(&cache, &other),
                 ReplayDecision::Fresh,
                 "{name}: a request differing only in {name} must be admitted"
             );
@@ -144,7 +144,7 @@ mod tests {
     /// separator's worth of text between components must not collide.
     #[test]
     fn composite_slots_are_injective() {
-        let mut cache = InMemoryReplayCache::new(0);
+        let cache = InMemoryReplayCache::new(0);
         let a = HttpReplayKey {
             actor_id: "a".into(),
             audience_hash: "b".into(),
@@ -158,8 +158,8 @@ mod tests {
             audience_hash: "b".into(),
             nonce: "nonce-1".into(),
         };
-        assert_eq!(admit(&mut cache, &a), ReplayDecision::Fresh);
+        assert_eq!(admit(&cache, &a), ReplayDecision::Fresh);
         // Identical five-tuple → replay (sanity that equality still detects).
-        assert_eq!(admit(&mut cache, &b), ReplayDecision::Replay);
+        assert_eq!(admit(&cache, &b), ReplayDecision::Replay);
     }
 }

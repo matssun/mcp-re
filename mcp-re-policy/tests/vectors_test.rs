@@ -82,8 +82,8 @@ fn every_committed_vector_replays_to_its_expected_decision() {
         // Core verification MUST succeed for every Phase 5 vector — these vectors
         // exercise the policy layer, not Core's own failure paths.
         let request_bytes = serde_json::to_vec(request).expect("serialize request");
-        let mut replay = InMemoryReplayCache::new(config.max_clock_skew_secs);
-        let verified = verify_request(&request_bytes, &resolver, &mut replay, &config, now_unix)
+        let replay = InMemoryReplayCache::new(config.max_clock_skew_secs);
+        let verified = verify_request(&request_bytes, &resolver, &replay, &config, now_unix)
             .unwrap_or_else(|e| {
                 panic!("vector '{name}': Core verify_request must succeed, got {e}")
             });

@@ -139,8 +139,8 @@ fn signed_request_is_accepted_by_the_verifier() {
         .sign_tool_call(&id, "echo", json!({ "text": "hello" }), ON_BEHALF_OF, AUDIENCE, AUTH_HASH)
         .expect("session signs");
 
-    let mut replay = InMemoryReplayCache::new(SKEW);
-    let verified = verify_request(&bytes, &inbound_resolver(), &mut replay, &config(), NOW_UNIX + 60)
+    let replay = InMemoryReplayCache::new(SKEW);
+    let verified = verify_request(&bytes, &inbound_resolver(), &replay, &config(), NOW_UNIX + 60)
         .expect("verifier accepts the session-signed request");
     assert_eq!(verified.verified_signer, SIGNER);
     assert_eq!(verified.on_behalf_of, ON_BEHALF_OF);

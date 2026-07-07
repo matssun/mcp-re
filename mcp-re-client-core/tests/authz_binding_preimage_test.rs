@@ -59,7 +59,7 @@ fn provider_binding_is_signed_and_verifies_unchanged() {
 
     let mut resolver = InMemoryTrustResolver::new();
     resolver.insert(SIGNER, KEY_ID, key.public_key());
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let config = VerificationConfig {
         expected_audience: AUDIENCE.to_string(),
         max_clock_skew_secs: 60,
@@ -67,7 +67,7 @@ fn provider_binding_is_signed_and_verifies_unchanged() {
     let now = parse_rfc3339_utc("2026-06-30T20:00:00Z").unwrap();
 
     let verified =
-        verify_request_draft02(signed.wire_bytes(), &resolver, &mut replay, &config, now).unwrap();
+        verify_request_draft02(signed.wire_bytes(), &resolver, &replay, &config, now).unwrap();
 
     // The verifier recovered EXACTLY the provider's binding (bind-not-interpret).
     let recovered = verified

@@ -296,10 +296,10 @@ pub fn demo_revocation_source() -> InMemoryRevocationSource {
 /// process environment / filesystem (surfaced at construction).
 pub fn build_demo_proxy_with_policy(
     config: DemoProxyConfig,
-    resolver: Box<dyn TrustResolver>,
+    resolver: Box<dyn TrustResolver + Send + Sync>,
     log_sink: Arc<dyn InnerLogSink + Send + Sync>,
     evaluator: PolicyEvaluator,
-    revocation: Box<dyn RevocationSource>,
+    revocation: Box<dyn RevocationSource + Send + Sync>,
 ) -> Result<Proxy, String> {
     let proxy = build_demo_proxy(config, resolver, log_sink)?;
     Ok(proxy.with_policy_enforcement(evaluator, revocation))

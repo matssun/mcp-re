@@ -166,14 +166,14 @@ pub trait AtomicReplayStore {
 /// composite key from `(signer, audience, nonce)`, and delegates the atomic
 /// check-and-insert to the store. Any store error fails closed.
 pub struct SharedReplayCache {
-    store: Box<dyn AtomicReplayStore>,
+    store: Box<dyn AtomicReplayStore + Send + Sync>,
     max_clock_skew_secs: i64,
 }
 
 impl SharedReplayCache {
     /// Build a shared cache over `store`, applying the symmetric
     /// `max_clock_skew_secs` to each entry's retain-until (folded into the TTL).
-    pub fn new(store: Box<dyn AtomicReplayStore>, max_clock_skew_secs: i64) -> Self {
+    pub fn new(store: Box<dyn AtomicReplayStore + Send + Sync>, max_clock_skew_secs: i64) -> Self {
         SharedReplayCache {
             store,
             max_clock_skew_secs,
@@ -207,7 +207,7 @@ impl SharedReplayCache {
 
 impl ReplayCache for SharedReplayCache {
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
@@ -482,7 +482,7 @@ mod tests {
     #[test]
     fn fresh_then_replay_single_instance() {
         let store = InMemoryAtomicReplayStore::new();
-        let mut cache = SharedReplayCache::new(Box::new(store), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store), SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn distinct_tuples_do_not_alias() {
         let store = InMemoryAtomicReplayStore::new();
-        let mut cache = SharedReplayCache::new(Box::new(store), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store), SKEW);
 
         // Would collide under naive concat: signer|audience boundary moved.
         assert_eq!(
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn skew_folded_into_retain_until_matches_in_memory_semantics() {
         let store = InMemoryAtomicReplayStore::new();
-        let mut cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -629,7 +629,7 @@ mod tests {
     /// `McpReError::ReplayCacheUnavailable` — never "allow".
     #[test]
     fn store_error_fails_closed_as_unavailable() {
-        let mut cache = SharedReplayCache::new(Box::new(AlwaysUnavailableStore), SKEW);
+        let cache = SharedReplayCache::new(Box::new(AlwaysUnavailableStore), SKEW);
         let err = cache
             .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
             .expect_err("an unavailable store must surface an error, never allow");
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn stale_request_via_shared_cache_fails_closed() {
         let store = InMemoryAtomicReplayStore::new();
-        let mut cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let cache = SharedReplayCache::new(Box::new(store.clone()), SKEW);
         // retain_until = expires_at + SKEW = -SKEW + SKEW = 0 → non-positive → stale.
         let err = cache
             .check_and_insert(SIGNER, AUD, NONCE, -SKEW)

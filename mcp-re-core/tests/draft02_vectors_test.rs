@@ -550,11 +550,11 @@ fn observe(fixture: &Fixture) -> String {
     };
     let result: Result<(), McpReError> = match &fixture.check {
         Check::Request { policy } => {
-            let mut replay = InMemoryReplayCache::new(SKEW);
+            let replay = InMemoryReplayCache::new(SKEW);
             mcp_re_core::verify_request_dispatch(
                 &raw,
                 &signer_resolver(),
-                &mut replay,
+                &replay,
                 &config(),
                 ISSUED_EPOCH + 60,
                 *policy,

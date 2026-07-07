@@ -35,8 +35,8 @@ use crate::revocation::RevocationSource;
 /// authz-system-reference.
 #[derive(Default)]
 pub struct PolicyEvaluator {
-    profiles: BTreeMap<String, Box<dyn AuthorizationProfile>>,
-    reference_resolvers: BTreeMap<String, Box<dyn AuthorizationReferenceResolver>>,
+    profiles: BTreeMap<String, Box<dyn AuthorizationProfile + Send + Sync>>,
+    reference_resolvers: BTreeMap<String, Box<dyn AuthorizationReferenceResolver + Send + Sync>>,
 }
 
 impl PolicyEvaluator {
@@ -50,7 +50,7 @@ impl PolicyEvaluator {
 
     /// Register a profile, keyed by its [`AuthorizationProfile::profile_id`]. A
     /// later registration with the same id replaces the earlier one.
-    pub fn register(&mut self, profile: Box<dyn AuthorizationProfile>) {
+    pub fn register(&mut self, profile: Box<dyn AuthorizationProfile + Send + Sync>) {
         self.profiles
             .insert(profile.profile_id().to_string(), profile);
     }
@@ -62,7 +62,7 @@ impl PolicyEvaluator {
     /// ([`PolicyError::AuthorizationBindingProfileRequired`]).
     pub fn register_reference_resolver(
         &mut self,
-        resolver: Box<dyn AuthorizationReferenceResolver>,
+        resolver: Box<dyn AuthorizationReferenceResolver + Send + Sync>,
     ) {
         self.reference_resolvers
             .insert(resolver.authorization_system_id().to_string(), resolver);

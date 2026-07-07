@@ -3,7 +3,7 @@
 //! A profile interprets the authorization artifact behind Core's opaque
 //! `authorization_hash` and renders an allow/deny decision. The trait is
 //! deliberately object-safe so a `PolicyEvaluator` can dispatch over
-//! `Box<dyn AuthorizationProfile>` keyed by `profile_id`. The first concrete
+//! `Box<dyn AuthorizationProfile + Send + Sync>` keyed by `profile_id`. The first concrete
 //! implementation is the Reference Signed Authorization Profile (MCPS-020);
 //! Biscuit / UCAN / OAuth-bound are later pluggable profiles.
 
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn trait_is_object_safe_and_dispatchable() {
-        let profile: Box<dyn AuthorizationProfile> = Box::new(AllowAllStub);
+        let profile: Box<dyn AuthorizationProfile + Send + Sync> = Box::new(AllowAllStub);
         let resolver = InMemoryTrustResolver::new();
         let revocation = InMemoryRevocationSource::new();
         let verified = sample_verified();
