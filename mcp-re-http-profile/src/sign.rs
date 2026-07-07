@@ -8,12 +8,19 @@
 
 use mcp_re_core::SigningKey;
 
+use crate::block::ActorIdentity;
+use crate::block::HttpRequestEvidenceBlock;
+use crate::block::HttpResponseEvidenceBlock;
+use crate::block::RequestEvidenceDigest;
+use crate::body::insert_meta_block;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::ALG_ED25519;
 use crate::ids::PROFILE_TAG;
+use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
+use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
@@ -95,6 +102,53 @@ pub fn sign_request(
         format!("{REQUEST_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
     );
     Ok(evidence)
+}
+
+/// Full-profile request signing (MCPRE-101): compose the request evidence block
+/// (`se.syncom/mcp-re.http.request`) into the JSON-RPC body `_meta` FIRST, then
+/// sign — so `content-digest` (a covered component) protects the block. Returns
+/// the [`RequestEvidence`] handle over the resulting signature base; pass it to
+/// [`sign_response_full`] so the response can carry `request_evidence`.
+pub fn sign_request_full(
+    request: &mut HttpRequest,
+    block: &HttpRequestEvidenceBlock,
+    key: &SigningKey,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+    nonce: &str,
+) -> Result<RequestEvidence, HttpProfileError> {
+    request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
+    sign_request(request, key, key_id, created, expires, nonce)
+}
+
+/// Full-profile response signing (MCPRE-101): compose the response evidence
+/// block (`se.syncom/mcp-re.http.response`) carrying the `server_signer` identity
+/// and the `request_evidence` this response answers into the body `_meta`, then
+/// sign with the `;req` binding to `request`. `request_evidence` is the handle
+/// [`sign_request_full`]/`verify_request_full` produced for the originating
+/// request.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_response_full(
+    response: &mut HttpResponse,
+    request: &HttpRequest,
+    request_evidence: &RequestEvidence,
+    server_signer: &ActorIdentity,
+    key: &SigningKey,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: server_signer.clone(),
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: request_evidence.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(response, request, key, key_id, created, expires)
 }
 
 /// Sign `response` in place, binding it to the verified originating request

@@ -11,15 +11,26 @@
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
+use crate::artifact::verify_artifact_binding;
+use crate::block::ActorIdentity;
+use crate::block::ArtifactBinding;
+use crate::block::ArtifactType;
+use crate::block::AudienceTuple;
+use crate::block::HttpRequestEvidenceBlock;
+use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolvedActor;
 use crate::block::SignerSlot;
+use crate::body::authorization_bearer_bytes;
+use crate::body::extract_meta_block;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::ALG_ED25519;
 use crate::ids::PROFILE_TAG;
+use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
+use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
@@ -62,6 +73,16 @@ pub struct VerifiedHttpRequestEvidence {
     /// The presented keyid. Distinct from `resolved_actor.actor_id()`: a keyid
     /// is a wire selector, not a trust-resolution output.
     pub key_id: String,
+    /// The verified audience tuple from the request body block. `None` on the
+    /// minimal proof path; `Some` after `verify_request_full` (MCPRE-101).
+    pub audience: Option<AudienceTuple>,
+    /// `audience_hash` over the canonical audience tuple — the replay-key
+    /// component (MCPRE-102). `None` on the minimal path.
+    pub audience_hash: Option<String>,
+    /// The parsed, validated request evidence block (audience, artifact
+    /// bindings, optional continuation). `None` on the minimal path; carried
+    /// here so replay/MRTR wiring (MCPRE-102) need not re-parse the body.
+    pub request_block: Option<HttpRequestEvidenceBlock>,
 }
 
 /// The verifier's structured product for a response (MCPRE-100): the resolved
@@ -75,9 +96,18 @@ pub struct VerifiedHttpResponseEvidence {
     pub resolved_server_actor: ResolvedActor,
     /// The response signature-base handle (`SHA-256` over the reconstructed base).
     pub response_signature_base_digest: RequestEvidence,
-    /// The request evidence this response binds to, when the caller supplies it
-    /// (MCPRE-101/102). `None` on the seam-only verification path.
+    /// The request evidence this response binds to, taken from the verified
+    /// request context. `None` on the seam-only path; `Some` after
+    /// `verify_response_full` (MCPRE-101).
     pub bound_request_evidence: Option<RequestEvidence>,
+    /// The `request_evidence` the response body block carried. Compared against
+    /// `bound_request_evidence`; a mismatch is `request_binding_mismatch`. `None`
+    /// on the seam-only path.
+    pub body_request_evidence: Option<RequestEvidence>,
+    /// The `server_signer` identity the response body block declared, verified
+    /// to match the keyid the response signature was accepted under. `None` on
+    /// the seam-only path.
+    pub server_signer: Option<ActorIdentity>,
 }
 
 /// Resolve a keyid through the trust seam for a specific signing slot and apply
@@ -391,7 +421,78 @@ pub fn verify_request(
         expires,
         nonce,
         key_id,
+        audience: None,
+        audience_hash: None,
+        request_block: None,
     })
+}
+
+/// Full-profile request verification (MCPRE-101): the minimal proof path PLUS
+/// the request evidence block (`se.syncom/mcp-re.http.request`). Runs the
+/// cryptographic floor first, then parses the block (protected by the covered
+/// `content-digest`), enforces the profile tag, the audience tuple, and — strictly
+/// — every `artifact_bindings[]` entry.
+///
+/// `expected_audience` is the verifier's own audience tuple: the block's
+/// audience must equal it AND its `target_uri` must match the request
+/// `@target-uri`. `artifact_material` supplies the credential bytes for bindings
+/// the verifier cannot derive from covered headers (mTLS cert, RAR details,
+/// etc.); DPoP is derived from the covered `Authorization` header. A binding with
+/// no obtainable credential fails `artifact_binding_failed` — full profile never
+/// silently accepts an unverifiable binding.
+pub fn verify_request_full(
+    request: &HttpRequest,
+    expected_audience: &AudienceTuple,
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    now: i64,
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+    // 1. Cryptographic floor: content digest, evidence, trust, signature.
+    let mut verified = verify_request(request, resolve_actor, now)?;
+
+    // 2. Parse the request evidence block — protected because content-digest is a
+    //    covered component of the signature just verified.
+    let block: HttpRequestEvidenceBlock =
+        extract_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, "request evidence block")?;
+    block.validate(&verified.profile_id)?;
+
+    // 3. Audience binding: block audience == expected, and the expected tuple's
+    //    target URI is consistent with the request @target-uri (guards routed /
+    //    reverse-proxied deployments where a label could alias two dispatch
+    //    boundaries).
+    if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
+        return Err(HttpProfileError::AudienceMismatch);
+    }
+
+    // 4. Strict artifact enforcement: every present binding must verify.
+    for binding in &block.artifact_bindings {
+        let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
+            .ok_or(HttpProfileError::ArtifactBindingFailed)?;
+        verify_artifact_binding(binding, &credential)?;
+    }
+
+    verified.audience_hash = Some(block.audience.audience_hash());
+    verified.audience = Some(block.audience.clone());
+    verified.request_block = Some(block);
+    Ok(verified)
+}
+
+/// Obtain the credential bytes a binding commits to. DPoP `ath` binds the access
+/// token in the covered `Authorization` header (falling back to caller material
+/// if the header is absent); every other artifact type is caller-supplied. A
+/// `None` here means the credential surface is unavailable — the caller treats
+/// that as `artifact_binding_failed`.
+fn resolve_artifact_credential(
+    binding: &ArtifactBinding,
+    headers: &[(String, String)],
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    match binding.artifact_type {
+        ArtifactType::OauthDpop => {
+            authorization_bearer_bytes(headers).or_else(|| artifact_material(binding))
+        }
+        _ => artifact_material(binding),
+    }
 }
 
 /// Verify a signed MCP-RE/HTTP response against the exact request the caller
@@ -439,7 +540,65 @@ pub fn verify_response(
         resolved_server_actor,
         response_signature_base_digest: RequestEvidence::from_signature_base(&base),
         bound_request_evidence: None,
+        body_request_evidence: None,
+        server_signer: None,
     })
+}
+
+/// Full-profile response verification (MCPRE-101): the `;req`-bound minimal
+/// verification PLUS the response evidence block (`se.syncom/mcp-re.http.response`).
+/// After the signature verifies, the block is parsed and:
+///
+/// 1. its `profile` must be the profile tag;
+/// 2. its `server_signer.keyid` must match the keyid the response signature was
+///    accepted under (a forged `server_signer` is a splice);
+/// 3. its `request_evidence` must equal the verified request's evidence handle —
+///    explicit MCP semantic defense-in-depth ON TOP of the cryptographic `;req`
+///    binding. A mismatch is `request_binding_mismatch`.
+///
+/// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
+/// `verify_request_full`; its `evidence` handle is the recomputed request
+/// signature-base digest compared here — no re-parse of the request.
+pub fn verify_response_full(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    verified_request: &VerifiedHttpRequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    // 1. Cryptographic floor incl. the ;req binding to `request`.
+    let mut evidence = verify_response(response, request, resolve_actor, now)?;
+
+    // 2. Parse the response evidence block (protected by content-digest).
+    let block: HttpResponseEvidenceBlock = extract_meta_block(
+        &response.body,
+        RESPONSE_EVIDENCE_BLOCK_KEY,
+        "response evidence block",
+    )?;
+    block.validate(PROFILE_TAG)?;
+
+    // 3. server_signer must be the identity that actually signed.
+    if block.server_signer.keyid != evidence.resolved_server_actor.identity.keyid {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+
+    // 4. Explicit request-evidence comparison: body handle == verified request
+    //    signature-base digest. This is the precise `request_binding_mismatch`
+    //    path (the ;req floor already rejects a cryptographic splice above).
+    let bound = &verified_request.evidence;
+    if block.request_evidence.digest_alg != bound.digest_alg
+        || block.request_evidence.digest_value != bound.digest_value
+    {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+
+    evidence.bound_request_evidence = Some(bound.clone());
+    evidence.body_request_evidence = Some(RequestEvidence {
+        digest_alg: block.request_evidence.digest_alg.clone(),
+        digest_value: block.request_evidence.digest_value.clone(),
+    });
+    evidence.server_signer = Some(block.server_signer);
+    Ok(evidence)
 }
 
 /// Verify a signed MCP-RE/HTTP response with NO request context (MCPRE-96): a
@@ -486,5 +645,7 @@ pub fn verify_response_unbound(
         resolved_server_actor,
         response_signature_base_digest: RequestEvidence::from_signature_base(&base),
         bound_request_evidence: None,
+        body_request_evidence: None,
+        server_signer: None,
     })
 }

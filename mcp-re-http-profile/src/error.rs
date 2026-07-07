@@ -55,8 +55,15 @@ pub enum HttpProfileError {
     ActorSlotMismatch,
     /// An `artifact_bindings[]` proof (DPoP `ath`, mTLS `x5t#S256`, RAR
     /// authorization-details digest) does not bind to the covered credential
-    /// surface (MCPRE-95). Maps to `mcp-re.artifact_binding_failed`.
+    /// surface (MCPRE-95), or full-profile enforcement could not obtain the
+    /// credential material for a present binding (MCPRE-101 strict rule). Maps to
+    /// `mcp-re.artifact_binding_failed`.
     ArtifactBindingFailed,
+    /// The full-profile request body block's `audience` does not match the
+    /// verifier's expected audience tuple, or the tuple's target URI is
+    /// inconsistent with the request `@target-uri` (MCPRE-101). Maps to
+    /// `mcp-re.invalid_audience`.
+    AudienceMismatch,
     /// Response evidence does not bind to the expected request (`;req`
     /// component mismatch or `request_evidence` mismatch) — a splice. Maps to
     /// `mcp-re.request_binding_mismatch` (MCPRE-92).
@@ -102,6 +109,7 @@ impl HttpProfileError {
                 "mcp-re.actor_binding_failed"
             }
             HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
+            HttpProfileError::AudienceMismatch => "mcp-re.invalid_audience",
             // A response bound to a different request is a request-binding
             // splice — precise code (MCPRE-92), not the native response_hash
             // field name.
@@ -130,6 +138,7 @@ mod tests {
             McpReError::ExpiredRequest.wire_code(),
             McpReError::ActorBindingFailed.wire_code(),
             McpReError::ArtifactBindingFailed.wire_code(),
+            McpReError::InvalidAudience.wire_code(),
             McpReError::RequestBindingMismatch.wire_code(),
             McpReError::ResponseHashMismatch.wire_code(),
             McpReError::ResponseSigInvalid.wire_code(),
@@ -149,6 +158,7 @@ mod tests {
             HttpProfileError::UnresolvedKeyId,
             HttpProfileError::ActorSlotMismatch,
             HttpProfileError::ArtifactBindingFailed,
+            HttpProfileError::AudienceMismatch,
             HttpProfileError::ResponseBindingMismatch,
             HttpProfileError::ResponseSignatureInvalid,
             HttpProfileError::ContinuationBindingFailed,

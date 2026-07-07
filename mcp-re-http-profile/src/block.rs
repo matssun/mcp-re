@@ -32,7 +32,8 @@ use crate::ids::EVIDENCE_DIGEST_ALG;
 /// The resolved signing-actor identity. Built by the verifier from what the
 /// TrustResolver returned for the presented keyid — role and trusted key
 /// identity, never the raw keyid alone (MCPRE-93/94 pin).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActorIdentity {
     /// Trust role the resolver assigned (e.g. `host`, `server`, `client`).
     pub role: String,
@@ -384,6 +385,39 @@ impl HttpRequestEvidenceBlock {
         }
         for b in &self.artifact_bindings {
             b.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// The response-side body evidence block (`se.syncom/mcp-re.http.response`,
+/// MCPRE-101). Carries the resolved server signer identity and the request
+/// evidence handle this response is bound to. Like the request block it rides in
+/// the JSON-RPC body `_meta` and is protected by the covered `content-digest`.
+///
+/// `request_evidence` is explicit MCP semantic defense-in-depth ON TOP of the
+/// cryptographic `;req` binding: `verify_response_full` compares it against the
+/// recomputed request signature-base digest from the verified request context,
+/// and a mismatch is `request_binding_mismatch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpResponseEvidenceBlock {
+    /// The signed profile id; cross-checked against `PROFILE_TAG`.
+    pub profile: String,
+    /// The server's resolved signer identity (role, trust domain, subject,
+    /// keyid). Cross-checked against the keyid the response signature verified
+    /// under.
+    pub server_signer: ActorIdentity,
+    /// The request evidence handle (`SHA-256` over the request signature base)
+    /// this response asserts it is answering.
+    pub request_evidence: RequestEvidenceDigest,
+}
+
+impl HttpResponseEvidenceBlock {
+    /// Structural validation, fail-closed: the profile tag matches.
+    pub fn validate(&self, expected_profile: &str) -> Result<(), HttpProfileError> {
+        if self.profile != expected_profile {
+            return Err(HttpProfileError::UnknownProfileTag);
         }
         Ok(())
     }
