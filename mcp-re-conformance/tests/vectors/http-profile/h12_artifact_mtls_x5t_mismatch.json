@@ -1,0 +1,15 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h12_artifact_mtls_x5t_mismatch",
+  "kind": "artifact",
+  "expected": "mcp-re.artifact_binding_failed",
+  "artifact_check": {
+    "binding": {
+      "artifact_type": "oauth-mtls",
+      "binding_type": "opaque-digest",
+      "digest_alg": "sha256",
+      "digest_value": "X2IRnatdDIabvQZVAoig1OjL3m0jhOcP4qNrSVVuKa0"
+    },
+    "credential_b64": "MIJmYWtlLWNsaWVudC1jZXJ0LWRlci10YW1wZXJlZA"
+  }
+}

@@ -22,13 +22,32 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::build_signed_rejection;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_response;
+use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
+use mcp_re_http_profile::verify_signed_rejection;
+use mcp_re_http_profile::ActorIdentity;
+use mcp_re_http_profile::ArtifactBinding;
+use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
+
+/// Credentials in artifact fixtures are base64url-no-pad (reusing the core
+/// codec so the corpus needs no extra base64 dependency).
+fn credential_b64(bytes: &[u8]) -> String {
+    mcp_re_core::b64url_encode(bytes)
+}
+
+fn base64_std_decode(s: &str) -> Vec<u8> {
+    mcp_re_core::b64url_decode(s).expect("fixture credential is base64url")
+}
 
 // Fixed, documented TEST-ONLY seeds; the corpus is deterministic end-to-end.
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
@@ -68,19 +87,54 @@ struct Oracle {
     request_evidence_digest_value: String,
 }
 
+/// A frozen artifact-binding check (MCPRE-95). The committed `binding` is the
+/// oracle (its `digest_value` is frozen); the runner recomputes the thumbprint
+/// from `credential_b64` and checks the verdict. The credential surface (access
+/// token / cert DER / canonical RAR details) is standard-base64 here ONLY
+/// because a conformance fixture must be self-contained; on the wire it rides in
+/// the covered `authorization`/`dpop` header or the mTLS layer, never in
+/// evidence — the binding itself carries only the digest.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactCheck {
+    binding: serde_json::Value,
+    credential_b64: String,
+}
+
+/// A frozen MRTR continuation check (MCPRE-97). The committed `continuation`
+/// carries the three standards-derived handles; the runner re-presents the
+/// three mandated inputs (base64url) and checks the verdict. `request_state`
+/// stays opaque but is digest-bound.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContinuationCheck {
+    continuation: serde_json::Value,
+    previous_request_base_b64: String,
+    input_required_response_base_b64: String,
+    request_state_b64: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
     schema: String,
     name: String,
     /// `request` fixtures verify `request`; `response` fixtures verify
-    /// `response` against `request` (the ;req binding source).
+    /// `response` against `request` (the ;req binding source); `artifact`
+    /// fixtures verify `artifact_check`.
     kind: String,
     /// `verify_ok` or the exact frozen `mcp-re.*` wire code observed.
     expected: String,
-    request: WireMessage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request: Option<WireMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     response: Option<WireMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     oracle: Option<Oracle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_check: Option<ArtifactCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation_check: Option<ContinuationCheck>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,11 +156,25 @@ fn server_key() -> SigningKey {
     SigningKey::from_seed_bytes(&SERVER_SEED)
 }
 
-fn resolver() -> impl Fn(&str) -> Option<VerificationKey> {
-    move |key_id: &str| match key_id {
-        CLIENT_KEY_ID => Some(client_key().public_key()),
-        SERVER_KEY_ID => Some(server_key().public_key()),
-        _ => None,
+/// Slot-aware trust seam (MCPRE-100): the client key is trusted only for the
+/// Request slot, the server key only for the Response slot.
+fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+    move |key_id: &str, slot: SignerSlot| {
+        let (role, key) = match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key()),
+            (SERVER_KEY_ID, SignerSlot::Response) => ("server", server_key()),
+            _ => return None,
+        };
+        Some(ResolvedActor {
+            identity: ActorIdentity {
+                role: role.into(),
+                trust_domain: "example.com".into(),
+                subject: format!("did:example:{role}"),
+                keyid: key_id.into(),
+            },
+            verification_key: key.public_key(),
+            slot,
+        })
     }
 }
 
@@ -143,7 +211,10 @@ fn to_wire_response(r: &HttpResponse) -> WireMessage {
 fn from_wire_request(w: &WireMessage) -> HttpRequest {
     HttpRequest {
         method: w.method.clone().expect("request fixture has method"),
-        target_uri: w.target_uri.clone().expect("request fixture has target_uri"),
+        target_uri: w
+            .target_uri
+            .clone()
+            .expect("request fixture has target_uri"),
         headers: w.headers.clone(),
         body: w.body_utf8.clone().into_bytes(),
     }
@@ -166,13 +237,19 @@ fn vectors_root() -> std::path::PathBuf {
             if let Ok(root) = std::env::var(key) {
                 let candidate = std::path::Path::new(&root).join(&rel);
                 if candidate.exists() {
-                    return candidate.parent().expect("manifest has a parent").to_path_buf();
+                    return candidate
+                        .parent()
+                        .expect("manifest has a parent")
+                        .to_path_buf();
                 }
             }
         }
         let candidate = std::path::PathBuf::from(&rel);
         if candidate.exists() {
-            return candidate.parent().expect("manifest has a parent").to_path_buf();
+            return candidate
+                .parent()
+                .expect("manifest has a parent")
+                .to_path_buf();
         }
         panic!("MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST set but runfile not found (rel={rel})");
     }
@@ -191,8 +268,15 @@ fn build_fixtures() -> Vec<Fixture> {
 
     // 1. request_valid — with the full static oracle.
     let mut req = base_request();
-    let evidence = sign_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-1")
-        .expect("signing succeeds");
+    let evidence = sign_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-1",
+    )
+    .expect("signing succeeds");
     let verified = verify_request(&req, &resolver(), NOW).expect("fixture verifies");
     assert_eq!(evidence, verified.evidence, "writer sanity");
     // Reconstruct the exact base the verifier accepted, for the oracle.
@@ -235,7 +319,7 @@ fn build_fixtures() -> Vec<Fixture> {
         name: "h01_request_valid".into(),
         kind: "request".into(),
         expected: "verify_ok".into(),
-        request: to_wire_request(&req),
+        request: Some(to_wire_request(&req)),
         response: None,
         oracle: Some(Oracle {
             signature_base_b64url: mcp_re_core::b64url_encode(&base),
@@ -243,9 +327,13 @@ fn build_fixtures() -> Vec<Fixture> {
             signature_header,
             request_evidence_digest_value: evidence.digest_value.clone(),
         }),
+        artifact_check: None,
+        continuation_check: None,
     });
 
-    // 2. h02_request_body_tamper — frozen post-tamper message.
+    // 2. h02_request_body_tamper — frozen post-tamper message. The body no
+    //    longer matches the signed Content-Digest, so this is a precise digest
+    //    mismatch (MCPRE-92), not the old invalid_signature fold.
     let mut tampered = req.clone();
     tampered.body =
         br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rm -rf"}}"#.to_vec();
@@ -253,10 +341,12 @@ fn build_fixtures() -> Vec<Fixture> {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h02_request_body_tamper".into(),
         kind: "request".into(),
-        expected: "mcp-re.invalid_signature".into(),
-        request: to_wire_request(&tampered),
+        expected: "mcp-re.digest_mismatch".into(),
+        request: Some(to_wire_request(&tampered)),
         response: None,
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 3. h03_request_missing_covered_component — content-digest stripped from
@@ -272,9 +362,11 @@ fn build_fixtures() -> Vec<Fixture> {
         name: "h03_request_missing_covered_component".into(),
         kind: "request".into(),
         expected: "mcp-re.missing_envelope".into(),
-        request: to_wire_request(&stripped),
+        request: Some(to_wire_request(&stripped)),
         response: None,
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 4. h04_request_foreign_tag — same evidence under a foreign profile tag.
@@ -289,9 +381,11 @@ fn build_fixtures() -> Vec<Fixture> {
         name: "h04_request_foreign_tag".into(),
         kind: "request".into(),
         expected: "mcp-re.unsupported_version".into(),
-        request: to_wire_request(&foreign),
+        request: Some(to_wire_request(&foreign)),
         response: None,
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
@@ -310,23 +404,34 @@ fn build_fixtures() -> Vec<Fixture> {
         name: "h05_request_stale_window".into(),
         kind: "request".into(),
         expected: "mcp-re.expired_request".into(),
-        request: to_wire_request(&stale),
+        request: Some(to_wire_request(&stale)),
         response: None,
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 6. h06_request_wrong_keyid — untrusted keyid, trust must fail first.
     let mut rogue = base_request();
-    sign_request(&mut rogue, &client_key(), "rogue-key-9", CREATED, EXPIRES, "vec-nonce-r")
-        .expect("signing succeeds");
+    sign_request(
+        &mut rogue,
+        &client_key(),
+        "rogue-key-9",
+        CREATED,
+        EXPIRES,
+        "vec-nonce-r",
+    )
+    .expect("signing succeeds");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h06_request_wrong_keyid".into(),
         kind: "request".into(),
         expected: "mcp-re.actor_binding_failed".into(),
-        request: to_wire_request(&rogue),
+        request: Some(to_wire_request(&rogue)),
         response: None,
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 7. h07_response_valid — full signed exchange.
@@ -335,41 +440,324 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(&mut rsp, &req, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("response signing succeeds");
+    sign_response(
+        &mut rsp,
+        &req,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signing succeeds");
     verify_response(&rsp, &req, &resolver(), NOW).expect("fixture verifies");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h07_response_valid".into(),
         kind: "response".into(),
         expected: "verify_ok".into(),
-        request: to_wire_request(&req),
+        request: Some(to_wire_request(&req)),
         response: Some(to_wire_response(&rsp)),
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     // 8. h08_response_splice — a response signed for request B presented as
     //    the answer to request A.
     let mut req_b = base_request();
     req_b.target_uri = "https://mcp.example.com/mcp?route=b".into();
-    sign_request(&mut req_b, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-2")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req_b,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-2",
+    )
+    .expect("signing succeeds");
     let mut rsp_b = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(&mut rsp_b, &req_b, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("response signing succeeds");
+    sign_response(
+        &mut rsp_b,
+        &req_b,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signing succeeds");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h08_response_splice".into(),
         kind: "response".into(),
         expected: "mcp-re.response_sig_invalid".into(),
         // The splice: request A with B's response.
-        request: to_wire_request(&req),
+        request: Some(to_wire_request(&req)),
         response: Some(to_wire_response(&rsp_b)),
         oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
+    // ----- artifact-binding fixtures (MCPRE-95) -----
+    // The binding carries only a digest; the credential surface is committed
+    // alongside ONLY so the fixture is self-contained. Each type has a positive
+    // (matching thumbprint) and a negative (a different credential → the
+    // artifact_binding_failed code).
+    let dpop_token = b"dpop-access-token-abc".to_vec();
+    let mtls_cert = b"\x30\x82fake-client-cert-der".to_vec();
+    let rar_details = br#"[{"type":"payment_initiation","actions":["initiate"]}]"#.to_vec();
+
+    let artifact_cases: [(&str, ArtifactType, &[u8], bool); 6] = [
+        (
+            "h09_artifact_dpop_ath_valid",
+            ArtifactType::OauthDpop,
+            &dpop_token,
+            true,
+        ),
+        (
+            "h10_artifact_dpop_ath_mismatch",
+            ArtifactType::OauthDpop,
+            &dpop_token,
+            false,
+        ),
+        (
+            "h11_artifact_mtls_x5t_valid",
+            ArtifactType::OauthMtls,
+            &mtls_cert,
+            true,
+        ),
+        (
+            "h12_artifact_mtls_x5t_mismatch",
+            ArtifactType::OauthMtls,
+            &mtls_cert,
+            false,
+        ),
+        (
+            "h13_artifact_rar_digest_valid",
+            ArtifactType::OauthRar,
+            &rar_details,
+            true,
+        ),
+        (
+            "h14_artifact_rar_digest_mismatch",
+            ArtifactType::OauthRar,
+            &rar_details,
+            false,
+        ),
+    ];
+    for (name, artifact_type, credential, positive) in artifact_cases {
+        // The binding always commits to the true credential's thumbprint; the
+        // negative presents a DIFFERENT credential at verify time.
+        let binding = ArtifactBinding::opaque_digest(artifact_type, credential);
+        let presented: Vec<u8> = if positive {
+            credential.to_vec()
+        } else {
+            let mut evil = credential.to_vec();
+            evil.extend_from_slice(b"-tampered");
+            evil
+        };
+        fixtures.push(Fixture {
+            schema: "mcp-re-http-profile-conformance/v1".into(),
+            name: name.into(),
+            kind: "artifact".into(),
+            expected: if positive {
+                "verify_ok".into()
+            } else {
+                "mcp-re.artifact_binding_failed".into()
+            },
+            request: None,
+            response: None,
+            oracle: None,
+            artifact_check: Some(ArtifactCheck {
+                binding: serde_json::to_value(&binding).expect("binding serializes"),
+                credential_b64: credential_b64(&presented),
+            }),
+            continuation_check: None,
+        });
+    }
+
+    // ----- MRTR continuation fixtures (MCPRE-97) -----
+    // Three standards-derived handles over the mandated inputs. Positive binds
+    // its inputs; negatives splice the previous-request base and tamper the
+    // opaque requestState — both continuation_binding_failed.
+    let prev_base = b"previous-request-signature-base-bytes".to_vec();
+    let irr_base = b"input-required-response-signature-base-bytes".to_vec();
+    let req_state = b"opaque-request-state-blob".to_vec();
+    let continuation = HttpContinuation::build(&prev_base, &irr_base, &req_state);
+    let continuation_value = serde_json::to_value(&continuation).expect("continuation serializes");
+
+    // h15 — valid: the client re-presents the exact mandated inputs.
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h15_continuation_valid".into(),
+        kind: "continuation".into(),
+        expected: "verify_ok".into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: Some(ContinuationCheck {
+            continuation: continuation_value.clone(),
+            previous_request_base_b64: credential_b64(&prev_base),
+            input_required_response_base_b64: credential_b64(&irr_base),
+            request_state_b64: credential_b64(&req_state),
+        }),
+    });
+
+    // h16 — splice: a different previous-request base is presented.
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h16_continuation_splice".into(),
+        kind: "continuation".into(),
+        expected: "mcp-re.continuation_binding_failed".into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: Some(ContinuationCheck {
+            continuation: continuation_value.clone(),
+            previous_request_base_b64: credential_b64(b"a-different-previous-request-base"),
+            input_required_response_base_b64: credential_b64(&irr_base),
+            request_state_b64: credential_b64(&req_state),
+        }),
+    });
+
+    // h17 — tampered opaque requestState.
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h17_continuation_request_state_tamper".into(),
+        kind: "continuation".into(),
+        expected: "mcp-re.continuation_binding_failed".into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: Some(ContinuationCheck {
+            continuation: continuation_value,
+            previous_request_base_b64: credential_b64(&prev_base),
+            input_required_response_base_b64: credential_b64(&irr_base),
+            request_state_b64: credential_b64(b"opaque-request-state-blob-TAMPERED"),
+        }),
+    });
+
+    // ----- signed-rejection fixtures (MCPRE-96) -----
+    // A rejection is a signed response carrying error.data.mcp_re_error.wire_code.
+    // `req` (from h01) is a fully signed request the server binds via ;req.
+    let reject_reason = RejectionReason {
+        wire_code: "mcp-re.invalid_audience",
+        message: "audience did not match this verifier (human text — do not trust)".into(),
+    };
+
+    // h18 — bound valid: the trusted wire code surfaces after the signature.
+    let bound = build_signed_rejection(
+        Some(&req),
+        &reject_reason,
+        403,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("bound rejection builds");
+    verify_signed_rejection(&bound, Some(&req), &resolver(), NOW)
+        .expect("bound rejection verifies");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h18_rejection_bound_valid".into(),
+        kind: "rejection".into(),
+        expected: "mcp-re.invalid_audience".into(),
+        request: Some(to_wire_request(&req)),
+        response: Some(to_wire_response(&bound)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
+    // h19 — unbound valid: no request context, signed response-only.
+    let unbound = build_signed_rejection(
+        None,
+        &reject_reason,
+        400,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("unbound rejection builds");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h19_rejection_unbound_valid".into(),
+        kind: "rejection".into(),
+        expected: "mcp-re.invalid_audience".into(),
+        request: None,
+        response: Some(to_wire_response(&unbound)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
+    // h20 — body tamper: an edited human message breaks Content-Digest.
+    let mut tampered_rej = bound.clone();
+    tampered_rej.body =
+        br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#
+            .to_vec();
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h20_rejection_body_tamper".into(),
+        kind: "rejection".into(),
+        expected: "mcp-re.digest_mismatch".into(),
+        request: Some(to_wire_request(&req)),
+        response: Some(to_wire_response(&tampered_rej)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
+    // h21 — splice: a rejection bound to `req` presented against a different
+    // request fails the ;req-covered signature.
+    let mut other_req = base_request();
+    other_req.target_uri = "https://mcp.example.com/mcp?route=other".into();
+    sign_request(
+        &mut other_req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-o",
+    )
+    .expect("signing succeeds");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h21_rejection_splice".into(),
+        kind: "rejection".into(),
+        expected: "mcp-re.response_sig_invalid".into(),
+        request: Some(to_wire_request(&other_req)),
+        response: Some(to_wire_response(&bound)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
+    // h22 — unsigned: a bare JSON-RPC error with no signature is untrusted.
+    let unsigned = HttpResponse {
+        status: 403,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: bound.body.clone(),
+    };
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h22_rejection_unsigned".into(),
+        kind: "rejection".into(),
+        expected: "mcp-re.missing_envelope".into(),
+        request: Some(to_wire_request(&req)),
+        response: Some(to_wire_response(&unsigned)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
     });
 
     fixtures
@@ -388,8 +776,11 @@ fn write_http_profile_fixtures() {
     let mut names = Vec::new();
     for f in &fixtures {
         let path = root.join(format!("{}.json", f.name));
-        std::fs::write(&path, serde_json::to_string_pretty(f).expect("serialize") + "\n")
-            .expect("write fixture");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(f).expect("serialize") + "\n",
+        )
+        .expect("write fixture");
         names.push(format!("{}.json", f.name));
     }
     let manifest = Manifest {
@@ -423,41 +814,95 @@ fn frozen_http_profile_corpus_verifies() {
         let fixture: Fixture =
             serde_json::from_slice(&std::fs::read(root.join(name)).expect("fixture file"))
                 .expect("fixture parses");
-        let request = from_wire_request(&fixture.request);
         let observed = match fixture.kind.as_str() {
-            "request" => match verify_request(&request, &resolver(), manifest.verify_at_unix) {
-                Ok(verified) => {
-                    if let Some(oracle) = &fixture.oracle {
-                        // Oracle byte-equality (S8: assert bytes, not prints).
-                        assert_eq!(
-                            verified.evidence.digest_value, oracle.request_evidence_digest_value,
-                            "{name}: evidence handle drifted from frozen oracle"
-                        );
-                        let digest_header = request
-                            .headers
-                            .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case("content-digest"))
-                            .expect("digest header")
-                            .1
-                            .clone();
-                        assert_eq!(digest_header, oracle.content_digest, "{name}: digest drifted");
-                        let sig_header = request
-                            .headers
-                            .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case("signature"))
-                            .expect("signature header")
-                            .1
-                            .clone();
-                        assert_eq!(sig_header, oracle.signature_header, "{name}: signature drifted");
+            "request" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
+                match verify_request(&request, &resolver(), manifest.verify_at_unix) {
+                    Ok(verified) => {
+                        if let Some(oracle) = &fixture.oracle {
+                            // Oracle byte-equality (S8: assert bytes, not prints).
+                            assert_eq!(
+                                verified.evidence.digest_value,
+                                oracle.request_evidence_digest_value,
+                                "{name}: evidence handle drifted from frozen oracle"
+                            );
+                            let digest_header = request
+                                .headers
+                                .iter()
+                                .find(|(k, _)| k.eq_ignore_ascii_case("content-digest"))
+                                .expect("digest header")
+                                .1
+                                .clone();
+                            assert_eq!(
+                                digest_header, oracle.content_digest,
+                                "{name}: digest drifted"
+                            );
+                            let sig_header = request
+                                .headers
+                                .iter()
+                                .find(|(k, _)| k.eq_ignore_ascii_case("signature"))
+                                .expect("signature header")
+                                .1
+                                .clone();
+                            assert_eq!(
+                                sig_header, oracle.signature_header,
+                                "{name}: signature drifted"
+                            );
+                        }
+                        "verify_ok".to_owned()
                     }
-                    "verify_ok".to_owned()
+                    Err(e) => e.wire_code().to_owned(),
                 }
-                Err(e) => e.wire_code().to_owned(),
-            },
+            }
             "response" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
                 match verify_response(&response, &request, &resolver(), manifest.verify_at_unix) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "artifact" => {
+                let check = fixture.artifact_check.as_ref().expect("artifact_check");
+                let binding: ArtifactBinding =
+                    serde_json::from_value(check.binding.clone()).expect("binding parses");
+                let credential = base64_std_decode(&check.credential_b64);
+                match verify_artifact_binding(&binding, &credential) {
                     Ok(()) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "continuation" => {
+                let check = fixture
+                    .continuation_check
+                    .as_ref()
+                    .expect("continuation_check");
+                let continuation: HttpContinuation =
+                    serde_json::from_value(check.continuation.clone())
+                        .expect("continuation parses");
+                match continuation.verify(
+                    &base64_std_decode(&check.previous_request_base_b64),
+                    &base64_std_decode(&check.input_required_response_base_b64),
+                    &base64_std_decode(&check.request_state_b64),
+                ) {
+                    Ok(()) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "rejection" => {
+                // A rejection carries request context only when bound.
+                let request = fixture.request.as_ref().map(from_wire_request);
+                let response = from_wire_response(fixture.response.as_ref().expect("response"));
+                match verify_signed_rejection(
+                    &response,
+                    request.as_ref(),
+                    &resolver(),
+                    manifest.verify_at_unix,
+                ) {
+                    // On success the observed verdict IS the trusted wire code
+                    // (not just "verify_ok"): the frozen fixture pins the exact
+                    // machine signal a client would act on.
+                    Ok(verdict) => verdict.wire_code,
                     Err(e) => e.wire_code().to_owned(),
                 }
             }

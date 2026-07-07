@@ -15,6 +15,7 @@ description = "MCP-RE HTTP standards profile (ADR-MCPRE-050) — RFC 9421 HTTP M
 # the layers above (proxy/transport), mirroring the mcp-re-client-core seam rule.
 mcp-re-core = { path = "../mcp-re-core" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
 

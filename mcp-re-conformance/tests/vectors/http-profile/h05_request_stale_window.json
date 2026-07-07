@@ -26,7 +26,5 @@
       ]
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
-  },
-  "response": null,
-  "oracle": null
+  }
 }

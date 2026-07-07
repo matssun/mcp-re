@@ -1,11 +1,11 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
-  "name": "h07_response_valid",
-  "kind": "response",
-  "expected": "verify_ok",
+  "name": "h21_rejection_splice",
+  "kind": "rejection",
+  "expected": "mcp-re.response_sig_invalid",
   "request": {
     "method": "POST",
-    "target_uri": "https://mcp.example.com/mcp",
+    "target_uri": "https://mcp.example.com/mcp?route=other",
     "status": null,
     "headers": [
       [
@@ -18,11 +18,11 @@
       ],
       [
         "Signature-Input",
-        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-1\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-o\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
       ],
       [
         "Signature",
-        "mcp-re=:b6ZKUdB0Fog2foHhKUrU9Lz2TfpR1dBVewhJEL8Bqe0E7a/CyrTgO8/GpUn4VdSLp5eDDVm8LdCEOoxCUSmgDQ==:"
+        "mcp-re=:VuCtNEfUUcumFcc4Jki0rDZRZqROiphM/QnjFCbKjaO9UzydPFOB9kNTHmb7opKnpVNVKl3D2JJ/iCKDJowXAw==:"
       ]
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
@@ -30,7 +30,7 @@
   "response": {
     "method": null,
     "target_uri": null,
-    "status": 200,
+    "status": 403,
     "headers": [
       [
         "Content-Type",
@@ -38,7 +38,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:PLmCCbhIGTbodedGJIp/2YqtcClkVqao/wV9iTJFA+U=:"
+        "sha-256=:B56haJlvgKG14suRKiBNiiFIeXxmN8QUqWuYgfL8BVk=:"
       ],
       [
         "Signature-Input",
@@ -46,9 +46,9 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:XFhIBKOZrG7oM8c03Lo30uw8Wf+hDWJVYFHv37ZNeOZAkzeDs879hmv7SkuTmReEZzpIu0udrpVqBLDv6hl3BQ==:"
+        "mcp-re-response=:X7fkHkt+WL8ZrGF5WZC10UF2GrUpFLiZEVLOICCkAuM9Z/QlBeYtM/MG4C+RF/yTtJQtT9b7+ZHywHMNmuJ2AQ==:"
       ]
     ],
-    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+    "body_utf8": "{\"error\":{\"code\":-32003,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":1,\"jsonrpc\":\"2.0\"}"
   }
 }

@@ -9,6 +9,20 @@
     "h05_request_stale_window.json",
     "h06_request_wrong_keyid.json",
     "h07_response_valid.json",
-    "h08_response_splice.json"
+    "h08_response_splice.json",
+    "h09_artifact_dpop_ath_valid.json",
+    "h10_artifact_dpop_ath_mismatch.json",
+    "h11_artifact_mtls_x5t_valid.json",
+    "h12_artifact_mtls_x5t_mismatch.json",
+    "h13_artifact_rar_digest_valid.json",
+    "h14_artifact_rar_digest_mismatch.json",
+    "h15_continuation_valid.json",
+    "h16_continuation_splice.json",
+    "h17_continuation_request_state_tamper.json",
+    "h18_rejection_bound_valid.json",
+    "h19_rejection_unbound_valid.json",
+    "h20_rejection_body_tamper.json",
+    "h21_rejection_splice.json",
+    "h22_rejection_unsigned.json"
   ]
 }

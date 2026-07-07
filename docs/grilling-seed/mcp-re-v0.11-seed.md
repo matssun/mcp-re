@@ -148,7 +148,7 @@ Do not make EPOP normative in the next SEP/IG post.
 ## Standards mapping table
 
 | Current MCP-RE feature | Existing standards coverage | Remaining gap | Proposed action |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Request signature envelope in MCP `_meta` | RFC 9421 signs selected HTTP request components. RFC 9530 provides content digests. `draft-richer-oauth-httpsig` shows OAuth proof-of-possession with HTTP Message Signatures. | Current draft-02 signs a canonicalized JSON-RPC object using an in-body envelope. That is not wire-compatible with HTTP Signatures. | **Add standards HTTP profile.** For HTTP transport, emit `Content-Digest`, `Signature-Input`, and `Signature`. Keep the current `_meta` envelope as the experimental/native MCP-RE profile and migration bridge. |
 | `canonicalization_id = mcps-jcs-int53-json-v1` | RFC 9421 defines the HTTP signature base. RFC 9530 digests HTTP message content. Neither requires JSON canonicalization. | Current profile has a custom JSON subset and canonicalization rules. This is valuable for prototype conformance but creates SEP-facing friction. | **Deprecate as public HTTP crypto selector.** For HTTP, bind content via `Content-Digest` and covered HTTP components. Keep canonicalization only for the current native profile and legacy vectors. |
 | Ed25519 signing | RFC 9421 supports EdDSA / Ed25519. | The issue is not Ed25519; the issue is the custom envelope and preimage. | **Keep where appropriate.** Do not present Ed25519 as legacy. Align algorithm naming and key identifiers with RFC 9421 for HTTP profile. |
@@ -163,7 +163,7 @@ Do not make EPOP normative in the next SEP/IG post.
 ## Code impact table
 
 | Component | Decision | Design impact before refactor |
-|---|---:|---|
+| --- | ---: | --- |
 | Request signature envelope | **Add standards profile / wrap current** | Do not remove current `_meta` envelope yet. Implement an RFC 9421 + `Content-Digest` HTTP profile alongside it. |
 | `canonicalization_id` | **Keep native; deprecate for HTTP profile** | For HTTP, move away from JSON canonicalization as the cryptographic center. Keep for native profile and regression vectors. |
 | Ed25519 | **Keep available** | Align algorithm expression with RFC 9421 where used. Do not add P-256 just because another MCPS proposal used it. |
@@ -398,15 +398,15 @@ Track open questions:
 
 ## References
 
-- RFC 9421 — HTTP Message Signatures: https://www.rfc-editor.org/rfc/rfc9421.html
-- RFC 9530 — Digest Fields: https://www.rfc-editor.org/rfc/rfc9530.html
-- RFC 9449 — OAuth 2.0 Demonstrating Proof of Possession (DPoP): https://www.rfc-editor.org/rfc/rfc9449.html
-- RFC 8705 — OAuth 2.0 Mutual-TLS Client Authentication and Certificate-Bound Access Tokens: https://www.rfc-editor.org/rfc/rfc8705.html
-- RFC 9396 — OAuth 2.0 Rich Authorization Requests: https://www.rfc-editor.org/rfc/rfc9396.html
-- RFC 9700 — Best Current Practice for OAuth 2.0 Security: https://www.rfc-editor.org/rfc/rfc9700.html
-- draft-richer-oauth-httpsig-02 — OAuth Proof of Possession Tokens with HTTP Message Signatures: https://www.ietf.org/archive/id/draft-richer-oauth-httpsig-02.html
-- draft-ambekar-oauth-epop — JSON Web Token Profile for OAuth 2.0 Enveloped Proof of Possession: https://datatracker.ietf.org/doc/draft-ambekar-oauth-epop/
-- MCP SEP-1932 DPoP Profile discussion: https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1932
+- RFC 9421 — HTTP Message Signatures: <https://www.rfc-editor.org/rfc/rfc9421.html>
+- RFC 9530 — Digest Fields: <https://www.rfc-editor.org/rfc/rfc9530.html>
+- RFC 9449 — OAuth 2.0 Demonstrating Proof of Possession (DPoP): <https://www.rfc-editor.org/rfc/rfc9449.html>
+- RFC 8705 — OAuth 2.0 Mutual-TLS Client Authentication and Certificate-Bound Access Tokens: <https://www.rfc-editor.org/rfc/rfc8705.html>
+- RFC 9396 — OAuth 2.0 Rich Authorization Requests: <https://www.rfc-editor.org/rfc/rfc9396.html>
+- RFC 9700 — Best Current Practice for OAuth 2.0 Security: <https://www.rfc-editor.org/rfc/rfc9700.html>
+- draft-richer-oauth-httpsig-02 — OAuth Proof of Possession Tokens with HTTP Message Signatures: <https://www.ietf.org/archive/id/draft-richer-oauth-httpsig-02.html>
+- draft-ambekar-oauth-epop — JSON Web Token Profile for OAuth 2.0 Enveloped Proof of Possession: <https://datatracker.ietf.org/doc/draft-ambekar-oauth-epop/>
+- MCP SEP-1932 DPoP Profile discussion: <https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1932>
 
 ## Final verdict
 

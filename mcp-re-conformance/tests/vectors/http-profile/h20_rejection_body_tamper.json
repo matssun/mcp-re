@@ -1,8 +1,8 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
-  "name": "h07_response_valid",
-  "kind": "response",
-  "expected": "verify_ok",
+  "name": "h20_rejection_body_tamper",
+  "kind": "rejection",
+  "expected": "mcp-re.digest_mismatch",
   "request": {
     "method": "POST",
     "target_uri": "https://mcp.example.com/mcp",
@@ -30,7 +30,7 @@
   "response": {
     "method": null,
     "target_uri": null,
-    "status": 200,
+    "status": 403,
     "headers": [
       [
         "Content-Type",
@@ -38,7 +38,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:PLmCCbhIGTbodedGJIp/2YqtcClkVqao/wV9iTJFA+U=:"
+        "sha-256=:B56haJlvgKG14suRKiBNiiFIeXxmN8QUqWuYgfL8BVk=:"
       ],
       [
         "Signature-Input",
@@ -46,9 +46,9 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:XFhIBKOZrG7oM8c03Lo30uw8Wf+hDWJVYFHv37ZNeOZAkzeDs879hmv7SkuTmReEZzpIu0udrpVqBLDv6hl3BQ==:"
+        "mcp-re-response=:X7fkHkt+WL8ZrGF5WZC10UF2GrUpFLiZEVLOICCkAuM9Z/QlBeYtM/MG4C+RF/yTtJQtT9b7+ZHywHMNmuJ2AQ==:"
       ]
     ],
-    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32003,\"message\":\"LIES\",\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.expired_request\"}}}}"
   }
 }

@@ -1,0 +1,6 @@
+# Pinned third-party dependency for the RFC 9421 cross-verification no-merge
+# gate (ADR-MCPRE-050, MCPRE-99). `cryptography` provides an Ed25519
+# implementation independent of the Rust `ed25519-dalek` the corpus is signed
+# with, so agreement is a genuine cross-implementation check. Pin exactly — the
+# gate must be deterministic.
+cryptography==46.0.7

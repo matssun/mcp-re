@@ -33,6 +33,22 @@ or wire-format compatibility while the design lines from
   `docs/spec/http-profile-open-questions.md` — grill-resolved questions vs.
   open items with named triggers (wire-code mapping ratification, third-party
   RFC 9421 CI cross-verification, artifact-binding/rejection/MRTR slices).
+- **HTTP standards profile — full profile + parity gate green (ADR-MCPRE-050,
+  MCPRE-92…103)**: the full profile is implemented and integrated — active
+  `se.syncom/mcp-re.http.request` / `.response` body evidence blocks
+  (audience + strict DPoP/mTLS/RAR artifact bindings, `server_signer` +
+  `request_evidence` response binding), resolved-actor trust seam, the
+  five-tuple replay key `(profile_id, signature_label, actor_id, audience_hash,
+  nonce)` packed onto the existing replay-cache tiers, signed rejection
+  receipts, and MRTR continuation rebased onto three standards-derived handles
+  (previous-request / input-required-response signature-base digests + a
+  `requestState` digest). A pure profile-level dispatcher seam
+  (`mcp-re-http-profile::dispatch`) drives replay admission and continuation
+  binding over verified evidence, failing closed and refusing a single-process
+  reference replay cache under fleet-strict. ADR-MCPRE-050 is **Accepted**: the
+  parity gate is declared green on the integrated-path battery
+  (`full_profile_parity_test`, MCPRE-103) composed with the third-party RFC 9421
+  cross-verification CI no-merge gate (MCPRE-99).
 
 ### Changed
 

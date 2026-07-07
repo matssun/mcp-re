@@ -1,0 +1,30 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h19_rejection_unbound_valid",
+  "kind": "rejection",
+  "expected": "mcp-re.invalid_audience",
+  "response": {
+    "method": null,
+    "target_uri": null,
+    "status": 400,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:Mwu5mIlATGpjv3PrlekwKNODR2K/SE5KzNWHHqJcdGg=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re-response=(\"@status\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;keyid=\"server-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re-response=:YViFlkuDNG4euxyJEdMwduvzH28tsE3iS1v0pV6hSyAPm3hNGekL0qLSXjpBmljalWoWL3GQaBozNf+OljoWDA==:"
+      ]
+    ],
+    "body_utf8": "{\"error\":{\"code\":-32003,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":null,\"jsonrpc\":\"2.0\"}"
+  }
+}

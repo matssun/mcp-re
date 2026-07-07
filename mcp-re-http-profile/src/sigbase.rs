@@ -9,7 +9,6 @@
 //! base is NOT newline-terminated (RFC 9421 §2.5).
 
 use crate::error::HttpProfileError;
-use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 
@@ -88,14 +87,17 @@ impl SignatureParams {
     }
 }
 
-/// The message a component value is resolved from: a request, or a response
-/// whose `;req` components resolve against the originating request.
+/// The message a component value is resolved from: a request, a response whose
+/// `;req` components resolve against the originating request, or a response with
+/// NO request context (a rejection emitted before a request could be parsed —
+/// `;req` components are then unresolvable and fail closed).
 pub enum SourceMessage<'a> {
     Request(&'a HttpRequest),
     Response {
         response: &'a HttpResponse,
         request: &'a HttpRequest,
     },
+    ResponseOnly(&'a HttpResponse),
 }
 
 /// Resolve one covered component's value, fail-closed: an absent field or an
@@ -120,6 +122,13 @@ fn component_value(
                 (None, Some(*response))
             }
         }
+        SourceMessage::ResponseOnly(response) => {
+            if component.req {
+                // No request context: a `;req` component cannot be resolved.
+                return Err(HttpProfileError::MissingCoveredComponent(component.name));
+            }
+            (None, Some(*response))
+        }
     };
 
     if let Some(name) = component.name.strip_prefix('@') {
@@ -128,9 +137,8 @@ fn component_value(
             ("target-uri", Some(r), _) => Ok(r.target_uri.clone()),
             ("authority", Some(r), _) => authority_of(&r.target_uri)
                 .ok_or(HttpProfileError::MissingCoveredComponent(component.name)),
-            ("path", Some(r), _) => {
-                path_of(&r.target_uri).ok_or(HttpProfileError::MissingCoveredComponent(component.name))
-            }
+            ("path", Some(r), _) => path_of(&r.target_uri)
+                .ok_or(HttpProfileError::MissingCoveredComponent(component.name)),
             ("status", _, Some(rsp)) => Ok(rsp.status.to_string()),
             _ => Err(HttpProfileError::MissingCoveredComponent(component.name)),
         };
@@ -178,7 +186,9 @@ fn path_of(target_uri: &str) -> Option<String> {
         Some(i) => &rest[i..],
     };
     if after_authority.starts_with('/') {
-        let end = after_authority.find(['?', '#']).unwrap_or(after_authority.len());
+        let end = after_authority
+            .find(['?', '#'])
+            .unwrap_or(after_authority.len());
         Some(after_authority[..end].to_owned())
     } else {
         Some("/".to_owned())
@@ -253,7 +263,10 @@ mod tests {
             &src,
         )
         .unwrap_err();
-        assert_eq!(err, HttpProfileError::MissingCoveredComponent("content-digest"));
+        assert_eq!(
+            err,
+            HttpProfileError::MissingCoveredComponent("content-digest")
+        );
     }
 
     #[test]
@@ -267,7 +280,10 @@ mod tests {
             &src,
         )
         .unwrap_err();
-        assert_eq!(err, HttpProfileError::MissingCoveredComponent("content-type"));
+        assert_eq!(
+            err,
+            HttpProfileError::MissingCoveredComponent("content-type")
+        );
     }
 
     #[test]

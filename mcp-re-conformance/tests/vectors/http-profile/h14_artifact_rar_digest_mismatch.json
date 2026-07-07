@@ -1,0 +1,15 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h14_artifact_rar_digest_mismatch",
+  "kind": "artifact",
+  "expected": "mcp-re.artifact_binding_failed",
+  "artifact_check": {
+    "binding": {
+      "artifact_type": "oauth-rar",
+      "binding_type": "opaque-digest",
+      "digest_alg": "sha256",
+      "digest_value": "2CxmEZD47SjLrD5bmroH7EFxHMykY_gN8_Cs2wC_Y4k"
+    },
+    "credential_b64": "W3sidHlwZSI6InBheW1lbnRfaW5pdGlhdGlvbiIsImFjdGlvbnMiOlsiaW5pdGlhdGUiXX1dLXRhbXBlcmVk"
+  }
+}

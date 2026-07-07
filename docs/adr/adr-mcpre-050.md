@@ -4,7 +4,23 @@
 
 ## Status
 
-Proposed
+Accepted — parity gate green (2026-07-07).
+
+The full HTTP profile is implemented and integrated (MCPRE-92…103). The parity
+gate is declared green on two composed pieces of executable evidence:
+
+- **Integrated-path activation (MCPRE-103):**
+  `mcp-re-conformance/tests/full_profile_parity_test.rs` drives the live
+  `verify_request_full → dispatch_request → verify_response_full` path and
+  asserts every acceptance behaviour rejects through the integrated verifier —
+  request body tamper, response splice, `request_evidence` mismatch
+  (`request_binding_mismatch`), DPoP/RAR artifact mismatch, replay, and MRTR
+  continuation mismatch — proving the body evidence blocks, the five-tuple
+  replay key, and the continuation binding are ACTIVE, not merely corpus-defined.
+- **Third-party RFC 9421 interop (MCPRE-99):**
+  `rfc9421_cross_verification_test` plus the `rfc9421-cross-verify` CI no-merge
+  job cross-verify against an independent (python-cryptography) Ed25519
+  implementation in both directions.
 
 _First ADR under the `ADR-MCPRE` tag: `ADR-MCPS-NNN` ids are frozen historical
 evidence (rename, #289/PR #291); the number sequence continues from 049._
@@ -64,10 +80,11 @@ every property the native profile proves, fail-closed:
   present, exactly-once); `Content-Digest` = sha-256 over unencoded content
   bytes; any `Content-Encoding` on a signed MCP request is a fail-closed error.
 - **Freshness/replay:** RFC 9421 `created`/`expires`/`nonce` required on every
-  signature; DPoP `jti` never substitutes; replay key remains
-  `(resolved_signer_identity, resolved_audience, signature_nonce)`; all
-  existing cache tiers and `replay_cache_unavailable` fail-closed semantics
-  carry over verbatim.
+  signature; DPoP `jti` never substitutes; replay key is
+  `(profile_id, signature_label, actor_id, audience_hash, nonce)`
+  (2026-07-07 ruling: extends the grill-era signer/audience/nonce key with
+  the profile id and signature label); all existing cache tiers and
+  `replay_cache_unavailable` fail-closed semantics carry over verbatim.
 - **Response binding:** response signature covers `@status`,
   `content-digest`, `content-type` plus request components via RFC 9421
   `;req` (`@method`, `@target-uri`, `content-digest`, `content-type`); the
@@ -76,11 +93,17 @@ every property the native profile proves, fail-closed:
 - **Rejection evidence:** the HTTP profile is the **first implementation** of
   signed rejections and rejection signing is REQUIRED conformance behavior;
   `wire_code` lives only in `error.data.mcp_re_error` (frozen taxonomy reused,
-  no parallel namespace); unsigned rejections under `require_mcp_re` fail
+  no parallel namespace; 2026-07-07 ruling adds five signed-rejection codes —
+  `malformed_envelope`, `digest_mismatch`, `artifact_binding_failed`,
+  `request_binding_mismatch`, `continuation_binding_failed` — grouped by
+  security meaning); unsigned rejections under `require_mcp_re` fail
   closed with client-local `mcp-re.rejection_unsigned`.
-- **Continuation (MRTR):** the `mcp-mrt` two-hash shape is kept; handles are
-  SHA-256 over the profile-MANDATED verified signature bases; body-only
-  carriage; no fallback to native JCS hashes inside the HTTP profile.
+- **Continuation (MRTR):** MRTR stays MCP-specific; the HTTP profile binds
+  continuation to three standards-derived evidence handles (2026-07-07
+  ruling): previous request signature-base digest, input-required response
+  signature-base digest, and a `requestState` digest (extending the native
+  two-hash `mcp-mrt` shape); body-only carriage; no fallback to native JCS
+  hashes inside the HTTP profile.
 - **Downgrade:** cross-profile evidence presented under the wrong policy fails
   closed in BOTH directions; the expected-version policy generalizes to an
   `accepted_profiles` set with no default, failing closed at startup
@@ -165,9 +188,11 @@ embedded), the migration bridge, and the proof harness; it is publicly labeled
   bytes from pinned keys — Ed25519 is deterministic, so byte-comparison is
   honest; never generalized to ECDSA) plus a regenerated drift guard.
 - **Independent verification (no-merge gate):** CI must validate the vector
-  set through a pinned third-party RFC 9421 implementation and run
-  RFC 9421/9530 worked examples as known-answer tests; no external validation,
-  no merge.
+  set through a pinned third-party RFC 9421 implementation — both ways: the
+  external implementation validates MCP-RE-produced vectors AND the MCP-RE
+  verifier validates externally produced signatures — and run RFC 9421/9530
+  worked examples as known-answer tests; required before full-profile parity
+  is declared green; no external validation, no merge.
 - **Fail-closed policy:** `accepted_profiles` is a required explicit set; if
   unset the verifier/service fails closed at configuration/startup.
 
@@ -206,10 +231,36 @@ Normative details ratified as slate E-1…E-12 in
 8. EPOP/`rctx` tracked non-normatively; native profile is the sole normative
    non-HTTP carrier.
 
+### Post-grill owner rulings (2026-07-07)
+
+The remaining open questions were ruled on 2026-07-07; the full text lives in
+`docs/spec/http-profile-open-questions.md`. Deltas that amend this ADR are
+already folded into the sections above (replay key, signed-rejection code
+additions, MRTR third handle, bidirectional cross-verification). The other
+rulings, normative here:
+
+1. The `se.syncom/mcp-re.http.request` block carries required `profile`,
+   `audience`, `artifact_bindings`, and `continuation` fields; no raw
+   secrets; it is semantic evidence protected by `Content-Digest` and the
+   RFC 9421 signature, not a custom crypto envelope.
+2. Signed rejection's stable machine signal is the wire code in `error.data`
+   (`mcp_re_error.wire_code`), never `error.message`.
+3. Structured Fields parsing is strictly RFC 8941/RFC 9421 with a closed
+   component and parameter set for v1; parameter/component reordering that
+   changes the signature base fails verification (normative).
+4. The covered-component floor is NOT raised: `@target-uri` stays required,
+   `@authority` is not added globally. Reverse-proxy deployments must
+   reconstruct the exact external `@target-uri`; if that is unavailable,
+   strict verification fails.
+5. SEP-facing stance: RFC 9421 + RFC 9530 + OAuth sender-constrained-token
+   standards likely cover the HTTP cryptographic carrier; MCP-specific work
+   remains for JSON-RPC response binding, signed rejection semantics, MRTR
+   continuation binding, and conformance.
+
 ## Appendix — draft-02 → HTTP standards profile mapping (Work Item 2)
 
 | draft-02 native element | HTTP standards profile equivalent |
-|---|---|
+| --- | --- |
 | `_meta["se.syncom/mcp-re.request"]` envelope | `Signature-Input`/`Signature` headers (label `mcp-re`) + body evidence block `se.syncom/mcp-re.http.request` |
 | `version: "draft-02"` + `canonicalization_id: "mcp-re-jcs-int53-json-v1"` | profile id `mcp-re-http-v1` carried as the signed RFC 9421 `tag` parameter (no JSON canonicalization in the HTTP profile) |
 | JCS/int53 signing preimage | RFC 9421 signature base over covered components; body bound via RFC 9530 `Content-Digest` (sha-256, unencoded bytes) |
@@ -221,7 +272,7 @@ Normative details ratified as slate E-1…E-12 in
 | `request_hash` (`sha256:<b64url>` over JCS preimage) | `request_evidence` `{digest_alg:"sha256", digest_value}` over the request's RFC 9421 signature base |
 | Response envelope (`server_signer`, `request_hash`) | response signature (label `mcp-re-response`) covering `@status`, `content-digest`, `content-type` + `;req` components; body block `se.syncom/mcp-re.http.response` |
 | Unsigned JSON-RPC error (`-32003`, `data.mcp_re_error`) | signed HTTP rejection: same JSON-RPC error body + `Content-Digest` + response signature; wire codes reused verbatim |
-| `continuation` (`mcp-mrt` two hashes over JCS preimages) | same object, hashes over the mandated RFC 9421 signature bases; body-only |
+| `continuation` (`mcp-mrt` two hashes over JCS preimages) | same object plus a `requestState` digest (three handles), hashes over the mandated RFC 9421 signature bases; body-only |
 | Replay key `(signer, audience, nonce)` | unchanged (resolved identity, resolved audience, signature nonce) |
 | `tests/vectors/draft-02/` corpus | `mcp-re-conformance/tests/vectors/http-profile/` corpus (existing corpora byte-frozen) |
 

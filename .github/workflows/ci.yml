@@ -85,6 +85,45 @@ jobs:
         run: cargo clippy --workspace --all-targets
         continue-on-error: true
 
+  rfc9421-cross-verify:
+    name: RFC 9421 third-party cross-verification (no-merge gate)
+    runs-on: ubuntu-latest
+    # ADR-MCPRE-050 / MCPRE-99: the HTTP-profile corpus MUST validate through a
+    # pinned, INDEPENDENT RFC 9421 implementation (python-cryptography Ed25519),
+    # both ways — our signatures verify externally, and an externally produced
+    # signature verifies under the Rust verifier. No external validation, no
+    # merge; this gate is required before full-profile parity is declared green.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned external RFC 9421 dependency
+        run: pip install -r mcp-re-conformance/tools/requirements-cross-verify.txt
+
+      # Direction 1: our committed vectors verify under the independent impl,
+      # and h01's reconstructed signature base is byte-compared to the oracle.
+      - name: Cross-verify the HTTP-profile corpus (ours → external)
+        run: python3 mcp-re-conformance/tools/rfc9421_cross_verify.py
+
+      # The emitted external vector must match what is committed (drift guard for
+      # the external → us direction the Rust test consumes).
+      - name: External vector is up to date
+        run: |
+          python3 mcp-re-conformance/tools/rfc9421_cross_verify.py --emit-external-kat
+          git diff --exit-code mcp-re-conformance/tests/vectors/http-profile/external_kat.json
+
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      # Direction 2: the externally produced signature verifies under the Rust
+      # MCP-RE verifier.
+      - name: Cross-verify (external → us) under the Rust verifier
+        run: cargo test -p mcp-re-conformance --test rfc9421_cross_verification_test
+
   cargo-features:
     name: cargo test (feature-gated backends, 1.94.1)
     runs-on: ubuntu-latest

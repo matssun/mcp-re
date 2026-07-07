@@ -26,6 +26,15 @@ pub const ALG_ED25519: &str = "ed25519";
 /// `digest_value`, no prefix form — v0.11 grill E-5).
 pub const EVIDENCE_DIGEST_ALG: &str = "sha256";
 
+/// `_meta` key of the request-side body evidence block (E-3: no new HTTP
+/// header fields; MCP evidence rides in the JSON-RPC body, protected because
+/// `content-digest` is a covered component). MCPRE-93.
+pub const REQUEST_EVIDENCE_BLOCK_KEY: &str = "se.syncom/mcp-re.http.request";
+
+/// `_meta` key of the response-side body evidence block (`server_signer`,
+/// `request_evidence`). MCPRE-93.
+pub const RESPONSE_EVIDENCE_BLOCK_KEY: &str = "se.syncom/mcp-re.http.response";
+
 /// Covered components REQUIRED on every conforming request signature
 /// (v0.11 grill B.1). `authorization` and `dpop` are additionally required
 /// when the corresponding header is present.

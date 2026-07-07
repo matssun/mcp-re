@@ -1,0 +1,26 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h17_continuation_request_state_tamper",
+  "kind": "continuation",
+  "expected": "mcp-re.continuation_binding_failed",
+  "continuation_check": {
+    "continuation": {
+      "input_required_response_evidence": {
+        "digest_alg": "sha256",
+        "digest_value": "QFnYuFv72uKu7hE0x3NRCsfnG4uGyuAvtMru87-6nZ4"
+      },
+      "previous_request_evidence": {
+        "digest_alg": "sha256",
+        "digest_value": "YwwuhCgV_XRnmJVUH-T9AMaTWlMdpkYKewAMw9Iwapo"
+      },
+      "request_state_digest": {
+        "digest_alg": "sha256",
+        "digest_value": "Te-0sPGGrW_6zy664_q82f5QxWnY1iW1f-T9MrSRcj0"
+      },
+      "type": "mcp-mrt"
+    },
+    "previous_request_base_b64": "cHJldmlvdXMtcmVxdWVzdC1zaWduYXR1cmUtYmFzZS1ieXRlcw",
+    "input_required_response_base_b64": "aW5wdXQtcmVxdWlyZWQtcmVzcG9uc2Utc2lnbmF0dXJlLWJhc2UtYnl0ZXM",
+    "request_state_b64": "b3BhcXVlLXJlcXVlc3Qtc3RhdGUtYmxvYi1UQU1QRVJFRA"
+  }
+}

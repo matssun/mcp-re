@@ -27,7 +27,6 @@
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
   },
-  "response": null,
   "oracle": {
     "signature_base_b64url": "IkBtZXRob2QiOiBQT1NUCiJAdGFyZ2V0LXVyaSI6IGh0dHBzOi8vbWNwLmV4YW1wbGUuY29tL21jcAoiY29udGVudC1kaWdlc3QiOiBzaGEtMjU2PTpxWERiYlNiQUlBcXRUcC9wYUZURDVHSzNGcERQVXlNZmR3M00rQmVXcFd3PToKImNvbnRlbnQtdHlwZSI6IGFwcGxpY2F0aW9uL2pzb24KIkBzaWduYXR1cmUtcGFyYW1zIjogKCJAbWV0aG9kIiAiQHRhcmdldC11cmkiICJjb250ZW50LWRpZ2VzdCIgImNvbnRlbnQtdHlwZSIpO2NyZWF0ZWQ9MTcwMDAwMDAwMDtleHBpcmVzPTE3MDAwMDAzMDA7bm9uY2U9InZlYy1ub25jZS0xIjtrZXlpZD0iY2xpZW50LWtleS0xIjthbGc9ImVkMjU1MTkiO3RhZz0ibWNwLXJlLWh0dHAtdjEi",
     "content_digest": "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:",
