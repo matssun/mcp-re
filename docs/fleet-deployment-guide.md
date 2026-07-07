@@ -63,6 +63,46 @@ guardrail**: `helm template`/`install` errors out if `fleet=true` is paired with
 a non-shared or sub-quorum replay tier, so an unsafe fleet manifest cannot be
 produced.
 
+## Cloud KMS custody on GKE (Workload Identity)
+
+By default the chart mounts a raw `signing-seed` from the Secret
+(`keySource=fileSeed`). On GKE you can instead keep the signing key in **GCP
+Cloud KMS** so no key material ever enters the pod — the proxy authenticates to
+KMS via **Workload Identity** (the metadata-server token path), not a key file.
+
+Build the image with the `gcp_kms_keysource` feature, then:
+
+1. Create a Google Service Account (GSA) and grant it signing on the key:
+   ```sh
+   gcloud iam service-accounts create mcp-re-signer
+   gcloud kms keys add-iam-policy-binding KEY --keyring RING --location LOC \
+     --member "serviceAccount:mcp-re-signer@PROJECT.iam.gserviceaccount.com" \
+     --role roles/cloudkms.signerVerifier
+   ```
+2. Bind the GSA to the chart's Kubernetes ServiceAccount (KSA) and annotate it:
+   ```sh
+   gcloud iam service-accounts add-iam-policy-binding \
+     mcp-re-signer@PROJECT.iam.gserviceaccount.com \
+     --role roles/iam.workloadIdentityUser \
+     --member "serviceAccount:PROJECT.svc.id.goog[NAMESPACE/my-fleet-mcp-re-proxy]"
+   ```
+3. Install with the KMS key source (the `signing-seed` Secret key is then
+   unnecessary):
+   ```sh
+   helm install my-fleet deploy/helm/mcp-re-proxy \
+     ... \
+     --set keySource=gcpKms \
+     --set gcpKms.keyVersion=projects/PROJECT/locations/LOC/keyRings/RING/cryptoKeys/KEY/cryptoKeyVersions/N \
+     --set gcpKms.useMetadata=true \
+     --set 'serviceAccount.annotations.iam\.gke\.io/gcp-service-account=mcp-re-signer@PROJECT.iam.gserviceaccount.com'
+   ```
+
+`helm template`/`install` fails closed if `keySource=gcpKms` is set without
+`gcpKms.keyVersion`. Setting `gcpKms.tlsKeyVersion` (a second, distinct KMS key)
+additionally delegates the TLS server private key to KMS; the chart then omits
+`--tls-key` and the Secret need not carry `tls.key`. Live-cluster validation of
+this path is MCPS-90 (HITL).
+
 ## The four fleet concerns
 
 ### 1. Replay coherence (ADR-MCPS-049 W1, proof a)
