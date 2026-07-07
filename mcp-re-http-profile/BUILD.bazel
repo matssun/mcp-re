@@ -83,3 +83,18 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
     ],
 )
+
+# MCPRE-102: dispatcher seam — replay five-tuple admission + MRTR continuation
+# binding driven from verified full-profile evidence, plus the fleet-strict
+# single-process-reference cache refusal.
+nt_rust_test(
+    name = "dispatch_test",
+    srcs = ["tests/dispatch_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
