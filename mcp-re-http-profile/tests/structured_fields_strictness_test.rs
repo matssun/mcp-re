@@ -18,11 +18,13 @@
 //! - a foreign profile `tag`.
 
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::verify_request;
+use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const NOW: i64 = 1_700_000_100;
@@ -33,9 +35,18 @@ fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
 }
 
-fn resolver() -> impl Fn(&str) -> Option<VerificationKey> {
-    move |key_id: &str| match key_id {
-        "client-key-1" => Some(client_key().public_key()),
+fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+    move |key_id: &str, slot: SignerSlot| match (key_id, slot) {
+        ("client-key-1", SignerSlot::Request) => Some(ResolvedActor {
+            identity: ActorIdentity {
+                role: "client".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:client".into(),
+                keyid: key_id.into(),
+            },
+            verification_key: client_key().public_key(),
+            slot,
+        }),
         _ => None,
     }
 }

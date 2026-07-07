@@ -10,8 +10,9 @@
 
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
-use mcp_re_core::VerificationKey;
 
+use crate::block::ResolvedActor;
+use crate::block::SignerSlot;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
@@ -33,15 +34,68 @@ use crate::sigbase::SignatureParams;
 use crate::sigbase::SourceMessage;
 use crate::sign::base64_standard_decode;
 
-/// The verifier's product for a request: the evidence handle (for response
-/// binding, MRTR, audit) plus the accepted freshness window.
+/// The verifier's structured product for a request (MCPRE-100): the resolved
+/// signer identity, the evidence handle (for response binding, MRTR, audit), the
+/// covered content digest, and the accepted freshness window. Downstream
+/// consumers (replay-key construction, response/body-block validation, signed
+/// rejections) read this context instead of re-parsing headers/body.
+///
+/// The verifier no longer returns "signature valid" alone — it returns a
+/// *verified evidence context*. In particular `resolved_actor` carries the
+/// trust-resolution output, so `resolved_actor.actor_id()` — not the raw
+/// `key_id` — is the identity replay and audit bind to.
 #[derive(Debug, Clone)]
-pub struct VerifiedHttpRequest {
+pub struct VerifiedHttpRequestEvidence {
+    /// The profile id (`tag`) the signature was accepted under (`PROFILE_TAG`).
+    pub profile_id: String,
+    /// The RFC 9421 dictionary label of the verified signature (`REQUEST_LABEL`).
+    pub signature_label: String,
+    /// The resolved signing actor (identity + key + vouched slot).
+    pub resolved_actor: ResolvedActor,
+    /// The request signature-base handle (`SHA-256` over the reconstructed base).
     pub evidence: RequestEvidence,
+    /// The verified `Content-Digest` header value covered by the signature.
+    pub content_digest: String,
     pub created: i64,
     pub expires: i64,
     pub nonce: String,
+    /// The presented keyid. Distinct from `resolved_actor.actor_id()`: a keyid
+    /// is a wire selector, not a trust-resolution output.
     pub key_id: String,
+}
+
+/// The verifier's structured product for a response (MCPRE-100): the resolved
+/// server signer and the response signature-base handle. `bound_request_evidence`
+/// is the request handle this response is bound to; the seam-only path leaves it
+/// `None` and the MCPRE-101/102 dispatcher wiring populates it from the verified
+/// request context (it is not recomputed here to avoid re-parsing the request).
+#[derive(Debug, Clone)]
+pub struct VerifiedHttpResponseEvidence {
+    /// The resolved server/response signer (identity + key + `Response` slot).
+    pub resolved_server_actor: ResolvedActor,
+    /// The response signature-base handle (`SHA-256` over the reconstructed base).
+    pub response_signature_base_digest: RequestEvidence,
+    /// The request evidence this response binds to, when the caller supplies it
+    /// (MCPRE-101/102). `None` on the seam-only verification path.
+    pub bound_request_evidence: Option<RequestEvidence>,
+}
+
+/// Resolve a keyid through the trust seam for a specific signing slot and apply
+/// the typed defense-in-depth cross-check (MCPRE-100). The seam is the primary
+/// slot-authorization authority: a key not trusted for `slot` resolves to `None`
+/// and fails `actor_binding_failed`. The verifier additionally asserts the
+/// returned actor is vouched for the slot it asked for — never a role-string
+/// comparison — so a resolver that hands back a wrong-slot actor is also caught.
+fn resolve_actor_for(
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    key_id: &str,
+    slot: SignerSlot,
+) -> Result<ResolvedActor, HttpProfileError> {
+    let actor = resolve_actor(key_id, slot).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    if actor.slot != slot {
+        return Err(HttpProfileError::ActorSlotMismatch);
+    }
+    Ok(actor)
 }
 
 /// One parsed `Signature-Input` dictionary member.
@@ -274,15 +328,16 @@ fn require_components(
 /// rule; v0.11 grill B.1).
 pub fn verify_request(
     request: &HttpRequest,
-    resolve_key: &dyn Fn(&str) -> Option<VerificationKey>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
-) -> Result<VerifiedHttpRequest, HttpProfileError> {
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
 
     // 1. Content binding first: the body must match its digest before any
     //    signature statement about that digest is even considered.
     let digest_header = required_header(&request.headers, "content-digest")?;
     verify_content_digest_sha256(digest_header, &request.body)?;
+    let content_digest = digest_header.to_owned();
 
     // 2. Parse evidence.
     let input_header = required_header(&request.headers, "signature-input")?;
@@ -306,20 +361,32 @@ pub fn verify_request(
     }
     let (created, expires, nonce, key_id) = check_params(&parsed.params, now, true)?;
 
-    // 3. Trust resolution, 4. signature over the reconstructed base.
-    let key = resolve_key(&key_id).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
+    //    and a key not trusted to sign requests fails actor_binding_failed.
+    let resolved_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Request)?;
+    // 4. Signature over the reconstructed base.
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Request(request),
     )?;
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
-    verify_ed25519_with(&base, &sig, &key, McpReError::InvalidSignature)
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
+    verify_ed25519_with(
+        &base,
+        &sig,
+        &resolved_actor.verification_key,
+        McpReError::InvalidSignature,
+    )
+    .map_err(|_| HttpProfileError::InvalidSignature)?;
 
-    // 5. Derive the handle from the exact verified base.
-    Ok(VerifiedHttpRequest {
+    // 5. Derive the handle from the exact verified base and return the full
+    //    verified evidence context.
+    Ok(VerifiedHttpRequestEvidence {
+        profile_id: PROFILE_TAG.to_owned(),
+        signature_label: REQUEST_LABEL.to_owned(),
+        resolved_actor,
         evidence: RequestEvidence::from_signature_base(&base),
+        content_digest,
         created,
         expires,
         nonce,
@@ -333,9 +400,9 @@ pub fn verify_request(
 pub fn verify_response(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_key: &dyn Fn(&str) -> Option<VerificationKey>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
 
     let digest_header = required_header(&response.headers, "content-digest")
@@ -352,16 +419,27 @@ pub fn verify_response(
     )?;
     let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
 
-    let key = resolve_key(&key_id).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    // Trust resolution for the RESPONSE slot: a request-signer key presented on
+    // a response fails actor_binding_failed.
+    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Response { response, request },
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(&base, &sig, &key, McpReError::ResponseSigInvalid)
-        .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
-    Ok(())
+    verify_ed25519_with(
+        &base,
+        &sig,
+        &resolved_server_actor.verification_key,
+        McpReError::ResponseSigInvalid,
+    )
+    .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    Ok(VerifiedHttpResponseEvidence {
+        resolved_server_actor,
+        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        bound_request_evidence: None,
+    })
 }
 
 /// Verify a signed MCP-RE/HTTP response with NO request context (MCPRE-96): a
@@ -370,9 +448,9 @@ pub fn verify_response(
 /// resolve it against).
 pub fn verify_response_unbound(
     response: &HttpResponse,
-    resolve_key: &dyn Fn(&str) -> Option<VerificationKey>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
 
     let digest_header = required_header(&response.headers, "content-digest")
@@ -390,14 +468,23 @@ pub fn verify_response_unbound(
     }
     let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
 
-    let key = resolve_key(&key_id).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::ResponseOnly(response),
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(&base, &sig, &key, McpReError::ResponseSigInvalid)
-        .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
-    Ok(())
+    verify_ed25519_with(
+        &base,
+        &sig,
+        &resolved_server_actor.verification_key,
+        McpReError::ResponseSigInvalid,
+    )
+    .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    Ok(VerifiedHttpResponseEvidence {
+        resolved_server_actor,
+        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        bound_request_evidence: None,
+    })
 }

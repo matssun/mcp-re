@@ -22,7 +22,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_signed_rejection;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_response;
@@ -30,12 +29,15 @@ use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
 use mcp_re_http_profile::verify_signed_rejection;
+use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
 
 /// Credentials in artifact fixtures are base64url-no-pad (reusing the core
 /// codec so the corpus needs no extra base64 dependency).
@@ -154,11 +156,25 @@ fn server_key() -> SigningKey {
     SigningKey::from_seed_bytes(&SERVER_SEED)
 }
 
-fn resolver() -> impl Fn(&str) -> Option<VerificationKey> {
-    move |key_id: &str| match key_id {
-        CLIENT_KEY_ID => Some(client_key().public_key()),
-        SERVER_KEY_ID => Some(server_key().public_key()),
-        _ => None,
+/// Slot-aware trust seam (MCPRE-100): the client key is trusted only for the
+/// Request slot, the server key only for the Response slot.
+fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+    move |key_id: &str, slot: SignerSlot| {
+        let (role, key) = match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key()),
+            (SERVER_KEY_ID, SignerSlot::Response) => ("server", server_key()),
+            _ => return None,
+        };
+        Some(ResolvedActor {
+            identity: ActorIdentity {
+                role: role.into(),
+                trust_domain: "example.com".into(),
+                subject: format!("did:example:{role}"),
+                keyid: key_id.into(),
+            },
+            verification_key: key.public_key(),
+            slot,
+        })
     }
 }
 
@@ -842,7 +858,7 @@ fn frozen_http_profile_corpus_verifies() {
                 let request = from_wire_request(fixture.request.as_ref().expect("request"));
                 let response = from_wire_response(fixture.response.as_ref().expect("response"));
                 match verify_response(&response, &request, &resolver(), manifest.verify_at_unix) {
-                    Ok(()) => "verify_ok".to_owned(),
+                    Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
             }

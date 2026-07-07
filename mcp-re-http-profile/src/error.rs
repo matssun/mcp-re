@@ -45,6 +45,14 @@ pub enum HttpProfileError {
     StaleWindow,
     /// The `keyid` does not resolve to a trusted verification key.
     UnresolvedKeyId,
+    /// Defense-in-depth (MCPRE-100): the trust seam returned a [`ResolvedActor`]
+    /// whose vouched slot does not match the slot the verifier requested — a
+    /// misbehaving resolver caught by the verifier's typed cross-check. Public
+    /// wire code is `mcp-re.actor_binding_failed`, identical to an unresolved
+    /// keyid; the distinct variant is internal/test-only diagnosis.
+    ///
+    /// [`ResolvedActor`]: crate::block::ResolvedActor
+    ActorSlotMismatch,
     /// An `artifact_bindings[]` proof (DPoP `ath`, mTLS `x5t#S256`, RAR
     /// authorization-details digest) does not bind to the covered credential
     /// surface (MCPRE-95). Maps to `mcp-re.artifact_binding_failed`.
@@ -90,7 +98,9 @@ impl HttpProfileError {
             HttpProfileError::StaleWindow => "mcp-re.expired_request",
             // A keyid outside trust is an actor-binding failure, not a broken
             // signature: the crypto may verify under an untrusted key.
-            HttpProfileError::UnresolvedKeyId => "mcp-re.actor_binding_failed",
+            HttpProfileError::UnresolvedKeyId | HttpProfileError::ActorSlotMismatch => {
+                "mcp-re.actor_binding_failed"
+            }
             HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             // A response bound to a different request is a request-binding
             // splice — precise code (MCPRE-92), not the native response_hash
@@ -137,6 +147,7 @@ mod tests {
             HttpProfileError::InvalidSignature,
             HttpProfileError::StaleWindow,
             HttpProfileError::UnresolvedKeyId,
+            HttpProfileError::ActorSlotMismatch,
             HttpProfileError::ArtifactBindingFailed,
             HttpProfileError::ResponseBindingMismatch,
             HttpProfileError::ResponseSignatureInvalid,

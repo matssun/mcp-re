@@ -24,8 +24,9 @@ use serde_json::json;
 use serde_json::Value;
 
 use mcp_re_core::SigningKey;
-use mcp_re_core::VerificationKey;
 
+use crate::block::ResolvedActor;
+use crate::block::SignerSlot;
 use crate::error::HttpProfileError;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
@@ -115,12 +116,17 @@ pub fn build_signed_rejection(
 pub fn verify_signed_rejection(
     response: &HttpResponse,
     request: Option<&HttpRequest>,
-    resolve_key: &dyn Fn(&str) -> Option<VerificationKey>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<SignedRejection, HttpProfileError> {
+    // A rejection is a server-signed response: resolve for the RESPONSE slot.
     match request {
-        Some(req) => verify_response(response, req, resolve_key, now)?,
-        None => verify_response_unbound(response, resolve_key, now)?,
+        Some(req) => {
+            verify_response(response, req, resolve_actor, now)?;
+        }
+        None => {
+            verify_response_unbound(response, resolve_actor, now)?;
+        }
     }
     // Only AFTER the signature verifies do we read the body for the wire code.
     let wire_code = extract_wire_code(&response.body)?;
@@ -161,11 +167,25 @@ mod tests {
         SigningKey::from_seed_bytes(&CLIENT_SEED)
     }
 
-    fn resolver() -> impl Fn(&str) -> Option<VerificationKey> {
-        move |key_id: &str| match key_id {
-            "server-key-1" => Some(server_key().public_key()),
-            "client-key-1" => Some(client_key().public_key()),
-            _ => None,
+    /// Slot-aware trust seam: the server key is trusted only for the Response
+    /// slot, the client key only for the Request slot (MCPRE-100).
+    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+        move |key_id: &str, slot: SignerSlot| {
+            let (role, key) = match (key_id, slot) {
+                ("server-key-1", SignerSlot::Response) => ("server", server_key()),
+                ("client-key-1", SignerSlot::Request) => ("client", client_key()),
+                _ => return None,
+            };
+            Some(ResolvedActor {
+                identity: crate::block::ActorIdentity {
+                    role: role.into(),
+                    trust_domain: "example.com".into(),
+                    subject: format!("did:example:{role}"),
+                    keyid: key_id.into(),
+                },
+                verification_key: key.public_key(),
+                slot,
+            })
         }
     }
 

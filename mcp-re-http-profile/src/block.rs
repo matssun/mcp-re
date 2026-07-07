@@ -20,6 +20,7 @@
 //!   different MCP audiences that share one HTTP endpoint.
 
 use mcp_re_core::b64url_encode;
+use mcp_re_core::VerificationKey;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -64,6 +65,52 @@ impl ActorIdentity {
 /// (so the escape is reversible), then `:`.
 fn field_escape(s: &str) -> String {
     s.replace('%', "%25").replace(':', "%3A")
+}
+
+/// The signing slot a keyid is resolved FOR. Passed INTO the trust seam so
+/// role authorization is a decision of trust resolution, never inferred from a
+/// role string after the fact (MCPRE-100): a key may be cryptographically valid
+/// yet not trusted to sign in this slot, and that must fail
+/// `actor_binding_failed` exactly like an unknown keyid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignerSlot {
+    /// The client/request-signer slot — [`crate::verify_request`].
+    Request,
+    /// The server/response-signer slot — [`crate::verify_response`],
+    /// `verify_response_unbound`, and signed rejections.
+    Response,
+}
+
+/// Trust-resolution output for a presented keyid: the resolved actor identity,
+/// its verification key, and the slot the trust layer vouched this actor for.
+/// The seam returns this ONLY when the key is trusted for the requested slot; a
+/// wrong-slot key resolves to `None`, indistinguishable at the public error
+/// layer from an unknown keyid (`mcp-re.actor_binding_failed`).
+///
+/// `keyid` is NOT `actor_id`: `actor_id` (see [`ActorIdentity::actor_id`]) is
+/// the trust-resolution output that replay keys, response/body-block validation,
+/// and audit consume — a keyid alone never introduces trust.
+///
+/// Not `PartialEq`/`Eq`: `VerificationKey` is opaque key material with no value
+/// equality. Compare `identity` (or `actor_id()`) and `slot` instead.
+#[derive(Debug, Clone)]
+pub struct ResolvedActor {
+    /// The resolved identity (role, trust domain, subject, keyid → `actor_id`).
+    pub identity: ActorIdentity,
+    /// The verification key trust resolution bound to this actor.
+    pub verification_key: VerificationKey,
+    /// The slot the trust layer authorized this actor for. The verifier asserts
+    /// this equals the slot it requested — a typed defense-in-depth cross-check
+    /// atop the seam's primary enforcement, never a role-string comparison.
+    pub slot: SignerSlot,
+}
+
+impl ResolvedActor {
+    /// The canonical `actor_id` of the resolved signer (delegates to
+    /// [`ActorIdentity::actor_id`]).
+    pub fn actor_id(&self) -> String {
+        self.identity.actor_id()
+    }
 }
 
 /// The MCP-RE audience tuple — richer than `@target-uri` (v0.11 grill E-3).
