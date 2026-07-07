@@ -32,6 +32,9 @@ _PROXY_LIB_SRCS = [
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
     "src/cli.rs",
+    # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
+    # CRL hot-reloader. Pure std; always compiled by every flavor.
+    "src/config_snapshot.rs",
     # ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer (blocking ureq
     # HTTPS + OAuth2 bearer; behind #[cfg(feature = "gcp_kms_keysource")], cfg'd out
     # of the default build). No async google-cloud SDK (ADR-MCPS-018 lean-sync).
@@ -197,6 +200,9 @@ nt_rust_binary(
         # libc::sigaction for graceful drain, so the binary must link libc (the
         # Cargo build resolves it by manifest; the Bazel binary target must list it).
         "@crates_mcp_re//:libc",
+        # MCPRE-116 (ADR-MCPRE-051 §6): main.rs names rustls_pki_types cert/key types
+        # in the CRL hot-reload task signature.
+        "@crates_mcp_re//:rustls-pki-types",
     ],
 )
 

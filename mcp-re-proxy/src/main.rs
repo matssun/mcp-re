@@ -20,6 +20,7 @@ use mcp_re_policy::InMemoryRevocationSource;
 use mcp_re_policy::PolicyEvaluator;
 use mcp_re_policy::ReferenceProfile;
 use mcp_re_policy::REFERENCE_PROFILE_ID;
+use mcp_re_proxy::config_snapshot;
 use mcp_re_proxy::cli;
 use mcp_re_proxy::cli::AuthzKind;
 use mcp_re_proxy::cli::BindingKind;
@@ -751,6 +752,18 @@ fn run() -> Result<(), String> {
     // exported); the validated builder fails closed at construction if the leaf cert
     // is not Ed25519 or its key does not match the signer. Otherwise the exported-key
     // path is used verbatim.
+    // ADR-MCPRE-051 §6 (MCPRE-116): capture the direct-TLS rebuild inputs BEFORE the
+    // match consumes them, so the opt-in CRL hot-reload task can rebuild the verifier
+    // from a refreshed `--client-crl` without a restart. Only the direct
+    // (exported-key) path is reloadable in this increment; delegated-TLS reload is a
+    // tracked follow-up.
+    let is_delegated_tls = tls_delegated_signer.is_some();
+    let reload_chain = server_chain.clone();
+    let reload_client_ca = client_ca.clone();
+    let reload_key = server_key.as_ref().map(|k| k.clone_key());
+    let reload_crl_paths = config.client_crl_paths.clone();
+    let reload_allow_unknown = config.crl_allow_unknown_status;
+
     let server_config = match tls_delegated_signer {
         Some(signer) => tls::build_server_config_delegated_validated(
             server_chain,
@@ -774,7 +787,38 @@ fn run() -> Result<(), String> {
             .map_err(|e| e.to_string())?
         }
     };
-    let server_config = Arc::new(server_config);
+    // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
+    // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
+    // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
+    // byte-identical to the static posture.
+    let config_snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server_config)));
+    if let Some(reload_secs) = config.client_crl_reload_secs {
+        if reload_crl_paths.is_empty() {
+            eprintln!(
+                "mcp-re-proxy: --client-crl-reload-secs set but no --client-crl configured; \
+                 no CRL reload scheduled"
+            );
+        } else if is_delegated_tls {
+            eprintln!(
+                "mcp-re-proxy: --client-crl-reload-secs is not yet supported on the \
+                 delegated-TLS path; retaining the static CRL snapshot (follow-up)"
+            );
+        } else if let Some(reload_key) = reload_key {
+            spawn_crl_reload_task(
+                Arc::clone(&config_snapshot),
+                reload_chain,
+                reload_key,
+                reload_client_ca,
+                reload_crl_paths,
+                reload_allow_unknown,
+                reload_secs,
+            );
+            eprintln!(
+                "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s; \
+                 refreshed --client-crl honored without restart; failed reload keeps last-good)"
+            );
+        }
+    }
     // Select the identity strategy (MCPS-3840): direct mTLS (default) extracts the
     // identity from the verified peer certificate; reverse-proxy mode reads it from
     // the trusted forwarded header and ignores the local client cert. These are
@@ -858,7 +902,7 @@ fn run() -> Result<(), String> {
     // interior state, so connections are handled one at a time. Runs until a
     // shutdown signal is observed, then returns for a clean (exit 0) drain.
     while !SHUTDOWN.load(Ordering::SeqCst) {
-        let config_arc = Arc::clone(&server_config);
+        let config_arc = config_snapshot.load();
         match tls::serve_once_with_assertion(
             &listener,
             config_arc,
@@ -883,6 +927,60 @@ fn run() -> Result<(), String> {
     // inner child. Exit 0 so an orchestrator reads the rollout as a clean stop.
     eprintln!("mcp-re-proxy: shutdown signal received; stopped accepting, drained, exiting cleanly");
     Ok(())
+}
+
+/// ADR-MCPRE-051 §6 (MCPRE-116): the in-process CRL hot-reload task. Every
+/// `interval_secs` it re-reads the `--client-crl` files and rebuilds the direct-TLS
+/// verifier from the SAME immutable server key material, atomically swapping the
+/// result into `snapshot`. A read/parse/build failure keeps the last-good config
+/// (which still fails closed once its CRL passes `nextUpdate`), so a bad reload
+/// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
+/// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
+/// is set with a non-empty `--client-crl` on the direct-TLS path.
+fn spawn_crl_reload_task(
+    snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
+    server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+    server_key: rustls_pki_types::PrivateKeyDer<'static>,
+    client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+    crl_paths: Vec<String>,
+    allow_unknown_status: bool,
+    interval_secs: u64,
+) {
+    std::thread::spawn(move || {
+        // Nap in small increments so a shutdown signal is observed within one
+        // increment rather than after a whole reload interval.
+        let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
+        loop {
+            for _ in 0..ticks {
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let outcome = config_snapshot::reload_once(&snapshot, || {
+                let crls = cli::load_client_crls(&crl_paths)?;
+                let rebuilt = tls::RustlsDirectProvider::build_server_config_with_crls(
+                    server_chain.clone(),
+                    server_key.clone_key(),
+                    client_ca.clone(),
+                    crls,
+                    allow_unknown_status,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(Arc::new(rebuilt))
+            });
+            match outcome {
+                config_snapshot::ReloadOutcome::Swapped => {
+                    eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
+                }
+                config_snapshot::ReloadOutcome::KeptLastGood { reason } => {
+                    eprintln!(
+                        "mcp-re-proxy: client CRL reload FAILED, keeping last-good config: {reason}"
+                    );
+                }
+            }
+        }
+    });
 }
 
 /// MCPS-88 (ADR-MCPS-049 W3): set on SIGTERM/SIGINT so the serve loop stops

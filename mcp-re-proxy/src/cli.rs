@@ -223,6 +223,14 @@ pub struct Config {
     /// file; empty disables revocation checking (the pre-#3839 behavior). OFFLINE
     /// only — there is no online OCSP / distribution-point fetching.
     pub client_crl_paths: Vec<String>,
+    /// ADR-MCPRE-051 §6 (MCPRE-116) in-process CRL hot-reload cadence, in seconds.
+    /// `None` (default) keeps the static-snapshot posture (reload requires a
+    /// restart). `Some(n)` spawns a background task that every `n` seconds re-reads
+    /// the `--client-crl` files and atomically swaps in a rebuilt verifier — so a
+    /// refreshed CRL is honored WITHOUT a restart; a failed reload keeps the
+    /// last-good config (which still fails closed once its CRL passes `nextUpdate`).
+    /// Has no effect without `--client-crl`.
+    pub client_crl_reload_secs: Option<u64>,
     /// Relax the fail-closed revocation posture: when `true`, a client cert whose
     /// revocation status cannot be determined from the configured CRLs is ALLOWED
     /// rather than rejected. Default `false` (deny unknown status — fail closed).
@@ -502,6 +510,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--tls-key",
     "--client-ca",
     "--client-crl",
+    "--client-crl-reload-secs",
     "--trust",
     "--client-ocsp",
     "--ocsp-responder-url",
@@ -571,6 +580,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #3839 offline CRL revocation: zero or more CRL file paths, fail-closed on
     // unknown status by default.
     let mut client_crl_paths: Vec<String> = Vec::new();
+    let mut client_crl_reload_secs: Option<u64> = None;
     let mut crl_allow_unknown_status = false;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -816,6 +826,18 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     }
                     client_crl_paths.push(segment.to_string());
                 }
+            }
+            // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence. Must
+            // be a positive whole number of seconds (0 or unparseable is a hard
+            // parse error — fail closed rather than silently disable/spin).
+            "--client-crl-reload-secs" => {
+                let secs: u64 = value
+                    .parse()
+                    .map_err(|_| "invalid --client-crl-reload-secs (expected a positive integer)".to_string())?;
+                if secs == 0 {
+                    return Err("--client-crl-reload-secs must be greater than 0".to_string());
+                }
+                client_crl_reload_secs = Some(secs);
             }
             "--trust" => trust_path = Some(value.clone()),
             // ADR-MCPS-013: repeatable and/or comma-separated revocation deny-list
@@ -1594,6 +1616,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         },
         client_ca: require(client_ca, "--client-ca")?,
         client_crl_paths,
+        client_crl_reload_secs,
         crl_allow_unknown_status,
         client_ocsp,
         ocsp_responder_url,
