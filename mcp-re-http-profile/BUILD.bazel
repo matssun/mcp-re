@@ -84,6 +84,21 @@ nt_rust_test(
     ],
 )
 
+# MCPRE-101: full-profile body-block battery — active request/response evidence
+# blocks (audience + strict artifact enforcement, server_signer + request_evidence
+# response binding, request_binding_mismatch).
+nt_rust_test(
+    name = "full_profile_test",
+    srcs = ["tests/full_profile_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
 # MCPRE-102: dispatcher seam — replay five-tuple admission + MRTR continuation
 # binding driven from verified full-profile evidence, plus the fleet-strict
 # single-process-reference cache refusal.
