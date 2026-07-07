@@ -12,6 +12,28 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added
+
+- **HTTP standards profile — minimal proof path (ADR-MCPRE-050, seed Work
+  Item 3)**: new pure crate `mcp-re-http-profile` implementing the RFC 9421
+  HTTP Message Signatures + RFC 9530 `Content-Digest` carrier with the ratified
+  covered-component sets, profile tag `mcp-re-http-v1`, labels `mcp-re` /
+  `mcp-re-response`, split-form `request_evidence` handle, and fail-closed
+  verification (body tamper, response splice, wrong digest, missing covered
+  component, stale window, wrong keyid, foreign tag, `Content-Encoding`
+  rejection). Wire-code verdicts reuse the frozen `mcp-re.*` taxonomy — no new
+  tokens. Independent oracle: RFC 9421 Appendix B.2.6 known-answer test
+  (byte-exact signature base; deterministic Ed25519 `sig-b26` byte-match).
+- **HTTP-profile conformance corpus seed (Work Item 4)**:
+  `mcp-re-conformance/tests/vectors/http-profile/` — 8 frozen fixtures with a
+  static oracle (signature base, `Content-Digest`, Ed25519 signature bytes,
+  evidence handle) plus a regenerating drift guard; draft-01/draft-02 corpora
+  untouched.
+- **Standards issue tracker (Work Item 5)**:
+  `docs/spec/http-profile-open-questions.md` — grill-resolved questions vs.
+  open items with named triggers (wire-code mapping ratification, third-party
+  RFC 9421 CI cross-verification, artifact-binding/rejection/MRTR slices).
+
 ### Changed
 
 - **Project renamed: MCP-S / MCPS → MCP Runtime Evidence (MCP-RE)** (#289,

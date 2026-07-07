@@ -1,0 +1,32 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h03_request_missing_covered_component",
+  "kind": "request",
+  "expected": "mcp-re.missing_envelope",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-1\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:b6ZKUdB0Fog2foHhKUrU9Lz2TfpR1dBVewhJEL8Bqe0E7a/CyrTgO8/GpUn4VdSLp5eDDVm8LdCEOoxCUSmgDQ==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
+  },
+  "response": null,
+  "oracle": null
+}

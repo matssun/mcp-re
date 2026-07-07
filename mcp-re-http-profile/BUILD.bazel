@@ -1,0 +1,69 @@
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ADR-MCPRE-050 (seed Work Item 3): the HTTP standards profile — RFC 9421 HTTP
+# Message Signatures + RFC 9530 Content-Digest carrier, minimal proof path.
+# Pure library beside the native profile: depends only on mcp-re-core's crypto
+# primitives plus the serde/sha2/base64 subset. No networking/async/fs — the
+# transport layers above adapt real messages into this crate's message model.
+nt_rust_library(
+    name = "mcp_re_http_profile",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_http_profile",
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:base64",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:sha2",
+    ],
+)
+
+# Inline crate unit tests (digest / sigbase / evidence / error #[cfg(test)]
+# modules).
+nt_rust_test(
+    name = "mcp_re_http_profile_test",
+    crate = ":mcp_re_http_profile",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:base64",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:sha2",
+    ],
+)
+
+# RFC 9421 known-answer test: Appendix B.2.6 signature-base byte-equality and
+# the deterministic Ed25519 sig-b26 byte-match (the RFC is the independent
+# oracle — S15).
+nt_rust_test(
+    name = "rfc9421_kat",
+    srcs = ["tests/rfc9421_kat.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:base64",
+    ],
+)
+
+# Seed Work Item 3 proof battery: request/response roundtrips plus the
+# fail-closed negatives (body tamper, response splice, wrong content-digest,
+# missing covered component, stale window, wrong keyid, foreign tag,
+# content-encoding).
+nt_rust_test(
+    name = "proof_path_test",
+    srcs = ["tests/proof_path_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)

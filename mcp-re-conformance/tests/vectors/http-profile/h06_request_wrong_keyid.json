@@ -1,0 +1,32 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h06_request_wrong_keyid",
+  "kind": "request",
+  "expected": "mcp-re.actor_binding_failed",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-r\";keyid=\"rogue-key-9\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:ilyATRxZkrL6K1ueKfMYb+ByPiBFE+5aJ1SLqR6gcLtCIdlLdpxIHUoUrLz7pAi3EuvzidRlIxS1gIXhNZRuDw==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
+  },
+  "response": null,
+  "oracle": null
+}
