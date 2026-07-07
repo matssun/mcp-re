@@ -4,7 +4,23 @@
 
 ## Status
 
-Proposed
+Accepted — parity gate green (2026-07-07).
+
+The full HTTP profile is implemented and integrated (MCPRE-92…103). The parity
+gate is declared green on two composed pieces of executable evidence:
+
+- **Integrated-path activation (MCPRE-103):**
+  `mcp-re-conformance/tests/full_profile_parity_test.rs` drives the live
+  `verify_request_full → dispatch_request → verify_response_full` path and
+  asserts every acceptance behaviour rejects through the integrated verifier —
+  request body tamper, response splice, `request_evidence` mismatch
+  (`request_binding_mismatch`), DPoP/RAR artifact mismatch, replay, and MRTR
+  continuation mismatch — proving the body evidence blocks, the five-tuple
+  replay key, and the continuation binding are ACTIVE, not merely corpus-defined.
+- **Third-party RFC 9421 interop (MCPRE-99):**
+  `rfc9421_cross_verification_test` plus the `rfc9421-cross-verify` CI no-merge
+  job cross-verify against an independent (python-cryptography) Ed25519
+  implementation in both directions.
 
 _First ADR under the `ADR-MCPRE` tag: `ADR-MCPS-NNN` ids are frozen historical
 evidence (rename, #289/PR #291); the number sequence continues from 049._

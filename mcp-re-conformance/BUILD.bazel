@@ -468,3 +468,23 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
     ],
 )
+
+# ADR-MCPRE-050 / MCPRE-103: full-profile PARITY GATE. Drives the integrated
+# live path (verify_request_full -> dispatch_request -> verify_response_full) and
+# asserts every acceptance behaviour (#1-#6: body tamper, response splice,
+# request_evidence mismatch, artifact mismatch, replay, MRTR continuation)
+# rejects through the integrated verifier — proving the body blocks, replay key,
+# and continuation binding are ACTIVE, not merely corpus-defined. Acceptance #7
+# (third-party RFC 9421 interop) is the separate rfc9421_cross_verification_test
+# + CI no-merge gate (MCPRE-99), cited but not re-executed here.
+nt_rust_test(
+    name = "full_profile_parity_test",
+    srcs = ["tests/full_profile_parity_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+    ],
+)
