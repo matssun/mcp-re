@@ -1,0 +1,15 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h11_artifact_mtls_x5t_valid",
+  "kind": "artifact",
+  "expected": "verify_ok",
+  "artifact_check": {
+    "binding": {
+      "artifact_type": "oauth-mtls",
+      "binding_type": "opaque-digest",
+      "digest_alg": "sha256",
+      "digest_value": "X2IRnatdDIabvQZVAoig1OjL3m0jhOcP4qNrSVVuKa0"
+    },
+    "credential_b64": "MIJmYWtlLWNsaWVudC1jZXJ0LWRlcg"
+  }
+}

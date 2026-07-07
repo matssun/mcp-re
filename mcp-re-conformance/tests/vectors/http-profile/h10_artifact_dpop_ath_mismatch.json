@@ -1,0 +1,15 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h10_artifact_dpop_ath_mismatch",
+  "kind": "artifact",
+  "expected": "mcp-re.artifact_binding_failed",
+  "artifact_check": {
+    "binding": {
+      "artifact_type": "oauth-dpop",
+      "binding_type": "opaque-digest",
+      "digest_alg": "sha256",
+      "digest_value": "pUu5Ap-239o9W188VBzuf5azYBXYJEdnzFc6_ZMOW3Y"
+    },
+    "credential_b64": "ZHBvcC1hY2Nlc3MtdG9rZW4tYWJjLXRhbXBlcmVk"
+  }
+}

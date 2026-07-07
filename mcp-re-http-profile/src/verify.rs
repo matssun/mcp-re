@@ -72,16 +72,15 @@ fn split_dictionary(value: &str) -> Vec<&str> {
 
 /// Find the member value for `label` in a `Signature-Input`/`Signature`
 /// dictionary header, fail-closed on absence or duplication.
-fn member_value<'a>(
-    header_value: &'a str,
-    label: &str,
-) -> Result<&'a str, HttpProfileError> {
+fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpProfileError> {
     let mut found: Option<&'a str> = None;
     for member in split_dictionary(header_value) {
         if let Some(rest) = member.strip_prefix(label) {
             if let Some(v) = rest.strip_prefix('=') {
                 if found.is_some() {
-                    return Err(HttpProfileError::MissingEvidence("duplicate signature label"));
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "duplicate signature label",
+                    ));
                 }
                 found = Some(v.trim());
             }
@@ -93,18 +92,18 @@ fn member_value<'a>(
 /// Leak-free integer parse for created/expires.
 fn parse_i64(s: &str) -> Result<i64, HttpProfileError> {
     s.parse::<i64>()
-        .map_err(|_| HttpProfileError::MissingEvidence("integer signature parameter"))
+        .map_err(|_| HttpProfileError::MalformedEvidence("integer signature parameter"))
 }
 
 /// Parse one `("a" "b";req ...);k=v;...` signature-input member value.
 fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfileError> {
     let value = value.trim();
     if !value.starts_with('(') {
-        return Err(HttpProfileError::MissingEvidence("inner list"));
+        return Err(HttpProfileError::MalformedEvidence("inner list"));
     }
     let close = value
         .find(')')
-        .ok_or(HttpProfileError::MissingEvidence("inner list"))?;
+        .ok_or(HttpProfileError::MalformedEvidence("inner list"))?;
     let list = &value[1..close];
     let mut components = Vec::new();
     for item in list.split_whitespace() {
@@ -115,7 +114,7 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         let name = name_part
             .strip_prefix('"')
             .and_then(|s| s.strip_suffix('"'))
-            .ok_or(HttpProfileError::MissingEvidence("component identifier"))?;
+            .ok_or(HttpProfileError::MalformedEvidence("component identifier"))?;
         // Identifiers are 'static in this profile: admit only the closed set
         // the profile can ever cover; anything else is foreign evidence.
         let known: &'static str = match name {
@@ -129,7 +128,11 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             "content-length" => "content-length",
             "authorization" => "authorization",
             "dpop" => "dpop",
-            _ => return Err(HttpProfileError::MissingEvidence("unknown covered component")),
+            _ => {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "unknown covered component",
+                ))
+            }
         };
         components.push(if req {
             CoveredComponent::req(known)
@@ -139,6 +142,7 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
     }
 
     let mut params = SignatureParams::default();
+    let mut last_param_rank: i32 = -1;
     for p in value[close + 1..].split(';') {
         let p = p.trim();
         if p.is_empty() {
@@ -146,13 +150,42 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         }
         let (k, v) = p
             .split_once('=')
-            .ok_or(HttpProfileError::MissingEvidence("signature parameter"))?;
+            .ok_or(HttpProfileError::MalformedEvidence("signature parameter"))?;
         let unquote = |v: &str| -> Result<String, HttpProfileError> {
             v.strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
                 .map(str::to_owned)
-                .ok_or(HttpProfileError::MissingEvidence("quoted signature parameter"))
+                .ok_or(HttpProfileError::MalformedEvidence(
+                    "quoted signature parameter",
+                ))
         };
+        // Strict Structured Fields (MCPRE-98): the profile's parameter set is
+        // closed AND ordered. The verifier normalizes to a canonical order when
+        // rebuilding the base, so a reordered wire form would silently verify;
+        // reject it structurally instead. `rank` is the canonical position; a
+        // key that is not strictly after the previous one (reordered OR
+        // duplicated) fails closed.
+        let rank = match k {
+            "created" => 0,
+            "expires" => 1,
+            "nonce" => 2,
+            "keyid" => 3,
+            "alg" => 4,
+            "tag" => 5,
+            // Unknown parameters would change the signature base this verifier
+            // rebuilds; fail closed rather than sign-what-you-did-not-say.
+            _ => {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "unknown signature parameter",
+                ))
+            }
+        };
+        if rank <= last_param_rank {
+            return Err(HttpProfileError::MalformedEvidence(
+                "signature parameter order",
+            ));
+        }
+        last_param_rank = rank;
         match k {
             "created" => params.created = Some(parse_i64(v)?),
             "expires" => params.expires = Some(parse_i64(v)?),
@@ -160,9 +193,7 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             "keyid" => params.keyid = Some(unquote(v)?),
             "alg" => params.alg = Some(unquote(v)?),
             "tag" => params.tag = Some(unquote(v)?),
-            // Unknown parameters would change the signature base this verifier
-            // rebuilds; fail closed rather than sign-what-you-did-not-say.
-            _ => return Err(HttpProfileError::MissingEvidence("unknown signature parameter")),
+            _ => unreachable!("rank match above is exhaustive over the closed set"),
         }
     }
     Ok(ParsedSignatureInput { components, params })
@@ -212,7 +243,9 @@ fn signature_value_b64url(
     let b64 = member
         .strip_prefix(':')
         .and_then(|s| s.strip_suffix(':'))
-        .ok_or(HttpProfileError::MissingEvidence("signature byte sequence"))?;
+        .ok_or(HttpProfileError::MalformedEvidence(
+            "signature byte sequence",
+        ))?;
     let bytes = base64_standard_decode(b64)?;
     Ok(mcp_re_core::b64url_encode(&bytes))
 }
@@ -256,7 +289,9 @@ pub fn verify_request(
     let parsed = parse_signature_input(member_value(input_header, REQUEST_LABEL)?)?;
     require_components(&parsed.components, &REQUIRED_REQUEST_COMPONENTS, &[])?;
     if parsed.components.iter().any(|c| c.req) {
-        return Err(HttpProfileError::MissingEvidence("req component on a request"));
+        return Err(HttpProfileError::MalformedEvidence(
+            "req component on a request",
+        ));
     }
     // Conditional coverage is mandatory when the header is present.
     if single_header(&request.headers, "authorization")?.is_some()
@@ -322,6 +357,44 @@ pub fn verify_response(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Response { response, request },
+    )?;
+    let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
+    verify_ed25519_with(&base, &sig, &key, McpReError::ResponseSigInvalid)
+        .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    Ok(())
+}
+
+/// Verify a signed MCP-RE/HTTP response with NO request context (MCPRE-96): a
+/// rejection emitted before a request could be parsed. Covers only the response
+/// components; any `;req` component is malformed here (there is no request to
+/// resolve it against).
+pub fn verify_response_unbound(
+    response: &HttpResponse,
+    resolve_key: &dyn Fn(&str) -> Option<VerificationKey>,
+    now: i64,
+) -> Result<(), HttpProfileError> {
+    reject_content_encoding(&response.headers)?;
+
+    let digest_header = required_header(&response.headers, "content-digest")
+        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    let input_header = required_header(&response.headers, "signature-input")
+        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
+    require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
+    if parsed.components.iter().any(|c| c.req) {
+        return Err(HttpProfileError::MalformedEvidence(
+            "req component without request context",
+        ));
+    }
+    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+
+    let key = resolve_key(&key_id).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::ResponseOnly(response),
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
     verify_ed25519_with(&base, &sig, &key, McpReError::ResponseSigInvalid)

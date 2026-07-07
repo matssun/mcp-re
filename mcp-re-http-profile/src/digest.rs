@@ -21,8 +21,10 @@ pub fn content_digest_sha256(body: &[u8]) -> String {
 ///
 /// Fail-closed: the value must contain a well-formed `sha-256` member whose
 /// bytes equal the recomputed digest. Unknown additional members are ignored
-/// for verification (RFC 9530 permits multiple algorithms) but a malformed or
-/// missing `sha-256` member rejects.
+/// for verification (RFC 9530 permits multiple algorithms) but a wrong-valued
+/// `sha-256` member rejects, and a `Content-Digest` header that is present yet
+/// carries no `sha-256` member is malformed evidence (MCPRE-92) — a downgrade
+/// to an unrecognized-only digest, distinct from an absent header.
 pub fn verify_content_digest_sha256(
     header_value: &str,
     body: &[u8],
@@ -41,7 +43,9 @@ pub fn verify_content_digest_sha256(
             return Err(HttpProfileError::ContentDigestMismatch);
         }
     }
-    Err(HttpProfileError::MissingEvidence("content-digest sha-256 member"))
+    Err(HttpProfileError::MalformedEvidence(
+        "content-digest sha-256 member",
+    ))
 }
 
 #[cfg(test)]
@@ -64,9 +68,11 @@ mod tests {
     }
 
     #[test]
-    fn missing_sha256_member_fails_closed() {
-        let err =
-            verify_content_digest_sha256("sha-512=:AAAA:", b"x").unwrap_err();
-        assert!(matches!(err, HttpProfileError::MissingEvidence(_)));
+    fn sha256_member_absent_from_present_header_is_malformed() {
+        // A `Content-Digest` header carrying only an unrecognized algorithm is
+        // present-but-malformed evidence (MCPRE-92), not an absent header.
+        let err = verify_content_digest_sha256("sha-512=:AAAA:", b"x").unwrap_err();
+        assert!(matches!(err, HttpProfileError::MalformedEvidence(_)));
+        assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
     }
 }

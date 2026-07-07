@@ -2,7 +2,7 @@
   "schema": "mcp-re-http-profile-conformance/v1",
   "name": "h02_request_body_tamper",
   "kind": "request",
-  "expected": "mcp-re.invalid_signature",
+  "expected": "mcp-re.digest_mismatch",
   "request": {
     "method": "POST",
     "target_uri": "https://mcp.example.com/mcp",
@@ -26,7 +26,5 @@
       ]
     ],
     "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"rm -rf\"}}"
-  },
-  "response": null,
-  "oracle": null
+  }
 }

@@ -28,24 +28,50 @@
 //! bindings, signed rejections, and MRTR continuation reuse the existing
 //! machinery and land with the full profile (ADR-MCPRE-050 parity gate).
 
+pub mod artifact;
+pub mod block;
 pub mod digest;
 pub mod error;
 pub mod evidence;
 pub mod ids;
 pub mod message;
+pub mod rejection;
+pub mod replay;
 pub mod sigbase;
 pub mod sign;
 pub mod verify;
 
+pub use artifact::bearer_token;
+pub use artifact::verify_artifact_binding;
+pub use artifact::verify_dpop_ath;
+pub use artifact::verify_mtls_x5t_s256;
+pub use artifact::verify_rar_details;
+pub use block::ActorIdentity;
+pub use block::ArtifactBinding;
+pub use block::ArtifactType;
+pub use block::AudienceTuple;
+pub use block::BindingType;
+pub use block::HttpContinuation;
+pub use block::HttpRequestEvidenceBlock;
+pub use block::RequestEvidenceDigest;
+pub use block::CONTINUATION_TYPE_MCP_MRT;
 pub use digest::content_digest_sha256;
 pub use error::HttpProfileError;
 pub use evidence::RequestEvidence;
 pub use ids::ALG_ED25519;
 pub use ids::PROFILE_TAG;
+pub use ids::REQUEST_EVIDENCE_BLOCK_KEY;
 pub use ids::REQUEST_LABEL;
+pub use ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 pub use ids::RESPONSE_LABEL;
 pub use message::HttpRequest;
 pub use message::HttpResponse;
+pub use rejection::build_signed_rejection;
+pub use rejection::verify_signed_rejection;
+pub use rejection::RejectionReason;
+pub use rejection::SignedRejection;
+pub use rejection::JSON_RPC_ERROR_CODE;
+pub use replay::HttpReplayKey;
 pub use sigbase::CoveredComponent;
 pub use sigbase::SignatureParams;
 pub use sign::sign_request;

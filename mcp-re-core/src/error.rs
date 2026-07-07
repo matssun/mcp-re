@@ -170,6 +170,42 @@ pub enum McpReError {
     /// verified `InputRequiredResult` it is answering.
     #[error("mcp-re.continuation_malformed")]
     ContinuationMalformed,
+
+    // ----- HTTP-profile signed-rejection codes (ADR-MCPRE-050, MCPRE-92) -----
+    // Added to the frozen taxonomy (no parallel namespace) so the HTTP profile's
+    // signed rejections carry precise, security-grouped wire codes rather than
+    // folding onto the coarser draft-01/02 tokens. Ratified 2026-07-07.
+    /// An evidence structure is present but structurally invalid — a signature
+    /// base, `Signature-Input` member, or evidence block that does not parse
+    /// against the profile's closed grammar. Distinct from
+    /// [`McpReError::MissingEnvelope`] (evidence entirely absent).
+    #[error("mcp-re.malformed_envelope")]
+    MalformedEnvelope,
+
+    /// The message content does not match its signed `Content-Digest`
+    /// (RFC 9530). Distinct from [`McpReError::InvalidSignature`]: the content
+    /// commitment itself is wrong, before any signature statement about it is
+    /// weighed.
+    #[error("mcp-re.digest_mismatch")]
+    DigestMismatch,
+
+    /// An `artifact_bindings[]` proof (DPoP `ath`, mTLS `x5t#S256`, RAR
+    /// authorization-details digest) does not bind to the covered credential
+    /// surface.
+    #[error("mcp-re.artifact_binding_failed")]
+    ArtifactBindingFailed,
+
+    /// A signed response's `;req` / `request_evidence` binding does not match
+    /// the signed request it claims to answer (a splice). Distinct from
+    /// [`McpReError::ResponseHashMismatch`], which names the native-profile
+    /// `request_hash` field.
+    #[error("mcp-re.request_binding_mismatch")]
+    RequestBindingMismatch,
+
+    /// An MRTR continuation handle does not match its mandated signature-base
+    /// digest (previous-request, input-required-response, or `requestState`).
+    #[error("mcp-re.continuation_binding_failed")]
+    ContinuationBindingFailed,
 }
 
 impl McpReError {
@@ -216,6 +252,12 @@ impl McpReError {
             }
             McpReError::ContinuationTypeUnsupported => "mcp-re.continuation_type_unsupported",
             McpReError::ContinuationMalformed => "mcp-re.continuation_malformed",
+            // HTTP-profile signed-rejection codes (ADR-MCPRE-050, MCPRE-92).
+            McpReError::MalformedEnvelope => "mcp-re.malformed_envelope",
+            McpReError::DigestMismatch => "mcp-re.digest_mismatch",
+            McpReError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
+            McpReError::RequestBindingMismatch => "mcp-re.request_binding_mismatch",
+            McpReError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
         }
     }
 }
@@ -260,7 +302,10 @@ mod tests {
             "mcp-re.replay_cache_unavailable",
         );
         // KEPT verbatim despite field rename actor -> signer (ADR-007).
-        check(McpReError::ActorBindingFailed, "mcp-re.actor_binding_failed");
+        check(
+            McpReError::ActorBindingFailed,
+            "mcp-re.actor_binding_failed",
+        );
     }
 
     #[test]
@@ -275,7 +320,10 @@ mod tests {
             McpReError::TransportBindingFailed,
             "mcp-re.transport_binding_failed",
         );
-        check(McpReError::ResponseSigInvalid, "mcp-re.response_sig_invalid");
+        check(
+            McpReError::ResponseSigInvalid,
+            "mcp-re.response_sig_invalid",
+        );
         check(
             McpReError::ResponseHashMismatch,
             "mcp-re.response_hash_mismatch",
@@ -344,6 +392,46 @@ mod tests {
         check(
             McpReError::AuthorizationHashMissing,
             "mcp-re.authorization_hash_missing",
+        );
+    }
+
+    #[test]
+    fn http_profile_signed_rejection_wire_strings() {
+        // ADR-MCPRE-050 / MCPRE-92 — the five HTTP-profile additions, grouped
+        // by security meaning and frozen before they go wire-visible in signed
+        // rejections.
+        check(McpReError::MalformedEnvelope, "mcp-re.malformed_envelope");
+        check(McpReError::DigestMismatch, "mcp-re.digest_mismatch");
+        check(
+            McpReError::ArtifactBindingFailed,
+            "mcp-re.artifact_binding_failed",
+        );
+        check(
+            McpReError::RequestBindingMismatch,
+            "mcp-re.request_binding_mismatch",
+        );
+        check(
+            McpReError::ContinuationBindingFailed,
+            "mcp-re.continuation_binding_failed",
+        );
+    }
+
+    /// The new codes are distinct from the coarser tokens the HTTP profile used
+    /// to fold onto — a `Content-Digest` mismatch is no longer `invalid_signature`,
+    /// and a response splice is no longer the native `response_hash_mismatch`.
+    #[test]
+    fn http_profile_codes_are_distinct_from_the_folds_they_replace() {
+        assert_ne!(
+            McpReError::DigestMismatch.wire_code(),
+            McpReError::InvalidSignature.wire_code(),
+        );
+        assert_ne!(
+            McpReError::RequestBindingMismatch.wire_code(),
+            McpReError::ResponseHashMismatch.wire_code(),
+        );
+        assert_ne!(
+            McpReError::MalformedEnvelope.wire_code(),
+            McpReError::MissingEnvelope.wire_code(),
         );
     }
 

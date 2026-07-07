@@ -98,6 +98,12 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::AuthorizationBindingAmbiguousBytes => "authorization_binding ambiguous bytes",
         McpReError::ContinuationTypeUnsupported => "continuation type unsupported",
         McpReError::ContinuationMalformed => "continuation malformed",
+        // HTTP-profile signed-rejection codes (ADR-MCPRE-050, MCPRE-92).
+        McpReError::MalformedEnvelope => "Malformed evidence structure",
+        McpReError::DigestMismatch => "Content-Digest mismatch",
+        McpReError::ArtifactBindingFailed => "Artifact binding failed",
+        McpReError::RequestBindingMismatch => "Response/request binding mismatch",
+        McpReError::ContinuationBindingFailed => "Continuation binding failed",
     }
 }
 

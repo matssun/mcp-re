@@ -92,10 +92,7 @@ pub fn sign_request(
     set_header(
         &mut request.headers,
         "Signature",
-        format!(
-            "{REQUEST_LABEL}=:{}:",
-            base64_standard_encode(&sig_bytes)
-        ),
+        format!("{REQUEST_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
     );
     Ok(evidence)
 }
@@ -152,10 +149,55 @@ pub fn sign_response(
     set_header(
         &mut response.headers,
         "Signature",
-        format!(
-            "{RESPONSE_LABEL}=:{}:",
-            base64_standard_encode(&sig_bytes)
-        ),
+        format!("{RESPONSE_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
+    );
+    Ok(())
+}
+
+/// Sign `response` in place with NO request binding — for a rejection emitted
+/// before a request could be parsed (MCPRE-96). Covers only the response
+/// components (`@status`, `content-digest`, `content-type`); no `;req`. Label
+/// `mcp-re-response`, same profile tag.
+pub fn sign_response_unbound(
+    response: &mut HttpResponse,
+    key: &SigningKey,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
+    reject_content_encoding(&response.headers)?;
+    set_header(
+        &mut response.headers,
+        "Content-Digest",
+        content_digest_sha256(&response.body),
+    );
+
+    let components: Vec<CoveredComponent> = REQUIRED_RESPONSE_COMPONENTS
+        .iter()
+        .map(|n| CoveredComponent::new(n))
+        .collect();
+    let params = SignatureParams {
+        created: Some(created),
+        expires: Some(expires),
+        nonce: None,
+        keyid: Some(key_id.to_owned()),
+        alg: Some(ALG_ED25519.to_owned()),
+        tag: Some(PROFILE_TAG.to_owned()),
+    };
+    let base = signature_base(&components, &params, &SourceMessage::ResponseOnly(response))?;
+    let signature_b64url = key.sign(&base);
+    let sig_bytes = mcp_re_core::b64url_decode(&signature_b64url)
+        .map_err(|_| HttpProfileError::InvalidSignature)?;
+
+    set_header(
+        &mut response.headers,
+        "Signature-Input",
+        format!("{RESPONSE_LABEL}={}", params.serialize_with(&components)),
+    );
+    set_header(
+        &mut response.headers,
+        "Signature",
+        format!("{RESPONSE_LABEL}=:{}:", base64_standard_encode(&sig_bytes)),
     );
     Ok(())
 }

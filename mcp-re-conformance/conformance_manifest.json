@@ -54,7 +54,7 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 70
+    "bazel_test_targets": 71
   },
   "bazel_test_targets": [
     "//mcp-re-conformance:acceptance_test",
@@ -65,6 +65,7 @@
     "//mcp-re-conformance:forbidden_claim_guard_test",
     "//mcp-re-conformance:http_harness_test",
     "//mcp-re-conformance:http_profile_vectors_test",
+    "//mcp-re-conformance:rfc9421_cross_verification_test",
     "//mcp-re-conformance:method_name_drift_guard_test",
     "//mcp-re-conformance:method_transparency_test",
     "//mcp-re-conformance:object_suite_test",

@@ -44,14 +44,22 @@ fn request() -> HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp?route=a".into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
 fn signed_request() -> HttpRequest {
     let mut req = request();
-    sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-1")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("signing succeeds");
     req
 }
 
@@ -62,8 +70,15 @@ fn signed_exchange() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(&mut rsp, &req, &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("response signing succeeds");
+    sign_response(
+        &mut rsp,
+        &req,
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signing succeeds");
     (req, rsp)
 }
 
@@ -81,9 +96,15 @@ fn request_roundtrip_verifies_and_yields_split_form_evidence() {
 #[test]
 fn signer_and_verifier_derive_the_same_evidence_handle() {
     let mut req = request();
-    let signer_evidence =
-        sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-1")
-            .expect("signing succeeds");
+    let signer_evidence = sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("signing succeeds");
     let verified = verify_request(&req, &resolver(), NOW).expect("verifies");
     assert_eq!(signer_evidence, verified.evidence);
 }
@@ -97,9 +118,17 @@ fn response_roundtrip_bound_to_request_verifies() {
 #[test]
 fn authorization_header_is_covered_when_present() {
     let mut req = request();
-    req.headers.push(("Authorization".into(), "Bearer token-abc".into()));
-    sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, "n")
-        .expect("signing succeeds");
+    req.headers
+        .push(("Authorization".into(), "Bearer token-abc".into()));
+    sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "n",
+    )
+    .expect("signing succeeds");
     verify_request(&req, &resolver(), NOW).expect("verifies with authorization covered");
 
     // Tampering with the bearer token after signing must break the signature.
@@ -120,7 +149,9 @@ fn body_tamper_fails_closed() {
     req.body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rm"}}"#.to_vec();
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::ContentDigestMismatch);
-    assert_eq!(err.wire_code(), "mcp-re.invalid_signature");
+    // MCPRE-92: a content-digest mismatch is its own precise code now, no
+    // longer folded onto invalid_signature.
+    assert_eq!(err.wire_code(), "mcp-re.digest_mismatch");
 }
 
 #[test]
@@ -129,15 +160,29 @@ fn response_splice_fails_closed() {
     let (req_a, _rsp_a) = signed_exchange();
     let mut req_b = request();
     req_b.target_uri = "https://mcp.example.com/mcp?route=b".into();
-    sign_request(&mut req_b, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-2")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req_b,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-2",
+    )
+    .expect("signing succeeds");
     let mut rsp_b = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response(&mut rsp_b, &req_b, &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("response signing succeeds");
+    sign_response(
+        &mut rsp_b,
+        &req_b,
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signing succeeds");
 
     // rsp_b verifies against its own request but MUST NOT verify against req_a:
     verify_response(&rsp_b, &req_b, &resolver(), NOW).expect("own request ok");
@@ -168,7 +213,10 @@ fn missing_covered_component_fails_closed() {
         }
     }
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
-    assert_eq!(err, HttpProfileError::MissingCoveredComponent("content-digest"));
+    assert_eq!(
+        err,
+        HttpProfileError::MissingCoveredComponent("content-digest")
+    );
     assert_eq!(err.wire_code(), "mcp-re.missing_envelope");
 }
 
@@ -190,8 +238,15 @@ fn wrong_keyid_fails_closed() {
     let mut req = request();
     // Signed with the client key but claiming an unknown keyid: trust
     // resolution must reject before any signature check.
-    sign_request(&mut req, &client_key(), "rogue-key-9", CREATED, EXPIRES, "n")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "rogue-key-9",
+        CREATED,
+        EXPIRES,
+        "n",
+    )
+    .expect("signing succeeds");
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::UnresolvedKeyId);
     assert_eq!(err.wire_code(), "mcp-re.actor_binding_failed");
@@ -202,8 +257,15 @@ fn keyid_swap_to_another_trusted_key_fails_the_signature() {
     let mut req = request();
     // Signed by the CLIENT key but claiming the SERVER keyid: resolution
     // succeeds (both are trusted) but the signature must not verify.
-    sign_request(&mut req, &client_key(), "server-key-1", CREATED, EXPIRES, "n")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+        "n",
+    )
+    .expect("signing succeeds");
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::InvalidSignature);
 }
@@ -213,7 +275,8 @@ fn foreign_tag_fails_closed() {
     let mut req = signed_request();
     for h in req.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 = h.1.replace("tag=\"mcp-re-http-v1\"", "tag=\"someone-elses-profile\"");
+            h.1 =
+                h.1.replace("tag=\"mcp-re-http-v1\"", "tag=\"someone-elses-profile\"");
         }
     }
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
@@ -240,9 +303,18 @@ fn unsigned_request_fails_closed() {
 #[test]
 fn duplicate_authorization_fails_closed() {
     let mut req = request();
-    req.headers.push(("Authorization".into(), "Bearer one".into()));
-    req.headers.push(("authorization".into(), "Bearer two".into()));
-    let err =
-        sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, "n").unwrap_err();
+    req.headers
+        .push(("Authorization".into(), "Bearer one".into()));
+    req.headers
+        .push(("authorization".into(), "Bearer two".into()));
+    let err = sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "n",
+    )
+    .unwrap_err();
     assert_eq!(err, HttpProfileError::DuplicateHeader("authorization"));
 }

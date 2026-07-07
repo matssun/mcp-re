@@ -771,6 +771,7 @@ dependencies = [
  "base64",
  "mcp-re-core",
  "serde",
+ "serde_json",
  "sha2",
 ]
 

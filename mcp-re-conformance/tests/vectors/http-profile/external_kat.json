@@ -1,0 +1,7 @@
+{
+  "note": "Signature produced by python-cryptography (independent of ed25519-dalek).",
+  "seed_b64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "public_key_b64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "signature_base_b64url": "IkBtZXRob2QiOiBQT1NUCiJjb250ZW50LXR5cGUiOiBhcHBsaWNhdGlvbi9qc29uCiJAc2lnbmF0dXJlLXBhcmFtcyI6ICgiQG1ldGhvZCIgImNvbnRlbnQtdHlwZSIpO2NyZWF0ZWQ9MTcwMDAwMDAwMDtrZXlpZD0iZXh0LWtleSI7YWxnPSJlZDI1NTE5Ijt0YWc9Im1jcC1yZS1odHRwLXYxIg",
+  "signature_b64url": "BAATqrLS_kKMF66JQ6kJQA7vm1vlyxFmt7LGa-WNcFxmOcxpbUthSSksPmKdr_8Bm0sqsZbuVagpr2ANLq1OBA"
+}
