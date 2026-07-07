@@ -802,6 +802,7 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-host",
+ "mcp-re-http-profile",
  "mcp-re-policy",
  "mcp-re-test-paths",
  "rcgen",

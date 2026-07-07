@@ -99,6 +99,21 @@ nt_rust_test(
     ],
 )
 
+# MCPRE-106: external-signer custody seam — sign_request_with_signer /
+# sign_response_with_signer wire-identical to local-key signing, the raw
+# 64-byte Ed25519 length contract, and tamper / wrong-key negatives.
+nt_rust_test(
+    name = "signer_seam_test",
+    srcs = ["tests/signer_seam_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
 # MCPRE-102: dispatcher seam — replay five-tuple admission + MRTR continuation
 # binding driven from verified full-profile evidence, plus the fleet-strict
 # single-process-reference cache refusal.

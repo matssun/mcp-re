@@ -148,7 +148,15 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_draft02_live_test -- --ignored --nocapture --test-threads=1
 
+# 4. HTTP standards profile (RFC 9421 + RFC 9530) lane: Cloud KMS signs an RFC 9421
+#    request and response through the profile's external-signer seam
+#    (sign_request_with_signer / sign_response_with_signer, ADR-MCPRE-050 /
+#    MCPRE-106) that the unmodified verify_request / verify_response accept, with
+#    tamper and wrong-key negatives.
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test gcp_kms_http_profile_live_test -- --ignored --nocapture --test-threads=1
+
 echo
 echo "OK — live GCP KMS validation passed (object signing + delegated TLS +"
-echo "draft-02 envelope round-trip, with negatives). The private keys never left"
-echo "Cloud KMS."
+echo "draft-02 envelope round-trip + HTTP standards profile RFC 9421 round-trip,"
+echo "with negatives). The private keys never left Cloud KMS."
