@@ -49,6 +49,16 @@ or wire-format compatibility while the design lines from
   parity gate is declared green on the integrated-path battery
   (`full_profile_parity_test`, MCPRE-103) composed with the third-party RFC 9421
   cross-verification CI no-merge gate (MCPRE-99).
+- **Fleet proof (c) — MRT continuation survives a mid-continuation replica
+  switch (ADR-MCPS-049 W1, MCPS-82).** Completes the three ceiling-lifting
+  proofs (alongside replay MCPS-80/81 and revocation MCPS-86): a new always-on
+  e2e (`fleet_mrt_replica_switch_e2e_test`) drives an elicitation continuation
+  across two independent serving-proxy replicas — leg 1 to replica A, the signed
+  continuation leg to a fresh replica B — and B completes it without any shared
+  server-side continuation state, because the `continuation` binding rides the
+  signed draft-02 preimage (ADR-MCPS-047). Runs in the normal Bazel battery
+  (not the Redis live lane): replica-independence of the continuation requires
+  no shared cross-node store. No production code change.
 
 ### Changed
 
