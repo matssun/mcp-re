@@ -95,33 +95,29 @@ _PROXY_LIB_SRCS = [
     # in-memory reference store). Always compiled; default-build, Bazel-tested.
     "src/shared_replay.rs",
     "src/tls.rs",
-    # ADR-MCPRE-051 Phase 2 (§1): opt-in async serving path. #[cfg(feature =
-    # "async_serve")] — compiled ONLY by the `:mcp_re_proxy_async` flavor + its
-    # tests; the default/production flavors see an absent module and link no
-    # tokio/hyper (ADR-MCPS-018 lean-sync firewall).
+    # ADR-MCPRE-051 (MCPRE-118): the async serving path is UNCONDITIONAL — it is the
+    # PEP's sole serving path, so every flavor compiles it and links the async stack
+    # (the `async_serve` feature is a vestigial no-op; no code gates on it). This
+    # supersedes the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path;
+    # `mcp-re-core` stays pure.
     "src/async_serve.rs",
-    # MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): the per-core serving fleet (per-core
-    # tokio runtimes + SO_REUSEPORT listeners + Linux CPU pinning). Same
-    # #[cfg(feature = "async_serve")] gate as async_serve.rs — invisible to the
-    # default closure.
+    # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
+    # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
+    # plane.
     "src/async_fleet.rs",
-    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async authoritative replay tier seam
-    # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
-    # "async_serve")] gate — invisible to the default closure.
+    # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
+    # contract + L1-never-Fresh wrapper) — the only replay path.
     "src/async_replay.rs",
-    # ADR-MCPRE-051 §3 (Phase 3): the async inner-server seam. Same #[cfg(feature =
-    # "async_serve")] gate — invisible to the default closure; the async serving path
-    # awaits it instead of the sync stdio inner.
+    # ADR-MCPRE-051 §3: the async inner-server seam — the only inner path; the
+    # serving path awaits it (a stdio server is fronted by mcp-re-stdio-bridge over HTTP).
     "src/async_inner.rs",
-    # ADR-MCPRE-051 §3 (Phase 3): the production async inner plane — pooled hyper
-    # client to stateless Streamable-HTTP inner backends. Same async_serve gate.
+    # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
+    # stateless Streamable-HTTP inner backends.
     "src/http_inner.rs",
-    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async Redis authoritative replay
-    # backend (SET NX PX over the tokio async client). #[cfg(all(async_serve,
-    # redis_replay))] — cfg'd out of every current flavor (none sets both), compiled
-    # + tested by the cargo async+redis lane; it links under Bazel when the async
-    # production flavor (async_serve + redis_replay + tokio + redis) is added at the
-    # main.rs cutover.
+    # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
+    # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
+    # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
+    # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
@@ -463,6 +459,13 @@ nt_rust_test(
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
+    # Spawns a real TLS server plus several concurrent TLS client threads and
+    # synchronizes on admission state. The work is bounded (internal waits cap at
+    # 30s), but under heavy parallel `bazel test //...` on a many-core host the
+    # scheduler thrash can push wall-clock past the default `medium` (300s) ceiling.
+    # `large` (900s) gives the headroom so oversubscription never trips a false
+    # timeout; a genuine hang still fails via the internal bounded waits.
+    size = "large",
     deps = [
         ":mcp_re_proxy_async",  # keep
         "@crates_mcp_re//:rcgen",
