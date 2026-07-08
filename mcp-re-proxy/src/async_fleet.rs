@@ -77,6 +77,14 @@ pub struct FleetConfig {
     pub cores: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
+    /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request ceiling. When set (and
+    /// the per-core `ServerLimits::max_in_flight_requests` is not already set
+    /// explicitly), it is divided evenly across cores — each core's ceiling is
+    /// `ceil(total / cores)` — so the aggregate in-flight stays under `total` while
+    /// the request path remains lock-free ACROSS cores (no shared global semaphore on
+    /// the hot path, per ADR-MCPRE-051 §1). `None` leaves the per-core ceiling as
+    /// configured on `ServerOptions` (or unbounded).
+    pub max_in_flight_total: Option<usize>,
 }
 
 impl FleetConfig {
@@ -86,6 +94,7 @@ impl FleetConfig {
             addr,
             cores: 0,
             listen_backlog: DEFAULT_LISTEN_BACKLOG,
+            max_in_flight_total: None,
         }
     }
 }
@@ -160,6 +169,11 @@ where
 {
     let cores = resolve_core_count(cfg.cores);
 
+    // MCPRE-114: translate an optional fleet-GLOBAL in-flight ceiling into an
+    // evenly-divided PER-CORE ceiling, so admission control stays lock-free across
+    // cores (each core enforces its own share; no shared global semaphore).
+    let options = apply_global_admission(options, cfg.max_in_flight_total, cores);
+
     // Bind the first listener to resolve the concrete port (cfg.addr may be `:0`),
     // then bind the remaining listeners to that resolved address so the whole fleet
     // shares ONE port via SO_REUSEPORT.
@@ -208,6 +222,47 @@ where
         shutdown,
         workers,
     })
+}
+
+/// MCPRE-114: derive the per-core in-flight ceiling from an optional fleet-global
+/// target. When `global` is set AND the per-core ceiling is not already configured
+/// explicitly, set each core's `max_in_flight_requests` to `ceil(global / cores)` (at
+/// least 1) — so the aggregate stays under `global` while every core enforces only
+/// its own share (no shared cross-core semaphore). Otherwise the options are returned
+/// unchanged (an explicit per-core ceiling wins; no global ⇒ no derivation).
+fn apply_global_admission(
+    options: Arc<ServerOptions>,
+    global: Option<usize>,
+    cores: usize,
+) -> Arc<ServerOptions> {
+    match derived_per_core_ceiling(options.limits.max_in_flight_requests, global, cores) {
+        // Only rebuild the options when the derivation actually changed the ceiling
+        // (a global target was divided into a per-core one). An explicit per-core
+        // ceiling or "no ceiling" leaves the shared options untouched.
+        derived if derived != options.limits.max_in_flight_requests => {
+            let mut opts = (*options).clone();
+            opts.limits.max_in_flight_requests = derived;
+            Arc::new(opts)
+        }
+        _ => options,
+    }
+}
+
+/// MCPRE-114: the per-core in-flight ceiling given an (optional) explicit per-core
+/// ceiling, an (optional) fleet-global target, and the core count. An explicit
+/// per-core ceiling always wins; otherwise a global target is divided evenly
+/// (`ceil(global / cores)`, at least 1); with neither, there is no ceiling. Pure and
+/// deterministic (unit-tested).
+pub fn derived_per_core_ceiling(
+    explicit_per_core: Option<usize>,
+    global: Option<usize>,
+    cores: usize,
+) -> Option<usize> {
+    match (explicit_per_core, global) {
+        (Some(per_core), _) => Some(per_core),
+        (None, Some(total)) => Some(total.div_ceil(cores.max(1)).max(1)),
+        (None, None) => None,
+    }
 }
 
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]

@@ -14,6 +14,24 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **Per-core bounded admission control + fail-closed backpressure (ADR-MCPRE-051
+  §1, Phase 2, MCPRE-114).** The async serving path now enforces a **per-core
+  in-flight-request ceiling** (`ServerLimits::max_in_flight_requests`): once a core is
+  serving that many requests, the next request is rejected with `503 Service
+  Unavailable` **before its body is read or the handler runs** — fail-closed
+  backpressure that bounds tail latency under overload instead of queuing work without
+  bound. The ceiling is a per-core `tokio::sync::Semaphore` acquired at the top of
+  request handling and released on return (RAII, the same fail-closed permit idiom as
+  `redis_store`'s `ConnectPermit`), so it stays lock-free ACROSS cores. Config surface
+  is both per-core and fleet-global: `FleetConfig::max_in_flight_total` is divided
+  evenly into per-core ceilings (`ceil(total / cores)`, at least 1; an explicit
+  per-core ceiling wins) — no shared cross-core semaphore on the hot path. `None`
+  leaves in-flight unbounded (the historical default). A deterministic suite
+  (`async_admission_test`) drives `serve` on a multi-thread runtime with blocking
+  handlers to prove over-cap requests get 503 (handler never reached), that the
+  uncapped default admits all, and the global→per-core division. **Saturation latency
+  bounded-at-cap is measured on the load harness (MCPRE-108) in the SLO lane.**
+  Conformance target count 77 → 78.
 - **Per-core async serving fleet — SO_REUSEPORT + thread pinning (ADR-MCPRE-051
   §1, Phase 2, MCPRE-113).** A new `mcp-re-proxy` module (`async_fleet`, behind the
   non-default `async_serve` feature) stands up the target data plane: **one worker

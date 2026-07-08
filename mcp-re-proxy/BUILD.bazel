@@ -501,6 +501,26 @@ nt_rust_test(
     ],
 )
 
+# MCPRE-114 (ADR-MCPRE-051 §1, Phase 2): per-core ADMISSION-control suite — proves
+# the async path enforces a per-core in-flight ceiling with fail-closed 503
+# backpressure (never unbounded queuing) + the fleet-global→per-core derivation.
+# Drives serve() on a multi-thread runtime to force concurrent in-flight requests.
+nt_rust_test(
+    name = "async_admission_test",
+    srcs = ["tests/async_admission_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
 # MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): per-core serving FLEET suite — proves N
 # independent per-core tokio runtimes, each with its own SO_REUSEPORT listener, serve
 # the full mTLS pipeline correctly with a configurable core count and a clean

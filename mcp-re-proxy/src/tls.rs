@@ -76,6 +76,19 @@ pub struct ServerLimits {
     /// Connections beyond the cap are dropped (TCP-accepted then closed) rather
     /// than queued unboundedly.
     pub max_concurrent_connections: usize,
+    /// MCPRE-114 (ADR-MCPRE-051 §1): per-core bounded ADMISSION control — the
+    /// maximum number of requests being served CONCURRENTLY on one core (async
+    /// serving path). A request that arrives while the ceiling is full is rejected
+    /// fail-closed with `503 Service Unavailable` BEFORE the handler runs, rather
+    /// than queued without bound — so tail latency stays bounded under overload
+    /// instead of degrading unboundedly. `None` disables the ceiling (unbounded
+    /// in-flight; the historical behavior). On the per-core fleet the effective
+    /// ceiling can also be derived from a fleet-global target
+    /// (`FleetConfig::max_in_flight_total`), divided evenly across cores so the
+    /// request path stays lock-free across cores. Bounds only the async
+    /// (`async_serve`) path; the blocking loop bounds concurrency via
+    /// `max_concurrent_connections`.
+    pub max_in_flight_requests: Option<usize>,
 }
 
 impl Default for ServerLimits {
@@ -87,6 +100,7 @@ impl Default for ServerLimits {
             request_deadline: Some(Duration::from_secs(30)),
             write_timeout: Some(Duration::from_secs(30)),
             max_concurrent_connections: 256,
+            max_in_flight_requests: None,
         }
     }
 }
