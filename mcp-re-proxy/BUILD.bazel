@@ -102,6 +102,10 @@ _PROXY_LIB_SRCS = [
     # #[cfg(feature = "async_serve")] gate as async_serve.rs — invisible to the
     # default closure.
     "src/async_fleet.rs",
+    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async authoritative replay tier seam
+    # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
+    # "async_serve")] gate — invisible to the default closure.
+    "src/async_replay.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -537,6 +541,25 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+# MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): async replay tier SEAM suite — proves the
+# per-core L1 fast-rejects known replays without ever manufacturing a Fresh
+# (L1-never-Fresh), L1 eviction is safe, an L2 outage fails closed + recovers, and
+# cross-core many-tiers-over-one-L2 admit EXACTLY ONE Fresh under concurrency. On the
+# in-memory reference backend; async Redis/etcd live cross-replica is the infra lane.
+nt_rust_test(
+    name = "async_replay_test",
+    srcs = ["tests/async_replay_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:tokio",
     ],
 )
