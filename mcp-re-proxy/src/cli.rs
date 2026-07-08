@@ -1372,8 +1372,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
         );
     }
-    if inner_command.is_empty() {
-        return Err("missing required --inner-command <cmd> [args...]".to_string());
+    // `--inner-command` is required for the sync stdio serving path, but NOT when
+    // HTTP inner backends are configured (ADR-MCPRE-051 §3): the async fleet
+    // forwards over the HttpInnerPool, so no subprocess command is needed. They are
+    // mutually exclusive — supplying both is a misconfiguration (fail closed).
+    if !inner_http_urls.is_empty() {
+        if !inner_command.is_empty() {
+            return Err(
+                "--inner-command and --inner-http-url are mutually exclusive (stdio subprocess \
+                 vs async HTTP inner plane); supply exactly one"
+                    .to_string(),
+            );
+        }
+    } else if inner_command.is_empty() {
+        return Err(
+            "missing required inner server: --inner-command <cmd> [args...] (stdio) or \
+             --inner-http-url <url> (async HTTP inner plane)"
+                .to_string(),
+        );
     }
 
     // MCPS-3840 reverse-proxy ingress: identity comes EITHER from a locally-
@@ -3505,6 +3521,23 @@ mod tests {
         ])
     }
 
+    /// The same required flags as `minimal()` but WITHOUT the tail `--inner-command`
+    /// (which consumes the remainder of argv), so a test can supply `--inner-http-url`
+    /// as the inner instead.
+    fn minimal_without_inner_command() -> Vec<String> {
+        args(&[
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--signing-key-seed", "/seed",
+            "--tls-cert", "/cert",
+            "--tls-key", "/key",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+        ])
+    }
+
     /// A durable single-node replay selection (`--replay-cache file --replay-path
     /// <p>`). The DEFAULT replay backend is the non-durable in-memory cache, which
     /// is a strict-production violation (#90, ADR-MCPS-014/020): a restart forgets
@@ -5144,16 +5177,14 @@ mod tests {
 
     #[test]
     fn parses_repeated_and_comma_separated_inner_http_urls() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inner-http-url",
-                "http://10.0.0.1:8080/mcp,http://10.0.0.2:8080/mcp",
-                "--inner-http-url",
-                "http://10.0.0.3:8080/mcp",
-            ]),
-        );
+        // No --inner-command (mutually exclusive with --inner-http-url).
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&[
+            "--inner-http-url",
+            "http://10.0.0.1:8080/mcp,http://10.0.0.2:8080/mcp",
+            "--inner-http-url",
+            "http://10.0.0.3:8080/mcp",
+        ]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
             config.inner_http_urls,
@@ -5172,6 +5203,32 @@ mod tests {
         assert!(
             parse_args(&a).unwrap_err().contains("--inner-http-url"),
             "an empty URL segment must be a hard parse error"
+        );
+    }
+
+    #[test]
+    fn http_inner_does_not_require_inner_command() {
+        // `minimal()` supplies --inner-command; build an arg set WITHOUT it but WITH
+        // --inner-http-url and assert it parses (the async HTTP inner plane needs no
+        // subprocess command).
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
+        let config = parse_args(&a).expect("HTTP inner needs no --inner-command");
+        assert_eq!(config.inner_http_urls, vec!["http://127.0.0.1:8080/mcp".to_string()]);
+        assert!(config.inner_command.is_empty());
+    }
+
+    #[test]
+    fn inner_command_and_http_url_are_mutually_exclusive() {
+        // `minimal()` already carries --inner-command; adding --inner-http-url must
+        // fail closed (the two serving paths are mutually exclusive).
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
+        assert!(
+            parse_args(&a)
+                .unwrap_err()
+                .contains("mutually exclusive"),
+            "supplying both --inner-command and --inner-http-url must fail closed"
         );
     }
 
