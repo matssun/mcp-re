@@ -67,9 +67,32 @@ or wire-format compatibility while the design lines from
   parity gate is declared green on the integrated-path battery
   (`full_profile_parity_test`, MCPRE-103) composed with the third-party RFC 9421
   cross-verification CI no-merge gate (MCPRE-99).
+- **Fleet proof (c) — MRT continuation survives a mid-continuation replica
+  switch (ADR-MCPS-049 W1, MCPS-82).** Completes the three ceiling-lifting
+  proofs (alongside replay MCPS-80/81 and revocation MCPS-86): a new always-on
+  e2e (`fleet_mrt_replica_switch_e2e_test`) drives an elicitation continuation
+  across two independent serving-proxy replicas — leg 1 to replica A, the signed
+  continuation leg to a fresh replica B — and B completes it without any shared
+  server-side continuation state, because the `continuation` binding rides the
+  signed draft-02 preimage (ADR-MCPS-047). Runs in the normal Bazel battery
+  (not the Redis live lane): replica-independence of the continuation requires
+  no shared cross-node store. No production code change.
 
 ### Changed
 
+- **Thread-readiness: `Proxy` is now `Send + Sync` (ADR-MCPRE-051 §2, Phase 1,
+  MCPRE-111).** Mechanical, no behavior change — the groundwork for the target
+  per-core async data plane where a single `Proxy` serves concurrently across
+  cores. `ReplayCache::check_and_insert` moved from `&mut self` to `&self`; the
+  in-memory reference cache and the file-backed `DurableReplayCache` gained
+  interior `Mutex` synchronization (each check-and-insert stays atomic — the
+  lock spans check+insert, so a race still yields exactly one `Fresh`); the
+  shared/atomic stores were already `&self`. The proxy now holds its replay
+  cache directly (the `RefCell` on the serving path is gone), and the boxed
+  custody/trust/inner/replay/policy trait-object seams carry `+ Send + Sync`. A
+  compile-time assertion (`proxy_is_send_and_sync`) locks the property. The
+  `ReplayCacheUnavailable` fail-closed taxonomy is unchanged; `mcp-re-core`
+  stays pure (the interior lock is `std::sync`, not I/O/async).
 - **Project renamed: MCP-S / MCPS → MCP Runtime Evidence (MCP-RE)** (#289,
   Stages 2–4). A full identity rename, including the wire format:
   - Crates and directories: `mcps-*` → `mcp-re-*`; Rust lib/module names

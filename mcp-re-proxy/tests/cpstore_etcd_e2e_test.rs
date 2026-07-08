@@ -141,7 +141,7 @@ fn single_node_fresh_then_replay() {
     let signer = "did:example:host#cpstore_single_node_fresh_then_replay";
     let nonce = "nonce-69-cpstore-single-node-fresh-then-replay";
 
-    let mut cache = node(&url);
+    let cache = node(&url);
     assert_eq!(
         cache.check_and_insert(signer, AUD, nonce, expires_at),
         Ok(ReplayDecision::Fresh),
@@ -183,7 +183,7 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
     let signer = "did:example:host#cpstore_live_lease_ttl_bounded_window";
     let nonce = "nonce-69-cpstore-live-lease-ttl-bounded-window";
 
-    let mut cache = node(&url);
+    let cache = node(&url);
     assert_eq!(
         cache.check_and_insert(signer, AUD, nonce, expires_at),
         Ok(ReplayDecision::Fresh),

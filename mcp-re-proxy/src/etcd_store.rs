@@ -795,7 +795,7 @@ mod tests {
     /// Fresh-then-Replay on one instance over the etcd-semantics store.
     #[test]
     fn fresh_then_replay_single_instance() {
-        let mut cache = SharedReplayCache::new(Box::new(SharedEtcdModelStore::default()), SKEW);
+        let cache = SharedReplayCache::new(Box::new(SharedEtcdModelStore::default()), SKEW);
         assert_eq!(
             cache.check_and_insert("did:example:host", AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -831,7 +831,7 @@ mod tests {
     /// Fresh serve-through. Any etcd transport/HTTP/parse failure lands here.
     #[test]
     fn store_unavailable_fails_closed_never_fresh() {
-        let mut cache = SharedReplayCache::new(Box::new(AlwaysUnavailableEtcdStore), SKEW);
+        let cache = SharedReplayCache::new(Box::new(AlwaysUnavailableEtcdStore), SKEW);
         let result = cache.check_and_insert("did:example:host", AUD, NONCE, EXPIRES);
         assert!(
             matches!(result, Err(ReplayCacheError::Unavailable { .. })),

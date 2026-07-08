@@ -274,17 +274,17 @@ mod tests {
             max_clock_skew_secs: SKEW,
         };
         let now = mcp_re_core::parse_rfc3339_utc(ISSUED_AT).expect("parse") + 60;
-        let mut replay = InMemoryReplayCache::new(SKEW);
-        verify_request_draft02(&raw, &resolver, &mut replay, &cfg, now)
+        let replay = InMemoryReplayCache::new(SKEW);
+        verify_request_draft02(&raw, &resolver, &replay, &cfg, now)
             .expect("a Cloud KMS client-signed draft-02 request MUST verify");
 
         // Negative — a post-signing tamper of the signed payload fails closed.
         let mut tampered = request.clone();
         tampered["params"]["arguments"]["text"] = json!("goodbye");
         let raw_t = serde_json::to_vec(&tampered).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw_t, &resolver, &mut replay, &cfg, now),
+            verify_request_draft02(&raw_t, &resolver, &replay, &cfg, now),
             Err(McpReError::InvalidSignature),
             "a post-signing tamper must fail closed"
         );

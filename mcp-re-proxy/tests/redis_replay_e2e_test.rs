@@ -135,7 +135,7 @@ fn single_node_fresh_then_replay() {
     let signer = "did:example:host#single_node_fresh_then_replay";
     let nonce = "nonce-4028-single-node-fresh-then-replay";
 
-    let mut cache = node(&url);
+    let cache = node(&url);
     assert_eq!(
         cache.check_and_insert(signer, AUD, nonce, expires_soon()),
         Ok(ReplayDecision::Fresh),
@@ -180,7 +180,7 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
     let window_secs: i64 = 600;
     let expires_at = now + window_secs;
 
-    let mut cache = node(&url);
+    let cache = node(&url);
     assert_eq!(
         cache.check_and_insert(signer, AUD, nonce, expires_at),
         Ok(ReplayDecision::Fresh),

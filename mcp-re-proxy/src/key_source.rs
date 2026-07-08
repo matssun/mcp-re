@@ -104,7 +104,7 @@ impl ResponseSigner for SigningKey {
 /// non-exporting device behind a custom `rustls::sign::SigningKey` so the TLS
 /// private key also never leaves the device — is part of the HSM/KMS-adapter
 /// follow-up; the existing TLS path is unchanged here.
-pub trait KeySource: ResponseSigner {
+pub trait KeySource: ResponseSigner + Send + Sync {
     /// The TLS server certificate chain (leaf first).
     fn tls_server_cert_chain(&self) -> Result<Vec<CertificateDer<'static>>, KeyError>;
     /// The TLS server private key. (Export accessor — see the trait note on the
@@ -140,7 +140,7 @@ pub trait KeySource: ResponseSigner {
 /// stdlib does not auto-upcast `Box<dyn KeySource>` to `Box<dyn ResponseSigner>` on
 /// stable Rust, so this explicit forward is what bridges the supertrait at the boxed
 /// trait object.)
-impl ResponseSigner for Box<dyn KeySource> {
+impl ResponseSigner for Box<dyn KeySource + Send + Sync> {
     fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
         (**self).sign_response(preimage)
     }

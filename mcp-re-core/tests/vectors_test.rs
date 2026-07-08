@@ -887,11 +887,11 @@ fn fixture_bytes(file: &str) -> Vec<u8> {
 #[test]
 fn pipeline_v1_valid_request_verifies_with_matching_fields() {
     let raw = fixture_bytes("v1_valid_request.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let verified = verify_request(
         &raw,
         &signer_trust_resolver(),
-        &mut replay,
+        &replay,
         &pipeline_config(),
         VALID_ISSUED_EPOCH + 60,
     )
@@ -912,12 +912,12 @@ fn pipeline_v1_valid_request_verifies_with_matching_fields() {
 #[test]
 fn pipeline_v2_tampered_argument_is_invalid_signature() {
     let raw = fixture_bytes("v2_tampered_argument.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
         verify_request(
             &raw,
             &signer_trust_resolver(),
-            &mut replay,
+            &replay,
             &pipeline_config(),
             VALID_ISSUED_EPOCH + 60
         ),
@@ -928,12 +928,12 @@ fn pipeline_v2_tampered_argument_is_invalid_signature() {
 #[test]
 fn pipeline_tampered_id_is_invalid_signature() {
     let raw = fixture_bytes("tampered_id.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
         verify_request(
             &raw,
             &signer_trust_resolver(),
-            &mut replay,
+            &replay,
             &pipeline_config(),
             VALID_ISSUED_EPOCH + 60
         ),
@@ -944,15 +944,15 @@ fn pipeline_tampered_id_is_invalid_signature() {
 #[test]
 fn pipeline_replay_first_ok_second_detected() {
     let raw = fixture_bytes("replay_request.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let now = VALID_ISSUED_EPOCH + 60;
     assert!(
-        verify_request(&raw, &signer_trust_resolver(), &mut replay, &pipeline_config(), now)
+        verify_request(&raw, &signer_trust_resolver(), &replay, &pipeline_config(), now)
             .is_ok(),
         "first submission must verify"
     );
     assert_eq!(
-        verify_request(&raw, &signer_trust_resolver(), &mut replay, &pipeline_config(), now),
+        verify_request(&raw, &signer_trust_resolver(), &replay, &pipeline_config(), now),
         Err(McpReError::ReplayDetected),
         "second submission (same cache) must be a replay"
     );
@@ -963,11 +963,11 @@ fn pipeline_expired_request_is_expired() {
     // expired_request.json uses issued_at 2020-01-01T00:00:00Z, expires +5min.
     // Evaluate well past expiry+skew.
     let raw = fixture_bytes("expired_request.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     // 2020-01-01T00:05:00Z epoch = 1577836800 + 300; + skew + 1 is past the window.
     let now = 1_577_836_800 + 300 + SKEW + 1;
     assert_eq!(
-        verify_request(&raw, &signer_trust_resolver(), &mut replay, &pipeline_config(), now),
+        verify_request(&raw, &signer_trust_resolver(), &replay, &pipeline_config(), now),
         Err(McpReError::ExpiredRequest)
     );
 }
@@ -975,12 +975,12 @@ fn pipeline_expired_request_is_expired() {
 #[test]
 fn pipeline_wrong_audience_is_invalid_audience() {
     let raw = fixture_bytes("wrong_audience_request.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
         verify_request(
             &raw,
             &signer_trust_resolver(),
-            &mut replay,
+            &replay,
             &pipeline_config(),
             VALID_ISSUED_EPOCH + 60
         ),
@@ -991,12 +991,12 @@ fn pipeline_wrong_audience_is_invalid_audience() {
 #[test]
 fn pipeline_missing_envelope_is_missing_envelope() {
     let raw = fixture_bytes("missing_envelope_request.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
         verify_request(
             &raw,
             &signer_trust_resolver(),
-            &mut replay,
+            &replay,
             &pipeline_config(),
             VALID_ISSUED_EPOCH + 60
         ),
@@ -1007,9 +1007,9 @@ fn pipeline_missing_envelope_is_missing_envelope() {
 #[test]
 fn pipeline_batch_is_batch_forbidden() {
     let raw = fixture_bytes("batch.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
-        verify_request(&raw, &signer_trust_resolver(), &mut replay, &pipeline_config(), 0),
+        verify_request(&raw, &signer_trust_resolver(), &replay, &pipeline_config(), 0),
         Err(McpReError::BatchForbidden)
     );
 }
@@ -1017,9 +1017,9 @@ fn pipeline_batch_is_batch_forbidden() {
 #[test]
 fn pipeline_security_notification_is_notification_forbidden() {
     let raw = fixture_bytes("security_notification.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
-        verify_request(&raw, &signer_trust_resolver(), &mut replay, &pipeline_config(), 0),
+        verify_request(&raw, &signer_trust_resolver(), &replay, &pipeline_config(), 0),
         Err(McpReError::NotificationForbidden)
     );
 }
@@ -1027,12 +1027,12 @@ fn pipeline_security_notification_is_notification_forbidden() {
 #[test]
 fn pipeline_unknown_envelope_field_is_unknown_envelope_field() {
     let raw = fixture_bytes("unknown_envelope_field.json");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
         verify_request(
             &raw,
             &signer_trust_resolver(),
-            &mut replay,
+            &replay,
             &pipeline_config(),
             VALID_ISSUED_EPOCH + 60
         ),

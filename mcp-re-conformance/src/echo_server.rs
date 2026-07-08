@@ -86,11 +86,11 @@ impl EchoServer {
 
         let verify_result = {
             // A poisoned/contended borrow must not panic; fail closed instead.
-            match self.replay.try_borrow_mut() {
-                Ok(mut replay) => verify_request(
+            match self.replay.try_borrow() {
+                Ok(replay) => verify_request(
                     request_bytes,
                     self.resolver.as_ref(),
-                    &mut *replay,
+                    &*replay,
                     &self.config,
                     now_unix,
                 ),

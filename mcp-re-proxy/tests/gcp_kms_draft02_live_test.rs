@@ -166,8 +166,8 @@ fn gcp_kms_draft02_request_round_trip() {
 
     let raw = serde_json::to_vec(&request).expect("serialize");
     let resolver = resolver_for(SIGNER_ID, SIGNER_KEY_ID, &pubkey);
-    let mut replay = InMemoryReplayCache::new(SKEW);
-    let verified = verify_request_draft02(&raw, &resolver, &mut replay, &config(), now_in_window())
+    let replay = InMemoryReplayCache::new(SKEW);
+    let verified = verify_request_draft02(&raw, &resolver, &replay, &config(), now_in_window())
         .expect("a Cloud KMS-signed draft-02 request MUST verify under verify_request_draft02");
     assert_eq!(verified.canonicalization_id.as_deref(), Some(CANON_ID));
 
@@ -177,9 +177,9 @@ fn gcp_kms_draft02_request_round_trip() {
     tampered["params"]["_meta"][REQUEST_META_KEY]["canonicalization_id"] = json!(CANON_ID);
     tampered["params"]["arguments"]["text"] = json!("goodbye");
     let raw_t = serde_json::to_vec(&tampered).expect("serialize");
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
-        verify_request_draft02(&raw_t, &resolver, &mut replay, &config(), now_in_window()),
+        verify_request_draft02(&raw_t, &resolver, &replay, &config(), now_in_window()),
         Err(McpReError::InvalidSignature),
         "a post-signing tamper of the signed payload must fail closed"
     );
@@ -188,9 +188,9 @@ fn gcp_kms_draft02_request_round_trip() {
     // the resolver maps to a DIFFERENT public key.
     let foreign = mcp_re_core::SigningKey::from_seed_bytes(&[0x09; 32]).public_key();
     let foreign_resolver = resolver_for(SIGNER_ID, SIGNER_KEY_ID, &foreign);
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     assert_eq!(
-        verify_request_draft02(&raw, &foreign_resolver, &mut replay, &config(), now_in_window()),
+        verify_request_draft02(&raw, &foreign_resolver, &replay, &config(), now_in_window()),
         Err(McpReError::InvalidSignature),
         "a Cloud KMS draft-02 signature must NOT verify under a foreign key"
     );
@@ -211,9 +211,9 @@ fn gcp_kms_draft02_response_round_trip() {
     request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] = json!(req_sig);
     let raw_req = serde_json::to_vec(&request).expect("serialize");
     let req_resolver = resolver_for(SIGNER_ID, SIGNER_KEY_ID, &pubkey);
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let verified_req =
-        verify_request_draft02(&raw_req, &req_resolver, &mut replay, &config(), now_in_window())
+        verify_request_draft02(&raw_req, &req_resolver, &replay, &config(), now_in_window())
             .expect("request verifies");
 
     // Now KMS-sign the bound draft-02 response.

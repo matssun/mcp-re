@@ -238,7 +238,7 @@ impl VerifiedResponse {
 pub fn verify_request(
     raw_bytes: &[u8],
     resolver: &dyn TrustResolver,
-    replay: &mut dyn ReplayCache,
+    replay: &dyn ReplayCache,
     config: &VerificationConfig,
     now_unix: i64,
 ) -> Result<VerifiedRequest, McpReError> {
@@ -425,7 +425,7 @@ pub fn verify_response(
 pub fn verify_request_draft02(
     raw_bytes: &[u8],
     resolver: &dyn TrustResolver,
-    replay: &mut dyn ReplayCache,
+    replay: &dyn ReplayCache,
     config: &VerificationConfig,
     now_unix: i64,
 ) -> Result<VerifiedRequest, McpReError> {
@@ -653,7 +653,7 @@ pub enum VersionPolicyError {
 pub fn verify_request_dispatch(
     raw_bytes: &[u8],
     resolver: &dyn TrustResolver,
-    replay: &mut dyn ReplayCache,
+    replay: &dyn ReplayCache,
     config: &VerificationConfig,
     now_unix: i64,
     policy: ExpectedVersionPolicy,
@@ -830,7 +830,7 @@ mod tests {
     struct UnavailableReplayCache;
     impl ReplayCache for UnavailableReplayCache {
         fn check_and_insert(
-            &mut self,
+            &self,
             _signer: &str,
             _audience: &str,
             _nonce: &str,
@@ -1009,11 +1009,11 @@ mod tests {
     #[test]
     fn draft02_request_verifies_and_carries_canonicalization_id() {
         let raw = signed_request_draft02("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let verified = verify_request_draft02(
             &raw,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
         )
@@ -1028,11 +1028,11 @@ mod tests {
     #[test]
     fn draft02_full_round_trip_request_then_response() {
         let raw_req = signed_request_draft02("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let verified_req = verify_request_draft02(
             &raw_req,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
         )
@@ -1061,9 +1061,9 @@ mod tests {
         obj["params"]["_meta"][REQUEST_META_KEY]["canonicalization_id"] =
             json!("mcp-re-jcs-int53-json-v1-TAMPERED");
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request_draft02(&raw, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::CanonicalizationIdUnknown)
         );
     }
@@ -1076,9 +1076,9 @@ mod tests {
         sign_request_value(&mut obj);
         obj["params"]["_meta"][REQUEST_META_KEY]["version"] = json!("draft-01");
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request_draft02(&raw, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::UnsupportedVersion)
         );
     }
@@ -1089,11 +1089,11 @@ mod tests {
         // bound request's scheme fails the post-signature binding check (decision
         // B.2: request and response share canonicalization_id).
         let raw_req = signed_request_draft02("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let verified_req = verify_request_draft02(
             &raw_req,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
         )
@@ -1126,9 +1126,9 @@ mod tests {
         // so a placeholder signature suffices: verification rejects at step 3.
         obj["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] = json!("AA");
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request_draft02(&raw, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::CanonicalizationFailed)
         );
     }
@@ -1142,9 +1142,9 @@ mod tests {
         obj["params"]["arguments"] = json!({ "count": 9_007_199_254_740_991i64 });
         sign_request_value(&mut obj);
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert!(
-            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60)
+            verify_request_draft02(&raw, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60)
                 .is_ok(),
             "a max-safe-integer payload must verify under the int53 scheme"
         );
@@ -1159,9 +1159,9 @@ mod tests {
             .unwrap()
             .remove("canonicalization_id");
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request_draft02(&raw, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::CanonicalizationIdMissing)
         );
     }
@@ -1194,11 +1194,11 @@ mod tests {
     fn dispatch_routes_draft01_and_draft02_by_version() {
         // draft-02 under the recommended draft-02-only posture verifies.
         let raw2 = signed_request_draft02("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let v2 = verify_request_dispatch(
             &raw2,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
             ExpectedVersionPolicy::Draft02Only,
@@ -1208,11 +1208,11 @@ mod tests {
 
         // draft-01 under the migration posture verifies (its own profile).
         let raw1 = signed_request("req-2", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let v1 = verify_request_dispatch(
             &raw1,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
             ExpectedVersionPolicy::Draft01AndDraft02,
@@ -1230,12 +1230,12 @@ mod tests {
         // Recognized lower profile, policy forbids it -> downgrade_forbidden
         // (NOT unsupported_version).
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             verify_request_dispatch(
                 &raw,
                 &signer_resolver(),
-                &mut replay,
+                &replay,
                 &config(),
                 ISSUED_EPOCH + 60,
                 ExpectedVersionPolicy::Draft02Only,
@@ -1251,7 +1251,7 @@ mod tests {
         let mut obj = request_unsigned("req-1", "hello");
         obj["params"]["_meta"][REQUEST_META_KEY]["version"] = json!("draft-99");
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         for policy in [
             ExpectedVersionPolicy::Draft02Only,
             ExpectedVersionPolicy::Draft01AndDraft02,
@@ -1260,7 +1260,7 @@ mod tests {
                 verify_request_dispatch(
                     &raw,
                     &signer_resolver(),
-                    &mut replay,
+                    &replay,
                     &config(),
                     ISSUED_EPOCH + 60,
                     policy,
@@ -1277,16 +1277,16 @@ mod tests {
         // draft-02-only fields are unknown to it); the draft-02 verifier rejects
         // the draft-01 envelope at the version selector.
         let raw2 = signed_request_draft02("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request(&raw2, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request(&raw2, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::UnknownEnvelopeField),
             "the draft-01 verifier must reject draft-02 evidence"
         );
         let raw1 = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request_draft02(&raw1, &signer_resolver(), &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request_draft02(&raw1, &signer_resolver(), &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::UnsupportedVersion),
             "the draft-02 verifier must reject draft-01 evidence"
         );
@@ -1303,12 +1303,12 @@ mod tests {
             .unwrap()
             .insert("canonicalization_id".into(), json!("mcp-re-jcs-int53-json-v1"));
         let raw = serde_json::to_vec(&obj).expect("serialize");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             verify_request_dispatch(
                 &raw,
                 &signer_resolver(),
-                &mut replay,
+                &replay,
                 &config(),
                 ISSUED_EPOCH + 60,
                 ExpectedVersionPolicy::Draft01AndDraft02,
@@ -1322,11 +1322,11 @@ mod tests {
     #[test]
     fn valid_request_verifies_and_fields_match() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let verified = verify_request(
             &raw,
             &signer_resolver(),
-            &mut replay,
+            &replay,
             &config(),
             ISSUED_EPOCH + 60,
         )
@@ -1358,9 +1358,9 @@ mod tests {
     fn batch_wins_over_other_problems() {
         // A top-level array that ALSO has unsafe integers etc. Step 1 fires first.
         let raw = br#"[{"id":9007199254740993}]"#;
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request(raw, &signer_resolver(), &mut replay, &config(), 0),
+            verify_request(raw, &signer_resolver(), &replay, &config(), 0),
             Err(McpReError::BatchForbidden)
         );
     }
@@ -1369,9 +1369,9 @@ mod tests {
     fn notification_wins_over_envelope_problems() {
         // No id, and no envelope either: step 2 (notification) precedes step 4.
         let raw = br#"{"jsonrpc":"2.0","method":"tools/call","params":{}}"#;
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request(raw, &signer_resolver(), &mut replay, &config(), 0),
+            verify_request(raw, &signer_resolver(), &replay, &config(), 0),
             Err(McpReError::NotificationForbidden)
         );
     }
@@ -1380,9 +1380,9 @@ mod tests {
     fn duplicate_key_wins_over_envelope_extraction() {
         // id present (passes step 2), but a duplicate key -> step 3 canon fail.
         let raw = br#"{"id":"x","id":"y","jsonrpc":"2.0"}"#;
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
-            verify_request(raw, &signer_resolver(), &mut replay, &config(), 0),
+            verify_request(raw, &signer_resolver(), &replay, &config(), 0),
             Err(McpReError::CanonicalizationFailed)
         );
     }
@@ -1398,11 +1398,11 @@ mod tests {
         obj["params"]["arguments"]["text"] = Value::String("tampered".to_string());
         let raw = serde_json::to_vec(&obj).expect("serialize");
 
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         // expires_at = 2026-05-28T20:05:00Z -> ISSUED_EPOCH + 300; +skew+1 is past.
         let now = ISSUED_EPOCH + 300 + SKEW + 1;
         assert_eq!(
-            verify_request(&raw, &signer_resolver(), &mut replay, &config(), now),
+            verify_request(&raw, &signer_resolver(), &replay, &config(), now),
             Err(McpReError::ExpiredRequest)
         );
     }
@@ -1419,16 +1419,16 @@ mod tests {
         obj["params"]["arguments"]["text"] = Value::String("tampered".to_string());
         let raw_bad = serde_json::to_vec(&obj).expect("serialize");
 
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let now = ISSUED_EPOCH + 60;
         assert_eq!(
-            verify_request(&raw_bad, &signer_resolver(), &mut replay, &config(), now),
+            verify_request(&raw_bad, &signer_resolver(), &replay, &config(), now),
             Err(McpReError::InvalidSignature)
         );
 
         // Same nonce, valid signature -> Fresh (nonce was not burned by the bad one).
         let raw_good = signed_request("req-1", "hello");
-        assert!(verify_request(&raw_good, &signer_resolver(), &mut replay, &config(), now).is_ok());
+        assert!(verify_request(&raw_good, &signer_resolver(), &replay, &config(), now).is_ok());
     }
 
     // ---- replay detection -----------------------------------------------------
@@ -1436,11 +1436,11 @@ mod tests {
     #[test]
     fn second_identical_request_is_replay() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let now = ISSUED_EPOCH + 60;
-        assert!(verify_request(&raw, &signer_resolver(), &mut replay, &config(), now).is_ok());
+        assert!(verify_request(&raw, &signer_resolver(), &replay, &config(), now).is_ok());
         assert_eq!(
-            verify_request(&raw, &signer_resolver(), &mut replay, &config(), now),
+            verify_request(&raw, &signer_resolver(), &replay, &config(), now),
             Err(McpReError::ReplayDetected)
         );
     }
@@ -1450,13 +1450,13 @@ mod tests {
     #[test]
     fn audience_mismatch_is_invalid_audience() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let cfg = VerificationConfig {
             expected_audience: "did:example:someone-else".to_string(),
             max_clock_skew_secs: SKEW,
         };
         assert_eq!(
-            verify_request(&raw, &signer_resolver(), &mut replay, &cfg, ISSUED_EPOCH + 60),
+            verify_request(&raw, &signer_resolver(), &replay, &cfg, ISSUED_EPOCH + 60),
             Err(McpReError::InvalidAudience)
         );
     }
@@ -1466,10 +1466,10 @@ mod tests {
     #[test]
     fn unknown_binding_is_actor_binding_failed() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         let empty = InMemoryTrustResolver::new();
         assert_eq!(
-            verify_request(&raw, &empty, &mut replay, &config(), ISSUED_EPOCH + 60),
+            verify_request(&raw, &empty, &replay, &config(), ISSUED_EPOCH + 60),
             Err(McpReError::ActorBindingFailed)
         );
     }
@@ -1477,12 +1477,12 @@ mod tests {
     #[test]
     fn unavailable_resolver_is_trust_resolver_unavailable() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = InMemoryReplayCache::new(SKEW);
+        let replay = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             verify_request(
                 &raw,
                 &UnavailableResolver,
-                &mut replay,
+                &replay,
                 &config(),
                 ISSUED_EPOCH + 60
             ),
@@ -1493,12 +1493,12 @@ mod tests {
     #[test]
     fn unavailable_replay_cache_is_replay_cache_unavailable() {
         let raw = signed_request("req-1", "hello");
-        let mut replay = UnavailableReplayCache;
+        let replay = UnavailableReplayCache;
         assert_eq!(
             verify_request(
                 &raw,
                 &signer_resolver(),
-                &mut replay,
+                &replay,
                 &config(),
                 ISSUED_EPOCH + 60
             ),

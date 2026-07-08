@@ -164,17 +164,17 @@ impl ObjectTarget {
         // For the replay vector, the verdict only manifests on the SECOND
         // submission against the same cache; run it twice and report the second.
         if case.expected == "mcp-re.replay_detected" {
-            let mut replay = InMemoryReplayCache::new(TEST_MAX_CLOCK_SKEW_SECS);
-            let _first = verify_request(bytes, &resolver, &mut replay, &config, now);
-            let second = verify_request(bytes, &resolver, &mut replay, &config, now);
+            let replay = InMemoryReplayCache::new(TEST_MAX_CLOCK_SKEW_SECS);
+            let _first = verify_request(bytes, &resolver, &replay, &config, now);
+            let second = verify_request(bytes, &resolver, &replay, &config, now);
             return Ok(Self::map_result(second));
         }
 
-        let mut replay = InMemoryReplayCache::new(TEST_MAX_CLOCK_SKEW_SECS);
+        let replay = InMemoryReplayCache::new(TEST_MAX_CLOCK_SKEW_SECS);
         Ok(Self::map_result(verify_request(
             bytes,
             &resolver,
-            &mut replay,
+            &replay,
             &config,
             now,
         )))

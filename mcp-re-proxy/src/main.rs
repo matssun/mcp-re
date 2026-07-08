@@ -387,7 +387,7 @@ fn run() -> Result<(), String> {
     // the inner command per request; persistent spawns it ONCE, performs the MCP
     // initialize handshake, and forwards many requests over the same long-lived
     // process — the only way to front a genuinely long-lived MCP server.
-    let inner: Box<dyn InnerServer> = match config.inner_mode {
+    let inner: Box<dyn InnerServer + Send + Sync> = match config.inner_mode {
         InnerModeKind::OneShot => Box::new(cli::SubprocessInner::with_log_sink(
             &config.inner_command,
             config.inner_launch.clone(),

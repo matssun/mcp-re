@@ -14,8 +14,8 @@
 //! `mcp-re-host` signs draft-01, so it is the draft-01 producer here; the draft-02
 //! admit path is exercised by the client-proxy four-hop tests (it signs draft-02).
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_core::ExpectedVersionPolicy;
 use mcp_re_core::InMemoryTrustResolver;
@@ -54,14 +54,14 @@ fn inbound_resolver() -> InMemoryTrustResolver {
 
 /// A captured record of every request the inner server received — the proof that
 /// (or that NOT) dispatch was reached.
-type Calls = Rc<RefCell<Vec<Value>>>;
+type Calls = Arc<Mutex<Vec<Value>>>;
 
 /// Build a proxy wrapping a plain-MCP echo inner that records its calls. The
 /// `tighten` flag selects the expected-version posture: `false` keeps the
 /// constructor default (admit both), `true` applies `Draft02Only`.
 fn proxy_with_recorder(draft02_only: bool) -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses request");
         let id = value.get("id").cloned().unwrap_or(Value::Null);
@@ -69,7 +69,7 @@ fn proxy_with_recorder(draft02_only: bool) -> (Proxy, Calls) {
             .as_str()
             .unwrap_or("")
             .to_string();
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         let response = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -125,7 +125,7 @@ fn default_policy_admits_draft01_end_to_end() {
 
     let parsed: Value = serde_json::from_slice(&response).expect("parse response");
     assert!(parsed.get("error").is_none(), "expected success: {parsed}");
-    assert_eq!(calls.borrow().len(), 1, "default policy must reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 1, "default policy must reach the inner");
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn draft02_only_refuses_draft01_as_downgrade_before_dispatch() {
 
     assert_eq!(error_message(&response), "mcp-re.downgrade_forbidden");
     assert!(
-        calls.borrow().is_empty(),
+        calls.lock().unwrap().is_empty(),
         "a downgrade-refused request must NOT reach the inner"
     );
 }
