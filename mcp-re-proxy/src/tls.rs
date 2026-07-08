@@ -89,6 +89,18 @@ pub struct ServerLimits {
     /// (`async_serve`) path; the blocking loop bounds concurrency via
     /// `max_concurrent_connections`.
     pub max_in_flight_requests: Option<usize>,
+    /// MCPRE-115 (ADR-MCPRE-051 §6): the BOUNDED GRACE WINDOW for graceful drain on
+    /// the async serving path. On shutdown each per-core [`serve`] loop stops
+    /// accepting and then waits up to this long for its IN-FLIGHT requests to
+    /// complete before returning (after which the runtime is dropped and any
+    /// still-running request is abandoned). Each in-flight request is ALSO bounded by
+    /// `request_deadline`, so with `drain_grace >= request_deadline` every admitted
+    /// request finishes within the window — zero abandoned. Size it UNDER the
+    /// deployment's k8s `terminationGracePeriodSeconds` and AT OR ABOVE
+    /// `request_deadline`: `request_deadline <= drain_grace < terminationGracePeriodSeconds`.
+    /// Idle keep-alive connections carry no in-flight request and do not extend the
+    /// drain — an idle drain returns promptly.
+    pub drain_grace: Duration,
 }
 
 impl Default for ServerLimits {
@@ -101,6 +113,9 @@ impl Default for ServerLimits {
             write_timeout: Some(Duration::from_secs(30)),
             max_concurrent_connections: 256,
             max_in_flight_requests: None,
+            // >= request_deadline (so every admitted request can finish) and, in
+            // production, < k8s terminationGracePeriodSeconds.
+            drain_grace: Duration::from_secs(30),
         }
     }
 }
