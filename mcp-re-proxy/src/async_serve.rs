@@ -96,6 +96,16 @@ pub async fn serve<H: AsyncRequestHandler>(
     let permits = Arc::new(tokio::sync::Semaphore::new(
         options.limits.max_concurrent_connections,
     ));
+    // MCPRE-114: per-core bounded ADMISSION control. One in-flight-request semaphore
+    // per `serve` loop (i.e. per core), sized to `max_in_flight_requests`; a request
+    // that cannot acquire a permit is rejected with 503 before the handler runs
+    // (fail-closed backpressure, never unbounded queuing). `None` ⇒ unbounded
+    // in-flight (historical behavior). The semaphore is per-core, so the request path
+    // stays lock-free ACROSS cores (ADR-MCPRE-051 §1 share-nothing).
+    let in_flight = options
+        .limits
+        .max_in_flight_requests
+        .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
     while !shutdown.load(Ordering::SeqCst) {
         // Poll-with-timeout so the shutdown flag is observed within one interval
@@ -120,9 +130,10 @@ pub async fn serve<H: AsyncRequestHandler>(
         let acceptor = acceptor.clone();
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
+        let in_flight = in_flight.clone();
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
-            let _ = serve_connection(tcp, acceptor, options, handler).await;
+            let _ = serve_connection(tcp, acceptor, options, handler, in_flight).await;
         });
     }
 }
@@ -136,6 +147,7 @@ async fn serve_connection<H: AsyncRequestHandler>(
     acceptor: TlsAcceptor,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
+    in_flight: Option<Arc<tokio::sync::Semaphore>>,
 ) -> std::io::Result<()> {
     // Handshake, bounded by the aggregate read deadline: a peer that never
     // completes the handshake cannot hold the connection task forever. Reading
@@ -166,7 +178,8 @@ async fn serve_connection<H: AsyncRequestHandler>(
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let leaf_der = Arc::clone(&leaf_der);
-        async move { handle_request(req, options, handler, leaf_der).await }
+        let in_flight = in_flight.clone();
+        async move { handle_request(req, options, handler, leaf_der, in_flight).await }
     });
 
     let mut builder = auto::Builder::new(TokioExecutor::new());
@@ -194,7 +207,22 @@ async fn handle_request<H: AsyncRequestHandler>(
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     leaf_der: Arc<Option<Vec<u8>>>,
+    in_flight: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    // MCPRE-114: per-core admission control. Acquire an in-flight permit FIRST — if
+    // the per-core ceiling is full, reject with 503 fail-closed BEFORE reading the
+    // body or reaching the handler (the request never touches the inner server). The
+    // owned permit is held for the rest of this request and released on return (RAII),
+    // so the ceiling bounds requests actually in flight, never queuing them without
+    // bound. `None` ⇒ no ceiling (unbounded in-flight).
+    let _admission = match &in_flight {
+        Some(semaphore) => match Arc::clone(semaphore).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return Ok(overloaded_response()),
+        },
+        None => None,
+    };
+
     // A header view with the SAME case-insensitive lookup + duplicate-count
     // semantics the blocking path's `RequestHeaders::parse` produces (used by the
     // reverse-proxy identity provider, the Tier-3 assertion extractor, and the
@@ -255,6 +283,17 @@ fn json_response(body: Vec<u8>) -> Response<Full<Bytes>> {
 fn fail_closed_response() -> Response<Full<Bytes>> {
     Response::builder()
         .status(413)
+        .body(Full::new(Bytes::new()))
+        .expect("static response builds")
+}
+
+/// MCPRE-114 fail-closed backpressure: an empty `503 Service Unavailable` returned
+/// when the per-core in-flight ceiling (`max_in_flight_requests`) is saturated. The
+/// body is never read and the handler never runs, so an overloaded core sheds load
+/// with a bounded, cheap rejection instead of queuing work without bound.
+fn overloaded_response() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(503)
         .body(Full::new(Bytes::new()))
         .expect("static response builds")
 }
