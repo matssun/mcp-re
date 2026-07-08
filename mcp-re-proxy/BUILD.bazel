@@ -711,6 +711,32 @@ nt_rust_test(
     ],
 )
 
+# MCPRE-109 (ADR-MCPRE-051 §4): replay race harness — the authoritative replay
+# tier admits EXACTLY ONE Fresh under N-way concurrency (cross-core + cross-
+# replica), and ZERO Fresh when the store is unavailable (fail closed). The
+# in-memory reference tier is raced on every `bazel test //...` (no live infra);
+# the Redis/etcd lanes race the same harness on the live store when their feature
+# is compiled and endpoint env var is set (skip-when-absent; hard-fail under
+# MCP_RE_REQUIRE_LIVE_INFRA). Built against the ext crate so the feature-gated
+# Redis/etcd store exports are present.
+nt_rust_test(
+    name = "replay_race_harness_test",
+    srcs = ["tests/replay_race_harness_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCP_RE_TEST_REDIS_URL",
+        "MCP_RE_TEST_ETCD_URL",
+        "MCP_RE_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcp_re_proxy_ext",  # keep
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
 # MCPS-82 (#273, ADR-MCPS-049 W1, proof c): an MRT continuation survives a mid-
 # continuation replica switch — two INDEPENDENT serving Proxy replicas, leg 1 to A
 # and the signed continuation leg to a fresh B. Replica-independence needs no shared
