@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use mcp_re_proxy::async_fleet;
 use mcp_re_proxy::async_fleet::FleetConfig;
+use mcp_re_proxy::async_serve;
 use mcp_re_proxy::tls::RustlsDirectProvider;
 use mcp_re_proxy::transport::TransportIdentity;
 use mcp_re_proxy::ServerOptions;
@@ -223,12 +224,18 @@ fn read_http_body(stream: &mut impl Read) -> std::io::Result<Vec<u8>> {
 fn make_core_handler(
     core_index: usize,
     served_cores: Arc<Mutex<Vec<usize>>>,
-) -> impl Fn(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8> + Send + Sync + 'static {
+) -> impl Fn(Vec<u8>, Option<TransportIdentity>, Option<String>) -> async_serve::HandlerResponseFuture
+       + Send
+       + Sync
+       + 'static {
     move |request, _identity, _assertion| {
-        served_cores.lock().expect("served sink").push(core_index);
-        let mut out = format!("{core_index}:").into_bytes();
-        out.extend_from_slice(request);
-        out
+        let served_cores = Arc::clone(&served_cores);
+        Box::pin(async move {
+            served_cores.lock().expect("served sink").push(core_index);
+            let mut out = format!("{core_index}:").into_bytes();
+            out.extend_from_slice(&request);
+            out
+        })
     }
 }
 

@@ -101,6 +101,42 @@ pub(crate) fn is_stale_pre_store(retain_until_unix: i64, now_unix: i64) -> bool 
     retain_until_unix.saturating_sub(now_unix) <= 0
 }
 
+/// Build the COLLISION-SAFE composite replay key for the `(signer, audience,
+/// nonce)` triple (ADR-MCPRE-051 §4 replay key).
+///
+/// Naive concatenation aliases distinct tuples (`("a","bc",…)` and `("ab","c",…)`
+/// would collide), so each field is length-prefixed in BYTES (`<len>:<field>`) —
+/// making the preimage injective regardless of field content — then hashed with
+/// `mcp_re_core::sha256_hash_id` to a fixed, opaque, store-safe key.
+///
+/// This is the SINGLE source of the replay key formula: both the synchronous
+/// [`SharedReplayCache`] and the async replay tier
+/// ([`crate::async_replay`]) compose keys through THIS function, so a nonce
+/// inserted via the sync path is recognised as a replay via the async path and
+/// vice versa (cross-path coherence is a correctness requirement, not an accident
+/// of two matching literals).
+pub(crate) fn composite_replay_key(signer: &str, audience: &str, nonce: &str) -> String {
+    let preimage = format!(
+        "{}:{}|{}:{}|{}:{}",
+        signer.len(),
+        signer,
+        audience.len(),
+        audience,
+        nonce.len(),
+        nonce,
+    );
+    sha256_hash_id(preimage.as_bytes())
+}
+
+/// Fold the symmetric clock skew into `expires_at_unix` to yield the absolute
+/// retain-until instant handed to a store, EXACTLY as `InMemoryReplayCache` does
+/// (`retain_until = expires_at + max_clock_skew`). Both the sync and async replay
+/// paths fold identically, so the store TTL — and thus eviction timing — matches
+/// across paths. Saturating so a huge `expires_at` cannot wrap.
+pub(crate) fn skew_folded_retain_until(expires_at_unix: i64, max_clock_skew_secs: i64) -> i64 {
+    expires_at_unix.saturating_add(max_clock_skew_secs)
+}
+
 /// The minimal SHARED, server-side-ATOMIC primitive a [`SharedReplayCache`] needs
 /// from any backing store.
 ///
@@ -181,27 +217,10 @@ impl SharedReplayCache {
     }
 
     /// Build a COLLISION-SAFE composite key for the `(signer, audience, nonce)`
-    /// triple.
-    ///
-    /// Naive concatenation aliases distinct tuples (e.g. `("a", "bc", …)` and
-    /// `("ab", "c", …)` would collide). We length-prefix each field
-    /// (`<byte-len>:<field>`) so the parse is unambiguous regardless of any
-    /// delimiter the fields themselves contain, then hash the result with
-    /// `mcp_re_core::sha256_hash_id` to yield a fixed, opaque, store-safe key. The
-    /// length-prefix guarantees injectivity of the preimage; the hash just makes
-    /// the key compact and free of any character a backend might treat specially.
+    /// triple. Delegates to the shared [`composite_replay_key`] so the sync and
+    /// async replay paths key identically (cross-path coherence).
     fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
-        // Length-prefixed (in BYTES) so no field content can forge a boundary.
-        let preimage = format!(
-            "{}:{}|{}:{}|{}:{}",
-            signer.len(),
-            signer,
-            audience.len(),
-            audience,
-            nonce.len(),
-            nonce,
-        );
-        sha256_hash_id(preimage.as_bytes())
+        composite_replay_key(signer, audience, nonce)
     }
 }
 
@@ -224,7 +243,7 @@ impl ReplayCache for SharedReplayCache {
         // (~56 years), so keys ~never expired → unbounded keyspace growth (DoS).
         // The decision (Fresh/Replay) does NOT depend on the TTL value; only
         // eviction timing does.
-        let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
+        let retain_until = skew_folded_retain_until(expires_at_unix, self.max_clock_skew_secs);
         Ok(self.store.insert_if_absent(&key, retain_until, 0)?)
     }
 

@@ -277,6 +277,7 @@ nt_rust_test(
         "//mcp-re-policy:BUILD.bazel",
         "//mcp-re-policy:tests/vectors/phase5_vectors.json",
         "//mcp-re-proxy:BUILD.bazel",
+        "//mcp-re-stdio-bridge:BUILD.bazel",
         "//mcp-re-demo:BUILD.bazel",
         "//mcp-re-demo-server:BUILD.bazel",
         "//mcp-re-transport:BUILD.bazel",
@@ -292,6 +293,7 @@ nt_rust_test(
         "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
         "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
         "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
+        "MCP_RE_BUILD_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:BUILD.bazel)",
         # MCPS-082: the four previously-unscanned packages.
         "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
         "MCP_RE_BUILD_DEMO_SERVER": "$(rlocationpath //mcp-re-demo-server:BUILD.bazel)",

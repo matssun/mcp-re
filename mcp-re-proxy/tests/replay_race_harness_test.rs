@@ -197,7 +197,7 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
 /// pure wrapper over the authoritative tier the race exercises concurrently.
 #[test]
 fn shared_cache_first_is_fresh_then_replay() {
-    let mut cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
+    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
     assert_eq!(
         cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
         Ok(ReplayDecision::Fresh),
@@ -221,8 +221,8 @@ fn shared_cache_first_is_fresh_then_replay() {
 #[test]
 fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let backend = InMemoryAtomicReplayStore::new();
-    let mut replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
-    let mut replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
 
     assert_eq!(
         replica_a.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
@@ -291,4 +291,380 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
     let store = EtcdAtomicReplayStore::connect(&endpoint);
     let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(store);
     assert_exactly_one_fresh_per_round(store);
+}
+
+/// ASYNC Redis lane (ADR-MCPRE-051 §4): the async authoritative tier
+/// (`RedisAsyncAtomicReplayStore`, `SET NX PX` over the tokio async client) admits
+/// EXACTLY ONE `Fresh` under a concurrent race — the same load-bearing property as
+/// the sync lane, proven on the async client the per-core data plane awaits.
+/// Skip-when-absent (hard-fail under `MCP_RE_REQUIRE_LIVE_INFRA`).
+#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+#[test]
+fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
+    use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_proxy::RedisAsyncAtomicReplayStore;
+
+    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty());
+    let Some(url) = url else {
+        if require_live_infra() {
+            panic!(
+                "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable; \
+                 the async replay-race Redis lane cannot be scored as passing without a live store"
+            );
+        }
+        eprintln!("skipping async replay-race Redis lane: MCP_RE_TEST_REDIS_URL unset");
+        return;
+    };
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let store = Arc::new(
+            RedisAsyncAtomicReplayStore::connect(&url)
+                .await
+                .expect("connect async Redis replay store"),
+        );
+        for round in 0..RACE_ROUNDS {
+            let key = round_key(round);
+            let tasks = RACE_WIDTH;
+            let mut handles = Vec::new();
+            for _ in 0..tasks {
+                let store = Arc::clone(&store);
+                let key = key.clone();
+                handles.push(tokio::spawn(async move {
+                    store
+                        .atomic_insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                        .await
+                }));
+            }
+            let mut fresh = 0usize;
+            for handle in handles {
+                if let Ok(ReplayDecision::Fresh) = handle.await.expect("task") {
+                    fresh += 1;
+                }
+            }
+            assert_eq!(
+                fresh, 1,
+                "round {round}: async Redis {RACE_WIDTH}-way race must admit exactly one Fresh"
+            );
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Full-stack async serving path — N cores through ONE shared `Proxy`
+// ---------------------------------------------------------------------------
+//
+// The variant the module doc above deferred to "when the serving path is
+// shareable across threads" (ADR-MCPRE-051 Phase 1/2, MCPRE-111): now that the
+// `Proxy` is `Send + Sync` and `Proxy::handle_with_transport_async` awaits the
+// authoritative async replay tier (ADR-MCPRE-051 §4), this drives N concurrent
+// submissions of the SAME signed request through ONE shared async `Proxy` and
+// asserts the end-to-end property — EXACTLY ONE `Fresh` (a verifiable signed
+// response) and N−1 `Replay` (a fail-closed JSON-RPC error). This is the proof
+// that the async serving path is a genuine async data plane over the coherent
+// replay tier, not an async transport wrapped around a synchronous replay core.
+#[cfg(feature = "async_serve")]
+mod full_stack_async {
+    use std::sync::Arc;
+
+    use mcp_re_core::request_hash;
+    use mcp_re_core::request_signing_preimage;
+    use mcp_re_core::verify_response;
+    use mcp_re_core::InMemoryTrustResolver;
+    use mcp_re_core::SigningKey;
+    use mcp_re_core::REQUEST_META_KEY;
+    use mcp_re_core::SIG_ALG_ED25519;
+    use mcp_re_core::VERSION_DRAFT_01;
+
+    use std::convert::Infallible;
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::service::service_fn;
+    use hyper::Response;
+    use hyper::Uri;
+    use hyper_util::rt::TokioExecutor;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::server::conn::auto;
+    use tokio::net::TcpListener;
+
+    use mcp_re_proxy::async_inner::AsyncInnerServer;
+    use mcp_re_proxy::async_inner::InnerResponseFuture;
+    use mcp_re_proxy::async_replay::AsyncReplayTier;
+    use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+    use mcp_re_proxy::http_inner::HttpInnerPool;
+    use mcp_re_proxy::Proxy;
+
+    use serde_json::json;
+    use serde_json::Value;
+
+    /// A minimal async inner that returns a fixed valid JSON-RPC result — the async
+    /// analogue of the sync echo inner. Proves the async serving path awaits the
+    /// async inner seam end to end.
+    struct EchoAsyncInner;
+
+    impl AsyncInnerServer for EchoAsyncInner {
+        fn dispatch<'a>(&'a self, _request: &'a [u8]) -> InnerResponseFuture<'a> {
+            Box::pin(async move {
+                serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }))
+                    .expect("serialize inner result")
+            })
+        }
+    }
+
+    const SIGNER: &str = "did:example:agent-1";
+    const SIGNER_KEY_ID: &str = "key-1";
+    const SERVER: &str = "did:example:server-1";
+    const SERVER_KEY_ID: &str = "server-key-1";
+    const AUDIENCE: &str = "did:example:server-1";
+    const ON_BEHALF_OF: &str = "did:example:user-1";
+    const AUTH_HASH: &str = "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
+    const ISSUED_AT: &str = "2026-05-28T20:00:00Z";
+    const EXPIRES_AT: &str = "2026-05-28T20:05:00Z";
+    const SKEW: i64 = 300;
+    const REQUEST_ID: &str = "req-async-race-1";
+
+    fn signer_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[1u8; 32])
+    }
+    fn server_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[2u8; 32])
+    }
+    fn now() -> i64 {
+        mcp_re_core::parse_rfc3339_utc(ISSUED_AT).expect("parse issued_at") + 60
+    }
+    fn inbound_resolver() -> InMemoryTrustResolver {
+        let mut r = InMemoryTrustResolver::new();
+        r.insert(SIGNER, SIGNER_KEY_ID, signer_key().public_key());
+        r
+    }
+    fn server_resolver() -> InMemoryTrustResolver {
+        let mut r = InMemoryTrustResolver::new();
+        r.insert(SERVER, SERVER_KEY_ID, server_key().public_key());
+        r
+    }
+
+    fn signed_request(nonce: &str) -> Vec<u8> {
+        let mut request = json!({
+            "id": REQUEST_ID,
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "echo",
+                "arguments": { "text": "hello" },
+                "_meta": {
+                    REQUEST_META_KEY: {
+                        "version": VERSION_DRAFT_01,
+                        "signer": SIGNER,
+                        "on_behalf_of": ON_BEHALF_OF,
+                        "audience": AUDIENCE,
+                        "authorization_hash": AUTH_HASH,
+                        "nonce": nonce,
+                        "issued_at": ISSUED_AT,
+                        "expires_at": EXPIRES_AT,
+                        "signature": { "alg": SIG_ALG_ED25519, "key_id": SIGNER_KEY_ID },
+                    }
+                }
+            }
+        });
+        let preimage = request_signing_preimage(&request).expect("request preimage");
+        let signature = signer_key().sign(&preimage);
+        request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] =
+            Value::String(signature);
+        serde_json::to_vec(&request).expect("serialize signed request")
+    }
+
+    fn expected_request_hash(nonce: &str) -> String {
+        let bytes = signed_request(nonce);
+        let value: Value = serde_json::from_slice(&bytes).expect("parse signed request");
+        request_hash(&value).expect("request_hash")
+    }
+
+    fn async_proxy(tier: AsyncReplayTier) -> Proxy {
+        // The sync `inner` is unused on the async path (a placeholder); the async
+        // path dispatches through the async inner wired below.
+        let unused_sync_inner = |_request: &[u8]| -> Vec<u8> { Vec::new() };
+        Proxy::new(
+            server_key(),
+            SERVER,
+            SERVER_KEY_ID,
+            Box::new(inbound_resolver()),
+            AUDIENCE,
+            SKEW,
+            Box::new(unused_sync_inner),
+        )
+        .with_async_replay_tier(tier)
+        .with_async_inner(Box::new(EchoAsyncInner))
+    }
+
+    /// Spawn an in-process HTTP inner backend that records the last forwarded body
+    /// and replies with a fixed JSON-RPC result. Returns its address.
+    async fn spawn_http_inner(
+        seen: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    ) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind inner");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else { continue };
+                let seen = std::sync::Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let svc = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                        let seen = std::sync::Arc::clone(&seen);
+                        async move {
+                            use http_body_util::BodyExt;
+                            let body = req.into_body().collect().await.map(|c| c.to_bytes());
+                            if let Ok(bytes) = body {
+                                *seen.lock().expect("seen") = bytes.to_vec();
+                            }
+                            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(
+                                br#"{"jsonrpc":"2.0","id":"req-async-race-1","result":{"ok":true}}"#,
+                            ))))
+                        }
+                    });
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(io, svc)
+                        .await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// End-to-end assembly: the async `Proxy` verifies + replay-admits a signed
+    /// request, forwards it over the REAL `HttpInnerPool` to a stateless HTTP inner
+    /// backend, and signs the backend's result — the client verifies the response.
+    /// Also proves the forwarded body carries the proxy-authored verified context
+    /// (the inner received a stripped + context-injected request, not the raw
+    /// envelope). This is the whole async data plane minus the TLS ingress (which
+    /// async_fleet_test / async_serve_parity_test cover).
+    #[test]
+    fn async_proxy_signs_response_from_real_http_inner() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let addr = spawn_http_inner(std::sync::Arc::clone(&seen)).await;
+            let backend: Uri = format!("http://{addr}/mcp").parse().expect("uri");
+            let pool = HttpInnerPool::new(vec![backend], Duration::from_secs(5)).expect("pool");
+
+            let tier = AsyncReplayTier::new(
+                std::sync::Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                SKEW,
+            );
+            let unused_sync_inner = |_r: &[u8]| -> Vec<u8> { Vec::new() };
+            let proxy = Proxy::new(
+                server_key(),
+                SERVER,
+                SERVER_KEY_ID,
+                Box::new(inbound_resolver()),
+                AUDIENCE,
+                SKEW,
+                Box::new(unused_sync_inner),
+            )
+            .with_async_replay_tier(tier)
+            .with_async_inner(Box::new(pool));
+
+            let nonce = "nonce-async-http-e2e-1";
+            let out = proxy
+                .handle_with_transport_async(&signed_request(nonce), now(), None, None)
+                .await;
+
+            // The client verifies the signed, request-bound response — proving the
+            // response was built from the real HTTP inner round-trip and signed.
+            verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
+                .expect("the async proxy must sign a verifiable response from the HTTP inner");
+
+            // The inner backend received the proxy-authored forwarded request (the
+            // verified-context block is injected; the external request envelope is
+            // stripped).
+            let forwarded: Value =
+                serde_json::from_slice(&seen.lock().expect("seen")).expect("forwarded json");
+            assert!(
+                forwarded["params"]["_meta"]
+                    .get("se.syncom/mcp-re.verified")
+                    .is_some()
+                    || forwarded["params"]["_meta"]
+                        .as_object()
+                        .map(|m| m.keys().any(|k| k.contains("verified")))
+                        .unwrap_or(false),
+                "the HTTP inner must receive the proxy-authored verified-context request, got {forwarded}"
+            );
+        });
+    }
+
+    #[test]
+    fn async_proxy_admits_exactly_one_fresh_under_concurrency() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            // ONE shared async `Proxy` over ONE authoritative async L2, shared by
+            // all racing tasks (the real fleet model: `Proxy: Send + Sync`).
+            let tier = AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), SKEW);
+            let proxy = Arc::new(async_proxy(tier));
+
+            let nonce = "nonce-async-fullstack-race-1";
+            let bytes = Arc::new(signed_request(nonce));
+            let hash = expected_request_hash(nonce);
+
+            // Fire many concurrent submissions of the SAME signed request through the
+            // async serving entry point.
+            let tasks = 64;
+            let mut handles = Vec::new();
+            for _ in 0..tasks {
+                let proxy = Arc::clone(&proxy);
+                let bytes = Arc::clone(&bytes);
+                handles.push(tokio::spawn(async move {
+                    proxy
+                        .handle_with_transport_async(bytes.as_slice(), now(), None, None)
+                        .await
+                }));
+            }
+
+            let resolver = server_resolver();
+            let mut fresh = 0usize;
+            let mut replay = 0usize;
+            for handle in handles {
+                let out = handle.await.expect("task");
+                if verify_response(&out, &resolver, &hash).is_ok() {
+                    // A verifiable signed response ⇒ this submission won the atomic
+                    // insert (Fresh) and was dispatched + signed.
+                    fresh += 1;
+                } else {
+                    // Every non-Fresh submission fails closed with a JSON-RPC error
+                    // (replay detected), never a second signed response.
+                    let value: Value = serde_json::from_slice(&out).expect("json error object");
+                    assert!(
+                        value.get("error").is_some(),
+                        "a non-Fresh async submission must be a fail-closed JSON-RPC error"
+                    );
+                    replay += 1;
+                }
+            }
+            assert_eq!(
+                fresh, 1,
+                "the async serving path admits EXACTLY ONE Fresh under {tasks}-way concurrency"
+            );
+            assert_eq!(
+                replay,
+                tasks - 1,
+                "every other concurrent submission of the same request is a Replay"
+            );
+        });
+    }
 }

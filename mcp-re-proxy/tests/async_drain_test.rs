@@ -268,6 +268,11 @@ where
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_srv = Arc::clone(&shutdown);
     let (tx, rx) = mpsc::channel::<SocketAddr>();
+    // Adapt the test's sync handler to the async seam: each call returns a boxed
+    // future that runs the sync handler and yields its bytes. The `InFlightGuard`
+    // in `handle_request` spans this await, so a handler holding the request (the
+    // HANDLER_HOLD sleep) keeps the drain's in-flight count > 0 exactly as before.
+    let handler = Arc::new(handler);
     let handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(6)
@@ -277,7 +282,21 @@ where
         rt.block_on(async move {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
             tx.send(listener.local_addr().expect("addr")).expect("send addr");
-            async_serve::serve(listener, config, Arc::new(options), Arc::new(handler), shutdown_srv).await;
+            let async_handler = move |body: Vec<u8>,
+                                      id: Option<TransportIdentity>,
+                                      assertion: Option<String>|
+                  -> async_serve::HandlerResponseFuture {
+                let h = Arc::clone(&handler);
+                Box::pin(async move { h(&body, id, assertion.as_deref()) })
+            };
+            async_serve::serve(
+                listener,
+                config,
+                Arc::new(options),
+                Arc::new(async_handler),
+                shutdown_srv,
+            )
+            .await;
         });
     });
     let addr = rx.recv_timeout(Duration::from_secs(5)).expect("server bound");

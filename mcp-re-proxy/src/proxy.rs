@@ -134,6 +134,22 @@ pub struct Proxy {
     /// (`inner_request_forwarded`, `inner_response_signed`). Inner-process-level
     /// events (spawn/exit/stderr) are emitted by the `SubprocessInner` itself.
     log_sink: Option<Arc<dyn InnerLogSink + Send + Sync>>,
+    /// The authoritative ASYNC replay tier for the async serving path
+    /// (ADR-MCPRE-051 §4). Used ONLY by [`Proxy::handle_with_transport_async`];
+    /// the sync path uses `replay` above. `None` on the sync/stdio build; the
+    /// async data plane wires it via [`Proxy::with_async_replay_tier`] and a
+    /// request on the async path fails closed (`replay_cache_unavailable`) if it
+    /// is unset. Feature-gated so the default (sync) closure links no async stack.
+    #[cfg(feature = "async_serve")]
+    replay_async: Option<crate::async_replay::AsyncReplayTier>,
+    /// The ASYNC inner server for the async serving path (ADR-MCPRE-051 §3). Used
+    /// ONLY by [`Proxy::handle_with_transport_async`]; the sync path uses `inner`
+    /// above. `None` on the sync/stdio build; the async data plane wires it via
+    /// [`Proxy::with_async_inner`]. If unset on the async path, the inner round-trip
+    /// yields a signed fail-closed error (never a silent allow). Feature-gated so
+    /// the default (sync) closure links no async inner transport.
+    #[cfg(feature = "async_serve")]
+    inner_async: Option<Box<dyn crate::async_inner::AsyncInnerServer>>,
 }
 
 impl Proxy {
@@ -178,7 +194,41 @@ impl Proxy {
             lb_assertion: None,
             attested_ingress: None,
             log_sink: None,
+            #[cfg(feature = "async_serve")]
+            replay_async: None,
+            #[cfg(feature = "async_serve")]
+            inner_async: None,
         }
+    }
+
+    /// Wire the ASYNC inner server used by the async serving path (ADR-MCPRE-051
+    /// §3) — the per-core `hyper` client pool to stateless Streamable-HTTP inner
+    /// backends in production, or any [`AsyncInnerServer`](crate::async_inner::AsyncInnerServer).
+    /// Required for [`Proxy::handle_with_transport_async`] to reach a real inner;
+    /// without it the async path returns a signed fail-closed inner error. The sync
+    /// `inner` is left in place for the sync entry points and is NEVER used on the
+    /// async path.
+    #[cfg(feature = "async_serve")]
+    pub fn with_async_inner(
+        mut self,
+        inner: Box<dyn crate::async_inner::AsyncInnerServer>,
+    ) -> Self {
+        self.inner_async = Some(inner);
+        self
+    }
+
+    /// Wire the authoritative ASYNC replay tier used by the async serving path
+    /// (ADR-MCPRE-051 §4). Required for [`Proxy::handle_with_transport_async`];
+    /// without it every request on the async path fails closed
+    /// (`mcp-re.replay_cache_unavailable`). The sync `replay` cache is left in
+    /// place for the sync entry points but is NEVER consulted on the async path.
+    #[cfg(feature = "async_serve")]
+    pub fn with_async_replay_tier(
+        mut self,
+        tier: crate::async_replay::AsyncReplayTier,
+    ) -> Self {
+        self.replay_async = Some(tier);
+        self
     }
 
     /// Attach an MCPS-036 lifecycle-event sink for the proxy-level events
@@ -331,25 +381,135 @@ impl Proxy {
         // dispatch borrows it directly — no `RefCell`, no per-request borrow that
         // could fail. This is what lets a single `Proxy` serve concurrently
         // across per-core tasks (ADR-MCPRE-051 §2).
-        let verify_result = verify_request_dispatch(
+        //
+        // This is the SYNCHRONOUS serving path (stdio dev/compat mode + the
+        // embeddable API + tests). The verification and the replay
+        // check-and-insert are one synchronous call. The async data plane
+        // (ADR-MCPRE-051 §1) uses [`Self::handle_with_transport_async`] instead,
+        // which runs the pure preflight inline and AWAITS an async replay tier —
+        // the two paths share the identical post-verification logic below via
+        // [`Self::finish_after_verify`].
+        match verify_request_dispatch(
             request_bytes,
             self.resolver.as_ref(),
             self.replay.as_ref(),
             &self.config,
             now_unix,
             self.version_policy,
-        );
-
-        match verify_result {
+        ) {
             // Fail closed: the inner server is never reached.
             Err(err) => json_rpc_error_object(&err, &id_value),
-            Ok(verified) => {
+            Ok(verified) => self.finish_after_verify(
+                request_bytes,
+                verified,
+                parsed,
+                now_unix,
+                transport_identity,
+                lb_assertion_header,
+                id_value,
+            ),
+        }
+    }
+
+    /// The ASYNC serving-path entry point (ADR-MCPRE-051 §1/§4): the async mirror
+    /// of [`Self::handle_with_transport`] for the per-core `tokio` data plane.
+    ///
+    /// The pure `mcp-re-core` verification (steps 1–11) runs INLINE on the async
+    /// task — sub-millisecond CPU work, no `spawn_blocking`, no runtime coupling
+    /// (ADR-MCPRE-051 §2) — via `verify_request_dispatch_preflight`. The ONLY
+    /// awaited I/O on the request path is then the authoritative replay
+    /// insert-if-absent against the async replay tier (§4). The tier's
+    /// [`ReplayDecision`] is fed straight into
+    /// [`mcp_re_core::PreflightVerified::finalize`], and — on `Fresh` — the SAME
+    /// post-verification pipeline as the sync path runs
+    /// ([`Self::finish_after_verify`]).
+    ///
+    /// Fail-closed: if no async replay tier is wired (a misconfigured async build)
+    /// the request is rejected `mcp-re.replay_cache_unavailable`, never admitted.
+    /// A store failure is likewise `Unavailable` — uncertainty is never freshness.
+    #[cfg(feature = "async_serve")]
+    pub async fn handle_with_transport_async(
+        &self,
+        request_bytes: &[u8],
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+    ) -> Vec<u8> {
+        let parsed: Option<Value> = serde_json::from_slice(request_bytes).ok();
+        let id_value = parsed
+            .as_ref()
+            .and_then(|v| v.get("id").cloned())
+            .unwrap_or(Value::Null);
+
+        // Steps 1–11 inline (pure CPU): proves the Ed25519 signature valid and
+        // yields the replay key. No store is touched here.
+        let preflight = match mcp_re_core::verify_request_dispatch_preflight(
+            request_bytes,
+            self.resolver.as_ref(),
+            &self.config,
+            now_unix,
+            self.version_policy,
+        ) {
+            Ok(preflight) => preflight,
+            Err(err) => return json_rpc_error_object(&err, &id_value),
+        };
+
+        // Step 12 — AWAIT the authoritative atomic insert. An async serving path
+        // with no async replay tier wired is a misconfiguration: fail closed
+        // rather than admit without a coherence check.
+        let Some(tier) = &self.replay_async else {
+            return json_rpc_error_object(&McpReError::ReplayCacheUnavailable, &id_value);
+        };
+        let decision = match tier.check_and_insert(preflight.replay_key()).await {
+            Ok(decision) => decision,
+            Err(err) => return json_rpc_error_object(&McpReError::from(err), &id_value),
+        };
+        let verified = match preflight.finalize(decision) {
+            Ok(verified) => verified,
+            Err(err) => return json_rpc_error_object(&err, &id_value),
+        };
+
+        self.finish_after_verify_async(
+            request_bytes,
+            verified,
+            parsed,
+            now_unix,
+            transport_identity,
+            lb_assertion_header,
+            id_value,
+        )
+        .await
+    }
+
+    /// The post-verification pipeline shared by the sync and async serving paths:
+    /// authorization policy → Tier-3 LB/attested-ingress assertion → transport
+    /// binding → strip + forward + sign. The request is ALREADY verified and
+    /// replay-admitted (`Fresh`) when this runs; any failure here fails closed
+    /// with a JSON-RPC error and the inner server is never reached.
+    /// The authorization stage shared by the sync and async serving paths (policy
+    /// → Tier-3 LB/attested-ingress assertion → transport binding). The request is
+    /// already verified + replay-admitted; on success returns the `verified`
+    /// request and its `id_value` back (for the caller's dispatch), on any rejection
+    /// returns the fail-closed JSON-RPC error bytes — the inner server is not
+    /// reached. The forked dispatch (sync `dispatch_and_sign` vs async
+    /// `dispatch_and_sign_async`) runs in the caller, so the async path can AWAIT an
+    /// async inner without duplicating this security-critical logic.
+    #[allow(clippy::too_many_arguments)]
+    fn authorize_after_verify(
+        &self,
+        verified: VerifiedRequest,
+        parsed: Option<Value>,
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+        id_value: Value,
+    ) -> Result<(VerifiedRequest, Value), Vec<u8>> {
                 // Phase 5 (ADR-MCPS-013): when policy enforcement is enabled,
                 // evaluate authorization BEFORE dispatch and fail closed on deny.
                 if let Some(policy) = &self.policy {
                     let request_value: Value = match parsed {
                         Some(value) => value,
-                        None => return json_rpc_error_object(&McpReError::CanonicalizationFailed, &id_value),
+                        None => return Err(json_rpc_error_object(&McpReError::CanonicalizationFailed, &id_value)),
                     };
                     let decision = policy.evaluator.evaluate(
                         &verified,
@@ -359,7 +519,7 @@ impl Proxy {
                         now_unix,
                     );
                     if let AuthorizationDecision::Deny(err) = decision {
-                        return json_rpc_authorization_error(&err, &id_value);
+                        return Err(json_rpc_authorization_error(&err, &id_value));
                     }
                 }
                 // ADR-MCPS-023 Tier 3 (issue #71): when an LB-signed, request-bound
@@ -390,24 +550,24 @@ impl Proxy {
                     // transport-binding policy that identity would bind to nothing — a
                     // misconfiguration, not a weaker-but-valid mode: fail closed.
                     if self.transport_binding.is_none() {
-                        return json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value);
+                        return Err(json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value));
                     }
                     let header = match lb_assertion_header {
                         Some(value) => value,
                         None => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     };
                     match lb.verify(header, &verified.request_hash, now_unix) {
                         Ok(identity) => Some(identity),
                         Err(_rejection) => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     }
                 } else if let Some(attestor) = &self.attested_ingress {
@@ -418,24 +578,24 @@ impl Proxy {
                     // identity) are admitted inside `verify` (bind-not-interpret) and
                     // the delegated client identity flows into `transport_binding`.
                     if self.transport_binding.is_none() {
-                        return json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value);
+                        return Err(json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value));
                     }
                     let header = match lb_assertion_header {
                         Some(value) => value,
                         None => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     };
                     match attestor.verify(header, &verified.request_hash, now_unix) {
                         Ok(attested) => Some(attested.client_identity),
                         Err(_rejection) => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     }
                 } else {
@@ -448,7 +608,7 @@ impl Proxy {
                 if let Some(binding) = &self.transport_binding {
                     let identity = lb_verified_identity.as_ref().or(transport_identity);
                     if let Err(err) = binding.check(&verified.verified_signer, identity) {
-                        return json_rpc_error_object(&err, &id_value);
+                        return Err(json_rpc_error_object(&err, &id_value));
                     }
                 }
                 // Response `id` provenance (issue #24): on THIS branch the request
@@ -463,11 +623,71 @@ impl Proxy {
                 // request's id — not unchecked inbound data. (The error branches
                 // above use `id_value` only for best-effort correlation, where no
                 // verified request exists.) Pinned by the #24 tests.
-                match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
-                    Ok(bytes) => bytes,
-                    Err(err) => json_rpc_error_object(&err, &id_value),
-                }
-            }
+                Ok((verified, id_value))
+    }
+
+    /// Sync serving-path finisher: authorize, then dispatch + sign through the sync
+    /// inner. Used by [`Self::handle_with_transport`] (stdio dev/compat + tests).
+    #[allow(clippy::too_many_arguments)]
+    fn finish_after_verify(
+        &self,
+        request_bytes: &[u8],
+        verified: VerifiedRequest,
+        parsed: Option<Value>,
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+        id_value: Value,
+    ) -> Vec<u8> {
+        let (verified, id_value) = match self.authorize_after_verify(
+            verified,
+            parsed,
+            now_unix,
+            transport_identity,
+            lb_assertion_header,
+            id_value,
+        ) {
+            Ok(pair) => pair,
+            Err(error_bytes) => return error_bytes,
+        };
+        match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
+            Ok(bytes) => bytes,
+            Err(err) => json_rpc_error_object(&err, &id_value),
+        }
+    }
+
+    /// Async serving-path finisher (ADR-MCPRE-051 §3): the SAME authorization stage
+    /// as the sync path, then dispatch + sign through the ASYNC inner — the inner
+    /// round-trip is AWAITED, never blocking the per-core runtime worker.
+    #[cfg(feature = "async_serve")]
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_after_verify_async(
+        &self,
+        request_bytes: &[u8],
+        verified: VerifiedRequest,
+        parsed: Option<Value>,
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+        id_value: Value,
+    ) -> Vec<u8> {
+        let (verified, id_value) = match self.authorize_after_verify(
+            verified,
+            parsed,
+            now_unix,
+            transport_identity,
+            lb_assertion_header,
+            id_value,
+        ) {
+            Ok(pair) => pair,
+            Err(error_bytes) => return error_bytes,
+        };
+        match self
+            .dispatch_and_sign_async(request_bytes, &verified, now_unix, &id_value)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(err) => json_rpc_error_object(&err, &id_value),
         }
     }
 
@@ -485,6 +705,38 @@ impl Proxy {
             sink.log(&verified.verified_signer, &InnerLogEvent::RequestForwarded);
         }
         let inner_response = self.inner.dispatch(&forwarded);
+        let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
+        if let Some(sink) = &self.log_sink {
+            sink.log(&verified.verified_signer, &InnerLogEvent::ResponseSigned);
+        }
+        Ok(signed)
+    }
+
+    /// The async mirror of [`Self::dispatch_and_sign`] (ADR-MCPRE-051 §3): forward
+    /// the verified+stripped+context-injected request to the ASYNC inner and AWAIT
+    /// its response, then sign. The forwarded-request build and the response signing
+    /// are pure CPU (shared, inline); only the inner round-trip is awaited, so the
+    /// per-core runtime worker is never blocked on the inner.
+    ///
+    /// If no async inner is wired (a misconfigured async build), a synthesized
+    /// JSON-RPC error *response* is signed as a fail-closed inner error — the client
+    /// still receives signed bytes, never a silent allow.
+    #[cfg(feature = "async_serve")]
+    async fn dispatch_and_sign_async(
+        &self,
+        request_bytes: &[u8],
+        verified: &VerifiedRequest,
+        now_unix: i64,
+        id_value: &Value,
+    ) -> Result<Vec<u8>, McpReError> {
+        let forwarded = self.build_forwarded_request(request_bytes, verified, now_unix)?;
+        if let Some(sink) = &self.log_sink {
+            sink.log(&verified.verified_signer, &InnerLogEvent::RequestForwarded);
+        }
+        let inner_response = match &self.inner_async {
+            Some(inner) => inner.dispatch(&forwarded).await,
+            None => crate::async_inner::inner_unavailable_response(),
+        };
         let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
         if let Some(sink) = &self.log_sink {
             sink.log(&verified.verified_signer, &InnerLogEvent::ResponseSigned);

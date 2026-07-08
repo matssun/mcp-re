@@ -230,11 +230,72 @@ impl VerifiedResponse {
     }
 }
 
+/// The replay key of a preflight-verified request: the `(signer, audience,
+/// nonce)` logical identity fixed by the profiles (ADR-MCPRE-051 §4), plus the
+/// parsed `expires_at`. It is handed to the authoritative replay tier for the
+/// atomic insert-if-absent. `expires_at_unix` is the RAW parsed `expires_at`; the
+/// replay tier folds in the clock skew when it derives the store TTL, EXACTLY as
+/// the sync `check_and_insert` path does (`retain_until = expires_at + skew`), so
+/// a sync insert and an async insert of the same request are cross-coherent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayKey {
+    /// The verified request signer identity.
+    pub signer: String,
+    /// The verified request audience.
+    pub audience: String,
+    /// The request nonce.
+    pub nonce: String,
+    /// The parsed `expires_at` (Unix seconds), pre-skew-fold.
+    pub expires_at_unix: i64,
+}
+
+/// A request verified through every step EXCEPT the authoritative replay insert
+/// (MCP_RE_SPEC §9 steps 1–11): the Ed25519 signature is proven valid, so — and
+/// ONLY now — the replay key MAY be atomically inserted into the authoritative
+/// tier (step 12). This is the seam that lets the async data plane
+/// (ADR-MCPRE-051 §1) AWAIT an async replay store on the request path while
+/// `mcp-re-core` stays pure and synchronous: the (possibly networked) store
+/// round-trip happens in the caller, never in the core.
+///
+/// The ordering invariant "insert only after a valid signature" is preserved BY
+/// CONSTRUCTION — a `PreflightVerified` only exists once the signature verified,
+/// and [`finalize`](PreflightVerified::finalize) is the SOLE way to obtain the
+/// [`VerifiedRequest`], gated on the tier's [`ReplayDecision`].
+#[derive(Debug, Clone)]
+pub struct PreflightVerified {
+    verified: VerifiedRequest,
+    replay_key: ReplayKey,
+}
+
+impl PreflightVerified {
+    /// The replay key to atomically insert into the authoritative tier.
+    pub fn replay_key(&self) -> &ReplayKey {
+        &self.replay_key
+    }
+
+    /// Complete verification given the authoritative replay decision for
+    /// [`replay_key`](Self::replay_key). `Fresh` (this caller won the atomic
+    /// insert) ⇒ the [`VerifiedRequest`]; `Replay` (the key was already present)
+    /// ⇒ [`McpReError::ReplayDetected`]. An operational store failure is NOT a
+    /// decision: the caller maps it to [`McpReError::ReplayCacheUnavailable`]
+    /// (fail closed) BEFORE ever calling `finalize`.
+    pub fn finalize(self, decision: ReplayDecision) -> Result<VerifiedRequest, McpReError> {
+        match decision {
+            ReplayDecision::Fresh => Ok(self.verified),
+            ReplayDecision::Replay => Err(McpReError::ReplayDetected),
+        }
+    }
+}
+
 /// Verify a signed MCP-RE request end-to-end (MCP_RE_SPEC §9 steps 1-12).
 ///
 /// Fails closed at the first failing step. See the module docs for the full
 /// step-by-step error mapping. On success returns a [`VerifiedRequest`] whose
 /// `request_hash` binds a later response.
+///
+/// This is the synchronous composition of [`verify_request_preflight`] (steps
+/// 1–11) and the sync `replay.check_and_insert` (step 12); the async data plane
+/// calls the preflight directly and awaits its own replay tier instead.
 pub fn verify_request(
     raw_bytes: &[u8],
     resolver: &dyn TrustResolver,
@@ -242,6 +303,30 @@ pub fn verify_request(
     config: &VerificationConfig,
     now_unix: i64,
 ) -> Result<VerifiedRequest, McpReError> {
+    let preflight = verify_request_preflight(raw_bytes, resolver, config, now_unix)?;
+    let decision = replay
+        .check_and_insert(
+            &preflight.replay_key.signer,
+            &preflight.replay_key.audience,
+            &preflight.replay_key.nonce,
+            preflight.replay_key.expires_at_unix,
+        )
+        .map_err(McpReError::from)?;
+    preflight.finalize(decision)
+}
+
+/// The pure/synchronous PREFLIGHT of [`verify_request`] — MCP_RE_SPEC §9 steps
+/// 1–11 (draft-01), stopping just before the replay insert. Proves the Ed25519
+/// signature valid and returns a [`PreflightVerified`] carrying the
+/// [`ReplayKey`] to insert. No replay store is consulted here (no I/O, no async),
+/// so the async data plane can run this inline on its task and then AWAIT its
+/// async replay tier (ADR-MCPRE-051 §2/§4).
+pub fn verify_request_preflight(
+    raw_bytes: &[u8],
+    resolver: &dyn TrustResolver,
+    config: &VerificationConfig,
+    now_unix: i64,
+) -> Result<PreflightVerified, McpReError> {
     // The JSON value model used for envelope extraction and preimage building.
     // A parse failure here is a malformed message: fail closed as a JCS-domain
     // violation (the dedicated raw-bytes domain check at step 3 also rejects it,
@@ -298,22 +383,12 @@ pub fn verify_request(
         .ok_or(McpReError::InvalidSignature)?;
     verify_ed25519(&preimage, signature_value, &key)?;
 
-    // Step 12 — replay check-and-insert (LAST, after a valid signature).
+    // Signature is valid — parse `expires_at` for the replay key (step 12 is now
+    // the CALLER's atomic insert; see `PreflightVerified`). Recompute request_hash
+    // from the verified preimage.
     let expires_at_unix = parse_rfc3339_utc(&envelope.expires_at)?;
-    match replay.check_and_insert(
-        &envelope.signer,
-        &envelope.audience,
-        &envelope.nonce,
-        expires_at_unix,
-    ) {
-        Ok(ReplayDecision::Fresh) => {}
-        Ok(ReplayDecision::Replay) => return Err(McpReError::ReplayDetected),
-        Err(err) => return Err(McpReError::from(err)),
-    }
-
-    // Success — recompute request_hash from the verified preimage.
     let computed_request_hash = request_hash(&value)?;
-    Ok(VerifiedRequest {
+    let verified = VerifiedRequest {
         verified_signer: envelope.signer,
         key_id: envelope.signature.key_id,
         on_behalf_of: envelope.on_behalf_of,
@@ -327,6 +402,16 @@ pub fn verify_request(
         expires_at: envelope.expires_at,
         // draft-01 carries no canonicalization id.
         canonicalization_id: None,
+    };
+    let replay_key = ReplayKey {
+        signer: verified.verified_signer.clone(),
+        audience: verified.audience.clone(),
+        nonce: verified.nonce.clone(),
+        expires_at_unix,
+    };
+    Ok(PreflightVerified {
+        verified,
+        replay_key,
     })
 }
 
@@ -429,6 +514,28 @@ pub fn verify_request_draft02(
     config: &VerificationConfig,
     now_unix: i64,
 ) -> Result<VerifiedRequest, McpReError> {
+    let preflight = verify_request_draft02_preflight(raw_bytes, resolver, config, now_unix)?;
+    let decision = replay
+        .check_and_insert(
+            &preflight.replay_key.signer,
+            &preflight.replay_key.audience,
+            &preflight.replay_key.nonce,
+            preflight.replay_key.expires_at_unix,
+        )
+        .map_err(McpReError::from)?;
+    preflight.finalize(decision)
+}
+
+/// The pure/synchronous PREFLIGHT of [`verify_request_draft02`] — steps 1–11 of
+/// the draft-02 profile, stopping just before the replay insert. Mirrors
+/// [`verify_request_preflight`] for the draft-02 envelope (protected `version` /
+/// `canonicalization_id` / typed `authorization_binding`).
+pub fn verify_request_draft02_preflight(
+    raw_bytes: &[u8],
+    resolver: &dyn TrustResolver,
+    config: &VerificationConfig,
+    now_unix: i64,
+) -> Result<PreflightVerified, McpReError> {
     let value: Value =
         serde_json::from_slice(raw_bytes).map_err(|_| McpReError::CanonicalizationFailed)?;
 
@@ -476,21 +583,11 @@ pub fn verify_request_draft02(
         .ok_or(McpReError::InvalidSignature)?;
     verify_ed25519(&preimage, signature_value, &key)?;
 
-    // Step 12 — replay check-and-insert (LAST, after a valid signature).
+    // Signature is valid — build the preflight (the atomic insert is the caller's
+    // step 12; see `PreflightVerified`).
     let expires_at_unix = parse_rfc3339_utc(&envelope.expires_at)?;
-    match replay.check_and_insert(
-        &envelope.signer,
-        &envelope.audience,
-        &envelope.nonce,
-        expires_at_unix,
-    ) {
-        Ok(ReplayDecision::Fresh) => {}
-        Ok(ReplayDecision::Replay) => return Err(McpReError::ReplayDetected),
-        Err(err) => return Err(McpReError::from(err)),
-    }
-
     let computed_request_hash = request_hash(&value)?;
-    Ok(VerifiedRequest {
+    let verified = VerifiedRequest {
         verified_signer: envelope.signer,
         key_id: envelope.signature.key_id,
         on_behalf_of: envelope.on_behalf_of,
@@ -503,6 +600,16 @@ pub fn verify_request_draft02(
         issued_at: envelope.issued_at,
         expires_at: envelope.expires_at,
         canonicalization_id: Some(envelope.canonicalization_id),
+    };
+    let replay_key = ReplayKey {
+        signer: verified.verified_signer.clone(),
+        audience: verified.audience.clone(),
+        nonce: verified.nonce.clone(),
+        expires_at_unix,
+    };
+    Ok(PreflightVerified {
+        verified,
+        replay_key,
     })
 }
 
@@ -658,6 +765,33 @@ pub fn verify_request_dispatch(
     now_unix: i64,
     policy: ExpectedVersionPolicy,
 ) -> Result<VerifiedRequest, McpReError> {
+    let preflight =
+        verify_request_dispatch_preflight(raw_bytes, resolver, config, now_unix, policy)?;
+    let decision = replay
+        .check_and_insert(
+            &preflight.replay_key.signer,
+            &preflight.replay_key.audience,
+            &preflight.replay_key.nonce,
+            preflight.replay_key.expires_at_unix,
+        )
+        .map_err(McpReError::from)?;
+    preflight.finalize(decision)
+}
+
+/// The pure/synchronous PREFLIGHT of [`verify_request_dispatch`]: version
+/// dispatch (identical downgrade/unsupported semantics) into the matching
+/// profile preflight (steps 1–11), stopping before the replay insert. The async
+/// data plane calls THIS, runs it inline, then awaits its async replay tier and
+/// [`PreflightVerified::finalize`]s the decision (ADR-MCPRE-051 §2/§4). Keeping
+/// the dispatch here — not in the proxy — means the async and sync paths select
+/// the profile through the SAME downgrade-defense logic.
+pub fn verify_request_dispatch_preflight(
+    raw_bytes: &[u8],
+    resolver: &dyn TrustResolver,
+    config: &VerificationConfig,
+    now_unix: i64,
+    policy: ExpectedVersionPolicy,
+) -> Result<PreflightVerified, McpReError> {
     let value: Value =
         serde_json::from_slice(raw_bytes).map_err(|_| McpReError::CanonicalizationFailed)?;
 
@@ -682,9 +816,9 @@ pub fn verify_request_dispatch(
     // Dispatch to exactly one profile; no fallback. The chosen verifier re-reads
     // and enforces the exact signed version.
     if version == VERSION_DRAFT_01 {
-        verify_request(raw_bytes, resolver, replay, config, now_unix)
+        verify_request_preflight(raw_bytes, resolver, config, now_unix)
     } else {
-        verify_request_draft02(raw_bytes, resolver, replay, config, now_unix)
+        verify_request_draft02_preflight(raw_bytes, resolver, config, now_unix)
     }
 }
 

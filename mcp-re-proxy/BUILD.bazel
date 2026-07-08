@@ -106,6 +106,20 @@ _PROXY_LIB_SRCS = [
     # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
     # "async_serve")] gate — invisible to the default closure.
     "src/async_replay.rs",
+    # ADR-MCPRE-051 §3 (Phase 3): the async inner-server seam. Same #[cfg(feature =
+    # "async_serve")] gate — invisible to the default closure; the async serving path
+    # awaits it instead of the sync stdio inner.
+    "src/async_inner.rs",
+    # ADR-MCPRE-051 §3 (Phase 3): the production async inner plane — pooled hyper
+    # client to stateless Streamable-HTTP inner backends. Same async_serve gate.
+    "src/http_inner.rs",
+    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async Redis authoritative replay
+    # backend (SET NX PX over the tokio async client). #[cfg(all(async_serve,
+    # redis_replay))] — cfg'd out of every current flavor (none sets both), compiled
+    # + tested by the cargo async+redis lane; it links under Bazel when the async
+    # production flavor (async_serve + redis_replay + tokio + redis) is added at the
+    # main.rs cutover.
+    "src/async_redis_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -501,6 +515,28 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+# ADR-MCPRE-051 §3 (Phase 3): the async HTTP inner-plane transport suite — proves
+# HttpInnerPool delivers a verified JSON-RPC request to a stateless HTTP backend
+# (an in-process hyper server, no external infra) and returns its JSON response
+# bytes verbatim, with fail-closed on dead backend / non-2xx / oversize.
+nt_rust_test(
+    name = "http_inner_test",
+    srcs = ["tests/http_inner_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )

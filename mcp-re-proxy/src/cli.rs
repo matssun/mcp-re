@@ -253,6 +253,13 @@ pub struct Config {
     pub ocsp_soft_fail: bool,
     /// Path to the JSON trust file (request signers + authorization issuers).
     pub trust_path: String,
+    /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the
+    /// ASYNC serving path. When non-empty, the proxy serves on the per-core async
+    /// fleet (SO_REUSEPORT + tokio) and forwards verified requests over the pooled
+    /// `HttpInnerPool` to these backends (round-robin), instead of the sync stdio
+    /// subprocess. Each `--inner-http-url` value (comma-separated and/or repeated)
+    /// adds a backend. Empty ⇒ the sync stdio serving path (`--inner-command`).
+    pub inner_http_urls: Vec<String>,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -511,6 +518,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--client-ca",
     "--client-crl",
     "--client-crl-reload-secs",
+    "--inner-http-url",
     "--trust",
     "--client-ocsp",
     "--ocsp-responder-url",
@@ -580,6 +588,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #3839 offline CRL revocation: zero or more CRL file paths, fail-closed on
     // unknown status by default.
     let mut client_crl_paths: Vec<String> = Vec::new();
+    // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async serving
+    // path (comma-separated and/or repeated).
+    let mut inner_http_urls: Vec<String> = Vec::new();
     let mut client_crl_reload_secs: Option<u64> = None;
     let mut crl_allow_unknown_status = false;
     // #4030 online OCSP revocation: off by default; responder-URL override
@@ -825,6 +836,19 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                         ));
                     }
                     client_crl_paths.push(segment.to_string());
+                }
+            }
+            // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async
+            // serving path. Comma-separated and/or repeated; empty segment is a hard
+            // parse error (fail closed rather than silently drop a backend).
+            "--inner-http-url" => {
+                for segment in value.split(',') {
+                    if segment.is_empty() {
+                        return Err(format!(
+                            "invalid --inner-http-url '{value}' (empty URL segment)"
+                        ));
+                    }
+                    inner_http_urls.push(segment.to_string());
                 }
             }
             // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence. Must
@@ -1348,8 +1372,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
         );
     }
-    if inner_command.is_empty() {
-        return Err("missing required --inner-command <cmd> [args...]".to_string());
+    // `--inner-command` is required for the sync stdio serving path, but NOT when
+    // HTTP inner backends are configured (ADR-MCPRE-051 §3): the async fleet
+    // forwards over the HttpInnerPool, so no subprocess command is needed. They are
+    // mutually exclusive — supplying both is a misconfiguration (fail closed).
+    if !inner_http_urls.is_empty() {
+        if !inner_command.is_empty() {
+            return Err(
+                "--inner-command and --inner-http-url are mutually exclusive (stdio subprocess \
+                 vs async HTTP inner plane); supply exactly one"
+                    .to_string(),
+            );
+        }
+    } else if inner_command.is_empty() {
+        return Err(
+            "missing required inner server: --inner-command <cmd> [args...] (stdio) or \
+             --inner-http-url <url> (async HTTP inner plane)"
+                .to_string(),
+        );
     }
 
     // MCPS-3840 reverse-proxy ingress: identity comes EITHER from a locally-
@@ -1616,6 +1656,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         },
         client_ca: require(client_ca, "--client-ca")?,
         client_crl_paths,
+        inner_http_urls,
         client_crl_reload_secs,
         crl_allow_unknown_status,
         client_ocsp,
@@ -3480,6 +3521,23 @@ mod tests {
         ])
     }
 
+    /// The same required flags as `minimal()` but WITHOUT the tail `--inner-command`
+    /// (which consumes the remainder of argv), so a test can supply `--inner-http-url`
+    /// as the inner instead.
+    fn minimal_without_inner_command() -> Vec<String> {
+        args(&[
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--signing-key-seed", "/seed",
+            "--tls-cert", "/cert",
+            "--tls-key", "/key",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+        ])
+    }
+
     /// A durable single-node replay selection (`--replay-cache file --replay-path
     /// <p>`). The DEFAULT replay backend is the non-durable in-memory cache, which
     /// is a strict-production violation (#90, ADR-MCPS-014/020): a restart forgets
@@ -5103,6 +5161,74 @@ mod tests {
         assert_eq!(
             config.client_crl_paths,
             vec!["/a.crl".to_string(), "/b.crl".to_string(), "/c.crl".to_string()]
+        );
+    }
+
+    // --- ADR-MCPRE-051 §3 async HTTP inner backends --------------------------
+
+    #[test]
+    fn default_has_no_http_inner_backends() {
+        let config = parse_args(&minimal()).expect("parse");
+        assert!(
+            config.inner_http_urls.is_empty(),
+            "no HTTP inner backends by default (the sync stdio serving path)"
+        );
+    }
+
+    #[test]
+    fn parses_repeated_and_comma_separated_inner_http_urls() {
+        // No --inner-command (mutually exclusive with --inner-http-url).
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&[
+            "--inner-http-url",
+            "http://10.0.0.1:8080/mcp,http://10.0.0.2:8080/mcp",
+            "--inner-http-url",
+            "http://10.0.0.3:8080/mcp",
+        ]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.inner_http_urls,
+            vec![
+                "http://10.0.0.1:8080/mcp".to_string(),
+                "http://10.0.0.2:8080/mcp".to_string(),
+                "http://10.0.0.3:8080/mcp".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_inner_http_url_segment_fails_closed() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-http-url", "http://a,,http://b"]));
+        assert!(
+            parse_args(&a).unwrap_err().contains("--inner-http-url"),
+            "an empty URL segment must be a hard parse error"
+        );
+    }
+
+    #[test]
+    fn http_inner_does_not_require_inner_command() {
+        // `minimal()` supplies --inner-command; build an arg set WITHOUT it but WITH
+        // --inner-http-url and assert it parses (the async HTTP inner plane needs no
+        // subprocess command).
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
+        let config = parse_args(&a).expect("HTTP inner needs no --inner-command");
+        assert_eq!(config.inner_http_urls, vec!["http://127.0.0.1:8080/mcp".to_string()]);
+        assert!(config.inner_command.is_empty());
+    }
+
+    #[test]
+    fn inner_command_and_http_url_are_mutually_exclusive() {
+        // `minimal()` already carries --inner-command; adding --inner-http-url must
+        // fail closed (the two serving paths are mutually exclusive).
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
+        assert!(
+            parse_args(&a)
+                .unwrap_err()
+                .contains("mutually exclusive"),
+            "supplying both --inner-command and --inner-http-url must fail closed"
         );
     }
 

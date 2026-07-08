@@ -14,6 +14,25 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **`mcp-re-stdio-bridge` — the out-of-TCB stdio↔HTTP adapter (ADR-MCPRE-051,
+  Phase B, MCPRE-118, part 1).** A new binary crate that fronts an unmodified,
+  sandboxed local stdio MCP server behind a plain HTTP endpoint, so the proxy PEP
+  can protect a stdio-only server via its stateless HTTP inner plane **without**
+  the subprocess/sandbox/env/rlimit attack surface (~3k lines: subprocess
+  lifecycle, environment allow-listing, Landlock fs rulesets, seccomp-bpf egress
+  filters, `setrlimit`) entering the signing PEP's Trusted Computing Base. The
+  bridge accepts a `POST` of an already-verified JSON-RPC body from the PEP,
+  relays it to the sandboxed child over stdio (blocking subprocess I/O kept off
+  the async workers), and returns the child's JSON-RPC response as the HTTP body;
+  non-`POST` is `405`, over-cap bodies `400`, a panicked dispatch `502`. A
+  compromise of the bridge cannot forge a signature or defeat replay — those
+  guarantees live entirely in the PEP. Phase A reuses the proven hardened
+  subprocess inner (`SubprocessInner` / `PersistentSubprocessInner` +
+  `InnerLaunchConfig` + the Landlock/seccomp `SandboxProfile` + `RLimits`) from
+  `mcp-re-proxy` with secure launch defaults; a later commit of this phase
+  physically moves those modules into this crate and cuts the dependency so the
+  PEP links none of them. Arg-parse unit tests + an end-to-end HTTP→stdio→HTTP
+  relay smoke path.
 - **Async authoritative replay tier — seam + L1-never-Fresh (ADR-MCPRE-051 §4,
   Phase 2, MCPRE-117, part 1).** The async data plane checks replay without blocking a
   runtime worker: a new `async_replay` module defines `AsyncAtomicReplayStore` — the

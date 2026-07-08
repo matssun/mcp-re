@@ -33,6 +33,8 @@
 //! the READ side, which is mapped).
 
 use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -63,17 +65,34 @@ use crate::tls::ServerOptions;
 use crate::transport::RequestHeaders;
 use crate::transport::TransportIdentity;
 
-/// The per-request handler: verified request bytes + resolved transport identity +
-/// the raw Tier-3 ingress-assertion header (when the strategy is LB-assertion), in,
-/// signed response bytes out. This is the async mirror of the blocking serve loop's
-/// handler; a `Proxy` satisfies it via `handle_with_transport` because `Proxy` is
-/// `Send + Sync` (MCPRE-111).
+/// The boxed, `Send` future a handler returns: signed response bytes out. The
+/// handler is genuinely ASYNC — the request path AWAITS it — so a real `Proxy`
+/// handler can await the authoritative async replay tier (ADR-MCPRE-051 §4)
+/// WITHOUT blocking the per-core runtime worker. (A sync `-> Vec<u8>` seam would
+/// have forced the replay store I/O to block the worker — an async transport
+/// wrapped around a synchronous core; this type makes that impossible.)
+pub type HandlerResponseFuture = Pin<Box<dyn Future<Output = Vec<u8>> + Send>>;
+
+/// The per-request async handler: verified request bytes + resolved transport
+/// identity + the raw Tier-3 ingress-assertion header (when the strategy is
+/// LB-assertion), in; a future of signed response bytes, out. Arguments are OWNED
+/// because the returned future is `'static` (it is awaited on a spawned connection
+/// task and cannot borrow request-scoped data). A `Proxy` satisfies it by
+/// returning `Box::pin(async move { proxy.handle_with_transport_async(..).await })`
+/// — `Proxy` is `Send + Sync` (MCPRE-111), so one `Proxy` per core serves every
+/// connection on that core.
 pub trait AsyncRequestHandler:
-    Fn(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8> + Send + Sync + 'static
+    Fn(Vec<u8>, Option<TransportIdentity>, Option<String>) -> HandlerResponseFuture
+    + Send
+    + Sync
+    + 'static
 {
 }
 impl<F> AsyncRequestHandler for F where
-    F: Fn(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8> + Send + Sync + 'static
+    F: Fn(Vec<u8>, Option<TransportIdentity>, Option<String>) -> HandlerResponseFuture
+        + Send
+        + Sync
+        + 'static
 {
 }
 
@@ -317,12 +336,14 @@ async fn handle_request<H: AsyncRequestHandler>(
 
     // SAME order as the blocking loop: per-connection cert-lifetime rejection, then
     // routing-header hygiene, then (only if admitted) the handler. The inner server
-    // is never reached on a rejection.
+    // is never reached on a rejection. The two rejection checks are sync CPU
+    // (leaf-cert lifetime + header hygiene); only the admitted handler is AWAITED,
+    // and it is the handler that awaits the async replay tier.
     let response_bytes = match connection_rejection_for_leaf(leaf, &options, &body_bytes)
         .or_else(|| routing_header_rejection(&headers, &body_bytes))
     {
         Some(error) => error,
-        None => handler(&body_bytes, identity, assertion),
+        None => handler(body_bytes.to_vec(), identity, assertion.map(str::to_string)).await,
     };
 
     Ok(json_response(response_bytes))

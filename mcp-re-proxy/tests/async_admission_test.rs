@@ -244,6 +244,8 @@ where
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_srv = Arc::clone(&shutdown);
     let (tx, rx) = mpsc::channel::<SocketAddr>();
+    // Adapt the test's sync handler to the async seam (see async_drain_test).
+    let handler = Arc::new(handler);
     let handle = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(6)
@@ -253,11 +255,18 @@ where
         rt.block_on(async move {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
             tx.send(listener.local_addr().expect("addr")).expect("send addr");
+            let async_handler = move |body: Vec<u8>,
+                                      id: Option<TransportIdentity>,
+                                      assertion: Option<String>|
+                  -> async_serve::HandlerResponseFuture {
+                let h = Arc::clone(&handler);
+                Box::pin(async move { h(&body, id, assertion.as_deref()) })
+            };
             async_serve::serve(
                 listener,
                 config,
                 Arc::new(options),
-                Arc::new(handler),
+                Arc::new(async_handler),
                 shutdown_srv,
             )
             .await;

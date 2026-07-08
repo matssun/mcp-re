@@ -69,6 +69,8 @@ ALLOW_NAMING_COLLISION = {
     "mcp-re-demo-server",            # == hand-named demo bin
     "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
+    "mcp-re-stdio-bridge",           # == :mcp_re_stdio_bridge (bin, hand-named)
+    "mcp-re-stdio-bridge_test",      # == :mcp_re_stdio_bridge_test (crate unit test)
     "echo-inner",                  # == hand-named inner echo bin
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }
