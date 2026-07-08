@@ -382,12 +382,28 @@ mod full_stack_async {
     use mcp_re_core::SIG_ALG_ED25519;
     use mcp_re_core::VERSION_DRAFT_01;
 
+    use mcp_re_proxy::async_inner::AsyncInnerServer;
+    use mcp_re_proxy::async_inner::InnerResponseFuture;
     use mcp_re_proxy::async_replay::AsyncReplayTier;
     use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
     use mcp_re_proxy::Proxy;
 
     use serde_json::json;
     use serde_json::Value;
+
+    /// A minimal async inner that returns a fixed valid JSON-RPC result — the async
+    /// analogue of the sync echo inner. Proves the async serving path awaits the
+    /// async inner seam end to end.
+    struct EchoAsyncInner;
+
+    impl AsyncInnerServer for EchoAsyncInner {
+        fn dispatch<'a>(&'a self, _request: &'a [u8]) -> InnerResponseFuture<'a> {
+            Box::pin(async move {
+                serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }))
+                    .expect("serialize inner result")
+            })
+        }
+    }
 
     const SIGNER: &str = "did:example:agent-1";
     const SIGNER_KEY_ID: &str = "key-1";
@@ -458,10 +474,9 @@ mod full_stack_async {
     }
 
     fn async_proxy(tier: AsyncReplayTier) -> Proxy {
-        let inner = |_request: &[u8]| -> Vec<u8> {
-            serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }))
-                .expect("serialize inner result")
-        };
+        // The sync `inner` is unused on the async path (a placeholder); the async
+        // path dispatches through the async inner wired below.
+        let unused_sync_inner = |_request: &[u8]| -> Vec<u8> { Vec::new() };
         Proxy::new(
             server_key(),
             SERVER,
@@ -469,9 +484,10 @@ mod full_stack_async {
             Box::new(inbound_resolver()),
             AUDIENCE,
             SKEW,
-            Box::new(inner),
+            Box::new(unused_sync_inner),
         )
         .with_async_replay_tier(tier)
+        .with_async_inner(Box::new(EchoAsyncInner))
     }
 
     #[test]

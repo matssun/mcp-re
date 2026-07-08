@@ -152,6 +152,12 @@ pub mod async_fleet;
 // Same `async_serve` gate; concrete async Redis/etcd backends plug into this contract.
 #[cfg(feature = "async_serve")]
 pub mod async_replay;
+// MCPRE (ADR-MCPRE-051 §3, Phase 3): the ASYNC inner-server seam. The async serving
+// path awaits it instead of the sync stdio subprocess inner, so the inner round-trip
+// never blocks a per-core runtime worker. The production impl (async hyper client
+// pool to stateless Streamable-HTTP inner backends) plugs into this contract.
+#[cfg(feature = "async_serve")]
+pub mod async_inner;
 // MCPRE-117 (ADR-MCPRE-051 §4): the ASYNC Redis authoritative replay backend
 // (`SET NX PX` via the tokio async client + auto-reconnecting ConnectionManager).
 // Behind BOTH the async serving path and the redis backend flag; the async data

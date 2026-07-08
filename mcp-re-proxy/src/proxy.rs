@@ -142,6 +142,14 @@ pub struct Proxy {
     /// is unset. Feature-gated so the default (sync) closure links no async stack.
     #[cfg(feature = "async_serve")]
     replay_async: Option<crate::async_replay::AsyncReplayTier>,
+    /// The ASYNC inner server for the async serving path (ADR-MCPRE-051 §3). Used
+    /// ONLY by [`Proxy::handle_with_transport_async`]; the sync path uses `inner`
+    /// above. `None` on the sync/stdio build; the async data plane wires it via
+    /// [`Proxy::with_async_inner`]. If unset on the async path, the inner round-trip
+    /// yields a signed fail-closed error (never a silent allow). Feature-gated so
+    /// the default (sync) closure links no async inner transport.
+    #[cfg(feature = "async_serve")]
+    inner_async: Option<Box<dyn crate::async_inner::AsyncInnerServer>>,
 }
 
 impl Proxy {
@@ -188,7 +196,25 @@ impl Proxy {
             log_sink: None,
             #[cfg(feature = "async_serve")]
             replay_async: None,
+            #[cfg(feature = "async_serve")]
+            inner_async: None,
         }
+    }
+
+    /// Wire the ASYNC inner server used by the async serving path (ADR-MCPRE-051
+    /// §3) — the per-core `hyper` client pool to stateless Streamable-HTTP inner
+    /// backends in production, or any [`AsyncInnerServer`](crate::async_inner::AsyncInnerServer).
+    /// Required for [`Proxy::handle_with_transport_async`] to reach a real inner;
+    /// without it the async path returns a signed fail-closed inner error. The sync
+    /// `inner` is left in place for the sync entry points and is NEVER used on the
+    /// async path.
+    #[cfg(feature = "async_serve")]
+    pub fn with_async_inner(
+        mut self,
+        inner: Box<dyn crate::async_inner::AsyncInnerServer>,
+    ) -> Self {
+        self.inner_async = Some(inner);
+        self
     }
 
     /// Wire the authoritative ASYNC replay tier used by the async serving path
@@ -443,7 +469,7 @@ impl Proxy {
             Err(err) => return json_rpc_error_object(&err, &id_value),
         };
 
-        self.finish_after_verify(
+        self.finish_after_verify_async(
             request_bytes,
             verified,
             parsed,
@@ -452,6 +478,7 @@ impl Proxy {
             lb_assertion_header,
             id_value,
         )
+        .await
     }
 
     /// The post-verification pipeline shared by the sync and async serving paths:
@@ -459,23 +486,30 @@ impl Proxy {
     /// binding → strip + forward + sign. The request is ALREADY verified and
     /// replay-admitted (`Fresh`) when this runs; any failure here fails closed
     /// with a JSON-RPC error and the inner server is never reached.
+    /// The authorization stage shared by the sync and async serving paths (policy
+    /// → Tier-3 LB/attested-ingress assertion → transport binding). The request is
+    /// already verified + replay-admitted; on success returns the `verified`
+    /// request and its `id_value` back (for the caller's dispatch), on any rejection
+    /// returns the fail-closed JSON-RPC error bytes — the inner server is not
+    /// reached. The forked dispatch (sync `dispatch_and_sign` vs async
+    /// `dispatch_and_sign_async`) runs in the caller, so the async path can AWAIT an
+    /// async inner without duplicating this security-critical logic.
     #[allow(clippy::too_many_arguments)]
-    fn finish_after_verify(
+    fn authorize_after_verify(
         &self,
-        request_bytes: &[u8],
         verified: VerifiedRequest,
         parsed: Option<Value>,
         now_unix: i64,
         transport_identity: Option<&TransportIdentity>,
         lb_assertion_header: Option<&str>,
         id_value: Value,
-    ) -> Vec<u8> {
+    ) -> Result<(VerifiedRequest, Value), Vec<u8>> {
                 // Phase 5 (ADR-MCPS-013): when policy enforcement is enabled,
                 // evaluate authorization BEFORE dispatch and fail closed on deny.
                 if let Some(policy) = &self.policy {
                     let request_value: Value = match parsed {
                         Some(value) => value,
-                        None => return json_rpc_error_object(&McpReError::CanonicalizationFailed, &id_value),
+                        None => return Err(json_rpc_error_object(&McpReError::CanonicalizationFailed, &id_value)),
                     };
                     let decision = policy.evaluator.evaluate(
                         &verified,
@@ -485,7 +519,7 @@ impl Proxy {
                         now_unix,
                     );
                     if let AuthorizationDecision::Deny(err) = decision {
-                        return json_rpc_authorization_error(&err, &id_value);
+                        return Err(json_rpc_authorization_error(&err, &id_value));
                     }
                 }
                 // ADR-MCPS-023 Tier 3 (issue #71): when an LB-signed, request-bound
@@ -516,24 +550,24 @@ impl Proxy {
                     // transport-binding policy that identity would bind to nothing — a
                     // misconfiguration, not a weaker-but-valid mode: fail closed.
                     if self.transport_binding.is_none() {
-                        return json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value);
+                        return Err(json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value));
                     }
                     let header = match lb_assertion_header {
                         Some(value) => value,
                         None => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     };
                     match lb.verify(header, &verified.request_hash, now_unix) {
                         Ok(identity) => Some(identity),
                         Err(_rejection) => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     }
                 } else if let Some(attestor) = &self.attested_ingress {
@@ -544,24 +578,24 @@ impl Proxy {
                     // identity) are admitted inside `verify` (bind-not-interpret) and
                     // the delegated client identity flows into `transport_binding`.
                     if self.transport_binding.is_none() {
-                        return json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value);
+                        return Err(json_rpc_error_object(&McpReError::TransportBindingFailed, &id_value));
                     }
                     let header = match lb_assertion_header {
                         Some(value) => value,
                         None => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     };
                     match attestor.verify(header, &verified.request_hash, now_unix) {
                         Ok(attested) => Some(attested.client_identity),
                         Err(_rejection) => {
-                            return json_rpc_error_object(
+                            return Err(json_rpc_error_object(
                                 &McpReError::TransportBindingFailed,
                                 &id_value,
-                            )
+                            ))
                         }
                     }
                 } else {
@@ -574,7 +608,7 @@ impl Proxy {
                 if let Some(binding) = &self.transport_binding {
                     let identity = lb_verified_identity.as_ref().or(transport_identity);
                     if let Err(err) = binding.check(&verified.verified_signer, identity) {
-                        return json_rpc_error_object(&err, &id_value);
+                        return Err(json_rpc_error_object(&err, &id_value));
                     }
                 }
                 // Response `id` provenance (issue #24): on THIS branch the request
@@ -589,10 +623,72 @@ impl Proxy {
                 // request's id — not unchecked inbound data. (The error branches
                 // above use `id_value` only for best-effort correlation, where no
                 // verified request exists.) Pinned by the #24 tests.
-                match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
-                    Ok(bytes) => bytes,
-                    Err(err) => json_rpc_error_object(&err, &id_value),
-                }
+                Ok((verified, id_value))
+    }
+
+    /// Sync serving-path finisher: authorize, then dispatch + sign through the sync
+    /// inner. Used by [`Self::handle_with_transport`] (stdio dev/compat + tests).
+    #[allow(clippy::too_many_arguments)]
+    fn finish_after_verify(
+        &self,
+        request_bytes: &[u8],
+        verified: VerifiedRequest,
+        parsed: Option<Value>,
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+        id_value: Value,
+    ) -> Vec<u8> {
+        let (verified, id_value) = match self.authorize_after_verify(
+            verified,
+            parsed,
+            now_unix,
+            transport_identity,
+            lb_assertion_header,
+            id_value,
+        ) {
+            Ok(pair) => pair,
+            Err(error_bytes) => return error_bytes,
+        };
+        match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
+            Ok(bytes) => bytes,
+            Err(err) => json_rpc_error_object(&err, &id_value),
+        }
+    }
+
+    /// Async serving-path finisher (ADR-MCPRE-051 §3): the SAME authorization stage
+    /// as the sync path, then dispatch + sign through the ASYNC inner — the inner
+    /// round-trip is AWAITED, never blocking the per-core runtime worker.
+    #[cfg(feature = "async_serve")]
+    #[allow(clippy::too_many_arguments)]
+    async fn finish_after_verify_async(
+        &self,
+        request_bytes: &[u8],
+        verified: VerifiedRequest,
+        parsed: Option<Value>,
+        now_unix: i64,
+        transport_identity: Option<&TransportIdentity>,
+        lb_assertion_header: Option<&str>,
+        id_value: Value,
+    ) -> Vec<u8> {
+        let (verified, id_value) = match self.authorize_after_verify(
+            verified,
+            parsed,
+            now_unix,
+            transport_identity,
+            lb_assertion_header,
+            id_value,
+        ) {
+            Ok(pair) => pair,
+            Err(error_bytes) => return error_bytes,
+        };
+        match self
+            .dispatch_and_sign_async(request_bytes, &verified, now_unix, &id_value)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(err) => json_rpc_error_object(&err, &id_value),
+        }
     }
 
     /// Strip + inject verified context, forward to the inner server, then sign
@@ -609,6 +705,38 @@ impl Proxy {
             sink.log(&verified.verified_signer, &InnerLogEvent::RequestForwarded);
         }
         let inner_response = self.inner.dispatch(&forwarded);
+        let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
+        if let Some(sink) = &self.log_sink {
+            sink.log(&verified.verified_signer, &InnerLogEvent::ResponseSigned);
+        }
+        Ok(signed)
+    }
+
+    /// The async mirror of [`Self::dispatch_and_sign`] (ADR-MCPRE-051 §3): forward
+    /// the verified+stripped+context-injected request to the ASYNC inner and AWAIT
+    /// its response, then sign. The forwarded-request build and the response signing
+    /// are pure CPU (shared, inline); only the inner round-trip is awaited, so the
+    /// per-core runtime worker is never blocked on the inner.
+    ///
+    /// If no async inner is wired (a misconfigured async build), a synthesized
+    /// JSON-RPC error *response* is signed as a fail-closed inner error — the client
+    /// still receives signed bytes, never a silent allow.
+    #[cfg(feature = "async_serve")]
+    async fn dispatch_and_sign_async(
+        &self,
+        request_bytes: &[u8],
+        verified: &VerifiedRequest,
+        now_unix: i64,
+        id_value: &Value,
+    ) -> Result<Vec<u8>, McpReError> {
+        let forwarded = self.build_forwarded_request(request_bytes, verified, now_unix)?;
+        if let Some(sink) = &self.log_sink {
+            sink.log(&verified.verified_signer, &InnerLogEvent::RequestForwarded);
+        }
+        let inner_response = match &self.inner_async {
+            Some(inner) => inner.dispatch(&forwarded).await,
+            None => synthesized_inner_unavailable(),
+        };
         let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
         if let Some(sink) = &self.log_sink {
             sink.log(&verified.verified_signer, &InnerLogEvent::ResponseSigned);
@@ -839,6 +967,17 @@ impl Proxy {
             }
         }
     }
+}
+
+/// A synthesized JSON-RPC error *response* (no `result`) used when the async
+/// serving path has no inner reachable (no async inner wired, or — in the future
+/// pool — all backends ejected / pool exhausted). It carries no `result`, so
+/// [`Proxy::build_signed_response`] wraps it as a SIGNED `inner_error` envelope:
+/// the client receives signed, fail-closed bytes, never an unsigned pass-through
+/// and never a silent allow.
+#[cfg(feature = "async_serve")]
+fn synthesized_inner_unavailable() -> Vec<u8> {
+    br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"inner server unavailable"}}"#.to_vec()
 }
 
 /// The four MCP-RE `_meta` keys the proxy EXCLUSIVELY owns at the trust boundary

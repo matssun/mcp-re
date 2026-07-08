@@ -106,6 +106,10 @@ _PROXY_LIB_SRCS = [
     # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
     # "async_serve")] gate — invisible to the default closure.
     "src/async_replay.rs",
+    # ADR-MCPRE-051 §3 (Phase 3): the async inner-server seam. Same #[cfg(feature =
+    # "async_serve")] gate — invisible to the default closure; the async serving path
+    # awaits it instead of the sync stdio inner.
+    "src/async_inner.rs",
     # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async Redis authoritative replay
     # backend (SET NX PX over the tokio async client). #[cfg(all(async_serve,
     # redis_replay))] — cfg'd out of every current flavor (none sets both), compiled
