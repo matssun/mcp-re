@@ -731,6 +731,26 @@ nt_rust_test(
     ],
 )
 
+# MCPS-82 (#273, ADR-MCPS-049 W1, proof c): an MRT continuation survives a mid-
+# continuation replica switch — two INDEPENDENT serving Proxy replicas, leg 1 to A
+# and the signed continuation leg to a fresh B. Replica-independence needs no shared
+# store (the continuation rides the signed preimage), so this runs on every
+# `bazel test //...` with no live infra — unlike the Redis-gated replay/revocation
+# proofs. Signs via the real mcp-re-client-core draft-02 seam.
+nt_rust_test(
+    name = "fleet_mrt_replica_switch_e2e_test",
+    srcs = ["tests/fleet_mrt_replica_switch_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 # MCPS-89 (ADR-MCPS-049 W3): fleet PEP throughput/added-latency benchmark harness
 # (#[ignore], run explicitly). Same feature/skip gating as the fleet replay test.
 nt_rust_test(

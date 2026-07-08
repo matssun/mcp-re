@@ -74,11 +74,11 @@ fn signed_request_is_accepted_by_core_verifier_and_hash_matches() {
     .expect("sign");
 
     let resolver = resolver(&key);
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).expect("parse issued_at");
 
     let verified =
-        verify_request_draft02(signed.wire_bytes(), &resolver, &mut replay, &config(), now)
+        verify_request_draft02(signed.wire_bytes(), &resolver, &replay, &config(), now)
             .expect("client-signed draft-02 request must verify");
 
     // The client's request_hash is exactly the verifier's response-binding handle.
@@ -109,11 +109,11 @@ fn tampering_an_argument_breaks_verification() {
     let tampered = serde_json::to_vec(&object).unwrap();
 
     let resolver = resolver(&key);
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).expect("parse");
 
     assert_eq!(
-        verify_request_draft02(&tampered, &resolver, &mut replay, &config(), now).unwrap_err(),
+        verify_request_draft02(&tampered, &resolver, &replay, &config(), now).unwrap_err(),
         McpReError::InvalidSignature
     );
 }
@@ -131,13 +131,13 @@ fn wrong_audience_is_rejected_by_the_verifier() {
     .expect("sign");
 
     let resolver = resolver(&key);
-    let mut replay = InMemoryReplayCache::new(60);
+    let replay = InMemoryReplayCache::new(60);
     let now = parse_rfc3339_utc(ISSUED_AT).expect("parse");
     let mut other = config();
     other.expected_audience = "did:example:someone-else".to_string();
 
     assert_eq!(
-        verify_request_draft02(signed.wire_bytes(), &resolver, &mut replay, &other, now)
+        verify_request_draft02(signed.wire_bytes(), &resolver, &replay, &other, now)
             .unwrap_err(),
         McpReError::InvalidAudience
     );

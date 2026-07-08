@@ -176,7 +176,7 @@ fn matching_ctx() -> RetainedContinuation<'static> {
 struct DurableCache(InMemoryReplayCache);
 impl ReplayCache for DurableCache {
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
@@ -213,8 +213,8 @@ fn full_exchange_activates_all_blocks() {
     assert_eq!(verified.audience_hash.as_deref(), Some(audience().audience_hash()).as_deref());
 
     // Dispatcher drives replay + continuation over the verified evidence.
-    let mut cache = strict_cache();
-    let outcome = dispatch_request(&verified, &mut cache, Some(matching_ctx()), &strict_cfg())
+    let cache = strict_cache();
+    let outcome = dispatch_request(&verified, &cache, Some(matching_ctx()), &strict_cfg())
         .expect("dispatch admits");
     assert!(outcome.continuation_verified, "continuation must be active");
 
@@ -322,10 +322,10 @@ fn replay_fails_in_integrated_path() {
     let (req, _ev) = signed_request(&block, "nonce-1");
     let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
         .expect("verifies");
-    let mut cache = strict_cache();
+    let cache = strict_cache();
 
-    dispatch_request(&verified, &mut cache, Some(matching_ctx()), &strict_cfg()).expect("first admit");
-    let err = dispatch_request(&verified, &mut cache, Some(matching_ctx()), &strict_cfg()).unwrap_err();
+    dispatch_request(&verified, &cache, Some(matching_ctx()), &strict_cfg()).expect("first admit");
+    let err = dispatch_request(&verified, &cache, Some(matching_ctx()), &strict_cfg()).unwrap_err();
     assert_eq!(err, DispatchError::ReplayDetected);
     assert_eq!(err.wire_code(), "mcp-re.replay_detected");
 }
@@ -338,14 +338,14 @@ fn continuation_mismatch_fails_in_integrated_path() {
     let (req, _ev) = signed_request(&block, "nonce-1");
     let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
         .expect("verifies");
-    let mut cache = strict_cache();
+    let cache = strict_cache();
 
     // Tampered requestState against the retained bases.
     let bad_ctx = RetainedContinuation {
         request_state: b"tampered-request-state",
         ..matching_ctx()
     };
-    let err = dispatch_request(&verified, &mut cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
+    let err = dispatch_request(&verified, &cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
     assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
     assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
 }

@@ -16,8 +16,8 @@
 //! The draft-02 request is signed by `mcp-re-client-core` (the real client seam);
 //! the draft-01 request by `mcp-re-host` (the legacy ambassador).
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_client_core::build_signed_request_with_signer;
 use mcp_re_client_core::verify_signed_response;
@@ -75,16 +75,16 @@ fn server_resolver() -> InMemoryTrustResolver {
 
 /// The bytes the inner server received (so the injected verified context is
 /// observable).
-type Captured = Rc<RefCell<Option<Value>>>;
+type Captured = Arc<Mutex<Option<Value>>>;
 
 /// A proxy wrapping a plain-MCP echo inner that records the forwarded request.
 fn proxy_with_capture() -> (Proxy, Captured) {
-    let captured: Captured = Rc::new(RefCell::new(None));
-    let sink = Rc::clone(&captured);
+    let captured: Captured = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&captured);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses forwarded request");
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        *sink.borrow_mut() = Some(value);
+        *sink.lock().unwrap() = Some(value);
         serde_json::to_vec(&json!({
             "jsonrpc": "2.0", "id": id,
             "result": { "content": [ { "type": "text", "text": "ok" } ] }
@@ -106,7 +106,7 @@ fn proxy_with_capture() -> (Proxy, Captured) {
 /// The verified-context block the proxy injected into the forwarded request.
 fn injected_context(captured: &Captured) -> Value {
     captured
-        .borrow()
+        .lock().unwrap()
         .as_ref()
         .expect("inner was reached")["params"]["_meta"][VERIFIED_META_KEY]
         .clone()

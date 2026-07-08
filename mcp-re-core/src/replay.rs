@@ -41,6 +41,7 @@
 //! `ReplayDurabilityTier` (ADR-MCPS-020).
 
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use crate::error::McpReError;
 
@@ -141,8 +142,14 @@ impl From<ReplayCacheError> for McpReError {
 pub trait ReplayCache {
     /// Atomically check whether `(signer, audience, nonce)` was already seen and
     /// record it if not.
+    ///
+    /// Takes `&self` (not `&mut self`): a replay cache is a shared coherent tier
+    /// consulted concurrently by many per-core serving tasks (ADR-MCPRE-051 §2),
+    /// so implementations carry interior synchronization — the shared/atomic
+    /// stores already do, and the in-memory reference cache locks its map. This
+    /// is what lets a single `Proxy` be `Send + Sync` and shared across cores.
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
@@ -185,12 +192,30 @@ pub trait ReplayCache {
 ///
 /// A distributed deployment MUST share replay state across verifiers; this
 /// per-process cache does not prevent cross-node replays.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InMemoryReplayCache {
     /// Symmetric clock skew added to `expires_at_unix` to compute retain-until.
     max_clock_skew_secs: i64,
     /// `(signer, audience, nonce)` -> retain-until Unix seconds.
-    seen: BTreeMap<(String, String, String), i64>,
+    ///
+    /// Behind a [`Mutex`] so `check_and_insert` and `prune` take `&self`
+    /// (ADR-MCPRE-051 §2): the reference cache carries the same interior
+    /// synchronization as [`InMemoryAtomicReplayStore`], letting a shared
+    /// `Proxy` be `Send + Sync` across per-core serving tasks. The lock is held
+    /// only for the O(log n) map op; the check-and-insert stays atomic.
+    seen: Mutex<BTreeMap<(String, String, String), i64>>,
+}
+
+impl Clone for InMemoryReplayCache {
+    /// Deep, independent copy of the seen-set (the reference cache is not a
+    /// shared handle — cloning yields a private map, unlike the `Arc`-shared
+    /// [`InMemoryAtomicReplayStore`]).
+    fn clone(&self) -> Self {
+        InMemoryReplayCache {
+            max_clock_skew_secs: self.max_clock_skew_secs,
+            seen: Mutex::new(self.seen.lock().expect("replay mutex poisoned").clone()),
+        }
+    }
 }
 
 impl InMemoryReplayCache {
@@ -199,7 +224,7 @@ impl InMemoryReplayCache {
     pub fn new(max_clock_skew_secs: i64) -> Self {
         InMemoryReplayCache {
             max_clock_skew_secs,
-            seen: BTreeMap::new(),
+            seen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -208,15 +233,19 @@ impl InMemoryReplayCache {
     /// After eviction a previously-seen triple becomes [`ReplayDecision::Fresh`]
     /// again — by which point it can no longer pass the freshness window, so
     /// readmitting its nonce is safe. Pruning is explicit and side-effect free
-    /// beyond the eviction itself, keeping the cache deterministic.
-    pub fn prune(&mut self, now_unix: i64) {
-        self.seen.retain(|_, &mut retain_until| retain_until >= now_unix);
+    /// beyond the eviction itself, keeping the cache deterministic. Takes
+    /// `&self` via the interior [`Mutex`].
+    pub fn prune(&self, now_unix: i64) {
+        self.seen
+            .lock()
+            .expect("replay mutex poisoned")
+            .retain(|_, &mut retain_until| retain_until >= now_unix);
     }
 }
 
 impl ReplayCache for InMemoryReplayCache {
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
@@ -227,11 +256,15 @@ impl ReplayCache for InMemoryReplayCache {
             audience.to_string(),
             nonce.to_string(),
         );
-        if self.seen.contains_key(&key) {
+        // The check-and-insert is atomic: the lock spans both the presence
+        // check and the insert, so two concurrent callers racing the same
+        // triple cannot both observe it absent (exactly one `Fresh`).
+        let mut seen = self.seen.lock().expect("replay mutex poisoned");
+        if seen.contains_key(&key) {
             return Ok(ReplayDecision::Replay);
         }
         let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
-        self.seen.insert(key, retain_until);
+        seen.insert(key, retain_until);
         Ok(ReplayDecision::Fresh)
     }
 
@@ -268,7 +301,7 @@ mod tests {
 
     impl ReplayCache for AlwaysUnavailableReplayCache {
         fn check_and_insert(
-            &mut self,
+            &self,
             _signer: &str,
             _audience: &str,
             _nonce: &str,
@@ -282,7 +315,7 @@ mod tests {
 
     #[test]
     fn first_insert_is_fresh() {
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -291,7 +324,7 @@ mod tests {
 
     #[test]
     fn same_triple_again_is_replay() {
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -306,7 +339,7 @@ mod tests {
     fn different_audience_same_nonce_is_fresh() {
         // Multi-tenant keying: the same nonce under a different audience is a
         // distinct key and must NOT be flagged as a replay.
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -319,7 +352,7 @@ mod tests {
 
     #[test]
     fn different_signer_same_nonce_is_fresh() {
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -332,7 +365,7 @@ mod tests {
 
     #[test]
     fn prune_after_retain_until_readmits_triple() {
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         assert_eq!(
             cache.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh)
@@ -355,7 +388,7 @@ mod tests {
 
     #[test]
     fn in_memory_cache_never_errors() {
-        let mut cache = InMemoryReplayCache::new(SKEW);
+        let cache = InMemoryReplayCache::new(SKEW);
         // Any number of distinct inserts succeed without an operational failure.
         for i in 0..5 {
             let nonce = format!("nonce-{i:022}");
@@ -395,7 +428,7 @@ mod tests {
 
     #[test]
     fn operational_failure_maps_to_replay_cache_unavailable() {
-        let mut cache = AlwaysUnavailableReplayCache;
+        let cache = AlwaysUnavailableReplayCache;
         let err = cache
             .check_and_insert(SIGNER, AUD, NONCE, EXPIRES)
             .expect_err("always-unavailable cache must fail");

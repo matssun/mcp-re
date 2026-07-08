@@ -104,8 +104,8 @@ fn host_signs_request_accepted_by_verifier() {
     let bytes = signed_echo_request();
     let now = mcp_re_core::parse_rfc3339_utc(ISSUED_AT).expect("parse") + 60;
 
-    let mut replay = InMemoryReplayCache::new(SKEW);
-    let verified = verify_request(&bytes, &inbound_resolver(), &mut replay, &config(), now)
+    let replay = InMemoryReplayCache::new(SKEW);
+    let verified = verify_request(&bytes, &inbound_resolver(), &replay, &config(), now)
         .expect("verifier accepts the host-signed request");
 
     assert_eq!(verified.verified_signer, SIGNER);
@@ -167,8 +167,8 @@ fn host_overwrites_caller_supplied_request_envelope() {
         .expect("host signs");
 
     let now = mcp_re_core::parse_rfc3339_utc(ISSUED_AT).expect("parse") + 60;
-    let mut replay = InMemoryReplayCache::new(SKEW);
-    let verified = verify_request(&bytes, &inbound_resolver(), &mut replay, &config(), now)
+    let replay = InMemoryReplayCache::new(SKEW);
+    let verified = verify_request(&bytes, &inbound_resolver(), &replay, &config(), now)
         .expect("host-authored envelope verifies");
     assert_eq!(
         verified.verified_signer, SIGNER,

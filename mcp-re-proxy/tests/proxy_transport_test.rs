@@ -7,8 +7,8 @@
 //! and the inner server is never reached. Without a binding policy the transport
 //! identity is ignored (a pre-Phase-6 sidecar).
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
@@ -46,15 +46,15 @@ fn resolver() -> InMemoryTrustResolver {
     r
 }
 
-type Calls = Rc<RefCell<Vec<Value>>>;
+type Calls = Arc<Mutex<Vec<Value>>>;
 
 fn proxy(bind: bool) -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses");
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
     };
     let mut p = Proxy::new(
@@ -103,7 +103,7 @@ fn signer_bound_to_matching_identity_is_allowed() {
     let req = signed_request("nonce-bind-ok-1");
     let id = identity(SIGNER);
     let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
-    assert_eq!(calls.borrow().len(), 1, "bound request reaches the inner");
+    assert_eq!(calls.lock().unwrap().len(), 1, "bound request reaches the inner");
     let value: Value = serde_json::from_slice(&response).unwrap();
     assert!(value.get("error").is_none(), "no error for a bound request");
 }
@@ -114,7 +114,7 @@ fn mismatched_identity_is_denied_before_dispatch() {
     let req = signed_request("nonce-bind-mm-1");
     let id = identity("did:example:someone-else");
     let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
-    assert_eq!(calls.borrow().len(), 0, "mismatch must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "mismatch must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -123,7 +123,7 @@ fn absent_identity_is_denied_when_binding_required() {
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-none1");
     let response = proxy.handle_with_transport(&req, now(), None, None);
-    assert_eq!(calls.borrow().len(), 0, "absent identity must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "absent identity must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -134,7 +134,7 @@ fn without_binding_the_transport_identity_is_ignored() {
     // Even a clearly-wrong identity is ignored when no binding is configured.
     let id = identity("did:example:irrelevant");
     let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
-    assert_eq!(calls.borrow().len(), 1, "no binding → request is forwarded");
+    assert_eq!(calls.lock().unwrap().len(), 1, "no binding → request is forwarded");
     let value: Value = serde_json::from_slice(&response).unwrap();
     assert!(value.get("error").is_none());
 }
@@ -156,7 +156,7 @@ fn valid_identity_does_not_rescue_a_tampered_signature() {
     let id = identity(SIGNER);
     let response = proxy.handle_with_transport(&tampered, now(), Some(&id), None);
 
-    assert_eq!(calls.borrow().len(), 0, "a tampered request must never reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a tampered request must never reach the inner");
     assert_eq!(error_message(&response), "mcp-re.invalid_signature");
 }
 
@@ -167,6 +167,6 @@ fn plain_handle_is_equivalent_to_no_identity() {
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-plain");
     let response = proxy.handle(&req, now());
-    assert_eq!(calls.borrow().len(), 0);
+    assert_eq!(calls.lock().unwrap().len(), 0);
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }

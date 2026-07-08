@@ -23,8 +23,8 @@
 //!     regardless of a perfectly valid assertion (object verify runs first).
 //! Every rejection asserts the inner was NEVER reached.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 use mcp_re_core::b64url_encode;
 use mcp_re_core::request_hash;
@@ -80,17 +80,17 @@ fn server_resolver() -> InMemoryTrustResolver {
     r
 }
 
-type Calls = Rc<RefCell<Vec<Value>>>;
+type Calls = Arc<Mutex<Vec<Value>>>;
 
 /// A proxy wired EXACTLY as `main.rs` wires `BindingKind::LbAssertion`: the SAME
 /// ExactMatchBinding plus the Tier-3 verifier trusting `lb_key` under `LB_KEY_ID`.
 fn lb_proxy() -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses");
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": { "ok": true } })).unwrap()
     };
     let mut binding = LbAssertionBinding::new(IdentitySource::UriSan);
@@ -182,7 +182,7 @@ fn valid_request_bound_assertion_reaches_inner_and_response_verifies() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 1, "a valid request-bound assertion must reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 1, "a valid request-bound assertion must reach the inner");
     // The returned envelope is a real signed, request-bound response.
     verify_response(&response, &server_resolver(), &rh)
         .expect("the response must be a signed, request-bound envelope");
@@ -200,7 +200,7 @@ fn cross_request_assertion_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "a cross-request assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a cross-request assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -218,7 +218,7 @@ fn tampered_assertion_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&tampered));
 
-    assert_eq!(calls.borrow().len(), 0, "a tampered assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a tampered assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -233,7 +233,7 @@ fn unknown_lb_key_assertion_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "an unknown-key assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "an unknown-key assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -248,7 +248,7 @@ fn stale_assertion_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "a stale assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a stale assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -259,7 +259,7 @@ fn missing_assertion_header_under_lb_mode_is_rejected_before_dispatch() {
     // No assertion header presented while the LB verifier is configured.
     let response = proxy.handle_with_transport(&req, now(), None, None);
 
-    assert_eq!(calls.borrow().len(), 0, "a missing assertion header must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a missing assertion header must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -286,7 +286,7 @@ fn tampered_object_signature_fails_regardless_of_a_valid_assertion() {
 
     let response = proxy.handle_with_transport(&tampered, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "a tampered object must never reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a tampered object must never reach the inner");
     assert_eq!(
         error_message(&response),
         "mcp-re.invalid_signature",
@@ -312,12 +312,12 @@ fn attestor_key() -> SigningKey {
 /// SAME ExactMatchBinding plus the v2 verifier trusting `attestor_key` under
 /// `ATTESTOR_KEY_ID`, the node audience `AUDIENCE`, and the trusted `INGRESS_ID`.
 fn attested_ingress_proxy() -> (Proxy, Calls) {
-    let calls: Calls = Rc::new(RefCell::new(Vec::new()));
-    let calls_for_inner = Rc::clone(&calls);
+    let calls: Calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_for_inner = Arc::clone(&calls);
     let inner = move |request: &[u8]| -> Vec<u8> {
         let value: Value = serde_json::from_slice(request).expect("inner parses");
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        calls_for_inner.borrow_mut().push(value);
+        calls_for_inner.lock().unwrap().push(value);
         serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": { "ok": true } })).unwrap()
     };
     let mut binding = LbAssertionV2Binding::new(IdentitySource::UriSan, AUDIENCE);
@@ -371,7 +371,7 @@ fn mode_c_valid_assertion_reaches_inner_and_response_verifies() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 1, "a valid Mode-C assertion must reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 1, "a valid Mode-C assertion must reach the inner");
     verify_response(&response, &server_resolver(), &rh)
         .expect("the response must be a signed, request-bound envelope");
 }
@@ -388,7 +388,7 @@ fn mode_c_revoked_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
 
-    assert_eq!(calls.borrow().len(), 0, "a revoked-cert assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a revoked-cert assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -404,7 +404,7 @@ fn mode_c_stale_crl_freshness_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
 
-    assert_eq!(calls.borrow().len(), 0, "a stale-CRL assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a stale-CRL assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -420,7 +420,7 @@ fn mode_c_bad_signature_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&forged));
 
-    assert_eq!(calls.borrow().len(), 0, "a bad-signature assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a bad-signature assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -434,7 +434,7 @@ fn mode_c_cross_request_hash_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "a cross-request assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a cross-request assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -448,7 +448,7 @@ fn mode_c_untrusted_ingress_identity_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
 
-    assert_eq!(calls.borrow().len(), 0, "an untrusted-ingress assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "an untrusted-ingress assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -462,7 +462,7 @@ fn mode_c_audience_mismatch_is_rejected_before_dispatch() {
 
     let response = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&a)));
 
-    assert_eq!(calls.borrow().len(), 0, "an audience-mismatch assertion must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "an audience-mismatch assertion must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -473,7 +473,7 @@ fn mode_c_missing_assertion_header_is_rejected_before_dispatch() {
     // No assertion header while the Mode-C verifier requires it (assertion-required).
     let response = proxy.handle_with_transport(&req, now(), None, None);
 
-    assert_eq!(calls.borrow().len(), 0, "a missing assertion header must not reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a missing assertion header must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
 
@@ -491,7 +491,7 @@ fn mode_c_object_signature_fails_regardless_of_a_valid_assertion() {
 
     let response = proxy.handle_with_transport(&tampered, now(), None, Some(&assertion));
 
-    assert_eq!(calls.borrow().len(), 0, "a tampered object must never reach the inner");
+    assert_eq!(calls.lock().unwrap().len(), 0, "a tampered object must never reach the inner");
     assert_eq!(error_message(&response), "mcp-re.invalid_signature");
 }
 
@@ -503,17 +503,17 @@ fn mode_c_forwarded_request_is_byte_identical_to_mode_a() {
     // it receives under Mode A (end_to_end_mtls / exact) for the same signed request:
     // Mode-C facts ride the v2 assertion, never the forwarded draft-02 request
     // preimage. The inner strips the MCP-RE envelope identically in both modes.
-    let captured_a: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
-    let captured_c: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
+    let captured_a: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+    let captured_c: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
 
     let req = signed_request("nonce-c-invariance-1");
     let rh = request_hash_of(&req);
 
     // Mode A: exact binding, identity supplied at the connection seam.
     {
-        let cap = Rc::clone(&captured_a);
+        let cap = Arc::clone(&captured_a);
         let inner = move |request: &[u8]| -> Vec<u8> {
-            *cap.borrow_mut() = Some(request.to_vec());
+            *cap.lock().unwrap() = Some(request.to_vec());
             let value: Value = serde_json::from_slice(request).expect("parse");
             let id = value.get("id").cloned().unwrap_or(Value::Null);
             serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
@@ -529,9 +529,9 @@ fn mode_c_forwarded_request_is_byte_identical_to_mode_a() {
 
     // Mode C: attested ingress, identity from the v2 assertion.
     {
-        let cap = Rc::clone(&captured_c);
+        let cap = Arc::clone(&captured_c);
         let inner = move |request: &[u8]| -> Vec<u8> {
-            *cap.borrow_mut() = Some(request.to_vec());
+            *cap.lock().unwrap() = Some(request.to_vec());
             let value: Value = serde_json::from_slice(request).expect("parse");
             let id = value.get("id").cloned().unwrap_or(Value::Null);
             serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": id, "result": {} })).unwrap()
@@ -548,8 +548,8 @@ fn mode_c_forwarded_request_is_byte_identical_to_mode_a() {
         let _ = proxy.handle_with_transport(&req, now(), None, Some(&mint_v2(&v2_valid(&rh))));
     }
 
-    let a = captured_a.borrow().clone().expect("Mode A forwarded a request");
-    let c = captured_c.borrow().clone().expect("Mode C forwarded a request");
+    let a = captured_a.lock().unwrap().clone().expect("Mode A forwarded a request");
+    let c = captured_c.lock().unwrap().clone().expect("Mode C forwarded a request");
     assert_eq!(
         a, c,
         "the forwarded draft-02 request preimage under Mode C must be byte-identical \

@@ -190,12 +190,12 @@ fn run() -> Result<(), String> {
     //    This is for the operator-facing log line; the proxy performs its own
     //    authoritative verification + evaluation below in `handle`.
     let resolver = inbound_resolver();
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let config = VerificationConfig {
         expected_audience: AUDIENCE.to_string(),
         max_clock_skew_secs: SKEW,
     };
-    let verified = verify_request(&request, &resolver, &mut replay, &config, now())
+    let verified = verify_request(&request, &resolver, &replay, &config, now())
         .map_err(|e| format!("verify_request (for log): {e:?}"))?;
     let request_value: Value =
         serde_json::from_slice(&request).map_err(|e| format!("parse request: {e}"))?;

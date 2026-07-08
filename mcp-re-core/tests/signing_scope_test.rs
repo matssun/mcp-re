@@ -99,21 +99,21 @@ fn raw(obj: &Value) -> Vec<u8> {
 
 #[test]
 fn baseline_request_with_trace_and_protocol_verifies() {
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let obj = signed_request_with_trace_and_protocol();
-    assert!(verify_request(&raw(&obj), &resolver(), &mut replay, &config(), now()).is_ok());
+    assert!(verify_request(&raw(&obj), &resolver(), &replay, &config(), now()).is_ok());
 }
 
 #[test]
 fn mutating_traceparent_after_signing_still_verifies() {
     // A tracing middle box rewrites traceparent in flight. Because it is out of
     // signing scope, the signature still verifies.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let mut obj = signed_request_with_trace_and_protocol();
     obj["params"]["_meta"]["traceparent"] =
         Value::String("00-1111111111111111111111111111111111-2222222222222222-01".into());
     assert!(
-        verify_request(&raw(&obj), &resolver(), &mut replay, &config(), now()).is_ok(),
+        verify_request(&raw(&obj), &resolver(), &replay, &config(), now()).is_ok(),
         "rewriting an out-of-scope trace field must not break verification"
     );
 }
@@ -122,11 +122,11 @@ fn mutating_traceparent_after_signing_still_verifies() {
 fn mutating_protocol_version_after_signing_fails_verification() {
     // protocolVersion is in signing scope (ADR-026 rule 2): altering it after
     // signing is a downgrade attempt and MUST fail closed.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let mut obj = signed_request_with_trace_and_protocol();
     obj["params"]["_meta"]["protocolVersion"] = Value::String("2025-06-18".into());
     assert_eq!(
-        verify_request(&raw(&obj), &resolver(), &mut replay, &config(), now()),
+        verify_request(&raw(&obj), &resolver(), &replay, &config(), now()),
         Err(McpReError::InvalidSignature)
     );
 }

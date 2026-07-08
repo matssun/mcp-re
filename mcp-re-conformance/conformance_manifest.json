@@ -102,6 +102,7 @@
     "//mcp-re-proxy:cpstore_etcd_e2e_test",
     "//mcp-re-proxy:dev_env_key_source_test",
     "//mcp-re-proxy:fault_injection_test",
+    "//mcp-re-proxy:fleet_mrt_replica_switch_e2e_test",
     "//mcp-re-proxy:fleet_replay_e2e_test",
     "//mcp-re-proxy:fleet_throughput_bench",
     "//mcp-re-proxy:fleet_trust_epoch_e2e_test",

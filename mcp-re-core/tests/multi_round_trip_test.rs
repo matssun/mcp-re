@@ -101,13 +101,13 @@ fn now() -> i64 {
 fn continuation_leg_with_fresh_nonce_is_accepted() {
     // A shared replay cache stands in for "any instance may continue the exchange"
     // (SEP-2567): leg 1 then leg 2, each a fresh nonce, both accepted.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let leg1 = signed_leg("req-1", NONCE_LEG_1, Some("resume-after-leg-1"));
     let leg2 = signed_leg("req-2", NONCE_LEG_2, Some("resume-after-leg-1"));
 
-    assert!(verify_request(&leg1, &resolver(), &mut replay, &config(), now()).is_ok());
+    assert!(verify_request(&leg1, &resolver(), &replay, &config(), now()).is_ok());
     assert!(
-        verify_request(&leg2, &resolver(), &mut replay, &config(), now()).is_ok(),
+        verify_request(&leg2, &resolver(), &replay, &config(), now()).is_ok(),
         "a continuation leg with a fresh nonce must NOT be treated as a replay"
     );
 }
@@ -115,11 +115,11 @@ fn continuation_leg_with_fresh_nonce_is_accepted() {
 #[test]
 fn replaying_a_leg_with_its_original_nonce_is_rejected() {
     // Re-sending leg 1 verbatim (same nonce) mid-exchange is a replay.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let leg1 = signed_leg("req-1", NONCE_LEG_1, Some("s"));
-    assert!(verify_request(&leg1, &resolver(), &mut replay, &config(), now()).is_ok());
+    assert!(verify_request(&leg1, &resolver(), &replay, &config(), now()).is_ok());
     assert_eq!(
-        verify_request(&leg1, &resolver(), &mut replay, &config(), now()),
+        verify_request(&leg1, &resolver(), &replay, &config(), now()),
         Err(McpReError::ReplayDetected)
     );
 }
@@ -128,16 +128,16 @@ fn replaying_a_leg_with_its_original_nonce_is_rejected() {
 fn request_state_does_not_purchase_replay_exemption() {
     // The SAME requestState echoed back with a REUSED nonce is still a replay:
     // requestState confers no freshness or replay-exemption.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let leg = signed_leg("req-1", NONCE_LEG_1, Some("identical-resume-state"));
-    assert!(verify_request(&leg, &resolver(), &mut replay, &config(), now()).is_ok());
+    assert!(verify_request(&leg, &resolver(), &replay, &config(), now()).is_ok());
 
     let resumed_same_nonce = signed_leg("req-2", NONCE_LEG_1, Some("identical-resume-state"));
     assert_eq!(
         verify_request(
             &resumed_same_nonce,
             &resolver(),
-            &mut replay,
+            &replay,
             &config(),
             now()
         ),
@@ -151,7 +151,7 @@ fn forged_request_state_breaks_the_signature() {
     // requestState is inside the signed JSON-RPC object (ADR-004 signs the whole
     // object). Mutating it after signing fails verification — a forged resume
     // payload cannot ride on a captured leg's signature.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let mut obj: Value =
         serde_json::from_slice(&signed_leg("req-1", NONCE_LEG_1, Some("authentic-state")))
             .expect("parse");
@@ -159,7 +159,7 @@ fn forged_request_state_breaks_the_signature() {
     let tampered = serde_json::to_vec(&obj).expect("serialize");
 
     assert_eq!(
-        verify_request(&tampered, &resolver(), &mut replay, &config(), now()),
+        verify_request(&tampered, &resolver(), &replay, &config(), now()),
         Err(McpReError::InvalidSignature)
     );
 }
@@ -169,19 +169,19 @@ fn retry_with_a_fresh_nonce_is_accepted_but_reused_nonce_is_rejected() {
     // Availability: a dropped leg retried with a NEW nonce is accepted; the same
     // leg retried with the SAME nonce is rejected. Idempotency lives in
     // fresh-nonce-per-attempt, never in nonce reuse.
-    let mut replay = InMemoryReplayCache::new(SKEW);
+    let replay = InMemoryReplayCache::new(SKEW);
     let attempt = signed_leg("req-1", NONCE_LEG_1, None);
-    assert!(verify_request(&attempt, &resolver(), &mut replay, &config(), now()).is_ok());
+    assert!(verify_request(&attempt, &resolver(), &replay, &config(), now()).is_ok());
 
     let retry_reused = signed_leg("req-1", NONCE_LEG_1, None);
     assert_eq!(
-        verify_request(&retry_reused, &resolver(), &mut replay, &config(), now()),
+        verify_request(&retry_reused, &resolver(), &replay, &config(), now()),
         Err(McpReError::ReplayDetected)
     );
 
     let retry_fresh = signed_leg("req-1", NONCE_RETRY, None);
     assert!(
-        verify_request(&retry_fresh, &resolver(), &mut replay, &config(), now()).is_ok(),
+        verify_request(&retry_fresh, &resolver(), &replay, &config(), now()).is_ok(),
         "a retry with a fresh nonce must be accepted, not mistaken for a replay"
     );
 }

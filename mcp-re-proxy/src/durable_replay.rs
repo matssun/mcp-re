@@ -47,10 +47,15 @@
 //! [`ReplayCacheError::Unavailable`] rather than growing unbounded — never a
 //! silent "allow". A present, unexpired entry is still a replay until pruned.
 //!
-//! Concurrency: a single [`DurableReplayCache`] is NOT internally synchronized
-//! (`&mut self` on insert); the proxy serializes access (single-threaded serve
-//! loop / interior `RefCell`). Two PROCESSES sharing one file is unsupported —
-//! last-writer-wins on the rename can drop the other's entries.
+//! Concurrency: the mutable state (`entries` + prune counter) lives behind an
+//! interior [`Mutex`] so `check_and_insert` takes `&self` and the cache is
+//! `Send + Sync` — a single shared `Proxy` can be consulted from every per-core
+//! serving task (ADR-MCPRE-051 §2). The lock spans the check-insert-persist so
+//! two concurrent callers racing the same nonce cannot both see it absent
+//! (exactly one `Fresh`); the persist I/O runs under the lock, which the
+//! single-node durability contract already requires. Two PROCESSES sharing one
+//! file is still unsupported — last-writer-wins on the rename can drop the
+//! other's entries.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -58,6 +63,7 @@ use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
@@ -110,14 +116,22 @@ const PRUNE_EVERY_N_INSERTS: u64 = 64;
 /// window drains the backlog as entries expire.
 const MAX_ENTRIES: usize = 1_000_000;
 
-/// A file-backed durable replay cache.
-pub struct DurableReplayCache {
-    path: PathBuf,
-    max_clock_skew_secs: i64,
+/// The mutable interior of a [`DurableReplayCache`], guarded by one [`Mutex`] so
+/// the whole check-insert-persist step is atomic under `&self`.
+struct DurableState {
     entries: BTreeMap<Key, i64>,
     /// Count of admitted inserts since open; drives the opportunistic-prune
     /// cadence (`PRUNE_EVERY_N_INSERTS`).
     inserts_since_prune: u64,
+}
+
+/// A file-backed durable replay cache.
+pub struct DurableReplayCache {
+    path: PathBuf,
+    max_clock_skew_secs: i64,
+    /// Mutable state behind an interior lock so `check_and_insert`/`prune` take
+    /// `&self` and the cache is `Send + Sync` (ADR-MCPRE-051 §2).
+    state: Mutex<DurableState>,
     /// Fail-closed ceiling on retained entries (defaults to [`MAX_ENTRIES`]).
     /// Held as a field so tests can exercise the ceiling cheaply without
     /// inserting a million entries; production always uses the default.
@@ -129,11 +143,15 @@ pub struct DurableReplayCache {
 
 impl std::fmt::Debug for DurableReplayCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (entries_len, inserts_since_prune) = match self.state.lock() {
+            Ok(s) => (s.entries.len(), s.inserts_since_prune),
+            Err(_) => (0, 0),
+        };
         f.debug_struct("DurableReplayCache")
             .field("path", &self.path)
             .field("max_clock_skew_secs", &self.max_clock_skew_secs)
-            .field("entries", &self.entries.len())
-            .field("inserts_since_prune", &self.inserts_since_prune)
+            .field("entries", &entries_len)
+            .field("inserts_since_prune", &inserts_since_prune)
             .field("max_entries", &self.max_entries)
             .finish_non_exhaustive()
     }
@@ -152,8 +170,10 @@ impl DurableReplayCache {
         Ok(DurableReplayCache {
             path,
             max_clock_skew_secs,
-            entries,
-            inserts_since_prune: 0,
+            state: Mutex::new(DurableState {
+                entries,
+                inserts_since_prune: 0,
+            }),
             max_entries: MAX_ENTRIES,
             clock: system_clock(),
         })
@@ -185,32 +205,44 @@ impl DurableReplayCache {
     /// boundaries are safe (past `retain_until` the nonce can no longer pass the
     /// freshness window, so readmission is not exploitable); aligning them removes
     /// a one-second cross-backend inconsistency in the exact eviction instant.
-    pub fn prune(&mut self, now_unix: i64) -> io::Result<()> {
-        self.entries.retain(|_, &mut retain_until| retain_until >= now_unix);
-        persist(&self.path, &self.entries)
+    pub fn prune(&self, now_unix: i64) -> io::Result<()> {
+        let mut state = self.state.lock().expect("replay mutex poisoned");
+        state
+            .entries
+            .retain(|_, &mut retain_until| retain_until >= now_unix);
+        persist(&self.path, &state.entries)
     }
 
     /// Number of live entries (test/inspection aid).
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.state.lock().expect("replay mutex poisoned").entries.len()
     }
 
     /// Whether the cache holds no entries.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.state
+            .lock()
+            .expect("replay mutex poisoned")
+            .entries
+            .is_empty()
     }
 }
 
 impl ReplayCache for DurableReplayCache {
     fn check_and_insert(
-        &mut self,
+        &self,
         signer: &str,
         audience: &str,
         nonce: &str,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
         let key: Key = (signer.to_string(), audience.to_string(), nonce.to_string());
-        if self.entries.contains_key(&key) {
+        // Hold the lock across the whole check-insert-persist so two callers
+        // racing the same nonce cannot both observe it absent (exactly one
+        // `Fresh`), matching the single-node serialization the durability
+        // contract already assumed.
+        let mut state = self.state.lock().expect("replay mutex poisoned");
+        if state.entries.contains_key(&key) {
             return Ok(ReplayDecision::Replay);
         }
 
@@ -224,11 +256,12 @@ impl ReplayCache for DurableReplayCache {
         // expires_at + skew`) and would over-evict still-live entries, reopening a
         // replay window. Pruning at the real `now` evicts only entries strictly
         // past their own `retain_until` (`>=` boundary, matching `prune`).
-        self.inserts_since_prune = self.inserts_since_prune.saturating_add(1);
-        if self.inserts_since_prune >= PRUNE_EVERY_N_INSERTS {
-            self.inserts_since_prune = 0;
+        state.inserts_since_prune = state.inserts_since_prune.saturating_add(1);
+        if state.inserts_since_prune >= PRUNE_EVERY_N_INSERTS {
+            state.inserts_since_prune = 0;
             let now = (self.clock)();
-            self.entries
+            state
+                .entries
                 .retain(|_, &mut retain_until| retain_until >= now);
         }
 
@@ -236,7 +269,7 @@ impl ReplayCache for DurableReplayCache {
         // above, admitting this entry would exceed the cap, refuse it as
         // Unavailable (→ `mcp-re.replay_cache_unavailable`) rather than allow or
         // grow unbounded. The freshness window drains the backlog over time.
-        if self.entries.len() >= self.max_entries {
+        if state.entries.len() >= self.max_entries {
             return Err(ReplayCacheError::Unavailable {
                 details: format!(
                     "replay cache at capacity ({} entries); refusing to admit further nonces until expired entries drain",
@@ -246,10 +279,10 @@ impl ReplayCache for DurableReplayCache {
         }
 
         let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
-        self.entries.insert(key.clone(), retain_until);
-        if let Err(e) = persist(&self.path, &self.entries) {
+        state.entries.insert(key.clone(), retain_until);
+        if let Err(e) = persist(&self.path, &state.entries) {
             // Roll back so a transient persistence failure can be retried.
-            self.entries.remove(&key);
+            state.entries.remove(&key);
             return Err(ReplayCacheError::Unavailable {
                 details: format!("persist failed: {e}"),
             });
@@ -367,7 +400,7 @@ mod tests {
     fn first_is_fresh_then_replay() {
         let path = tmp("fresh_replay");
         let _ = std::fs::remove_file(&path);
-        let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+        let cache = DurableReplayCache::open(&path, 300).unwrap();
         assert_eq!(
             cache.check_and_insert("s", "a", "n1", 1000).unwrap(),
             ReplayDecision::Fresh
@@ -389,14 +422,14 @@ mod tests {
         let path = tmp("reopen");
         let _ = std::fs::remove_file(&path);
         {
-            let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+            let cache = DurableReplayCache::open(&path, 300).unwrap();
             assert_eq!(
                 cache.check_and_insert("s", "a", "n", 1000).unwrap(),
                 ReplayDecision::Fresh
             );
         }
         // Reopen: the nonce must still be seen as a replay.
-        let mut reopened = DurableReplayCache::open(&path, 300).unwrap();
+        let reopened = DurableReplayCache::open(&path, 300).unwrap();
         assert_eq!(
             reopened.check_and_insert("s", "a", "n", 1000).unwrap(),
             ReplayDecision::Replay
@@ -417,7 +450,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&tmp_sibling);
 
-        let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+        let cache = DurableReplayCache::open(&path, 300).unwrap();
         cache.check_and_insert("s", "a", "n", 1000).unwrap();
 
         assert!(path.exists(), "committed replay file must exist after insert");
@@ -426,7 +459,7 @@ mod tests {
             "no .tmp sibling may remain after a committed insert"
         );
         // Durable content: a reopen sees the nonce as a replay.
-        let mut reopened = DurableReplayCache::open(&path, 300).unwrap();
+        let reopened = DurableReplayCache::open(&path, 300).unwrap();
         assert_eq!(
             reopened.check_and_insert("s", "a", "n", 1000).unwrap(),
             ReplayDecision::Replay
@@ -439,7 +472,7 @@ mod tests {
     fn prune_removes_expired_and_frees_the_nonce() {
         let path = tmp("prune");
         let _ = std::fs::remove_file(&path);
-        let mut cache = DurableReplayCache::open(&path, 0).unwrap();
+        let cache = DurableReplayCache::open(&path, 0).unwrap();
         // retain_until = 1000 + 0 = 1000.
         cache.check_and_insert("s", "a", "n", 1000).unwrap();
         // Prune at now=2000 (> retain_until) drops it.
@@ -457,7 +490,7 @@ mod tests {
     fn persist_failure_is_unavailable_and_rolls_back() {
         // A path inside a non-existent directory cannot be written.
         let path = tmp("nope_dir").join("inner").join("cache.json");
-        let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+        let cache = DurableReplayCache::open(&path, 300).unwrap();
         let err = cache.check_and_insert("s", "a", "n", 1000).unwrap_err();
         assert!(matches!(err, ReplayCacheError::Unavailable { .. }));
         // Rolled back: not retained in memory.
@@ -496,12 +529,12 @@ mod tests {
         let path = tmp("leftover_tmp");
         let _ = std::fs::remove_file(&path);
         {
-            let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+            let cache = DurableReplayCache::open(&path, 300).unwrap();
             cache.check_and_insert("s", "a", "n", 1000).unwrap();
         }
         // Simulate interrupted write: a stale temp file beside the good main file.
         std::fs::write(path.with_extension("tmp"), b"garbage-interrupted-write").unwrap();
-        let mut reopened = DurableReplayCache::open(&path, 300).unwrap();
+        let reopened = DurableReplayCache::open(&path, 300).unwrap();
         assert_eq!(
             reopened.check_and_insert("s", "a", "n", 1000).unwrap(),
             ReplayDecision::Replay,
@@ -517,7 +550,7 @@ mod tests {
         // parseable document after every successful insert (never half-written).
         let path = tmp("valid_json");
         let _ = std::fs::remove_file(&path);
-        let mut cache = DurableReplayCache::open(&path, 300).unwrap();
+        let cache = DurableReplayCache::open(&path, 300).unwrap();
         for i in 0..25 {
             cache.check_and_insert("s", "a", &format!("n{i}"), 1000).unwrap();
             let bytes = std::fs::read(&path).unwrap();
@@ -525,7 +558,7 @@ mod tests {
             assert!(value.is_array(), "on-disk state stays a valid JSON array");
         }
         // And it reopens consistently with every committed nonce intact.
-        let mut reopened = DurableReplayCache::open(&path, 300).unwrap();
+        let reopened = DurableReplayCache::open(&path, 300).unwrap();
         assert_eq!(reopened.len(), 25);
         assert_eq!(
             reopened.check_and_insert("s", "a", "n0", 1000).unwrap(),
@@ -544,7 +577,7 @@ mod tests {
         let path = tmp("prune_boundary");
         let _ = std::fs::remove_file(&path);
         // skew = 30, expires_at = 1000 → retain_until = 1030.
-        let mut cache = DurableReplayCache::open(&path, 30).unwrap();
+        let cache = DurableReplayCache::open(&path, 30).unwrap();
         cache.check_and_insert("s", "a", "n", 1000).unwrap();
         let retain_until = 1030;
         // Prune AT retain_until keeps the entry (retain_until >= now).
@@ -578,7 +611,7 @@ mod tests {
         // Every streamed nonce expires before `now`, so each cadence-triggered
         // prune (anchored on the store's clock, NOT the request) evicts the
         // accumulated batch. We never call prune() explicitly.
-        let mut cache = DurableReplayCache::open(&path, 0)
+        let cache = DurableReplayCache::open(&path, 0)
             .unwrap()
             .with_clock(Box::new(|| 2_000));
 
@@ -616,7 +649,7 @@ mod tests {
         let path = tmp("inline_prune_safe");
         let _ = std::fs::remove_file(&path);
         // Fixed clock now = 5000; long-lived nonce retain_until = 100_030 >> now.
-        let mut cache = DurableReplayCache::open(&path, 30)
+        let cache = DurableReplayCache::open(&path, 30)
             .unwrap()
             .with_clock(Box::new(|| 5_000));
 
@@ -652,7 +685,7 @@ mod tests {
         let path = tmp("inline_prune_clock");
         let _ = std::fs::remove_file(&path);
         // Fixed clock now = 1000; live nonce retain_until = 2000 (> now).
-        let mut cache = DurableReplayCache::open(&path, 0)
+        let cache = DurableReplayCache::open(&path, 0)
             .unwrap()
             .with_clock(Box::new(|| 1_000));
         cache.check_and_insert("s", "a", "live", 2_000).unwrap();
@@ -684,7 +717,7 @@ mod tests {
         let path = tmp("ceiling");
         let _ = std::fs::remove_file(&path);
         let cap = 8;
-        let mut cache = DurableReplayCache::open(&path, 0).unwrap().with_max_entries(cap);
+        let cache = DurableReplayCache::open(&path, 0).unwrap().with_max_entries(cap);
         // Fill to capacity with non-expiring (far-future) nonces.
         for i in 0..cap as i64 {
             assert_eq!(
@@ -711,11 +744,11 @@ mod tests {
     fn expired_entries_evicted_safely_then_nonce_is_fresh() {
         let path = tmp("evict_safe");
         let _ = std::fs::remove_file(&path);
-        let mut cache = DurableReplayCache::open(&path, 0).unwrap();
+        let cache = DurableReplayCache::open(&path, 0).unwrap();
         cache.check_and_insert("s", "a", "n", 1000).unwrap();
         cache.prune(2000).unwrap();
         // Eviction persisted: a reopen does not resurrect the pruned nonce.
-        let mut reopened = DurableReplayCache::open(&path, 0).unwrap();
+        let reopened = DurableReplayCache::open(&path, 0).unwrap();
         assert!(reopened.is_empty());
         assert_eq!(
             reopened.check_and_insert("s", "a", "n", 3000).unwrap(),
