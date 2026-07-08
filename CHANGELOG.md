@@ -14,6 +14,24 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **Async authoritative replay tier — seam + L1-never-Fresh (ADR-MCPRE-051 §4,
+  Phase 2, MCPRE-117, part 1).** The async data plane checks replay without blocking a
+  runtime worker: a new `async_replay` module defines `AsyncAtomicReplayStore` — the
+  async analogue of `shared_replay::AtomicReplayStore`, one server-side-atomic
+  `atomic_insert_if_absent` awaited on the request path — with an in-memory reference
+  impl (`InMemoryAsyncAtomicReplayStore`). The per-core `L1FastRejectStore` sits in
+  front of the shared authoritative L2: it may fast-reject a key it already knows is
+  present (returning `Replay` with no L2 round-trip) but **can never answer `Fresh` —
+  `Fresh` is produced only by a winning L2 insert.** The property is enforced BY
+  CONSTRUCTION (the L1 lookup returns `Some(Replay)` or a miss — a type that cannot
+  express `Fresh`) and BY TEST. L1 is bounded per core with FIFO eviction that is
+  always safe (an evicted known key costs an L2 round-trip, never a false `Fresh`); an
+  L2 outage fails closed (`ReplayCacheUnavailable`) and recovers clean. A deterministic
+  suite (`async_replay_test`) proves L1 fast-reject-without-L2, eviction safety, outage
+  fail-closed + recovery, and **cross-core EXACTLY-ONE-`Fresh`** (many per-core tiers
+  over one shared L2 under concurrency). Concrete async Redis (`SET NX PX`) / etcd
+  (CAS) backends implement the same contract next; their live cross-replica proofs run
+  in the skip-when-absent infra lane. Conformance target count 79 → 80.
 - **Bounded graceful drain across cores — zero-abandoned (ADR-MCPRE-051 §6, Phase
   2, MCPRE-115).** On shutdown, each per-core `async_serve` loop stops accepting and
   then waits up to a bounded grace window (`ServerLimits::drain_grace`, default 30s)

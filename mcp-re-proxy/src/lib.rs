@@ -146,6 +146,12 @@ pub mod async_serve;
 // supersedes the single-shared-runtime scaffolding above. Same `async_serve` gate.
 #[cfg(feature = "async_serve")]
 pub mod async_fleet;
+// MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async authoritative replay tier seam —
+// the async AtomicReplayStore analogue + the per-core L1-never-Fresh fast-reject
+// wrapper, so the per-core data plane checks replay without blocking a runtime worker.
+// Same `async_serve` gate; concrete async Redis/etcd backends plug into this contract.
+#[cfg(feature = "async_serve")]
+pub mod async_replay;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.
