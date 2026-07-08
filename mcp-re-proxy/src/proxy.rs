@@ -47,9 +47,9 @@ use mcp_re_policy::AUTHORIZATION_META_KEY;
 use serde_json::json;
 use serde_json::Value;
 
-use crate::inner_launch::InnerLogEvent;
-use crate::inner_launch::InnerLogSink;
 use crate::key_source::ResponseSigner;
+use crate::log_sink::InnerLogEvent;
+use crate::log_sink::InnerLogSink;
 use crate::transport::LbAssertionBinding;
 use crate::transport::LbAssertionV2Binding;
 use crate::transport::TransportBindingPolicy;

@@ -52,6 +52,10 @@ _PROXY_LIB_SRCS = [
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource.rs",
     "src/lib.rs",
+    # Inner-server lifecycle logging seam (transport-agnostic; used by the async
+    # dispatch path). Split out of inner_launch so it stays in the PEP when the
+    # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
+    "src/log_sink.rs",
     "src/persistent_inner.rs",
     "src/proxy.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =

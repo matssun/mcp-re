@@ -68,9 +68,9 @@ use serde_json::json;
 use serde_json::Value;
 
 use crate::inner_launch::InnerLaunchConfig;
-use crate::inner_launch::InnerLogEvent;
-use crate::inner_launch::InnerLogSink;
-use crate::inner_launch::StderrLogSink;
+use crate::log_sink::InnerLogEvent;
+use crate::log_sink::InnerLogSink;
+use crate::log_sink::StderrLogSink;
 use crate::proxy::InnerServer;
 
 /// The MCP protocol version the proxy advertises in its `initialize` handshake.

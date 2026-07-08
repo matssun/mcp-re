@@ -66,6 +66,7 @@ pub mod durable_replay;
 pub mod gcp_kms_keysource;
 pub mod inner_launch;
 pub mod key_source;
+pub mod log_sink;
 // ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
 // mapping behind the #3838 delegation seam). Dependency-free — the per-provider
 // network backends (AWS KMS / GCP Cloud KMS) are the feature-gated follow-ups.
@@ -204,9 +205,9 @@ pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
 pub use inner_launch::BoundedStderr;
 pub use inner_launch::InnerLaunchConfig;
-pub use inner_launch::InnerLogEvent;
-pub use inner_launch::InnerLogSink;
-pub use inner_launch::StderrLogSink;
+pub use log_sink::InnerLogEvent;
+pub use log_sink::InnerLogSink;
+pub use log_sink::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
 // non-default `dev_env_key_source` feature is enabled.
 #[cfg(feature = "dev_env_key_source")]

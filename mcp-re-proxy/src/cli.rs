@@ -22,9 +22,9 @@ use serde_json::Value;
 
 use crate::inner_launch::BoundedStderr;
 use crate::inner_launch::InnerLaunchConfig;
-use crate::inner_launch::InnerLogEvent;
-use crate::inner_launch::InnerLogSink;
-use crate::inner_launch::StderrLogSink;
+use crate::log_sink::InnerLogEvent;
+use crate::log_sink::InnerLogSink;
+use crate::log_sink::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
