@@ -489,9 +489,6 @@ mod full_stack_async {
     }
 
     fn async_proxy(tier: AsyncReplayTier) -> Proxy {
-        // The sync `inner` is unused on the async path (a placeholder); the async
-        // path dispatches through the async inner wired below.
-        let unused_sync_inner = |_request: &[u8]| -> Vec<u8> { Vec::new() };
         Proxy::new(
             server_key(),
             SERVER,
@@ -499,7 +496,6 @@ mod full_stack_async {
             Box::new(inbound_resolver()),
             AUDIENCE,
             SKEW,
-            Box::new(unused_sync_inner),
         )
         .with_async_replay_tier(tier)
         .with_async_inner(Box::new(EchoAsyncInner))
@@ -564,7 +560,6 @@ mod full_stack_async {
                 std::sync::Arc::new(InMemoryAsyncAtomicReplayStore::new()),
                 SKEW,
             );
-            let unused_sync_inner = |_r: &[u8]| -> Vec<u8> { Vec::new() };
             let proxy = Proxy::new(
                 server_key(),
                 SERVER,
@@ -572,7 +567,6 @@ mod full_stack_async {
                 Box::new(inbound_resolver()),
                 AUDIENCE,
                 SKEW,
-                Box::new(unused_sync_inner),
             )
             .with_async_replay_tier(tier)
             .with_async_inner(Box::new(pool));

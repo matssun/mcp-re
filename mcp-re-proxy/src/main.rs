@@ -2,12 +2,13 @@
 //!
 //! Terminates TLS, verifies the mTLS client certificate, verifies the MCP-RE
 //! object signature, optionally evaluates authorization (Phase 5) and transport
-//! binding (Phase 6), then forwards verified requests to an inner MCP server
-//! subprocess and signs the response. Blocking single-threaded serve loop (no
-//! async). All wiring/parsing logic lives in `cli` (and is unit-tested there);
-//! this shell parses, builds, and runs.
+//! binding (Phase 6), then forwards verified requests to a stateless HTTP inner
+//! MCP backend and signs the response. Serves on the per-core async fleet
+//! (ADR-MCPRE-051 §1: SO_REUSEPORT + one tokio runtime per core); the authoritative
+//! replay tier and the inner round-trip are AWAITED, never blocking a worker. All
+//! wiring/parsing logic lives in `cli` (and is unit-tested there); this shell
+//! parses, builds, and runs.
 
-use std::io;
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -24,17 +25,14 @@ use mcp_re_proxy::config_snapshot;
 use mcp_re_proxy::cli;
 use mcp_re_proxy::cli::AuthzKind;
 use mcp_re_proxy::cli::BindingKind;
-use mcp_re_proxy::cli::InnerModeKind;
 use mcp_re_proxy::cli::KeySourceKind;
 use mcp_re_proxy::cli::ReplayKind;
+use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::tls;
 use mcp_re_proxy::transport::ExactMatchBinding;
-use mcp_re_proxy::DurableReplayCache;
 use mcp_re_proxy::IdentityPolicy;
 use mcp_re_proxy::ReplayDurabilityTier;
 use mcp_re_proxy::IdentityStrategy;
-use mcp_re_proxy::InnerServer;
-use mcp_re_proxy::PersistentSubprocessInner;
 use mcp_re_proxy::Proxy;
 use mcp_re_proxy::RevocationTier;
 use mcp_re_proxy::ReverseProxyMtlsProvider;
@@ -259,13 +257,6 @@ fn run() -> Result<(), String> {
         "mcp-re-proxy: {}",
         config.revocation_tier.startup_audit_line("trust-store")
     );
-    // MCPS-83 (ADR-MCPS-049 clause 2): surface the declared inner-session posture so
-    // the routing consequence is auditable at startup. Verification is unaffected;
-    // this only tells an operator/LB whether sticky routing is required.
-    eprintln!(
-        "mcp-re-proxy: {}",
-        config.inner_session.startup_audit_line()
-    );
     // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
     // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
     // trust to T; Tier 2 consults the store live every request; Tier 3 evicts on a
@@ -295,125 +286,24 @@ fn run() -> Result<(), String> {
         push_channel,
     );
 
-    // Inner-server environment minimization (MCPS-035, ADR-MCPS-016). By default
-    // the child environment is cleared and only the explicit allowlist is passed,
-    // closing the full-inheritance leak (env-loaded key material is not visible to
-    // the inner server unless explicitly allowlisted). Full inheritance is opt-in
-    // and loudly warned.
-    if config.inner_launch.inherit_env {
-        eprintln!(
-            "mcp-re-proxy: WARNING: --inherit-env true passes the proxy's ENTIRE environment to the \
-             inner server, including any env-loaded key material (e.g. an env-backed KeySource). \
-             This re-opens the full-inheritance leak; prefer --inherit-env false (default) with \
-             explicit --inner-env / --inner-env-allow."
+    // ADR-MCPRE-051 §3: the inner MCP server is reached over the ASYNC HTTP inner
+    // plane — a stateless Streamable-HTTP backend fronted by the pooled hyper
+    // client wired below. The proxy launches NO subprocess and carries no sandbox:
+    // an unmodified local stdio MCP server is fronted by the out-of-TCB
+    // `mcp-re-stdio-bridge` adapter and reached over HTTP like any other backend.
+    if config.inner_http_urls.is_empty() {
+        return Err(
+            "the proxy serves over an async HTTP inner plane: pass --inner-http-url <url>. \
+             To protect a local stdio MCP server, run it behind the mcp-re-stdio-bridge adapter \
+             and point --inner-http-url at the bridge."
+                .to_string(),
         );
     }
 
-    // Inner-server working-dir + output hygiene (MCPS-036, ADR-MCPS-016). The
-    // inner server launches in a CONTROLLED working directory (the explicit
-    // --inner-working-dir, else the system temp dir — never silently the proxy's
-    // cwd). This is a controlled STARTING directory, NOT a filesystem sandbox:
-    // the inner server can still chdir and open any path its OS credentials
-    // allow. Its stderr is captured separately into a bounded log; bounded is not
-    // secrets-safe.
-    eprintln!(
-        "mcp-re-proxy: inner working dir = {} (controlled start dir, NOT a filesystem sandbox); \
-         inner stderr captured to a bounded log ({} bytes / {} lines), never forwarded as MCP content; \
-         inner stdout per-read timeout = {:?} (always bounded, no disable — never-hang posture)",
-        config.inner_launch.effective_working_dir(),
-        config.inner_launch.stderr_cap_bytes,
-        config.inner_launch.stderr_cap_lines,
-        config.inner_launch.inner_read_timeout,
-    );
-
-    // Inner-server resource hardening (MCPS-037, ADR-MCPS-016). Unix `setrlimit`
-    // ceilings applied to the inner subprocess before exec. This is RESOURCE
-    // HARDENING, NOT SANDBOXING: it bounds resource abuse (fds, CPU, memory,
-    // core/file size), not access — the inner server can still reach any file or
-    // socket its OS credentials permit. A configured limit is never silently
-    // dropped: on Unix a setrlimit the kernel refuses fails the spawn; on a
-    // non-Unix platform a configured limit is a hard startup error unless
-    // best-effort is opted in.
-    {
-        let r = &config.inner_launch.rlimits;
-        if r.any_configured() {
-            eprintln!(
-                "mcp-re-proxy: inner resource limits (RESOURCE HARDENING, NOT a sandbox): \
-                 nofile={:?} cpu_s={:?} as_bytes={:?} data_bytes={:?} core_bytes={:?} \
-                 fsize_bytes={:?} best_effort={}",
-                r.nofile, r.cpu_seconds, r.address_space_bytes, r.data_bytes, r.core_bytes,
-                r.fsize_bytes, r.best_effort,
-            );
-        }
-        if r.best_effort && r.any_configured() {
-            eprintln!(
-                "mcp-re-proxy: WARNING: --inner-rlimit-best-effort true — a resource limit that \
-                 cannot be applied will be downgraded to a logged no-op instead of failing \
-                 closed. Prefer the default strict posture in production."
-            );
-        }
-    }
-
-    // Inner-server OS sandbox profile (#3865, ADR-MCPS-016). This is the PROFILE +
-    // fail-closed platform gate, NOT enforcement. With --inner-sandbox off
-    // (default) there is NO fs/network containment: the inner server can still
-    // reach any file or socket its OS credentials permit — the working-dir /
-    // rlimit hardening above is not a sandbox. With --inner-sandbox enforce the
-    // proxy REFUSES to start unless a kernel backend (Linux Landlock/seccomp) can
-    // actually enforce containment; no such backend ships in this build yet, so
-    // enforce currently fails closed on every platform (the inner server is never
-    // spawned unsandboxed while having been asked to sandbox it). The gate fires
-    // inside SubprocessInner / PersistentSubprocessInner construction below.
-    {
-        let s = &config.inner_launch.sandbox;
-        if s.is_enforced() {
-            eprintln!(
-                "mcp-re-proxy: inner sandbox = ENFORCE requested (fs read-allow={:?}, \
-                 fs write-allow={:?}, net={:?}); kernel enforcement backend is a follow-up and \
-                 ships on no platform yet, so startup will FAIL CLOSED (see #3865).",
-                s.fs_allow_read, s.fs_allow_write, s.network,
-            );
-        } else {
-            eprintln!(
-                "mcp-re-proxy: inner sandbox = off (NO fs/network containment; the inner server can \
-                 still reach any file or socket its OS credentials permit — this is not a sandbox)"
-            );
-        }
-    }
-
-    // Build the proxy (PEP).
+    // Build the proxy (PEP). The MCPS-036 lifecycle sink receives the proxy-level
+    // events (inner_request_forwarded / inner_response_signed) on the async path.
     let log_sink: Arc<dyn mcp_re_proxy::InnerLogSink + Send + Sync> =
         Arc::new(mcp_re_proxy::StderrLogSink);
-    // Select the inner-server process model (MCPS-066). One-shot (default) spawns
-    // the inner command per request; persistent spawns it ONCE, performs the MCP
-    // initialize handshake, and forwards many requests over the same long-lived
-    // process — the only way to front a genuinely long-lived MCP server.
-    // ADR-MCPRE-051 §3: when HTTP inner backends are configured the async serving
-    // path forwards over the pooled `HttpInnerPool` (wired below), so no stdio
-    // subprocess is spawned — the sync `inner` is an unused placeholder on that
-    // path. Otherwise build the real subprocess inner for the sync serving path.
-    let inner: Box<dyn InnerServer + Send + Sync> = if !config.inner_http_urls.is_empty() {
-        Box::new(|_request: &[u8]| -> Vec<u8> { Vec::new() })
-    } else {
-        match config.inner_mode {
-        InnerModeKind::OneShot => Box::new(cli::SubprocessInner::with_log_sink(
-            &config.inner_command,
-            config.inner_launch.clone(),
-            Arc::clone(&log_sink),
-        )?),
-        InnerModeKind::Persistent => {
-            eprintln!(
-                "mcp-re-proxy: inner process model = persistent (spawn-once + initialize handshake; \
-                 long-lived inner serves many requests over one process)"
-            );
-            Box::new(PersistentSubprocessInner::with_log_sink(
-                &config.inner_command,
-                config.inner_launch.clone(),
-                Arc::clone(&log_sink),
-            )?)
-        }
-        }
-    };
     let mut proxy = Proxy::new(
         key_source,
         config.server_signer.clone(),
@@ -421,77 +311,105 @@ fn run() -> Result<(), String> {
         resolver,
         config.audience.clone(),
         config.max_clock_skew,
-        inner,
     )
     .with_expected_version_policy(config.expected_version_policy)
     .with_log_sink(Arc::clone(&log_sink));
-    if config.replay == ReplayKind::File {
-        let path = config
-            .replay_path
-            .clone()
-            .ok_or("--replay-cache file requires --replay-path")?;
-        let cache = DurableReplayCache::open(&path, config.max_clock_skew)
-            .map_err(|e| format!("replay cache {path}: {e}"))?;
-        proxy = proxy.with_replay_cache(Box::new(cache));
-    }
-    if config.replay == ReplayKind::Shared {
-        // Issue #3837 / #69: shared, server-side-atomic cache for horizontally-
-        // scaled replay safety. The DECLARED durability tier selects the backend
-        // (ADR-MCPS-020): LINEARIZABLE → the CP / etcd store (issue #69),
-        // every other tier → the Redis store (issue #4028). Either backend FAILS
-        // CLOSED if its adapter feature is not compiled in this build, never
-        // silently degrading to a non-shared / weaker cache.
-        let tier = config
-            .replay_durability_tier
-            .as_ref()
-            .ok_or("--replay-cache shared requires --replay-durability-tier")?;
-        let cache = if matches!(tier, ReplayDurabilityTier::Linearizable) {
-            // CP / LINEARIZABLE: etcd endpoint required (parse_args already
-            // enforced its presence for this tier — fail closed otherwise).
-            let endpoint = config
-                .cpstore_etcd_endpoint
-                .clone()
-                .ok_or("--replay-durability-tier linearizable requires --cpstore-etcd-endpoint")?;
-            let backend = if cfg!(feature = "cpstore_etcd") {
-                "etcd"
-            } else {
-                "none"
-            };
-            eprintln!(
-                "mcp-re-proxy: replay cache = shared (CP/linearizable; {backend} backend, issue #69)"
+    // ADR-MCPRE-051 §4: select the AUTHORITATIVE async replay tier. The atomic
+    // insert-if-absent is AWAITED on the per-core request path without blocking a
+    // runtime worker. Memory (default) is single-replica; Shared selects a durable
+    // networked store — etcd (CP/linearizable) or redis (horizontally scaled) —
+    // both fail closed on any store error (an outage is never a fresh nonce).
+    // `--replay-cache file` is not offered on the async fleet: a single file-backed
+    // cache does not fit the per-core, share-nothing data plane (ADR-MCPRE-051 §1).
+    // The redis ConnectionManager's reconnect task lives on a process-lifetime
+    // control runtime (`replay_control_rt`), distinct from the per-core serving
+    // runtimes; it is held alive for the whole serve.
+    let replay_control_rt: Option<tokio::runtime::Runtime>;
+    match config.replay {
+        ReplayKind::Memory => {
+            // Proxy::new already installed the in-memory async tier (single-replica).
+            replay_control_rt = None;
+        }
+        ReplayKind::File => {
+            return Err(
+                "--replay-cache file is not supported on the async serving path: a single \
+                 file-backed cache does not fit the per-core share-nothing data plane. Use \
+                 --replay-cache shared (redis/etcd) for durable cross-replica replay, or \
+                 --replay-cache memory for single-replica development."
+                    .to_string(),
             );
-            eprintln!("mcp-re-proxy: {}", tier.startup_audit_line(backend));
-            cli::build_cpstore_replay_cache(
-                &endpoint,
-                config.max_clock_skew,
-                config.limits.read_timeout,
-                config.limits.write_timeout,
-            )?
-        } else {
-            // Redis tiers (REDIS_ASYNC / REDIS_WAIT_QUORUM / SINGLE_STORE_FAIL_CLOSED).
-            let url = config
-                .replay_redis_url
-                .clone()
-                .ok_or("--replay-cache shared requires --replay-redis-url")?;
-            let backend = if cfg!(feature = "redis_replay") {
-                "redis"
+        }
+        ReplayKind::Shared => {
+            let tier_kind = config
+                .replay_durability_tier
+                .as_ref()
+                .ok_or("--replay-cache shared requires --replay-durability-tier")?;
+            if matches!(tier_kind, ReplayDurabilityTier::Linearizable) {
+                let endpoint = config.cpstore_etcd_endpoint.clone().ok_or(
+                    "--replay-durability-tier linearizable requires --cpstore-etcd-endpoint",
+                )?;
+                #[cfg(feature = "cpstore_etcd")]
+                {
+                    eprintln!(
+                        "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
+                    );
+                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("etcd"));
+                    let store = Arc::new(
+                        mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(
+                            &endpoint,
+                        ),
+                    );
+                    proxy = proxy.with_async_replay_tier(
+                        mcp_re_proxy::async_replay::AsyncReplayTier::new(
+                            store,
+                            config.max_clock_skew,
+                        ),
+                    );
+                    replay_control_rt = None;
+                }
+                #[cfg(not(feature = "cpstore_etcd"))]
+                {
+                    let _ = endpoint;
+                    return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
+                }
             } else {
-                "none"
-            };
-            eprintln!(
-                "mcp-re-proxy: replay cache = shared (horizontally-scaled replay safety; \
-                 Redis backend, issue #4028)"
-            );
-            eprintln!("mcp-re-proxy: {}", tier.startup_audit_line(backend));
-            cli::build_shared_replay_cache(
-                &url,
-                config.max_clock_skew,
-                config.limits.read_timeout,
-                config.limits.write_timeout,
-                tier,
-            )?
-        };
-        proxy = proxy.with_replay_cache(cache);
+                let url = config
+                    .replay_redis_url
+                    .clone()
+                    .ok_or("--replay-cache shared requires --replay-redis-url")?;
+                #[cfg(feature = "redis_replay")]
+                {
+                    eprintln!(
+                        "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
+                    );
+                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("redis"));
+                    // The ConnectionManager's reconnect task runs on this dedicated
+                    // process-lifetime runtime, distinct from the per-core serving
+                    // runtimes; held alive by `replay_control_rt` for the whole serve.
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(1)
+                        .enable_all()
+                        .build()
+                        .map_err(|e| format!("build replay control runtime: {e}"))?;
+                    let store = Arc::new(
+                        rt.block_on(mcp_re_proxy::RedisAsyncAtomicReplayStore::connect(&url))
+                            .map_err(|e| format!("connect redis async replay store: {e:?}"))?,
+                    );
+                    proxy = proxy.with_async_replay_tier(
+                        mcp_re_proxy::async_replay::AsyncReplayTier::new(
+                            store,
+                            config.max_clock_skew,
+                        ),
+                    );
+                    replay_control_rt = Some(rt);
+                }
+                #[cfg(not(feature = "redis_replay"))]
+                {
+                    let _ = url;
+                    return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
+                }
+            }
+        }
     }
     // #78 (ADR-MCPS-020), OBJECT-LEVEL defense in depth beneath the CLI-flag gate:
     // the CLI's strict_violations rejects the `--replay-cache memory` SELECTION,
@@ -885,75 +803,27 @@ fn run() -> Result<(), String> {
         ocsp_checker,
     };
 
-    // ADR-MCPRE-051 §1/§3: when HTTP inner backends are configured, serve on the
-    // per-core async fleet (SO_REUSEPORT + tokio) forwarding over the pooled
-    // HttpInnerPool — the production async data plane. Otherwise fall through to the
-    // sync stdio serving path below. A build without the `async_serve` feature fails
-    // closed for `--inner-http-url` (the async stack is not compiled).
-    if !config.inner_http_urls.is_empty() {
-        #[cfg(feature = "async_serve")]
-        {
-            return run_async_fleet(proxy, Arc::clone(&config_snapshot), serve_options, &config);
-        }
-        #[cfg(not(feature = "async_serve"))]
-        {
-            return Err(
-                "--inner-http-url requires a build with the `async_serve` feature".to_string(),
-            );
-        }
-    }
+    // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
+    // the stateless Streamable-HTTP inner backends. Forwarding is AWAITED, never
+    // blocking a per-core runtime worker.
+    let inner_timeout = config
+        .limits
+        .read_timeout
+        .unwrap_or_else(|| Duration::from_secs(30));
+    let pool = HttpInnerPool::from_url_strs(config.inner_http_urls.clone(), inner_timeout)?;
+    let proxy = proxy.with_async_inner(Box::new(pool));
 
-    let listener = std::net::TcpListener::bind(&config.bind)
-        .map_err(|e| format!("bind {}: {e}", config.bind))?;
-    // Report the OS-RESOLVED address, not the requested one: when `--bind` asks
-    // for port 0 the kernel assigns an ephemeral port, and a caller (e.g. a test
-    // harness) that lets the proxy pick the port avoids the bind-after-free-port
-    // TOCTOU race. For a fixed `--bind` port this prints the same address.
-    let local_addr = listener
-        .local_addr()
-        .map_err(|e| format!("local_addr after bind {}: {e}", config.bind))?;
-    eprintln!("mcp-re-proxy: listening on {} (PEP; inner = {:?})", local_addr, config.inner_command);
-
-    // MCPS-88 (ADR-MCPS-049 W3): graceful shutdown for fleet rollouts. Install the
-    // SIGTERM/SIGINT handler and make the listener non-blocking so the loop polls
-    // between connections and observes a shutdown signal within
-    // `SHUTDOWN_POLL_INTERVAL` even when idle. `serve_once_with_assertion` forces
-    // each ACCEPTED connection socket back to blocking, so the per-connection read/
-    // response phase is unchanged.
-    install_shutdown_handlers();
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("set_nonblocking on listener {}: {e}", config.bind))?;
-
-    // Single-threaded serve loop: the Proxy's replay cache is single-threaded
-    // interior state, so connections are handled one at a time. Runs until a
-    // shutdown signal is observed, then returns for a clean (exit 0) drain.
-    while !SHUTDOWN.load(Ordering::SeqCst) {
-        let config_arc = config_snapshot.load();
-        match tls::serve_once_with_assertion(
-            &listener,
-            config_arc,
-            &serve_options,
-            |request, identity, assertion| {
-                proxy.handle_with_transport(request, now_unix(), identity.as_ref(), assertion)
-            },
-        ) {
-            Ok(_) => {}
-            // No connection is pending on the non-blocking listener: nap briefly so
-            // a shutdown signal is observed promptly, then re-check the loop guard.
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
-            }
-            // A single rejected/aborted connection (e.g. failed mTLS) must not
-            // bring the server down — log and keep serving.
-            Err(e) => eprintln!("mcp-re-proxy: connection error: {e}"),
-        }
-    }
-    // Reached only via SIGTERM/SIGINT. Any in-flight request already completed
-    // above (inline, on this thread); dropping `proxy` here tears down a persistent
-    // inner child. Exit 0 so an orchestrator reads the rollout as a clean stop.
-    eprintln!("mcp-re-proxy: shutdown signal received; stopped accepting, drained, exiting cleanly");
-    Ok(())
+    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
+    // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
+    // `replay_control_rt` (if any) is handed in so the redis ConnectionManager's
+    // reconnect task stays alive for the whole serve.
+    serve_fleet(
+        proxy,
+        Arc::clone(&config_snapshot),
+        serve_options,
+        &config,
+        replay_control_rt,
+    )
 }
 
 /// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
@@ -965,22 +835,18 @@ fn run() -> Result<(), String> {
 /// `Proxy::handle_with_transport_async` on each core's own tokio runtime until a
 /// SIGTERM/SIGINT drains the fleet within the bounded grace window.
 ///
-/// First cut: the authoritative replay tier is the single-process in-memory async
-/// store (correct for a single replica / development). Wiring the durable async
-/// Redis store into the per-core fleet — its auto-reconnecting `ConnectionManager`
-/// must live on a process-lifetime runtime distinct from the per-core serving
-/// runtimes — is the immediate follow-up; until then an operator needing
-/// cross-replica durable replay uses the sync serving path (`--replay-cache
-/// shared`).
-#[cfg(feature = "async_serve")]
-fn run_async_fleet(
+/// The authoritative replay tier and async HTTP inner have already been wired into
+/// `proxy` by the caller (`run`) from the `--replay-cache` / `--inner-http-url`
+/// selection. `_replay_control_rt` (if a durable redis tier is configured) holds
+/// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
+fn serve_fleet(
     proxy: Proxy,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: mcp_re_proxy::ServerOptions,
     config: &cli::Config,
+    _replay_control_rt: Option<tokio::runtime::Runtime>,
 ) -> Result<(), String> {
     use std::net::ToSocketAddrs;
-    use std::time::Duration;
 
     // Resolve `--bind` to a concrete SocketAddr for the SO_REUSEPORT listeners.
     let addr = config
@@ -990,26 +856,7 @@ fn run_async_fleet(
         .next()
         .ok_or_else(|| format!("--bind {} resolved to no address", config.bind))?;
 
-    // Pooled HTTP inner transport over the configured stateless backends.
-    let inner_timeout = config
-        .limits
-        .read_timeout
-        .unwrap_or_else(|| Duration::from_secs(30));
-    let pool = mcp_re_proxy::http_inner::HttpInnerPool::from_url_strs(
-        config.inner_http_urls.clone(),
-        inner_timeout,
-    )?;
-
-    // Authoritative async replay tier (see the fn doc re: durable-store follow-up).
-    let store = mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore::new();
-    let tier =
-        mcp_re_proxy::async_replay::AsyncReplayTier::new(Arc::new(store), config.max_clock_skew);
-
-    let proxy = Arc::new(
-        proxy
-            .with_async_replay_tier(tier)
-            .with_async_inner(Box::new(pool)),
-    );
+    let proxy = Arc::new(proxy);
 
     let fleet_cfg = mcp_re_proxy::async_fleet::FleetConfig {
         addr,

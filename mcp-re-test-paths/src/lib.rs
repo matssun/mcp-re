@@ -100,14 +100,12 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcp-re-conformance/tests/method_name_drift_guard_test.rs")
         }
         "MCP_RE_SRC_HOST_SESSION" => workspace_root.join("mcp-re-host/tests/host_session_test.rs"),
-        "MCP_RE_SRC_PERSISTENT_SCOPE" => {
-            workspace_root.join("mcp-re-proxy/tests/persistent_scope_test.rs")
-        }
-        "MCP_RE_SRC_PERSISTENT_INNER" => {
-            workspace_root.join("mcp-re-proxy/tests/persistent_inner_test.rs")
-        }
-        "MCP_RE_SRC_PERSISTENT_SESSION" => {
-            workspace_root.join("mcp-re-proxy/tests/persistent_session_test.rs")
+        // ADR-MCPRE-051 Phase B (MCPRE-118): the persistent-inner / subprocess
+        // hardening proofs relocated to the out-of-TCB mcp-re-stdio-bridge crate,
+        // where the subprocess surface now lives (the proxy-owned persistent_*
+        // tests were retired with that topology).
+        "MCP_RE_SRC_PERSISTENT_INNER_HARDENING" => {
+            workspace_root.join("mcp-re-stdio-bridge/tests/persistent_inner_hardening_test.rs")
         }
         "MCP_RE_SRC_PROXY" => workspace_root.join("mcp-re-proxy/tests/proxy_test.rs"),
         "MCP_RE_SRC_KEY_SOURCE" => workspace_root.join("mcp-re-proxy/tests/key_source_test.rs"),

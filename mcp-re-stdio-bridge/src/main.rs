@@ -56,11 +56,12 @@ use hyper::StatusCode;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
-use mcp_re_proxy::cli::SubprocessInner;
-use mcp_re_proxy::InnerLaunchConfig;
-use mcp_re_proxy::InnerServer;
-use mcp_re_proxy::PersistentSubprocessInner;
 use tokio::net::TcpListener;
+
+use mcp_re_stdio_bridge::inner_launch::InnerLaunchConfig;
+use mcp_re_stdio_bridge::persistent_inner::PersistentSubprocessInner;
+use mcp_re_stdio_bridge::subprocess_inner::InnerServer;
+use mcp_re_stdio_bridge::subprocess_inner::SubprocessInner;
 
 /// A cap on the request body the bridge reads into memory, so a broken/hostile
 /// PEP (or, more realistically, a misconfiguration) cannot exhaust the bridge.

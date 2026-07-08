@@ -32,13 +32,17 @@ use mcp_re_core::verify_response;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoGrantSpec;
 use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
 use serde_json::Map;
@@ -188,11 +192,21 @@ impl CapturingSink {
     }
 }
 
-fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
-    build_demo_proxy_with_policy(
+/// Spawn the out-of-TCB bridge fronting the real fileserver (over the fixture
+/// `demo_root`) and build the policy-enabled demo proxy pointed at it. The
+/// returned `BridgeProcess` MUST be kept alive for the proxy's lifetime.
+fn build_proxy(sink: Arc<CapturingSink>) -> (mcp_re_proxy::Proxy, BridgeProcess) {
+    let root = demo_root();
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner_binary(), "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+    let proxy = build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary: inner_binary(),
-            demo_root: demo_root(),
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -204,7 +218,8 @@ fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
         demo_policy_evaluator(),
         Box::new(demo_revocation_source()),
     )
-    .expect("policy-enabled demo proxy builds against the resolved binary + demo_root")
+    .expect("policy-enabled demo proxy builds against the bridge URL");
+    (proxy, bridge)
 }
 
 fn error_message(bytes: &[u8]) -> String {
@@ -218,14 +233,14 @@ fn error_message(bytes: &[u8]) -> String {
 #[test]
 fn authorized_list_files_on_allowed_path_succeeds_end_to_end() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
 
     let request = signed_list_files("nonce-authz-allow-1", ALLOWED_PATH, &grant, true);
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // The authorized request reached the inner fileserver and returned a real,
     // signed, request-hash-bound listing of the allowed path.
@@ -251,12 +266,12 @@ fn authorized_list_files_on_allowed_path_succeeds_end_to_end() {
 #[test]
 fn signed_but_unauthorized_path_is_denied_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
 
     // Validly signed, but the grant authorizes only `reports`; ask for `.`.
     let request = signed_list_files("nonce-authz-deny-1", ".", &grant, true);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
     assert!(
@@ -269,14 +284,14 @@ fn signed_but_unauthorized_path_is_denied_before_dispatch() {
 #[test]
 fn signed_but_demo_root_escaping_path_is_denied_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
 
     // A demo-root-escaping path is not the granted path → denied by scope, and
     // the inner fileserver (which would itself refuse the escape) is never even
     // launched: authorization fails closed first.
     let request = signed_list_files("nonce-authz-escape-1", "../../etc", &grant, true);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
     assert!(
@@ -289,13 +304,13 @@ fn signed_but_demo_root_escaping_path_is_denied_before_dispatch() {
 #[test]
 fn authorization_hash_mismatch_is_denied_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
 
     // Authorized path + attached grant, but the request binds a DIFFERENT hash:
     // the evaluator's hash-binding check fails before any artifact claim is read.
     let request = signed_list_files("nonce-authz-hashmm-1", ALLOWED_PATH, &grant, false);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(error_message(&response), "mcp-re.authorization_hash_mismatch");
     assert!(
@@ -308,7 +323,7 @@ fn authorization_hash_mismatch_is_denied_before_dispatch() {
 #[test]
 fn expired_grant_is_denied_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
 
     // A grant whose validity window has already closed before `now()`.
     let spec = DemoGrantSpec {
@@ -325,7 +340,7 @@ fn expired_grant_is_denied_before_dispatch() {
 
     // Request freshness still inside the request window; only the GRANT expired.
     let request = signed_list_files("nonce-authz-expired-1", ALLOWED_PATH, &grant, true);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(error_message(&response), "mcp-re.authorization_expired");
     assert!(

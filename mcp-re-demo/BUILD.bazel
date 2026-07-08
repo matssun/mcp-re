@@ -11,6 +11,7 @@ package(default_visibility = ["//visibility:public"])
 nt_rust_library(
     name = "mcp_re_demo",
     srcs = [
+        "src/bridge.rs",
         "src/client.rs",
         "src/demo_authorization.rs",
         "src/demo_fixtures.rs",
@@ -115,11 +116,13 @@ nt_rust_test(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -149,11 +152,13 @@ nt_rust_test(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -184,10 +189,12 @@ nt_rust_test(
     bazel_build_cfg = False,
     data = [
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
     },
     deps = [
         ":mcp_re_demo",
@@ -217,11 +224,13 @@ nt_rust_test(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -256,11 +265,13 @@ nt_rust_test(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -290,11 +301,13 @@ nt_rust_binary(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -321,11 +334,13 @@ nt_rust_binary(
     data = [
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
     ],
     edition = "2021",
     env = {
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
     },
     deps = [
@@ -384,12 +399,14 @@ nt_rust_test(
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [
@@ -422,11 +439,13 @@ nt_rust_test(
     bazel_build_cfg = False,
     data = [
         "//mcp-re-demo-server:mcp_re_demo_server_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_SERVER_BIN": "$(rlocationpath //mcp-re-demo-server:mcp_re_demo_server_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [
@@ -463,12 +482,14 @@ nt_rust_test(
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [
@@ -553,12 +574,14 @@ nt_rust_test(
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [
@@ -591,12 +614,14 @@ nt_rust_binary(
         "//mcp-re-demo-fileserver:demo_root_fixture",
         "//mcp-re-demo-fileserver:demo_root/readme.txt",
         "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_ROOT_README": "$(rlocationpath //mcp-re-demo-fileserver:demo_root/readme.txt)",
         "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [
@@ -621,11 +646,13 @@ nt_rust_binary(
     crate_name = "demo_e2e_persistent",
     data = [
         "//mcp-re-demo-server:mcp_re_demo_server_bin",
+        "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
         "//mcp-re-proxy:mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
         "DEMO_SERVER_BIN": "$(rlocationpath //mcp-re-demo-server:mcp_re_demo_server_bin)",
+        "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     },
     deps = [

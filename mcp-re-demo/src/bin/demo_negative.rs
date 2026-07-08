@@ -42,11 +42,14 @@ use mcp_re_core::REQUEST_META_KEY;
 use mcp_re_core::RESPONSE_META_KEY;
 use mcp_re_core::VERIFIED_META_KEY;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_inner_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_root_dir;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoGrantSpec;
 use mcp_re_demo::DemoHostClient;
@@ -54,6 +57,7 @@ use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::FixedClock;
 use mcp_re_host::HostSigner;
 use mcp_re_host::SeededNonceSource;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogEvent;
 use mcp_re_proxy::InnerLogSink;
 use mcp_re_proxy::Proxy;
@@ -157,13 +161,11 @@ impl CapturingSink {
 
 fn build_proxy(
     sink: Arc<CapturingSink>,
-    inner_binary: &str,
-    demo_root: &str,
+    inner_http_url: &str,
 ) -> Result<Proxy, String> {
     build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary: inner_binary.to_string(),
-            demo_root: demo_root.to_string(),
+            inner_http_url: inner_http_url.to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -246,6 +248,17 @@ fn run() -> Result<(), String> {
     let grant = demo_grant();
     let auth_hash = grant.authorization_hash().map_err(|e| format!("authorization_hash: {e:?}"))?;
 
+    // Spawn the out-of-TCB bridge fronting the real fileserver ONCE; every case's
+    // fresh proxy points its HTTP inner plane at this same bridge URL. Held for
+    // the whole run (killed on drop).
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary()?,
+        BridgeInnerMode::OneShot,
+        Some(&demo_root),
+        &[inner_binary, "--demo-root".to_string(), demo_root.clone()],
+    )?;
+    let inner_url = bridge.url().to_string();
+
     println!("MCP-RE local fail-closed paths — each case must be rejected with its frozen mcp-re.* reason:");
 
     group("Request integrity");
@@ -253,7 +266,7 @@ fn run() -> Result<(), String> {
     // Case 1: tampered request body.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-tamper-body".to_string());
         let signed = cl
@@ -262,7 +275,7 @@ fn run() -> Result<(), String> {
         let mut request: Value = serde_json::from_slice(&signed).map_err(|e| format!("parse: {e}"))?;
         request["params"]["arguments"]["path"] = json!("tampered");
         let tampered = serde_json::to_vec(&request).map_err(|e| format!("serialize: {e}"))?;
-        let response = proxy.handle(&tampered, now());
+        let response = block_on_handle(&proxy, &tampered, now());
         let reason = denial_reason(&response)?.ok_or("case 1: expected a denial")?;
         report("tampered_body", McpReError::InvalidSignature.wire_code(), &reason, sink.inner_was_reached(), false)?;
     }
@@ -270,7 +283,7 @@ fn run() -> Result<(), String> {
     // Case 2: tampered JSON-RPC id.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-tamper-id".to_string());
         let signed = cl
@@ -279,7 +292,7 @@ fn run() -> Result<(), String> {
         let mut request: Value = serde_json::from_slice(&signed).map_err(|e| format!("parse: {e}"))?;
         request["id"] = json!("req-neg-tamper-id-SWAPPED");
         let tampered = serde_json::to_vec(&request).map_err(|e| format!("serialize: {e}"))?;
-        let response = proxy.handle(&tampered, now());
+        let response = block_on_handle(&proxy, &tampered, now());
         let reason = denial_reason(&response)?.ok_or("case 2: expected a denial")?;
         report("tampered_id", McpReError::InvalidSignature.wire_code(), &reason, sink.inner_was_reached(), false)?;
     }
@@ -289,17 +302,17 @@ fn run() -> Result<(), String> {
     // Case 3: replayed request (first send dispatches; second is replay).
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-replay".to_string());
         let signed = cl
             .sign_request(&id, "tools/call", list_files_params(ALLOWED_PATH, &grant), ON_BEHALF_OF, AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
-        let first = proxy.handle(&signed, now());
+        let first = block_on_handle(&proxy, &signed, now());
         if denial_reason(&first)?.is_some() {
             return Err("case 3: first send unexpectedly denied".to_string());
         }
-        let second = proxy.handle(&signed, now());
+        let second = block_on_handle(&proxy, &signed, now());
         let reason = denial_reason(&second)?.ok_or("case 3: expected a replay denial")?;
         // The inner WAS reached by the (accepted) first send; the replay verdict
         // on the second send is the security property.
@@ -309,13 +322,13 @@ fn run() -> Result<(), String> {
     // Case 4: expired request (verified far past its freshness window).
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-expired".to_string());
         let signed = cl
             .sign_request(&id, "tools/call", list_files_params(ALLOWED_PATH, &grant), ON_BEHALF_OF, AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
-        let response = proxy.handle(&signed, NOW_UNIX + 10 * 3600);
+        let response = block_on_handle(&proxy, &signed, NOW_UNIX + 10 * 3600);
         let reason = denial_reason(&response)?.ok_or("case 4: expected a denial")?;
         report("expired", McpReError::ExpiredRequest.wire_code(), &reason, sink.inner_was_reached(), false)?;
     }
@@ -325,13 +338,13 @@ fn run() -> Result<(), String> {
     // Case 5: wrong audience.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-audience".to_string());
         let signed = cl
             .sign_request(&id, "tools/call", list_files_params(ALLOWED_PATH, &grant), ON_BEHALF_OF, WRONG_AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
-        let response = proxy.handle(&signed, now());
+        let response = block_on_handle(&proxy, &signed, now());
         let reason = denial_reason(&response)?.ok_or("case 5: expected a denial")?;
         report("wrong_audience", McpReError::InvalidAudience.wire_code(), &reason, sink.inner_was_reached(), false)?;
     }
@@ -339,7 +352,7 @@ fn run() -> Result<(), String> {
     // Case 6: missing MCP-RE request envelope.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-noenv".to_string());
         let signed = cl
@@ -351,7 +364,7 @@ fn run() -> Result<(), String> {
             .ok_or("_meta object")?
             .remove(REQUEST_META_KEY);
         let stripped = serde_json::to_vec(&request).map_err(|e| format!("serialize: {e}"))?;
-        let response = proxy.handle(&stripped, now());
+        let response = block_on_handle(&proxy, &stripped, now());
         let reason = denial_reason(&response)?.ok_or("case 6: expected a denial")?;
         report("missing_envelope", McpReError::MissingEnvelope.wire_code(), &reason, sink.inner_was_reached(), false)?;
     }
@@ -363,7 +376,7 @@ fn run() -> Result<(), String> {
     // impostor and the response binds + verifies under the SERVER key).
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let mut params = list_files_params(ALLOWED_PATH, &grant);
         params
@@ -379,7 +392,7 @@ fn run() -> Result<(), String> {
             .sign_request(&id, "tools/call", params, ON_BEHALF_OF, AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
         let stored = cl.stored_request_hash(&id).ok_or("stored hash")?.to_string();
-        let response = proxy.handle(&signed, now());
+        let response = block_on_handle(&proxy, &signed, now());
         if denial_reason(&response)?.is_some() {
             return Err("case 7: smuggled .verified should not deny".to_string());
         }
@@ -400,13 +413,13 @@ fn run() -> Result<(), String> {
     // Case 8: valid signature, failed Phase 5 authorization (unauthorized path).
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-unauthorized".to_string());
         let signed = cl
             .sign_request(&id, "tools/call", list_files_params(UNAUTHORIZED_PATH, &grant), ON_BEHALF_OF, AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
-        let response = proxy.handle(&signed, now());
+        let response = block_on_handle(&proxy, &signed, now());
         let reason = denial_reason(&response)?.ok_or("case 8: expected a denial")?;
         report("unauthorized_path", "mcp-re.authorization_scope_denied", &reason, sink.inner_was_reached(), false)?;
     }
@@ -416,7 +429,7 @@ fn run() -> Result<(), String> {
     // Case 9: wrong response hash — the HostSession client refuses the binding.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-resphash".to_string());
         // Client signs A (stores hash A); proxy runs a DIFFERENT B (same id) and
@@ -438,7 +451,7 @@ fn run() -> Result<(), String> {
             )
             .map_err(|e| format!("sign B: {e:?}"))?;
         let _ = request_hash(&serde_json::from_slice::<Value>(&signed_b).map_err(|e| format!("parse B: {e}"))?);
-        let response_b = proxy.handle(&signed_b, now());
+        let response_b = block_on_handle(&proxy, &signed_b, now());
         if denial_reason(&response_b)?.is_some() {
             return Err("case 9: proxy unexpectedly denied request B".to_string());
         }
@@ -452,13 +465,13 @@ fn run() -> Result<(), String> {
     // Case 10: invalid response signature — the HostSession client refuses it.
     {
         let sink = Arc::new(CapturingSink::default());
-        let proxy = build_proxy(Arc::clone(&sink), &inner_binary, &demo_root)?;
+        let proxy = build_proxy(Arc::clone(&sink), &inner_url)?;
         let mut cl = client();
         let id = Value::String("req-neg-respsig".to_string());
         let signed = cl
             .sign_request(&id, "tools/call", list_files_params(ALLOWED_PATH, &grant), ON_BEHALF_OF, AUDIENCE, &auth_hash)
             .map_err(|e| format!("sign: {e:?}"))?;
-        let response = proxy.handle(&signed, now());
+        let response = block_on_handle(&proxy, &signed, now());
         if denial_reason(&response)?.is_some() {
             return Err("case 10: proxy unexpectedly denied".to_string());
         }

@@ -2,34 +2,39 @@
 //!
 //! Measures the ISOLATED policy-enforcement path (verify + shared-replay
 //! insert + dispatch to an in-process inner) of `mcp-re-proxy` replicas sharing one
-//! Redis replay store, and reports requests/sec plus p50/p99/max added latency at
-//! 1 and N replica counts. The inner server is a near-zero-cost in-process
-//! closure, so the measured latency is the PEP overhead itself — dominated at
-//! scale by the shared-store round-trip (`SET NX PX`), which is exactly the cost
-//! horizontal scaling must amortize.
+//! authoritative async replay store, and reports requests/sec plus p50/p99/max
+//! added latency at 1 and N replica counts. The inner server is a near-zero-cost
+//! in-process closure, so the measured latency is the PEP overhead itself.
 //!
 //! This is a HARNESS, not a pass/fail gate: it asserts only that the run
 //! completes, and PRINTS the numbers (which land in the deployment reference,
 //! MCPS-87). It is `#[ignore]` so normal `cargo test` never runs it; invoke it
-//! explicitly. Redis-gated + skip-when-absent like `fleet_replay_e2e_test.rs`.
+//! explicitly.
+//!
+//! The shared store is the in-memory async reference (`InMemoryAsyncAtomicReplayStore`):
+//! ONE `Arc` is cloned into every replica's `AsyncReplayTier`, so the replicas share
+//! one authoritative tier without any live infra (the durable-backend throughput
+//! lane lives with the live redis/etcd suites). Each `block_on_handle` drives one
+//! request through the async serving path to completion.
 //!
 //! Run:
-//!   MCP_RE_TEST_REDIS_URL=redis://127.0.0.1:6379 \
-//!     cargo test -p mcp-re-proxy --features redis_replay \
+//!   cargo test -p mcp-re-proxy \
 //!     --test fleet_throughput_bench -- --ignored --nocapture
 //!
 //! Tunables (env): MCP_RE_BENCH_REQUESTS (default 500), MCP_RE_BENCH_REPLICAS
 //! (default 4 — the high end of the 1..=N sweep).
-#![cfg(feature = "redis_replay")]
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::Proxy;
-use mcp_re_proxy::RedisAtomicReplayStore;
-use mcp_re_proxy::SharedReplayCache;
 use serde_json::json;
 use serde_json::Value;
 
@@ -54,17 +59,7 @@ fn inbound_resolver() -> InMemoryTrustResolver {
     r
 }
 
-fn redis_url() -> Option<String> {
-    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty());
-    if url.is_none() && std::env::var("MCP_RE_REQUIRE_LIVE_INFRA").is_ok_and(|v| !v.is_empty()) {
-        panic!("MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable");
-    }
-    url
-}
-
-fn replica(url: &str) -> Proxy {
+fn replica(store: Arc<dyn AsyncAtomicReplayStore>) -> Proxy {
     let inner = |request: &[u8]| -> Vec<u8> {
         let id = serde_json::from_slice::<Value>(request)
             .ok()
@@ -76,7 +71,6 @@ fn replica(url: &str) -> Proxy {
         }))
         .unwrap()
     };
-    let store = RedisAtomicReplayStore::connect(url).expect("connect redis");
     Proxy::new(
         server_key(),
         SERVER,
@@ -84,9 +78,9 @@ fn replica(url: &str) -> Proxy {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
-    .with_replay_cache(Box::new(SharedReplayCache::new(Box::new(store), SKEW)))
+    .with_async_inner(Box::new(inner))
+    .with_async_replay_tier(AsyncReplayTier::new(store, SKEW))
 }
 
 fn now_unix() -> i64 {
@@ -130,10 +124,12 @@ fn percentile(sorted_micros: &[u128], p: f64) -> u128 {
 }
 
 /// Drive `requests` fresh (distinct-nonce) requests round-robin across `n`
-/// replicas, timing ONLY each `handle()` call, and return (throughput_rps,
+/// replicas, timing ONLY each `block_on_handle()` call, and return (throughput_rps,
 /// sorted per-request latencies in micros).
-fn measure(url: &str, n: usize, requests: usize) -> (f64, Vec<u128>) {
-    let nodes: Vec<Proxy> = (0..n).map(|_| replica(url)).collect();
+fn measure(n: usize, requests: usize) -> (f64, Vec<u128>) {
+    // ONE shared authoritative store, cloned into every replica's async tier.
+    let shared: Arc<dyn AsyncAtomicReplayStore> = Arc::new(InMemoryAsyncAtomicReplayStore::new());
+    let nodes: Vec<Proxy> = (0..n).map(|_| replica(Arc::clone(&shared))).collect();
     let now = now_unix();
     let run_tag = format!("{now}-{n}");
 
@@ -147,7 +143,7 @@ fn measure(url: &str, n: usize, requests: usize) -> (f64, Vec<u128>) {
     // does not consume a nonce the timed loop would then replay.
     for i in 0..n {
         let warm = sign(now, &format!("warm-{run_tag}-{i}"));
-        let _ = nodes[i % n].handle(&warm, now);
+        let _ = block_on_handle(&nodes[i % n], &warm, now);
     }
 
     let mut latencies = Vec::with_capacity(requests);
@@ -155,7 +151,7 @@ fn measure(url: &str, n: usize, requests: usize) -> (f64, Vec<u128>) {
     for (i, req) in requests_bytes.iter().enumerate() {
         let node = &nodes[i % n];
         let t = Instant::now();
-        let resp = node.handle(req, now);
+        let resp = block_on_handle(node, req, now);
         latencies.push(t.elapsed().as_micros());
         debug_assert!(
             serde_json::from_slice::<Value>(&resp)
@@ -171,17 +167,13 @@ fn measure(url: &str, n: usize, requests: usize) -> (f64, Vec<u128>) {
 }
 
 #[test]
-#[ignore = "benchmark harness; needs Redis; run explicitly with --ignored --nocapture"]
+#[ignore = "benchmark harness; run explicitly with --ignored --nocapture"]
 fn fleet_throughput_and_added_latency() {
-    let Some(url) = redis_url() else {
-        eprintln!("SKIP fleet_throughput_and_added_latency: MCP_RE_TEST_REDIS_URL unset");
-        return;
-    };
     let requests = env_usize("MCP_RE_BENCH_REQUESTS", 500);
     let max_replicas = env_usize("MCP_RE_BENCH_REPLICAS", 4).max(1);
 
     eprintln!(
-        "\nMCPS-89 fleet PEP benchmark — {requests} requests/run, in-process inner, shared Redis"
+        "\nMCPS-89 fleet PEP benchmark — {requests} requests/run, in-process inner, shared async store"
     );
     eprintln!(
         "{:>9} | {:>10} | {:>9} | {:>9} | {:>9}",
@@ -189,7 +181,7 @@ fn fleet_throughput_and_added_latency() {
     );
     eprintln!("{:->9}-+-{:->10}-+-{:->9}-+-{:->9}-+-{:->9}", "", "", "", "", "");
     for n in 1..=max_replicas {
-        let (rps, lat) = measure(&url, n, requests);
+        let (rps, lat) = measure(n, requests);
         eprintln!(
             "{:>9} | {:>10.0} | {:>9} | {:>9} | {:>9}",
             n,

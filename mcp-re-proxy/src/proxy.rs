@@ -22,11 +22,8 @@ use std::sync::Arc;
 use mcp_re_core::json_rpc_error_object;
 use mcp_re_core::response_signing_preimage;
 use mcp_re_core::unix_to_rfc3339_utc;
-use mcp_re_core::verify_request_dispatch;
 use mcp_re_core::ExpectedVersionPolicy;
-use mcp_re_core::InMemoryReplayCache;
 use mcp_re_core::McpReError;
-use mcp_re_core::ReplayCache;
 use mcp_re_core::TrustResolver;
 use mcp_re_core::VerificationConfig;
 use mcp_re_core::VerifiedAuthorization;
@@ -54,25 +51,6 @@ use crate::transport::LbAssertionBinding;
 use crate::transport::LbAssertionV2Binding;
 use crate::transport::TransportBindingPolicy;
 use crate::transport::TransportIdentity;
-
-/// An unmodified inner MCP server: plain JSON-RPC request bytes in, plain
-/// JSON-RPC response bytes out. The proxy is the only MCP-RE-aware component;
-/// the inner server speaks ordinary MCP.
-pub trait InnerServer {
-    /// Dispatch one (already verified + stripped) request to the inner server.
-    fn dispatch(&self, request: &[u8]) -> Vec<u8>;
-}
-
-/// Any `Fn(&[u8]) -> Vec<u8>` is an inner server (ergonomic for tests / closures
-/// wrapping a real subprocess).
-impl<F> InnerServer for F
-where
-    F: Fn(&[u8]) -> Vec<u8>,
-{
-    fn dispatch(&self, request: &[u8]) -> Vec<u8> {
-        self(request)
-    }
-}
 
 /// Optional Phase 5 (ADR-MCPS-013) policy enforcement: after a request verifies
 /// and BEFORE it is dispatched, evaluate the authorization artifact and deny
@@ -104,12 +82,6 @@ pub struct Proxy {
     /// via [`Proxy::with_expected_version_policy`], at which point a draft-01
     /// envelope fails closed as `mcp-re.downgrade_forbidden`.
     version_policy: ExpectedVersionPolicy,
-    inner: Box<dyn InnerServer + Send + Sync>,
-    /// The replay cache is held directly (no `RefCell`) and the trait's
-    /// `check_and_insert` takes `&self`, so a single `Proxy` is `Send + Sync`
-    /// and shareable across per-core serving tasks (ADR-MCPRE-051 §2). All
-    /// concrete caches carry their own interior synchronization.
-    replay: Box<dyn ReplayCache + Send + Sync>,
     policy: Option<PolicyEnforcement>,
     transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>>,
     /// Optional ADR-MCPS-023 Tier 3 (issue #71) LB-signed, request-bound ingress
@@ -134,21 +106,18 @@ pub struct Proxy {
     /// (`inner_request_forwarded`, `inner_response_signed`). Inner-process-level
     /// events (spawn/exit/stderr) are emitted by the `SubprocessInner` itself.
     log_sink: Option<Arc<dyn InnerLogSink + Send + Sync>>,
-    /// The authoritative ASYNC replay tier for the async serving path
-    /// (ADR-MCPRE-051 §4). Used ONLY by [`Proxy::handle_with_transport_async`];
-    /// the sync path uses `replay` above. `None` on the sync/stdio build; the
-    /// async data plane wires it via [`Proxy::with_async_replay_tier`] and a
-    /// request on the async path fails closed (`replay_cache_unavailable`) if it
-    /// is unset. Feature-gated so the default (sync) closure links no async stack.
-    #[cfg(feature = "async_serve")]
-    replay_async: Option<crate::async_replay::AsyncReplayTier>,
-    /// The ASYNC inner server for the async serving path (ADR-MCPRE-051 §3). Used
-    /// ONLY by [`Proxy::handle_with_transport_async`]; the sync path uses `inner`
-    /// above. `None` on the sync/stdio build; the async data plane wires it via
-    /// [`Proxy::with_async_inner`]. If unset on the async path, the inner round-trip
-    /// yields a signed fail-closed error (never a silent allow). Feature-gated so
-    /// the default (sync) closure links no async inner transport.
-    #[cfg(feature = "async_serve")]
+    /// The authoritative ASYNC replay tier — the ONLY replay path (ADR-MCPRE-051
+    /// §4). The atomic insert-if-absent is AWAITED on the request path without
+    /// blocking a per-core runtime worker. Defaults to an in-memory tier
+    /// (single-replica); production wires a durable/distributed store (redis/etcd)
+    /// via [`Proxy::with_async_replay_tier`]. Held directly (interior-synchronized)
+    /// so a single `Proxy` is `Send + Sync` and shareable across per-core tasks
+    /// (ADR-MCPRE-051 §2).
+    replay_async: crate::async_replay::AsyncReplayTier,
+    /// The ASYNC inner server (ADR-MCPRE-051 §3) — the per-core `hyper` client pool
+    /// to stateless Streamable-HTTP inner backends in production, wired via
+    /// [`Proxy::with_async_inner`]. If unset, the inner round-trip yields a signed
+    /// fail-closed error (never a silent allow).
     inner_async: Option<Box<dyn crate::async_inner::AsyncInnerServer>>,
 }
 
@@ -163,8 +132,10 @@ impl Proxy {
     ///   its private key. The signer is boxed internally.
     /// * `resolver` — resolves inbound request signers.
     /// * `expected_audience` / `max_clock_skew_secs` — verification policy.
-    /// * `inner` — the unmodified MCP server to protect.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// The async inner server and (durable) replay tier are wired via
+    /// [`Proxy::with_async_inner`] / [`Proxy::with_async_replay_tier`]; the default
+    /// replay tier is in-memory (single-replica).
     pub fn new(
         signer: impl ResponseSigner + Send + Sync + 'static,
         server_signer: impl Into<String>,
@@ -172,7 +143,6 @@ impl Proxy {
         resolver: Box<dyn TrustResolver + Send + Sync>,
         expected_audience: impl Into<String>,
         max_clock_skew_secs: i64,
-        inner: Box<dyn InnerServer + Send + Sync>,
     ) -> Self {
         Proxy {
             signer: Box::new(signer),
@@ -187,16 +157,15 @@ impl Proxy {
             // verified by its own profile). Tighten with
             // `with_expected_version_policy` once draft-01 is retired.
             version_policy: ExpectedVersionPolicy::Draft01AndDraft02,
-            inner,
-            replay: Box::new(InMemoryReplayCache::new(max_clock_skew_secs)),
             policy: None,
             transport_binding: None,
             lb_assertion: None,
             attested_ingress: None,
             log_sink: None,
-            #[cfg(feature = "async_serve")]
-            replay_async: None,
-            #[cfg(feature = "async_serve")]
+            replay_async: crate::async_replay::AsyncReplayTier::new(
+                Arc::new(crate::async_replay::InMemoryAsyncAtomicReplayStore::new()),
+                max_clock_skew_secs,
+            ),
             inner_async: None,
         }
     }
@@ -205,10 +174,7 @@ impl Proxy {
     /// §3) — the per-core `hyper` client pool to stateless Streamable-HTTP inner
     /// backends in production, or any [`AsyncInnerServer`](crate::async_inner::AsyncInnerServer).
     /// Required for [`Proxy::handle_with_transport_async`] to reach a real inner;
-    /// without it the async path returns a signed fail-closed inner error. The sync
-    /// `inner` is left in place for the sync entry points and is NEVER used on the
-    /// async path.
-    #[cfg(feature = "async_serve")]
+    /// without it the async path returns a signed fail-closed inner error.
     pub fn with_async_inner(
         mut self,
         inner: Box<dyn crate::async_inner::AsyncInnerServer>,
@@ -217,17 +183,15 @@ impl Proxy {
         self
     }
 
-    /// Wire the authoritative ASYNC replay tier used by the async serving path
-    /// (ADR-MCPRE-051 §4). Required for [`Proxy::handle_with_transport_async`];
-    /// without it every request on the async path fails closed
-    /// (`mcp-re.replay_cache_unavailable`). The sync `replay` cache is left in
-    /// place for the sync entry points but is NEVER consulted on the async path.
-    #[cfg(feature = "async_serve")]
+    /// Replace the default in-memory replay tier with a durable/distributed one
+    /// (redis/etcd) for the async serving path (ADR-MCPRE-051 §4). The atomic
+    /// insert-if-absent is consulted only after signature verification; a store
+    /// failure fails closed (`mcp-re.replay_cache_unavailable`).
     pub fn with_async_replay_tier(
         mut self,
         tier: crate::async_replay::AsyncReplayTier,
     ) -> Self {
-        self.replay_async = Some(tier);
+        self.replay_async = tier;
         self
     }
 
@@ -255,23 +219,16 @@ impl Proxy {
         self
     }
 
-    /// Replace the default in-memory replay cache with an injected one (e.g. the
-    /// durable file-backed cache). The cache is consulted only after signature
-    /// verification; a cache failure fails closed.
-    pub fn with_replay_cache(mut self, cache: Box<dyn ReplayCache + Send + Sync>) -> Self {
-        self.replay = cache;
-        self
-    }
-
-    /// The self-declared [`mcp_re_core::ReplayDurabilityClass`] of the replay cache
-    /// this proxy actually holds (issue #78, ADR-MCPS-020). Lets the wiring layer
-    /// MACHINE-CHECK the cache OBJECT — including a caller-injected one — rather than
-    /// inferring durability from the selected `ReplayKind`. A strict/production
-    /// startup rejects a [`mcp_re_core::ReplayDurabilityClass::SingleProcessReference`]
-    /// cache, closing the gap at the object level (defense in depth beneath the
-    /// CLI-flag rejection of `--replay-cache memory`).
+    /// The self-declared [`mcp_re_core::ReplayDurabilityClass`] of the async replay
+    /// tier this proxy actually holds (issue #78, ADR-MCPS-020). Lets the wiring
+    /// layer MACHINE-CHECK the store OBJECT — including a caller-injected one —
+    /// rather than inferring durability from the selected store kind. A
+    /// strict/production startup rejects a
+    /// [`mcp_re_core::ReplayDurabilityClass::SingleProcessReference`] tier, closing
+    /// the gap at the object level (defense in depth beneath the CLI-flag rejection
+    /// of `--replay-store memory`).
     pub fn replay_durability_class(&self) -> mcp_re_core::ReplayDurabilityClass {
-        self.replay.durability_class()
+        self.replay_async.durability_class()
     }
 
     /// Enable opt-in Phase 5 policy enforcement (ADR-MCPS-013). After a request
@@ -343,76 +300,8 @@ impl Proxy {
         self
     }
 
-    /// Handle one inbound request without a transport identity (stdio / no mTLS).
-    /// Equivalent to [`Proxy::handle_with_transport`] with `identity = None` and no
-    /// LB-assertion header. When an LB-assertion verifier is configured this fails
-    /// closed (a required assertion header is absent).
-    pub fn handle(&self, request_bytes: &[u8], now_unix: i64) -> Vec<u8> {
-        self.handle_with_transport(request_bytes, now_unix, None, None)
-    }
-
-    /// Handle one inbound request carrying the connection's verified transport
-    /// identity (mTLS): verify, then (on success) authorization policy, then
-    /// transport binding, then strip + forward + sign — or, on any failure, an
-    /// unsigned JSON-RPC error WITHOUT touching the inner server. Never panics.
-    ///
-    /// `lb_assertion_header` carries the raw presented Tier-3 ingress-assertion
-    /// header value (issue #71), if any. It is consulted ONLY when an
-    /// [`LbAssertionBinding`] is configured (via [`Proxy::with_lb_assertion`]): the
-    /// assertion can only be checked AFTER verification (it binds
-    /// `verified.request_hash`), so it cannot flow through the pre-resolved
-    /// `transport_identity` seam. When the LB verifier is configured the header is
-    /// REQUIRED — its absence, or any assertion rejection, fails closed before
-    /// dispatch.
-    pub fn handle_with_transport(
-        &self,
-        request_bytes: &[u8],
-        now_unix: i64,
-        transport_identity: Option<&TransportIdentity>,
-        lb_assertion_header: Option<&str>,
-    ) -> Vec<u8> {
-        let parsed: Option<Value> = serde_json::from_slice(request_bytes).ok();
-        let id_value = parsed
-            .as_ref()
-            .and_then(|v| v.get("id").cloned())
-            .unwrap_or(Value::Null);
-
-        // The replay cache is shared via `&self` (interior-synchronized), so the
-        // dispatch borrows it directly — no `RefCell`, no per-request borrow that
-        // could fail. This is what lets a single `Proxy` serve concurrently
-        // across per-core tasks (ADR-MCPRE-051 §2).
-        //
-        // This is the SYNCHRONOUS serving path (stdio dev/compat mode + the
-        // embeddable API + tests). The verification and the replay
-        // check-and-insert are one synchronous call. The async data plane
-        // (ADR-MCPRE-051 §1) uses [`Self::handle_with_transport_async`] instead,
-        // which runs the pure preflight inline and AWAITS an async replay tier —
-        // the two paths share the identical post-verification logic below via
-        // [`Self::finish_after_verify`].
-        match verify_request_dispatch(
-            request_bytes,
-            self.resolver.as_ref(),
-            self.replay.as_ref(),
-            &self.config,
-            now_unix,
-            self.version_policy,
-        ) {
-            // Fail closed: the inner server is never reached.
-            Err(err) => json_rpc_error_object(&err, &id_value),
-            Ok(verified) => self.finish_after_verify(
-                request_bytes,
-                verified,
-                parsed,
-                now_unix,
-                transport_identity,
-                lb_assertion_header,
-                id_value,
-            ),
-        }
-    }
-
-    /// The ASYNC serving-path entry point (ADR-MCPRE-051 §1/§4): the async mirror
-    /// of [`Self::handle_with_transport`] for the per-core `tokio` data plane.
+    /// The ASYNC serving-path entry point (ADR-MCPRE-051 §1/§4) — the ONLY request
+    /// path — for the per-core `tokio` data plane.
     ///
     /// The pure `mcp-re-core` verification (steps 1–11) runs INLINE on the async
     /// task — sub-millisecond CPU work, no `spawn_blocking`, no runtime coupling
@@ -420,14 +309,11 @@ impl Proxy {
     /// awaited I/O on the request path is then the authoritative replay
     /// insert-if-absent against the async replay tier (§4). The tier's
     /// [`ReplayDecision`] is fed straight into
-    /// [`mcp_re_core::PreflightVerified::finalize`], and — on `Fresh` — the SAME
-    /// post-verification pipeline as the sync path runs
-    /// ([`Self::finish_after_verify`]).
+    /// [`mcp_re_core::PreflightVerified::finalize`], and — on `Fresh` — the
+    /// post-verification pipeline runs ([`Self::finish_after_verify_async`]).
     ///
-    /// Fail-closed: if no async replay tier is wired (a misconfigured async build)
-    /// the request is rejected `mcp-re.replay_cache_unavailable`, never admitted.
-    /// A store failure is likewise `Unavailable` — uncertainty is never freshness.
-    #[cfg(feature = "async_serve")]
+    /// Fail-closed: a replay store failure is `Unavailable` — uncertainty is never
+    /// freshness — and yields `mcp-re.replay_cache_unavailable`, never admission.
     pub async fn handle_with_transport_async(
         &self,
         request_bytes: &[u8],
@@ -454,13 +340,9 @@ impl Proxy {
             Err(err) => return json_rpc_error_object(&err, &id_value),
         };
 
-        // Step 12 — AWAIT the authoritative atomic insert. An async serving path
-        // with no async replay tier wired is a misconfiguration: fail closed
-        // rather than admit without a coherence check.
-        let Some(tier) = &self.replay_async else {
-            return json_rpc_error_object(&McpReError::ReplayCacheUnavailable, &id_value);
-        };
-        let decision = match tier.check_and_insert(preflight.replay_key()).await {
+        // Step 12 — AWAIT the authoritative atomic insert. A store failure fails
+        // closed (`Unavailable` — uncertainty is never freshness).
+        let decision = match self.replay_async.check_and_insert(preflight.replay_key()).await {
             Ok(decision) => decision,
             Err(err) => return json_rpc_error_object(&McpReError::from(err), &id_value),
         };
@@ -626,40 +508,9 @@ impl Proxy {
                 Ok((verified, id_value))
     }
 
-    /// Sync serving-path finisher: authorize, then dispatch + sign through the sync
-    /// inner. Used by [`Self::handle_with_transport`] (stdio dev/compat + tests).
-    #[allow(clippy::too_many_arguments)]
-    fn finish_after_verify(
-        &self,
-        request_bytes: &[u8],
-        verified: VerifiedRequest,
-        parsed: Option<Value>,
-        now_unix: i64,
-        transport_identity: Option<&TransportIdentity>,
-        lb_assertion_header: Option<&str>,
-        id_value: Value,
-    ) -> Vec<u8> {
-        let (verified, id_value) = match self.authorize_after_verify(
-            verified,
-            parsed,
-            now_unix,
-            transport_identity,
-            lb_assertion_header,
-            id_value,
-        ) {
-            Ok(pair) => pair,
-            Err(error_bytes) => return error_bytes,
-        };
-        match self.dispatch_and_sign(request_bytes, &verified, now_unix, &id_value) {
-            Ok(bytes) => bytes,
-            Err(err) => json_rpc_error_object(&err, &id_value),
-        }
-    }
-
-    /// Async serving-path finisher (ADR-MCPRE-051 §3): the SAME authorization stage
-    /// as the sync path, then dispatch + sign through the ASYNC inner — the inner
-    /// round-trip is AWAITED, never blocking the per-core runtime worker.
-    #[cfg(feature = "async_serve")]
+    /// Serving-path finisher (ADR-MCPRE-051 §3): the authorization stage, then
+    /// dispatch + sign through the ASYNC inner — the inner round-trip is AWAITED,
+    /// never blocking the per-core runtime worker.
     #[allow(clippy::too_many_arguments)]
     async fn finish_after_verify_async(
         &self,
@@ -691,37 +542,14 @@ impl Proxy {
         }
     }
 
-    /// Strip + inject verified context, forward to the inner server, then sign
-    /// its result.
-    fn dispatch_and_sign(
-        &self,
-        request_bytes: &[u8],
-        verified: &VerifiedRequest,
-        now_unix: i64,
-        id_value: &Value,
-    ) -> Result<Vec<u8>, McpReError> {
-        let forwarded = self.build_forwarded_request(request_bytes, verified, now_unix)?;
-        if let Some(sink) = &self.log_sink {
-            sink.log(&verified.verified_signer, &InnerLogEvent::RequestForwarded);
-        }
-        let inner_response = self.inner.dispatch(&forwarded);
-        let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
-        if let Some(sink) = &self.log_sink {
-            sink.log(&verified.verified_signer, &InnerLogEvent::ResponseSigned);
-        }
-        Ok(signed)
-    }
-
-    /// The async mirror of [`Self::dispatch_and_sign`] (ADR-MCPRE-051 §3): forward
-    /// the verified+stripped+context-injected request to the ASYNC inner and AWAIT
-    /// its response, then sign. The forwarded-request build and the response signing
-    /// are pure CPU (shared, inline); only the inner round-trip is awaited, so the
-    /// per-core runtime worker is never blocked on the inner.
+    /// Forward the verified+stripped+context-injected request to the ASYNC inner
+    /// and AWAIT its response, then sign (ADR-MCPRE-051 §3). The forwarded-request
+    /// build and the response signing are pure CPU (inline); only the inner
+    /// round-trip is awaited, so the per-core runtime worker is never blocked.
     ///
-    /// If no async inner is wired (a misconfigured async build), a synthesized
-    /// JSON-RPC error *response* is signed as a fail-closed inner error — the client
-    /// still receives signed bytes, never a silent allow.
-    #[cfg(feature = "async_serve")]
+    /// If no async inner is wired, a synthesized JSON-RPC error *response* is signed
+    /// as a fail-closed inner error — the client still receives signed bytes, never
+    /// a silent allow.
     async fn dispatch_and_sign_async(
         &self,
         request_bytes: &[u8],
@@ -1020,6 +848,8 @@ fn scrub_proxy_owned_meta(value: &mut Value) {
 mod tests {
     use super::scrub_proxy_owned_meta;
     use super::Proxy;
+    use crate::test_support::block_on_handle;
+    use crate::test_support::block_on_handle_with_transport;
 
     /// ADR-MCPRE-051 §2 / Phase 1 (MCPRE-111): a single `Proxy` must be
     /// `Send + Sync` so the target per-core async data plane can share one over
@@ -1131,8 +961,8 @@ mod tests {
             Box::new(inbound_resolver()),
             AUDIENCE,
             SKEW,
-            Box::new(inner),
         )
+        .with_async_inner(Box::new(inner))
     }
 
     fn out_value(bytes: &[u8]) -> Value {
@@ -1149,7 +979,7 @@ mod tests {
             "id": REQUEST_ID,
             "result": 42,
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
 
         // The client MUST be able to verify the response against its request_hash.
         verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
@@ -1164,7 +994,7 @@ mod tests {
             "id": REQUEST_ID,
             "result": [1, 2, 3],
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
         verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
             .expect("array result must be a signed, request-bound envelope");
     }
@@ -1177,7 +1007,7 @@ mod tests {
             "id": REQUEST_ID,
             "result": Value::Null,
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
         verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
             .expect("null result must be a signed, request-bound envelope");
     }
@@ -1190,7 +1020,7 @@ mod tests {
             "id": REQUEST_ID,
             "result": "scalar-string",
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
         let value = out_value(&out);
         // The inner scalar is preserved so it is not silently dropped by wrapping.
         assert_eq!(
@@ -1212,7 +1042,7 @@ mod tests {
             "id": Value::Null,
             "error": { "code": -32000, "message": "inner boom" },
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
 
         // (1) The outgoing envelope must be signed + bound to the request_hash.
         verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
@@ -1240,7 +1070,7 @@ mod tests {
             "id": Value::Null,
             "error": { "code": -32000, "message": "inner boom", "data": "attacker" },
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
         let value = out_value(&out);
         // The exact hostile inner object (null id + top-level error) must not be
         // what the client receives.
@@ -1266,8 +1096,8 @@ mod tests {
             Box::new(inbound_resolver()),
             AUDIENCE,
             SKEW,
-            Box::new(inner),
         )
+        .with_async_inner(Box::new(inner))
     }
 
     /// A signed inbound request that ALSO carries attacker-planted proxy-owned
@@ -1317,7 +1147,7 @@ mod tests {
         let nonce = "nonce-scrub-req-1";
         let captured = Arc::new(Mutex::new(Vec::new()));
         let proxy = proxy_capturing(Arc::clone(&captured));
-        let _ = proxy.handle(&signed_request_with_forged_nested(nonce), now());
+        let _ = block_on_handle(&proxy, &signed_request_with_forged_nested(nonce), now());
 
         let forwarded: Value =
             serde_json::from_slice(&captured.lock().expect("lock")).expect("parse forwarded");
@@ -1372,7 +1202,7 @@ mod tests {
                 }]
             }
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
 
         // The outgoing envelope still verifies (the canonical response block the
         // proxy wrote is intact and signs the scrubbed result).
@@ -1415,7 +1245,7 @@ mod tests {
             "id": REQUEST_ID,
             "result": { "ok": true },
         }));
-        let out = proxy.handle(&signed_request(nonce), now());
+        let out = block_on_handle(&proxy, &signed_request(nonce), now());
         // The response verifies AND its correlation id is exactly the request id.
         verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
             .expect("happy-path response must be signed and request-bound");
@@ -1438,7 +1268,7 @@ mod tests {
         let tampered = serde_json::to_vec(&request).expect("serialize");
 
         let proxy = proxy_returning(json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }));
-        let out = proxy.handle(&tampered, now());
+        let out = block_on_handle(&proxy, &tampered, now());
 
         // It is an unsigned JSON-RPC error, NOT a verifiable signed response.
         assert!(
@@ -1465,7 +1295,7 @@ mod tests {
         let duped = format!("{{\"id\":\"did:evil:dup\",{}", &text[1..]);
 
         let proxy = proxy_returning(json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }));
-        let out = proxy.handle(duped.as_bytes(), now());
+        let out = block_on_handle(&proxy, duped.as_bytes(), now());
 
         assert!(
             verify_response(&out, &server_resolver(), &expected_request_hash(nonce)).is_err(),
@@ -1545,8 +1375,8 @@ mod tests {
             Box::new(inbound_resolver()),
             AUDIENCE,
             SKEW,
-            Box::new(inner),
         )
+        .with_async_inner(Box::new(inner))
         .with_lb_assertion(lb_binding);
 
         // A genuinely valid assertion bound to THIS request's hash, in-window.
@@ -1573,7 +1403,8 @@ mod tests {
             "the minted LB assertion must be cryptographically valid on its own"
         );
 
-        let out = proxy.handle_with_transport(
+        let out = block_on_handle_with_transport(
+            &proxy,
             &signed_request(nonce),
             now(),
             None,

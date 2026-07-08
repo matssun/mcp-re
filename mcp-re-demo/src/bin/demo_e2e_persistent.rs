@@ -49,8 +49,11 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use mcp_re_demo::assemble_assertions;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::run_persistent_e2e;
 use mcp_re_demo::server_response_public_key;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use mcp_re_demo::PersistentE2eEvidence;
@@ -167,6 +170,7 @@ struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
     stderr: Arc<Mutex<String>>,
+    bridge: BridgeProcess,
     received_log_path: PathBuf,
     _files: DemoFixtureFiles,
     _replay_dir: PathBuf,
@@ -181,9 +185,14 @@ impl Drop for ProxyProcess {
 }
 
 impl ProxyProcess {
-    /// The proxy's captured diagnostic stderr (the `inner_spawned` lifecycle log).
+    /// The combined diagnostic stderr: the proxy's post-bind startup marker plus
+    /// the BRIDGE's `inner_spawned` lifecycle marker (the PEP no longer launches
+    /// the subprocess — the persistent bridge does).
     fn stderr_snapshot(&self) -> String {
-        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut combined = self.stderr.lock().map(|s| s.clone()).unwrap_or_default();
+        combined.push('\n');
+        combined.push_str(&self.bridge.stderr_snapshot());
+        combined
     }
 
     /// The inner server's received-log content (#3965), empty if unwritten.
@@ -209,17 +218,29 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         .into_owned();
     let working_dir = std::env::temp_dir().to_string_lossy().into_owned();
 
+    let replay_dir = std::env::temp_dir().join(format!("mcp_re_persist_replay_{}", std::process::id()));
+    std::fs::create_dir_all(&replay_dir).map_err(|e| format!("mkdir replay dir: {e}"))?;
+    // The inner server's received-log (#3965): the BRIDGE forwards these trailing
+    // args verbatim to the long-lived inner, so it records every tools/call it
+    // ACTUALLY runs.
+    let received_log_path = replay_dir.join("inner_received.log");
+
+    // Front the LONG-LIVED demo server with the out-of-TCB bridge in PERSISTENT
+    // mode (spawn-once). The bridge's StderrLogSink prints `inner_spawned` once.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary()?,
+        BridgeInnerMode::Persistent,
+        Some(&working_dir),
+        &[
+            inner,
+            "--received-log".to_string(),
+            received_log_path.to_string_lossy().into_owned(),
+        ],
+    )?;
+
     let port = free_port()?;
     let bind = format!("127.0.0.1:{port}");
     let addr: SocketAddr = bind.parse().map_err(|e| format!("addr: {e}"))?;
-
-    let replay_dir = std::env::temp_dir().join(format!("mcp_re_persist_replay_{}", std::process::id()));
-    std::fs::create_dir_all(&replay_dir).map_err(|e| format!("mkdir replay dir: {e}"))?;
-    let replay_path = replay_dir.join("replay.json");
-    // The inner server's received-log (#3965): the proxy forwards these trailing
-    // args verbatim to the inner (`--inner-command` consumes the remainder of
-    // argv), so the long-lived inner records every tools/call it ACTUALLY runs.
-    let received_log_path = replay_dir.join("inner_received.log");
 
     let mut child = Command::new(&cli)
         .args([
@@ -246,9 +267,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--trust",
             &files.trust_path().to_string_lossy(),
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -259,17 +278,9 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
-            "--inner-mode",
-            "persistent",
-            "--inner-working-dir",
-            &working_dir,
-            // `--inner-command` consumes the remainder of argv: the inner binary
-            // plus its OWN `--received-log` flag, so the long-lived inner records
-            // every tools/call it actually serves.
-            "--inner-command",
-            &inner,
-            "--received-log",
-            &received_log_path.to_string_lossy(),
+            // The inner plane is HTTP: point it at the PERSISTENT bridge above.
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -315,6 +326,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         child,
         addr,
         stderr,
+        bridge,
         received_log_path,
         _files: files,
         _replay_dir: replay_dir,

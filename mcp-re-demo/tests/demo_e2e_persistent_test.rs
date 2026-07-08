@@ -47,10 +47,13 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use mcp_re_demo::assemble_assertions;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::independently_verify_response;
 use mcp_re_demo::inner_received_id;
 use mcp_re_demo::run_persistent_e2e;
 use mcp_re_demo::server_response_public_key;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use mcp_re_demo::PersistentE2eEvidence;
@@ -86,23 +89,25 @@ fn demo_server_binary() -> String {
         .into_owned()
 }
 
-/// Parse the proxy's OS-resolved listen address from its startup marker
-/// `mcp-re-proxy: listening on <addr> (PEP; …)`. Requires the trailing space so a
-/// partially-captured line never yields a truncated address.
+/// Parse the proxy's OS-resolved listen address from its async-fleet startup
+/// marker `mcp-re-proxy: async fleet serving on <addr> (…)`. Requires the trailing
+/// space so a partially-captured line never yields a truncated address.
 fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
-    let marker = "mcp-re-proxy: listening on ";
+    let marker = "mcp-re-proxy: async fleet serving on ";
     let start = stderr.find(marker)? + marker.len();
     let rest = &stderr[start..];
     let end = rest.find(' ')?;
     rest[..end].parse().ok()
 }
 
-/// A spawned `mcp_re_proxy_cli` OS process, killed (and reaped — together with its
-/// persistent inner child, which exits on the proxy's death / stdin EOF) on drop.
+/// A spawned `mcp_re_proxy_cli` OS process, plus the out-of-TCB
+/// `mcp-re-stdio-bridge` (in persistent mode) that actually launches + keeps the
+/// long-lived demo server. Both are killed + reaped on drop.
 struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
     stderr: Arc<Mutex<String>>,
+    bridge: BridgeProcess,
     received_log_path: PathBuf,
     _files: DemoFixtureFiles,
     _replay_dir: PathBuf,
@@ -117,10 +122,16 @@ impl Drop for ProxyProcess {
 }
 
 impl ProxyProcess {
-    /// The proxy's captured diagnostic stderr (the `inner_spawned` lifecycle log)
-    /// — the INDEPENDENT spawn-count oracle.
+    /// The captured diagnostic stderr — the INDEPENDENT spawn-count oracle. The
+    /// PEP no longer launches the subprocess, so the `inner_spawned` marker is
+    /// printed by the BRIDGE's own `StderrLogSink`; the proxy's post-bind startup
+    /// marker (`async fleet serving on`) is on the PROXY's stderr. Combine both so
+    /// the persistent-flow assertions see every independent signal.
     fn stderr_snapshot(&self) -> String {
-        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut combined = self.stderr.lock().map(|s| s.clone()).unwrap_or_default();
+        combined.push('\n');
+        combined.push_str(&self.bridge.stderr_snapshot());
+        combined
     }
 
     /// The inner server's received-log content (#3965) — the INDEPENDENT "what
@@ -138,22 +149,36 @@ fn spawn_persistent_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
     let files = fixtures.write_files().expect("materialize fixture files");
     let cli = proxy_cli();
     let inner = demo_server_binary();
-    // The persistent inner spawns the demo server in a controlled working dir;
-    // the demo server reads/writes nothing on disk, so the system temp dir is a
-    // valid controlled start dir.
+    // The bridge spawns the demo server in a controlled working dir; the demo
+    // server reads/writes nothing on disk, so the system temp dir is a valid
+    // controlled start dir.
     let working_dir = std::env::temp_dir().to_string_lossy().into_owned();
+
+    let replay_dir = std::env::temp_dir().join(format!("mcp_re_persist_replay_{}", std::process::id()));
+    std::fs::create_dir_all(&replay_dir).expect("mkdir replay dir");
+    // The inner server's received-log (#3965): the BRIDGE forwards these trailing
+    // args verbatim to the long-lived inner, so it records every tools/call it
+    // ACTUALLY runs. This is the anti-gaming oracle for "denied never reached".
+    let received_log_path = replay_dir.join("inner_received.log");
+
+    // THE knob under test: front the LONG-LIVED demo server with the out-of-TCB
+    // bridge in PERSISTENT mode (spawn-once + initialize handshake). The bridge's
+    // own StderrLogSink prints `inner_spawned` exactly once — the spawn oracle.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::Persistent,
+        Some(&working_dir),
+        &[
+            inner,
+            "--received-log".to_string(),
+            received_log_path.to_string_lossy().into_owned(),
+        ],
+    )
+    .expect("spawn persistent stdio bridge fronting the demo server");
 
     // Let the PROXY pick the port (bind :0, read it back from the startup
     // marker) — deletes the free_port() bind-after-free TOCTOU (MCPS-087).
     let bind = "127.0.0.1:0".to_string();
-
-    let replay_dir = std::env::temp_dir().join(format!("mcp_re_persist_replay_{}", std::process::id()));
-    std::fs::create_dir_all(&replay_dir).expect("mkdir replay dir");
-    let replay_path = replay_dir.join("replay.json");
-    // The inner server's received-log (#3965): the proxy forwards these trailing
-    // args verbatim to the inner, so the long-lived inner records every tools/call
-    // it ACTUALLY runs. This is the anti-gaming oracle for "denied never reached".
-    let received_log_path = replay_dir.join("inner_received.log");
 
     let mut child = Command::new(&cli)
         .args([
@@ -179,10 +204,10 @@ fn spawn_persistent_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             &files.client_ca_path().to_string_lossy(),
             "--trust",
             &files.trust_path().to_string_lossy(),
+            // Shared in-memory replay tier (the async data plane rejects the
+            // single-file durable cache).
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -193,27 +218,18 @@ fn spawn_persistent_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
-            // THE knob under test: front a long-lived inner with the persistent
-            // process model (spawn-once + initialize handshake).
-            "--inner-mode",
-            "persistent",
-            "--inner-working-dir",
-            &working_dir,
-            // `--inner-command` consumes the remainder of argv: the inner binary
-            // plus its OWN `--received-log` flag (#3965), so the long-lived inner
-            // records every tools/call it actually serves to a file the test reads.
-            "--inner-command",
-            &inner,
-            "--received-log",
-            &received_log_path.to_string_lossy(),
+            // The inner plane is HTTP: point it at the PERSISTENT bridge above.
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        // stderr PIPED + drained: the proxy emits `inner_spawned` here the instant
-        // it launches the persistent inner — the independent spawn-count oracle.
+        // stderr PIPED + drained: the proxy emits `inner_request_forwarded` here on
+        // every forward; the persistent inner's `inner_spawned` is on the BRIDGE's
+        // stderr (combined by stderr_snapshot).
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn mcp_re_proxy_cli --inner-mode persistent");
+        .expect("spawn mcp_re_proxy_cli");
 
     let stderr = Arc::new(Mutex::new(String::new()));
     let mut pipe = child.stderr.take().expect("piped stderr");
@@ -254,6 +270,7 @@ fn spawn_persistent_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
         child,
         addr,
         stderr,
+        bridge,
         received_log_path,
         _files: files,
         _replay_dir: replay_dir,

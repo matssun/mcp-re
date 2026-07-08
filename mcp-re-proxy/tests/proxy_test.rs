@@ -17,6 +17,7 @@ use mcp_re_host::HostSigner;
 use mcp_re_host::SeededNonceSource;
 use mcp_re_host::UnwrappedResult;
 use mcp_re_proxy::DelegatedResponseSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::Proxy;
 use mcp_re_proxy::ResponseSigner;
 use serde_json::json;
@@ -89,8 +90,8 @@ fn proxy_with_recorder() -> (Proxy, Calls) {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
     (proxy, calls)
 }
 
@@ -129,7 +130,7 @@ fn verified_request_is_forwarded_stripped_and_response_is_signed() {
     let expected_hash = request_hash(&serde_json::from_slice::<Value>(&request).unwrap())
         .expect("request_hash");
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // The inner server was reached exactly once.
     assert_eq!(calls.lock().unwrap().len(), 1, "inner reached once");
@@ -175,7 +176,7 @@ fn unsigned_request_is_blocked_and_never_forwarded() {
     }))
     .unwrap();
 
-    let response = proxy.handle(&plain, now());
+    let response = block_on_handle(&proxy, &plain, now());
 
     assert_eq!(calls.lock().unwrap().len(), 0, "inner must NOT be reached");
     assert_eq!(error_message(&response), "mcp-re.missing_envelope");
@@ -189,7 +190,7 @@ fn tampered_request_is_blocked_and_never_forwarded() {
     value["params"]["arguments"]["text"] = Value::String("goodbye".to_string());
     let tampered = serde_json::to_vec(&value).unwrap();
 
-    let response = proxy.handle(&tampered, now());
+    let response = block_on_handle(&proxy, &tampered, now());
 
     assert_eq!(calls.lock().unwrap().len(), 0, "inner must NOT be reached");
     assert_eq!(error_message(&response), "mcp-re.invalid_signature");
@@ -223,7 +224,7 @@ fn caller_supplied_verified_context_is_stripped_even_when_signed() {
         )
         .expect("host signs");
 
-    let _ = proxy.handle(&request, now());
+    let _ = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 1, "verified request is forwarded");
     let forwarded = &calls.lock().unwrap()[0];
@@ -286,14 +287,14 @@ fn non_exporting_signer_drives_response_signing_and_verifies() {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
 
     let request = signed_echo_request("nonce-proxy-delegated", "hello");
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     let verified = verify_response(&response, &response_resolver, &expected_hash)
         .expect("response signed via the delegation seam verifies under the advertised public key");
@@ -338,8 +339,8 @@ fn proxy_returning(inner_response: Value) -> Proxy {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
 }
 
 /// Sign a `tools/call` through the SESSION (so the request is pending and the
@@ -356,7 +357,7 @@ fn roundtrip(session: &mut HostSession<FixedClock, SeededNonceSource>, proxy: &P
             AUTH_HASH,
         )
         .expect("session signs the tool call");
-    proxy.handle(&request, NOW_UNIX + 60)
+    block_on_handle(proxy, &request, NOW_UNIX + 60)
 }
 
 #[test]

@@ -45,7 +45,10 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::run_positive_e2e;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 
@@ -134,10 +137,12 @@ fn resolve_runfile(env_key: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("cannot locate runfile via {env_key}='{rel}'"))
 }
 
-/// A spawned `mcp_re_proxy_cli` OS process, killed (and reaped) on drop.
+/// A spawned `mcp_re_proxy_cli` OS process plus the out-of-TCB bridge fronting the
+/// fileserver, killed (and reaped) on drop.
 struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
+    _bridge: BridgeProcess,
     _files: DemoFixtureFiles,
     _replay_dir: PathBuf,
 }
@@ -171,13 +176,20 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         .to_string_lossy()
         .into_owned();
 
+    // Front the real fileserver behind the out-of-TCB stdio↔HTTP bridge.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary()?,
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner, "--demo-root".to_string(), root.clone()],
+    )?;
+
     let port = free_port()?;
     let bind = format!("127.0.0.1:{port}");
     let addr: SocketAddr = bind.parse().map_err(|e| format!("addr: {e}"))?;
 
     let replay_dir = std::env::temp_dir().join(format!("mcp_re_e2e_replay_{}", std::process::id()));
     std::fs::create_dir_all(&replay_dir).map_err(|e| format!("mkdir replay dir: {e}"))?;
-    let replay_path = replay_dir.join("replay.json");
 
     let child = Command::new(&cli)
         .args([
@@ -204,9 +216,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--trust",
             &files.trust_path().to_string_lossy(),
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -217,12 +227,8 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
-            "--inner-working-dir",
-            &root,
-            "--inner-command",
-            &inner,
-            "--demo-root",
-            &root,
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -244,6 +250,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
     Ok(ProxyProcess {
         child,
         addr,
+        _bridge: bridge,
         _files: files,
         _replay_dir: replay_dir,
     })

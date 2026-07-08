@@ -21,6 +21,7 @@ use mcp_re_core::ExpectedVersionPolicy;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::Proxy;
 use serde_json::json;
 use serde_json::Value;
@@ -85,8 +86,8 @@ fn proxy_with_recorder(draft02_only: bool) -> (Proxy, Calls) {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
     if draft02_only {
         proxy = proxy.with_expected_version_policy(ExpectedVersionPolicy::Draft02Only);
     }
@@ -121,7 +122,7 @@ fn error_message(bytes: &[u8]) -> String {
 #[test]
 fn default_policy_admits_draft01_end_to_end() {
     let (proxy, calls) = proxy_with_recorder(false);
-    let response = proxy.handle(&signed_draft01_echo("nonce-d1-default"), now());
+    let response = block_on_handle(&proxy, &signed_draft01_echo("nonce-d1-default"), now());
 
     let parsed: Value = serde_json::from_slice(&response).expect("parse response");
     assert!(parsed.get("error").is_none(), "expected success: {parsed}");
@@ -131,7 +132,7 @@ fn default_policy_admits_draft01_end_to_end() {
 #[test]
 fn draft02_only_refuses_draft01_as_downgrade_before_dispatch() {
     let (proxy, calls) = proxy_with_recorder(true);
-    let response = proxy.handle(&signed_draft01_echo("nonce-d1-strict"), now());
+    let response = block_on_handle(&proxy, &signed_draft01_echo("nonce-d1-strict"), now());
 
     assert_eq!(error_message(&response), "mcp-re.downgrade_forbidden");
     assert!(

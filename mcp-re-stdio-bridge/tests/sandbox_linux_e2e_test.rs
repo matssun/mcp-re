@@ -16,10 +16,10 @@
 use std::process::Command;
 use std::process::Stdio;
 
-use mcp_re_proxy::InnerLaunchConfig;
-use mcp_re_proxy::NetworkPolicy;
-use mcp_re_proxy::SandboxMode;
-use mcp_re_proxy::SandboxProfile;
+use mcp_re_stdio_bridge::inner_launch::InnerLaunchConfig;
+use mcp_re_stdio_bridge::sandbox::NetworkPolicy;
+use mcp_re_stdio_bridge::sandbox::SandboxMode;
+use mcp_re_stdio_bridge::sandbox::SandboxProfile;
 
 /// Build a `/bin/sh -c <script>` command wired through the inner-launch sandbox
 /// install path under an Enforce profile with the given fs allowlists and network

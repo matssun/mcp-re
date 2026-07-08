@@ -119,11 +119,20 @@ subprocess mode is **excluded from the production architecture**.
 - **Outlier ejection and circuit breaking** on the upstream pool: a slow or
   dead inner backend is ejected and cannot stall the plane; pool exhaustion
   fails closed with backpressure, never unbounded queuing.
-- **stdio subprocess mode is development/compatibility only.** It is not part
-  of the high-throughput release architecture, is excluded from all SLO
-  claims, and the high-throughput MCP-RE deployment profile requires
-  Streamable-HTTP inner backends. (The mode remains in-tree for local
-  development and conformance harnesses; it makes no production claims.)
+- **stdio subprocess mode is RELOCATED OUT of the PEP (out of the TCB).**
+  The proxy's sole inner plane is the stateless Streamable-HTTP client above;
+  the proxy launches no subprocess and carries no sandbox/rlimit/env surface.
+  The ~3k-line subprocess/sandbox machinery (subprocess lifecycle, environment
+  allow-listing, Landlock fs rulesets, seccomp-bpf egress filters, `setrlimit`)
+  — the single most dangerous, most platform-specific code in the system — has
+  been MOVED to a separate, un-privileged crate, `mcp-re-stdio-bridge`, an
+  out-of-TCB `stdio`↔HTTP adapter. An unmodified local stdio MCP server is
+  fronted by the bridge and reached by the PEP over HTTP like any other backend.
+  A compromise of the bridge cannot forge a signature or defeat replay — those
+  guarantees live entirely in the PEP. This relocation SHRINKS the PEP's Trusted
+  Computing Base and removes an entire class of code (subprocess/kernel-sandbox)
+  from the cryptographic trust boundary; it supersedes the earlier "stdio remains
+  in-tree as a dev/compat mode" position (MCPRE-118).
 
 ### 4. Replay — an authoritative atomic tier; L1 is never authoritative
 
@@ -271,8 +280,10 @@ is preserved exactly.
 - **stdio inner plane in production (pooled or not).** Rejected: even pooled,
   it is process-manager-shaped local IPC with per-worker serial pipes —
   the wrong transport for a scale path MCP itself is moving away from;
-  keeping it in the production architecture diffuses focus. Retained only as
-  a development/compatibility mode with no production claims.
+  keeping it in the production architecture diffuses focus. Its subprocess/
+  sandbox surface is RELOCATED to the out-of-TCB `mcp-re-stdio-bridge` adapter
+  (MCPRE-118), so a stdio-only server is still protectable — fronted by the
+  bridge and reached over HTTP — WITHOUT that surface entering the PEP's TCB.
 - **L1-authoritative replay (per-core caches, best-effort sync).** Rejected:
   violates the cross-replica replay guarantee (MCPS-81) the fleet posture is
   built on; freshness must be a linearizable insert, full stop.
@@ -342,9 +353,9 @@ is preserved exactly.
   the bounded-drain test are CI release gates.
 - The firewall test is updated: `mcp-re-core` MUST remain pure (no
   networking/async/fs); the proxy serving path MAY use the async stack.
-- The production deployment profile asserts Streamable-HTTP inner backends;
-  stdio mode logs itself as a development mode and is excluded from SLO
-  claims.
+- The production deployment profile asserts Streamable-HTTP inner backends.
+  The proxy has NO stdio inner mode: a stdio-only server is fronted by the
+  out-of-TCB `mcp-re-stdio-bridge` and reached over HTTP (MCPRE-118).
 - Delegated-key issuance, rotation, and retirement are audited events;
   fail-closed issuance is covered by a deterministic test.
 

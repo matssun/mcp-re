@@ -1,7 +1,7 @@
 //! MCPS-063 (MCP-RE-EPIC-P6.6B) — a LONG-LIVED inner MCP server.
 //!
 //! [`PersistentSubprocessInner`] is the persistent counterpart of the one-shot
-//! [`crate::cli::SubprocessInner`]. Where the one-shot impl spawns the inner
+//! [`crate::subprocess_inner::SubprocessInner`]. Where the one-shot impl spawns the inner
 //! command per request (write one request, close stdin, read stdout to EOF, and
 //! expect the process to exit), this impl spawns the inner command **once** at
 //! construction, performs the MCP `initialize` handshake, and then keeps the
@@ -71,7 +71,7 @@ use crate::inner_launch::InnerLaunchConfig;
 use crate::log_sink::InnerLogEvent;
 use crate::log_sink::InnerLogSink;
 use crate::log_sink::StderrLogSink;
-use crate::proxy::InnerServer;
+use crate::subprocess_inner::InnerServer;
 
 /// The MCP protocol version the proxy advertises in its `initialize` handshake.
 /// Matches the version `mcp-re-demo-server` advertises (#3956).

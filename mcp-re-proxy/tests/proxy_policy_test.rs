@@ -29,6 +29,8 @@ use mcp_re_policy::AUTHORIZATION_META_KEY;
 use mcp_re_policy::REFERENCE_PROFILE_ID;
 use mcp_re_proxy::ExactMatchBinding;
 use mcp_re_proxy::IdentitySource;
+use mcp_re_proxy::test_support::block_on_handle;
+use mcp_re_proxy::test_support::block_on_handle_with_transport;
 use mcp_re_proxy::Proxy;
 use mcp_re_proxy::TransportIdentity;
 use serde_json::json;
@@ -103,8 +105,8 @@ fn proxy_with_recorder(enforce: bool) -> (Proxy, Calls) {
         Box::new(resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
     if enforce {
         let mut evaluator = PolicyEvaluator::new();
         evaluator.register(Box::new(ReferenceProfile::new()));
@@ -179,7 +181,7 @@ fn enforced_in_scope_request_is_allowed_and_signed() {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).unwrap();
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
     // The inner never sees the MCP-RE authorization block.
@@ -200,7 +202,7 @@ fn enforced_out_of_scope_request_is_denied_before_dispatch() {
     // Grant only `echo`, but call `delete_everything`.
     let request = signed_request("nonce-scope-01", "delete_everything", "echo", true);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
@@ -211,7 +213,7 @@ fn enforced_request_without_block_is_denied() {
     let (proxy, calls) = proxy_with_recorder(true);
     let request = signed_request("nonce-noblk-01", "echo", "echo", false);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 0, "no authorization → inner never reached");
     assert_eq!(error_message(&response), "mcp-re.authorization_block_missing");
@@ -238,12 +240,12 @@ fn enforced_revoked_grant_is_denied() {
         Box::new(resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
     .with_policy_enforcement(evaluator, Box::new(revocation));
 
     let request = signed_request("nonce-revk-01", "echo", "echo", true);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 0, "revoked grant → inner never reached");
     assert_eq!(error_message(&response), "mcp-re.authorization_revoked");
@@ -256,7 +258,7 @@ fn unenforced_proxy_ignores_the_authorization_block_and_forwards() {
     let (proxy, calls) = proxy_with_recorder(false);
     let request = signed_request("nonce-unenf-01", "delete_everything", "echo", true);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(calls.lock().unwrap().len(), 1, "without enforcement the request is forwarded");
     assert!(
@@ -282,7 +284,7 @@ fn satisfied_transport_binding_does_not_rescue_failed_authz() {
     let request = signed_request("nonce-authz-bind", "delete_everything", "echo", true);
     let id = TransportIdentity::new(SIGNER, IdentitySource::UriSan);
 
-    let response = proxy.handle_with_transport(&request, now(), Some(&id), None);
+    let response = block_on_handle_with_transport(&proxy, &request, now(), Some(&id), None);
 
     assert_eq!(calls.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
@@ -331,12 +333,12 @@ fn enforced_unavailable_revocation_source_denies_with_distinct_token() {
         Box::new(resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
     .with_policy_enforcement(evaluator, Box::new(AlwaysUnavailable));
 
     let request = signed_request("nonce-unavail-01", "echo", "echo", true);
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(
         calls.lock().unwrap().len(),

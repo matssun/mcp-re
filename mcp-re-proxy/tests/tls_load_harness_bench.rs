@@ -31,6 +31,7 @@
 //! realised-reuse fraction ≈ 0 on the current proxy — the mode is instrumented now
 //! and becomes meaningful with the Phase-2 keep-alive/H2 data plane.
 
+use std::convert::Infallible;
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -47,6 +48,17 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+
+use bytes::Bytes;
+use http_body_util::BodyExt;
+use http_body_util::Full;
+use hyper::body::Incoming;
+use hyper::service::service_fn;
+use hyper::Request;
+use hyper::Response;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::TokioIo;
+use hyper_util::server::conn::auto;
 
 use mcp_re_core::b64url_encode;
 use mcp_re_core::request_hash;
@@ -214,6 +226,77 @@ fn locate(env_key: &str) -> PathBuf {
     mcp_re_test_paths::resolve_runfile(env_key)
 }
 
+// --- in-process HTTP echo inner backend (ADR-MCPRE-051 §3) --------------------
+//
+// The proxy serves on the async fleet and forwards each verified request over HTTP
+// to a stateless inner backend (no more stdio echo subprocess). This is the HTTP
+// analogue of the old `echo_inner` fixture: it reads the POSTed JSON-RPC request
+// and answers with a JSON-RPC result echoing `params._meta` and the method, so a
+// success ("no error") still corresponds to a genuinely signed inner result.
+// Mirrors the in-process hyper backend in `http_inner_test.rs`.
+async fn echo_inner_service(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = req
+        .into_body()
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let id = value.get("id").cloned().unwrap_or(Value::Null);
+    let meta = value
+        .get("params")
+        .and_then(|params| params.get("_meta"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let method = value.get("method").cloned().unwrap_or(Value::Null);
+
+    let response = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": { "echoed_meta": meta, "echoed_method": method },
+    });
+    let bytes = serde_json::to_vec(&response).unwrap_or_default();
+    Ok(Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(Full::new(Bytes::from(bytes)))
+        .expect("response builds"))
+}
+
+/// Start the in-process HTTP echo backend on an ephemeral `127.0.0.1` port and
+/// return its bound address. Runs on its own multi-thread tokio runtime on a
+/// detached daemon thread (lives for the rest of the test process), so it can
+/// absorb the harness's concurrent load without starving.
+fn spawn_http_echo_backend() -> SocketAddr {
+    let (tx, rx) = std::sync::mpsc::channel::<SocketAddr>();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("backend runtime");
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind echo backend");
+            let addr = listener.local_addr().expect("backend addr");
+            tx.send(addr).expect("send backend addr");
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(io, service_fn(echo_inner_service))
+                        .await;
+                });
+            }
+        });
+    });
+    rx.recv().expect("echo backend did not report its address")
+}
+
 struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
@@ -231,9 +314,8 @@ fn free_port() -> u16 {
     listener.local_addr().expect("addr").port()
 }
 
-fn spawn_proxy(material: &Material) -> ProxyProcess {
+fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
-    let echo = locate("MCP_RE_ECHO_INNER");
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
     let addr: SocketAddr = bind.parse().expect("addr");
@@ -253,7 +335,9 @@ fn spawn_proxy(material: &Material) -> ProxyProcess {
             "--transport-binding", "exact",
             "--transport-identity-source", "uri_san",
             "--max-client-cert-lifetime", "175200h",
-            "--inner-command", &echo.to_string_lossy(),
+            // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the
+            // stateless in-process HTTP echo backend (was `--inner-command <echo>`).
+            "--inner-http-url", inner_http_url,
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -718,7 +802,8 @@ fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
 #[test]
 fn load_harness_smoke() {
     let material = write_material();
-    let proxy = spawn_proxy(&material);
+    let backend = spawn_http_echo_backend();
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"));
     let config = build_client_config(&material.client_ca);
 
     // 1. One explicit VERIFIED round-trip proves the success criterion (`no error`)
@@ -768,7 +853,8 @@ fn load_harness_smoke() {
 fn tls_load_harness_bench() {
     let cfg = LoadConfig::from_env();
     let material = write_material();
-    let proxy = spawn_proxy(&material);
+    let backend = spawn_http_echo_backend();
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"));
     let config = build_client_config(&material.client_ca);
 
     let report = run_load(proxy.addr, config, &cfg);

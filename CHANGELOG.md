@@ -230,6 +230,33 @@ or wire-format compatibility while the design lines from
 
 ### Changed
 
+- **BREAKING — async/HTTP is the sole proxy serving path; sync serving + stdio
+  inner are deleted/relocated (ADR-MCPRE-051, MCPRE-118).** The `mcp-re-proxy`
+  binary now serves ONLY on the per-core async fleet (SO_REUSEPORT + one tokio
+  runtime per core) forwarding to a stateless Streamable-HTTP inner backend; the
+  blocking single-threaded serve loop and the synchronous in-memory `Proxy::handle`
+  / `handle_with_transport` / `InnerServer` seam are removed. `Proxy::new` no longer
+  takes an inner argument — wire the async inner via `.with_async_inner(...)`; the
+  async replay tier defaults to in-memory and is swapped for a durable store via
+  `.with_async_replay_tier(...)`. **The proxy no longer launches a subprocess:** the
+  ~3k-line stdio subprocess/sandbox/rlimit/env surface (Landlock, seccomp-bpf,
+  `setrlimit`, subprocess lifecycle) is REMOVED from the PEP's TCB and relocated to
+  the out-of-TCB `mcp-re-stdio-bridge` crate. The `--inner-command` flag and all
+  `--inner-*`/sandbox/rlimit stdio flags are gone; `--inner-http-url` is now required
+  (front a local stdio server with `mcp-re-stdio-bridge` and point `--inner-http-url`
+  at the bridge). The async serving path links tokio/hyper unconditionally,
+  superseding the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path.
+- **Durable/distributed replay is served by the async fleet (ADR-MCPRE-051 §4,
+  MCPRE-118).** `--replay-cache shared` selects an AWAITED async authoritative
+  store — `--replay-durability-tier linearizable` → a new async etcd backend (hyper
+  over the etcd v3 JSON gateway), otherwise the async Redis backend (`SET NX PX` via
+  the tokio client; its `ConnectionManager` reconnect task runs on a process-lifetime
+  control runtime distinct from the per-core serving runtimes). `--replay-cache file`
+  is not offered on the async fleet (a single file cache does not fit the per-core
+  share-nothing data plane; use `shared` for durable cross-replica replay or `memory`
+  for single-replica dev). *Follow-up: re-establish the persistent-inner / sandbox
+  e2e coverage against the bridge topology (the bridge carries the unit coverage; the
+  proxy's old proxy-wraps-subprocess e2e tests were removed with that topology).*
 - **Thread-readiness: `Proxy` is now `Send + Sync` (ADR-MCPRE-051 §2, Phase 1,
   MCPRE-111).** Mechanical, no behavior change — the groundwork for the target
   per-core async data plane where a single `Proxy` serves concurrently across

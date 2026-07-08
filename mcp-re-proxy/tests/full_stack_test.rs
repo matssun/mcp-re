@@ -19,6 +19,7 @@
 //! The two binaries are delivered via runfiles (`$(rlocationpath ...)`), the same
 //! scheme the conformance harnesses use.
 
+use std::convert::Infallible;
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -31,6 +32,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+
+use bytes::Bytes;
+use http_body_util::BodyExt;
+use http_body_util::Full;
+use hyper::body::Incoming;
+use hyper::service::service_fn;
+use hyper::Request;
+use hyper::Response;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::TokioIo;
+use hyper_util::server::conn::auto;
 
 use mcp_re_core::b64url_encode;
 use mcp_re_core::request_hash;
@@ -219,6 +231,83 @@ fn locate(env_key: &str) -> PathBuf {
     mcp_re_test_paths::resolve_runfile(env_key)
 }
 
+// --- in-process HTTP echo inner backend (ADR-MCPRE-051 §3) --------------------
+//
+// The proxy now serves on the async fleet and forwards each verified request over
+// HTTP to a stateless inner backend (no more stdio echo subprocess). This is the
+// HTTP analogue of the old `echo_inner` fixture: it reads the POSTed JSON-RPC
+// request and answers with a JSON-RPC result that echoes back `params._meta` (and
+// the method), so the test can still prove the proxy injected a fresh verified-
+// context block before forwarding. Mirrors the in-process hyper backend in
+// `http_inner_test.rs` (hyper_util `auto` server + `service_fn` + `TokioIo`).
+
+/// The inner echo service: parse the forwarded JSON-RPC request and answer with a
+/// `{"jsonrpc":"2.0","id":<id>,"result":{"echoed_meta":<params._meta>,
+/// "echoed_method":<method>}}` result — the exact response shape the stdio
+/// `echo_inner` fixture returned, so every downstream assertion is preserved.
+async fn echo_inner_service(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = req
+        .into_body()
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let id = value.get("id").cloned().unwrap_or(Value::Null);
+    let meta = value
+        .get("params")
+        .and_then(|params| params.get("_meta"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let method = value.get("method").cloned().unwrap_or(Value::Null);
+
+    let response = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": { "echoed_meta": meta, "echoed_method": method },
+    });
+    let bytes = serde_json::to_vec(&response).unwrap_or_default();
+    Ok(Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(Full::new(Bytes::from(bytes)))
+        .expect("response builds"))
+}
+
+/// Start the in-process HTTP echo backend on an ephemeral `127.0.0.1` port and
+/// return its bound address. The backend runs on its own tokio runtime on a
+/// detached daemon thread that lives for the rest of the (short-lived) test
+/// process — the proxy's async fleet forwards verified requests to it over HTTP.
+fn spawn_http_echo_backend() -> SocketAddr {
+    let (tx, rx) = std::sync::mpsc::channel::<SocketAddr>();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("backend runtime");
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind echo backend");
+            let addr = listener.local_addr().expect("backend addr");
+            tx.send(addr).expect("send backend addr");
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(io, service_fn(echo_inner_service))
+                        .await;
+                });
+            }
+        });
+    });
+    rx.recv().expect("echo backend did not report its address")
+}
+
 // --- spawned CLI process (killed on drop) -------------------------------------
 
 struct ProxyProcess {
@@ -238,9 +327,8 @@ fn free_port() -> u16 {
     listener.local_addr().expect("addr").port()
 }
 
-fn spawn_proxy(material: &Material, max_cert_lifetime: &str) -> ProxyProcess {
+fn spawn_proxy(material: &Material, max_cert_lifetime: &str, inner_http_url: &str) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
-    let echo = locate("MCP_RE_ECHO_INNER");
     let port = free_port();
     let bind = format!("127.0.0.1:{port}");
     let addr: SocketAddr = bind.parse().expect("addr");
@@ -260,7 +348,9 @@ fn spawn_proxy(material: &Material, max_cert_lifetime: &str) -> ProxyProcess {
             "--transport-binding", "exact",
             "--transport-identity-source", "uri_san",
             "--max-client-cert-lifetime", max_cert_lifetime,
-            "--inner-command", &echo.to_string_lossy(),
+            // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the
+            // stateless in-process HTTP echo backend (was `--inner-command <echo>`).
+            "--inner-http-url", inner_http_url,
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -429,10 +519,15 @@ fn error_message(bytes: &[u8]) -> String {
 #[test]
 fn full_stack_cli_security_matrix() {
     let material = write_material();
+    // The inner MCP server is reached over HTTP (async fleet inner plane); one
+    // in-process echo backend serves both the matrix proxy and the cert-lifetime
+    // proxy below.
+    let backend = spawn_http_echo_backend();
+    let inner_http_url = format!("http://{backend}/mcp");
     // Matrix proxy runs with a generous cert-lifetime ceiling (≈20y) so the
     // bounded test certs (≈15y) pass; cert-lifetime ENFORCEMENT is exercised by
     // its own case (a second proxy with a tiny ceiling) below.
-    let proxy = spawn_proxy(&material, "175200h");
+    let proxy = spawn_proxy(&material, "175200h", &inner_http_url);
     let addr = proxy.addr;
 
     // 1. Happy path: valid cert (identity == SIGNER_A) + request signed by A.
@@ -506,7 +601,7 @@ fn full_stack_cli_security_matrix() {
     //    (≈15y) client cert even though signer, signature, and binding are all
     //    valid — the ONLY reason for rejection is the over-long certificate.
     {
-        let proxy2 = spawn_proxy(&material, "60");
+        let proxy2 = spawn_proxy(&material, "60", &inner_http_url);
         let request = signed_request(SIGNER_A, SIGNER_A_KEY_ID, signer_a_key(), "nonce-life");
         let cert = trusted_client_cert(&material.client_ca);
         let body = round_trip(proxy2.addr, client_config(Some(cert)), &request)
@@ -528,7 +623,9 @@ fn full_stack_cli_security_matrix() {
 #[test]
 fn sigterm_drains_gracefully_and_exits_zero() {
     let material = write_material();
-    let mut proxy = spawn_proxy(&material, "60");
+    let backend = spawn_http_echo_backend();
+    let inner_http_url = format!("http://{backend}/mcp");
+    let mut proxy = spawn_proxy(&material, "60", &inner_http_url);
     let addr = proxy.addr;
 
     // The port is accepting before the signal.

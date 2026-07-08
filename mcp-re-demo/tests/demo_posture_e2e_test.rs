@@ -99,11 +99,11 @@ fn demo_root() -> String {
         .into_owned()
 }
 
-/// Parse the proxy's OS-resolved listen address from its startup marker
-/// `mcp-re-proxy: listening on <addr> (PEP; …)`. Requires the trailing space so a
-/// partially-captured line never yields a truncated address.
+/// Parse the proxy's OS-resolved listen address from its async-fleet startup
+/// marker `mcp-re-proxy: async fleet serving on <addr> (…)`. Requires the trailing
+/// space so a partially-captured line never yields a truncated address.
 fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
-    let marker = "mcp-re-proxy: listening on ";
+    let marker = "mcp-re-proxy: async fleet serving on ";
     let start = stderr.find(marker)? + marker.len();
     let rest = &stderr[start..];
     let end = rest.find(' ')?;
@@ -224,14 +224,15 @@ fn spawn_env_keysource_proxy(
     for f in extra {
         args.push((*f).into());
     }
-    // The inner command consumes the remainder of argv.
+    // The async serving path requires an HTTP inner plane. C1 fails CLOSED before
+    // it ever binds (the env-keysource refusal is in arg-parsing / key-source
+    // construction), so a dummy unreachable URL is never dialed — it only satisfies
+    // the "an inner plane is configured" parse check so the run reaches the
+    // keysource gate under test. `inner`/`root` are unused on this startup-only path.
+    let _ = (inner, root);
     args.extend([
-        "--inner-working-dir".into(),
-        root.into(),
-        "--inner-command".into(),
-        inner.into(),
-        "--demo-root".into(),
-        root.into(),
+        "--inner-http-url".into(),
+        "http://127.0.0.1:1/".into(),
     ]);
 
     let child = Command::new(proxy_cli())
@@ -305,7 +306,7 @@ fn c1_env_keysource_without_opt_in_fails_closed_no_listener() {
         "the refusal diagnostic must name the required opt-in; got: {diag:?}"
     );
     assert!(
-        !diag.contains("mcp-re-proxy: listening on"),
+        !diag.contains("mcp-re-proxy: async fleet serving on"),
         "a refused proxy must NEVER open a listening socket; got: {diag:?}"
     );
 }
@@ -378,7 +379,7 @@ fn c1_env_keysource_fails_closed_even_with_opt_in_in_production_build() {
          rebuild; got: {diag:?}"
     );
     assert!(
-        !diag.contains("mcp-re-proxy: listening on"),
+        !diag.contains("mcp-re-proxy: async fleet serving on"),
         "a refused proxy must NEVER open a listening socket; got: {diag:?}"
     );
 }
@@ -549,6 +550,13 @@ fn denial_reason(response: &[u8]) -> Option<String> {
 /// SAME durable `--replay-path`. Proves the file-backed replay cache survives a
 /// full restart (the in-process / across-connection cases are covered elsewhere;
 /// this is the across-PROCESS guarantee).
+// ADR-MCPRE-051: the async per-core data plane dropped the single-file durable
+// replay cache (`--replay-cache file`); durable cross-restart replay now requires
+// a SHARED redis/etcd store (`--replay-cache shared`), which needs external infra
+// not present under `cargo test`. The across-CONNECTION replay guarantee is still
+// covered in-process by `demo_negative_e2e_test` A3 (shared in-memory tier). This
+// across-PROCESS case is gated behind that infra.
+#[ignore = "needs a shared redis/etcd replay store; the async data plane dropped the single-file durable cache"]
 #[test]
 fn c2_replay_detected_after_proxy_restart_with_shared_durable_cache() {
     let fixtures = DemoFixtures::generate_default();

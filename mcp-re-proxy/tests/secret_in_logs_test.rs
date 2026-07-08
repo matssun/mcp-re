@@ -36,6 +36,7 @@ use mcp_re_policy::ReferenceGrantSpec;
 use mcp_re_policy::ReferenceProfile;
 use mcp_re_policy::AUTHORIZATION_META_KEY;
 use mcp_re_policy::REFERENCE_PROFILE_ID;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogEvent;
 use mcp_re_proxy::InnerLogSink;
 use mcp_re_proxy::Proxy;
@@ -257,8 +258,8 @@ fn proxy_recording(
         Box::new(resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
     .with_log_sink(Arc::new(sink.clone()));
     if enforce {
         let mut evaluator = PolicyEvaluator::new();
@@ -286,7 +287,7 @@ fn request_verify_failure_leaks_no_secret() {
     let last = request.len() - 2;
     request[last] ^= 0xFF; // corrupt a content byte → InvalidSignature
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(forwarded.lock().unwrap().len(), 0, "tampered request must NOT reach the inner");
     // SEED + ARTIFACT + ARG all absent in the returned error object.
@@ -303,7 +304,7 @@ fn authz_denial_leaks_no_secret() {
     // Grant only `echo` but call `delete_everything` → scope denied before dispatch.
     let request = signed_request("nonce-az-01", "delete_everything", "echo", true);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(forwarded.lock().unwrap().len(), 0, "denied request must NOT reach the inner");
     let value: Value = serde_json::from_slice(&response).unwrap();
@@ -329,7 +330,7 @@ fn response_failure_leaks_no_secret() {
     let (proxy, forwarded, sink) = proxy_recording(true, garbage);
     let request = signed_request("nonce-rs-01", "echo", "echo", true);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // The request IS forwarded (it is in-scope) — the failure is on the way back.
     assert_eq!(forwarded.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
@@ -350,7 +351,7 @@ fn forwarded_to_inner_strips_seed_and_artifact() {
     let (proxy, forwarded, sink) = proxy_recording(true, ok_inner_response());
     let request = signed_request("nonce-fwd-01", "echo", "echo", true);
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(forwarded.lock().unwrap().len(), 1, "in-scope request reaches the inner once");
     let inner_bytes = forwarded.lock().unwrap()[0].clone();

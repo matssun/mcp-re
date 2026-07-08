@@ -21,18 +21,23 @@ nt_rust_library(
     ],
 )
 
-# The three real binaries every tier spawns, delivered via runfiles and resolved
-# by mcp-re-test-paths from the matching $(rlocationpath ...) env keys.
+# The real binaries every tier spawns, delivered via runfiles and resolved from
+# the matching $(rlocationpath ...) env keys. Under ADR-MCPRE-051 the server PEP
+# reaches the inner over HTTP, so the unmodified stdio fileserver is fronted by
+# the out-of-TCB mcp-re-stdio-bridge (spawned by the harness; resolved via
+# MCP_RE_STDIO_BRIDGE, which mcp_re_demo::demo_bridge_binary reads).
 _TIER_DATA = [
     "//mcp-re-client-proxy-cli:mcp_re_client_proxy_cli",
     "//mcp-re-proxy:mcp_re_proxy_cli",
     "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
+    "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
 ]
 
 _TIER_ENV = {
     "MCP_RE_CLIENT_PROXY_CLI": "$(rlocationpath //mcp-re-client-proxy-cli:mcp_re_client_proxy_cli)",
     "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
+    "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
 }
 
 # T0 — "Hello, signed call": one signed tools/call round-trips all four hops as

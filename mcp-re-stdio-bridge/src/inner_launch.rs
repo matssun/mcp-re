@@ -114,7 +114,7 @@ pub const DEFAULT_STDERR_CAP_BYTES: usize = 64 * 1024;
 pub const DEFAULT_STDERR_CAP_LINES: usize = 1024;
 
 /// Default per-read timeout on the persistent-inner stdout pipe (MCPS-074, audit
-/// §3 H-3). Mirrors the [`crate::tls::ServerLimits`] socket `read_timeout`
+/// §3 H-3). Mirrors the proxy's `ServerLimits` socket `read_timeout`
 /// default of 30s. The timeout is ALWAYS bounded — there is NO disable: a
 /// hung/silent/unterminated-line inner can never block the single-threaded serve
 /// loop forever (the module's "never hang" P179 claim).

@@ -45,6 +45,7 @@ use mcp_re_core::ResultClass;
 use mcp_re_core::SigningKey;
 use mcp_re_core::CANONICALIZATION_ID_INT53_V1;
 use mcp_re_core::REQUEST_META_KEY;
+use mcp_re_proxy::test_support::block_on_handle;
 use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
@@ -127,8 +128,8 @@ fn replica() -> mcp_re_proxy::Proxy {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
 }
 
 /// Sign a draft-02 `tools/call` via the real client-core seam, optionally binding a
@@ -191,7 +192,7 @@ fn continuation_begun_on_replica_a_completes_on_replica_b() {
         NONCE_LEG_1,
         None,
     );
-    let resp1 = replica_a.handle(leg1.wire_bytes(), now());
+    let resp1 = block_on_handle(&replica_a, leg1.wire_bytes(), now());
     assert!(
         !is_error(&resp1),
         "replica A must serve the first-round call, got: {}",
@@ -233,7 +234,7 @@ fn continuation_begun_on_replica_a_completes_on_replica_b() {
             &input_required_response_hash,
         )),
     );
-    let resp2 = replica_b.handle(leg2.wire_bytes(), now());
+    let resp2 = block_on_handle(&replica_b, leg2.wire_bytes(), now());
     assert!(
         !is_error(&resp2),
         "replica B (which never saw leg 1) must complete the continuation, got: {}",
@@ -271,7 +272,7 @@ fn tampered_continuation_is_rejected_on_the_sibling_replica() {
     let replica_b = replica();
 
     let leg1 = sign_call("req-1", "delete_files", json!({}), NONCE_LEG_1, None);
-    let resp1 = replica_a.handle(leg1.wire_bytes(), now());
+    let resp1 = block_on_handle(&replica_a, leg1.wire_bytes(), now());
     assert!(!is_error(&resp1), "replica A serves leg 1");
     let resp1_obj: Value = serde_json::from_slice(&resp1).expect("parse leg-1 response");
     let previous_request_hash = leg1.request_hash().to_string();
@@ -296,7 +297,7 @@ fn tampered_continuation_is_rejected_on_the_sibling_replica() {
         json!(previous_request_hash);
     let tampered = serde_json::to_vec(&object).expect("serialize tampered continuation");
 
-    let resp2 = replica_b.handle(&tampered, now());
+    let resp2 = block_on_handle(&replica_b, &tampered, now());
     assert!(
         is_error(&resp2),
         "replica B must reject a tampered continuation, got: {}",

@@ -19,6 +19,7 @@
 //! the request/response through `mcp-re-proxy` is the subject of later issues
 //! (#3925 / #3927 / #3928).
 
+pub mod bridge;
 pub mod client;
 pub mod demo_authorization;
 pub mod demo_fixtures;
@@ -55,6 +56,9 @@ pub use e2e_persistent_flow::PERSISTENT_ON_BEHALF_OF;
 pub use e2e_persistent_flow::TOOL_ECHO;
 pub use e2e_persistent_flow::TOOL_LIST_ITEMS;
 pub use e2e_persistent_flow::TOOL_RESET_ITEMS;
+pub use bridge::BridgeInnerMode;
+pub use bridge::BridgeProcess;
+pub use demo_paths::demo_bridge_binary;
 pub use demo_paths::demo_inner_binary;
 pub use demo_paths::demo_root_dir;
 pub use demo_fixtures::DemoFixtureFiles;
@@ -72,8 +76,6 @@ pub use demo_authorization::DemoRoleGrantSpec;
 pub use demo_authorization::DEMO_METHOD;
 pub use demo_authorization::DEMO_TOOL_NAME;
 pub use demo_proxy::build_demo_proxy;
-pub use demo_proxy::demo_inner_command;
-pub use demo_proxy::demo_inner_launch;
 pub use demo_proxy::DemoProxyConfig;
 pub use mtls_client::MtlsClientRunner;
 pub use mtls_client::RoundTripOutcome;

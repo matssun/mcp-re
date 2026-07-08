@@ -41,14 +41,18 @@ use mcp_re_core::verify_response;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_role_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoProxyConfig;
 use mcp_re_demo::DemoRole;
 use mcp_re_demo::DemoRoleGrantSpec;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
 use serde_json::Map;
@@ -200,11 +204,24 @@ impl CapturingSink {
     }
 }
 
-fn build_proxy(sink: Arc<CapturingSink>, demo_root: &str) -> mcp_re_proxy::Proxy {
-    build_demo_proxy_with_policy(
+/// Spawn the out-of-TCB bridge fronting the real fileserver over the WRITABLE
+/// `demo_root` and build the policy-enabled demo proxy pointed at it. The returned
+/// `BridgeProcess` MUST be kept alive for the proxy's lifetime.
+fn build_proxy(sink: Arc<CapturingSink>, demo_root: &str) -> (mcp_re_proxy::Proxy, BridgeProcess) {
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(demo_root),
+        &[
+            inner_binary(),
+            "--demo-root".to_string(),
+            demo_root.to_string(),
+        ],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+    let proxy = build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary: inner_binary(),
-            demo_root: demo_root.to_string(),
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -216,7 +233,8 @@ fn build_proxy(sink: Arc<CapturingSink>, demo_root: &str) -> mcp_re_proxy::Proxy
         demo_policy_evaluator(),
         Box::new(demo_revocation_source()),
     )
-    .expect("policy-enabled demo proxy builds against the resolved binary + writable root")
+    .expect("policy-enabled demo proxy builds against the bridge URL");
+    (proxy, bridge)
 }
 
 fn error_message(bytes: &[u8]) -> String {
@@ -236,7 +254,7 @@ fn expect_authorized_success(
 ) -> Value {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(request).unwrap()).expect("request_hash");
-    let response = proxy.handle(request, now());
+    let response = block_on_handle(proxy, request, now());
 
     assert!(
         sink.inner_was_reached(),
@@ -254,7 +272,7 @@ fn expect_authorized_success(
 fn reader_write_file_is_denied_before_dispatch() {
     let root = writable_demo_root();
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
     let reader = role_grant(DemoRole::Reader);
 
     // The reader grant covers list/read/stat but NOT write_file → scope denied.
@@ -264,7 +282,7 @@ fn reader_write_file_is_denied_before_dispatch() {
         json!({ "path": ADMIN_OUT_NAME, "content": "reader should not be able to write this" }),
         &reader,
     );
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     assert_eq!(error_message(&response), "mcp-re.authorization_scope_denied");
     assert!(
@@ -283,7 +301,7 @@ fn reader_write_file_is_denied_before_dispatch() {
 fn admin_write_file_succeeds_end_to_end() {
     let root = writable_demo_root();
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
     let admin = role_grant(DemoRole::Admin);
 
     let request = signed_call(
@@ -303,7 +321,7 @@ fn admin_write_file_succeeds_end_to_end() {
 fn reader_read_file_succeeds_end_to_end() {
     let root = writable_demo_root();
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
     let reader = role_grant(DemoRole::Reader);
 
     let request = signed_call(
@@ -325,7 +343,7 @@ fn reader_read_file_succeeds_end_to_end() {
 fn reader_list_files_succeeds_end_to_end() {
     let root = writable_demo_root();
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink), &root.to_string_lossy());
     let reader = role_grant(DemoRole::Reader);
 
     let request = signed_call(

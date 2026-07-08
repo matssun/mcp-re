@@ -49,6 +49,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_demo::demo_bridge_binary;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use serde_json::json;
@@ -503,11 +506,13 @@ impl FourHop {
         self.demo_root.path.join(name)
     }
 
-    /// How many times the server PEP spawned the inner fileserver (deny-before-
-    /// dispatch proof: a denied call never spawns the inner). Counts the
-    /// `inner_spawned` lifecycle marker in the server's stderr.
+    /// How many verified calls the server PEP forwarded to its HTTP inner plane
+    /// (deny-before-dispatch proof: a denied call is never forwarded). Under
+    /// ADR-MCPRE-051 the PEP no longer launches the subprocess (the out-of-TCB
+    /// bridge does); the PEP's `StderrLogSink` prints `inner_request_forwarded`
+    /// per forwarded request, which is the equivalent "inner reached" marker.
     pub fn inner_spawn_count(&self) -> usize {
-        self.server.stderr_contains_count("inner_spawned")
+        self.server.stderr_contains_count("inner_request_forwarded")
     }
 
     /// The server PEP's captured stderr so far (diagnostics).
@@ -532,11 +537,13 @@ fn resolve_bin(env_key: &str) -> String {
 }
 
 /// The server `mcp-re-proxy` subprocess + its captured stderr (for the listening
-/// marker and the `inner_spawned` lifecycle proof).
+/// marker and the `inner_request_forwarded` lifecycle proof), plus the out-of-TCB
+/// `mcp-re-stdio-bridge` fronting the inner fileserver over HTTP (ADR-MCPRE-051).
 struct ServerProc {
     child: Child,
     addr: SocketAddr,
     stderr: Arc<Mutex<String>>,
+    _bridge: BridgeProcess,
 }
 
 impl ServerProc {
@@ -550,6 +557,23 @@ impl ServerProc {
         opts: &FourHopOptions,
         profile: &SigningProfile,
     ) -> ServerProc {
+        // Front the unmodified stdio fileserver behind the out-of-TCB bridge; the
+        // PEP reaches it over HTTP (`--inner-http-url`). The inner's own
+        // `--received-log` (T3 cross-process deny proof) is forwarded by the bridge.
+        let mut inner_command: Vec<String> =
+            vec![inner_bin.to_string(), "--demo-root".to_string(), demo_root.to_string()];
+        if let Some(log) = &opts.received_log {
+            inner_command.push("--received-log".to_string());
+            inner_command.push(log.to_string_lossy().into_owned());
+        }
+        let bridge = BridgeProcess::spawn(
+            demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+            BridgeInnerMode::OneShot,
+            Some(demo_root),
+            &inner_command,
+        )
+        .expect("spawn stdio bridge fronting the demo fileserver");
+
         let mut args: Vec<String> = vec![
             "--bind".into(), "127.0.0.1:0".into(),
             "--audience".into(), audience_string.into(),
@@ -581,18 +605,9 @@ impl ServerProc {
                 args.push("uri_san".into());
             }
         }
-        args.push("--inner-working-dir".into());
-        args.push(demo_root.to_string());
-        // --inner-command MUST be last (it swallows the rest of argv as the
-        // inner server's argv).
-        args.push("--inner-command".into());
-        args.push(inner_bin.to_string());
-        args.push("--demo-root".into());
-        args.push(demo_root.to_string());
-        if let Some(log) = &opts.received_log {
-            args.push("--received-log".into());
-            args.push(log.to_string_lossy().into_owned());
-        }
+        // The inner plane is HTTP: point the PEP at the out-of-TCB bridge.
+        args.push("--inner-http-url".into());
+        args.push(bridge.url().to_string());
 
         let mut child = Command::new(proxy_bin)
             .args(&args)
@@ -615,7 +630,7 @@ impl ServerProc {
         });
 
         let addr = await_listening(&mut child, &stderr);
-        ServerProc { child, addr, stderr }
+        ServerProc { child, addr, stderr, _bridge: bridge }
     }
 
     fn stderr_contains_count(&self, needle: &str) -> usize {
@@ -634,8 +649,9 @@ impl Drop for ServerProc {
     }
 }
 
-/// Poll the server's stderr for the `mcp-re-proxy: listening on <addr>` marker and
-/// return the OS-resolved bound address. Fails fast if the child exits early.
+/// Poll the server's stderr for the `mcp-re-proxy: async fleet serving on <addr>`
+/// marker and return the OS-resolved bound address. Fails fast if the child exits
+/// early.
 fn await_listening(child: &mut Child, stderr: &Arc<Mutex<String>>) -> SocketAddr {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -659,9 +675,9 @@ fn await_listening(child: &mut Child, stderr: &Arc<Mutex<String>>) -> SocketAddr
     }
 }
 
-/// Parse `mcp-re-proxy: listening on 127.0.0.1:PORT (PEP; inner = ...)`.
+/// Parse `mcp-re-proxy: async fleet serving on 127.0.0.1:PORT (...)`.
 fn parse_listening_addr(line: &str) -> Option<SocketAddr> {
-    let rest = line.split("listening on ").nth(1)?;
+    let rest = line.split("serving on ").nth(1)?;
     let token = rest.split_whitespace().next()?;
     token.parse().ok()
 }

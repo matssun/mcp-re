@@ -150,13 +150,6 @@
       "notes": "demo_transport T5. End-to-end echo of the server-auth property: the demo host client refuses an untrusted proxy server cert."
     },
     {
-      "property": "Phase-5 allow/deny over a persistent session; admin tool DENIED before dispatch",
-      "bazel_target": "//mcp-re-proxy:persistent_scope_test",
-      "source": "mcp-re-proxy/tests/persistent_scope_test.rs",
-      "test_fn": "phase5_scopes_over_one_persistent_session",
-      "notes": "Per-scope grants over one persistent inner session; the admin tool (reset_items) has NO grant and is scope-denied. inner_request_forwarded (emitted inside dispatch_and_sign) is the deny-before-dispatch probe \u2014 a denied call shows zero forwards."
-    },
-    {
       "property": "admin tool denied before dispatch, end-to-end (denied call never forwarded to the persistent inner)",
       "bazel_target": "//mcp-re-demo:demo_e2e_persistent_test",
       "source": "mcp-re-demo/tests/demo_e2e_persistent_test.rs",
@@ -164,18 +157,11 @@
       "notes": "demo_e2e_persistent. The admin reset_items call (no grant) is denied with mcp-re.authorization_scope_denied; the inner's own received-log (an INDEPENDENT signal) shows it was never forwarded."
     },
     {
-      "property": "persistent inner reused: one spawn, multiple forwards (single process serves N calls)",
-      "bazel_target": "//mcp-re-proxy:persistent_inner_test",
-      "source": "mcp-re-proxy/tests/persistent_inner_test.rs",
-      "test_fn": "n_requests_over_one_persistent_inner_process",
-      "notes": "P6.6B. N authorized requests are served over ONE long-lived inner process (one spawn, many forwards)."
-    },
-    {
-      "property": "deny-not-reached via the inner received-log: a pre-dispatch denial yields zero forwards while the inner stays alive",
-      "bazel_target": "//mcp-re-proxy:persistent_inner_test",
-      "source": "mcp-re-proxy/tests/persistent_inner_test.rs",
-      "test_fn": "pre_dispatch_denial_yields_zero_forwards_while_inner_stays_alive",
-      "notes": "The anti-gaming oracle for 'denied never reached': the inner's forward count stays at zero for a denied call and the inner process is NOT torn down."
+      "property": "persistent inner reused: one spawn, multiple dispatches (single process serves N calls)",
+      "bazel_target": "//mcp-re-stdio-bridge:persistent_inner_hardening_test",
+      "source": "mcp-re-stdio-bridge/tests/persistent_inner_hardening_test.rs",
+      "test_fn": "n_dispatches_over_one_persistent_inner_process",
+      "notes": "ADR-MCPRE-051 Phase B. N requests are served over ONE long-lived PersistentSubprocessInner process (one spawn, many dispatches), driven directly through the InnerServer seam in the out-of-TCB bridge crate where the subprocess surface now lives. Relocated from the retired proxy-owned persistent_inner_test."
     },
     {
       "property": "demo server received-log lists ONLY calls the inner actually served (independent oracle)",
@@ -183,13 +169,6 @@
       "source": "mcp-re-demo-server/tests/received_log_test.rs",
       "test_fn": "received_log_omits_unknown_tool_calls_that_were_not_executed",
       "notes": "Validates the received-log oracle itself: it records only executed calls, so 'denied never reached' assertions built on it are sound."
-    },
-    {
-      "property": "per-request strip/inject: the proxy is the SOLE writer of .verified, fresh on every request of a persistent session",
-      "bazel_target": "//mcp-re-proxy:persistent_session_test",
-      "source": "mcp-re-proxy/tests/persistent_session_test.rs",
-      "test_fn": "per_request_strip_inject_over_one_persistent_session",
-      "notes": "MCPS-064. A forged caller-owned .verified block (inside the signed params) is stripped on EVERY request across one long-lived session and the sidecar-owned context for request K is injected fresh \u2014 the proxy is the sole writer (ADR-MCPS-008)."
     },
     {
       "property": "caller-supplied .verified is stripped and replaced even when it is part of the signed payload (in-process)",
@@ -537,6 +516,6 @@
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 76
+    "entries": 73
   }
 }

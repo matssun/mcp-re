@@ -24,8 +24,6 @@
 //! `retain_until - now` and an already-stale request is rejected before Redis is
 //! touched.
 
-#![cfg(all(feature = "async_serve", feature = "redis_replay"))]
-
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use redis::aio::ConnectionManager;

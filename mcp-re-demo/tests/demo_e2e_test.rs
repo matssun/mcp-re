@@ -42,7 +42,10 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::run_positive_e2e;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use mcp_re_demo::E2E_PATH;
@@ -79,21 +82,27 @@ fn demo_root() -> String {
         .into_owned()
 }
 
-/// Parse the proxy's OS-resolved listen address from its startup marker
-/// `mcp-re-proxy: listening on <addr> (PEP; …)`. Requires the trailing space so a
-/// partially-captured line never yields a truncated address.
+/// Parse the proxy's OS-resolved listen address from its async-fleet startup
+/// marker `mcp-re-proxy: async fleet serving on <addr> (…)`. Requires the trailing
+/// space so a partially-captured line never yields a truncated address.
 fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
-    let marker = "mcp-re-proxy: listening on ";
+    let marker = "mcp-re-proxy: async fleet serving on ";
     let start = stderr.find(marker)? + marker.len();
     let rest = &stderr[start..];
     let end = rest.find(' ')?;
     rest[..end].parse().ok()
 }
 
-/// A spawned `mcp_re_proxy_cli` OS process, killed (and reaped) on drop.
+/// A spawned `mcp_re_proxy_cli` OS process, killed (and reaped) on drop. Under
+/// ADR-MCPRE-051 the PEP reaches its inner over HTTP, so the real
+/// `mcp-re-demo-fileserver` is fronted by an out-of-TCB `mcp-re-stdio-bridge`
+/// (held here, killed after the proxy).
 struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
+    // The out-of-TCB stdio↔HTTP bridge fronting the fileserver; the proxy's
+    // `--inner-http-url` points at it. Held so it outlives the proxy.
+    _bridge: BridgeProcess,
     // Held for the lifetime of the proxy so the path-based fixture files (and the
     // durable replay-cache dir) outlive it; dropped (cleaned up) after the proxy.
     _files: DemoFixtureFiles,
@@ -118,6 +127,16 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
     let inner = inner_binary();
     let root = demo_root();
 
+    // Front the real fileserver behind the out-of-TCB stdio↔HTTP bridge; the proxy
+    // reaches it via `--inner-http-url`.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner, "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+
     // Let the PROXY pick the port (bind :0, read it back from the startup
     // marker) — deletes the free_port() bind-after-free TOCTOU (MCPS-087).
     let bind = "127.0.0.1:0".to_string();
@@ -125,7 +144,6 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
     // A private durable replay-cache file (P1 uses `--replay-cache file`).
     let replay_dir = std::env::temp_dir().join(format!("mcp_re_e2e_replay_{}", std::process::id()));
     std::fs::create_dir_all(&replay_dir).expect("mkdir replay dir");
-    let replay_path = replay_dir.join("replay.json");
 
     let mut child = Command::new(&cli)
         .args([
@@ -151,10 +169,11 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             &files.client_ca_path().to_string_lossy(),
             "--trust",
             &files.trust_path().to_string_lossy(),
+            // The async per-core data plane does not support the single-file
+            // durable cache; use the shared in-memory tier (one Proxy Arc across
+            // the fleet, so cross-connection replay is still detected).
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -167,14 +186,10 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
             // client cert passes; lifetime ENFORCEMENT (T4) is full_stack_test's job.
             "--max-client-cert-lifetime",
             "175200h",
-            // The inner stdio server: the demo fileserver pointed at the demo root.
-            // `--inner-command` consumes the remainder of argv.
-            "--inner-working-dir",
-            &root,
-            "--inner-command",
-            &inner,
-            "--demo-root",
-            &root,
+            // The inner plane is HTTP: point it at the out-of-TCB bridge fronting
+            // the demo fileserver (which relays over stdio to the real server).
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -224,6 +239,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> ProxyProcess {
     ProxyProcess {
         child,
         addr,
+        _bridge: bridge,
         _files: files,
         _replay_dir: replay_dir,
     }
