@@ -140,6 +140,12 @@ pub mod transport;
 // only (per-core SO_REUSEPORT is MCPRE-113).
 #[cfg(feature = "async_serve")]
 pub mod async_serve;
+// MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): the per-core serving fleet — one worker
+// thread per core, each a current-thread tokio runtime with its own SO_REUSEPORT
+// listener + Linux CPU pinning, over one Proxy per core. The target data plane;
+// supersedes the single-shared-runtime scaffolding above. Same `async_serve` gate.
+#[cfg(feature = "async_serve")]
+pub mod async_fleet;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.
