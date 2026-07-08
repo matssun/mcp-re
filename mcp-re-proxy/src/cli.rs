@@ -253,6 +253,13 @@ pub struct Config {
     pub ocsp_soft_fail: bool,
     /// Path to the JSON trust file (request signers + authorization issuers).
     pub trust_path: String,
+    /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the
+    /// ASYNC serving path. When non-empty, the proxy serves on the per-core async
+    /// fleet (SO_REUSEPORT + tokio) and forwards verified requests over the pooled
+    /// `HttpInnerPool` to these backends (round-robin), instead of the sync stdio
+    /// subprocess. Each `--inner-http-url` value (comma-separated and/or repeated)
+    /// adds a backend. Empty ⇒ the sync stdio serving path (`--inner-command`).
+    pub inner_http_urls: Vec<String>,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -511,6 +518,7 @@ const KNOWN_PROXY_FLAGS: &[&str] = &[
     "--client-ca",
     "--client-crl",
     "--client-crl-reload-secs",
+    "--inner-http-url",
     "--trust",
     "--client-ocsp",
     "--ocsp-responder-url",
@@ -580,6 +588,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #3839 offline CRL revocation: zero or more CRL file paths, fail-closed on
     // unknown status by default.
     let mut client_crl_paths: Vec<String> = Vec::new();
+    // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async serving
+    // path (comma-separated and/or repeated).
+    let mut inner_http_urls: Vec<String> = Vec::new();
     let mut client_crl_reload_secs: Option<u64> = None;
     let mut crl_allow_unknown_status = false;
     // #4030 online OCSP revocation: off by default; responder-URL override
@@ -825,6 +836,19 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                         ));
                     }
                     client_crl_paths.push(segment.to_string());
+                }
+            }
+            // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async
+            // serving path. Comma-separated and/or repeated; empty segment is a hard
+            // parse error (fail closed rather than silently drop a backend).
+            "--inner-http-url" => {
+                for segment in value.split(',') {
+                    if segment.is_empty() {
+                        return Err(format!(
+                            "invalid --inner-http-url '{value}' (empty URL segment)"
+                        ));
+                    }
+                    inner_http_urls.push(segment.to_string());
                 }
             }
             // ADR-MCPRE-051 §6 (MCPRE-116): in-process CRL hot-reload cadence. Must
@@ -1616,6 +1640,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         },
         client_ca: require(client_ca, "--client-ca")?,
         client_crl_paths,
+        inner_http_urls,
         client_crl_reload_secs,
         crl_allow_unknown_status,
         client_ocsp,
@@ -5103,6 +5128,50 @@ mod tests {
         assert_eq!(
             config.client_crl_paths,
             vec!["/a.crl".to_string(), "/b.crl".to_string(), "/c.crl".to_string()]
+        );
+    }
+
+    // --- ADR-MCPRE-051 §3 async HTTP inner backends --------------------------
+
+    #[test]
+    fn default_has_no_http_inner_backends() {
+        let config = parse_args(&minimal()).expect("parse");
+        assert!(
+            config.inner_http_urls.is_empty(),
+            "no HTTP inner backends by default (the sync stdio serving path)"
+        );
+    }
+
+    #[test]
+    fn parses_repeated_and_comma_separated_inner_http_urls() {
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--inner-http-url",
+                "http://10.0.0.1:8080/mcp,http://10.0.0.2:8080/mcp",
+                "--inner-http-url",
+                "http://10.0.0.3:8080/mcp",
+            ]),
+        );
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.inner_http_urls,
+            vec![
+                "http://10.0.0.1:8080/mcp".to_string(),
+                "http://10.0.0.2:8080/mcp".to_string(),
+                "http://10.0.0.3:8080/mcp".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_inner_http_url_segment_fails_closed() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--inner-http-url", "http://a,,http://b"]));
+        assert!(
+            parse_args(&a).unwrap_err().contains("--inner-http-url"),
+            "an empty URL segment must be a hard parse error"
         );
     }
 

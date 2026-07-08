@@ -94,6 +94,20 @@ impl HttpInnerPool {
         })
     }
 
+    /// Build a pool from string URLs (each parsed to a [`Uri`]), so callers (e.g.
+    /// the CLI wiring) need not depend on `hyper` types directly. Fails closed with
+    /// a precise message on an unparseable or empty URL, or an empty list.
+    pub fn from_url_strs(urls: Vec<String>, request_timeout: Duration) -> Result<Self, String> {
+        let backends = urls
+            .into_iter()
+            .map(|u| {
+                u.parse::<Uri>()
+                    .map_err(|e| format!("invalid inner HTTP backend URL '{u}': {e}"))
+            })
+            .collect::<Result<Vec<Uri>, String>>()?;
+        Self::new(backends, request_timeout)
+    }
+
     /// Round-robin the next backend URI (lock-free).
     fn pick_backend(&self) -> Uri {
         let i = self.next.fetch_add(1, Ordering::Relaxed) % self.backends.len();

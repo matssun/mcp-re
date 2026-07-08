@@ -388,7 +388,14 @@ fn run() -> Result<(), String> {
     // the inner command per request; persistent spawns it ONCE, performs the MCP
     // initialize handshake, and forwards many requests over the same long-lived
     // process — the only way to front a genuinely long-lived MCP server.
-    let inner: Box<dyn InnerServer + Send + Sync> = match config.inner_mode {
+    // ADR-MCPRE-051 §3: when HTTP inner backends are configured the async serving
+    // path forwards over the pooled `HttpInnerPool` (wired below), so no stdio
+    // subprocess is spawned — the sync `inner` is an unused placeholder on that
+    // path. Otherwise build the real subprocess inner for the sync serving path.
+    let inner: Box<dyn InnerServer + Send + Sync> = if !config.inner_http_urls.is_empty() {
+        Box::new(|_request: &[u8]| -> Vec<u8> { Vec::new() })
+    } else {
+        match config.inner_mode {
         InnerModeKind::OneShot => Box::new(cli::SubprocessInner::with_log_sink(
             &config.inner_command,
             config.inner_launch.clone(),
@@ -404,6 +411,7 @@ fn run() -> Result<(), String> {
                 config.inner_launch.clone(),
                 Arc::clone(&log_sink),
             )?)
+        }
         }
     };
     let mut proxy = Proxy::new(
@@ -876,6 +884,25 @@ fn run() -> Result<(), String> {
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
     };
+
+    // ADR-MCPRE-051 §1/§3: when HTTP inner backends are configured, serve on the
+    // per-core async fleet (SO_REUSEPORT + tokio) forwarding over the pooled
+    // HttpInnerPool — the production async data plane. Otherwise fall through to the
+    // sync stdio serving path below. A build without the `async_serve` feature fails
+    // closed for `--inner-http-url` (the async stack is not compiled).
+    if !config.inner_http_urls.is_empty() {
+        #[cfg(feature = "async_serve")]
+        {
+            return run_async_fleet(proxy, Arc::clone(&config_snapshot), serve_options, &config);
+        }
+        #[cfg(not(feature = "async_serve"))]
+        {
+            return Err(
+                "--inner-http-url requires a build with the `async_serve` feature".to_string(),
+            );
+        }
+    }
+
     let listener = std::net::TcpListener::bind(&config.bind)
         .map_err(|e| format!("bind {}: {e}", config.bind))?;
     // Report the OS-RESOLVED address, not the requested one: when `--bind` asks
@@ -926,6 +953,126 @@ fn run() -> Result<(), String> {
     // above (inline, on this thread); dropping `proxy` here tears down a persistent
     // inner child. Exit 0 so an orchestrator reads the rollout as a clean stop.
     eprintln!("mcp-re-proxy: shutdown signal received; stopped accepting, drained, exiting cleanly");
+    Ok(())
+}
+
+/// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
+/// pooled HTTP inner plane. Built when `--inner-http-url` is set; the sync stdio
+/// serving path is used otherwise.
+///
+/// Consumes the fully-built `proxy` (adds the async replay tier + async HTTP inner
+/// to it), binds one `SO_REUSEPORT` listener per core, and serves
+/// `Proxy::handle_with_transport_async` on each core's own tokio runtime until a
+/// SIGTERM/SIGINT drains the fleet within the bounded grace window.
+///
+/// First cut: the authoritative replay tier is the single-process in-memory async
+/// store (correct for a single replica / development). Wiring the durable async
+/// Redis store into the per-core fleet — its auto-reconnecting `ConnectionManager`
+/// must live on a process-lifetime runtime distinct from the per-core serving
+/// runtimes — is the immediate follow-up; until then an operator needing
+/// cross-replica durable replay uses the sync serving path (`--replay-cache
+/// shared`).
+#[cfg(feature = "async_serve")]
+fn run_async_fleet(
+    proxy: Proxy,
+    config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
+    serve_options: mcp_re_proxy::ServerOptions,
+    config: &cli::Config,
+) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    use std::time::Duration;
+
+    // Resolve `--bind` to a concrete SocketAddr for the SO_REUSEPORT listeners.
+    let addr = config
+        .bind
+        .to_socket_addrs()
+        .map_err(|e| format!("resolve --bind {}: {e}", config.bind))?
+        .next()
+        .ok_or_else(|| format!("--bind {} resolved to no address", config.bind))?;
+
+    // Pooled HTTP inner transport over the configured stateless backends.
+    let inner_timeout = config
+        .limits
+        .read_timeout
+        .unwrap_or_else(|| Duration::from_secs(30));
+    let pool = mcp_re_proxy::http_inner::HttpInnerPool::from_url_strs(
+        config.inner_http_urls.clone(),
+        inner_timeout,
+    )?;
+
+    // Authoritative async replay tier (see the fn doc re: durable-store follow-up).
+    let store = mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore::new();
+    let tier =
+        mcp_re_proxy::async_replay::AsyncReplayTier::new(Arc::new(store), config.max_clock_skew);
+
+    let proxy = Arc::new(
+        proxy
+            .with_async_replay_tier(tier)
+            .with_async_inner(Box::new(pool)),
+    );
+
+    let fleet_cfg = mcp_re_proxy::async_fleet::FleetConfig {
+        addr,
+        cores: 0, // auto: one worker per core
+        listen_backlog: mcp_re_proxy::async_fleet::DEFAULT_LISTEN_BACKLOG,
+        max_in_flight_total: None,
+    };
+    let server_config = config_snapshot.load();
+    let serve_options = Arc::new(serve_options);
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // SIGTERM/SIGINT graceful drain, same handler as the sync path.
+    install_shutdown_handlers();
+
+    // One handler per core over the SHARED `Proxy` (Send + Sync, MCPRE-111); each
+    // request awaits the async replay tier + async HTTP inner without blocking the
+    // per-core runtime worker.
+    let handler_proxy = Arc::clone(&proxy);
+    let make_handler = move |_core: usize| {
+        let proxy = Arc::clone(&handler_proxy);
+        Arc::new(
+            move |body: Vec<u8>,
+                  identity: Option<mcp_re_proxy::transport::TransportIdentity>,
+                  assertion: Option<String>|
+                  -> mcp_re_proxy::async_serve::HandlerResponseFuture {
+                let proxy = Arc::clone(&proxy);
+                Box::pin(async move {
+                    proxy
+                        .handle_with_transport_async(
+                            &body,
+                            now_unix(),
+                            identity.as_ref(),
+                            assertion.as_deref(),
+                        )
+                        .await
+                })
+            },
+        )
+    };
+
+    let fleet = mcp_re_proxy::async_fleet::serve_fleet(
+        fleet_cfg,
+        server_config,
+        serve_options,
+        make_handler,
+        Arc::clone(&shutdown),
+    )
+    .map_err(|e| format!("start async fleet: {e}"))?;
+    eprintln!(
+        "mcp-re-proxy: async fleet serving on {} ({} per-core workers; HTTP inner backends {:?})",
+        fleet.local_addr(),
+        fleet.worker_count(),
+        config.inner_http_urls,
+    );
+
+    // Block until a shutdown signal, then drain the fleet (bounded) and exit clean.
+    while !SHUTDOWN.load(Ordering::SeqCst) {
+        std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
+    }
+    eprintln!("mcp-re-proxy: shutdown signal received; draining async fleet");
+    shutdown.store(true, Ordering::SeqCst);
+    fleet.shutdown_and_join();
+    eprintln!("mcp-re-proxy: async fleet drained, exiting cleanly");
     Ok(())
 }
 
