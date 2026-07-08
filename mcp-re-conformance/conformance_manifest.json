@@ -54,7 +54,7 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 73
+    "bazel_test_targets": 74
   },
   "bazel_test_targets": [
     "//mcp-re-conformance:acceptance_test",
@@ -124,6 +124,7 @@
     "//mcp-re-proxy:proxy_version_policy_test",
     "//mcp-re-proxy:redis_replay_e2e_test",
     "//mcp-re-proxy:redis_trust_epoch_e2e_test",
+    "//mcp-re-proxy:replay_race_harness_test",
     "//mcp-re-proxy:sandbox_linux_e2e_test",
     "//mcp-re-proxy:secret_in_logs_test",
     "//mcp-re-proxy:tls_test",
