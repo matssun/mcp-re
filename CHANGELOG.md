@@ -14,6 +14,31 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **Per-core async serving fleet — SO_REUSEPORT + thread pinning (ADR-MCPRE-051
+  §1, Phase 2, MCPRE-113).** A new `mcp-re-proxy` module (`async_fleet`, behind the
+  non-default `async_serve` feature) stands up the target data plane: **one worker
+  thread per core, each a current-thread `tokio` runtime with its own `SO_REUSEPORT`
+  listener and (on Linux) `sched_setaffinity` CPU pinning, running one
+  `async_serve::serve` loop over one `Proxy` per core.** The kernel's `SO_REUSEPORT`
+  group load-balances accepted connections across the per-core listeners, so there is
+  no shared accept lock, no cross-core connection handoff, and no contended cross-core
+  hot-path state — the only cross-core sharing is the coherent replay/trust store
+  (server-side-atomic, ADR-MCPS-020) and the immutable `Arc<ServerConfig>` /
+  `Arc<ServerOptions>` snapshots (a module-level cross-core-sharing audit documents
+  this, satisfying the "no cross-core locks on the request path" criterion). Core
+  count is configurable (`0` = `available_parallelism`); listeners share one port
+  (`:0` resolves on the first bind and is reused). `SO_REUSEPORT` + `bind`/`listen`
+  are done via `libc` directly (set before `bind`, which `std::net` cannot express) —
+  no new crate, no crate-universe repin; the raw socket is wrapped in an `OwnedFd`
+  for fail-closed RAII. This supersedes the MCPRE-112 single-shared-runtime
+  scaffolding (never a release). An always-on suite (`async_fleet_test`) proves N
+  independent per-core runtimes serve the full mTLS pipeline correctly, that a missing
+  client cert fails closed on every core, configurable/auto core counts, and clean
+  shutdown+join; on Linux it also asserts `SO_REUSEPORT` distributes connections
+  across ≥2 cores. **Near-linear 1→N throughput scaling is measured on the load
+  harness (MCPRE-108) in the SLO/CI lane (MCPRE-110/123), not this deterministic
+  suite.** Bounded graceful drain across cores is MCPRE-115; per-core bounded
+  admission control is MCPRE-114. Conformance target count 76 → 77.
 - **In-process CRL hot-reload + versioned serving-config snapshots (ADR-MCPRE-051
   §6, MCPRE-116; subsumes MCPS-66).** The serve loop now reads the current rustls
   `ServerConfig` per connection from a `ServerConfigSnapshot` (a dependency-free

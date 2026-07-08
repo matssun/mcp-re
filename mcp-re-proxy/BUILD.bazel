@@ -97,6 +97,11 @@ _PROXY_LIB_SRCS = [
     # tests; the default/production flavors see an absent module and link no
     # tokio/hyper (ADR-MCPS-018 lean-sync firewall).
     "src/async_serve.rs",
+    # MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): the per-core serving fleet (per-core
+    # tokio runtimes + SO_REUSEPORT listeners + Linux CPU pinning). Same
+    # #[cfg(feature = "async_serve")] gate as async_serve.rs — invisible to the
+    # default closure.
+    "src/async_fleet.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -483,6 +488,27 @@ nt_rust_library(
 nt_rust_test(
     name = "async_serve_parity_test",
     srcs = ["tests/async_serve_parity_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+# MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): per-core serving FLEET suite — proves N
+# independent per-core tokio runtimes, each with its own SO_REUSEPORT listener, serve
+# the full mTLS pipeline correctly with a configurable core count and a clean
+# shutdown. Built + run on every `bazel test //...`; near-linear throughput scaling is
+# the load-harness/SLO lane (MCPRE-110/123), not this deterministic suite.
+nt_rust_test(
+    name = "async_fleet_test",
+    srcs = ["tests/async_fleet_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
