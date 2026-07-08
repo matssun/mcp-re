@@ -27,11 +27,16 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::Mutex;
 
+use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
+use mcp_re_core::ReplayKey;
 
+use crate::shared_replay::composite_replay_key;
+use crate::shared_replay::skew_folded_retain_until;
 use crate::shared_replay::ReplayStoreError;
 
 /// A boxed, `Send` future returning a replay decision — the object-safe return type
@@ -114,6 +119,60 @@ impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
         // explicit prune) — the decision is a lock-guarded insert. Wrapped in a
         // ready future so it satisfies the async contract without ever blocking.
         Box::pin(async move { Ok(self.insert_locked(key)) })
+    }
+}
+
+/// The async replay TIER the proxy's async serving path awaits (ADR-MCPRE-051
+/// §4): the async analogue of [`crate::shared_replay::SharedReplayCache`]. Given a
+/// `mcp_re_core::ReplayKey` from `verify_request_dispatch_preflight`, it composes
+/// the collision-safe composite key and folds the clock skew IDENTICALLY to the
+/// sync path (via the shared [`composite_replay_key`] / [`skew_folded_retain_until`]
+/// helpers), then AWAITS the authoritative [`AsyncAtomicReplayStore`] insert. The
+/// store round-trip is the ONLY awaited I/O on the request path; the returned
+/// [`ReplayDecision`] is fed straight into
+/// [`mcp_re_core::PreflightVerified::finalize`].
+///
+/// Fail-closed: any store failure surfaces as [`ReplayCacheError::Unavailable`]
+/// ⇒ `mcp-re.replay_cache_unavailable`, never a silent allow (ADR-MCPS-020).
+#[derive(Clone)]
+pub struct AsyncReplayTier {
+    store: Arc<dyn AsyncAtomicReplayStore>,
+    max_clock_skew_secs: i64,
+}
+
+impl AsyncReplayTier {
+    /// Build the tier over `store`, applying the symmetric `max_clock_skew_secs`
+    /// to each entry's retain-until (folded into the store TTL) exactly as the
+    /// sync `SharedReplayCache` does.
+    pub fn new(store: Arc<dyn AsyncAtomicReplayStore>, max_clock_skew_secs: i64) -> Self {
+        AsyncReplayTier {
+            store,
+            max_clock_skew_secs,
+        }
+    }
+
+    /// This tier's declared durability class — delegated to the backing store, so
+    /// a strict/production startup can machine-check the object it actually holds
+    /// (never a hardcoded `Durable`).
+    pub fn durability_class(&self) -> ReplayDurabilityClass {
+        self.store.durability_class()
+    }
+
+    /// AWAIT the authoritative atomic insert-if-absent for `key`. Composes the
+    /// composite key and folds skew identically to the sync path; maps a store
+    /// failure to the fail-closed [`ReplayCacheError::Unavailable`]. The vestigial
+    /// `now_unix = 0` anchor is passed through — a store that derives a server-side
+    /// TTL reads its OWN clock and ignores it (see [`AsyncAtomicReplayStore`]).
+    pub async fn check_and_insert(
+        &self,
+        key: &ReplayKey,
+    ) -> Result<ReplayDecision, ReplayCacheError> {
+        let composite = composite_replay_key(&key.signer, &key.audience, &key.nonce);
+        let retain_until = skew_folded_retain_until(key.expires_at_unix, self.max_clock_skew_secs);
+        self.store
+            .atomic_insert_if_absent(&composite, retain_until, 0)
+            .await
+            .map_err(ReplayCacheError::from)
     }
 }
 

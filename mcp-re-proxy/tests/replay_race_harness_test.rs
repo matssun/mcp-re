@@ -197,7 +197,7 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
 /// pure wrapper over the authoritative tier the race exercises concurrently.
 #[test]
 fn shared_cache_first_is_fresh_then_replay() {
-    let mut cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
+    let cache = SharedReplayCache::new(Box::new(InMemoryAtomicReplayStore::new()), 30);
     assert_eq!(
         cache.check_and_insert("did:example:agent", "did:example:server", "nonce-1", 1_000),
         Ok(ReplayDecision::Fresh),
@@ -221,8 +221,8 @@ fn shared_cache_first_is_fresh_then_replay() {
 #[test]
 fn shared_cache_cross_replica_admit_via_a_is_replay_via_b() {
     let backend = InMemoryAtomicReplayStore::new();
-    let mut replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
-    let mut replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_a = SharedReplayCache::new(Box::new(backend.clone()), 30);
+    let replica_b = SharedReplayCache::new(Box::new(backend.clone()), 30);
 
     assert_eq!(
         replica_a.check_and_insert("did:example:agent", "did:example:server", "nonce-x", 1_000),
@@ -291,4 +291,186 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
     let store = EtcdAtomicReplayStore::connect(&endpoint);
     let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(store);
     assert_exactly_one_fresh_per_round(store);
+}
+
+// ---------------------------------------------------------------------------
+// Full-stack async serving path — N cores through ONE shared `Proxy`
+// ---------------------------------------------------------------------------
+//
+// The variant the module doc above deferred to "when the serving path is
+// shareable across threads" (ADR-MCPRE-051 Phase 1/2, MCPRE-111): now that the
+// `Proxy` is `Send + Sync` and `Proxy::handle_with_transport_async` awaits the
+// authoritative async replay tier (ADR-MCPRE-051 §4), this drives N concurrent
+// submissions of the SAME signed request through ONE shared async `Proxy` and
+// asserts the end-to-end property — EXACTLY ONE `Fresh` (a verifiable signed
+// response) and N−1 `Replay` (a fail-closed JSON-RPC error). This is the proof
+// that the async serving path is a genuine async data plane over the coherent
+// replay tier, not an async transport wrapped around a synchronous replay core.
+#[cfg(feature = "async_serve")]
+mod full_stack_async {
+    use std::sync::Arc;
+
+    use mcp_re_core::request_hash;
+    use mcp_re_core::request_signing_preimage;
+    use mcp_re_core::verify_response;
+    use mcp_re_core::InMemoryTrustResolver;
+    use mcp_re_core::SigningKey;
+    use mcp_re_core::REQUEST_META_KEY;
+    use mcp_re_core::SIG_ALG_ED25519;
+    use mcp_re_core::VERSION_DRAFT_01;
+
+    use mcp_re_proxy::async_replay::AsyncReplayTier;
+    use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+    use mcp_re_proxy::Proxy;
+
+    use serde_json::json;
+    use serde_json::Value;
+
+    const SIGNER: &str = "did:example:agent-1";
+    const SIGNER_KEY_ID: &str = "key-1";
+    const SERVER: &str = "did:example:server-1";
+    const SERVER_KEY_ID: &str = "server-key-1";
+    const AUDIENCE: &str = "did:example:server-1";
+    const ON_BEHALF_OF: &str = "did:example:user-1";
+    const AUTH_HASH: &str = "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
+    const ISSUED_AT: &str = "2026-05-28T20:00:00Z";
+    const EXPIRES_AT: &str = "2026-05-28T20:05:00Z";
+    const SKEW: i64 = 300;
+    const REQUEST_ID: &str = "req-async-race-1";
+
+    fn signer_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[1u8; 32])
+    }
+    fn server_key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[2u8; 32])
+    }
+    fn now() -> i64 {
+        mcp_re_core::parse_rfc3339_utc(ISSUED_AT).expect("parse issued_at") + 60
+    }
+    fn inbound_resolver() -> InMemoryTrustResolver {
+        let mut r = InMemoryTrustResolver::new();
+        r.insert(SIGNER, SIGNER_KEY_ID, signer_key().public_key());
+        r
+    }
+    fn server_resolver() -> InMemoryTrustResolver {
+        let mut r = InMemoryTrustResolver::new();
+        r.insert(SERVER, SERVER_KEY_ID, server_key().public_key());
+        r
+    }
+
+    fn signed_request(nonce: &str) -> Vec<u8> {
+        let mut request = json!({
+            "id": REQUEST_ID,
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "echo",
+                "arguments": { "text": "hello" },
+                "_meta": {
+                    REQUEST_META_KEY: {
+                        "version": VERSION_DRAFT_01,
+                        "signer": SIGNER,
+                        "on_behalf_of": ON_BEHALF_OF,
+                        "audience": AUDIENCE,
+                        "authorization_hash": AUTH_HASH,
+                        "nonce": nonce,
+                        "issued_at": ISSUED_AT,
+                        "expires_at": EXPIRES_AT,
+                        "signature": { "alg": SIG_ALG_ED25519, "key_id": SIGNER_KEY_ID },
+                    }
+                }
+            }
+        });
+        let preimage = request_signing_preimage(&request).expect("request preimage");
+        let signature = signer_key().sign(&preimage);
+        request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] =
+            Value::String(signature);
+        serde_json::to_vec(&request).expect("serialize signed request")
+    }
+
+    fn expected_request_hash(nonce: &str) -> String {
+        let bytes = signed_request(nonce);
+        let value: Value = serde_json::from_slice(&bytes).expect("parse signed request");
+        request_hash(&value).expect("request_hash")
+    }
+
+    fn async_proxy(tier: AsyncReplayTier) -> Proxy {
+        let inner = |_request: &[u8]| -> Vec<u8> {
+            serde_json::to_vec(&json!({ "jsonrpc": "2.0", "id": REQUEST_ID, "result": {} }))
+                .expect("serialize inner result")
+        };
+        Proxy::new(
+            server_key(),
+            SERVER,
+            SERVER_KEY_ID,
+            Box::new(inbound_resolver()),
+            AUDIENCE,
+            SKEW,
+            Box::new(inner),
+        )
+        .with_async_replay_tier(tier)
+    }
+
+    #[test]
+    fn async_proxy_admits_exactly_one_fresh_under_concurrency() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            // ONE shared async `Proxy` over ONE authoritative async L2, shared by
+            // all racing tasks (the real fleet model: `Proxy: Send + Sync`).
+            let tier = AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), SKEW);
+            let proxy = Arc::new(async_proxy(tier));
+
+            let nonce = "nonce-async-fullstack-race-1";
+            let bytes = Arc::new(signed_request(nonce));
+            let hash = expected_request_hash(nonce);
+
+            // Fire many concurrent submissions of the SAME signed request through the
+            // async serving entry point.
+            let tasks = 64;
+            let mut handles = Vec::new();
+            for _ in 0..tasks {
+                let proxy = Arc::clone(&proxy);
+                let bytes = Arc::clone(&bytes);
+                handles.push(tokio::spawn(async move {
+                    proxy
+                        .handle_with_transport_async(bytes.as_slice(), now(), None, None)
+                        .await
+                }));
+            }
+
+            let resolver = server_resolver();
+            let mut fresh = 0usize;
+            let mut replay = 0usize;
+            for handle in handles {
+                let out = handle.await.expect("task");
+                if verify_response(&out, &resolver, &hash).is_ok() {
+                    // A verifiable signed response ⇒ this submission won the atomic
+                    // insert (Fresh) and was dispatched + signed.
+                    fresh += 1;
+                } else {
+                    // Every non-Fresh submission fails closed with a JSON-RPC error
+                    // (replay detected), never a second signed response.
+                    let value: Value = serde_json::from_slice(&out).expect("json error object");
+                    assert!(
+                        value.get("error").is_some(),
+                        "a non-Fresh async submission must be a fail-closed JSON-RPC error"
+                    );
+                    replay += 1;
+                }
+            }
+            assert_eq!(
+                fresh, 1,
+                "the async serving path admits EXACTLY ONE Fresh under {tasks}-way concurrency"
+            );
+            assert_eq!(
+                replay,
+                tasks - 1,
+                "every other concurrent submission of the same request is a Replay"
+            );
+        });
+    }
 }
