@@ -293,6 +293,69 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
     assert_exactly_one_fresh_per_round(store);
 }
 
+/// ASYNC Redis lane (ADR-MCPRE-051 §4): the async authoritative tier
+/// (`RedisAsyncAtomicReplayStore`, `SET NX PX` over the tokio async client) admits
+/// EXACTLY ONE `Fresh` under a concurrent race — the same load-bearing property as
+/// the sync lane, proven on the async client the per-core data plane awaits.
+/// Skip-when-absent (hard-fail under `MCP_RE_REQUIRE_LIVE_INFRA`).
+#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+#[test]
+fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
+    use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_proxy::RedisAsyncAtomicReplayStore;
+
+    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty());
+    let Some(url) = url else {
+        if require_live_infra() {
+            panic!(
+                "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable; \
+                 the async replay-race Redis lane cannot be scored as passing without a live store"
+            );
+        }
+        eprintln!("skipping async replay-race Redis lane: MCP_RE_TEST_REDIS_URL unset");
+        return;
+    };
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let store = Arc::new(
+            RedisAsyncAtomicReplayStore::connect(&url)
+                .await
+                .expect("connect async Redis replay store"),
+        );
+        for round in 0..RACE_ROUNDS {
+            let key = round_key(round);
+            let tasks = RACE_WIDTH;
+            let mut handles = Vec::new();
+            for _ in 0..tasks {
+                let store = Arc::clone(&store);
+                let key = key.clone();
+                handles.push(tokio::spawn(async move {
+                    store
+                        .atomic_insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                        .await
+                }));
+            }
+            let mut fresh = 0usize;
+            for handle in handles {
+                if let Ok(ReplayDecision::Fresh) = handle.await.expect("task") {
+                    fresh += 1;
+                }
+            }
+            assert_eq!(
+                fresh, 1,
+                "round {round}: async Redis {RACE_WIDTH}-way race must admit exactly one Fresh"
+            );
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Full-stack async serving path — N cores through ONE shared `Proxy`
 // ---------------------------------------------------------------------------

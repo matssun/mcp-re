@@ -106,6 +106,13 @@ _PROXY_LIB_SRCS = [
     # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
     # "async_serve")] gate — invisible to the default closure.
     "src/async_replay.rs",
+    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async Redis authoritative replay
+    # backend (SET NX PX over the tokio async client). #[cfg(all(async_serve,
+    # redis_replay))] — cfg'd out of every current flavor (none sets both), compiled
+    # + tested by the cargo async+redis lane; it links under Bazel when the async
+    # production flavor (async_serve + redis_replay + tokio + redis) is added at the
+    # main.rs cutover.
+    "src/async_redis_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",

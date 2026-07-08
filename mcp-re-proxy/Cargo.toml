@@ -32,7 +32,14 @@ zeroize = { workspace = true }
 # list these in its `deps`, so the production (Bazel) closure stays lean
 # (ADR-MCPS-018); only `:mcp_re_proxy_ext` and its tests link them.
 cryptoki-sys = { workspace = true }
-redis = { workspace = true }
+# The sync `redis_store` backend uses the blocking client; the async
+# `async_redis_store` backend (ADR-MCPRE-051 §4 — the async data plane awaits an
+# async replay client, never blocks a per-core runtime worker) uses the tokio
+# async client + auto-reconnecting `ConnectionManager`. tokio is already in the
+# proxy closure for the async serving path, so `aio`/`tokio-comp` add redis's
+# async modules but no new runtime. The DEFAULT `:mcp_re_proxy` Bazel target
+# links neither the redis crate nor tokio; only the ext/async flavors do.
+redis = { workspace = true, features = ["aio", "tokio-comp", "connection-manager"] }
 # ureq is the blocking HTTP client for both the OCSP path (plain HTTP) and the AWS
 # KMS signer (HTTPS). The `tls` feature (rustls + webpki-roots) is what gives the
 # KMS adapter HTTPS; rustls/ring is already in the closure, so this reuses it and

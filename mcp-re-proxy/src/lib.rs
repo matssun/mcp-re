@@ -152,6 +152,12 @@ pub mod async_fleet;
 // Same `async_serve` gate; concrete async Redis/etcd backends plug into this contract.
 #[cfg(feature = "async_serve")]
 pub mod async_replay;
+// MCPRE-117 (ADR-MCPRE-051 §4): the ASYNC Redis authoritative replay backend
+// (`SET NX PX` via the tokio async client + auto-reconnecting ConnectionManager).
+// Behind BOTH the async serving path and the redis backend flag; the async data
+// plane awaits it instead of blocking a per-core worker on the sync client.
+#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+pub mod async_redis_store;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.
@@ -220,6 +226,8 @@ pub use proxy::Proxy;
 pub use etcd_store::EtcdAtomicReplayStore;
 #[cfg(feature = "redis_replay")]
 pub use redis_store::RedisAtomicReplayStore;
+#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+pub use async_redis_store::RedisAsyncAtomicReplayStore;
 #[cfg(feature = "redis_replay")]
 pub use trust_epoch::redis_trust_epoch_source;
 #[cfg(feature = "redis_replay")]
