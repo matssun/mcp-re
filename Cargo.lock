@@ -1052,6 +1052,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-re-stdio-bridge"
+version = "0.10.1"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mcp-re-proxy",
+ "tokio",
+]
+
+[[package]]
 name = "mcp-re-test-paths"
 version = "0.10.1"
 

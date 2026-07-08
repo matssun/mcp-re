@@ -82,6 +82,7 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCP_RE_BUILD_HOST" => workspace_root.join("mcp-re-host/BUILD.bazel"),
         "MCP_RE_BUILD_POLICY" => workspace_root.join("mcp-re-policy/BUILD.bazel"),
         "MCP_RE_BUILD_PROXY" => workspace_root.join("mcp-re-proxy/BUILD.bazel"),
+        "MCP_RE_BUILD_STDIO_BRIDGE" => workspace_root.join("mcp-re-stdio-bridge/BUILD.bazel"),
         "MCP_RE_BUILD_TRANSPORT" => workspace_root.join("mcp-re-transport/BUILD.bazel"),
         // Per-test source files (read by the security-traceability guard)
         "MCP_RE_SRC_OBJECT_SUITE" => {

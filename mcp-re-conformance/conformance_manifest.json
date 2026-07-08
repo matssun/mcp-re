@@ -54,7 +54,7 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 80
+    "bazel_test_targets": 81
   },
   "bazel_test_targets": [
     "//mcp-re-conformance:acceptance_test",
@@ -134,6 +134,7 @@
     "//mcp-re-proxy:secret_in_logs_test",
     "//mcp-re-proxy:tls_load_harness_bench",
     "//mcp-re-proxy:tls_test",
+    "//mcp-re-stdio-bridge:mcp_re_stdio_bridge_test",
     "//mcp-re-transport:dos_hardening_test",
     "//mcp-re-transport:fault_injection_test",
     "//mcp-re-transport:mtls_client_test"

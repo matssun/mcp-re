@@ -1,0 +1,44 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ADR-MCPRE-051 (Phase B): the OUT-OF-TCB stdio<->HTTP adapter. Fronts an
+# unmodified, sandboxed local stdio MCP server behind a plain HTTP endpoint so the
+# mcp-re-proxy PEP can protect it via its stateless HTTP inner plane WITHOUT the
+# subprocess/sandbox/env/rlimit surface entering the signing PEP's TCB. Phase A
+# reuses the hardened subprocess inner (SubprocessInner / PersistentSubprocessInner
+# + InnerLaunchConfig + the Landlock/seccomp SandboxProfile) from the sync
+# mcp-re-proxy library; Phase B moves those modules into this crate and cuts the
+# dependency so the PEP links none of them.
+nt_rust_binary(
+    name = "mcp_re_stdio_bridge",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_stdio_bridge",
+    edition = "2021",
+    deps = [
+        "//mcp-re-proxy:mcp_re_proxy",
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
+# Inline unit tests: bridge arg parsing (listen + inner command after `--`
+# separator, oneshot/persistent mode, working dir) and fail-closed rejections.
+nt_rust_test(
+    name = "mcp_re_stdio_bridge_test",
+    crate = ":mcp_re_stdio_bridge",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-proxy:mcp_re_proxy",
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:tokio",
+    ],
+)

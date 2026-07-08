@@ -14,7 +14,8 @@ resolver = "2"
 members = [
     "mcp-re-core",        # Pure verification crate — no networking/async/fs (ADR-MCPS-011)
     "mcp-re-conformance", # Black-box conformance runner (object + stdio + HTTP harnesses)
-    "mcp-re-proxy",       # Server-side sidecar (stdio-first)
+    "mcp-re-proxy",       # Server-side sidecar (async/HTTP-first PEP; ADR-MCPRE-051)
+    "mcp-re-stdio-bridge", # OUT-OF-TCB stdio<->HTTP adapter — fronts an unmodified sandboxed stdio MCP server behind HTTP so the PEP can protect it without the subprocess/sandbox surface entering its TCB (ADR-MCPRE-051 Phase B)
     "mcp-re-host",        # Client-side ambassador (request signing, response verification)
     "mcp-re-client-core", # Client-side shared seam for proxy + SDK (ADR-MCPS-044) — signed draft-02 requests, response binding
     "mcp-re-client-proxy",# Local client-side MCP-RE proxy (first adoption bridge) — plain-MCP endpoint -> sign -> forward -> verify (ADR-MCPS-044)

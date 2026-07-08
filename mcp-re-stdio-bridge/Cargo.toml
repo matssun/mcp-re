@@ -1,0 +1,24 @@
+[package]
+name = "mcp-re-stdio-bridge"
+version = "0.10.1"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "ADR-MCPRE-051 (Phase B): an OUT-OF-TCB stdio<->HTTP adapter. Fronts an unmodified local stdio MCP server (launched + sandboxed as a subprocess) behind a plain HTTP endpoint so the mcp-re-proxy PEP can protect it via its stateless HTTP inner plane. The subprocess/sandbox/rlimit/env attack surface lives HERE, outside the cryptographic trust boundary — never in the signing PEP."
+
+[dependencies]
+# Phase A scaffolding: the bridge reuses the proven, security-hardened subprocess
+# inner (SubprocessInner / PersistentSubprocessInner + InnerLaunchConfig + the
+# Landlock/seccomp SandboxProfile + RLimits) currently living in mcp-re-proxy.
+# Phase B PHYSICALLY MOVES those modules INTO this crate and cuts this reverse
+# dependency, so the PEP crate provably links none of the subprocess/sandbox code.
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+
+[[bin]]
+name = "mcp-re-stdio-bridge"
+path = "src/main.rs"
