@@ -711,6 +711,46 @@ nt_rust_test(
     ],
 )
 
+# MCPRE-108 (ADR-MCPRE-051 §7): concurrent-TLS-client load harness driving the
+# REAL listener (spawns the mcp-re-proxy CLI + echo inner, hammers it with many
+# concurrent rustls mTLS clients). The full benchmark is #[ignore] (the ADR §7
+# manual/dispatch lane, scaled by MCP_RE_LOADGEN_* env); an always-on smoke test
+# self-verifies the harness at tiny scale on every battery run. Same data/env
+# wiring as full_stack_test.
+nt_rust_test(
+    name = "tls_load_harness_bench",
+    srcs = ["tests/tls_load_harness_bench.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        ":echo_inner",
+        ":mcp_re_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_ECHO_INNER": "$(rlocationpath :echo_inner)",
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+    },
+    env_inherit = [
+        "MCP_RE_LOADGEN_CONCURRENCY",
+        "MCP_RE_LOADGEN_REQUESTS",
+        "MCP_RE_LOADGEN_MODE",
+        "MCP_RE_LOADGEN_HW_CLASS",
+        "MCP_RE_LOADGEN_CORES",
+        "MCP_RE_LOADGEN_OUT",
+    ],
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
+        ":mcp_re_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 # MCPRE-109 (ADR-MCPRE-051 §4): replay race harness — the authoritative replay
 # tier admits EXACTLY ONE Fresh under N-way concurrency (cross-core + cross-
 # replica), and ZERO Fresh when the store is unavailable (fail closed). The
