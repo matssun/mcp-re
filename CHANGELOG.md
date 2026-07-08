@@ -37,6 +37,24 @@ or wire-format compatibility while the design lines from
   client test, load-harness (#313) integration, and online-OCSP-on-async are the
   tracked follow-ups. Conformance target count 73 → 74; 22 async crates enter the
   `async_serve`-only closure (validated by the CI `cargo-deny` gate).
+- **Concurrent-TLS-client load harness driving the real listener (ADR-MCPRE-051
+  §7, MCPRE-108).** A new harness (`tls_load_harness_bench`) spawns the real
+  `mcp-re-proxy` binary and hammers its listener with many concurrent rustls
+  **mTLS** clients — accept → TLS/mTLS → verify → inner → sign → respond — so
+  every number includes the full serving path (unlike `fleet_throughput_bench`,
+  which calls `Proxy::handle` on one thread). It reports aggregate throughput and
+  p50/p99/p999 added latency, measures the cold-handshake and keep-alive
+  connection modes SEPARATELY (keep-alive reports a realised-reuse fraction ≈ 0 on
+  the current `Connection: close` wire), and records the per-core-scaling point.
+  The **declared benchmark envelope** is committed alongside it
+  (`docs/bench/adr-051-load-harness-envelope.md` + `adr-051-benchmark-envelope.json`):
+  hardware class, core count, payload, TLS/signature suite, connection mode,
+  replay backend, inner latency. The full run is `#[ignore]` (the §7
+  manual/dispatch lane, scaled by `MCP_RE_LOADGEN_*`, optional JSON via
+  `MCP_RE_LOADGEN_OUT`); an always-on smoke test self-verifies the harness at tiny
+  scale on every battery run. Run against the current single-threaded proxy it
+  produces the Phase-0 baseline for the SLO declaration (MCPRE-110). Conformance
+  target count 72 → 73.
 - **Replay race harness — the authoritative tier admits exactly one `Fresh`
   under concurrency (ADR-MCPRE-051 §4, MCPRE-109).** A new always-on test
   (`replay_race_harness_test`) fires N barrier-released threads at the SAME

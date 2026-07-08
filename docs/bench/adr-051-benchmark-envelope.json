@@ -1,0 +1,30 @@
+{
+  "schema": "mcp-re-load-harness-envelope/v1",
+  "envelope_version": 1,
+  "adr": "ADR-MCPRE-051",
+  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
+  "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+  "description": "Pinned CONDITIONS under which the concurrent-TLS-client load harness measures the serving data plane. The SLO target thresholds are declared separately (MCPRE-110, HITL); this file fixes the measurement envelope only. See adr-051-load-harness-envelope.md for prose.",
+  "dimensions": {
+    "hardware_class": { "source": "MCP_RE_LOADGEN_HW_CLASS", "default": "unspecified", "recorded": true },
+    "core_count": { "source": "MCP_RE_LOADGEN_CORES", "default": "detected", "current_system_utilises": 1, "note": "current proxy is a single-threaded blocking accept loop; per-core scaling curve is flat at 1 until ADR-051 Phase 2" },
+    "payload_class": { "value": "single tools/call (echo, small JSON body)" },
+    "tls_mode": { "value": "TLS1.3 mTLS", "provider": "rustls-ring", "client_auth": "required (trusted URI-SAN leaf)" },
+    "signature_suite": { "handshake": "rustls 1.3 defaults", "object_evidence": "Ed25519 (request + response, response bound to request_hash)" },
+    "connection_mode": { "source": "MCP_RE_LOADGEN_MODE", "values": ["cold", "keepalive"], "default": "cold", "note": "current wire is Connection: close (one request per connection); keepalive realised-reuse fraction is ~0 until Phase-2 keep-alive/H2" },
+    "replay_backend": { "value": "in-memory reference (--replay-cache memory)" },
+    "inner_backend_latency": { "value": "echo inner, ~0 added latency" },
+    "concurrency": { "source": "MCP_RE_LOADGEN_CONCURRENCY", "default": 64 },
+    "total_requests": { "source": "MCP_RE_LOADGEN_REQUESTS", "default": 2000 }
+  },
+  "reports": {
+    "throughput": "verified responses per wall-clock second",
+    "added_latency_percentiles": ["p50", "p99", "p999", "min", "mean", "max"],
+    "per_core_scaling": "declared core count + achieved throughput (single point at 1 core on the current single-threaded proxy)",
+    "connection_reuse_fraction": "reported for keepalive mode"
+  },
+  "output": {
+    "human": "stdout report",
+    "machine": "JSON written to MCP_RE_LOADGEN_OUT when set"
+  }
+}

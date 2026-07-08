@@ -128,6 +128,7 @@
     "//mcp-re-proxy:replay_race_harness_test",
     "//mcp-re-proxy:sandbox_linux_e2e_test",
     "//mcp-re-proxy:secret_in_logs_test",
+    "//mcp-re-proxy:tls_load_harness_bench",
     "//mcp-re-proxy:tls_test",
     "//mcp-re-transport:dos_hardening_test",
     "//mcp-re-transport:fault_injection_test",
