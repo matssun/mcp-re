@@ -382,10 +382,25 @@ mod full_stack_async {
     use mcp_re_core::SIG_ALG_ED25519;
     use mcp_re_core::VERSION_DRAFT_01;
 
+    use std::convert::Infallible;
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use http_body_util::Full;
+    use hyper::service::service_fn;
+    use hyper::Response;
+    use hyper::Uri;
+    use hyper_util::rt::TokioExecutor;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::server::conn::auto;
+    use tokio::net::TcpListener;
+
     use mcp_re_proxy::async_inner::AsyncInnerServer;
     use mcp_re_proxy::async_inner::InnerResponseFuture;
     use mcp_re_proxy::async_replay::AsyncReplayTier;
     use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+    use mcp_re_proxy::http_inner::HttpInnerPool;
     use mcp_re_proxy::Proxy;
 
     use serde_json::json;
@@ -488,6 +503,106 @@ mod full_stack_async {
         )
         .with_async_replay_tier(tier)
         .with_async_inner(Box::new(EchoAsyncInner))
+    }
+
+    /// Spawn an in-process HTTP inner backend that records the last forwarded body
+    /// and replies with a fixed JSON-RPC result. Returns its address.
+    async fn spawn_http_inner(
+        seen: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    ) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind inner");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else { continue };
+                let seen = std::sync::Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let io = TokioIo::new(stream);
+                    let svc = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                        let seen = std::sync::Arc::clone(&seen);
+                        async move {
+                            use http_body_util::BodyExt;
+                            let body = req.into_body().collect().await.map(|c| c.to_bytes());
+                            if let Ok(bytes) = body {
+                                *seen.lock().expect("seen") = bytes.to_vec();
+                            }
+                            Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(
+                                br#"{"jsonrpc":"2.0","id":"req-async-race-1","result":{"ok":true}}"#,
+                            ))))
+                        }
+                    });
+                    let _ = auto::Builder::new(TokioExecutor::new())
+                        .serve_connection(io, svc)
+                        .await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// End-to-end assembly: the async `Proxy` verifies + replay-admits a signed
+    /// request, forwards it over the REAL `HttpInnerPool` to a stateless HTTP inner
+    /// backend, and signs the backend's result — the client verifies the response.
+    /// Also proves the forwarded body carries the proxy-authored verified context
+    /// (the inner received a stripped + context-injected request, not the raw
+    /// envelope). This is the whole async data plane minus the TLS ingress (which
+    /// async_fleet_test / async_serve_parity_test cover).
+    #[test]
+    fn async_proxy_signs_response_from_real_http_inner() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let addr = spawn_http_inner(std::sync::Arc::clone(&seen)).await;
+            let backend: Uri = format!("http://{addr}/mcp").parse().expect("uri");
+            let pool = HttpInnerPool::new(vec![backend], Duration::from_secs(5)).expect("pool");
+
+            let tier = AsyncReplayTier::new(
+                std::sync::Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+                SKEW,
+            );
+            let unused_sync_inner = |_r: &[u8]| -> Vec<u8> { Vec::new() };
+            let proxy = Proxy::new(
+                server_key(),
+                SERVER,
+                SERVER_KEY_ID,
+                Box::new(inbound_resolver()),
+                AUDIENCE,
+                SKEW,
+                Box::new(unused_sync_inner),
+            )
+            .with_async_replay_tier(tier)
+            .with_async_inner(Box::new(pool));
+
+            let nonce = "nonce-async-http-e2e-1";
+            let out = proxy
+                .handle_with_transport_async(&signed_request(nonce), now(), None, None)
+                .await;
+
+            // The client verifies the signed, request-bound response — proving the
+            // response was built from the real HTTP inner round-trip and signed.
+            verify_response(&out, &server_resolver(), &expected_request_hash(nonce))
+                .expect("the async proxy must sign a verifiable response from the HTTP inner");
+
+            // The inner backend received the proxy-authored forwarded request (the
+            // verified-context block is injected; the external request envelope is
+            // stripped).
+            let forwarded: Value =
+                serde_json::from_slice(&seen.lock().expect("seen")).expect("forwarded json");
+            assert!(
+                forwarded["params"]["_meta"]
+                    .get("se.syncom/mcp-re.verified")
+                    .is_some()
+                    || forwarded["params"]["_meta"]
+                        .as_object()
+                        .map(|m| m.keys().any(|k| k.contains("verified")))
+                        .unwrap_or(false),
+                "the HTTP inner must receive the proxy-authored verified-context request, got {forwarded}"
+            );
+        });
     }
 
     #[test]
