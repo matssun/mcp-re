@@ -34,6 +34,7 @@
 
 use std::convert::Infallible;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,6 +82,31 @@ impl<F> AsyncRequestHandler for F where
 /// the blocking loop's `SHUTDOWN_POLL_INTERVAL`).
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// How often the graceful-drain loop re-checks the in-flight-request count while
+/// waiting for shutdown to complete (MCPRE-115). Small enough that a clean drain
+/// returns promptly after the last request finishes, large enough to not busy-spin.
+const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// RAII counter of requests currently being served on a core (MCPRE-115). Constructed
+/// once a request is admitted and about to be processed; the increment/decrement pair
+/// is exactly balanced by `Drop`, so the count reflects live in-flight requests on
+/// every return path (503 admission rejections are constructed BEFORE this guard and
+/// so are never counted — there is nothing to drain for a request that was shed).
+struct InFlightGuard(Arc<AtomicUsize>);
+
+impl InFlightGuard {
+    fn new(counter: &Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::AcqRel);
+        InFlightGuard(Arc::clone(counter))
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Run the async accept loop until `shutdown` flips. Each accepted connection is
 /// TLS-terminated (`tokio-rustls`) and served over `hyper` (keep-alive + H2). One
 /// shared `Proxy` (behind `handler`) serves every connection — the whole point of
@@ -107,6 +133,12 @@ pub async fn serve<H: AsyncRequestHandler>(
         .max_in_flight_requests
         .map(|n| Arc::new(tokio::sync::Semaphore::new(n)));
 
+    // MCPRE-115: live count of requests currently BEING SERVED on this core (past
+    // admission, in body-read/handler/response). Graceful drain waits for this to
+    // reach zero — idle keep-alive connections carry no in-flight request and so do
+    // not extend the drain.
+    let in_flight_requests = Arc::new(AtomicUsize::new(0));
+
     while !shutdown.load(Ordering::SeqCst) {
         // Poll-with-timeout so the shutdown flag is observed within one interval
         // even under an idle listener.
@@ -131,10 +163,28 @@ pub async fn serve<H: AsyncRequestHandler>(
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let in_flight = in_flight.clone();
+        let in_flight_requests = Arc::clone(&in_flight_requests);
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
-            let _ = serve_connection(tcp, acceptor, options, handler, in_flight).await;
+            let _ = serve_connection(tcp, acceptor, options, handler, in_flight, in_flight_requests)
+                .await;
         });
+    }
+
+    // MCPRE-115: bounded graceful drain. The accept loop has stopped (shutdown
+    // observed), so no NEW request will be admitted; wait up to `drain_grace` for the
+    // requests already in flight to finish. Because each in-flight request is itself
+    // bounded by `request_deadline`, `drain_grace >= request_deadline` guarantees a
+    // clean, zero-abandoned drain; the grace is the hard ceiling so a wedged request
+    // cannot delay process exit past it (bounded exit). When `serve` returns, the
+    // caller drops the runtime, aborting any (idle) connection tasks — none of which
+    // hold an in-flight request once the count reaches zero.
+    let drain_deadline = tokio::time::Instant::now() + options.limits.drain_grace;
+    while in_flight_requests.load(Ordering::Acquire) > 0 {
+        if tokio::time::Instant::now() >= drain_deadline {
+            break;
+        }
+        tokio::time::sleep(DRAIN_POLL_INTERVAL).await;
     }
 }
 
@@ -148,6 +198,7 @@ async fn serve_connection<H: AsyncRequestHandler>(
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
+    in_flight_requests: Arc<AtomicUsize>,
 ) -> std::io::Result<()> {
     // Handshake, bounded by the aggregate read deadline: a peer that never
     // completes the handshake cannot hold the connection task forever. Reading
@@ -179,7 +230,10 @@ async fn serve_connection<H: AsyncRequestHandler>(
         let handler = Arc::clone(&handler);
         let leaf_der = Arc::clone(&leaf_der);
         let in_flight = in_flight.clone();
-        async move { handle_request(req, options, handler, leaf_der, in_flight).await }
+        let in_flight_requests = Arc::clone(&in_flight_requests);
+        async move {
+            handle_request(req, options, handler, leaf_der, in_flight, in_flight_requests).await
+        }
     });
 
     let mut builder = auto::Builder::new(TokioExecutor::new());
@@ -208,6 +262,7 @@ async fn handle_request<H: AsyncRequestHandler>(
     handler: Arc<H>,
     leaf_der: Arc<Option<Vec<u8>>>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
+    in_flight_requests: Arc<AtomicUsize>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // MCPRE-114: per-core admission control. Acquire an in-flight permit FIRST — if
     // the per-core ceiling is full, reject with 503 fail-closed BEFORE reading the
@@ -222,6 +277,12 @@ async fn handle_request<H: AsyncRequestHandler>(
         },
         None => None,
     };
+
+    // MCPRE-115: count this request as in flight for the duration of its processing
+    // (body read + handler + response). Constructed AFTER admission so a shed 503 is
+    // not counted; dropped on every return path below, so graceful drain sees the
+    // count fall to zero exactly when the last request finishes.
+    let _in_flight_guard = InFlightGuard::new(&in_flight_requests);
 
     // A header view with the SAME case-insensitive lookup + duplicate-count
     // semantics the blocking path's `RequestHeaders::parse` produces (used by the

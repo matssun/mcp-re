@@ -14,6 +14,25 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **Bounded graceful drain across cores — zero-abandoned (ADR-MCPRE-051 §6, Phase
+  2, MCPRE-115).** On shutdown, each per-core `async_serve` loop stops accepting and
+  then waits up to a bounded grace window (`ServerLimits::drain_grace`, default 30s)
+  for its IN-FLIGHT requests to finish before the runtime is dropped — so a request
+  already being served **completes rather than being abandoned**, while a stuck
+  request cannot delay process exit past the grace (bounded exit). In-flight requests
+  are tracked by a per-core RAII counter (`InFlightGuard`, incremented once a request
+  is admitted, decremented on every return path); idle keep-alive connections carry no
+  in-flight request and so do not extend the drain — an idle drain returns promptly.
+  Because each request is also bounded by `request_deadline`, sizing
+  `request_deadline <= drain_grace < terminationGracePeriodSeconds` guarantees a clean,
+  zero-abandoned drain under a k8s rollout (documented on `drain_grace`). This replaces
+  MCPS-88's single-process "≤1 inline request" guarantee with an explicit
+  bounded-drain guarantee for the per-core fleet (each core drains before its worker
+  thread joins). A deterministic suite (`async_drain_test`) proves an in-flight request
+  drains cleanly (200, not abandoned), idle + saturated drains return within bound, and
+  a request stalled in the body-read phase cannot delay exit past the grace. The
+  SIGTERM/SIGINT → shutdown bridge is CLI wiring (a tracked follow-up); the mechanism
+  is driven by the shared shutdown flag. Conformance target count 78 → 79.
 - **Per-core bounded admission control + fail-closed backpressure (ADR-MCPRE-051
   §1, Phase 2, MCPRE-114).** The async serving path now enforces a **per-core
   in-flight-request ceiling** (`ServerLimits::max_in_flight_requests`): once a core is
