@@ -158,6 +158,12 @@ pub mod async_replay;
 // pool to stateless Streamable-HTTP inner backends) plugs into this contract.
 #[cfg(feature = "async_serve")]
 pub mod async_inner;
+// ADR-MCPRE-051 §3 (Phase 3): the production async inner plane — a per-core pooled
+// hyper client to stateless Streamable-HTTP inner backends (keep-alive/H2,
+// round-robin, per-request timeout, fail-closed). The AsyncInnerServer the async
+// serving path awaits in production.
+#[cfg(feature = "async_serve")]
+pub mod http_inner;
 // MCPRE-117 (ADR-MCPRE-051 §4): the ASYNC Redis authoritative replay backend
 // (`SET NX PX` via the tokio async client + auto-reconnecting ConnectionManager).
 // Behind BOTH the async serving path and the redis backend flag; the async data

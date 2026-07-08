@@ -144,8 +144,14 @@ seccompiler = "0.4"
 # byte-identical — only the I/O transport becomes async. mcp-re-core stays pure.
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-hyper = { version = "1", features = ["server", "http1", "http2"] }
-hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+# `client` adds the client-side HTTP/1+2 role for the async inner plane
+# (ADR-MCPRE-051 §3): the per-core pooled hyper client to stateless
+# Streamable-HTTP inner backends. Server role is the ingress data plane.
+hyper = { version = "1", features = ["server", "client", "http1", "http2"] }
+# `client-legacy` is hyper-util's pooled, keep-alive Client (connection reuse to
+# the inner backends); `client` its shared client utils. Server/server-auto is the
+# ingress side. All roles share one hyper/tokio closure.
+hyper-util = { version = "0.1", features = ["server", "server-auto", "client", "client-legacy", "tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 

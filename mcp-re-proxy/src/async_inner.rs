@@ -40,3 +40,14 @@ pub trait AsyncInnerServer: Send + Sync {
     /// inner server, awaiting its response bytes.
     fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a>;
 }
+
+/// A synthesized JSON-RPC error *response* (no `result`) returned when the inner
+/// is unreachable — no inner wired, an inner-backend transport/timeout failure, a
+/// non-2xx status, or (in the pool) all backends ejected / pool exhausted. It
+/// carries no `result`, so `Proxy::build_signed_response` wraps it as a SIGNED
+/// `inner_error` envelope: the client receives signed, fail-closed bytes, never an
+/// unsigned pass-through and never a silent allow (ADR-MCPS response-signing +
+/// ADR-MCPRE-051 §4 fail-closed posture).
+pub(crate) fn inner_unavailable_response() -> Vec<u8> {
+    br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"inner server unavailable"}}"#.to_vec()
+}

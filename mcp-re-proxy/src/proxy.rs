@@ -735,7 +735,7 @@ impl Proxy {
         }
         let inner_response = match &self.inner_async {
             Some(inner) => inner.dispatch(&forwarded).await,
-            None => synthesized_inner_unavailable(),
+            None => crate::async_inner::inner_unavailable_response(),
         };
         let signed = self.build_signed_response(&inner_response, verified, now_unix, id_value)?;
         if let Some(sink) = &self.log_sink {
@@ -967,17 +967,6 @@ impl Proxy {
             }
         }
     }
-}
-
-/// A synthesized JSON-RPC error *response* (no `result`) used when the async
-/// serving path has no inner reachable (no async inner wired, or — in the future
-/// pool — all backends ejected / pool exhausted). It carries no `result`, so
-/// [`Proxy::build_signed_response`] wraps it as a SIGNED `inner_error` envelope:
-/// the client receives signed, fail-closed bytes, never an unsigned pass-through
-/// and never a silent allow.
-#[cfg(feature = "async_serve")]
-fn synthesized_inner_unavailable() -> Vec<u8> {
-    br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"inner server unavailable"}}"#.to_vec()
 }
 
 /// The four MCP-RE `_meta` keys the proxy EXCLUSIVELY owns at the trust boundary
