@@ -89,6 +89,11 @@ _PROXY_LIB_SRCS = [
     # in-memory reference store). Always compiled; default-build, Bazel-tested.
     "src/shared_replay.rs",
     "src/tls.rs",
+    # ADR-MCPRE-051 Phase 2 (§1): opt-in async serving path. #[cfg(feature =
+    # "async_serve")] — compiled ONLY by the `:mcp_re_proxy_async` flavor + its
+    # tests; the default/production flavors see an absent module and link no
+    # tokio/hyper (ADR-MCPS-018 lean-sync firewall).
+    "src/async_serve.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -441,6 +446,50 @@ nt_rust_test(
 # MCPS-076 (audit gap G-3): a SEPARATE library instance of mcp-re-proxy built WITH
 # the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
 # build_key_source) is compiled into the dev test below. The default `:mcp_re_proxy`
+# ADR-MCPRE-051 Phase 2 (§1): the async serving path (tokio + tokio-rustls + hyper
+# keep-alive/H2). The tokio/hyper stack (declared non-optional in Cargo.toml for
+# crate_universe visibility) is linked ONLY by this flavor + its test — the default
+# `:mcp_re_proxy` closure stays the blocking std::net path (ADR-MCPS-018 lean-sync
+# firewall). Built on every `bazel test //...` so the opt-in path can never rot.
+_PROXY_ASYNC_CRATES = [
+    "@crates_mcp_re//:tokio",
+    "@crates_mcp_re//:tokio-rustls",
+    "@crates_mcp_re//:hyper",
+    "@crates_mcp_re//:hyper-util",
+    "@crates_mcp_re//:http-body-util",
+    "@crates_mcp_re//:bytes",
+]
+
+nt_rust_library(
+    name = "mcp_re_proxy_async",
+    srcs = _PROXY_LIB_SRCS,
+    crate_features = ["async_serve"],
+    crate_name = "mcp_re_proxy",
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS + _PROXY_ASYNC_CRATES,
+)
+
+# MCPRE-112 (ADR-MCPRE-051 §1): async serving-path PARITY suite — reproduces the
+# blocking loop's mTLS fail-closed behaviors + identity extraction on the async
+# transport, plus keep-alive + concurrency. Drives `async_serve::serve` on a tokio
+# runtime in a background thread and hammers it with blocking rustls mTLS clients.
+# Built + run on every `bazel test //...` so the opt-in path can never rot.
+nt_rust_test(
+    name = "async_serve_parity_test",
+    srcs = ["tests/async_serve_parity_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+
 # above is NEVER built with this feature; production and the production CLI link
 # only the env-LESS instance. This instance is built on every `bazel test //...`
 # (NOT `manual`) so it can never silently fail to compile.
