@@ -21,8 +21,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::sync::Condvar;
-use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -301,26 +299,12 @@ fn options_with_drain(grace: Duration, request_deadline: Duration) -> ServerOpti
     }
 }
 
-/// A gate the test releases to unblock handlers holding their in-flight permits.
-#[derive(Clone)]
-struct Gate(Arc<(Mutex<bool>, Condvar)>);
-impl Gate {
-    fn new() -> Self {
-        Gate(Arc::new((Mutex::new(false), Condvar::new())))
-    }
-    fn wait(&self) {
-        let (lock, cv) = &*self.0;
-        let mut released = lock.lock().expect("gate");
-        while !*released {
-            released = cv.wait(released).expect("gate wait");
-        }
-    }
-    fn release(&self) {
-        let (lock, cv) = &*self.0;
-        *lock.lock().expect("gate") = true;
-        cv.notify_all();
-    }
-}
+/// How long a handler holds a request in flight in the drain tests. Fixed and
+/// SELF-RELEASING (a plain sleep, never a blocking wait on an external signal) so a
+/// runtime drop can never wedge a worker thread — the handler always returns on its
+/// own within this bound. Long enough that shutdown reliably fires while the request
+/// is still in flight.
+const HANDLER_HOLD: Duration = Duration::from_millis(500);
 
 fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) {
     let start = Instant::now();
@@ -339,34 +323,29 @@ fn in_flight_request_completes_during_drain_zero_abandoned() {
     let client_ca = make_ca();
     let config = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
-    let gate = Gate::new();
-
     let entered_h = Arc::clone(&entered);
-    let gate_h = gate.clone();
     // Generous grace so the drain waits for the in-flight request rather than cutting
-    // it off.
+    // it off. The handler holds the request in flight for HANDLER_HOLD then returns on
+    // its own (self-releasing — no external signal, so a runtime drop can never wedge).
     let server = spawn_server(
         config,
         options_with_drain(Duration::from_secs(10), Duration::from_secs(10)),
         move |req, _id, _a| {
             entered_h.fetch_add(1, Ordering::SeqCst);
-            gate_h.wait();
+            std::thread::sleep(HANDLER_HOLD);
             req.to_vec()
         },
     );
 
-    // Fire one request; it enters the handler and blocks (in flight).
+    // Fire one request; it enters the handler and is now in flight (holding).
     let addr = server.addr;
     let client = client_config(&client_ca);
     let status = std::thread::spawn(move || request_status(addr, &client, b"drain-me"));
     wait_until(Duration::from_secs(5), || entered.load(Ordering::SeqCst) == 1);
 
-    // Signal shutdown WHILE the request is in flight, then release it. Graceful drain
-    // must let it finish (200), not abandon it.
+    // Signal shutdown WHILE the request is in flight. Graceful drain must let it finish
+    // (200), not abandon it — the handler is still mid-HANDLER_HOLD.
     server.trigger_shutdown();
-    // Give the accept loop a moment to observe shutdown and enter the drain wait.
-    std::thread::sleep(Duration::from_millis(100));
-    gate.release();
 
     let result = status.join().expect("client thread");
     assert_eq!(result.expect("request completes"), 200, "the in-flight request drained cleanly (not abandoned)");
@@ -398,21 +377,20 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
     let client_ca = make_ca();
     let config = server_config_for(&client_ca);
     let entered = Arc::new(AtomicUsize::new(0));
-    let gate = Gate::new();
-
     let entered_h = Arc::clone(&entered);
-    let gate_h = gate.clone();
+    // Handlers hold their requests in flight for HANDLER_HOLD then return on their own
+    // (self-releasing — no external signal, no worker wedge under any scheduling).
     let server = spawn_server(
         config,
         options_with_drain(Duration::from_secs(10), Duration::from_secs(10)),
         move |req, _id, _a| {
             entered_h.fetch_add(1, Ordering::SeqCst);
-            gate_h.wait();
+            std::thread::sleep(HANDLER_HOLD);
             req.to_vec()
         },
     );
 
-    // Four concurrent in-flight requests.
+    // Several concurrent in-flight requests.
     let n = 4;
     let addr = server.addr;
     let client = client_config(&client_ca);
@@ -423,11 +401,11 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
             request_status(addr, &client, format!("req-{i}").as_bytes())
         }));
     }
+    // All n are in flight (entered their handlers, now holding).
     wait_until(Duration::from_secs(5), || entered.load(Ordering::SeqCst) == n);
 
+    // Shut down WHILE all n are in flight; the drain must let every one finish (200).
     server.trigger_shutdown();
-    std::thread::sleep(Duration::from_millis(100));
-    gate.release();
 
     for c in clients {
         let status = c.join().expect("client thread").expect("request completes");
