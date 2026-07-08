@@ -14,6 +14,22 @@ or wire-format compatibility while the design lines from
 
 ### Added
 
+- **In-process CRL hot-reload + versioned serving-config snapshots (ADR-MCPRE-051
+  §6, MCPRE-116; subsumes MCPS-66).** The serve loop now reads the current rustls
+  `ServerConfig` per connection from a `ServerConfigSnapshot` (a dependency-free
+  `RwLock<Arc<ServerConfig>>` swap seam) instead of a fixed `Arc`. A new opt-in
+  `--client-crl-reload-secs N` spawns a background task that every `N` seconds
+  re-reads the `--client-crl` files and atomically swaps in a rebuilt verifier — so
+  a **refreshed CRL is honored without a restart**, removing the old
+  "restart-before-nextUpdate" requirement. A failed reload keeps the last-good
+  config (which still fails closed once its CRL passes `nextUpdate`, via rustls'
+  `enforce_revocation_expiration`), so a bad reload never widens what is accepted;
+  every reload outcome is logged. The swap/keep-last-good decision (`reload_once`)
+  is pure and deterministically tested (no wall clock), and an in-flight handshake
+  keeps serving on the config it captured. **Default behavior is byte-identical**
+  (no `--client-crl-reload-secs` → the snapshot is never swapped). Direct-TLS path
+  in this increment; delegated-TLS reload is a tracked follow-up. The snapshot seam
+  is also what the per-core async data plane (ADR-051 §1) reads from.
 - **Opt-in async serving path (ADR-MCPRE-051 §1, Phase 2, MCPRE-112).** A new
   `mcp-re-proxy` module (`async_serve`, behind the non-default `async_serve`
   feature) serves over `tokio` + `tokio-rustls` + `hyper` with HTTP/1.1 keep-alive

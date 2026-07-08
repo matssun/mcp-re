@@ -36,6 +36,10 @@
 // identity mode (per_node_keyset default | shared_remote_signer). The verifier-side
 // admission anchor; composes with `trust_cache::BoundedTrustCache` (ADR-MCPS-021).
 pub mod authorized_keyset;
+// ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
+// snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
+// pure std (RwLock<Arc<ServerConfig>>), no new dependency.
+pub mod config_snapshot;
 // ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + a minimal audited SigV4 signer — NO async `aws-sdk-kms`/tokio/Smithy
 // (ADR-MCPS-018 lean-sync firewall). Compiled ONLY under the non-default
