@@ -61,6 +61,20 @@ getrandom = { workspace = true }
 # resolved transitively via x509-parser, so this adds no new crate to the lock.
 asn1-rs = { workspace = true }
 
+# ADR-MCPRE-051 Phase 2 async serving path. Declared NON-optional (like the other
+# backend crates) so the isolated `@crates_mcp_re` hub exposes their Bazel targets;
+# the async serve CODE is behind `#[cfg(feature = "async_serve")]` and the DEFAULT
+# `:mcp_re_proxy` Bazel target neither sets the flag nor links these, so the
+# production closure stays lean (ADR-MCPS-018). Only `:mcp_re_proxy_async` + its
+# tests link the tokio/hyper stack. tokio-rustls reuses the exact rustls 0.23
+# ServerConfig the blocking path builds.
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+
 # #4039: Linux kernel sandbox crates. Target-gated (NOT feature-gated): present in
 # the dependency graph ONLY on Linux, so the Mac dev build never compiles or links
 # them. The enforcement code is behind #[cfg(target_os = "linux")].
@@ -119,6 +133,12 @@ cpstore_etcd = []
 # is part of THIS feature's module — `online_ocsp` + `--client-ocsp require`
 # performs real verification and can never admit on an unverified signature.
 online_ocsp = []
+# ADR-MCPRE-051 Phase 2 (§1): compile the OPT-IN async serving path (tokio +
+# tokio-rustls + hyper HTTP/1.1 keep-alive + HTTP/2). OFF by default — the default
+# `:mcp_re_proxy` target neither sets this nor links tokio/hyper, so the production
+# closure stays the blocking std::net path (ADR-MCPS-018). A shared runtime is dev
+# scaffolding only (ADR-MCPRE-051 §1; per-core SO_REUSEPORT is MCPRE-113).
+async_serve = []
 
 [dev-dependencies]
 # In-process test cert generation for the mTLS round-trip tests.

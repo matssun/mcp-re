@@ -133,6 +133,13 @@ pub mod sandbox_linux;
 pub mod shared_replay;
 pub mod tls;
 pub mod transport;
+// ADR-MCPRE-051 Phase 2 (§1): OPT-IN async serving path (tokio + tokio-rustls +
+// hyper keep-alive/H2). Behind the non-default `async_serve` feature; the default
+// production closure links no tokio/hyper (ADR-MCPS-018 lean-sync firewall stays
+// intact) and this module is not compiled. A shared runtime is dev scaffolding
+// only (per-core SO_REUSEPORT is MCPRE-113).
+#[cfg(feature = "async_serve")]
+pub mod async_serve;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.

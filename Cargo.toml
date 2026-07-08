@@ -134,6 +134,21 @@ x509-cert = "0.2"
 landlock = "0.4"
 seccompiler = "0.4"
 
+# ADR-MCPRE-051 Phase 2 (§1) — OPT-IN async serving path, behind the mcp-re-proxy
+# `async_serve` feature ONLY. The DEFAULT/production proxy closure stays the
+# blocking std::net + rustls path (ADR-MCPS-014/018 lean-sync firewall) and links
+# NONE of these; only the `:mcp_re_proxy_async` Bazel flavor + its tests do. Per
+# ADR-MCPRE-051 §1 a shared runtime is dev scaffolding only (per-core is MCPRE-113).
+# `tokio-rustls` reuses the EXACT rustls 0.23 `ServerConfig` the blocking path
+# builds (same mTLS verifier + CRL + identity extraction), so verification is
+# byte-identical — only the I/O transport becomes async. mcp-re-core stays pure.
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
 [profile.release]
 lto = true
 codegen-units = 1

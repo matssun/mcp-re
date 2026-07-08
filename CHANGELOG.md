@@ -30,6 +30,29 @@ or wire-format compatibility while the design lines from
   (no `--client-crl-reload-secs` → the snapshot is never swapped). Direct-TLS path
   in this increment; delegated-TLS reload is a tracked follow-up. The snapshot seam
   is also what the per-core async data plane (ADR-051 §1) reads from.
+- **Opt-in async serving path (ADR-MCPRE-051 §1, Phase 2, MCPRE-112).** A new
+  `mcp-re-proxy` module (`async_serve`, behind the non-default `async_serve`
+  feature) serves over `tokio` + `tokio-rustls` + `hyper` with HTTP/1.1 keep-alive
+  and HTTP/2 — killing the one-request-per-connection `Connection: close` wire. It
+  is a THIN transport swap: the rustls `ServerConfig` (mTLS verifier + CRL), the
+  verified-identity extraction, the per-connection cert-lifetime + routing-header
+  rejections, and the request handler are the EXACT SAME ones the blocking
+  `serve_once` uses (shared leaf-DER helper cores), so every mTLS fail-closed
+  behavior is byte-identical — only the I/O framing is async. `ServerLimits` map
+  onto the async stack: the aggregate read deadline bounds the handshake + body
+  read (slow-loris), `hyper`'s header-read timeout bounds the header read,
+  `max_body_bytes` caps the body (`http_body_util::Limited`), and
+  `max_concurrent_connections` is a fail-closed `Semaphore`. A parity suite
+  (`async_serve_parity_test`) proves mTLS rejection (missing/untrusted cert),
+  identity extraction, keep-alive (N requests / one handshake), 32-way concurrency
+  over one shared `Proxy` (`Send + Sync`, MCPRE-111), and the body-cap fail-closed.
+  **The default/production closure is unchanged** — it links no `tokio`/`hyper` and
+  stays the blocking `std::net` path (ADR-MCPS-018 lean-sync firewall); only the
+  `:mcp_re_proxy_async` flavor + its test link the async stack. A shared runtime is
+  dev scaffolding only (per-core `SO_REUSEPORT` is MCPRE-113); CLI wiring, an HTTP/2
+  client test, load-harness (#313) integration, and online-OCSP-on-async are the
+  tracked follow-ups. Conformance target count 73 → 74; 22 async crates enter the
+  `async_serve`-only closure (validated by the CI `cargo-deny` gate).
 - **Concurrent-TLS-client load harness driving the real listener (ADR-MCPRE-051
   §7, MCPRE-108).** A new harness (`tls_load_harness_bench`) spawns the real
   `mcp-re-proxy` binary and hammers its listener with many concurrent rustls
