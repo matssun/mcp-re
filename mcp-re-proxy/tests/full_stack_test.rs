@@ -23,13 +23,14 @@ use std::convert::Infallible;
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -322,20 +323,21 @@ impl Drop for ProxyProcess {
     }
 }
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
-    listener.local_addr().expect("addr").port()
-}
-
+/// Spawn the CLI on an EPHEMERAL port (`--bind 127.0.0.1:0`) and learn the actual
+/// bound address from the CLI's own `async fleet serving on <addr>` stderr line.
+///
+/// This is race-free: the CLI's fleet owns the port from `bind` onward, with no
+/// bind-release-rebind window. The previous approach (bind `:0`, read the port,
+/// drop the listener, then hand the number to the CLI) left a TOCTOU gap in which a
+/// concurrent test in this binary — or any process under a parallel
+/// `bazel test //...` — could grab the port before the CLI bound it, causing a
+/// spurious "did not start listening" failure.
 fn spawn_proxy(material: &Material, max_cert_lifetime: &str, inner_http_url: &str) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
-    let port = free_port();
-    let bind = format!("127.0.0.1:{port}");
-    let addr: SocketAddr = bind.parse().expect("addr");
 
-    let child = Command::new(&cli)
+    let mut child = Command::new(&cli)
         .args([
-            "--bind", &bind,
+            "--bind", "127.0.0.1:0",
             "--audience", AUDIENCE,
             "--server-signer", SERVER,
             "--server-key-id", SERVER_KEY_ID,
@@ -354,11 +356,50 @@ fn spawn_proxy(material: &Material, max_cert_lifetime: &str, inner_http_url: &st
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        // stderr inherited: the CLI's diagnostics show in the test log on failure.
+        // Capture stderr: it carries the resolved `serving on <addr>` line AND the
+        // CLI's startup diagnostics, which we surface on any readiness failure.
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn mcp_re_proxy_cli");
 
-    // Wait until the listener is accepting (TCP-level probe).
+    let stderr_buf = Arc::new(Mutex::new(String::new()));
+    let mut pipe = child.stderr.take().expect("piped stderr");
+    let sink = Arc::clone(&stderr_buf);
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Ok(mut buf) = sink.lock() {
+                        buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Wait for the CLI to report its resolved bound address, failing fast if it
+    // exits before serving.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let addr = loop {
+        if let Some(a) = stderr_buf.lock().ok().and_then(|b| parse_serving_addr(&b)) {
+            break a;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let captured = stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+            panic!("mcp_re_proxy_cli exited before serving (status {status}):\n{captured}");
+        }
+        if Instant::now() > deadline {
+            let captured = stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.kill();
+            panic!("mcp_re_proxy_cli did not report a serving address within budget:\n{captured}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+
+    // Confirm the socket is actually accepting now that we know the real port.
     let mut up = false;
     for _ in 0..200 {
         if TcpStream::connect(addr).is_ok() {
@@ -367,9 +408,20 @@ fn spawn_proxy(material: &Material, max_cert_lifetime: &str, inner_http_url: &st
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    assert!(up, "mcp_re_proxy_cli did not start listening on {addr}");
+    assert!(up, "mcp_re_proxy_cli listening address {addr} is not accepting connections");
 
     ProxyProcess { child, addr }
+}
+
+/// Parse the CLI's `... async fleet serving on <addr> (...)` stderr line into the
+/// bound [`SocketAddr`]. Requires the trailing space so a partially-captured line
+/// never yields a truncated address.
+fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
+    let marker = "async fleet serving on ";
+    let start = stderr.find(marker)? + marker.len();
+    let rest = &stderr[start..];
+    let end = rest.find(char::is_whitespace)?;
+    rest[..end].parse::<SocketAddr>().ok()
 }
 
 // --- TLS client ---------------------------------------------------------------

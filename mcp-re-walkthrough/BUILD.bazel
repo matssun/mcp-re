@@ -30,14 +30,14 @@ _TIER_DATA = [
     "//mcp-re-client-proxy-cli:mcp_re_client_proxy_cli",
     "//mcp-re-proxy:mcp_re_proxy_cli",
     "//mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin",
-    "//mcp-re-stdio-bridge:mcp_re_stdio_bridge",
+    "//mcp-re-stdio-bridge:mcp-re-stdio-bridge",
 ]
 
 _TIER_ENV = {
     "MCP_RE_CLIENT_PROXY_CLI": "$(rlocationpath //mcp-re-client-proxy-cli:mcp_re_client_proxy_cli)",
     "MCP_RE_PROXY_CLI": "$(rlocationpath //mcp-re-proxy:mcp_re_proxy_cli)",
     "INNER_FILESERVER_BIN": "$(rlocationpath //mcp-re-demo-fileserver:mcp_re_demo_fileserver_bin)",
-    "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp_re_stdio_bridge)",
+    "MCP_RE_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:mcp-re-stdio-bridge)",
 }
 
 # T0 — "Hello, signed call": one signed tools/call round-trips all four hops as

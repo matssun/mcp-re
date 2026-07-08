@@ -50,11 +50,13 @@ _BRIDGE_LIB_SRCS = glob(["src/**/*.rs"], exclude = ["src/main.rs"])
 # OWNS the hardened subprocess inner (SubprocessInner / PersistentSubprocessInner +
 # InnerLaunchConfig + the Landlock/seccomp SandboxProfile + RLimits), moved here
 # from mcp-re-proxy so the PEP links none of it.
-# The library target name (`_lib`) differs from the binary's so both can live in
-# this package; the crate_name stays `mcp_re_stdio_bridge` so `use
-# mcp_re_stdio_bridge::…` resolves in the binary and the integration tests.
+# Target/crate names match gazelle's generation to keep the drift gate green: the
+# library is `mcp_re_stdio_bridge` (crate_name `mcp_re_stdio_bridge`, so
+# `use mcp_re_stdio_bridge::…` resolves in the binary + integration tests); the
+# binary target is `mcp-re-stdio-bridge` (the Cargo `[[bin]]` name) with a distinct
+# crate_name so the bin crate does not collide with the library it links.
 nt_rust_library(
-    name = "mcp_re_stdio_bridge_lib",
+    name = "mcp_re_stdio_bridge",
     srcs = _BRIDGE_LIB_SRCS,
     crate_name = "mcp_re_stdio_bridge",
     edition = "2021",
@@ -62,17 +64,15 @@ nt_rust_library(
 )
 
 # The bridge binary: a thin HTTP front end over the library above. main.rs speaks
-# hyper/tokio directly and drives the library's subprocess inner. The target keeps
-# the name `mcp_re_stdio_bridge` (external data-deps reference it), but its
-# crate_name is distinct so the binary crate does not collide with the library
-# crate it links.
+# hyper/tokio directly and drives the library's subprocess inner. External data-deps
+# (demo/walkthrough) reference `//mcp-re-stdio-bridge:mcp-re-stdio-bridge`.
 nt_rust_binary(
-    name = "mcp_re_stdio_bridge",
+    name = "mcp-re-stdio-bridge",
     srcs = ["src/main.rs"],
     crate_name = "mcp_re_stdio_bridge_bin",
     edition = "2021",
     deps = [
-        ":mcp_re_stdio_bridge_lib",
+        ":mcp_re_stdio_bridge",
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
@@ -85,7 +85,7 @@ nt_rust_binary(
 # rlimit / log-sink behavior proofs.
 nt_rust_test(
     name = "mcp_re_stdio_bridge_lib_test",
-    crate = ":mcp_re_stdio_bridge_lib",
+    crate = ":mcp_re_stdio_bridge",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",
@@ -96,7 +96,7 @@ nt_rust_test(
 # separator, oneshot/persistent mode, working dir).
 nt_rust_test(
     name = "mcp_re_stdio_bridge_bin_test",
-    crate = ":mcp_re_stdio_bridge",
+    crate = ":mcp-re-stdio-bridge",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",
@@ -104,7 +104,7 @@ nt_rust_test(
     # spliced into a literal deps list, so the mixed form reads as missing edges to
     # the bazel-gazelle drift gate. Spelling the crates out keeps the gate green.
     deps = [
-        ":mcp_re_stdio_bridge_lib",
+        ":mcp_re_stdio_bridge",
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
@@ -127,7 +127,7 @@ nt_rust_test(
     bazel_build_cfg = False,
     edition = "2021",
     deps = [
-        ":mcp_re_stdio_bridge_lib",
+        ":mcp_re_stdio_bridge",
         "@crates_mcp_re//:serde_json",
     ],
 )
@@ -142,6 +142,6 @@ nt_rust_test(
     bazel_build_cfg = False,
     edition = "2021",
     deps = [
-        ":mcp_re_stdio_bridge_lib",
+        ":mcp_re_stdio_bridge",
     ],
 )
