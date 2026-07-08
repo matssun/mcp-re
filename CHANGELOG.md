@@ -32,6 +32,18 @@ or wire-format compatibility while the design lines from
   scale on every battery run. Run against the current single-threaded proxy it
   produces the Phase-0 baseline for the SLO declaration (MCPRE-110). Conformance
   target count 72 → 73.
+- **Replay race harness — the authoritative tier admits exactly one `Fresh`
+  under concurrency (ADR-MCPRE-051 §4, MCPRE-109).** A new always-on test
+  (`replay_race_harness_test`) fires N barrier-released threads at the SAME
+  replay key on one shared `AtomicReplayStore` and asserts EXACTLY ONE `Fresh` +
+  N−1 `Replay` — cross-core (many threads, one store) and cross-replica (per-
+  replica store clones over one backend) — plus the fail-closed path (store
+  unavailable ⇒ ZERO `Fresh`). Deterministic: a `Barrier` maximises contention
+  and the assertion is an exact count, so there is no timing/sleep flake. The
+  in-memory reference tier runs on every `bazel test //...`; the Redis and etcd
+  lanes race the same harness on the live store (skip-when-absent; hard-fail
+  under `MCP_RE_REQUIRE_LIVE_INFRA`). The full-stack serving-path variant arrives
+  with the async data plane (ADR-051 Phase 2). Conformance target count 72 → 73.
 - **HTTP standards profile — minimal proof path (ADR-MCPRE-050, seed Work
   Item 3)**: new pure crate `mcp-re-http-profile` implementing the RFC 9421
   HTTP Message Signatures + RFC 9530 `Content-Digest` carrier with the ratified
