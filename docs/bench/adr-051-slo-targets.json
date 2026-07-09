@@ -1,0 +1,63 @@
+{
+  "schema": "mcp-re-slo-targets/v1",
+  "adr": "ADR-MCPRE-051",
+  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
+  "issue": "MCPRE-110 (#317)",
+  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline, (2) PENDING production SLOs whose absolute numbers require the production hardware class + a dedicated load-generator host (blocked on the GKE fleet run), and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "baseline_ref": "docs/bench/adr-051-baseline-local.json",
+  "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+
+  "local_regression": {
+    "status": "active",
+    "kind": "relative-to-committed-baseline",
+    "rationale": "Hardware-independent: catches a local change that regresses the serving path against its own recorded baseline, without pretending a dev box states production capacity. Enforced by scripts/adr051_slo_gate.py against a fresh run of the baseline anchor config.",
+    "tolerances": {
+      "throughput_rps_min_fraction": 0.85,
+      "p50_added_us_max_fraction": 1.25,
+      "p99_added_us_max_fraction": 1.30,
+      "p999_added_us_max_fraction": 1.50,
+      "comment": "A fresh anchor run must sustain >= 85% of baseline throughput and stay within the stated multiples of baseline added-latency percentiles. Bands are wider on the tail (p999) than the median because the tail is noisier on a co-located box; tighten them once a dedicated loadgen removes that noise."
+    },
+    "per_core_scaling": {
+      "gated": false,
+      "comment": "NOT gated locally: the 1->N curve is non-authoritative on a single box (co-located loadgen contends for cores). Recorded only."
+    }
+  },
+
+  "production_slo": {
+    "status": "pending",
+    "blocked_on": "MCPRE-110 production half — production hardware class + dedicated load-generator host (GKE fleet run)",
+    "kind": "absolute-per-hardware-profile",
+    "hardware_class": null,
+    "targets": {
+      "aggregate_throughput_rps_min": null,
+      "p50_added_us_max": null,
+      "p99_added_us_max": null,
+      "p999_added_us_max": null
+    },
+    "per_core_scaling": {
+      "gated": true,
+      "linear_tolerance_min": null,
+      "comment": "Per ADR-051 §7: per-core linear-scaling tolerance (1->N cores) becomes an absolute release-acceptance gate once measured on the production hardware class with a dedicated loadgen. Numbers are the operator/product declaration and are intentionally null here until that run exists."
+    }
+  },
+
+  "absolute_gates": {
+    "status": "active",
+    "kind": "hardware-independent correctness gates — always required, every release",
+    "gates": [
+      {
+        "name": "replay-race",
+        "requirement": "N concurrent submissions of the same signed request across cores and across replicas yield EXACTLY ONE Fresh and N-1 Replay.",
+        "enforced_by": ["//mcp-re-proxy:replay_race_harness_test"],
+        "adr_ref": "ADR-MCPRE-051 §4"
+      },
+      {
+        "name": "bounded-drain",
+        "requirement": "Graceful drain joins all in-flight requests within the bounded grace window; zero abandoned requests.",
+        "enforced_by": ["//mcp-re-proxy:async_drain_test"],
+        "adr_ref": "ADR-MCPRE-051 §6"
+      }
+    ]
+  }
+}
