@@ -108,6 +108,30 @@ fn round_key(round: usize) -> String {
     format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{round}")
 }
 
+/// A per-invocation-unique salt (process id + wall-clock nanos, read ONCE by the
+/// caller) so a LIVE race test's keys never collide with another test's or a prior
+/// run's on a SHARED persistent store. This matters because every test here otherwise
+/// uses the same fixed `round_key`s: on one live Redis/etcd the sync lane (which runs
+/// first) would leave those keys present with a far-future TTL, so the async lane
+/// would then see all `Replay` (zero `Fresh`). The caller reads the salt ONCE and
+/// reuses it for every round, so all threads in a round still submit the IDENTICAL
+/// key (the race invariant holds).
+#[cfg(all(feature = "async_serve", any(feature = "redis_replay", feature = "cpstore_etcd")))]
+fn unique_salt(tag: &str) -> String {
+    use std::time::SystemTime;
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{tag}-{}-{nanos}", std::process::id())
+}
+
+/// A `round_key` namespaced by a per-test `salt` (see [`unique_salt`]).
+#[cfg(all(feature = "async_serve", any(feature = "redis_replay", feature = "cpstore_etcd")))]
+fn salted_round_key(salt: &str, round: usize) -> String {
+    format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{salt}-{round}")
+}
+
 /// Drive `RACE_ROUNDS` independent race rounds against `store` and assert EXACTLY
 /// ONE `Fresh` + `RACE_WIDTH - 1` `Replay` + ZERO `Unavailable` every round. This
 /// is the cross-core property: many threads (cores) racing one replay key on one
@@ -329,8 +353,12 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
                 .await
                 .expect("connect async Redis replay store"),
         );
+        // Salt read ONCE so this lane's keys are disjoint from the sync Redis lane's
+        // (which shares this live store and runs first) — else every insert here is a
+        // Replay of a key the sync lane already left behind (zero Fresh).
+        let salt = unique_salt("redis-async");
         for round in 0..RACE_ROUNDS {
-            let key = round_key(round);
+            let key = salted_round_key(&salt, round);
             let tasks = RACE_WIDTH;
             let mut handles = Vec::new();
             for _ in 0..tasks {
@@ -351,6 +379,72 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
             assert_eq!(
                 fresh, 1,
                 "round {round}: async Redis {RACE_WIDTH}-way race must admit exactly one Fresh"
+            );
+        }
+    });
+}
+
+/// ASYNC etcd lane (ADR-MCPRE-051 §4): the CP/linearizable async authoritative tier
+/// (`EtcdAsyncAtomicReplayStore`, a `compare { CREATE_REVISION == 0 }` txn over the
+/// v3 JSON gateway, AWAITED off the per-core runtime) admits EXACTLY ONE `Fresh`
+/// under a concurrent race — the async analogue of the sync etcd lane above, on the
+/// async client the per-core data plane awaits. Skip-when-absent (hard-fail under
+/// `MCP_RE_REQUIRE_LIVE_INFRA`).
+#[cfg(all(feature = "async_serve", feature = "cpstore_etcd"))]
+#[test]
+fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
+    use mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore;
+    use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+
+    let endpoint = std::env::var("MCP_RE_TEST_ETCD_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty());
+    let Some(endpoint) = endpoint else {
+        if require_live_infra() {
+            panic!(
+                "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_ETCD_URL is unavailable; \
+                 the async replay-race etcd lane cannot be scored as passing without a live store"
+            );
+        }
+        eprintln!("skipping async replay-race etcd lane: MCP_RE_TEST_ETCD_URL unset");
+        return;
+    };
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(8)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        // `connect` is infallible (it only records the endpoint); a wrong/unreachable
+        // gateway surfaces as a per-request `Unavailable`, i.e. ZERO Fresh — never a
+        // false Fresh — which the exact count below would catch.
+        let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+        // Salt read ONCE so this lane's keys are disjoint from the sync etcd lane's
+        // on this shared live store (see the Redis lane above).
+        let salt = unique_salt("etcd-async");
+        for round in 0..RACE_ROUNDS {
+            let key = salted_round_key(&salt, round);
+            let tasks = RACE_WIDTH;
+            let mut handles = Vec::new();
+            for _ in 0..tasks {
+                let store = Arc::clone(&store);
+                let key = key.clone();
+                handles.push(tokio::spawn(async move {
+                    store
+                        .atomic_insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                        .await
+                }));
+            }
+            let mut fresh = 0usize;
+            for handle in handles {
+                if let Ok(ReplayDecision::Fresh) = handle.await.expect("task") {
+                    fresh += 1;
+                }
+            }
+            assert_eq!(
+                fresh, 1,
+                "round {round}: async etcd {RACE_WIDTH}-way race must admit exactly one Fresh"
             );
         }
     });
@@ -599,6 +693,63 @@ mod full_stack_async {
         });
     }
 
+    /// Drive `TASKS` concurrent submissions of the SAME signed request (`nonce`)
+    /// through ONE shared async `Proxy` and assert the end-to-end property: EXACTLY
+    /// ONE verifiable signed response (the submission that won the atomic insert) and
+    /// the rest fail-closed JSON-RPC errors (`Replay`). The store behind the tier is
+    /// the cross-replica coherence boundary, so this is the full-serving-path proof
+    /// for whichever L2 the caller wired — the in-memory reference OR a live networked
+    /// store (Redis/etcd), which is exactly "cross-replica through the full serving
+    /// path" (MCPRE-117 AC).
+    async fn assert_fullstack_exactly_one_fresh(proxy: Arc<Proxy>, nonce: &str) {
+        const TASKS: usize = 64;
+        let bytes = Arc::new(signed_request(nonce));
+        let hash = expected_request_hash(nonce);
+
+        // Fire many concurrent submissions of the SAME signed request through the
+        // async serving entry point.
+        let mut handles = Vec::new();
+        for _ in 0..TASKS {
+            let proxy = Arc::clone(&proxy);
+            let bytes = Arc::clone(&bytes);
+            handles.push(tokio::spawn(async move {
+                proxy
+                    .handle_with_transport_async(bytes.as_slice(), now(), None, None)
+                    .await
+            }));
+        }
+
+        let resolver = server_resolver();
+        let mut fresh = 0usize;
+        let mut replay = 0usize;
+        for handle in handles {
+            let out = handle.await.expect("task");
+            if verify_response(&out, &resolver, &hash).is_ok() {
+                // A verifiable signed response ⇒ this submission won the atomic
+                // insert (Fresh) and was dispatched + signed.
+                fresh += 1;
+            } else {
+                // Every non-Fresh submission fails closed with a JSON-RPC error
+                // (replay detected), never a second signed response.
+                let value: Value = serde_json::from_slice(&out).expect("json error object");
+                assert!(
+                    value.get("error").is_some(),
+                    "a non-Fresh async submission must be a fail-closed JSON-RPC error"
+                );
+                replay += 1;
+            }
+        }
+        assert_eq!(
+            fresh, 1,
+            "the async serving path admits EXACTLY ONE Fresh under {TASKS}-way concurrency"
+        );
+        assert_eq!(
+            replay,
+            TASKS - 1,
+            "every other concurrent submission of the same request is a Replay"
+        );
+    }
+
     #[test]
     fn async_proxy_admits_exactly_one_fresh_under_concurrency() {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -610,55 +761,104 @@ mod full_stack_async {
             // ONE shared async `Proxy` over ONE authoritative async L2, shared by
             // all racing tasks (the real fleet model: `Proxy: Send + Sync`).
             let tier = AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), SKEW);
-            let proxy = Arc::new(async_proxy(tier));
+            assert_fullstack_exactly_one_fresh(
+                Arc::new(async_proxy(tier)),
+                "nonce-async-fullstack-race-1",
+            )
+            .await;
+        });
+    }
 
-            let nonce = "nonce-async-fullstack-race-1";
-            let bytes = Arc::new(signed_request(nonce));
-            let hash = expected_request_hash(nonce);
+    /// LIVE full-serving-path proof over a NETWORKED Redis async L2: the same
+    /// exactly-one-Fresh property, now with the coherence boundary at a real Redis
+    /// (`SET NX PX`) that a cross-replica fleet actually shares — the async data plane
+    /// awaits it inside `handle_with_transport_async`. Skip-when-absent (hard-fail
+    /// under `MCP_RE_REQUIRE_LIVE_INFRA`).
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn async_proxy_exactly_one_fresh_over_live_redis() {
+        use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
-            // Fire many concurrent submissions of the SAME signed request through the
-            // async serving entry point.
-            let tasks = 64;
-            let mut handles = Vec::new();
-            for _ in 0..tasks {
-                let proxy = Arc::clone(&proxy);
-                let bytes = Arc::clone(&bytes);
-                handles.push(tokio::spawn(async move {
-                    proxy
-                        .handle_with_transport_async(bytes.as_slice(), now(), None, None)
-                        .await
-                }));
+        let url = std::env::var("MCP_RE_TEST_REDIS_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty());
+        let Some(url) = url else {
+            if super::require_live_infra() {
+                panic!(
+                    "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable; \
+                     the full-serving-path Redis race cannot be scored as passing without a live store"
+                );
             }
+            eprintln!("skipping full-serving-path Redis race: MCP_RE_TEST_REDIS_URL unset");
+            return;
+        };
 
-            let resolver = server_resolver();
-            let mut fresh = 0usize;
-            let mut replay = 0usize;
-            for handle in handles {
-                let out = handle.await.expect("task");
-                if verify_response(&out, &resolver, &hash).is_ok() {
-                    // A verifiable signed response ⇒ this submission won the atomic
-                    // insert (Fresh) and was dispatched + signed.
-                    fresh += 1;
-                } else {
-                    // Every non-Fresh submission fails closed with a JSON-RPC error
-                    // (replay detected), never a second signed response.
-                    let value: Value = serde_json::from_slice(&out).expect("json error object");
-                    assert!(
-                        value.get("error").is_some(),
-                        "a non-Fresh async submission must be a fail-closed JSON-RPC error"
-                    );
-                    replay += 1;
-                }
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            // Pin the store's staleness clock to the request's fixed test clock
+            // (`now()`). The signed request carries a FIXED `expires_at`; a live store
+            // reading its own REAL wall clock sees that as long past and rejects every
+            // insert as already-stale (MCPS-08 fail-closed) — zero Fresh. The admission
+            // decision must use the same clock the request was signed against.
+            let store = Arc::new(
+                RedisAsyncAtomicReplayStore::connect_with(&url, Box::new(now))
+                    .await
+                    .expect("connect async Redis replay store"),
+            );
+            let tier = AsyncReplayTier::new(store, SKEW);
+            assert_fullstack_exactly_one_fresh(
+                Arc::new(async_proxy(tier)),
+                &super::unique_salt("fullstack-redis"),
+            )
+            .await;
+        });
+    }
+
+    /// LIVE full-serving-path proof over a NETWORKED etcd async L2 (the CP /
+    /// linearizable backend): the same exactly-one-Fresh property with the coherence
+    /// boundary at a real etcd `compare { CREATE_REVISION == 0 }` txn. Skip-when-absent
+    /// (hard-fail under `MCP_RE_REQUIRE_LIVE_INFRA`).
+    #[cfg(feature = "cpstore_etcd")]
+    #[test]
+    fn async_proxy_exactly_one_fresh_over_live_etcd() {
+        use mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore;
+
+        let endpoint = std::env::var("MCP_RE_TEST_ETCD_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty());
+        let Some(endpoint) = endpoint else {
+            if super::require_live_infra() {
+                panic!(
+                    "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_ETCD_URL is unavailable; \
+                     the full-serving-path etcd race cannot be scored as passing without a live store"
+                );
             }
-            assert_eq!(
-                fresh, 1,
-                "the async serving path admits EXACTLY ONE Fresh under {tasks}-way concurrency"
-            );
-            assert_eq!(
-                replay,
-                tasks - 1,
-                "every other concurrent submission of the same request is a Replay"
-            );
+            eprintln!("skipping full-serving-path etcd race: MCP_RE_TEST_ETCD_URL unset");
+            return;
+        };
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            // Pin the store's staleness clock to the test clock (see the Redis
+            // variant) so the fixed-`expires_at` request is not seen as already-stale.
+            let store = Arc::new(EtcdAsyncAtomicReplayStore::connect_with(
+                &endpoint,
+                Box::new(now),
+            ));
+            let tier = AsyncReplayTier::new(store, SKEW);
+            assert_fullstack_exactly_one_fresh(
+                Arc::new(async_proxy(tier)),
+                &super::unique_salt("fullstack-etcd"),
+            )
+            .await;
         });
     }
 }

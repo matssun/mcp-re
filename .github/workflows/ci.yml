@@ -145,15 +145,21 @@ jobs:
       # the cross-crate `mcp-re-demo-server` fixture binary, which cargo does NOT
       # auto-build for another crate's integration tests. `--workspace` puts it
       # (and the echo-inner fixture) in target/debug for mcp-re-test-paths to find.
+      # `async_serve,cpstore_etcd` are included so the async serving-path tests and
+      # the async etcd authoritative replay store (MCPRE-117) get per-PR compile
+      # coverage here: the replay_race_harness_test async lanes compile, the in-memory
+      # async full-serving-path race RUNS, and the live Redis/etcd lanes self-skip
+      # (no MCP_RE_REQUIRE_LIVE_INFRA — the nightly live-infra-e2e lane is where they
+      # bind). Without cpstore_etcd the async etcd store would have NO per-PR build.
       - name: Build (workspace, all feature gates)
         run: >-
           cargo build --workspace --all-targets
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
+          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
 
       - name: Test (mcp-re-proxy, all feature gates; e2e self-skip without live infra)
         run: >-
           cargo test -p mcp-re-proxy
-          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource
+          --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
 
   bazel:
     name: bazel semantic-drift gate + test parity
