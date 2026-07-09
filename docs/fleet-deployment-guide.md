@@ -53,9 +53,18 @@ helm install my-fleet deploy/helm/mcp-re-proxy \
   --set replay.durabilityTier=redis-wait-quorum:2:2000 \
   --set revocation.tier=push:60 \
   --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
-  --set innerSession=stateful \
   --set tls.secretName=mcp-re-proxy-material \
-  --set-json 'inner.command=["/usr/local/bin/your-mcp-server"]'
+  --set-json 'inner.httpUrls=["http://inner-mcp.default.svc.cluster.local:8080/mcp"]' \
+  --set inner.stdioBridge.enabled=false
+```
+
+To wrap a **stdio-only** inner server instead of a native HTTP backend, enable the
+out-of-TCB `mcp-re-stdio-bridge` sidecar (ADR-MCPRE-051 §3) and give it the
+server command:
+
+```sh
+  --set inner.stdioBridge.enabled=true \
+  --set-json 'inner.stdioBridge.command=["/usr/local/bin/your-mcp-server"]'
 ```
 
 The chart renders `--strict --fleet` by default and includes a **fail-closed
@@ -131,14 +140,17 @@ Proven by `fleet_trust_epoch_e2e_test.rs`, which includes a negative control
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 
-MCP-RE replicates **no** inner-server session state across replicas. Declare the
-wrapped server's statefulness with `--inner-session`:
+MCP-RE replicates **no** inner-server session state across replicas. Under
+ADR-MCPRE-051 the PEP's inner plane is stateless Streamable-HTTP (`--inner-http-url`),
+so the norm is no affinity at all. Client→proxy stickiness is now a **Service**
+setting, not a proxy flag (`--inner-session` was removed with the in-proxy stdio
+mode, MCPRE-118). Set it via the chart's `service.sessionAffinity`:
 
-- `stateful` (default) — a logical session holds state on one replica; the chart
-  sets the Service `sessionAffinity: ClientIP` so the load balancer pins it.
-  **Sticky routing is required.**
-- `stateless` — any replica may serve any request; the chart uses plain
-  round-robin.
+- `None` (default) — any replica may serve any request; plain round-robin. This is
+  correct for a stateless HTTP inner backend.
+- `ClientIP` — the Service pins a client to one replica. Use only when the inner
+  **backend** you front is itself session-stateful and has no stickiness of its
+  own (e.g. a `persistent`-mode `mcp-re-stdio-bridge` wrapping a stateful server).
 
 The MCP-RE authenticity checks are identical on every replica either way; affinity
 is only about inner-session continuity. MRT continuations are replica-independent
@@ -147,17 +159,24 @@ a mid-continuation replica switch still verifies (proven at the proxy layer).
 
 ### 4. Graceful rollout (W3, MCPS-88)
 
-On `SIGTERM` (a rollout / `kubectl delete pod`) the proxy stops accepting, lets
-the single in-flight request finish (bounded by the request deadline), and exits
-0. Set `drainGracePeriodSeconds` above your request deadline. Health probes are
+On `SIGTERM` (a rollout / `kubectl delete pod`) the proxy stops accepting on every
+per-core listener and joins **all** in-flight requests within a bounded grace
+window (each request already bounded by its deadline), then exits 0 with zero
+abandoned requests (ADR-MCPRE-051 §6, proven by `async_drain_test.rs`). Set
+`drainGracePeriodSeconds` above your request deadline. Health probes are
 **tcpSocket** against the bind port — the proxy speaks MCP-RE over TLS, not HTTP,
 so "port accepting" is the honest readiness signal (no synthetic `/healthz`).
 
 ## Capacity
 
-`fleet_throughput_bench.rs` (MCPS-89) reports the per-request PEP added latency
-and throughput over the shared store; run it against your Redis to size the
-fleet. The dominant per-request cost at scale is the shared-store round-trip.
+The concurrent-TLS-client load harness (`tls_load_harness_bench.rs`,
+ADR-MCPRE-051 §7) drives the real per-core listener over mTLS and reports p50/p99/p999
+added latency and throughput against the declared benchmark envelope
+([`docs/bench/adr-051-load-harness-envelope.md`](bench/adr-051-load-harness-envelope.md));
+run it against your Redis to size the fleet. The dominant per-request cost at
+scale is the shared-store round-trip. (The older single-thread
+`fleet_throughput_bench.rs` (MCPS-89) calls `Proxy::handle` directly and cannot
+measure the concurrent serving path.)
 
 ## What a fleet still does NOT claim
 

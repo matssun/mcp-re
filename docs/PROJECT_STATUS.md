@@ -91,10 +91,12 @@ node-local coherence gaps:
   bounded-staleness guarantee on a read outage, with explicit per-tier
   revocation-lag bounds. An e2e proves a revocation reaches a sibling, with a
   negative control (MCPS-84/85/86).
-- **Fleet operations** — self-declared inner-session statefulness (`--inner-session`)
-  driving Service session affinity (MCPS-83); graceful `SIGTERM`/`SIGINT` drain for
-  rolling deploys (MCPS-88); a fleet PEP throughput / added-latency benchmark
-  (MCPS-89).
+- **Fleet operations** — Service session affinity for stateful inner backends
+  (MCPS-83; a chart `service.sessionAffinity` setting now the inner plane is
+  stateless HTTP); bounded graceful `SIGTERM`/`SIGINT` drain of all in-flight
+  requests for rolling deploys (ADR-MCPRE-051 §6, superseding MCPS-88's ≤1-request
+  drain); a concurrent-TLS-client load harness reporting p50/p99/p999 against the
+  declared envelope (ADR-MCPRE-051 §7).
 - **Kubernetes/Helm reference** + deployment guide (MCPS-87), with a fail-closed
   guardrail that refuses a `--fleet` deployment wired to a weak (node-local) tier.
 

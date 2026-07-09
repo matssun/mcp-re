@@ -39,6 +39,9 @@ shared tier is expressed via replay.redisUrl + a redis-wait-quorum / linearizabl
 durabilityTier; refuse to render an unsafe fleet chart.
 */}}
 {{- define "mcp-re-proxy.validate" -}}
+{{- if not (or .Values.inner.stdioBridge.enabled (gt (len .Values.inner.httpUrls) 0)) -}}
+{{- fail "inner plane required (ADR-MCPRE-051 §3): set inner.httpUrls to one or more Streamable-HTTP backends, or enable inner.stdioBridge to front a stdio-only server with the out-of-TCB mcp-re-stdio-bridge sidecar. The proxy no longer launches a subprocess and fails closed with no --inner-http-url." -}}
+{{- end -}}
 {{- if .Values.fleet -}}
 {{- if not .Values.replay.redisUrl -}}
 {{- fail "fleet=true requires replay.redisUrl (a shared replay store); a node-local cache cannot maintain cross-verifier replay state" -}}

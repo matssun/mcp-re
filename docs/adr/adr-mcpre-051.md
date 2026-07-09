@@ -369,8 +369,9 @@ is preserved exactly.
   continuation; MCPS-82 cross-replica proof), ADR-MCPS-049 (fleet posture),
   ADR-MCPS-028 (KMS/HSM custody — root retained, hot path delegated),
   ADR-MCPRE-050 (HTTP profile).
-- Companion (to author): ADR-MCPRE-052 — delegated signing-key attestation:
-  wire evidence format, verifier trust chain, revocation, taxonomy.
+- Companion: [ADR-MCPRE-052](adr-mcpre-052.md) — delegated signing-key attestation:
+  wire evidence format, verifier trust chain, rotation overlap, revocation, audit,
+  taxonomy (Proposed; BLOCKING for any production delegated-signing release).
 - Prior art: linkerd2-proxy / Envoy data-plane model; thread-per-core
   share-nothing high-transaction designs; php-fpm-class process management
   (rejected for production here, informative for the dev-mode stdio pool).

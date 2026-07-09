@@ -55,6 +55,9 @@ maintainable as the project evolves.
 | [ADR-MCPS-047](adr-mcps-047.md) | Stateless Multi-Round-Trip Continuation Evidence (Accepted, v0.8) |
 | [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
 | [ADR-MCPS-049](adr-mcps-049.md) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence (Accepted, v0.10.1) |
+| [ADR-MCPRE-050](adr-mcpre-050.md) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports (Accepted) |
+| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Proposed) |
+| [ADR-MCPRE-052](adr-mcpre-052.md) | Delegated Signing-Key Attestation — Wire Evidence Format, Verifier Trust Chain, Rotation, Revocation, and Audit (Proposed) |
 
 ## Provenance
 

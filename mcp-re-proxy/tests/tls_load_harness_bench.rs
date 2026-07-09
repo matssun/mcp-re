@@ -14,8 +14,9 @@
 //! declared benchmark envelope (hardware class, core count, payload, TLS/signature
 //! suite, connection mode, replay backend, inner latency) alongside the numbers —
 //! the envelope is pinned in `docs/bench/adr-051-load-harness-envelope.md` +
-//! `adr-051-benchmark-envelope.json`. Run against the CURRENT single-threaded
-//! proxy it produces the Phase-0 baseline input to the SLO declaration (MCPRE-110).
+//! `adr-051-benchmark-envelope.json`. It drives the per-core async fleet
+//! (`--cores` pins the worker count) and produces the baseline + per-core scaling
+//! input to the SLO declaration (MCPRE-110).
 //!
 //! Two entry points:
 //!   * [`load_harness_smoke`] — ALWAYS runs in the battery at tiny scale, so the
@@ -308,8 +309,14 @@ impl Drop for ProxyProcess {
     }
 }
 
-fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
+fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
+
+    // ADR-MCPRE-051 §1/§7: PIN the per-core worker count so `declared_cores` in the
+    // report is the count actually served (not a label divorced from the auto-sized
+    // fleet), and so the 1→N linear-scaling curve is reproducible — run the bench at
+    // MCP_RE_LOADGEN_CORES=1 then =N. `0` is passed through as auto (one per core).
+    let cores_str = cores.to_string();
 
     // Bind an EPHEMERAL port and read the resolved address back from the CLI's own
     // `async fleet serving on <addr>` stderr line — race-free (the fleet owns the
@@ -329,6 +336,7 @@ fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
             "--transport-binding", "exact",
             "--transport-identity-source", "uri_san",
             "--max-client-cert-lifetime", "175200h",
+            "--cores", &cores_str,
             // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the
             // stateless in-process HTTP echo backend (was `--inner-command <echo>`).
             "--inner-http-url", inner_http_url,
@@ -778,7 +786,11 @@ fn keepalive_round_trip(
 fn print_report(cfg: &LoadConfig, report: &Report) {
     println!("=== ADR-MCPRE-051 §7 load-harness report (envelope v1) ===");
     println!("hardware_class     : {}", cfg.hw_class);
-    println!("declared_cores     : {} (current proxy is single-threaded → utilises 1)", cfg.cores);
+    println!(
+        "declared_cores     : {} (per-core async fleet, SO_REUSEPORT; pinned via --cores, {})",
+        cfg.cores,
+        if cfg.cores == 0 { "0 = auto/one-per-core" } else { "workers served == this count" }
+    );
     println!("connection_mode    : {}", cfg.mode.as_str());
     println!("concurrency        : {}", cfg.concurrency);
     println!("requests           : {}", cfg.requests);
@@ -795,7 +807,7 @@ fn print_report(cfg: &LoadConfig, report: &Report) {
             report.reuse_fraction, report.reconnects
         );
     }
-    println!("per_core_scaling   : single point at 1 core (flat baseline; Phase 2 fills the 1→N curve)");
+    println!("per_core_scaling   : single point at {} core(s); drive MCP_RE_LOADGEN_CORES=1 then =N for the 1→N linear-scaling curve", cfg.cores);
 }
 
 /// Emit the report as machine-readable JSON to `MCP_RE_LOADGEN_OUT` when set, so a
@@ -843,7 +855,8 @@ fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
 fn load_harness_smoke() {
     let material = write_material();
     let backend = spawn_http_echo_backend();
-    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"));
+    // Smoke pins a single worker (matches cfg.cores below) so declared == served.
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), 1);
     let config = build_client_config(&material.client_ca);
 
     // 1. One explicit VERIFIED round-trip proves the success criterion (`no error`)
@@ -894,7 +907,9 @@ fn tls_load_harness_bench() {
     let cfg = LoadConfig::from_env();
     let material = write_material();
     let backend = spawn_http_echo_backend();
-    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"));
+    // Pin the served worker count to cfg.cores (MCP_RE_LOADGEN_CORES) so the report
+    // is honest and the 1→N scaling curve is reproducible (run at cores=1 then =N).
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), cfg.cores);
     let config = build_client_config(&material.client_ca);
 
     let report = run_load(proxy.addr, config, &cfg);

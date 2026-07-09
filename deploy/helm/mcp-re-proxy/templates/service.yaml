@@ -7,17 +7,12 @@ metadata:
     {{- include "mcp-re-proxy.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
-  # MCPS-83 (ADR-MCPS-049 clause 2): a `stateful` inner server holds per-session
-  # state that lives on ONE replica (no cross-replica inner-session replication),
-  # so a logical session MUST be pinned to a replica — ClientIP sticky routing. A
-  # `stateless` inner allows plain round-robin. The MCP-RE authenticity checks run
-  # identically on every replica either way; affinity is only about inner session
-  # continuity.
-  {{- if eq .Values.innerSession "stateful" }}
-  sessionAffinity: ClientIP
-  {{- else }}
-  sessionAffinity: None
-  {{- end }}
+  # MCPS-83 (ADR-MCPS-049 clause 2): the MCP-RE authenticity checks run identically
+  # on every replica, so client→proxy affinity is only about inner-session
+  # continuity. The inner plane is stateless Streamable-HTTP (ADR-MCPRE-051 §3), so
+  # `None` (plain round-robin) is the default; set service.sessionAffinity=ClientIP
+  # only when fronting a session-stateful inner backend without its own stickiness.
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
   selector:
     {{- include "mcp-re-proxy.selectorLabels" . | nindent 4 }}
   ports:

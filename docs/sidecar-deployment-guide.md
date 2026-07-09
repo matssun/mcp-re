@@ -1,59 +1,57 @@
 # MCP-RE Sidecar Deployment Guide
 
-**Audience:** an operator who wants to wrap an ordinary stdio MCP server with the
-MCP-RE production sidecar so requests are verified before they reach the inner
-server.
+**Audience:** an operator who wants to put the MCP-RE production sidecar in front
+of an MCP server — including an ordinary **stdio** MCP server — so requests are
+verified before they reach the inner server and responses are signed.
 
-This guide explains **how to run** the `mcp-re-proxy` production CLI. The rules it
-enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md);
-the rationale is in ADR-MCPS-014
-([view](adr/adr-mcps-014.md), transport hardening)
-and ADR-MCPS-016 ([view](adr/adr-mcps-016.md),
-inner-server isolation boundary). The proofs are the
-`//mcp-re-proxy:*` test targets (see the
+This guide explains **how to run** the `mcp-re-proxy` production CLI and, for a
+stdio-only inner server, the companion `mcp-re-stdio-bridge`. The rules the proxy
+enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md); the
+rationale is in ADR-MCPS-014 ([view](adr/adr-mcps-014.md), transport hardening),
+ADR-MCPS-016 ([view](adr/adr-mcps-016.md), inner-server isolation boundary) and
+ADR-MCPRE-051 ([view](adr/adr-mcpre-051.md), high-throughput serving
+architecture). The proofs are the `//mcp-re-proxy:*` test targets (see the
 [conformance manifest](../mcp-re-conformance/conformance_manifest.json)).
 
 For TLS/mTLS, transport binding, key sources, and the replay cache in depth, read
-the companion [Transport Hardening Guide](transport-hardening-guide.md). This
-guide focuses on **wrapping a server** and the inner-launch flags.
+the companion [Transport Hardening Guide](transport-hardening-guide.md). For a
+horizontally-scaled replica fleet read the
+[Fleet Deployment Guide](fleet-deployment-guide.md).
 
-## What the sidecar does
+## What the PEP does
 
 Source: [`cli.rs`](../mcp-re-proxy/src/cli.rs), [`main.rs`](../mcp-re-proxy/src/main.rs),
-[`inner_launch.rs`](../mcp-re-proxy/src/inner_launch.rs).
+[`http_inner.rs`](../mcp-re-proxy/src/http_inner.rs).
 
-The `:mcp_re_proxy_cli` binary is the **policy-enforcement point**. For each
-connection it: terminates TLS itself, verifies the mTLS client certificate,
-verifies the MCP-RE object signature, optionally evaluates authorization (Phase 5)
-and transport binding (Phase 6), and only then forwards the verified request to
-an inner MCP server **subprocess**, signing the response. The inner server's
-stdin receives the request bytes and its **stdout** is read back as the protocol
-response. The serve loop is blocking and single-threaded (no async).
+The `:mcp_re_proxy_cli` binary is the **policy-enforcement point (PEP)** — a
+cryptographic trust boundary. For each connection it: terminates TLS itself,
+verifies the mTLS client certificate, verifies the MCP-RE object signature,
+optionally evaluates authorization (Phase 5) and transport binding (Phase 6), and
+only then forwards the verified, context-injected request to an inner MCP server,
+signing the response.
+
+Two things changed with ADR-MCPRE-051 and matter to operators:
+
+- **The serving path is async, thread-per-core.** The PEP runs one worker per
+  core (auto-sized from `available_parallelism`), each with its own
+  `SO_REUSEPORT` listener; connections keep-alive and multiplex (HTTP/1.1 + H2).
+  The old blocking, single-threaded, one-request-at-a-time serve loop is gone.
+- **The inner plane is stateless Streamable-HTTP, not a subprocess.** The PEP
+  **no longer launches, sandboxes, or speaks stdio to a child process.** Its sole
+  inner plane is a pooled, keep-alive `hyper` client to one or more HTTP MCP
+  backends named by `--inner-http-url`. The entire ~3k-line subprocess/sandbox
+  surface (subprocess lifecycle, environment allow-listing, Landlock/seccomp,
+  `setrlimit`) has been **removed from the PEP's Trusted Computing Base** and
+  relocated to the separate, un-privileged `mcp-re-stdio-bridge` adapter
+  (MCPRE-118). See [Wrapping a stdio server](#wrapping-a-stdio-server-with-mcp-re-stdio-bridge).
 
 An invalid request never reaches the inner server — verification happens first,
 and a failure returns a signed/`mcp-re.*` error instead of dispatching.
 
-## The inner-server boundary (be honest about it)
+## The proxy flags
 
-The sidecar applies **launch hygiene** to the inner subprocess. It is **NOT** a
-kernel, filesystem, or network sandbox (ADR-MCPS-016). Specifically:
-
-- The controlled working directory is a controlled **start** directory, not a
-  filesystem jail — the inner server can still `chdir` and open any path its OS
-  credentials allow.
-- The Unix `setrlimit` ceilings are **resource hardening** (bounding fds, CPU,
-  memory, core/file size), not access control — the inner server can still reach
-  any file or socket its OS credentials permit.
-- The bounded stderr capture is size-bounded, not secrets-safe.
-
-If you need true isolation, run the sidecar + inner server inside an OS sandbox
-(container, namespace, jail) — that is out of MCP-RE's scope and is the deployment
-operator's responsibility.
-
-## The flags
-
-Run `:mcp_re_proxy_cli` via Bazel. Required and optional flags below are parsed by
-`cli::parse_args`; defaults shown are the real defaults from that parser.
+Run `:mcp_re_proxy_cli` via Bazel. Flags are parsed by `cli::parse_args`; defaults
+shown are the real defaults from that parser.
 
 ### Core / required
 
@@ -64,9 +62,22 @@ Run `:mcp_re_proxy_cli` via Bazel. Required and optional flags below are parsed 
 | `--server-signer` / `--server-key-id` | Response-signing identity + key id. |
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
 | `--trust` | Path to the JSON trust file (request signers + authorization issuers). |
-| `--inner-command <cmd> [args...]` | The inner MCP server command. **Consumes the rest of argv**, so put it last. |
+| `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
 `--max-clock-skew` defaults to `300` seconds.
+
+### Inner plane (`http_inner.rs`)
+
+| Flag | Meaning |
+| --- | --- |
+| `--inner-http-url <url>` | An absolute backend endpoint, e.g. `http://10.0.0.5:8080/mcp`. At least one is required (the PEP fails closed at startup with none). |
+
+Repeated and/or comma-separated values add backends; the PEP spreads requests
+across them round-robin over a per-core keep-alive connection pool. A dead,
+non-2xx, or timed-out backend fails that request closed with a synthesized
+`mcp-re.*` JSON-RPC error — it never returns an unsigned or unverified body. To
+front a **stdio-only** server, point `--inner-http-url` at a local
+`mcp-re-stdio-bridge` (below).
 
 ### KeySource (`key_source.rs`)
 
@@ -79,9 +90,9 @@ Run `:mcp_re_proxy_cli` via Bazel. Required and optional flags below are parsed 
 Environment variables are visible to the whole process tree and can leak via
 crash dumps, `ps e`, and `/proc/<pid>/environ` — so `env` is gated behind an
 explicit opt-in and loudly warned. Use `file` with `0600` permissions in
-production (the CLI warns if a key file is group/world-readable). An HSM/KMS-
-backed source is a documented future `KeySource` implementation, not present
-today.
+production (the CLI warns if a key file is group/world-readable). A Cloud-KMS /
+PKCS#11-backed source keeps the signing key off-host — see the Transport
+Hardening Guide and the Helm chart's `keySource: gcpKms` path.
 
 ### Trust resolver
 
@@ -109,58 +120,83 @@ authorization-issuer keys. A bad key fails startup closed.
 
 | Flag | Meaning |
 | --- | --- |
-| `--replay-cache memory` (default) | In-memory; lost on restart. |
+| `--replay-cache memory` (default) | In-memory; lost on restart; single-replica only. |
 | `--replay-cache file` | Durable, single-node, file-backed. Requires `--replay-path`. |
-| `--replay-path <path>` | State-file path for the durable cache. |
+| `--replay-cache shared` | The authoritative shared tier (Redis/etcd); **required under `--fleet`.** See the Fleet Deployment Guide. |
+| `--replay-path <path>` | State-file path for the `file` cache. |
+| `--replay-redis-url` / `--replay-durability-tier` | Shared-tier endpoint + durability class (e.g. `redis-wait-quorum:2:2000`). |
 
 ### Connection limits (DoS defense)
 
 `--max-header-bytes` (64 KiB), `--max-body-bytes` (16 MiB),
 `--max-connections` (256), `--read-timeout-secs` / `--write-timeout-secs` (30s;
-`0` disables). Every limit fails closed.
+`0` disables). Every limit fails closed. The per-core in-flight admission ceiling
+returns `503` at saturation rather than queuing unbounded.
 
-### Inner-server environment minimization (MCPS-035)
+## Wrapping a stdio server with `mcp-re-stdio-bridge`
 
-The child environment is **cleared by default** and only an explicit allowlist is
-passed through, so env-loaded key material is not visible to the inner server
-unless you explicitly allow it.
+The PEP speaks HTTP to its inner plane. A stdio-only MCP server (JSON-RPC over a
+child's stdin/stdout) is fronted by the **out-of-TCB** `mcp-re-stdio-bridge`,
+which the PEP reaches over loopback HTTP like any other backend:
 
-| Flag | Meaning |
-| --- | --- |
-| `--inherit-env false` (default) / `true` | `true` passes the proxy's ENTIRE environment to the inner server (re-opens the leak; loudly warned). |
-| `--inner-env KEY=VALUE` | Set one explicit variable on the child (repeatable; the value may itself contain `=`). |
-| `--inner-env-allow NAME` | Pass through one variable from the proxy's env (repeatable). A name absent from the proxy env fails startup. |
+```text
+  client ──mTLS──▶  mcp-re-proxy (PEP, signs)  ──HTTP──▶  mcp-re-stdio-bridge  ──stdio──▶  unmodified MCP server
+                    └ cryptographic TCB ──────┘            └ subprocess + launch hygiene live HERE, outside the TCB ┘
+```
 
-### Inner-server working dir + stderr bounds (MCPS-036)
+A compromise of the bridge **cannot forge a signature or defeat replay** — those
+guarantees live entirely in the PEP. The bridge's only job is to launch and
+contain the child; keeping it out here is what shrinks the PEP's TCB.
 
-| Flag | Meaning |
-| --- | --- |
-| `--inner-working-dir <dir>` | Controlled start directory. Default is the system temp dir — **never** silently the proxy's cwd. A missing dir fails startup. |
-| `--inner-stderr-cap-bytes` / `--inner-stderr-cap-lines` | Bound the separately-captured inner stderr (must be `> 0`). Inner stderr goes to the proxy's structured log only, never onto stdout (the protocol stream) and never into MCP content. |
-
-### Inner-server resource limits (MCPS-037, Unix `setrlimit`)
+### The bridge flags (`mcp-re-stdio-bridge`)
 
 | Flag | Meaning |
 | --- | --- |
-| `--inner-rlimit-nofile` | Max open file descriptors. |
-| `--inner-rlimit-cpu-seconds` | CPU-time ceiling. |
-| `--inner-rlimit-as-bytes` | Address-space ceiling. |
-| `--inner-rlimit-data-bytes` | Data-segment ceiling. |
-| `--inner-rlimit-core-bytes` | Core-dump size (default `0` = core dumps disabled). |
-| `--inner-rlimit-fsize-bytes` | Max written-file size. |
-| `--inner-rlimit-best-effort true`/`false` (default `false`) | When `false` (strict), a ceiling the kernel refuses **fails the spawn** closed. When `true`, an unappliable ceiling is downgraded to a logged no-op (warned). |
+| `--listen <addr>` | **Required.** The loopback HTTP address the bridge serves on (e.g. `127.0.0.1:8080`). Point `--inner-http-url` at it. Keep it on `127.0.0.1` so the un-TLS'd inner hop never leaves the host/pod. |
+| `--inner-mode oneshot` (default) | A fresh child per request (stateless). |
+| `--inner-mode persistent` | One long-lived child; requests serialized over it (stateful servers). |
+| `--inner-working-dir <dir>` | Controlled **start** directory for the child. Omit for the hardened default (never silently the bridge's cwd). |
+| `-- <cmd> [args...]` | Everything after the `--` separator is the inner command + argv, verbatim. **Required.** |
 
-Each ceiling accepts a non-negative integer (`0` is a valid, very tight ceiling),
-or the literal `none` to clear the ceiling and leave that resource at the OS
-default (e.g. to re-enable core dumps). On a non-Unix platform a configured limit
-is a hard startup error unless best-effort is opted in.
+### The inner-server boundary (be honest about it)
+
+The bridge applies **launch hygiene** to the child — it is **NOT** a kernel,
+filesystem, or network sandbox (ADR-MCPS-016):
+
+- The controlled working directory is a controlled **start** directory, not a
+  filesystem jail — the child can still `chdir` and open any path its OS
+  credentials allow.
+- The `setrlimit` ceilings the bridge applies are **resource hardening**, not
+  access control.
+- Bounded stderr capture is size-bounded, not secrets-safe.
+
+If you need true isolation, run the bridge + inner server inside an OS sandbox
+(container, namespace, jail) — that is the deployment operator's responsibility.
+
+### Current hardening surface (honest status)
+
+The bridge applies its secure launch defaults today: an **empty child
+environment**, a controlled working directory, bounded stderr, and resource
+ceilings (sandbox off by default). The **richer per-flag hardening surface** the
+in-proxy sidecar once exposed — `--inner-env` / `--inner-env-allow`,
+`--inner-rlimit-*`, explicit sandbox profiles — is **not yet exposed on the bridge
+CLI**; it is a tracked Phase-B follow-up (the modules are already relocated into
+`mcp-re-stdio-bridge`). Until then, tune child environment and limits at the OS /
+container layer (systemd unit, container `securityContext`, cgroup limits).
 
 ## Worked example
 
-Wrap an inner stdio server (`/usr/local/bin/my-mcp-server --config /etc/mcp.toml`)
-behind a fully-hardened sidecar:
+Two processes: the bridge wrapping a stdio server, and the PEP in front of it.
 
 ```bash
+# 1. Front the stdio MCP server with the out-of-TCB bridge on loopback.
+bazel run //mcp-re-stdio-bridge:mcp_re_stdio_bridge -- \
+  --listen 127.0.0.1:8080 \
+  --inner-mode oneshot \
+  --inner-working-dir /srv/inner \
+  -- /usr/local/bin/my-mcp-server --config /etc/mcp.toml &
+
+# 2. Run the PEP; its inner plane is the bridge's HTTP endpoint.
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8443 \
   --audience did:example:server-1 \
@@ -178,21 +214,20 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
   --replay-cache file --replay-path /var/lib/mcp-re/replay.json \
-  --inner-working-dir /srv/inner \
-  --inner-env MCP_MODE=prod \
-  --inner-env-allow PATH \
-  --inner-rlimit-nofile 256 \
-  --inner-rlimit-cpu-seconds 30 \
-  --inner-command /usr/local/bin/my-mcp-server --config /etc/mcp.toml
+  --inner-http-url http://127.0.0.1:8080/mcp
 ```
 
-Note `--inner-command` is last: everything after it is the inner command and its
-arguments, not proxy flags.
+The `--` separator on the bridge is what makes the inner command unambiguous:
+everything after it is the child command and its arguments, not bridge flags.
 
-On startup the proxy emits the listen address, the effective inner working dir
-(explicitly labelled "controlled start dir, NOT a filesystem sandbox"), the
-stderr caps, and any configured resource limits (labelled "RESOURCE HARDENING,
-NOT a sandbox"). Heed the warnings — they mark the honest boundaries above.
+For a native Streamable-HTTP inner backend (no stdio, no bridge), skip step 1 and
+point `--inner-http-url` straight at the backend (or repeat it across a fleet).
+
+On startup the bridge emits its listen address labelled "stdio inner, out of the
+PEP TCB"; the PEP emits its async-fleet listen line with the worker count and the
+configured HTTP inner backends. The Kubernetes form of this two-container pattern
+is the Helm chart's `inner.stdioBridge` sidecar
+([`deploy/helm/mcp-re-proxy`](../deploy/helm/mcp-re-proxy)).
 
 ## Always use Bazel
 

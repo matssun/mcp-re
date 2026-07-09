@@ -123,3 +123,23 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
     ],
 )
+
+# ADR-MCPRE-051 "Compliance and Enforcement": the core purity firewall. Reads the
+# committed Cargo.toml + BUILD.bazel at compile time (include_str!) and fails on
+# any networking/async/fs or up-stack crate in the declared deps — encoding the
+# ADR-051 split (core pure; the async stack is admitted into the proxy serving
+# path only). They must be compile inputs in the sandbox.
+nt_rust_test(
+    name = "firewall_test",
+    srcs = ["tests/firewall_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    compile_data = [
+        "Cargo.toml",
+        "BUILD.bazel",
+    ],
+    edition = "2021",
+    deps = [
+        ":mcp_re_core",
+    ],
+)

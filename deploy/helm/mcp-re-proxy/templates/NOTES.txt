@@ -2,7 +2,8 @@ MCP-RE proxy fleet "{{ .Release.Name }}" installed: {{ .Values.replicaCount }} r
 
 Posture:
   strict / fleet     : {{ .Values.strict }} / {{ .Values.fleet }}
-  inner-session      : {{ .Values.innerSession }}{{ if eq .Values.innerSession "stateful" }} (Service sessionAffinity=ClientIP — sticky routing REQUIRED){{ else }} (stateless — plain round-robin){{ end }}
+  inner plane        : {{ if .Values.inner.stdioBridge.enabled }}stdio-only server fronted by the out-of-TCB mcp-re-stdio-bridge sidecar on {{ .Values.inner.stdioBridge.listen }} ({{ .Values.inner.stdioBridge.mode }}){{ else }}HTTP backends: {{ join ", " .Values.inner.httpUrls }}{{ end }}
+  service affinity   : {{ .Values.service.sessionAffinity }}{{ if eq .Values.service.sessionAffinity "None" }} (round-robin){{ else }} (sticky — session-stateful inner backend){{ end }}
   replay tier        : shared, {{ .Values.replay.durabilityTier }}
   revocation tier    : {{ .Values.revocation.tier }}{{ if .Values.revocation.trustEpochRedisUrl }} + networked trust-epoch source (near-zero cross-replica revocation lag){{ else }} (inert push — bounded-T lag){{ end }}
 
