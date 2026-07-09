@@ -108,6 +108,30 @@ fn round_key(round: usize) -> String {
     format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{round}")
 }
 
+/// A per-invocation-unique salt (process id + wall-clock nanos, read ONCE by the
+/// caller) so a LIVE race test's keys never collide with another test's or a prior
+/// run's on a SHARED persistent store. This matters because every test here otherwise
+/// uses the same fixed `round_key`s: on one live Redis/etcd the sync lane (which runs
+/// first) would leave those keys present with a far-future TTL, so the async lane
+/// would then see all `Replay` (zero `Fresh`). The caller reads the salt ONCE and
+/// reuses it for every round, so all threads in a round still submit the IDENTICAL
+/// key (the race invariant holds).
+#[cfg(all(feature = "async_serve", any(feature = "redis_replay", feature = "cpstore_etcd")))]
+fn unique_salt(tag: &str) -> String {
+    use std::time::SystemTime;
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{tag}-{}-{nanos}", std::process::id())
+}
+
+/// A `round_key` namespaced by a per-test `salt` (see [`unique_salt`]).
+#[cfg(all(feature = "async_serve", any(feature = "redis_replay", feature = "cpstore_etcd")))]
+fn salted_round_key(salt: &str, round: usize) -> String {
+    format!("did:example:agent\u{1f}did:example:server\u{1f}nonce-{salt}-{round}")
+}
+
 /// Drive `RACE_ROUNDS` independent race rounds against `store` and assert EXACTLY
 /// ONE `Fresh` + `RACE_WIDTH - 1` `Replay` + ZERO `Unavailable` every round. This
 /// is the cross-core property: many threads (cores) racing one replay key on one
@@ -329,8 +353,12 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
                 .await
                 .expect("connect async Redis replay store"),
         );
+        // Salt read ONCE so this lane's keys are disjoint from the sync Redis lane's
+        // (which shares this live store and runs first) — else every insert here is a
+        // Replay of a key the sync lane already left behind (zero Fresh).
+        let salt = unique_salt("redis-async");
         for round in 0..RACE_ROUNDS {
-            let key = round_key(round);
+            let key = salted_round_key(&salt, round);
             let tasks = RACE_WIDTH;
             let mut handles = Vec::new();
             for _ in 0..tasks {
@@ -392,8 +420,11 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
         // gateway surfaces as a per-request `Unavailable`, i.e. ZERO Fresh — never a
         // false Fresh — which the exact count below would catch.
         let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+        // Salt read ONCE so this lane's keys are disjoint from the sync etcd lane's
+        // on this shared live store (see the Redis lane above).
+        let salt = unique_salt("etcd-async");
         for round in 0..RACE_ROUNDS {
-            let key = round_key(round);
+            let key = salted_round_key(&salt, round);
             let tasks = RACE_WIDTH;
             let mut handles = Vec::new();
             for _ in 0..tasks {
@@ -719,21 +750,6 @@ mod full_stack_async {
         );
     }
 
-    /// A per-run-unique nonce so a full-serving-path proof over a PERSISTENT live
-    /// store is independent of keys any earlier run left behind: a leftover key would
-    /// make every submission a `Replay` (zero `Fresh`) and spuriously fail. The
-    /// in-memory variant does not need this (its store is fresh per test), but the
-    /// networked variants MUST use it.
-    #[cfg(any(feature = "redis_replay", feature = "cpstore_etcd"))]
-    fn unique_nonce(tag: &str) -> String {
-        use std::time::SystemTime;
-        let nanos = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("nonce-async-fullstack-{tag}-{}-{nanos}", std::process::id())
-    }
-
     #[test]
     fn async_proxy_admits_exactly_one_fresh_under_concurrency() {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -783,14 +799,22 @@ mod full_stack_async {
             .build()
             .expect("runtime");
         rt.block_on(async {
+            // Pin the store's staleness clock to the request's fixed test clock
+            // (`now()`). The signed request carries a FIXED `expires_at`; a live store
+            // reading its own REAL wall clock sees that as long past and rejects every
+            // insert as already-stale (MCPS-08 fail-closed) — zero Fresh. The admission
+            // decision must use the same clock the request was signed against.
             let store = Arc::new(
-                RedisAsyncAtomicReplayStore::connect(&url)
+                RedisAsyncAtomicReplayStore::connect_with(&url, Box::new(now))
                     .await
                     .expect("connect async Redis replay store"),
             );
             let tier = AsyncReplayTier::new(store, SKEW);
-            assert_fullstack_exactly_one_fresh(Arc::new(async_proxy(tier)), &unique_nonce("redis"))
-                .await;
+            assert_fullstack_exactly_one_fresh(
+                Arc::new(async_proxy(tier)),
+                &super::unique_salt("fullstack-redis"),
+            )
+            .await;
         });
     }
 
@@ -823,10 +847,18 @@ mod full_stack_async {
             .build()
             .expect("runtime");
         rt.block_on(async {
-            let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));
+            // Pin the store's staleness clock to the test clock (see the Redis
+            // variant) so the fixed-`expires_at` request is not seen as already-stale.
+            let store = Arc::new(EtcdAsyncAtomicReplayStore::connect_with(
+                &endpoint,
+                Box::new(now),
+            ));
             let tier = AsyncReplayTier::new(store, SKEW);
-            assert_fullstack_exactly_one_fresh(Arc::new(async_proxy(tier)), &unique_nonce("etcd"))
-                .await;
+            assert_fullstack_exactly_one_fresh(
+                Arc::new(async_proxy(tier)),
+                &super::unique_salt("fullstack-etcd"),
+            )
+            .await;
         });
     }
 }
