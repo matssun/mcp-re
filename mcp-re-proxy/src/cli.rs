@@ -183,12 +183,19 @@ pub struct Config {
     /// Path to the JSON trust file (request signers + authorization issuers).
     pub trust_path: String,
     /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the
-    /// ASYNC serving path. When non-empty, the proxy serves on the per-core async
-    /// fleet (SO_REUSEPORT + tokio) and forwards verified requests over the pooled
-    /// `HttpInnerPool` to these backends (round-robin), instead of the sync stdio
-    /// subprocess. Each `--inner-http-url` value (comma-separated and/or repeated)
-    /// adds a backend. Empty ⇒ the sync stdio serving path (`--inner-command`).
+    /// ASYNC serving path. The proxy serves on the per-core async fleet
+    /// (SO_REUSEPORT + tokio) and forwards verified requests over the pooled
+    /// `HttpInnerPool` to these backends (round-robin). Each `--inner-http-url`
+    /// value (comma-separated and/or repeated) adds a backend. At least one is
+    /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
+    /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
     pub inner_http_urls: Vec<String>,
+    /// ADR-MCPRE-051 §1: number of per-core async worker runtimes (SO_REUSEPORT
+    /// listeners). `0` (default) means auto — one worker per core via
+    /// `std::thread::available_parallelism`. Pinning an explicit count makes the
+    /// per-core linear-scaling benchmark reproducible (drive N=1 then N=cores) and
+    /// lets an operator cap workers below the core count.
+    pub cores: usize,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -399,6 +406,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPRE-051 §3: stateless HTTP inner backend URL(s) for the async serving
     // path (comma-separated and/or repeated).
     let mut inner_http_urls: Vec<String> = Vec::new();
+    // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
+    let mut cores: usize = 0;
     let mut client_crl_reload_secs: Option<u64> = None;
     let mut crl_allow_unknown_status = false;
     // #4030 online OCSP revocation: off by default; responder-URL override
@@ -844,6 +853,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--max-client-cert-lifetime" => {
                 max_client_cert_lifetime = parse_cert_lifetime(value)?
             }
+            "--cores" => {
+                // ADR-MCPRE-051 §1: pin the per-core worker count. `0` = auto (one
+                // per core). An explicit count makes the 1→N linear-scaling
+                // benchmark reproducible and can cap workers below the core count.
+                cores = value.parse().map_err(|_| "invalid --cores (expected a non-negative integer; 0 = auto)".to_string())?;
+            }
             other => return Err(format!("unknown flag {other}")),
         }
         i += 2;
@@ -1261,6 +1276,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         client_ca: require(client_ca, "--client-ca")?,
         client_crl_paths,
         inner_http_urls,
+        cores,
         client_crl_reload_secs,
         crl_allow_unknown_status,
         client_ocsp,
@@ -3681,6 +3697,32 @@ mod tests {
                 "http://10.0.0.3:8080/mcp".to_string(),
             ]
         );
+    }
+
+    // --- ADR-MCPRE-051 §1 per-core worker count (--cores) --------------------
+
+    #[test]
+    fn cores_defaults_to_auto_zero() {
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.cores, 0, "unset --cores means auto (0 = one worker per core)");
+    }
+
+    #[test]
+    fn parses_explicit_cores() {
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp", "--cores", "4"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.cores, 4);
+    }
+
+    #[test]
+    fn non_numeric_cores_fails_closed() {
+        let mut a = minimal_without_inner_command();
+        a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp", "--cores", "many"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--cores"), "non-numeric --cores must fail with a --cores message; got: {err}");
     }
 
     #[test]

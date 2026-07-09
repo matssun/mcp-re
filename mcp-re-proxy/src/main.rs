@@ -860,7 +860,7 @@ fn serve_fleet(
 
     let fleet_cfg = mcp_re_proxy::async_fleet::FleetConfig {
         addr,
-        cores: 0, // auto: one worker per core
+        cores: config.cores, // 0 = auto (one worker per core); --cores pins it
         listen_backlog: mcp_re_proxy::async_fleet::DEFAULT_LISTEN_BACKLOG,
         max_in_flight_total: None,
     };

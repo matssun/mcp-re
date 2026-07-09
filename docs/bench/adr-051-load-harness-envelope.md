@@ -10,8 +10,9 @@ number; the numbers live here + with the release profile, and the harness
 publishes aggregate throughput and p50/p99/p999 added latency against them.
 
 **The SLO *targets* are declared separately (MCPRE-110, HITL) — this file pins
-the measurement CONDITIONS, not the pass/fail thresholds.** A run against the
-CURRENT single-threaded proxy produces the Phase-0 baseline input to MCPRE-110.
+the measurement CONDITIONS, not the pass/fail thresholds.** A run drives the
+per-core async fleet (`--cores` pins the worker count) and produces the baseline
+and per-core scaling input to MCPRE-110.
 
 The machine-readable companion is
 [`adr-051-benchmark-envelope.json`](adr-051-benchmark-envelope.json); the harness
@@ -22,11 +23,11 @@ emits its measured report as JSON when `MCP_RE_LOADGEN_OUT` is set.
 | Dimension | Value (this envelope, v1) | Notes |
 |---|---|---|
 | **Hardware class** | operator-declared per run (`MCP_RE_LOADGEN_HW_CLASS`) | recorded verbatim into the report; not fixed in-tree so a CI runner and a bare-metal run are distinguishable |
-| **Core count** | operator-declared (`MCP_RE_LOADGEN_CORES`), default = detected | the CURRENT proxy is a single-threaded blocking accept loop (ADR-051 Context), so it utilises **1** core regardless; the per-core scaling curve is flat at 1 until the Phase-2 per-core data plane lands |
+| **Core count** | operator-declared (`MCP_RE_LOADGEN_CORES`), default = detected | the proxy serves on the per-core async fleet (SO_REUSEPORT, one worker per core); the harness passes the declared count through `--cores` so the workers actually served equal the reported count and the 1→N scaling curve is reproducible (run at cores=1 then =N) |
 | **Payload sizes** | one `tools/call` (`echo`, small JSON body) | the inner echo server returns the argument; representative small-request class. Larger-payload classes are a future envelope revision |
 | **TLS mode** | TLS 1.3, **mTLS** (client cert required) | rustls `ring` provider defaults; client presents a trusted URI-SAN leaf, server verified via `AcceptAny` on the client side (the SERVER identity is not under test here) |
 | **Cipher / signature suite** | rustls 1.3 default suites; **Ed25519** request + response object signatures | the request is a signed draft-02 object; the response is Ed25519-signed and bound to `request_hash` |
-| **Keep-alive vs cold-handshake mix** | selectable (`MCP_RE_LOADGEN_MODE = cold \| keepalive`) | measured **separately**. NOTE: the current wire is one-request-per-connection (`Connection: close`, ADR-051 Context §3), so `keepalive` mode reports a **realised-reuse fraction ≈ 0** on the current proxy — the mode is instrumented now and becomes meaningful with Phase-2 HTTP/1.1 keep-alive / H2 |
+| **Keep-alive vs cold-handshake mix** | selectable (`MCP_RE_LOADGEN_MODE = cold \| keepalive`) | measured **separately**. The per-core fleet serves HTTP/1.1 keep-alive / H2 (ADR-051 §1); the harness reports the **realised-reuse fraction** so `keepalive` runs are attributable to actual connection reuse rather than assumed |
 | **Replay backend** | in-memory reference (`--replay-cache memory`) | the baseline single-node path; the shared Redis/etcd tiers add a network hop measured under their own envelope |
 | **Inner-backend latency** | echo inner, ~0 added latency | isolates the PEP (accept → TLS → verify → sign → respond) cost from inner-server cost; a latency-injecting inner is a future envelope dimension |
 | **Concurrency** | `MCP_RE_LOADGEN_CONCURRENCY` (default 64) | number of concurrent client threads; the harness drives ≥ hundreds of concurrent mTLS connections when configured to |
@@ -38,10 +39,10 @@ emits its measured report as JSON when `MCP_RE_LOADGEN_OUT` is set.
 - **Added latency percentiles** — p50 / p99 / p999 (plus min / mean / max) of
   per-request round-trip time (connect + handshake + request + verify-on-server
   + response), measured client-side.
-- **Per-core scaling (1→N)** — the harness records the declared core count and
-  the achieved throughput so a scaling curve can be assembled across runs. On the
-  CURRENT single-threaded proxy this is a single point at 1 core (the flat
-  baseline); Phase 2 fills in the curve.
+- **Per-core scaling (1→N)** — the harness pins the served worker count via
+  `--cores` and records it alongside achieved throughput, so the scaling curve is
+  assembled by running at `MCP_RE_LOADGEN_CORES=1` then `=N` (each run is one point
+  at a truthfully-served core count).
 - **Cold vs keep-alive** — the two connection modes are measured separately; the
   keep-alive run additionally reports the realised connection-reuse fraction.
 
