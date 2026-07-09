@@ -15,8 +15,11 @@
 #
 # Scope: Redis primary+replica (replay e2e + the #41 WAIT-quorum shortfall/recovery
 # proof of ADR-MCPS-020 Amendment 1) + an OpenSSL OCSP responder (online_ocsp
-# good/revoked revocation e2e, #46). Both feature-gated backends have live CI
-# verification.
+# good/revoked revocation e2e, #46) + a single-node etcd (the CP/linearizable
+# replay backend — MCPRE-117). Each feature-gated backend has live CI verification,
+# including the ASYNC authoritative replay tier (ADR-MCPRE-051 §4): the async Redis
+# and async etcd stores are raced both at the store level and cross-replica through
+# the full async serving `Proxy`.
 name: live-infra e2e
 
 on:
@@ -157,14 +160,21 @@ jobs:
 
       # Run the live-infra e2e binaries (avoids building cross-crate demo fixtures).
       # MCP_RE_REQUIRE_LIVE_INFRA=1 turns a missing backend into a failure.
+      # `async_serve` is added so the async replay-race lanes in
+      # replay_race_harness_test compile in: the store-level async Redis
+      # exactly-one-Fresh proof AND the full-serving-path race that drives N cores
+      # through one shared async `Proxy` over the LIVE Redis L2 (MCPRE-117 AC —
+      # "cross-replica through the full serving path"). Both self-skip without a
+      # store, so MCP_RE_REQUIRE_LIVE_INFRA=1 above is what makes them binding here.
       - name: Run live-infra e2e (Redis replay + OCSP revocation)
         run: >-
           cargo test -p mcp-re-proxy
-          --features redis_replay,online_ocsp
+          --features async_serve,redis_replay,online_ocsp
           --test redis_replay_e2e_test
           --test fleet_replay_e2e_test
           --test redis_trust_epoch_e2e_test
           --test fleet_trust_epoch_e2e_test
+          --test replay_race_harness_test
           --test ocsp_e2e_test
 
       - name: Stop OpenSSL OCSP responder
@@ -173,3 +183,58 @@ jobs:
           if [ -n "${MCP_RE_OCSP_RESPONDER_PID:-}" ]; then
             kill "${MCP_RE_OCSP_RESPONDER_PID}" 2>/dev/null || true
           fi
+
+  etcd:
+    name: etcd replay e2e (1.94.1)
+    runs-on: ubuntu-latest
+    # A single etcd node is sufficient: the cross-NODE property is proven by two
+    # independent client connections to the SAME cluster (two modelled proxy nodes),
+    # exactly as cpstore_etcd_e2e_test documents. etcd is not in apt on ubuntu-latest,
+    # so the official release tarball is fetched and started in a step (mirroring the
+    # Redis job's "start in a step" pattern) rather than a service container — this
+    # lets us pass the exact client-URL flags and poll readiness.
+    env:
+      MCP_RE_REQUIRE_LIVE_INFRA: "1"
+      MCP_RE_TEST_ETCD_URL: "http://127.0.0.1:2379"
+      RUST_TEST_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # etcd serves its v3 gRPC-JSON gateway on the client port (2379) by default in
+      # 3.4+, under `/v3/...` — the exact paths async_etcd_store posts to
+      # (`/v3/lease/grant`, `/v3/kv/txn`, `/v3/lease/revoke`). Readiness is polled via
+      # the plain-HTTP `/version` endpoint (no blind sleep). Data dir is scratch.
+      - name: Install + start etcd (v3 JSON gateway on 2379)
+        run: |
+          set -euo pipefail
+          ETCD_VER=v3.5.17
+          curl -fsSL -o etcd.tar.gz \
+            "https://github.com/etcd-io/etcd/releases/download/${ETCD_VER}/etcd-${ETCD_VER}-linux-amd64.tar.gz"
+          tar xzf etcd.tar.gz
+          # nohup + disown so etcd survives THIS step's shell into the test step
+          # (mirrors the OCSP responder), the same way the Redis job's daemons persist.
+          nohup "./etcd-${ETCD_VER}-linux-amd64/etcd" \
+            --listen-client-urls http://127.0.0.1:2379 \
+            --advertise-client-urls http://127.0.0.1:2379 \
+            --data-dir /tmp/etcd-data > etcd.log 2>&1 &
+          disown || true
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:2379/version >/dev/null 2>&1; then break; fi
+            sleep 0.25
+          done
+          curl -fsS http://127.0.0.1:2379/version || { echo "etcd did not become healthy; log:"; cat etcd.log; exit 1; }
+
+      - name: Select pinned toolchain (from rust-toolchain.toml)
+        run: rustup show && rustc --version && cargo --version
+
+      # `cpstore_etcd` compiles the etcd stores + their gated tests; `async_serve`
+      # compiles the async replay-race lanes. MCP_RE_REQUIRE_LIVE_INFRA=1 turns a
+      # missing etcd into a failure, so the async etcd store (previously with NO live
+      # coverage) is now exercised both at the store level and cross-replica through
+      # the full async serving `Proxy` (MCPRE-117 AC).
+      - name: Run live-infra e2e (etcd replay)
+        run: >-
+          cargo test -p mcp-re-proxy
+          --features async_serve,cpstore_etcd
+          --test cpstore_etcd_e2e_test
+          --test replay_race_harness_test
