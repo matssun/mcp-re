@@ -1,5 +1,20 @@
 # MCP-RE Dogfood Runbook — wrapping the real `intelli_code_mcp` server
 
+> **⚠ Superseded serving model (ADR-MCPRE-051 / MCPRE-118).** This runbook was
+> written for the pre-ADR-051 architecture in which the **proxy launched and
+> env-minimized the inner stdio subprocess** (`--inner-command`, `--inner-env*`,
+> `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer exist on the
+> proxy**: the PEP's inner plane is now stateless Streamable-HTTP
+> (`--inner-http-url`), and the entire subprocess/env/sandbox surface has been
+> relocated **out of the TCB** into the `mcp-re-stdio-bridge` adapter. To dogfood a
+> stdio server today, front it with the bridge and point the proxy at it — see the
+> rewritten [Sidecar Deployment Guide](sidecar-deployment-guide.md#wrapping-a-stdio-server-with-mcp-re-stdio-bridge).
+> The env-minimization sections (§2.2) and several of the 12 checks below exercise
+> a proxy surface that no longer exists; a bridge-oriented rewrite of this runbook
+> is a tracked follow-up (part of MCPRE-123 docs). The security *intent* (verify
+> before dispatch, sign responses, minimize the child's environment) is unchanged —
+> only the component that owns the child moved.
+
 > **Note for public-repo readers.** This runbook documents an internal dogfood
 > exercise: wrapping the author's private `intelli_code_mcp` server (not present
 > in this repository) with `mcp_re_proxy_cli`. It is preserved as a worked example

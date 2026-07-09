@@ -23,11 +23,13 @@ bindPort: 8443
 strict: true
 fleet: true
 
-# Inner-server session statefulness (ADR-MCPS-049 clause 2). Drives the Service's
-# sessionAffinity below: a `stateful` inner REQUIRES sticky routing (a logical
-# session pinned to one replica); `stateless` allows a plain round-robin LB.
-# Default `stateful` fails toward correctness.
-innerSession: stateful
+# Client→proxy Service routing. The inner plane is stateless Streamable-HTTP
+# (ADR-MCPRE-051 §3), so plain round-robin (`None`) is the norm — the MCP-RE
+# authenticity checks run identically on every replica. Set `ClientIP` only when
+# the inner BACKEND you front is itself session-stateful and you have not put its
+# own sticky routing in front of it.
+service:
+  sessionAffinity: None # None | ClientIP
 
 # Shared replay store (ADR-MCPS-020). MUST be a shared tier at >= REDIS_WAIT_QUORUM
 # under --fleet, or the proxy refuses to start.
@@ -52,11 +54,44 @@ identity:
   serverSigner: "did:example:server-1"
   serverKeyId: "server-key-1"
 
-# The wrapped inner MCP server command (argv). Replace with your server.
-# --inner-command consumes the remainder of argv, so it is rendered LAST.
+# Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
+# it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`. The
+# ~3k-line subprocess/sandbox surface was RELOCATED OUT of the PEP's TCB into the
+# separate `mcp-re-stdio-bridge` adapter (MCPRE-118). Two supported shapes:
+#
+#   1. Native HTTP backend(s): list one or more Streamable-HTTP MCP URLs in
+#      `httpUrls` (repeated → round-robin across the fleet).
+#   2. A stdio-only MCP server: front it IN-POD with the out-of-TCB
+#      `mcp-re-stdio-bridge` sidecar (`stdioBridge` below). The PEP then reaches
+#      it over loopback HTTP like any backend; a compromise of the bridge cannot
+#      forge a signature or defeat replay — those guarantees live only in the PEP.
+#
+# Exactly one shape must be configured (the proxy fails closed with no inner URL).
 inner:
-  command:
-    - "/usr/local/bin/echo-inner"
+  # Streamable-HTTP backend URL(s). Required unless stdioBridge.enabled.
+  httpUrls: []
+  #  - "http://inner-mcp.default.svc.cluster.local:8080/mcp"
+
+  # In-pod stdio→HTTP adapter sidecar for a stdio-only inner server. Enabled by
+  # default so this reference renders a runnable pod around the example echo-inner
+  # server below; a real HTTP-backend deployment sets httpUrls and disables this.
+  stdioBridge:
+    enabled: true
+    image:
+      repository: mcp-re-stdio-bridge
+      tag: "0.11.0"
+      pullPolicy: IfNotPresent
+    # Loopback address the bridge listens on and the PEP forwards to. Keep it on
+    # 127.0.0.1 so the un-TLS'd inner hop never leaves the pod.
+    listen: "127.0.0.1:8080"
+    # Path the PEP POSTs to on the bridge (the bridge relays any POST path).
+    path: "/mcp"
+    # oneshot: a fresh child per inner request (stateless). persistent: one
+    # long-lived child, requests serialized over it (stateful servers).
+    mode: oneshot
+    # The wrapped stdio MCP server command (argv), run by the bridge after `--`.
+    command:
+      - "/usr/local/bin/echo-inner"
 
 # Signing-key custody (ADR-MCPS-028). `fileSeed` mounts a raw Ed25519 seed from
 # the material Secret (dev / on-prem). `gcpKms` keeps the signing key in GCP
