@@ -17,8 +17,6 @@
 //! upstream outage becomes signed fail-closed bytes, never an unsigned pass-through
 //! and never a silent allow.
 
-#![cfg(feature = "async_serve")]
-
 use std::future::Future;
 use std::pin::Pin;
 
@@ -39,6 +37,21 @@ pub trait AsyncInnerServer: Send + Sync {
     /// Dispatch one (already verified + stripped + context-injected) request to the
     /// inner server, awaiting its response bytes.
     fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a>;
+}
+
+/// Any `Fn(&[u8]) -> Vec<u8>` is an async inner server: the (synchronous) closure
+/// is evaluated eagerly and its result returned as a ready future. Ergonomic for
+/// tests and embedding — an in-process echo/stub inner plugs into the async path
+/// without a bespoke type. Real transports (the `hyper` pool) implement the trait
+/// directly and genuinely await I/O.
+impl<F> AsyncInnerServer for F
+where
+    F: Fn(&[u8]) -> Vec<u8> + Send + Sync,
+{
+    fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a> {
+        let response = self(request);
+        Box::pin(async move { response })
+    }
 }
 
 /// A synthesized JSON-RPC error *response* (no `result`) returned when the inner

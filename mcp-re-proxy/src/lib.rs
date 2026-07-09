@@ -64,8 +64,13 @@ pub mod durable_replay;
 // non-default `gcp_kms_keysource` feature.
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
-pub mod inner_launch;
 pub mod key_source;
+pub mod log_sink;
+// Test / embedding helpers that drive the async serving path synchronously
+// (a private current-thread runtime per call). NOT a serving path — the
+// production data plane is the per-core async fleet. Used by this crate's tests
+// and by downstream crates' proxy test harnesses.
+pub mod test_support;
 // ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
 // mapping behind the #3838 delegation seam). Dependency-free — the per-provider
 // network backends (AWS KMS / GCP Cloud KMS) are the feature-gated follow-ups.
@@ -76,7 +81,6 @@ pub mod kms_keysource;
 // links no HTTP client and stays byte-for-byte unchanged.
 #[cfg(feature = "online_ocsp")]
 pub mod ocsp;
-pub mod persistent_inner;
 // Issue #4034: the PKCS#11-backed response-signing key source (the real,
 // non-exporting backend behind the #3838 delegation seam — the response-signing
 // key never leaves the token). Compiled ONLY under the non-default
@@ -96,6 +100,11 @@ pub mod proxy;
 // non-default `cpstore_etcd` feature so the default build is unchanged.
 #[cfg(feature = "cpstore_etcd")]
 pub mod etcd_store;
+// ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
+// v3 JSON gateway; reuses etcd_store's pure helpers). The linearizable durable
+// tier the async serving fleet awaits. Same `cpstore_etcd` gate.
+#[cfg(feature = "cpstore_etcd")]
+pub mod async_etcd_store;
 // Issue #4028: the Redis-backed shared replay backend that makes
 // `--replay-cache shared` give real horizontally-scaled replay safety. Compiled
 // ONLY under the non-default `redis_replay` feature so the default build is
@@ -118,57 +127,38 @@ pub mod live_trust;
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).
 pub mod push_trust;
-pub mod rlimits;
-// Issue #3865: OS sandbox PROFILE + fail-closed platform gate for inner-server
-// fs/network containment (the config, CLI, seam, and fail-closed gate).
-pub mod sandbox;
-// Issue #4039: the LINUX kernel-enforcement backend behind the #3865 seam —
-// Landlock fs ruleset + seccomp-bpf egress filter installed on the inner-server
-// child before exec. Linux-only: a non-Linux build excludes this module entirely
-// and never links landlock/seccompiler.
-#[cfg(target_os = "linux")]
-pub mod sandbox_linux;
 // Issue #3837: shared, server-side-atomic replay cache for horizontally-scaled
 // replay safety (the backend-agnostic core + the in-memory reference store).
 pub mod shared_replay;
 pub mod tls;
 pub mod transport;
 // ADR-MCPRE-051 Phase 2 (§1): OPT-IN async serving path (tokio + tokio-rustls +
-// hyper keep-alive/H2). Behind the non-default `async_serve` feature; the default
-// production closure links no tokio/hyper (ADR-MCPS-018 lean-sync firewall stays
-// intact) and this module is not compiled. A shared runtime is dev scaffolding
-// only (per-core SO_REUSEPORT is MCPRE-113).
-#[cfg(feature = "async_serve")]
+// hyper keep-alive/H2). A shared runtime is dev scaffolding only (per-core
+// SO_REUSEPORT is MCPRE-113, the production data plane).
 pub mod async_serve;
-// MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): the per-core serving fleet — one worker
-// thread per core, each a current-thread tokio runtime with its own SO_REUSEPORT
-// listener + Linux CPU pinning, over one Proxy per core. The target data plane;
-// supersedes the single-shared-runtime scaffolding above. Same `async_serve` gate.
-#[cfg(feature = "async_serve")]
+// MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet — one worker thread per
+// core, each a current-thread tokio runtime with its own SO_REUSEPORT listener +
+// Linux CPU pinning, over one Proxy per core. THE production data plane.
 pub mod async_fleet;
-// MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async authoritative replay tier seam —
-// the async AtomicReplayStore analogue + the per-core L1-never-Fresh fast-reject
-// wrapper, so the per-core data plane checks replay without blocking a runtime worker.
-// Same `async_serve` gate; concrete async Redis/etcd backends plug into this contract.
-#[cfg(feature = "async_serve")]
+// MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
+// AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
+// per-core data plane checks replay without blocking a runtime worker. Concrete
+// async in-memory/Redis/etcd backends plug into this contract.
 pub mod async_replay;
-// MCPRE (ADR-MCPRE-051 §3, Phase 3): the ASYNC inner-server seam. The async serving
-// path awaits it instead of the sync stdio subprocess inner, so the inner round-trip
-// never blocks a per-core runtime worker. The production impl (async hyper client
-// pool to stateless Streamable-HTTP inner backends) plugs into this contract.
-#[cfg(feature = "async_serve")]
+// MCPRE (ADR-MCPRE-051 §3): the ASYNC inner-server seam — THE inner path. The async
+// serving path awaits it so the inner round-trip never blocks a per-core runtime
+// worker. The production impl is the async hyper client pool to stateless
+// Streamable-HTTP inner backends; an unmodified stdio server is fronted by the
+// out-of-TCB `mcp-re-stdio-bridge` and reached over HTTP like any other backend.
 pub mod async_inner;
-// ADR-MCPRE-051 §3 (Phase 3): the production async inner plane — a per-core pooled
-// hyper client to stateless Streamable-HTTP inner backends (keep-alive/H2,
-// round-robin, per-request timeout, fail-closed). The AsyncInnerServer the async
-// serving path awaits in production.
-#[cfg(feature = "async_serve")]
+// ADR-MCPRE-051 §3: the production async inner plane — a per-core pooled hyper
+// client to stateless Streamable-HTTP inner backends (keep-alive/H2, round-robin,
+// per-request timeout, fail-closed). The AsyncInnerServer the serving path awaits.
 pub mod http_inner;
 // MCPRE-117 (ADR-MCPRE-051 §4): the ASYNC Redis authoritative replay backend
 // (`SET NX PX` via the tokio async client + auto-reconnecting ConnectionManager).
-// Behind BOTH the async serving path and the redis backend flag; the async data
-// plane awaits it instead of blocking a per-core worker on the sync client.
-#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+// Behind the redis backend flag; the data plane awaits it without blocking a worker.
+#[cfg(feature = "redis_replay")]
 pub mod async_redis_store;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
@@ -202,11 +192,9 @@ pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
-pub use inner_launch::BoundedStderr;
-pub use inner_launch::InnerLaunchConfig;
-pub use inner_launch::InnerLogEvent;
-pub use inner_launch::InnerLogSink;
-pub use inner_launch::StderrLogSink;
+pub use log_sink::InnerLogEvent;
+pub use log_sink::InnerLogSink;
+pub use log_sink::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only and exists only when the
 // non-default `dev_env_key_source` feature is enabled.
 #[cfg(feature = "dev_env_key_source")]
@@ -227,18 +215,16 @@ pub use ocsp::CertRevocationStatus;
 pub use ocsp::OcspChecker;
 #[cfg(feature = "online_ocsp")]
 pub use ocsp::OcspError;
-pub use persistent_inner::PersistentSubprocessInner;
 // Issue #4034: the PKCS#11 key source (feature-gated).
 #[cfg(feature = "pkcs11_keysource")]
 pub use pkcs11_keysource::Pkcs11KeySource;
-pub use proxy::InnerServer;
 pub use proxy::Proxy;
 // Issue #4028: the Redis shared replay backend (feature-gated).
 #[cfg(feature = "cpstore_etcd")]
 pub use etcd_store::EtcdAtomicReplayStore;
 #[cfg(feature = "redis_replay")]
 pub use redis_store::RedisAtomicReplayStore;
-#[cfg(all(feature = "async_serve", feature = "redis_replay"))]
+#[cfg(feature = "redis_replay")]
 pub use async_redis_store::RedisAsyncAtomicReplayStore;
 #[cfg(feature = "redis_replay")]
 pub use trust_epoch::redis_trust_epoch_source;
@@ -247,10 +233,6 @@ pub use trust_epoch::RedisEpochReader;
 pub use trust_epoch::EpochReader;
 pub use trust_epoch::TrustEpochSource;
 pub use replay_tier::ReplayDurabilityTier;
-pub use rlimits::RLimits;
-pub use sandbox::NetworkPolicy;
-pub use sandbox::SandboxMode;
-pub use sandbox::SandboxProfile;
 pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;

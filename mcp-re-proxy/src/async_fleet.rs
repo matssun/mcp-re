@@ -46,7 +46,6 @@
 //! MCPRE-115 (this increment inherits `serve`'s runtime-drop shutdown); per-core
 //! bounded admission control is MCPRE-114.
 
-#![cfg(feature = "async_serve")]
 
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;

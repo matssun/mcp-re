@@ -6,13 +6,6 @@
 //! [`Config`] into a [`KeySource`] / [`TrustResolver`] / [`Proxy`]. `main.rs` is a
 //! thin shell that parses, builds, and runs the blocking serve loop.
 
-use std::io::Read;
-use std::io::Write;
-use std::process::Command;
-use std::process::Stdio;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Duration;
 
 use mcp_re_core::ExpectedVersionPolicy;
@@ -20,11 +13,6 @@ use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::VerificationKey;
 use serde_json::Value;
 
-use crate::inner_launch::BoundedStderr;
-use crate::inner_launch::InnerLaunchConfig;
-use crate::inner_launch::InnerLogEvent;
-use crate::inner_launch::InnerLogSink;
-use crate::inner_launch::StderrLogSink;
 // MCPS-076 (audit gap G-3): EnvKeySource is dev/CI-only — compiled only under the
 // non-default `dev_env_key_source` feature.
 #[cfg(feature = "dev_env_key_source")]
@@ -32,9 +20,6 @@ use crate::key_source::EnvKeySource;
 use crate::key_source::FileKeySource;
 use crate::key_source::KeyError;
 use crate::key_source::KeySource;
-use crate::proxy::InnerServer;
-use crate::sandbox::NetworkPolicy;
-use crate::sandbox::SandboxMode;
 use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
 use crate::transport::ReverseProxyHeaderFormat;
@@ -66,49 +51,6 @@ pub enum KeySourceKind {
     /// Honored ONLY in a build with the `gcp_kms_keysource` feature; a default build
     /// parses it but FAILS CLOSED at construction.
     GcpKms,
-}
-
-/// Whether the wrapped inner MCP server holds per-session state across requests
-/// (MCPS-83, ADR-MCPS-049 clause 2). This is a self-declared, auditable operator
-/// assertion about the inner server's own behavior; MCP-RE does NOT inspect the
-/// inner server to verify it. It changes NO request verification — it exists so a
-/// fleet deployment can key its routing guidance off a config fact: a `Stateful`
-/// inner (the fail-safe default) requires a logical session to be routed to a
-/// stable replica (sticky routing), because each replica owns an independent inner
-/// subprocess and MCP-RE ships no cross-replica inner-session replication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum InnerSessionKind {
-    /// The inner server keeps per-session state (cursors, subscriptions,
-    /// `initialize` handshake, MRT `requestState`). Any replica may serve a given
-    /// logical session only if the deployment pins that session to it. This is the
-    /// DEFAULT: absent an explicit operator assertion, affinity is assumed so the
-    /// deployment fails toward correctness rather than silent session breakage.
-    #[default]
-    Stateful,
-    /// The operator asserts the inner server holds NO cross-request session state,
-    /// so any replica may serve any request and a stateless load balancer is safe.
-    Stateless,
-}
-
-impl InnerSessionKind {
-    /// Lowercase wire name matching the `--inner-session` flag values.
-    pub fn wire_name(&self) -> &'static str {
-        match self {
-            InnerSessionKind::Stateful => "stateful",
-            InnerSessionKind::Stateless => "stateless",
-        }
-    }
-
-    /// One-line startup-audit statement of the routing consequence.
-    pub fn startup_audit_line(&self) -> &'static str {
-        match self {
-            InnerSessionKind::Stateful => "inner-session=stateful: a logical session MUST be \
-                 routed to a stable replica (sticky routing); MCP-RE replicates no inner-session \
-                 state across the fleet",
-            InnerSessionKind::Stateless => "inner-session=stateless (operator-asserted): any \
-                 replica may serve any request; a stateless load balancer is safe",
-        }
-    }
 }
 
 /// Replay-cache backend.
@@ -173,19 +115,6 @@ pub enum AuthzKind {
     Off,
     /// The reference signed-authorization profile.
     Reference,
-}
-
-/// Inner-server process model selection (MCPS-066, MCP-RE-EPIC-P6.6B).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InnerModeKind {
-    /// One-shot: spawn the inner command per request, write the request to its
-    /// stdin, read its stdout to EOF, and expect it to exit (the default; fronts
-    /// the one-shot-shaped `mcp-re-demo-fileserver`).
-    OneShot,
-    /// Persistent: spawn the inner command ONCE, perform the MCP `initialize`
-    /// handshake, and keep it alive across many newline-delimited requests
-    /// (fronts a long-lived MCP server, e.g. `mcp-re-demo-server`).
-    Persistent,
 }
 
 /// Fully-parsed CLI configuration.
@@ -354,8 +283,6 @@ pub struct Config {
     /// Mirrors the `crl_allow_unknown_status` / `ocsp_soft_fail` relaxations — when
     /// set it is also a strict-production violation.
     pub allow_empty_revocation: bool,
-    /// Inner-server process model: one-shot (default) or persistent (MCPS-066).
-    pub inner_mode: InnerModeKind,
     /// Allow the (dev/CI-only) environment-variable key source in this run.
     /// Required when `key_source == Env`; absent, env keys are refused.
     pub allow_env_keysource: bool,
@@ -430,12 +357,6 @@ pub struct Config {
     /// Maximum client-certificate lifetime (v1 revocation posture). Defaults to
     /// 1 hour; `None` disables enforcement (strongly discouraged).
     pub max_client_cert_lifetime: Option<Duration>,
-    /// The inner MCP server command + args (`[cmd, arg, ...]`).
-    pub inner_command: Vec<String>,
-    /// How the inner subprocess's environment is constructed (MCPS-035): cleared
-    /// by default, then only an explicit allowlist (`--inner-env` /
-    /// `--inner-env-allow`). Full inheritance is opt-in (`--inherit-env`).
-    pub inner_launch: InnerLaunchConfig,
     /// Strict/production posture (MCPS-3842, `--strict`/`--production`). When
     /// `true`, insecure-posture configurations that are otherwise only WARNED
     /// about become HARD startup errors ("reject, not warn"). Default `false`
@@ -453,120 +374,7 @@ pub struct Config {
     /// does NOT imply `--strict`; the production guarantee is `--strict --fleet`
     /// (using `--fleet` without `--strict` only warns — see `main.rs`).
     pub fleet: bool,
-    /// Operator-declared inner-server session statefulness (MCPS-83,
-    /// ADR-MCPS-049 clause 2, `--inner-session`). Defaults to
-    /// [`InnerSessionKind::Stateful`] (fail-safe: affinity assumed). Drives fleet
-    /// routing guidance only; changes no request verification.
-    pub inner_session: InnerSessionKind,
-    /// Whether `--inner-sandbox off` was passed EXPLICITLY (#4082, M09). The
-    /// inner-sandbox default is also `Off`, but no kernel backend ships in this
-    /// build, so a blanket strict `enforce` requirement would fail closed
-    /// everywhere. We therefore distinguish a DELIBERATE `--inner-sandbox off`
-    /// (an explicit request for zero inner containment) from the unset default:
-    /// under `--strict`, the explicit form is a violation, the default is not.
-    pub sandbox_explicitly_off: bool,
 }
-
-/// Every proxy/security flag this parser recognizes (excluding `--inner-command`
-/// itself). Used to scan the inner-command tail for a misplaced proxy flag.
-///
-/// `--inner-command` consumes the remainder of argv as the inner server's argv,
-/// so any token after it is NEVER interpreted by the proxy. If that token is in
-/// fact a known proxy/security flag (#4066 / MCPS-091), it was almost certainly
-/// mis-placed by the operator: silently swallowing it would (a) drop a security
-/// control with NO warning — e.g. `--strict` would leave `strict == false`, a
-/// fail-open trust-posture downgrade — and (b) leak the flag verbatim into the
-/// hostile inner server's argv. So the tail is scanned and any such flag is a
-/// HARD parse error (fail closed) instructing the operator to move it before
-/// `--inner-command`.
-const KNOWN_PROXY_FLAGS: &[&str] = &[
-    // Valueless boolean flags.
-    "--allow-env-keysource",
-    "--allow-reference-authz",
-    "--crl-allow-unknown-status",
-    "--ocsp-soft-fail",
-    "--gcp-kms-use-metadata",
-    "--ingress-pinned-mtls",
-    "--strict",
-    "--production",
-    "--fleet",
-    // Value-taking flags.
-    "--bind",
-    "--audience",
-    "--server-signer",
-    "--server-key-id",
-    "--max-clock-skew",
-    "--expected-version-policy",
-    "--key-source",
-    "--inner-session",
-    "--pkcs11-module",
-    "--pkcs11-pin",
-    "--pkcs11-token-label",
-    "--pkcs11-key-label",
-    "--pkcs11-tls-key-label",
-    // ADR-MCPS-028 §B/§C: cloud-KMS response-signing key sources.
-    "--aws-kms-region",
-    "--aws-kms-key-id",
-    "--aws-kms-endpoint",
-    "--aws-kms-tls-key-id",
-    "--gcp-kms-key-version",
-    "--gcp-kms-endpoint",
-    "--gcp-kms-tls-key-version",
-    "--signing-key-seed",
-    "--tls-cert",
-    "--tls-key",
-    "--client-ca",
-    "--client-crl",
-    "--client-crl-reload-secs",
-    "--inner-http-url",
-    "--trust",
-    "--client-ocsp",
-    "--ocsp-responder-url",
-    "--replay-cache",
-    "--replay-path",
-    "--replay-redis-url",
-    "--cpstore-etcd-endpoint",
-    "--replay-durability-tier",
-    "--revocation-tier",
-    "--trust-epoch-redis-url",
-    "--trust-epoch-key",
-    "--transport-binding",
-    "--transport-identity-source",
-    "--reverse-proxy-identity-header",
-    "--reverse-proxy-header-format",
-    "--ingress-lb-key",
-    "--ingress-attestor-key",
-    "--ingress-identity",
-    "--ingress-audience",
-    "--authz",
-    "--revocation-list",
-    "--allow-empty-revocation",
-    "--inner-mode",
-    "--max-body-bytes",
-    "--read-timeout-secs",
-    "--request-deadline-secs",
-    "--write-timeout-secs",
-    "--inner-read-timeout-secs",
-    "--max-connections",
-    "--max-client-cert-lifetime",
-    "--inherit-env",
-    "--inner-env",
-    "--inner-env-allow",
-    "--inner-working-dir",
-    "--inner-stderr-cap-bytes",
-    "--inner-stderr-cap-lines",
-    "--inner-rlimit-nofile",
-    "--inner-rlimit-cpu-seconds",
-    "--inner-rlimit-as-bytes",
-    "--inner-rlimit-data-bytes",
-    "--inner-rlimit-core-bytes",
-    "--inner-rlimit-fsize-bytes",
-    "--inner-rlimit-best-effort",
-    "--inner-sandbox",
-    "--inner-fs-allow-read",
-    "--inner-fs-allow-write",
-    "--inner-net",
-];
 
 /// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
 /// human-readable error string on any missing/invalid argument.
@@ -637,9 +445,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // profile may be the sole production authority. Absent, `--authz reference` is
     // refused at parse time.
     let mut allow_reference_authz = false;
-    // Inner process model: one-shot by default (preserves the existing behavior
-    // for the one-shot-shaped fileserver); persistent fronts a long-lived server.
-    let mut inner_mode = InnerModeKind::OneShot;
     let mut allow_env_keysource = false;
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
@@ -666,10 +471,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut limits = ServerLimits::default();
     // v1 revocation posture: short-lived client certs, proxy-enforced, default 1h.
     let mut max_client_cert_lifetime = Some(Duration::from_secs(3600));
-    let mut inner_command: Vec<String> = Vec::new();
-    // MCPS-035 inner-server environment minimization. Secure defaults: clear the
-    // child environment and apply only the explicit allowlist below.
-    let mut inner_launch = InnerLaunchConfig::new();
     // MCPS-3842 strict/production posture: off by default (warn-only). When set,
     // insecure-posture configs are rejected at startup instead of merely warned.
     let mut strict = false;
@@ -677,35 +478,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // default. Orthogonal to `strict`; `--strict --fleet` is the fleet
     // strict-production posture that rejects node-local replay caches.
     let mut fleet = false;
-    // MCPS-83 (ADR-MCPS-049 clause 2): inner-server session statefulness, fail-safe
-    // default `Stateful` (assume sticky-routing affinity unless the operator asserts
-    // the inner server is stateless).
-    let mut inner_session = InnerSessionKind::Stateful;
-    // #4082 (M09): track whether `--inner-sandbox off` was given EXPLICITLY, so
-    // strict can reject a deliberate no-containment request without rejecting the
-    // (identical-valued) default that ships when the flag is omitted.
-    let mut sandbox_explicitly_off = false;
 
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
-        // `--inner-command` consumes the remainder of argv as the inner server's
-        // argv. A known proxy/security flag in that tail is a misplacement (#4066
-        // / MCPS-091): swallowing it would silently drop a security control and
-        // leak the flag into the hostile inner server. Fail closed with a loud,
-        // actionable error rather than downgrade the trust posture in silence.
-        if flag == "--inner-command" {
-            let tail = &args[i + 1..];
-            if let Some(misplaced) = tail.iter().find(|t| KNOWN_PROXY_FLAGS.contains(&t.as_str())) {
-                return Err(format!(
-                    "proxy flag {misplaced} appears AFTER --inner-command, where it would be \
-                     silently passed to the inner server instead of configuring the proxy; \
-                     move {misplaced} (and any other proxy flags) BEFORE --inner-command"
-                ));
-            }
-            inner_command = tail.to_vec();
-            break;
-        }
         // Valueless boolean flag.
         if flag == "--allow-env-keysource" {
             allow_env_keysource = true;
@@ -1036,15 +812,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     other => return Err(format!("unknown --authz '{other}' (off|reference)")),
                 }
             }
-            "--inner-mode" => {
-                inner_mode = match value.as_str() {
-                    "oneshot" => InnerModeKind::OneShot,
-                    "persistent" => InnerModeKind::Persistent,
-                    other => {
-                        return Err(format!("unknown --inner-mode '{other}' (oneshot|persistent)"))
-                    }
-                }
-            }
             "--max-header-bytes" => {
                 limits.max_header_bytes =
                     value.parse().map_err(|_| "invalid --max-header-bytes".to_string())?
@@ -1066,10 +833,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--write-timeout-secs" => {
                 limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
             }
-            "--inner-read-timeout-secs" => {
-                inner_launch.inner_read_timeout =
-                    parse_positive_timeout(value, "--inner-read-timeout-secs")?
-            }
             "--max-connections" => {
                 let n: usize =
                     value.parse().map_err(|_| "invalid --max-connections".to_string())?;
@@ -1080,137 +843,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--max-client-cert-lifetime" => {
                 max_client_cert_lifetime = parse_cert_lifetime(value)?
-            }
-            "--inherit-env" => {
-                inner_launch.inherit_env = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    other => {
-                        return Err(format!("unknown --inherit-env '{other}' (true|false)"))
-                    }
-                }
-            }
-            "--inner-env" => {
-                inner_launch.explicit_env.push(parse_env_pair(value)?);
-            }
-            "--inner-env-allow" => {
-                inner_launch.allow_env_names.push(value.clone());
-            }
-            "--inner-working-dir" => {
-                inner_launch.working_dir = Some(value.clone());
-            }
-            "--inner-stderr-cap-bytes" => {
-                let n: usize = value
-                    .parse()
-                    .map_err(|_| "invalid --inner-stderr-cap-bytes".to_string())?;
-                if n == 0 {
-                    return Err("--inner-stderr-cap-bytes must be > 0".to_string());
-                }
-                inner_launch.stderr_cap_bytes = n;
-            }
-            "--inner-stderr-cap-lines" => {
-                let n: usize = value
-                    .parse()
-                    .map_err(|_| "invalid --inner-stderr-cap-lines".to_string())?;
-                if n == 0 {
-                    return Err("--inner-stderr-cap-lines must be > 0".to_string());
-                }
-                inner_launch.stderr_cap_lines = n;
-            }
-            // MCPS-037 inner-server Unix setrlimit resource hardening (NOT
-            // sandboxing). Each ceiling is individually configurable; `0` is a
-            // valid (very tight) ceiling, so these accept any u64.
-            "--inner-rlimit-nofile" => {
-                inner_launch.rlimits.nofile = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-cpu-seconds" => {
-                inner_launch.rlimits.cpu_seconds = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-as-bytes" => {
-                inner_launch.rlimits.address_space_bytes = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-data-bytes" => {
-                inner_launch.rlimits.data_bytes = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-core-bytes" => {
-                inner_launch.rlimits.core_bytes = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-fsize-bytes" => {
-                inner_launch.rlimits.fsize_bytes = parse_rlimit_value(flag, value)?;
-            }
-            "--inner-rlimit-best-effort" => {
-                inner_launch.rlimits.best_effort = match value.as_str() {
-                    "true" => true,
-                    "false" => false,
-                    other => {
-                        return Err(format!(
-                            "unknown --inner-rlimit-best-effort '{other}' (true|false)"
-                        ))
-                    }
-                }
-            }
-            // #3865 OS sandbox profile: top-level mode. `enforce` REQUIRES kernel
-            // containment or refuses to start (fail closed); `off` (default) keeps
-            // today's no-containment behavior exactly.
-            "--inner-session" => {
-                inner_session = match value.as_str() {
-                    "stateful" => InnerSessionKind::Stateful,
-                    "stateless" => InnerSessionKind::Stateless,
-                    other => {
-                        return Err(format!(
-                            "unknown --inner-session '{other}' (stateful|stateless)"
-                        ))
-                    }
-                }
-            }
-            "--inner-sandbox" => {
-                inner_launch.sandbox.mode = match value.as_str() {
-                    "off" => {
-                        // #4082 (M09): record the EXPLICIT off so strict can refuse
-                        // a deliberate no-containment request.
-                        sandbox_explicitly_off = true;
-                        SandboxMode::Off
-                    }
-                    "enforce" => SandboxMode::Enforce,
-                    other => {
-                        return Err(format!("unknown --inner-sandbox '{other}' (off|enforce)"))
-                    }
-                }
-            }
-            // #3865 filesystem read-allowlist: repeatable and/or comma-separated,
-            // mirroring `--client-crl`. An empty segment (e.g. a trailing comma) is
-            // rejected so a typo cannot silently widen filesystem access.
-            "--inner-fs-allow-read" => {
-                for segment in value.split(',') {
-                    if segment.is_empty() {
-                        return Err(format!(
-                            "invalid --inner-fs-allow-read '{value}' (empty path segment)"
-                        ));
-                    }
-                    inner_launch.sandbox.fs_allow_read.push(segment.to_string());
-                }
-            }
-            // #3865 filesystem write-allowlist: same parsing as the read allowlist.
-            "--inner-fs-allow-write" => {
-                for segment in value.split(',') {
-                    if segment.is_empty() {
-                        return Err(format!(
-                            "invalid --inner-fs-allow-write '{value}' (empty path segment)"
-                        ));
-                    }
-                    inner_launch.sandbox.fs_allow_write.push(segment.to_string());
-                }
-            }
-            // #3865 network egress policy. Default is deny-all; `allow` is no
-            // network containment (explicit operator choice).
-            "--inner-net" => {
-                inner_launch.sandbox.network = match value.as_str() {
-                    "deny" => NetworkPolicy::DenyAll,
-                    "allow" => NetworkPolicy::Allow,
-                    other => {
-                        return Err(format!("unknown --inner-net '{other}' (deny|allow)"))
-                    }
-                }
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -1276,25 +908,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         return Err(
             "--key-source env requires --allow-env-keysource (env key material is dev/CI-only; \
              use --key-source file in production)"
-                .to_string(),
-        );
-    }
-    // #90 (defense-in-depth, UNCONDITIONAL — not just under --strict): the env key
-    // source reads the Ed25519 signing seed from a proxy environment variable, and
-    // `--inherit-env true` passes the proxy's ENTIRE environment to the inner
-    // server. Together they would leak the signing-seed env var into the inner
-    // process. These two postures are incompatible regardless of strict mode: a
-    // hard config-construction error here guarantees the env-keysource seed can
-    // never be inherited by the inner, rather than relying on the operator running
-    // under --strict (which defaults off). Mirrors the dangling-flag fail-closed
-    // guards above.
-    if inner_launch.inherit_env && key_source == KeySourceKind::Env {
-        return Err(
-            "--inherit-env true passes the proxy's ENTIRE environment to the inner server, \
-             but --key-source env reads the signing-key seed from a proxy environment \
-             variable, so full inheritance would leak that signing seed into the inner \
-             process; these are incompatible. Use --inherit-env false with explicit \
-             --inner-env / --inner-env-allow, or a non-env --key-source"
                 .to_string(),
         );
     }
@@ -1372,22 +985,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
         );
     }
-    // `--inner-command` is required for the sync stdio serving path, but NOT when
-    // HTTP inner backends are configured (ADR-MCPRE-051 §3): the async fleet
-    // forwards over the HttpInnerPool, so no subprocess command is needed. They are
-    // mutually exclusive — supplying both is a misconfiguration (fail closed).
-    if !inner_http_urls.is_empty() {
-        if !inner_command.is_empty() {
-            return Err(
-                "--inner-command and --inner-http-url are mutually exclusive (stdio subprocess \
-                 vs async HTTP inner plane); supply exactly one"
-                    .to_string(),
-            );
-        }
-    } else if inner_command.is_empty() {
+    // ADR-MCPRE-051 §3: the async serving path forwards verified requests over the
+    // pooled HttpInnerPool to one or more stateless HTTP inner backends, so at least
+    // one `--inner-http-url` MUST be configured (fail closed rather than start with
+    // no inner plane).
+    if inner_http_urls.is_empty() {
         return Err(
-            "missing required inner server: --inner-command <cmd> [args...] (stdio) or \
-             --inner-http-url <url> (async HTTP inner plane)"
+            "missing required inner server: --inner-http-url <url> (async HTTP inner plane)"
                 .to_string(),
         );
     }
@@ -1684,7 +1288,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         revocation_list_paths,
         allow_empty_revocation,
         allow_reference_authz,
-        inner_mode,
         allow_env_keysource,
         pkcs11_module,
         pkcs11_pin,
@@ -1701,12 +1304,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         gcp_kms_use_metadata,
         limits,
         max_client_cert_lifetime,
-        inner_command,
-        inner_launch,
         strict,
         fleet,
-        inner_session,
-        sandbox_explicitly_off,
     };
 
     // ADR-MCPS-013 fail-closed revocation posture: `--authz reference` enforces
@@ -1818,15 +1417,9 @@ const STRICT_MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// (`none`/`0`, i.e. `max_client_cert_lifetime == None`) remains rejected as an
 /// unsafe posture.
 ///
-/// Also deliberately EXCLUDED (#4082): the DEFAULT `--inner-sandbox off`,
-/// `--inner-net allow`, and `--authz off`. No kernel sandbox backend ships in
-/// this build, so requiring `--inner-sandbox enforce` (and the network policy it
-/// gates) under strict would fail closed on every platform; only an EXPLICIT
-/// `--inner-sandbox off` is rejected (see `sandbox_explicitly_off`). `authz off`
-/// is the established default authorization mode, not a downgrade of an enforced
-/// one. The postures rejected here are the pure-config, platform-independent
-/// fail-open ones: explicit no-sandbox, reverse-proxy header ingress (M10/M22),
-/// `--transport-binding none` (M11), and the OCSP/CRL fail-open relaxations (M12).
+/// The postures rejected here are the pure-config, platform-independent fail-open
+/// ones: reverse-proxy header ingress (M10/M22), `--transport-binding none` (M11),
+/// and the OCSP/CRL fail-open relaxations (M12).
 pub fn strict_violations(config: &Config) -> Vec<String> {
     let mut violations = Vec::new();
     if config.key_source == KeySourceKind::Env {
@@ -1855,25 +1448,10 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
         )),
         Some(_) => {}
     }
-    if config.inner_launch.inherit_env {
-        violations.push(
-            "--inherit-env true passes the proxy's ENTIRE environment to the inner server \
-             (leaks env-loaded secrets); use --inherit-env false with explicit \
-             --inner-env / --inner-env-allow"
-                .to_string(),
-        );
-    }
     if config.identity_source == IdentityPolicy::CnLegacy {
         violations.push(
             "--transport-identity-source cn_legacy is a deprecated, insecure identity binding; \
              use uri_san or dns_san"
-                .to_string(),
-        );
-    }
-    if config.inner_launch.rlimits.best_effort {
-        violations.push(
-            "--inner-rlimit-best-effort true silently degrades resource ceilings to logged \
-             no-ops; production must fail closed (--inner-rlimit-best-effort false)"
                 .to_string(),
         );
     }
@@ -1944,23 +1522,6 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
             }
         ));
     }
-    // #4082 (M09): a DELIBERATE `--inner-sandbox off` asks for zero inner
-    // containment against a potentially hostile inner server. Only the EXPLICIT
-    // form is rejected — the (identical-valued) default is left a warning because
-    // no kernel sandbox backend ships in this build, so a blanket `enforce`
-    // requirement would fail closed on every platform (see
-    // `sandbox_enforce_fails_closed_on_this_platform`). `network == Allow` and
-    // `authz == Off` remain warnings for the same reason they always have:
-    // network policy is honored only under an enforcing backend, and authz-off is
-    // the established default mode, not an unsafe downgrade of an enforced one.
-    if config.sandbox_explicitly_off {
-        violations.push(
-            "--inner-sandbox off explicitly disables inner-server containment (the inner \
-             server can reach any file/socket its OS credentials permit); production must \
-             request containment (--inner-sandbox enforce)"
-                .to_string(),
-        );
-    }
     // #4082 (M10/M22): reverse-proxy identity-header ingress takes the verified
     // identity from a forwarded header and trusts, on the operator's word alone,
     // that the socket is reachable ONLY by the upstream — a process that can
@@ -2003,9 +1564,8 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
         );
     }
     // #4082 (M12): both revocation relaxations convert a fail-closed posture into
-    // fail-open, exactly the inconsistency the symmetric best-effort-rlimit arm
-    // above already rejects. The CRL relaxation is only flagged when CRLs are
-    // actually configured (it has no effect otherwise — mirroring its parse-time
+    // fail-open. The CRL relaxation is only flagged when CRLs are actually
+    // configured (it has no effect otherwise — mirroring its parse-time
     // semantics), so a strict run without CRLs is not spuriously rejected.
     if config.crl_allow_unknown_status && !config.client_crl_paths.is_empty() {
         violations.push(
@@ -2062,40 +1622,13 @@ pub fn key_file_mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
 }
 
-/// Parse an `--inner-env` value of the form `KEY=VALUE`. The key must be
-/// non-empty and contain no `=`; the value (which may itself contain `=`) is
-/// everything after the first `=`. An empty value is allowed (`KEY=`).
-fn parse_env_pair(value: &str) -> Result<(String, String), String> {
-    match value.split_once('=') {
-        Some((key, _)) if key.is_empty() => {
-            Err(format!("invalid --inner-env '{value}' (empty key; expected KEY=VALUE)"))
-        }
-        Some((key, val)) => Ok((key.to_string(), val.to_string())),
-        None => Err(format!("invalid --inner-env '{value}' (expected KEY=VALUE)")),
-    }
-}
-
-/// Parse an `--inner-rlimit-*` value into the resource ceiling to set. A bare
-/// non-negative integer is the ceiling (`0` is a valid, very tight ceiling — it
-/// is NOT "no limit"); the literal `none` clears the ceiling so that resource is
-/// left at the OS default (used e.g. to RE-ENABLE core dumps that default off).
-fn parse_rlimit_value(flag: &str, value: &str) -> Result<Option<u64>, String> {
-    if value == "none" {
-        return Ok(None);
-    }
-    let n: u64 = value
-        .parse()
-        .map_err(|_| format!("invalid {flag} '{value}' (expected a non-negative integer or 'none')"))?;
-    Ok(Some(n))
-}
-
 /// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
 /// value is CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] (1 day) and an over-cap
 /// value is REJECTED loudly. This matters for `--request-deadline-secs`, whose
 /// value is later added to `Instant::now()` in the fail-closed deadline reader
 /// (`tls::DeadlineStream`): an absurdly large value would overflow `checked_add`
 /// and — if not rejected here — silently DISABLE the slow-loris defense. Bounding
-/// at parse time keeps the control fail-closed (mirrors [`parse_positive_timeout`]).
+/// at parse time keeps the control fail-closed.
 fn parse_timeout(value: &str, flag: &str) -> Result<Option<Duration>, String> {
     let secs: u64 = value.parse().map_err(|_| format!("invalid {flag}"))?;
     if secs > MAX_INNER_READ_TIMEOUT_SECS {
@@ -2115,29 +1648,6 @@ fn parse_timeout(value: &str, flag: &str) -> Result<Option<Duration>, String> {
 /// `Instant::now() + timeout` in the deadline reader, making that overflow
 /// practically unreachable (the `checked_add` there is defense-in-depth).
 const MAX_INNER_READ_TIMEOUT_SECS: u64 = 86_400;
-
-/// Parse a POSITIVE timeout in whole seconds, rejecting `0` (MCPS-074). The
-/// persistent-inner read timeout is ALWAYS bounded — there is no "disable", so
-/// unlike [`parse_timeout`] this never maps `0` to a disabled timeout. `0` (or a
-/// non-integer) is a clear error rather than a silent never-hang regression. The
-/// value is also CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] so an absurdly large
-/// timeout cannot overflow the `Instant` deadline in the fail-closed read path.
-fn parse_positive_timeout(value: &str, flag: &str) -> Result<Duration, String> {
-    let secs: u64 = value
-        .parse()
-        .map_err(|_| format!("invalid {flag} '{value}' (expected a positive integer of seconds)"))?;
-    if secs == 0 {
-        return Err(format!(
-            "{flag} must be > 0 (the inner read timeout is always bounded; there is no disable)"
-        ));
-    }
-    if secs > MAX_INNER_READ_TIMEOUT_SECS {
-        return Err(format!(
-            "{flag} must be <= {MAX_INNER_READ_TIMEOUT_SECS} seconds (1 day); got {secs}"
-        ));
-    }
-    Ok(Duration::from_secs(secs))
-}
 
 /// Parse a client-cert lifetime: a number with an optional `h`/`m`/`s` suffix
 /// (bare = seconds), or `none`/`0` to disable enforcement. E.g. `1h`, `30m`,
@@ -2765,247 +2275,6 @@ pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
     }
 }
 
-/// An inner MCP server backed by a subprocess: each request spawns the command,
-/// writes the request bytes to its stdin, and reads its **stdout** as the
-/// response (the MCP protocol stream). Per-request spawn keeps it trivially
-/// correct under the (single-threaded) serve loop; a failure yields a JSON-RPC
-/// internal error rather than reaching for a fallback.
-///
-/// MCPS-036 inner-server hygiene:
-///   * the inner server is launched in a CONTROLLED working directory (never
-///     silently the proxy's cwd) — see [`InnerLaunchConfig::apply_working_dir`];
-///   * its **stdout is reserved for the protocol stream** and read as the
-///     response bytes;
-///   * its **stderr is captured separately** into a BOUNDED structured log
-///     ([`BoundedStderr`]) and NEVER forwarded as MCP content;
-///   * lifecycle events (`inner_spawned`, `inner_exited`, `inner_killed`,
-///     `inner_stderr_truncated`, `inner_protocol_error`, `inner_spawn_failed`)
-///     are emitted to the proxy's own [`InnerLogSink`].
-pub struct SubprocessInner {
-    command: String,
-    args: Vec<String>,
-    launch: InnerLaunchConfig,
-    /// A stable identity for this inner server, tagged onto every lifecycle
-    /// event so emissions stay attributable.
-    inner_identity: String,
-    log_sink: Arc<dyn InnerLogSink + Send + Sync>,
-}
-
-impl SubprocessInner {
-    /// Build from an `[cmd, arg, ...]` vector (non-empty), with the inner-launch
-    /// policy validated against the proxy's OWN environment and working dir.
-    ///
-    /// This validation is where a configured-but-unappliable policy fails LOUDLY
-    /// rather than at spawn time — e.g. an `--inner-env-allow KEY` naming a
-    /// variable absent from the proxy's environment, or an `--inner-working-dir`
-    /// that is not an existing directory, is rejected here, at startup, so the
-    /// proxy never serves with a silently-dropped behavior.
-    pub fn new(inner_command: &[String], launch: InnerLaunchConfig) -> Result<Self, String> {
-        SubprocessInner::with_log_sink(inner_command, launch, Arc::new(StderrLogSink))
-    }
-
-    /// As [`SubprocessInner::new`], with an injected lifecycle-event sink (used by
-    /// tests to capture emissions deterministically).
-    pub fn with_log_sink(
-        inner_command: &[String],
-        launch: InnerLaunchConfig,
-        log_sink: Arc<dyn InnerLogSink + Send + Sync>,
-    ) -> Result<Self, String> {
-        // Validate the env + working-dir policy up front against the real process
-        // environment; a failure aborts startup (the same fail-closed posture as
-        // key loading). Both must be appliable before we agree to serve.
-        let mut probe = Command::new(&inner_command[0]);
-        launch.apply_env(&mut probe, |name| std::env::var(name).ok())?;
-        launch.apply_working_dir(&mut probe)?;
-        // Resource-hardening ceilings (MCPS-037): startup platform validation
-        // (non-Unix + required = fail closed) plus the pre_exec setrlimit hook.
-        launch.apply_rlimits(&mut probe)?;
-        // OS sandbox profile (#3865): the fail-closed platform/capability gate is
-        // checked HERE, at startup, before any inner server is spawned. Under
-        // `--inner-sandbox enforce` this refuses to start unless a kernel backend
-        // can actually enforce containment (none ships yet); `off` (default) is
-        // inert and passes through.
-        launch.apply_sandbox(&mut probe)?;
-        Ok(SubprocessInner {
-            command: inner_command[0].clone(),
-            args: inner_command[1..].to_vec(),
-            launch,
-            inner_identity: inner_command[0].clone(),
-            log_sink,
-        })
-    }
-
-    fn emit(&self, event: InnerLogEvent) {
-        self.log_sink.log(&self.inner_identity, &event);
-    }
-
-    fn run(&self, request: &[u8]) -> std::io::Result<Vec<u8>> {
-        let mut command = Command::new(&self.command);
-        command
-            .args(&self.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            // stderr is PIPED (not null) so it is captured separately into the
-            // bounded log; it is never merged into stdout (the protocol stream).
-            .stderr(Stdio::piped());
-        // Apply the (already validated) env + working-dir policy. Resolution
-        // against the proxy env/fs is stable for the process lifetime, so a
-        // repeat failure here is not expected; surface it as an IO error rather
-        // than silently spawning with an unintended launch context.
-        self.launch
-            .apply_env(&mut command, |name| std::env::var(name).ok())
-            .map_err(std::io::Error::other)?;
-        self.launch
-            .apply_working_dir(&mut command)
-            .map_err(std::io::Error::other)?;
-        // Install the Unix setrlimit ceilings (MCPS-037) as a pre_exec hook. A
-        // required limit the kernel refuses fails the spawn below (fail closed),
-        // never a silently-unbounded inner server.
-        self.launch
-            .apply_rlimits(&mut command)
-            .map_err(std::io::Error::other)?;
-        // OS sandbox profile (#3865). Already gated at startup; re-applied here so
-        // the (future) kernel enforcement is installed on the actual spawn
-        // command, and so a still-ungated `enforce` can never spawn unsandboxed.
-        self.launch
-            .apply_sandbox(&mut command)
-            .map_err(std::io::Error::other)?;
-        // M15 (audit 0.2, #4080): close every inherited fd above stdio in the child
-        // before exec (registered last), so the inner never inherits the proxy's
-        // own open sockets — a leak a seccomp egress filter cannot revoke.
-        self.launch
-            .apply_close_extra_fds(&mut command)
-            .map_err(std::io::Error::other)?;
-
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                self.emit(InnerLogEvent::SpawnFailed { reason: e.to_string() });
-                return Err(e);
-            }
-        };
-        let pid = child.id();
-        self.emit(InnerLogEvent::Spawned { pid });
-
-        // Bound the one-shot interaction so a wedged inner cannot hang the
-        // single-threaded serve loop (MCPS-084 / audit M-7). A watchdog thread
-        // waits for completion OR the inner-read deadline; on timeout the inner
-        // is not draining stdin or not closing stdout, so SIGKILL it to unblock
-        // the write_all + wait_with_output below. `recv_timeout` means the kill
-        // fires ONLY on a real timeout, and the child is not reaped until
-        // wait_with_output() — so `pid` is unambiguously this child (no reuse
-        // race) at the moment we signal.
-        let timeout = self.launch.inner_read_timeout;
-        let timed_out = Arc::new(AtomicBool::new(false));
-        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-        let wd_flag = Arc::clone(&timed_out);
-        let watchdog = std::thread::spawn(move || {
-            if done_rx.recv_timeout(timeout).is_err() {
-                wd_flag.store(true, Ordering::SeqCst);
-                // SAFETY: kill(2) on a child pid we own and have not yet reaped.
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
-                }
-            }
-        });
-
-        // Drain stderr on a dedicated thread into the BOUNDED capture so a noisy
-        // or hostile inner server can neither deadlock the pipe nor exhaust proxy
-        // memory. The capture is moved back when the thread joins.
-        let mut stderr_pipe = child
-            .stderr
-            .take()
-            .ok_or_else(|| std::io::Error::other("no child stderr"))?;
-        let mut capture = self.launch.new_stderr_capture();
-        let stderr_thread = std::thread::spawn(move || {
-            let mut chunk = [0u8; 4096];
-            loop {
-                match stderr_pipe.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => capture.push(&chunk[..n]),
-                    Err(_) => break,
-                }
-            }
-            capture
-        });
-
-        // Capture (do NOT early-return on) a stdin write error: a wedged inner
-        // that the watchdog kills makes write_all fail with a broken pipe, and we
-        // must still reap the child and join the watchdog before surfacing it.
-        let write_result = child
-            .stdin
-            .take()
-            .ok_or_else(|| std::io::Error::other("no child stdin"))
-            .and_then(|mut stdin| stdin.write_all(request));
-
-        let output = child.wait_with_output()?;
-        // Reaped: tell the watchdog to stand down (it never kills a reaped pid).
-        let _ = done_tx.send(());
-        let _ = watchdog.join();
-        let capture: BoundedStderr = stderr_thread
-            .join()
-            .unwrap_or_else(|_| self.launch.new_stderr_capture());
-
-        self.emit(InnerLogEvent::Exited {
-            code: output.status.code(),
-        });
-        if capture.truncated() {
-            self.emit(InnerLogEvent::StderrTruncated {
-                captured_bytes: capture.bytes().len(),
-                cap_bytes: capture.cap_bytes(),
-            });
-        }
-        if !capture.bytes().is_empty() {
-            // The captured stderr goes ONLY to the proxy's structured log (via the
-            // dedicated stderr channel), never onto stdout (the protocol stream)
-            // and never into MCP content.
-            self.log_sink.log_stderr(&self.inner_identity, capture.bytes());
-        }
-        // The inner exceeded its read deadline and was terminated: fail closed
-        // with a timeout rather than treating the (partial / empty) stdout as a
-        // response. This is the one-shot analogue of the persistent path's
-        // per-read deadline (MCPS-074); together they honour the never-hang
-        // posture for BOTH inner modes.
-        if timed_out.load(Ordering::SeqCst) {
-            self.emit(InnerLogEvent::ProtocolError {
-                detail: format!("inner exceeded inner_read_timeout ({timeout:?}); terminated"),
-            });
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("inner exceeded inner_read_timeout ({timeout:?}) and was terminated"),
-            ));
-        }
-        // Surface a genuine (non-timeout) stdin write failure now that the child
-        // is reaped and the watchdog has stood down.
-        write_result?;
-
-        // The inner server's stdout is the MCP protocol stream: if it is not a
-        // JSON object the proxy can frame, flag a protocol error (the dirty bytes
-        // are still returned for the proxy's normal error handling, but the
-        // observability event makes the dirty-stream case attributable).
-        if serde_json::from_slice::<Value>(&output.stdout).is_err() {
-            self.emit(InnerLogEvent::ProtocolError {
-                detail: "inner stdout is not a JSON-RPC frame".to_string(),
-            });
-        }
-        Ok(output.stdout)
-    }
-}
-
-impl InnerServer for SubprocessInner {
-    fn dispatch(&self, request: &[u8]) -> Vec<u8> {
-        match self.run(request) {
-            Ok(response) => response,
-            Err(e) => serde_json::to_vec(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": serde_json::Value::Null,
-                "error": { "code": -32603, "message": "inner server unavailable", "data": e.to_string() }
-            }))
-            .unwrap_or_default(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::build_attested_ingress_binding;
@@ -3017,493 +2286,16 @@ mod tests {
     use super::BindingKind;
     use super::IdentityPolicy;
     use super::ReverseProxyHeaderFormat;
-    use super::InnerLaunchConfig;
-    use super::InnerModeKind;
-    use super::InnerSessionKind;
-    use super::InnerServer;
     use super::KeySourceKind;
     use super::OcspKind;
     use super::ReplayKind;
-    use crate::rlimits::RLimits;
-    use super::InnerLogEvent;
-    use super::InnerLogSink;
-    use super::SubprocessInner;
-    use crate::sandbox::NetworkPolicy;
-    use crate::sandbox::SandboxMode;
-    use crate::sandbox::SandboxProfile;
     use mcp_re_core::SigningKey;
     use mcp_re_core::TrustResolver;
-    use serde_json::Value;
     use std::sync::Arc;
     use std::sync::Mutex;
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
-    }
-
-    /// Build a `/bin/sh -c` inner whose script first DRAINS the dispatched request
-    /// from stdin (`cat >/dev/null`), then runs `script`. This mirrors a real inner
-    /// MCP server, which reads its request before responding. Without the drain a
-    /// `printf`-only fixture exits immediately, closing its stdin read-end; the
-    /// proxy's `write_all(request)` then races that close and, on Linux,
-    /// deterministically loses — surfacing as a broken-pipe write error instead of
-    /// the fixture's intended output. (The race is benign on macOS, which is why it
-    /// hid until the Linux CI gate ran these to completion.) Every shell fixture
-    /// that the proxy dispatches a request to goes through this helper so the whole
-    /// class is fixed at the source rather than per-test.
-    fn sh_inner(script: &str) -> Vec<String> {
-        args(&["/bin/sh", "-c", &format!("cat >/dev/null; {script}")])
-    }
-
-    /// MCPS-084 / audit M-7: a one-shot inner that never drains stdin and never
-    /// exits must NOT hang the single-threaded serve loop — the per-read deadline
-    /// terminates it and the call fails closed within the budget. Load-bearing:
-    /// without the watchdog, `wait_with_output` would block forever and this test
-    /// would hang (time out) instead of returning an error response.
-    #[test]
-    fn oneshot_inner_that_never_exits_is_bounded_by_timeout() {
-        let launch = InnerLaunchConfig {
-            inner_read_timeout: std::time::Duration::from_millis(300),
-            ..InnerLaunchConfig::new()
-        };
-        // `sleep` ignores stdin and never writes stdout nor exits.
-        let inner = SubprocessInner::new(&args(&["sleep", "3600"]), launch).expect("construct");
-        let start = std::time::Instant::now();
-        let response = inner.dispatch(b"{\"jsonrpc\":\"2.0\",\"id\":1}");
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "a wedged one-shot inner must be bounded by inner_read_timeout, not hang (took {elapsed:?})"
-        );
-        let value: Value = serde_json::from_slice(&response).expect("error response is JSON");
-        assert_eq!(
-            value["error"]["message"].as_str(),
-            Some("inner server unavailable"),
-            "a timed-out inner must surface as unavailable, got {value}"
-        );
-    }
-
-    // --- MCPS-036 lifecycle / stderr capture proofs ---------------------------
-
-    /// A capturing log sink: records every lifecycle event and every captured
-    /// stderr chunk so tests can assert what the proxy emitted (deterministic,
-    /// no scraping of the real proxy stderr).
-    #[derive(Default)]
-    struct RecordingSink {
-        events: Mutex<Vec<(String, InnerLogEvent)>>,
-        stderr: Mutex<Vec<(String, Vec<u8>)>>,
-    }
-
-    impl InnerLogSink for RecordingSink {
-        fn log(&self, inner_identity: &str, event: &InnerLogEvent) {
-            self.events
-                .lock()
-                .expect("lock")
-                .push((inner_identity.to_string(), event.clone()));
-        }
-        fn log_stderr(&self, inner_identity: &str, captured: &[u8]) {
-            self.stderr
-                .lock()
-                .expect("lock")
-                .push((inner_identity.to_string(), captured.to_vec()));
-        }
-    }
-
-    impl RecordingSink {
-        fn tags(&self) -> Vec<String> {
-            self.events
-                .lock()
-                .expect("lock")
-                .iter()
-                .map(|(_, e)| e.tag().to_string())
-                .collect()
-        }
-        fn captured_stderr(&self) -> Vec<u8> {
-            self.stderr
-                .lock()
-                .expect("lock")
-                .iter()
-                .flat_map(|(_, bytes)| bytes.clone())
-                .collect()
-        }
-    }
-
-    #[test]
-    fn inner_launches_in_explicit_working_dir_not_proxy_cwd() {
-        // The fixture prints its OWN cwd to stdout (after draining the request).
-        // With an explicit --inner-working-dir, the child must run there, NOT in
-        // the proxy's cwd.
-        let tmp = std::env::temp_dir();
-        let dir = tmp.join(format!("mcp-re036_wd_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        // macOS resolves /var -> /private/var; canonicalize both sides.
-        let canonical = std::fs::canonicalize(&dir).expect("canonicalize");
-        let launch = InnerLaunchConfig {
-            working_dir: Some(dir.to_string_lossy().into_owned()),
-            ..InnerLaunchConfig::new()
-        };
-        let cmd = sh_inner("pwd -P");
-        let inner = SubprocessInner::new(&cmd, launch).expect("construct");
-        let seen = String::from_utf8(inner.dispatch(b"{}")).expect("utf8");
-        let proxy_cwd = std::env::current_dir().expect("cwd");
-        assert_ne!(
-            seen.trim(),
-            proxy_cwd.to_string_lossy(),
-            "inner ran in the proxy's cwd instead of the explicit working dir"
-        );
-        assert_eq!(seen.trim(), canonical.to_string_lossy());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn missing_explicit_working_dir_fails_construction() {
-        let launch = InnerLaunchConfig {
-            working_dir: Some("/no/such/dir/MCPS036_MISSING".to_string()),
-            ..InnerLaunchConfig::new()
-        };
-        match SubprocessInner::new(&args(&["/bin/true"]), launch) {
-            Ok(_) => panic!("a working dir that cannot be honored must fail closed"),
-            Err(err) => assert!(err.contains("MCPS036_MISSING"), "got: {err}"),
-        }
-    }
-
-    // --- MCPS-037 setrlimit resource-hardening proofs ------------------------
-
-    #[cfg(unix)]
-    #[test]
-    fn rlimit_nofile_actually_constrains_the_child() {
-        // EFFECT test: with RLIMIT_NOFILE applied, the child's OWN view of its
-        // soft fd limit (`ulimit -n`, which reads RLIMIT_NOFILE) must equal what
-        // we set — proving the pre_exec setrlimit took effect on the child, not
-        // just the parent's Command config.
-        let launch = InnerLaunchConfig {
-            rlimits: RLimits {
-                nofile: Some(48),
-                core_bytes: None,
-                ..RLimits::new()
-            },
-            ..InnerLaunchConfig::new()
-        };
-        // The inner prints its soft fd limit; `sh_inner` drains the request stdin
-        // first so it behaves like a real one-shot inner and the EFFECT assertion
-        // is deterministic on every platform (see `sh_inner` for the race).
-        let cmd = sh_inner("ulimit -n");
-        let inner = SubprocessInner::new(&cmd, launch).expect("construct");
-        let seen = String::from_utf8(inner.dispatch(b"{}")).expect("utf8");
-        assert_eq!(
-            seen.trim(),
-            "48",
-            "RLIMIT_NOFILE was not applied to the child (saw ulimit -n = {seen:?})"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn required_unappliable_rlimit_fails_the_spawn_not_silently() {
-        // FAIL-CLOSED test: ask for an RLIMIT_NOFILE ceiling far above the
-        // current HARD limit. As a non-root process the kernel REFUSES to raise
-        // the hard limit (EPERM/EINVAL), so the pre_exec setrlimit returns an
-        // error, which (strict mode) aborts the spawn. The dispatch must surface
-        // an inner-server error — NEVER a silently-unbounded successful run.
-        let launch = InnerLaunchConfig {
-            rlimits: RLimits {
-                // 2^60 fds is unattainable; raising the hard limit there fails.
-                nofile: Some(1u64 << 63),
-                core_bytes: None,
-                best_effort: false,
-                ..RLimits::new()
-            },
-            ..InnerLaunchConfig::new()
-        };
-        // The child WOULD print a clean frame if it ever ran; it must not.
-        let cmd = sh_inner("printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'");
-        let inner = SubprocessInner::new(&cmd, launch).expect("construct (validation is unix-ok)");
-        let out = inner.dispatch(b"{}");
-        let parsed: Value = serde_json::from_slice(&out).expect("dispatch returns a JSON frame");
-        assert!(
-            parsed.get("error").is_some(),
-            "a required-but-unappliable rlimit must fail the spawn closed, not run unbounded: {parsed}"
-        );
-        assert_eq!(parsed["error"]["code"], -32603);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn best_effort_unappliable_rlimit_does_not_block_the_spawn() {
-        // In explicit best-effort mode the SAME unattainable ceiling is
-        // downgraded: the setrlimit failure is ignored in the child and the
-        // inner server still runs (the relaxation is opt-in + warned, never the
-        // default). Contrast with the strict test above.
-        let launch = InnerLaunchConfig {
-            rlimits: RLimits {
-                nofile: Some(1u64 << 63),
-                core_bytes: None,
-                best_effort: true,
-                ..RLimits::new()
-            },
-            ..InnerLaunchConfig::new()
-        };
-        let cmd = sh_inner("printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'");
-        let inner = SubprocessInner::new(&cmd, launch).expect("construct");
-        let out = inner.dispatch(b"{}");
-        let parsed: Value = serde_json::from_slice(&out).expect("JSON frame");
-        assert_eq!(
-            parsed["jsonrpc"], "2.0",
-            "best-effort mode must let the inner server run despite an unappliable limit: {parsed}"
-        );
-        assert!(parsed.get("error").is_none());
-    }
-
-    #[test]
-    fn inner_stderr_is_captured_separately_and_stdout_stays_protocol_only() {
-        // The fixture writes a JSON-RPC frame to STDOUT and noise to STDERR.
-        // stdout (the protocol stream) must contain ONLY the JSON frame; the
-        // stderr noise must land in the bounded capture, never on stdout.
-        let sink = Arc::new(RecordingSink::default());
-        let cmd = sh_inner(
-            "printf 'STDERR-NOISE-LEAK' 1>&2; printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'",
-        );
-        let inner =
-            SubprocessInner::with_log_sink(&cmd, InnerLaunchConfig::new(), Arc::clone(&sink) as _)
-                .expect("construct");
-        let stdout = inner.dispatch(b"{}");
-        let stdout_str = String::from_utf8(stdout).expect("utf8");
-        assert!(
-            !stdout_str.contains("STDERR-NOISE-LEAK"),
-            "stderr leaked onto the stdout protocol stream: {stdout_str:?}"
-        );
-        let parsed: Value = serde_json::from_str(&stdout_str).expect("stdout is a clean JSON frame");
-        assert_eq!(parsed["jsonrpc"], "2.0");
-        let captured = String::from_utf8(sink.captured_stderr()).expect("utf8");
-        assert!(
-            captured.contains("STDERR-NOISE-LEAK"),
-            "inner stderr was not captured into the bounded log: {captured:?}"
-        );
-    }
-
-    #[test]
-    fn oversized_inner_stderr_is_bounded_and_emits_truncation_event() {
-        // The fixture floods stderr well past the byte cap. The capture must be
-        // bounded to the cap and an `inner_stderr_truncated` event emitted.
-        let sink = Arc::new(RecordingSink::default());
-        let launch = InnerLaunchConfig {
-            stderr_cap_bytes: 16,
-            stderr_cap_lines: 1000,
-            ..InnerLaunchConfig::new()
-        };
-        // 1000 'A' bytes to stderr; valid frame to stdout.
-        let cmd = sh_inner(
-            "for i in $(seq 1 1000); do printf 'A' 1>&2; done; \
-             printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'",
-        );
-        let inner = SubprocessInner::with_log_sink(&cmd, launch, Arc::clone(&sink) as _)
-            .expect("construct");
-        let _ = inner.dispatch(b"{}");
-        let captured = sink.captured_stderr();
-        assert!(captured.len() <= 16, "stderr capture exceeded the cap: {}", captured.len());
-        assert!(
-            sink.tags().iter().any(|t| t == "inner_stderr_truncated"),
-            "expected inner_stderr_truncated; got: {:?}",
-            sink.tags()
-        );
-    }
-
-    #[test]
-    fn lifecycle_events_spawn_and_exit_are_emitted() {
-        let sink = Arc::new(RecordingSink::default());
-        let cmd = sh_inner("printf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'");
-        let inner = SubprocessInner::with_log_sink(&cmd, InnerLaunchConfig::new(), Arc::clone(&sink) as _)
-            .expect("construct");
-        let _ = inner.dispatch(b"{}");
-        let tags = sink.tags();
-        assert!(tags.iter().any(|t| t == "inner_spawned"), "got: {tags:?}");
-        assert!(tags.iter().any(|t| t == "inner_exited"), "got: {tags:?}");
-    }
-
-    #[test]
-    fn dirty_stdout_emits_protocol_error_event() {
-        // The fixture writes non-JSON to stdout: the protocol stream is dirty.
-        let sink = Arc::new(RecordingSink::default());
-        let cmd = sh_inner("printf 'NOT JSON AT ALL'");
-        let inner = SubprocessInner::with_log_sink(&cmd, InnerLaunchConfig::new(), Arc::clone(&sink) as _)
-            .expect("construct");
-        let _ = inner.dispatch(b"{}");
-        assert!(
-            sink.tags().iter().any(|t| t == "inner_protocol_error"),
-            "expected inner_protocol_error; got: {:?}",
-            sink.tags()
-        );
-    }
-
-    // --- MCPS-035 environment-minimization leak proofs ------------------------
-    //
-    // The inner command is a tiny shell that IGNORES stdin and prints the value
-    // of a chosen variable to stdout. Driving it through the real
-    // `SubprocessInner` proves what the spawned child actually receives.
-
-    /// An inner command (`[cmd, arg...]`) that prints `${name}` (or empty if
-    /// unset) to stdout. Uses `sh_inner` so it drains the request stdin first
-    /// (portable on the unix CI hosts; see `sh_inner` for the EPIPE race).
-    fn dump_var_command(name: &str) -> Vec<String> {
-        sh_inner(&format!("printf '%s' \"${{{name}}}\""))
-    }
-
-    fn run_inner(inner: &SubprocessInner) -> String {
-        String::from_utf8(inner.dispatch(b"{}")).expect("utf8 child stdout")
-    }
-
-    #[test]
-    fn secret_in_proxy_env_is_not_visible_to_inner_by_default() {
-        // A secret-looking var is present in THIS (the proxy's) process env, as
-        // an env-backed KeySource would put it. With the secure default
-        // (inherit_env = false, no allowlist) the inner server must NOT see it.
-        let var = "MCPS035_SECRET_DEFAULT";
-        std::env::set_var(var, "TOP-SECRET-KEY-MATERIAL");
-        let inner = SubprocessInner::new(&dump_var_command(var), InnerLaunchConfig::new())
-            .expect("construct");
-        let seen = run_inner(&inner);
-        assert_eq!(
-            seen, "",
-            "inner server leaked an env-loaded secret under default minimization; saw: {seen:?}"
-        );
-        std::env::remove_var(var);
-    }
-
-    #[test]
-    fn explicit_inner_env_pair_is_visible_to_inner() {
-        let launch = InnerLaunchConfig {
-            explicit_env: vec![("MCPS035_EXPLICIT".to_string(), "hello".to_string())],
-            ..InnerLaunchConfig::new()
-        };
-        let inner =
-            SubprocessInner::new(&dump_var_command("MCPS035_EXPLICIT"), launch).expect("construct");
-        assert_eq!(run_inner(&inner), "hello");
-    }
-
-    #[test]
-    fn allowlisted_var_passes_through_but_others_do_not() {
-        // Two vars in the proxy env; only one is allowlisted.
-        let allowed = "MCPS035_ALLOWED";
-        let blocked = "MCPS035_BLOCKED";
-        std::env::set_var(allowed, "pass");
-        std::env::set_var(blocked, "leak");
-        let launch = InnerLaunchConfig {
-            allow_env_names: vec![allowed.to_string()],
-            ..InnerLaunchConfig::new()
-        };
-        let inner_allowed =
-            SubprocessInner::new(&dump_var_command(allowed), launch.clone()).expect("construct");
-        assert_eq!(run_inner(&inner_allowed), "pass");
-
-        let inner_blocked =
-            SubprocessInner::new(&dump_var_command(blocked), launch).expect("construct");
-        assert_eq!(
-            run_inner(&inner_blocked),
-            "",
-            "a non-allowlisted proxy var must not reach the inner server"
-        );
-        std::env::remove_var(allowed);
-        std::env::remove_var(blocked);
-    }
-
-    #[test]
-    fn inherit_env_true_exposes_the_proxy_env() {
-        // The escape hatch: with inheritance ON, the proxy env IS visible. This
-        // is the loudly-warned, opt-in behavior — the contrast that proves the
-        // default actually clears the environment.
-        let var = "MCPS035_INHERITED";
-        std::env::set_var(var, "inherited-value");
-        let launch = InnerLaunchConfig {
-            inherit_env: true,
-            ..InnerLaunchConfig::new()
-        };
-        let inner = SubprocessInner::new(&dump_var_command(var), launch).expect("construct");
-        assert_eq!(run_inner(&inner), "inherited-value");
-        std::env::remove_var(var);
-    }
-
-    // --- M15 (audit 0.2, #4080): inherited-fd leak across exec --------------------
-    //
-    // The inner must NOT inherit a non-stdio descriptor the proxy holds open. The
-    // threat: an already-connected socket survives `exec`, so a seccomp egress
-    // filter (which denies CREATING sockets) cannot revoke it. The proxy closes
-    // every fd >= 3 in the child before exec (`apply_close_extra_fds`). This is a
-    // black-box test of that hook over the REAL `SubprocessInner` launch pipeline:
-    // it opens a pipe whose read end has O_CLOEXEC CLEARED (so std/Command would
-    // otherwise leak it across exec), then spawns an inner that reports whether
-    // that exact fd is open in the child. Without the close hook the fd LEAKS
-    // (RED); with it, the fd is CLOSED in the child (GREEN). Cross-platform Unix:
-    // it tests the fd-close itself, not any Linux-only sandbox.
-
-    /// An inner command that prints `LEAKED` if `/dev/fd/<fd>` exists in the child
-    /// (the descriptor was inherited across exec) or `CLOSED` otherwise. `/dev/fd`
-    /// reflects the calling process's own descriptors on both Linux and macOS.
-    /// Uses `sh_inner` so it drains the request stdin first (see that helper).
-    fn probe_fd_command(fd: libc::c_int) -> Vec<String> {
-        sh_inner(&format!(
-            "if [ -e /dev/fd/{fd} ]; then printf LEAKED; else printf CLOSED; fi"
-        ))
-    }
-
-    #[test]
-    fn inner_does_not_inherit_a_non_cloexec_fd_across_exec() {
-        // Create a pipe; the read end is the descriptor we will try to leak.
-        let mut fds = [0 as libc::c_int; 2];
-        // SAFETY: `pipe` writes two fds into the provided length-2 array.
-        let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
-        assert_eq!(rc, 0, "pipe() failed: {}", std::io::Error::last_os_error());
-        let (read_fd, write_fd) = (fds[0], fds[1]);
-
-        // Clear O_CLOEXEC on the read end so that, absent the proxy's close hook,
-        // it WOULD survive exec into the child (this is the leak we are guarding).
-        // SAFETY: F_GETFD/F_SETFD read/clear the close-on-exec flag on our own fd.
-        let flags = unsafe { libc::fcntl(read_fd, libc::F_GETFD) };
-        assert!(flags >= 0, "F_GETFD failed: {}", std::io::Error::last_os_error());
-        let set = unsafe { libc::fcntl(read_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
-        assert_eq!(set, 0, "F_SETFD clear CLOEXEC failed: {}", std::io::Error::last_os_error());
-        // Confirm the flag is actually cleared — otherwise the test would pass
-        // vacuously (std's own CLOEXEC, not our hook, would close it).
-        let after = unsafe { libc::fcntl(read_fd, libc::F_GETFD) };
-        assert_eq!(after & libc::FD_CLOEXEC, 0, "CLOEXEC must be cleared for a meaningful test");
-
-        let inner = SubprocessInner::new(&probe_fd_command(read_fd), InnerLaunchConfig::new())
-            .expect("construct inner for fd-leak probe");
-        let seen = run_inner(&inner);
-
-        // SAFETY: closing our own pipe fds after the child has been spawned + run.
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
-
-        assert_eq!(
-            seen, "CLOSED",
-            "a non-CLOEXEC fd ({read_fd}) the proxy held open LEAKED into the inner across exec \
-             — the proxy must close every fd >= 3 before exec so an inherited (already-connected) \
-             socket cannot survive a seccomp egress filter"
-        );
-    }
-
-    #[test]
-    fn close_extra_fds_hook_is_registered_on_the_launch_pipeline() {
-        // A cross-platform unit check that the hook exists and is appliable on the
-        // launch config used by every spawn (complements the exec-level probe).
-        let mut command = std::process::Command::new("/bin/true");
-        InnerLaunchConfig::new()
-            .apply_close_extra_fds(&mut command)
-            .expect("close-extra-fds hook must apply cleanly");
-    }
-
-    #[test]
-    fn unsatisfiable_allowlist_fails_construction_loudly() {
-        let launch = InnerLaunchConfig {
-            allow_env_names: vec!["MCPS035_DEFINITELY_UNSET".to_string()],
-            ..InnerLaunchConfig::new()
-        };
-        match SubprocessInner::new(&dump_var_command("x"), launch) {
-            Ok(_) => panic!("a configured pass-through that cannot be satisfied must fail"),
-            Err(err) => assert!(err.contains("MCPS035_DEFINITELY_UNSET"), "got: {err}"),
-        }
     }
 
     fn minimal() -> Vec<String> {
@@ -3517,13 +2309,13 @@ mod tests {
             "--tls-key", "/key",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
-            "--inner-command", "my-server", "--flag",
+            "--inner-http-url", "http://127.0.0.1:8080/mcp",
         ])
     }
 
-    /// The same required flags as `minimal()` but WITHOUT the tail `--inner-command`
-    /// (which consumes the remainder of argv), so a test can supply `--inner-http-url`
-    /// as the inner instead.
+    /// The same required flags as `minimal()` but WITHOUT any inner-server selection,
+    /// so a test can supply `--inner-http-url` itself (or assert the missing-inner
+    /// error).
     fn minimal_without_inner_command() -> Vec<String> {
         args(&[
             "--bind", "127.0.0.1:8443",
@@ -3561,8 +2353,6 @@ mod tests {
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
         assert!(!config.allow_env_keysource);
         assert_eq!(config.authz, AuthzKind::Off);
-        // The inner process model defaults to one-shot (existing behavior).
-        assert_eq!(config.inner_mode, InnerModeKind::OneShot);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_concurrent_connections, 256);
@@ -3577,172 +2367,10 @@ mod tests {
             config.max_client_cert_lifetime,
             Some(std::time::Duration::from_secs(3600))
         );
-        assert_eq!(config.inner_command, vec!["my-server", "--flag"]);
-        // MCPS-035 secure defaults: no inheritance, empty allowlist.
-        assert!(!config.inner_launch.inherit_env);
-        assert!(config.inner_launch.explicit_env.is_empty());
-        assert!(config.inner_launch.allow_env_names.is_empty());
-    }
-
-    #[test]
-    fn parses_inner_env_minimization_flags() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inherit-env", "false",
-                "--inner-env", "MCP_MODE=prod",
-                "--inner-env", "PATH=/usr/bin",
-                "--inner-env-allow", "HOME",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert!(!config.inner_launch.inherit_env);
         assert_eq!(
-            config.inner_launch.explicit_env,
-            vec![
-                ("MCP_MODE".to_string(), "prod".to_string()),
-                ("PATH".to_string(), "/usr/bin".to_string()),
-            ]
+            config.inner_http_urls,
+            vec!["http://127.0.0.1:8080/mcp".to_string()]
         );
-        assert_eq!(config.inner_launch.allow_env_names, vec!["HOME".to_string()]);
-    }
-
-    #[test]
-    fn parses_inner_working_dir_and_stderr_caps() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inner-working-dir", "/srv/inner",
-                "--inner-stderr-cap-bytes", "2048",
-                "--inner-stderr-cap-lines", "32",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.inner_launch.working_dir, Some("/srv/inner".to_string()));
-        assert_eq!(config.inner_launch.stderr_cap_bytes, 2048);
-        assert_eq!(config.inner_launch.stderr_cap_lines, 32);
-    }
-
-    #[test]
-    fn parses_inner_rlimit_flags() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inner-rlimit-nofile", "256",
-                "--inner-rlimit-cpu-seconds", "30",
-                "--inner-rlimit-as-bytes", "1073741824",
-                "--inner-rlimit-data-bytes", "536870912",
-                "--inner-rlimit-core-bytes", "0",
-                "--inner-rlimit-fsize-bytes", "1048576",
-                "--inner-rlimit-best-effort", "true",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        let r = &config.inner_launch.rlimits;
-        assert_eq!(r.nofile, Some(256));
-        assert_eq!(r.cpu_seconds, Some(30));
-        assert_eq!(r.address_space_bytes, Some(1_073_741_824));
-        assert_eq!(r.data_bytes, Some(536_870_912));
-        assert_eq!(r.core_bytes, Some(0));
-        assert_eq!(r.fsize_bytes, Some(1_048_576));
-        assert!(r.best_effort);
-    }
-
-    #[test]
-    fn rlimit_defaults_disable_core_dumps_and_are_strict() {
-        let config = parse_args(&minimal()).expect("parse");
-        let r = &config.inner_launch.rlimits;
-        assert_eq!(r.core_bytes, Some(0), "core dumps disabled by default");
-        assert!(!r.best_effort, "default posture is strict/required");
-        assert!(r.nofile.is_none());
-    }
-
-    #[test]
-    fn rlimit_none_clears_the_ceiling() {
-        // `none` re-enables the OS default (e.g. to allow core dumps).
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-rlimit-core-bytes", "none"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.inner_launch.rlimits.core_bytes, None);
-    }
-
-    #[test]
-    fn rlimit_rejects_non_integer_value() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-rlimit-nofile", "lots"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-rlimit-nofile"), "got: {err}");
-    }
-
-    #[test]
-    fn rlimit_best_effort_rejects_bad_value() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-rlimit-best-effort", "maybe"]));
-        assert!(parse_args(&a).unwrap_err().contains("--inner-rlimit-best-effort"));
-    }
-
-    #[test]
-    fn working_dir_defaults_to_controlled_not_proxy_cwd() {
-        let config = parse_args(&minimal()).expect("parse");
-        assert!(config.inner_launch.working_dir.is_none());
-        let proxy_cwd = std::env::current_dir().expect("cwd").to_string_lossy().into_owned();
-        assert_ne!(config.inner_launch.effective_working_dir(), proxy_cwd);
-    }
-
-    #[test]
-    fn zero_stderr_cap_bytes_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-stderr-cap-bytes", "0"]));
-        assert!(parse_args(&a).unwrap_err().contains("must be > 0"));
-    }
-
-    #[test]
-    fn zero_stderr_cap_lines_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-stderr-cap-lines", "0"]));
-        assert!(parse_args(&a).unwrap_err().contains("must be > 0"));
-    }
-
-    #[test]
-    fn inherit_env_true_parses() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inherit-env", "true"]));
-        assert!(parse_args(&a).expect("parse").inner_launch.inherit_env);
-    }
-
-    #[test]
-    fn unknown_inherit_env_value_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inherit-env", "maybe"]));
-        assert!(parse_args(&a).unwrap_err().contains("maybe"));
-    }
-
-    #[test]
-    fn inner_env_value_may_contain_equals() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-env", "OPTS=a=b=c"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.inner_launch.explicit_env,
-            vec![("OPTS".to_string(), "a=b=c".to_string())]
-        );
-    }
-
-    #[test]
-    fn inner_env_without_equals_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-env", "NOEQUALS"]));
-        assert!(parse_args(&a).unwrap_err().contains("KEY=VALUE"));
-    }
-
-    #[test]
-    fn inner_env_empty_key_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-env", "=value"]));
-        assert!(parse_args(&a).unwrap_err().contains("empty key"));
     }
 
     #[test]
@@ -4372,8 +3000,8 @@ mod tests {
         let mut a = aws_kms_lead_no_tls_key();
         a.push("--aws-kms-tls-key-id".to_string());
         a.push("alias/mcp-re-tls-signing".to_string());
-        a.push("--inner-command".to_string());
-        a.push("my-server".to_string());
+        a.push("--inner-http-url".to_string());
+        a.push("http://127.0.0.1:8080/mcp".to_string());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.key_source, KeySourceKind::AwsKms);
         assert_eq!(
@@ -4472,8 +3100,8 @@ mod tests {
         a.push(
             "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/2".to_string(),
         );
-        a.push("--inner-command".to_string());
-        a.push("my-server".to_string());
+        a.push("--inner-http-url".to_string());
+        a.push("http://127.0.0.1:8080/mcp".to_string());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.key_source, KeySourceKind::GcpKms);
         assert_eq!(
@@ -4642,119 +3270,6 @@ mod tests {
             err.contains("--request-deadline-secs") && err.contains("<="),
             "rejection names the flag and the bound; got: {err}"
         );
-    }
-
-    #[test]
-    fn inner_read_timeout_defaults_to_30s() {
-        // MCPS-074: absent the flag, the persistent-inner read timeout is the
-        // bounded 30s default (mirrors the socket read_timeout default).
-        let config = parse_args(&minimal()).expect("parse");
-        assert_eq!(
-            config.inner_launch.inner_read_timeout,
-            std::time::Duration::from_secs(30),
-        );
-    }
-
-    #[test]
-    fn parses_inner_read_timeout_secs() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-read-timeout-secs", "5"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.inner_launch.inner_read_timeout,
-            std::time::Duration::from_secs(5),
-        );
-    }
-
-    #[test]
-    fn inner_read_timeout_secs_rejects_zero() {
-        // No-disable policy: 0 is a clear error, NOT a disabled (never-hang) timeout.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-read-timeout-secs", "0"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("must be > 0"), "got: {err}");
-        assert!(err.contains("--inner-read-timeout-secs"), "got: {err}");
-    }
-
-    #[test]
-    fn inner_read_timeout_secs_rejects_above_max() {
-        // MCPS-074: an absurdly large timeout is rejected at parse time so it can
-        // never overflow the Instant deadline in the fail-closed read path. The
-        // cap is 1 day (86_400s); cap+1 and u64::MAX must both be refused.
-        for over in ["86401", "18446744073709551615"] {
-            let mut a = minimal();
-            a.splice(0..0, args(&["--inner-read-timeout-secs", over]));
-            let err = parse_args(&a).unwrap_err();
-            assert!(err.contains("--inner-read-timeout-secs"), "got: {err}");
-            assert!(err.contains("86400"), "got: {err}");
-        }
-        // The cap itself (86_400) is still accepted.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-read-timeout-secs", "86400"]));
-        let config = parse_args(&a).expect("the cap value itself parses");
-        assert_eq!(
-            config.inner_launch.inner_read_timeout,
-            std::time::Duration::from_secs(86_400),
-        );
-    }
-
-    #[test]
-    fn inner_read_timeout_secs_rejects_non_integer() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-read-timeout-secs", "soon"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-read-timeout-secs"), "got: {err}");
-    }
-
-    #[test]
-    fn inner_command_captures_the_remainder() {
-        let mut a = minimal();
-        // Append flags AFTER --inner-command; they belong to the inner command.
-        a.extend(args(&["--not-a-proxy-flag", "value"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.inner_command,
-            vec!["my-server", "--flag", "--not-a-proxy-flag", "value"]
-        );
-    }
-
-    // #4066 (MCPS-091): a valueless proxy/security flag placed AFTER
-    // `--inner-command` must NEVER be silently swallowed into the inner argv. The
-    // historic greedy-varargs terminator turned `--inner-command srv --strict`
-    // into `inner_command = [srv, --strict]` with `strict == false` and NO
-    // warning — a silent fail-open trust-posture downgrade that also leaked the
-    // flag into the hostile inner server. The parser must HARD-ERROR instead.
-    #[test]
-    fn proxy_security_flags_after_inner_command_are_rejected_not_swallowed() {
-        for flag in ["--strict", "--production", "--allow-env-keysource"] {
-            let mut a = minimal();
-            // Declare a durable replay backend so the --strict/--production cases
-            // are otherwise-safe and reach the "flag interpreted" Ok branch (the
-            // default in-memory replay would be a #90 strict violation, muddying
-            // this test's intent — that a security flag after --inner-command is
-            // interpreted, not swallowed into the inner argv).
-            a.splice(0..0, durable_replay());
-            a.extend(args(&[flag]));
-            match parse_args(&a) {
-                // Acceptable outcome: the flag was interpreted (strict turned on).
-                Ok(config) => {
-                    assert!(
-                        config.strict || flag == "--allow-env-keysource",
-                        "{flag} after --inner-command must be interpreted, not dropped"
-                    );
-                    assert!(
-                        !config.inner_command.iter().any(|t| t == flag),
-                        "{flag} leaked into inner_command: {:?}",
-                        config.inner_command
-                    );
-                }
-                // Acceptable outcome: a loud parse error naming the flag.
-                Err(err) => assert!(
-                    err.contains(flag),
-                    "error for misplaced {flag} must name it; got: {err}"
-                ),
-            }
-        }
     }
 
     #[test]
@@ -5106,24 +3621,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_inner_mode_selection() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-mode", "persistent"]));
-        assert_eq!(parse_args(&a).expect("parse").inner_mode, InnerModeKind::Persistent);
-
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-mode", "oneshot"]));
-        assert_eq!(parse_args(&a).expect("parse").inner_mode, InnerModeKind::OneShot);
-    }
-
-    #[test]
-    fn unknown_inner_mode_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-mode", "forever"]));
-        assert!(parse_args(&a).unwrap_err().contains("forever"));
-    }
-
-    #[test]
     fn unknown_flag_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--bogus", "x"]));
@@ -5167,17 +3664,7 @@ mod tests {
     // --- ADR-MCPRE-051 §3 async HTTP inner backends --------------------------
 
     #[test]
-    fn default_has_no_http_inner_backends() {
-        let config = parse_args(&minimal()).expect("parse");
-        assert!(
-            config.inner_http_urls.is_empty(),
-            "no HTTP inner backends by default (the sync stdio serving path)"
-        );
-    }
-
-    #[test]
     fn parses_repeated_and_comma_separated_inner_http_urls() {
-        // No --inner-command (mutually exclusive with --inner-http-url).
         let mut a = minimal_without_inner_command();
         a.extend(args(&[
             "--inner-http-url",
@@ -5207,28 +3694,13 @@ mod tests {
     }
 
     #[test]
-    fn http_inner_does_not_require_inner_command() {
-        // `minimal()` supplies --inner-command; build an arg set WITHOUT it but WITH
-        // --inner-http-url and assert it parses (the async HTTP inner plane needs no
-        // subprocess command).
-        let mut a = minimal_without_inner_command();
-        a.extend(args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
-        let config = parse_args(&a).expect("HTTP inner needs no --inner-command");
-        assert_eq!(config.inner_http_urls, vec!["http://127.0.0.1:8080/mcp".to_string()]);
-        assert!(config.inner_command.is_empty());
-    }
-
-    #[test]
-    fn inner_command_and_http_url_are_mutually_exclusive() {
-        // `minimal()` already carries --inner-command; adding --inner-http-url must
-        // fail closed (the two serving paths are mutually exclusive).
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-http-url", "http://127.0.0.1:8080/mcp"]));
+    fn missing_inner_http_url_fails_closed() {
+        // The async serving path requires at least one HTTP inner backend; a config
+        // with none must fail closed.
+        let err = parse_args(&minimal_without_inner_command()).unwrap_err();
         assert!(
-            parse_args(&a)
-                .unwrap_err()
-                .contains("mutually exclusive"),
-            "supplying both --inner-command and --inner-http-url must fail closed"
+            err.contains("--inner-http-url"),
+            "missing inner plane must name --inner-http-url; got: {err}"
         );
     }
 
@@ -5856,50 +4328,6 @@ mod tests {
         assert!(config.fleet && !config.strict);
     }
 
-    // MCPS-83 (ADR-MCPS-049 clause 2): inner-session defaults to the fail-safe
-    // `Stateful` (affinity assumed) when the flag is omitted.
-    #[test]
-    fn inner_session_defaults_to_stateful() {
-        let config = parse_args(&minimal()).expect("parse");
-        assert_eq!(config.inner_session, InnerSessionKind::Stateful);
-    }
-
-    // MCPS-83: the operator can assert a stateless inner explicitly.
-    #[test]
-    fn inner_session_stateless_parses() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-session", "stateless"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.inner_session, InnerSessionKind::Stateless);
-        assert_eq!(config.inner_session.wire_name(), "stateless");
-    }
-
-    // MCPS-83: an unknown value is a fail-closed parse error.
-    #[test]
-    fn inner_session_unknown_value_rejected() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-session", "sometimes"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-session"), "got: {err}");
-        assert!(err.contains("stateful|stateless"), "got: {err}");
-    }
-
-    // MCPS-83: inner-session is orthogonal to the security posture — declaring it
-    // (either value) is never a strict violation.
-    #[test]
-    fn inner_session_is_not_a_strict_violation() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict", "--inner-session", "stateless"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(
-            strict_violations(&config)
-                .iter()
-                .all(|v| !v.contains("inner-session")),
-            "inner-session must not be a strict violation"
-        );
-    }
-
     // MCPS-84: a trust-epoch backend is only consumed by the Push tier; pairing it
     // with any other tier is a fail-closed misconfiguration (not silently ignored).
     #[test]
@@ -6009,45 +4437,6 @@ mod tests {
         let config = parse_args(&minimal()).expect("parse");
         assert_eq!(config.replay, ReplayKind::Memory);
         assert!(!config.strict);
-    }
-
-    // #90 (defense-in-depth, UNCONDITIONAL): --inherit-env true together with
-    // --key-source env would leak the signing-seed env var into the inner server.
-    // This is a hard config-construction error REGARDLESS of --strict (which
-    // defaults off), so the env-keysource seed can never be inherited.
-    #[test]
-    fn inherit_env_true_with_env_key_source_is_a_hard_error_without_strict() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inherit-env",
-                "true",
-                "--key-source",
-                "env",
-                "--allow-env-keysource",
-            ]),
-        );
-        // No --strict: this must STILL be rejected.
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            !err.contains("refuses unsafe configuration"),
-            "must be a direct config-build error, not a --strict violation; got: {err}"
-        );
-        assert!(err.contains("--inherit-env true"), "got: {err}");
-        assert!(err.contains("--key-source env"), "got: {err}");
-    }
-
-    // #90 control: --inherit-env true with a NON-env key source is allowed (no
-    // signing seed lives in the env to leak); only the env-keysource pairing is
-    // incompatible. (It remains a --strict warn-then-reject, covered separately.)
-    #[test]
-    fn inherit_env_true_with_file_key_source_is_ok() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inherit-env", "true"]));
-        let config = parse_args(&a).expect("inherit-env with the default file key source parses");
-        assert!(config.inner_launch.inherit_env);
-        assert_eq!(config.key_source, KeySourceKind::File);
     }
 
     #[test]
@@ -6163,24 +4552,6 @@ mod tests {
     }
 
     #[test]
-    fn strict_rejects_inherit_env_true() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--inherit-env", "true"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--inherit-env true"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_inherit_env_true_is_ok() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inherit-env", "true"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(config.inner_launch.inherit_env);
-        assert!(!config.strict);
-    }
-
-    #[test]
     fn strict_rejects_cn_legacy_identity_source() {
         let mut a = minimal();
         a.splice(0..0, args(&["--strict", "--transport-identity-source", "cn_legacy"]));
@@ -6199,85 +4570,32 @@ mod tests {
     }
 
     #[test]
-    fn strict_rejects_best_effort_rlimits() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--inner-rlimit-best-effort", "true"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--inner-rlimit-best-effort"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_best_effort_rlimits_is_ok() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-rlimit-best-effort", "true"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(config.inner_launch.rlimits.best_effort);
-        assert!(!config.strict);
-    }
-
-    #[test]
     fn strict_reports_all_violations_at_once() {
         // The error aggregates every parse-time violation so the operator can fix
-        // the whole posture in one pass, not one error per restart.
-        //
-        // NOTE (#90): `--key-source env` + `--inherit-env true` is now an
-        // UNCONDITIONAL config-build error (it would leak the signing seed into the
-        // inner) that fires BEFORE the strict-aggregation gate, so the two cannot
-        // co-occur here. To still exercise BOTH the env-keysource strict violation
-        // AND the inherit-env strict violation in one aggregated message, keep
-        // `--inherit-env true` with the default (file) key source — inherit-env is a
-        // strict violation on its own — and demonstrate the env-keysource strict
-        // rejection in its dedicated test (`strict_rejects_env_key_source`). The
-        // default in-memory replay is also a #90 strict violation and aggregates.
+        // the whole posture in one pass, not one error per restart. The default
+        // in-memory replay is itself a #90 strict violation and aggregates alongside
+        // the cert-lifetime and cn_legacy violations.
         let mut a = minimal();
         a.splice(
             0..0,
             args(&[
                 "--strict",
                 "--max-client-cert-lifetime", "none",
-                "--inherit-env", "true",
                 "--transport-identity-source", "cn_legacy",
-                "--inner-rlimit-best-effort", "true",
             ]),
         );
         let err = parse_args(&a).unwrap_err();
         // The default in-memory replay is itself an aggregated strict violation.
         assert!(err.contains("--replay-cache memory"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
-        assert!(err.contains("--inherit-env true"), "got: {err}");
         assert!(err.contains("cn_legacy"), "got: {err}");
-        assert!(err.contains("--inner-rlimit-best-effort"), "got: {err}");
     }
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----
     //
-    // M09/M10/M11/M12/M22: under `--strict`/`--production`, these otherwise
+    // M10/M11/M12/M22: under `--strict`/`--production`, these otherwise
     // warn-only postures become HARD parse errors. Each strict test is paired
     // with a non-strict control proving the SAME posture still parses Ok.
-
-    // M09 — an EXPLICIT `--inner-sandbox off` under --strict is a deliberate
-    // request for zero inner containment and is refused. (The DEFAULT off, with
-    // no flag, stays accepted — `strict_accepts_a_fully_safe_config` covers that
-    // — because no kernel backend ships in this build, so a blanket enforce
-    // requirement would fail closed everywhere.)
-    #[test]
-    fn strict_rejects_explicit_inner_sandbox_off() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--inner-sandbox", "off"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--inner-sandbox"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_explicit_inner_sandbox_off_is_ok() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-sandbox", "off"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.inner_launch.sandbox.mode, SandboxMode::Off);
-        assert!(!config.strict);
-    }
 
     // M10/M22 — reverse-proxy identity-header ingress is the documented
     // identity-spoofable posture; --strict refuses to enable it silently.
@@ -6394,162 +4712,6 @@ mod tests {
         assert!(err.contains("--ocsp-soft-fail"), "got: {err}");
     }
 
-    // --- #3865 inner-server OS sandbox profile (CLI parsing + fail-closed gate) ---
-    //
-    // The enforce gate's outcome is platform/kernel dependent: on darwin (and any
-    // Linux kernel without Landlock at the required ABI) no kernel backend can
-    // enforce, so requesting `enforce` MUST fail closed; on a Linux kernel that
-    // CAN enforce, construction succeeds and the backend is installed at spawn.
-    // The tests below assert the correct branch by consulting the SAME runtime
-    // capability probe the production gate uses (`backend_can_enforce`), so they
-    // hold on every runner (darwin dev, Linux CI with or without Landlock).
-
-    #[test]
-    fn sandbox_defaults_off_and_deny_all() {
-        let config = parse_args(&minimal()).expect("parse");
-        let s = &config.inner_launch.sandbox;
-        assert_eq!(s.mode, SandboxMode::Off, "default mode must be off");
-        assert_eq!(s.network, NetworkPolicy::DenyAll, "default net policy must be deny-all");
-        assert!(s.fs_allow_read.is_empty());
-        assert!(s.fs_allow_write.is_empty());
-    }
-
-    #[test]
-    fn sandbox_off_parses_and_does_not_trip_the_gate() {
-        // --inner-sandbox off behaves exactly as the default: parses Ok, no gate.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-sandbox", "off"]));
-        let config = parse_args(&a).expect("--inner-sandbox off must parse and not gate");
-        assert_eq!(config.inner_launch.sandbox.mode, SandboxMode::Off);
-    }
-
-    #[test]
-    fn sandbox_enforce_gate_matches_backend_capability() {
-        // The load-bearing honesty gate, asserted against the SAME runtime probe
-        // the production path uses (`SandboxProfile::backend_can_enforce`): where
-        // no kernel backend can enforce (darwin, or a Linux kernel without
-        // Landlock), `enforce` MUST refuse to start at construction time; where the
-        // kernel CAN enforce (Linux + Landlock at the required ABI), construction
-        // succeeds and the backend is installed lazily at spawn. The gate is
-        // exercised through SubprocessInner::new (startup validation), the same
-        // path main.rs takes before any inner server is spawned.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-sandbox", "enforce"]));
-        let config = parse_args(&a).expect("flags parse; the gate fires at construction");
-        assert_eq!(config.inner_launch.sandbox.mode, SandboxMode::Enforce);
-
-        let result = SubprocessInner::new(&config.inner_command, config.inner_launch.clone());
-        if SandboxProfile::backend_can_enforce() {
-            // A platform/kernel that CAN enforce: construction must succeed (the
-            // Landlock ruleset + seccomp filter install as a pre_exec hook later).
-            assert!(
-                result.is_ok(),
-                "enforce must construct where the kernel backend can enforce"
-            );
-        } else {
-            // No kernel backend: the gate MUST fail closed BEFORE any spawn. Match
-            // rather than `.expect_err` so the assertion does not require
-            // `SubprocessInner: Debug` (the Ok value is never printed here).
-            let err = match result {
-                Ok(_) => panic!("enforce without a kernel backend must fail closed before spawn"),
-                Err(e) => e,
-            };
-            assert!(err.contains("enforce"), "got: {err}");
-            assert!(err.contains("refusing to start"), "got: {err}");
-            assert!(
-                err.contains("#3865"),
-                "error must point at the follow-up: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn sandbox_unknown_mode_is_rejected() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-sandbox", "maybe"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-sandbox"), "got: {err}");
-        assert!(err.contains("off|enforce"), "got: {err}");
-    }
-
-    #[test]
-    fn fs_allow_read_repeated_and_comma_separated_accumulate() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--inner-fs-allow-read", "/etc/inner",
-                "--inner-fs-allow-read", "/var/data,/opt/cfg",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.inner_launch.sandbox.fs_allow_read,
-            vec!["/etc/inner".to_string(), "/var/data".to_string(), "/opt/cfg".to_string()],
-        );
-    }
-
-    #[test]
-    fn fs_allow_write_repeated_and_comma_separated_accumulate() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&["--inner-fs-allow-write", "/tmp/a,/tmp/b"]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.inner_launch.sandbox.fs_allow_write,
-            vec!["/tmp/a".to_string(), "/tmp/b".to_string()],
-        );
-    }
-
-    #[test]
-    fn fs_allow_read_empty_segment_is_rejected() {
-        // A trailing comma (empty segment) must be an error so a typo can never
-        // silently widen filesystem access — mirrors the --client-crl posture.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-fs-allow-read", "/etc/inner,"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-fs-allow-read"), "got: {err}");
-        assert!(err.contains("empty path segment"), "got: {err}");
-    }
-
-    #[test]
-    fn fs_allow_write_empty_segment_is_rejected() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-fs-allow-write", ",/tmp/x"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-fs-allow-write"), "got: {err}");
-        assert!(err.contains("empty path segment"), "got: {err}");
-    }
-
-    #[test]
-    fn net_policy_defaults_deny_and_allow_flips_it() {
-        // Default deny-all proven in sandbox_defaults_off_and_deny_all; here prove
-        // --inner-net allow flips it and --inner-net deny is explicit.
-        let mut allow = minimal();
-        allow.splice(0..0, args(&["--inner-net", "allow"]));
-        assert_eq!(
-            parse_args(&allow).expect("parse").inner_launch.sandbox.network,
-            NetworkPolicy::Allow,
-        );
-        let mut deny = minimal();
-        deny.splice(0..0, args(&["--inner-net", "deny"]));
-        assert_eq!(
-            parse_args(&deny).expect("parse").inner_launch.sandbox.network,
-            NetworkPolicy::DenyAll,
-        );
-    }
-
-    #[test]
-    fn net_policy_unknown_is_rejected() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--inner-net", "filtered"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--inner-net"), "got: {err}");
-        assert!(err.contains("deny|allow"), "got: {err}");
-    }
-
     #[test]
     fn key_file_mode_predicate_flags_group_and_world_bits() {
         // The pure file-perm predicate used by main.rs's strict key-file check:
@@ -6581,10 +4743,8 @@ mod tests {
         );
     }
 
-    /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no
-    /// `--inner-command`). Tests append the #59 toggles and then `--inner-command`
-    /// LAST, so any proxy flag lands BEFORE the inner-command tail (the tail scan
-    /// would otherwise — correctly — reject a proxy flag placed after it).
+    /// The leading PKCS#11-source flags (no `--tls-key`, no TLS label, no inner
+    /// plane). Tests append the #59 toggles and then an `--inner-http-url` inner.
     fn pkcs11_lead_no_tls_key() -> Vec<String> {
         args(&[
             "--bind", "127.0.0.1:8443",
@@ -6603,9 +4763,9 @@ mod tests {
         ])
     }
 
-    fn with_inner_command(mut a: Vec<String>) -> Vec<String> {
-        a.push("--inner-command".to_string());
-        a.push("my-server".to_string());
+    fn with_inner_http_url(mut a: Vec<String>) -> Vec<String> {
+        a.push("--inner-http-url".to_string());
+        a.push("http://127.0.0.1:8080/mcp".to_string());
         a
     }
 
@@ -6617,7 +4777,7 @@ mod tests {
         let mut a = pkcs11_lead_no_tls_key();
         a.push("--pkcs11-tls-key-label".to_string());
         a.push("mcp-re-tls".to_string());
-        let config = parse_args(&with_inner_command(a))
+        let config = parse_args(&with_inner_http_url(a))
             .expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.pkcs11_tls_key_label.as_deref(), Some("mcp-re-tls"));
         assert_eq!(config.key_source, super::KeySourceKind::Pkcs11);
@@ -6632,7 +4792,7 @@ mod tests {
         a.push("mcp-re-tls".to_string());
         a.push("--tls-key".to_string());
         a.push("/exported-key".to_string());
-        let err = parse_args(&with_inner_command(a))
+        let err = parse_args(&with_inner_http_url(a))
             .expect_err("delegated + exported TLS key must be rejected");
         assert!(
             err.contains("delegated XOR exported"),
@@ -6656,7 +4816,7 @@ mod tests {
             "--client-ca", "/ca",
             "--trust", "/trust.json",
             "--pkcs11-tls-key-label", "mcp-re-tls",
-            "--inner-command", "my-server",
+            "--inner-http-url", "http://127.0.0.1:8080/mcp",
         ]);
         let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
         assert!(
@@ -6670,39 +4830,9 @@ mod tests {
     /// path that was not requested).
     #[test]
     fn pkcs11_without_tls_label_still_requires_tls_key() {
-        let err = parse_args(&with_inner_command(pkcs11_lead_no_tls_key()))
+        let err = parse_args(&with_inner_http_url(pkcs11_lead_no_tls_key()))
             .expect_err("non-delegated pkcs11 must still require --tls-key");
         assert!(err.contains("--tls-key"), "got: {err}");
-    }
-
-    /// #59: a misplaced `--pkcs11-tls-key-label` AFTER `--inner-command` is caught by
-    /// the known-proxy-flag tail scan (it would otherwise be silently swallowed into
-    /// the inner server's argv, dropping the delegated-TLS control).
-    #[test]
-    fn pkcs11_tls_label_after_inner_command_is_rejected() {
-        // Build argv with the label deliberately placed AFTER --inner-command.
-        let a = args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin", "1234",
-            "--pkcs11-token-label", "mcp-re-test",
-            "--pkcs11-key-label", "mcp-re-response-signing",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--inner-command", "my-server",
-            "--pkcs11-tls-key-label", "mcp-re-tls",
-        ]);
-        let err = parse_args(&a).expect_err("a proxy flag after --inner-command must be rejected");
-        assert!(
-            err.contains("--pkcs11-tls-key-label") && err.contains("AFTER --inner-command"),
-            "got: {err}"
-        );
     }
 
     // ---- ADR-MCPS-021 Axis 2: build_revocation_resolver wiring ----------------

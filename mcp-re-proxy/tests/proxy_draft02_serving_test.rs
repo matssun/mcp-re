@@ -34,6 +34,7 @@ use mcp_re_core::CANONICALIZATION_ID_INT53_V1;
 use mcp_re_core::RESPONSE_META_KEY;
 use mcp_re_core::VERIFIED_META_KEY;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::Proxy;
 use serde_json::json;
 use serde_json::Map;
@@ -98,8 +99,8 @@ fn proxy_with_capture() -> (Proxy, Captured) {
         Box::new(inbound_resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
     (proxy, captured)
 }
 
@@ -160,7 +161,7 @@ fn draft02_request_forwards_with_a_draft02_verified_context() {
     let (proxy, captured) = proxy_with_capture();
     let (request, _hash) = signed_draft02();
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
     assert!(
         serde_json::from_slice::<Value>(&response).unwrap().get("error").is_none(),
         "draft-02 request must serve, not error: {}",
@@ -184,7 +185,7 @@ fn draft02_response_is_protected_and_request_bound() {
     let (proxy, _captured) = proxy_with_capture();
     let (request, request_hash) = signed_draft02();
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // The signed response carries the PROTECTED draft-02 identifiers.
     let parsed: Value = serde_json::from_slice(&response).expect("parse response");
@@ -206,7 +207,7 @@ fn draft01_serving_path_is_unchanged() {
     let expected_hash =
         mcp_re_core::request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("hash");
 
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // Draft-01 context: the bare authorization_hash, no draft-02 protected fields.
     let ctx = injected_context(&captured);

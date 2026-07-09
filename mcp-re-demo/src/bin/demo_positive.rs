@@ -43,11 +43,14 @@ use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationConfig;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_inner_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_root_dir;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoGrantSpec;
 use mcp_re_demo::DemoHostClient;
@@ -55,6 +58,7 @@ use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::FixedClock;
 use mcp_re_host::HostSigner;
 use mcp_re_host::SeededNonceSource;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogEvent;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
@@ -226,12 +230,19 @@ fn run() -> Result<(), String> {
     }
 
     // 3. Run the FULL policy-enabled proxy: verify -> freshness/replay -> authz
-    //    -> strip envelope -> inject verified context -> inner list_files -> sign.
+    //    -> strip envelope -> inject verified context -> forward to the HTTP inner
+    //    plane (the out-of-TCB bridge, relaying over stdio to the real fileserver)
+    //    -> sign. The bridge is spawned here fronting the real fileserver.
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary()?,
+        BridgeInnerMode::OneShot,
+        Some(&demo_root),
+        &[inner_binary, "--demo-root".to_string(), demo_root.clone()],
+    )?;
     let sink = Arc::new(CapturingSink::default());
     let proxy = build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary,
-            demo_root,
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -243,7 +254,7 @@ fn run() -> Result<(), String> {
         demo_policy_evaluator(),
         Box::new(demo_revocation_source()),
     )?;
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
     // 4. The CLIENT verifies the signed response against the STORED request hash.
     let parsed: Value =

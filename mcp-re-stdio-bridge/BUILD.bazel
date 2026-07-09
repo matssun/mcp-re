@@ -1,22 +1,78 @@
-load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_test")
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# ADR-MCPRE-051 (Phase B): the OUT-OF-TCB stdio<->HTTP adapter. Fronts an
+# Issue #4039: the Linux kernel-sandbox crates are TARGET-gated. sandbox_linux.rs
+# is #[cfg(target_os = "linux")], so the bridge links landlock+seccompiler ONLY on
+# Linux and NONE of them on Mac — the select() resolves to [] off-Linux, keeping
+# the Mac dev build's closure unchanged.
+_BRIDGE_LINUX_SANDBOX_DEPS = select({
+    "@platforms//os:linux": [
+        "@crates_mcp_re//:landlock",
+        "@crates_mcp_re//:seccompiler",
+    ],
+    "//conditions:default": [],
+})
+
+# The bridge's own dependency closure. ADR-MCPRE-051 Phase B / task C3 MOVED the
+# subprocess/sandbox/rlimit machinery INTO this crate and CUT the reverse
+# dependency on //mcp-re-proxy, so the signing PEP links none of it. libc (setrlimit
+# /kill/fcntl on the launch path) and serde_json (frame the inner's JSON-RPC stdout
+# + emit structured diagnostics) are now direct deps; the Landlock/seccomp crates
+# are the Linux-gated select above.
+# The non-gated crates as a PLAIN list. `nt_rust_test` does `list(deps)`, which
+# rejects a `select()`, so test targets take this plain list; the Linux-gated
+# landlock/seccompiler reach a crate-based test through its `crate =` and reach a
+# srcs-based test transitively through the `:mcp_re_stdio_bridge` library dep.
+_BRIDGE_TEST_DEPS = [
+    "@crates_mcp_re//:bytes",
+    "@crates_mcp_re//:http-body-util",
+    "@crates_mcp_re//:hyper",
+    "@crates_mcp_re//:hyper-util",
+    "@crates_mcp_re//:libc",
+    "@crates_mcp_re//:serde_json",
+    "@crates_mcp_re//:tokio",
+]
+
+_BRIDGE_DEPS = _BRIDGE_TEST_DEPS + _BRIDGE_LINUX_SANDBOX_DEPS
+
+# The library owns everything EXCEPT the thin HTTP front end in main.rs. Splitting a
+# library out of the (previously binary-only) crate lets the crate's own integration
+# tests exercise the security-critical subprocess/sandbox machinery directly — the
+# subprocess-hardening coverage relocated here from mcp-re-proxy when the surface
+# left the TCB (persistent_inner_hardening_test, sandbox_linux_e2e_test below).
+_BRIDGE_LIB_SRCS = glob(["src/**/*.rs"], exclude = ["src/main.rs"])
+
+# ADR-MCPRE-051 (Phase B): the OUT-OF-TCB stdio<->HTTP adapter library. Fronts an
 # unmodified, sandboxed local stdio MCP server behind a plain HTTP endpoint so the
 # mcp-re-proxy PEP can protect it via its stateless HTTP inner plane WITHOUT the
-# subprocess/sandbox/env/rlimit surface entering the signing PEP's TCB. Phase A
-# reuses the hardened subprocess inner (SubprocessInner / PersistentSubprocessInner
-# + InnerLaunchConfig + the Landlock/seccomp SandboxProfile) from the sync
-# mcp-re-proxy library; Phase B moves those modules into this crate and cuts the
-# dependency so the PEP links none of them.
-nt_rust_binary(
+# subprocess/sandbox/env/rlimit surface entering the signing PEP's TCB. This crate
+# OWNS the hardened subprocess inner (SubprocessInner / PersistentSubprocessInner +
+# InnerLaunchConfig + the Landlock/seccomp SandboxProfile + RLimits), moved here
+# from mcp-re-proxy so the PEP links none of it.
+# Target/crate names match gazelle's generation to keep the drift gate green: the
+# library is `mcp_re_stdio_bridge` (crate_name `mcp_re_stdio_bridge`, so
+# `use mcp_re_stdio_bridge::…` resolves in the binary + integration tests); the
+# binary target is `mcp-re-stdio-bridge` (the Cargo `[[bin]]` name) with a distinct
+# crate_name so the bin crate does not collide with the library it links.
+nt_rust_library(
     name = "mcp_re_stdio_bridge",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = _BRIDGE_LIB_SRCS,
     crate_name = "mcp_re_stdio_bridge",
     edition = "2021",
+    deps = _BRIDGE_DEPS,
+)
+
+# The bridge binary: a thin HTTP front end over the library above. main.rs speaks
+# hyper/tokio directly and drives the library's subprocess inner. External data-deps
+# (demo/walkthrough) reference `//mcp-re-stdio-bridge:mcp-re-stdio-bridge`.
+nt_rust_binary(
+    name = "mcp-re-stdio-bridge",
+    srcs = ["src/main.rs"],
+    crate_name = "mcp_re_stdio_bridge_bin",
+    edition = "2021",
     deps = [
-        "//mcp-re-proxy:mcp_re_proxy",
+        ":mcp_re_stdio_bridge",
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
@@ -25,20 +81,67 @@ nt_rust_binary(
     ],
 )
 
-# Inline unit tests: bridge arg parsing (listen + inner command after `--`
-# separator, oneshot/persistent mode, working dir) and fail-closed rejections.
+# Library inline unit tests: the relocated subprocess inner / launch / sandbox /
+# rlimit / log-sink behavior proofs.
 nt_rust_test(
-    name = "mcp_re_stdio_bridge_test",
+    name = "mcp_re_stdio_bridge_lib_test",
     crate = ":mcp_re_stdio_bridge",
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     edition = "2021",
+    deps = _BRIDGE_TEST_DEPS,
+)
+
+# Binary inline unit tests: bridge arg parsing (listen + inner command after `--`
+# separator, oneshot/persistent mode, working dir).
+nt_rust_test(
+    name = "mcp_re_stdio_bridge_bin_test",
+    crate = ":mcp-re-stdio-bridge",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    # Full literal (not `[…] + _BRIDGE_TEST_DEPS`): gazelle cannot read a variable
+    # spliced into a literal deps list, so the mixed form reads as missing edges to
+    # the bazel-gazelle drift gate. Spelling the crates out keeps the gate green.
     deps = [
-        "//mcp-re-proxy:mcp_re_proxy",
+        ":mcp_re_stdio_bridge",
         "@crates_mcp_re//:bytes",
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
         "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
+    ],
+)
+
+# Subprocess-hardening effect tests (relocated from mcp-re-proxy with the surface,
+# ADR-MCPRE-051 Phase B): drive PersistentSubprocessInner DIRECTLY through the
+# InnerServer seam — a crashed/malformed/silent/flooding/non-draining inner must
+# FAIL CLOSED, never hang/panic/OOM. Self-contained `/bin/sh` inners, no external
+# binary.
+nt_rust_test(
+    name = "persistent_inner_hardening_test",
+    srcs = ["tests/persistent_inner_hardening_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_stdio_bridge",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# Issue #4039 — Linux-only kernel-sandbox EFFECT tests: spawn a real child under an
+# Enforce SandboxProfile and assert the kernel mediated its fs/network syscalls. The
+# whole file is #[cfg(target_os = "linux")]; off-Linux it compiles to an empty test.
+nt_rust_test(
+    name = "sandbox_linux_e2e_test",
+    srcs = ["tests/sandbox_linux_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_stdio_bridge",
     ],
 )

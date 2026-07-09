@@ -1,43 +1,47 @@
-//! Demo proxy wiring (MCPS-047, MCP-RE-EPIC-P6 Child Issue 3).
+//! Demo proxy wiring (MCPS-047, MCP-RE-EPIC-P6 Child Issue 3; ADR-MCPRE-051).
 //!
 //! This is the demo-specific glue that points the EXISTING `mcp-re-proxy`
-//! [`Proxy`](mcp_re_proxy::Proxy) at the EXISTING `mcp-re-demo-fileserver` binary as
-//! its inner stdio subprocess. It reinvents nothing: the launch hardening
-//! (controlled working directory, minimized/allowlisted environment, bounded
-//! separately-captured stderr, `setrlimit` resource ceilings) lives in
-//! `mcp-re-proxy`'s [`InnerLaunchConfig`](mcp_re_proxy::InnerLaunchConfig) /
-//! [`SubprocessInner`](mcp_re_proxy::cli::SubprocessInner); the verify →
-//! strip-caller-`.verified` → inject-sidecar-verified-context → sign path lives
-//! in `mcp-re-proxy`'s `Proxy`. This module only assembles them for the demo.
+//! [`Proxy`](mcp_re_proxy::Proxy) at an inner MCP server. Under ADR-MCPRE-051 the
+//! signing PEP no longer launches a stdio subprocess: its sole inner plane is a
+//! stateless HTTP client ([`HttpInnerPool`](mcp_re_proxy::http_inner::HttpInnerPool)).
+//! The unmodified `mcp-re-demo-fileserver` stdio server is fronted by the
+//! out-of-TCB `mcp-re-stdio-bridge` (see [`crate::bridge::BridgeProcess`]) and
+//! reached over HTTP. All the subprocess launch hardening (controlled working
+//! directory, minimized environment, bounded stderr, sandbox, `setrlimit`) now
+//! lives in the bridge crate, OUTSIDE the cryptographic TCB.
 //!
-//! The inner binary path and the demo-root directory are RESOLVED BY THE CALLER
-//! (the integration test resolves them from Bazel runfiles); nothing here
-//! hardcodes a path. The proxy's verification/signing identities are likewise
-//! injected so the demo wiring is deterministic and testable.
+//! This module reinvents nothing: the verify → strip-caller-`.verified` →
+//! inject-sidecar-verified-context → sign path lives in `mcp-re-proxy`'s `Proxy`;
+//! the HTTP inner pool lives in `mcp-re-proxy`. It only assembles them for the
+//! demo. The inner HTTP URL is RESOLVED BY THE CALLER (the integration test /
+//! runnable bin spawns the bridge fronting the real fileserver and hands its
+//! `http://<addr>/` URL here); nothing here hardcodes a path.
+
+use std::time::Duration;
 
 use mcp_re_core::SigningKey;
 use mcp_re_core::TrustResolver;
-use mcp_re_proxy::cli::SubprocessInner;
-use mcp_re_proxy::InnerLaunchConfig;
+use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::InnerLogSink;
 use mcp_re_proxy::Proxy;
-use mcp_re_proxy::RLimits;
 use std::sync::Arc;
+
+/// The per-request timeout the demo's HTTP inner plane uses. Generous relative to
+/// a local bridge round-trip (which spawns / relays to the stdio fileserver), so a
+/// slow machine under heavy `bazel test` load never spuriously fails closed.
+const DEMO_INNER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The inputs that locate and identify a demo proxy instance.
 ///
-/// `inner_binary` and `demo_root` are absolute paths the caller resolves (the
-/// test resolves them from Bazel runfiles — see the crate's integration test).
-/// The remaining fields are the proxy's verification + response-signing
-/// identities, injected so the wiring carries no ambient configuration.
+/// `inner_http_url` is the base URL of the [`crate::bridge::BridgeProcess`] the
+/// caller stood up fronting the real inner stdio server (e.g.
+/// `http://127.0.0.1:54321/`). The remaining fields are the proxy's verification +
+/// response-signing identities, injected so the wiring carries no ambient config.
 pub struct DemoProxyConfig {
-    /// Absolute path to the `mcp-re-demo-fileserver` binary the proxy launches as
-    /// its inner stdio subprocess.
-    pub inner_binary: String,
-    /// Absolute path to the committed `demo_root/` fixture. Used BOTH as the
-    /// inner server's `--demo-root` argument AND as its controlled working
-    /// directory, so the inner server never silently inherits the proxy's cwd.
-    pub demo_root: String,
+    /// Base HTTP URL of the out-of-TCB stdio↔HTTP bridge fronting the real inner
+    /// MCP server. The proxy's async HTTP inner plane POSTs already-verified,
+    /// stripped, verified-context-injected JSON-RPC requests here.
+    pub inner_http_url: String,
     /// The proxy's response-signing key.
     pub server_signing_key: SigningKey,
     /// The proxy's signer identity (the `server_signer` / response `verifier`).
@@ -50,70 +54,28 @@ pub struct DemoProxyConfig {
     pub max_clock_skew_secs: i64,
 }
 
-/// Build the hardened inner-launch policy the demo uses (MCPS-035/036/037).
-///
-/// * environment is MINIMIZED — cleared then nothing allowlisted (the demo
-///   fileserver needs no env), so env-loaded key material is never visible to
-///   the inner server;
-/// * the inner server runs in an EXPLICIT working directory (`demo_root`),
-///   never the proxy's cwd;
-/// * stderr is captured separately into a bounded log (default caps) and never
-///   merged into the stdout protocol stream;
-/// * `setrlimit` resource ceilings are applied where supported (the secure
-///   default already disables core dumps; the demo additionally caps open file
-///   descriptors and single-file write size as a coarse abuse bound).
-pub fn demo_inner_launch(demo_root: &str) -> InnerLaunchConfig {
-    InnerLaunchConfig {
-        // MCPS-035: clear the environment, allowlist nothing — the fileserver
-        // reads no env. inherit_env stays false (the secure default).
-        inherit_env: false,
-        explicit_env: Vec::new(),
-        allow_env_names: Vec::new(),
-        // MCPS-036: explicit controlled working directory.
-        working_dir: Some(demo_root.to_string()),
-        // MCPS-037: resource ceilings where supported. Core dumps are already
-        // disabled by RLimits::new(); add a coarse fd + single-file-size bound.
-        rlimits: RLimits {
-            nofile: Some(256),
-            fsize_bytes: Some(8 * 1024 * 1024),
-            ..RLimits::new()
-        },
-        // Bounded-stderr caps default (MCPS-036) from InnerLaunchConfig::new().
-        ..InnerLaunchConfig::new()
-    }
-}
-
-/// The `[cmd, arg, ...]` vector launching the demo fileserver pointed at
-/// `demo_root` via its required `--demo-root` flag.
-pub fn demo_inner_command(inner_binary: &str, demo_root: &str) -> Vec<String> {
-    vec![
-        inner_binary.to_string(),
-        "--demo-root".to_string(),
-        demo_root.to_string(),
-    ]
-}
-
-/// Assemble a demo [`Proxy`] that launches the real `mcp-re-demo-fileserver` as
-/// its inner stdio subprocess under the hardened launch policy above, resolving
-/// inbound signers through `resolver`.
+/// Assemble a demo [`Proxy`] whose async inner plane is an
+/// [`HttpInnerPool`](mcp_re_proxy::http_inner::HttpInnerPool) pointed at the
+/// caller-provided bridge URL (which fronts the real `mcp-re-demo-fileserver`),
+/// resolving inbound signers through `resolver`.
 ///
 /// The returned proxy drives the production serving path: every inbound request
 /// is verified, any caller-supplied `.verified` block is stripped, a fresh
 /// sidecar-owned verified context is injected, the request is forwarded to the
-/// inner subprocess, and the inner result is signed. The `log_sink` receives the
-/// inner lifecycle events (spawn/exit/stderr) AND the two proxy-level events.
+/// HTTP inner (the bridge, which relays it over stdio to the real fileserver),
+/// and the inner result is signed. The `log_sink` receives the two proxy-level
+/// events (`inner_request_forwarded`, `inner_response_signed`); the subprocess
+/// lifecycle events (`inner_spawned`/`inner_exited`) are emitted by the BRIDGE
+/// (out of the PEP's TCB), on its own diagnostic channel.
 ///
-/// Fails closed (`Err`) if the launch policy cannot be honored against the real
-/// process environment / filesystem (e.g. `demo_root` is not a directory) —
-/// surfaced at construction, never silently at serve time.
+/// Fails closed (`Err`) if the inner URL cannot be parsed — surfaced at
+/// construction, never silently at serve time.
 pub fn build_demo_proxy(
     config: DemoProxyConfig,
     resolver: Box<dyn TrustResolver + Send + Sync>,
     log_sink: Arc<dyn InnerLogSink + Send + Sync>,
 ) -> Result<Proxy, String> {
-    let launch = demo_inner_launch(&config.demo_root);
-    let command = demo_inner_command(&config.inner_binary, &config.demo_root);
-    let inner = SubprocessInner::with_log_sink(&command, launch, Arc::clone(&log_sink))?;
+    let pool = HttpInnerPool::from_url_strs(vec![config.inner_http_url], DEMO_INNER_TIMEOUT)?;
     let proxy = Proxy::new(
         config.server_signing_key,
         config.server_signer,
@@ -121,8 +83,8 @@ pub fn build_demo_proxy(
         resolver,
         config.audience,
         config.max_clock_skew_secs,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(pool))
     .with_log_sink(log_sink);
     Ok(proxy)
 }

@@ -65,7 +65,10 @@ use std::time::UNIX_EPOCH;
 use mcp_re_core::unix_to_rfc3339_utc;
 use mcp_re_core::McpReError;
 use mcp_re_core::SigningKey;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use mcp_re_demo::DemoGrant;
@@ -149,7 +152,7 @@ fn demo_root() -> String {
 /// `mcp-re-proxy: listening on <addr> (PEP; …)`. Requires the trailing space so a
 /// partially-captured line never yields a truncated address.
 fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
-    let marker = "mcp-re-proxy: listening on ";
+    let marker = "mcp-re-proxy: async fleet serving on ";
     let start = stderr.find(marker)? + marker.len();
     let rest = &stderr[start..];
     let end = rest.find(' ')?;
@@ -158,15 +161,21 @@ fn parse_listening_addr(stderr: &str) -> Option<SocketAddr> {
 
 // ---------------------------------------------------------------------------
 // The spawned proxy, with its stderr captured so "inner not reached" is
-// observable over the wire (no `inner_spawned` line => the inner never ran).
+// observable over the wire. Under ADR-MCPRE-051 the PEP forwards to its HTTP
+// inner plane rather than launching a subprocess; its `StderrLogSink` prints
+// `inner-event inner_request_forwarded …` when it forwards a verified request,
+// and NOTHING for a TLS / binding rejection — so that marker's count is the
+// "inner reached?" signal (the subprocess spawn now lives in the bridge).
 // ---------------------------------------------------------------------------
 
 /// A spawned `mcp_re_proxy_cli` OS process whose stderr is drained into a shared
-/// buffer. Killed (and reaped) on drop; its durable replay dir is removed.
+/// buffer, plus the out-of-TCB bridge fronting the fileserver. Killed (and
+/// reaped) on drop.
 struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
     stderr: Arc<Mutex<String>>,
+    _bridge: BridgeProcess,
     _files: DemoFixtureFiles,
     _replay_dir: PathBuf,
 }
@@ -180,18 +189,19 @@ impl Drop for ProxyProcess {
 }
 
 impl ProxyProcess {
-    /// The number of times the proxy launched the inner subprocess, read from its
-    /// diagnostic stderr (`inner-event inner_spawned …`). Zero proves the inner
-    /// fileserver was never reached.
+    /// The number of verified requests the proxy FORWARDED to its HTTP inner
+    /// plane, read from its diagnostic stderr (`inner-event
+    /// inner_request_forwarded …`). Zero proves the inner fileserver was never
+    /// reached (the request was rejected at TLS / binding / dispatch).
     fn inner_spawn_count(&self) -> usize {
         self.stderr
             .lock()
             .expect("stderr lock")
-            .matches("inner_spawned")
+            .matches("inner_request_forwarded")
             .count()
     }
 
-    /// True iff the inner subprocess was launched at all (any spawn line).
+    /// True iff the inner plane was reached at all (any forwarded request).
     fn inner_was_reached(&self) -> bool {
         self.inner_spawn_count() > 0
     }
@@ -214,6 +224,15 @@ fn spawn_proxy(
     let inner = inner_binary();
     let root = demo_root();
 
+    // Front the real fileserver behind the out-of-TCB stdio↔HTTP bridge.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner, "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+
     // Let the PROXY pick the port (bind :0, read it back from the startup
     // marker) — deletes the free_port() bind-after-free TOCTOU (MCPS-087).
     let bind = "127.0.0.1:0".to_string();
@@ -226,7 +245,6 @@ fn spawn_proxy(
         seq,
     ));
     std::fs::create_dir_all(&replay_dir).expect("mkdir replay dir");
-    let replay_path = replay_dir.join("replay.json");
 
     let mut child = Command::new(&cli)
         .args([
@@ -252,10 +270,10 @@ fn spawn_proxy(
             &files.client_ca_path().to_string_lossy(),
             "--trust",
             &files.trust_path().to_string_lossy(),
+            // Shared in-memory replay tier (the async data plane rejects the
+            // single-file durable cache); adequate for the transport-tier cases.
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -266,12 +284,9 @@ fn spawn_proxy(
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             max_cert_lifetime,
-            "--inner-working-dir",
-            &root,
-            "--inner-command",
-            &inner,
-            "--demo-root",
-            &root,
+            // The inner plane is HTTP: point it at the out-of-TCB bridge.
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -321,6 +336,7 @@ fn spawn_proxy(
         child,
         addr,
         stderr,
+        _bridge: bridge,
         _files: files,
         _replay_dir: replay_dir,
     }

@@ -38,9 +38,12 @@ use mcp_re_core::REQUEST_META_KEY;
 use mcp_re_core::RESPONSE_META_KEY;
 use mcp_re_core::VERIFIED_META_KEY;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoGrantSpec;
 use mcp_re_demo::DemoHostClient;
@@ -48,6 +51,7 @@ use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::FixedClock;
 use mcp_re_host::HostSigner;
 use mcp_re_host::SeededNonceSource;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
 use serde_json::Value;
@@ -172,11 +176,21 @@ impl CapturingSink {
     }
 }
 
-fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
-    build_demo_proxy_with_policy(
+/// Spawn the out-of-TCB bridge fronting the real fileserver and build the
+/// policy-enabled demo proxy pointed at it. The returned `BridgeProcess` MUST be
+/// kept alive for the proxy's lifetime.
+fn build_proxy(sink: Arc<CapturingSink>) -> (mcp_re_proxy::Proxy, BridgeProcess) {
+    let root = demo_root();
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner_binary(), "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+    let proxy = build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary: inner_binary(),
-            demo_root: demo_root(),
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -188,7 +202,8 @@ fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
         demo_policy_evaluator(),
         Box::new(demo_revocation_source()),
     )
-    .expect("policy-enabled demo proxy builds against the resolved binary + demo_root")
+    .expect("policy-enabled demo proxy builds against the bridge URL");
+    (proxy, bridge)
 }
 
 /// `params` for an authorized `list_files` on `path`, carrying the grant block.
@@ -236,7 +251,7 @@ fn denial_reason(response: &[u8]) -> Option<String> {
 #[test]
 fn tampered_request_body_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -249,7 +264,7 @@ fn tampered_request_body_is_rejected_before_dispatch() {
     request["params"]["arguments"]["path"] = json!("tampered");
     let tampered = serde_json::to_vec(&request).expect("serialize");
 
-    let response = proxy.handle(&tampered, now());
+    let response = block_on_handle(&proxy, &tampered, now());
 
     assert_eq!(denial_reason(&response).as_deref(), Some(McpReError::InvalidSignature.wire_code()));
     assert!(!sink.inner_was_reached(), "tampered body must NOT reach inner: {:?}", sink.event_tags());
@@ -260,7 +275,7 @@ fn tampered_request_body_is_rejected_before_dispatch() {
 #[test]
 fn tampered_jsonrpc_id_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -273,7 +288,7 @@ fn tampered_jsonrpc_id_is_rejected_before_dispatch() {
     request["id"] = json!("req-neg-tamper-id-SWAPPED");
     let tampered = serde_json::to_vec(&request).expect("serialize");
 
-    let response = proxy.handle(&tampered, now());
+    let response = block_on_handle(&proxy, &tampered, now());
 
     assert_eq!(denial_reason(&response).as_deref(), Some(McpReError::InvalidSignature.wire_code()));
     assert!(!sink.inner_was_reached(), "tampered id must NOT reach inner: {:?}", sink.event_tags());
@@ -284,7 +299,7 @@ fn tampered_jsonrpc_id_is_rejected_before_dispatch() {
 #[test]
 fn replayed_request_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -294,7 +309,7 @@ fn replayed_request_is_rejected_before_dispatch() {
     let id = Value::String("req-neg-replay".to_string());
     let signed = signed_authorized(&mut cl, &id, ALLOWED_PATH, &grant);
 
-    let first = proxy.handle(&signed, now());
+    let first = block_on_handle(&proxy, &signed, now());
     assert!(denial_reason(&first).is_none(), "first send must succeed: {:?}", denial_reason(&first));
 
     let second_sink = Arc::new(CapturingSink::default());
@@ -303,7 +318,7 @@ fn replayed_request_is_rejected_before_dispatch() {
     // replay verdict on the same proxy and confirm no NEW inner dispatch by
     // checking the reason code (a replayed request is rejected pre-dispatch).
     let _ = second_sink;
-    let second = proxy.handle(&signed, now());
+    let second = block_on_handle(&proxy, &signed, now());
 
     assert_eq!(denial_reason(&second).as_deref(), Some(McpReError::ReplayDetected.wire_code()));
 }
@@ -313,7 +328,7 @@ fn replayed_request_is_rejected_before_dispatch() {
 #[test]
 fn expired_request_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -323,7 +338,7 @@ fn expired_request_is_rejected_before_dispatch() {
     // Verify FAR in the future, past the request's freshness window + skew, so the
     // (otherwise valid) request is stale.
     let way_future = NOW_UNIX + 10 * 3600;
-    let response = proxy.handle(&signed, way_future);
+    let response = block_on_handle(&proxy, &signed, way_future);
 
     assert_eq!(denial_reason(&response).as_deref(), Some(McpReError::ExpiredRequest.wire_code()));
     assert!(!sink.inner_was_reached(), "expired request must NOT reach inner: {:?}", sink.event_tags());
@@ -334,7 +349,7 @@ fn expired_request_is_rejected_before_dispatch() {
 #[test]
 fn wrong_audience_request_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -354,7 +369,7 @@ fn wrong_audience_request_is_rejected_before_dispatch() {
         )
         .expect("client signs for the wrong audience");
 
-    let response = proxy.handle(&signed, now());
+    let response = block_on_handle(&proxy, &signed, now());
 
     assert_eq!(denial_reason(&response).as_deref(), Some(McpReError::InvalidAudience.wire_code()));
     assert!(!sink.inner_was_reached(), "wrong-audience request must NOT reach inner: {:?}", sink.event_tags());
@@ -365,7 +380,7 @@ fn wrong_audience_request_is_rejected_before_dispatch() {
 #[test]
 fn missing_request_envelope_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -381,7 +396,7 @@ fn missing_request_envelope_is_rejected_before_dispatch() {
         .remove(REQUEST_META_KEY);
     let stripped = serde_json::to_vec(&request).expect("serialize");
 
-    let response = proxy.handle(&stripped, now());
+    let response = block_on_handle(&proxy, &stripped, now());
 
     assert_eq!(denial_reason(&response).as_deref(), Some(McpReError::MissingEnvelope.wire_code()));
     assert!(!sink.inner_was_reached(), "envelope-less request must NOT reach inner: {:?}", sink.event_tags());
@@ -392,7 +407,7 @@ fn missing_request_envelope_is_rejected_before_dispatch() {
 #[test]
 fn caller_supplied_verified_metadata_is_stripped_and_replaced() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -414,7 +429,7 @@ fn caller_supplied_verified_metadata_is_stripped_and_replaced() {
         .expect("client signs with a smuggled .verified block");
     let stored_hash = cl.stored_request_hash(&id).expect("stored hash").to_string();
 
-    let response = proxy.handle(&signed, now());
+    let response = block_on_handle(&proxy, &signed, now());
 
     // The smuggled block neither blocked nor altered the call: it reached the
     // inner and returned the real listing.
@@ -435,7 +450,7 @@ fn caller_supplied_verified_metadata_is_stripped_and_replaced() {
 #[test]
 fn signed_but_unauthorized_path_is_rejected_before_dispatch() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -444,7 +459,7 @@ fn signed_but_unauthorized_path_is_rejected_before_dispatch() {
     let id = Value::String("req-neg-unauthorized".to_string());
     let signed = signed_authorized(&mut cl, &id, UNAUTHORIZED_PATH, &grant);
 
-    let response = proxy.handle(&signed, now());
+    let response = block_on_handle(&proxy, &signed, now());
 
     assert_eq!(denial_reason(&response).as_deref(), Some("mcp-re.authorization_scope_denied"));
     assert!(!sink.inner_was_reached(), "unauthorized path must NOT reach inner: {:?}", sink.event_tags());
@@ -455,7 +470,7 @@ fn signed_but_unauthorized_path_is_rejected_before_dispatch() {
 #[test]
 fn host_session_rejects_response_with_wrong_request_hash() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -485,7 +500,7 @@ fn host_session_rejects_response_with_wrong_request_hash() {
     let hash_b = request_hash(&serde_json::from_slice::<Value>(&signed_b).expect("parse B")).expect("hash B");
     assert_ne!(hash_b, stored_a, "B must bind a different request hash than A");
 
-    let response_b = proxy.handle(&signed_b, now());
+    let response_b = block_on_handle(&proxy, &signed_b, now());
     assert!(sink.inner_was_reached(), "request B is valid + authorized and reaches the inner: {:?}", sink.event_tags());
     assert!(denial_reason(&response_b).is_none(), "the proxy signs B's response: {:?}", denial_reason(&response_b));
 
@@ -503,7 +518,7 @@ fn host_session_rejects_response_with_wrong_request_hash() {
 #[test]
 fn host_session_rejects_response_with_invalid_signature() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let mut cl = client();
 
@@ -514,7 +529,7 @@ fn host_session_rejects_response_with_invalid_signature() {
     let id = Value::String("req-neg-respsig".to_string());
     let signed = signed_authorized(&mut cl, &id, ALLOWED_PATH, &grant);
 
-    let response = proxy.handle(&signed, now());
+    let response = block_on_handle(&proxy, &signed, now());
     assert!(sink.inner_was_reached(), "authorized request reaches the inner: {:?}", sink.event_tags());
     assert!(denial_reason(&response).is_none(), "the proxy signs the response: {:?}", denial_reason(&response));
 

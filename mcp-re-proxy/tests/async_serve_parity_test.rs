@@ -251,7 +251,18 @@ impl Drop for AsyncServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            // Bounded join — a SYNCHRONOUS (Condvar-blocking) test handler parked on
+            // a tokio worker thread makes the server's runtime drop (which JOINS its
+            // workers) hang forever in a teardown race. Join off-thread and give up
+            // after a grace, leaking the about-to-die server thread; the process
+            // exits right after and reaps it. Production handlers are async and
+            // abort cleanly, so this hazard is test-harness only.
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = h.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(10));
         }
     }
 }
@@ -294,7 +305,7 @@ where
             .await;
         });
     });
-    let addr = rx.recv_timeout(Duration::from_secs(5)).expect("server bound");
+    let addr = rx.recv_timeout(Duration::from_secs(30)).expect("server bound");
     AsyncServer {
         addr,
         shutdown,

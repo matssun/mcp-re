@@ -46,13 +46,18 @@ _PROXY_LIB_SRCS = [
     # non-exporting device/KMS). Generic mechanism, always compiled.
     "src/delegated_tls.rs",
     "src/durable_replay.rs",
-    "src/inner_launch.rs",
     "src/key_source.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource.rs",
     "src/lib.rs",
-    "src/persistent_inner.rs",
+    # Inner-server lifecycle logging seam (transport-agnostic; used by the async
+    # dispatch path). Split out of inner_launch so it stays in the PEP when the
+    # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
+    "src/log_sink.rs",
+    # Test / embedding helpers that drive the async serving path synchronously
+    # (a private current-thread runtime per call). Not a serving path.
+    "src/test_support.rs",
     "src/proxy.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
@@ -71,6 +76,10 @@ _PROXY_LIB_SRCS = [
     # ReplayCache (behind #[cfg(feature = "cpstore_etcd")]; cfg'd out of the default
     # build).
     "src/etcd_store.rs",
+    # ADR-MCPRE-051 §4: the ASYNC etcd authoritative replay backend (hyper over the
+    # v3 JSON gateway; same `cpstore_etcd` gate). The linearizable durable tier the
+    # async serving fleet awaits.
+    "src/async_etcd_store.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
@@ -82,43 +91,33 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",
-    "src/rlimits.rs",
-    # Issue #3865 / #4039: OS sandbox profile + fail-closed platform gate, plus the
-    # Linux Landlock/seccomp ENFORCEMENT backend (sandbox_linux.rs is
-    # #[cfg(target_os = "linux")] — excluded from the Mac build entirely).
-    "src/sandbox.rs",
-    "src/sandbox_linux.rs",
     # Issue #3837: shared, server-side-atomic replay cache (backend-agnostic core +
     # in-memory reference store). Always compiled; default-build, Bazel-tested.
     "src/shared_replay.rs",
     "src/tls.rs",
-    # ADR-MCPRE-051 Phase 2 (§1): opt-in async serving path. #[cfg(feature =
-    # "async_serve")] — compiled ONLY by the `:mcp_re_proxy_async` flavor + its
-    # tests; the default/production flavors see an absent module and link no
-    # tokio/hyper (ADR-MCPS-018 lean-sync firewall).
+    # ADR-MCPRE-051 (MCPRE-118): the async serving path is UNCONDITIONAL — it is the
+    # PEP's sole serving path, so every flavor compiles it and links the async stack
+    # (the `async_serve` feature is a vestigial no-op; no code gates on it). This
+    # supersedes the ADR-MCPS-018 §1 lean-sync firewall for the proxy serving path;
+    # `mcp-re-core` stays pure.
     "src/async_serve.rs",
-    # MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): the per-core serving fleet (per-core
-    # tokio runtimes + SO_REUSEPORT listeners + Linux CPU pinning). Same
-    # #[cfg(feature = "async_serve")] gate as async_serve.rs — invisible to the
-    # default closure.
+    # MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet (per-core tokio
+    # runtimes + SO_REUSEPORT listeners + Linux CPU pinning) — the production data
+    # plane.
     "src/async_fleet.rs",
-    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async authoritative replay tier seam
-    # (async store contract + L1-never-Fresh wrapper). Same #[cfg(feature =
-    # "async_serve")] gate — invisible to the default closure.
+    # MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier (async store
+    # contract + L1-never-Fresh wrapper) — the only replay path.
     "src/async_replay.rs",
-    # ADR-MCPRE-051 §3 (Phase 3): the async inner-server seam. Same #[cfg(feature =
-    # "async_serve")] gate — invisible to the default closure; the async serving path
-    # awaits it instead of the sync stdio inner.
+    # ADR-MCPRE-051 §3: the async inner-server seam — the only inner path; the
+    # serving path awaits it (a stdio server is fronted by mcp-re-stdio-bridge over HTTP).
     "src/async_inner.rs",
-    # ADR-MCPRE-051 §3 (Phase 3): the production async inner plane — pooled hyper
-    # client to stateless Streamable-HTTP inner backends. Same async_serve gate.
+    # ADR-MCPRE-051 §3: the production async inner plane — pooled hyper client to
+    # stateless Streamable-HTTP inner backends.
     "src/http_inner.rs",
-    # MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): the async Redis authoritative replay
-    # backend (SET NX PX over the tokio async client). #[cfg(all(async_serve,
-    # redis_replay))] — cfg'd out of every current flavor (none sets both), compiled
-    # + tested by the cargo async+redis lane; it links under Bazel when the async
-    # production flavor (async_serve + redis_replay + tokio + redis) is added at the
-    # main.rs cutover.
+    # MCPRE-117 (ADR-MCPRE-051 §4): the async Redis authoritative replay backend
+    # (SET NX PX over the tokio async client). #[cfg(feature = "redis_replay")] —
+    # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
+    # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
@@ -126,6 +125,19 @@ _PROXY_LIB_SRCS = [
     # MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source (Redis reader is
     # redis_replay-gated inside the module).
     "src/trust_epoch.rs",
+]
+
+# ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL — the proxy
+# serves only on the per-core async fleet, so every library flavor AND the CLI/ext
+# binaries link the async stack (supersedes the ADR-MCPS-018 §1 lean-sync firewall
+# for the proxy serving path). Single source of truth for the async crate set.
+_PROXY_ASYNC_CRATES = [
+    "@crates_mcp_re//:tokio",
+    "@crates_mcp_re//:tokio-rustls",
+    "@crates_mcp_re//:hyper",
+    "@crates_mcp_re//:hyper-util",
+    "@crates_mcp_re//:http-body-util",
+    "@crates_mcp_re//:bytes",
 ]
 
 # Single source of truth for the mcp_re_proxy library deps. All three library
@@ -147,19 +159,7 @@ _PROXY_LIB_DEPS = [
     "@crates_mcp_re//:x509-parser",
     # MCPS-076 (audit gap G-3): scrub raw-seed temporaries in key_source.
     "@crates_mcp_re//:zeroize",
-]
-
-# Issue #4039: the Linux kernel-sandbox crates are TARGET-gated. sandbox_linux.rs
-# (in _PROXY_LIB_SRCS) is #[cfg(target_os = "linux")], so EVERY library instance
-# needs landlock+seccompiler when built for Linux and NONE of them on Mac — the
-# select() resolves to [] off-Linux, keeping the Mac build's closure unchanged.
-_PROXY_LINUX_SANDBOX_DEPS = select({
-    "@platforms//os:linux": [
-        "@crates_mcp_re//:landlock",
-        "@crates_mcp_re//:seccompiler",
-    ],
-    "//conditions:default": [],
-})
+] + _PROXY_ASYNC_CRATES
 
 # Issue #4028/#4030/#4034: deps for the all-external-backends library flavor.
 # _PROXY_LIB_DEPS + the optional backend crates (enabled together by the three
@@ -192,7 +192,7 @@ _PROXY_EXT_CRATES = [
     "@crates_mcp_re//:asn1-rs",
 ]
 
-_PROXY_EXT_DEPS = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + _PROXY_LINUX_SANDBOX_DEPS
+_PROXY_EXT_DEPS = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES
 
 # The three Mac-buildable external-backend features, enabled together by the
 # `:mcp_re_proxy_ext` flavor and its tests. (Sandbox enforcement is target-gated,
@@ -231,7 +231,10 @@ nt_rust_binary(
         # MCPRE-116 (ADR-MCPRE-051 §6): main.rs names rustls_pki_types cert/key types
         # in the CRL hot-reload task signature.
         "@crates_mcp_re//:rustls-pki-types",
-    ],
+        # ADR-MCPRE-051 (MCPRE-118): main.rs now drives the per-core async fleet and
+        # builds the redis-replay control runtime directly (tokio::runtime), and
+        # constructs the HttpInnerPool — so the binary links the async stack.
+    ] + _PROXY_ASYNC_CRATES,
 )
 
 # Phase 6.1: a plain (MCP-RE-unaware) inner MCP echo server used as the inner
@@ -254,7 +257,7 @@ nt_rust_library(
     srcs = _PROXY_LIB_SRCS,
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+    deps = _PROXY_LIB_DEPS,
 )
 
 # MCPS-079 — a SEPARATE library instance of mcp-re-proxy built WITH the fault
@@ -267,7 +270,7 @@ nt_rust_library(
     crate_features = ["fault_accept_any_client"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+    deps = _PROXY_LIB_DEPS,
 )
 
 # MCPS-079 — fault injection ("test of the tests"), the symmetric mirror of
@@ -312,93 +315,6 @@ nt_rust_test(
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:zeroize",
-    ],
-)
-
-# MCPS-063: the proxy fronts a LONG-LIVED inner MCP server. Spawns the REAL
-# mcp-re-demo-server binary as the persistent inner, does the initialize handshake
-# once, and forwards N verified host-signed requests over the SAME process —
-# asserting one inner_spawned and N inner_request_forwarded, plus fail-closed on
-# inner crash / malformed line / handshake failure. The demo binary is delivered
-# via runfiles (data dep) and resolved via $(rlocationpath ...) — no cargo.
-nt_rust_test(
-    name = "persistent_inner_test",
-    srcs = ["tests/persistent_inner_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        "//mcp-re-demo-server:mcp_re_demo_server_bin",
-    ],
-    edition = "2021",
-    env = {
-        "DEMO_SERVER_BIN": "$(rlocationpath //mcp-re-demo-server:mcp_re_demo_server_bin)",
-    },
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPS-064: per-request strip/inject over a LONG-LIVED inner session. Fronts the
-# REAL mcp-re-demo-server binary as the persistent inner behind a real Proxy, drives
-# N (>= 3) distinct host-signed requests over the SINGLE session, and asserts the
-# verified-context strip+inject fires FRESH on every request — a forged caller
-# .verified is stripped and a sidecar-owned context (verifier = this proxy, signer
-# = the verified inbound signer) is injected each time — with one inner_spawned, N
-# inner_request_forwarded, and a clean teardown. The demo binary is delivered via
-# runfiles (data dep) and resolved via $(rlocationpath ...) — no cargo.
-nt_rust_test(
-    name = "persistent_session_test",
-    srcs = ["tests/persistent_session_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        "//mcp-re-demo-server:mcp_re_demo_server_bin",
-    ],
-    edition = "2021",
-    env = {
-        "DEMO_SERVER_BIN": "$(rlocationpath //mcp-re-demo-server:mcp_re_demo_server_bin)",
-    },
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPS-065: Phase-5 scopes (public/protected/admin) over the LONG-LIVED
-# mcp-re-demo-server. A real Proxy with policy enforcement fronts the single
-# PersistentSubprocessInner: the public `echo` baseline grant succeeds, the
-# protected `list_items` succeeds with its matching grant and is denied without
-# one, and the admin `reset_items` is denied (no grant covers it). Each denial is
-# proven by zero added `inner_request_forwarded` AND the persistent session
-# staying alive (a later authorized call on the SAME session still succeeds). The
-# demo binary is delivered via runfiles (data dep) and resolved via
-# $(rlocationpath ...) — no cargo.
-nt_rust_test(
-    name = "persistent_scope_test",
-    srcs = ["tests/persistent_scope_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        "//mcp-re-demo-server:mcp_re_demo_server_bin",
-    ],
-    edition = "2021",
-    env = {
-        "DEMO_SERVER_BIN": "$(rlocationpath //mcp-re-demo-server:mcp_re_demo_server_bin)",
-    },
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "//mcp-re-policy:mcp_re_policy",
-        "@crates_mcp_re//:serde_json",
     ],
 )
 
@@ -475,27 +391,18 @@ nt_rust_test(
 # MCPS-076 (audit gap G-3): a SEPARATE library instance of mcp-re-proxy built WITH
 # the dev-only `dev_env_key_source` feature, so `EnvKeySource` (and the dev arm of
 # build_key_source) is compiled into the dev test below. The default `:mcp_re_proxy`
-# ADR-MCPRE-051 Phase 2 (§1): the async serving path (tokio + tokio-rustls + hyper
-# keep-alive/H2). The tokio/hyper stack (declared non-optional in Cargo.toml for
-# crate_universe visibility) is linked ONLY by this flavor + its test — the default
-# `:mcp_re_proxy` closure stays the blocking std::net path (ADR-MCPS-018 lean-sync
-# firewall). Built on every `bazel test //...` so the opt-in path can never rot.
-_PROXY_ASYNC_CRATES = [
-    "@crates_mcp_re//:tokio",
-    "@crates_mcp_re//:tokio-rustls",
-    "@crates_mcp_re//:hyper",
-    "@crates_mcp_re//:hyper-util",
-    "@crates_mcp_re//:http-body-util",
-    "@crates_mcp_re//:bytes",
-]
-
+# ADR-MCPRE-051 (MCPRE-118): the async serving path is now UNCONDITIONAL, so the
+# async crates live in `_PROXY_LIB_DEPS` and this flavor is a thin alias of the base
+# (the vestigial `async_serve` feature is a no-op — no code gates on it anymore).
+# Retained so the async test targets' `:mcp_re_proxy_async  # keep` dep edges stay
+# stable (MCPS-69) without a churny repoint.
 nt_rust_library(
     name = "mcp_re_proxy_async",
     srcs = _PROXY_LIB_SRCS,
     crate_features = ["async_serve"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS + _PROXY_ASYNC_CRATES,
+    deps = _PROXY_LIB_DEPS,
 )
 
 # MCPRE-112 (ADR-MCPRE-051 §1): async serving-path PARITY suite — reproduces the
@@ -635,7 +542,7 @@ nt_rust_library(
     crate_features = ["dev_env_key_source"],
     crate_name = "mcp_re_proxy",
     edition = "2021",
-    deps = _PROXY_LIB_DEPS + _PROXY_LINUX_SANDBOX_DEPS,
+    deps = _PROXY_LIB_DEPS,
 )
 
 # MCPS-076 (audit gap G-3): the dev-only EnvKeySource + secret-hygiene proofs. Built
@@ -778,12 +685,10 @@ nt_rust_test(
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     data = [
-        ":echo_inner",
         ":mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
-        "MCP_RE_ECHO_INNER": "$(rlocationpath :echo_inner)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
     },
     deps = [
@@ -791,10 +696,18 @@ nt_rust_test(
         ":mcp_re_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host",
+        # ADR-MCPRE-051 §3: the inner MCP server is reached over HTTP; the test
+        # stands up an in-process hyper echo backend (was the stdio echo_inner
+        # subprocess) that the async-fleet proxy forwards verified requests to.
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
     ],
 )
 
@@ -902,12 +815,10 @@ nt_rust_test(
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     data = [
-        ":echo_inner",
         ":mcp_re_proxy_cli",
     ],
     edition = "2021",
     env = {
-        "MCP_RE_ECHO_INNER": "$(rlocationpath :echo_inner)",
         "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
     },
     env_inherit = [
@@ -923,10 +834,18 @@ nt_rust_test(
         ":mcp_re_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host",
+        # ADR-MCPRE-051 §3: the inner MCP server is reached over HTTP; the harness
+        # stands up an in-process hyper echo backend (was the stdio echo_inner
+        # subprocess) that the async-fleet proxy forwards verified requests to.
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
     ],
 )
 
@@ -1116,22 +1035,6 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:rcgen",
-    ],
-)
-
-# #4039: Landlock+seccomp ENFORCEMENT effect tests. The file is
-# #![cfg(target_os = "linux")], so on Mac it compiles to an empty (passing) test
-# crate and the real fs/network-denial assertions run only on the Linux runner.
-nt_rust_test(
-    name = "sandbox_linux_e2e_test",
-    srcs = ["tests/sandbox_linux_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
     ],
 )
 

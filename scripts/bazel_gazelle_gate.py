@@ -70,7 +70,15 @@ ALLOW_NAMING_COLLISION = {
     "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
     "mcp-re-stdio-bridge",           # == :mcp_re_stdio_bridge (bin, hand-named)
-    "mcp-re-stdio-bridge_test",      # == :mcp_re_stdio_bridge_test (crate unit test)
+    # The bridge is a lib+bin crate (MCPRE-118 C3): the library owns the relocated
+    # subprocess/sandbox surface, the bin is the thin HTTP front end. gazelle names
+    # a single crate-unit-test after the crate_name; the repo hand-splits it into
+    # :mcp_re_stdio_bridge_lib_test + :mcp_re_stdio_bridge_bin_test (so the lib's
+    # security-critical machinery is exercised on its own). Adopting gazelle's name
+    # would duplicate, not add coverage.
+    "mcp_re_stdio_bridge_test",      # == :mcp_re_stdio_bridge_lib_test (lib crate_name)
+    "mcp-re-stdio-bridge_test",      # == :mcp_re_stdio_bridge_bin_test (bin [[bin]] name)
+    "mcp_re_stdio_bridge_lib",       # == :mcp_re_stdio_bridge_lib (hand-named library)
     "echo-inner",                  # == hand-named inner echo bin
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }

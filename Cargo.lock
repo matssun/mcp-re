@@ -1025,7 +1025,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "landlock",
  "libc",
  "mcp-re-client-core",
  "mcp-re-core",
@@ -1037,7 +1036,6 @@ dependencies = [
  "redis",
  "rustls",
  "rustls-pki-types",
- "seccompiler",
  "serde_json",
  "sha2",
  "spki",
@@ -1059,7 +1057,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "mcp-re-proxy",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "serde_json",
  "tokio",
 ]
 

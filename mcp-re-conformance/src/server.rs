@@ -28,7 +28,10 @@ impl McpReServer for EchoServer {
 
 impl McpReServer for Proxy {
     fn handle(&self, request: &[u8], now_unix: i64) -> Vec<u8> {
-        Proxy::handle(self, request, now_unix)
+        // The proxy serves only via the async path (ADR-MCPRE-051); this
+        // conformance harness drives one request to completion on a private
+        // runtime via the test-support helper (not a production serving path).
+        mcp_re_proxy::test_support::block_on_handle(self, request, now_unix)
     }
 }
 

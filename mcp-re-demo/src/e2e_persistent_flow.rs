@@ -527,8 +527,8 @@ pub fn independently_verify_response(
 #[derive(Debug, Clone)]
 pub struct PersistentE2eAssertions {
     /// The proxy emitted its post-bind startup marker on its lifecycle stderr
-    /// (`mcp-re-proxy: listening on …`) — an independent signal that the proxy
-    /// process started and bound, NOT a restatement of the app-layer outcome.
+    /// (`mcp-re-proxy: async fleet serving on …`) — an independent signal that the
+    /// proxy process started and bound, NOT a restatement of the app-layer outcome.
     pub proxy_process_started: bool,
     /// At least one round trip returned over the verifying mTLS client
     /// (`WebPkiServerVerifier`). Because that verifier rejects an untrusted,
@@ -584,10 +584,12 @@ impl PersistentE2eAssertions {
     }
 }
 
-/// Count `inner_spawned` lifecycle lines in the proxy's captured stderr. In
-/// `--inner-mode persistent` the proxy spawns the inner ONCE, so a healthy run
-/// yields exactly 1. This reads the proxy's OWN lifecycle channel — independent
-/// of the flow's printed claims.
+/// Count `inner_spawned` lifecycle lines in the captured stderr. Under
+/// ADR-MCPRE-051 the out-of-TCB `mcp-re-stdio-bridge` (in `--inner-mode
+/// persistent`) spawns the inner ONCE and prints this marker via its own
+/// `StderrLogSink`, so a healthy run yields exactly 1. The harness feeds the
+/// BRIDGE's stderr here (combined with the proxy's), independent of the flow's
+/// printed claims.
 pub fn count_inner_spawns(proxy_stderr: &str) -> usize {
     proxy_stderr.matches("inner_spawned").count()
 }
@@ -639,7 +641,7 @@ pub fn assemble_assertions(
 
     PersistentE2eAssertions {
         // Independent of the bin's printed OK: the proxy's own startup marker.
-        proxy_process_started: proxy_stderr.contains("mcp-re-proxy: listening on"),
+        proxy_process_started: proxy_stderr.contains("mcp-re-proxy: async fleet serving on"),
         // A returned round trip over the verifying client (authorized OR the
         // denial) witnesses a verified server cert at the handshake.
         mtls_verified: authorized_calls > 0 || !outcome.denied_reason.is_empty(),

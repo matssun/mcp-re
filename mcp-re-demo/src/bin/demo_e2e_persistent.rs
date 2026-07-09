@@ -36,7 +36,6 @@
 
 use std::io::Read;
 use std::net::SocketAddr;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
@@ -45,12 +44,16 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use mcp_re_demo::assemble_assertions;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::run_persistent_e2e;
 use mcp_re_demo::server_response_public_key;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoFixtureFiles;
 use mcp_re_demo::DemoFixtures;
 use mcp_re_demo::PersistentE2eEvidence;
@@ -167,6 +170,7 @@ struct ProxyProcess {
     child: std::process::Child,
     addr: SocketAddr,
     stderr: Arc<Mutex<String>>,
+    bridge: BridgeProcess,
     received_log_path: PathBuf,
     _files: DemoFixtureFiles,
     _replay_dir: PathBuf,
@@ -181,9 +185,14 @@ impl Drop for ProxyProcess {
 }
 
 impl ProxyProcess {
-    /// The proxy's captured diagnostic stderr (the `inner_spawned` lifecycle log).
+    /// The combined diagnostic stderr: the proxy's post-bind startup marker plus
+    /// the BRIDGE's `inner_spawned` lifecycle marker (the PEP no longer launches
+    /// the subprocess — the persistent bridge does).
     fn stderr_snapshot(&self) -> String {
-        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
+        let mut combined = self.stderr.lock().map(|s| s.clone()).unwrap_or_default();
+        combined.push('\n');
+        combined.push_str(&self.bridge.stderr_snapshot());
+        combined
     }
 
     /// The inner server's received-log content (#3965), empty if unwritten.
@@ -192,13 +201,19 @@ impl ProxyProcess {
     }
 }
 
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("bind ephemeral: {e}"))?;
-    Ok(listener.local_addr().map_err(|e| format!("addr: {e}"))?.port())
+/// Parse the CLI's `... async fleet serving on <addr> (...)` stderr line into the
+/// bound [`SocketAddr`].
+fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
+    let marker = "async fleet serving on ";
+    let start = stderr.find(marker)? + marker.len();
+    let rest = &stderr[start..];
+    let end = rest.find(char::is_whitespace)?;
+    rest[..end].parse::<SocketAddr>().ok()
 }
 
 /// Spawn the real `mcp_re_proxy_cli --inner-mode persistent` wrapping the demo
-/// server, then poll the port until it accepts.
+/// server on an EPHEMERAL port, learning its bound address from the CLI's own
+/// `serving on <addr>` stderr line (race-free — no `free_port()` bind window).
 fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
     let files = fixtures
         .write_files()
@@ -209,22 +224,30 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         .into_owned();
     let working_dir = std::env::temp_dir().to_string_lossy().into_owned();
 
-    let port = free_port()?;
-    let bind = format!("127.0.0.1:{port}");
-    let addr: SocketAddr = bind.parse().map_err(|e| format!("addr: {e}"))?;
-
     let replay_dir = std::env::temp_dir().join(format!("mcp_re_persist_replay_{}", std::process::id()));
     std::fs::create_dir_all(&replay_dir).map_err(|e| format!("mkdir replay dir: {e}"))?;
-    let replay_path = replay_dir.join("replay.json");
-    // The inner server's received-log (#3965): the proxy forwards these trailing
-    // args verbatim to the inner (`--inner-command` consumes the remainder of
-    // argv), so the long-lived inner records every tools/call it ACTUALLY runs.
+    // The inner server's received-log (#3965): the BRIDGE forwards these trailing
+    // args verbatim to the long-lived inner, so it records every tools/call it
+    // ACTUALLY runs.
     let received_log_path = replay_dir.join("inner_received.log");
+
+    // Front the LONG-LIVED demo server with the out-of-TCB bridge in PERSISTENT
+    // mode (spawn-once). The bridge's StderrLogSink prints `inner_spawned` once.
+    let bridge = BridgeProcess::spawn(
+        demo_bridge_binary()?,
+        BridgeInnerMode::Persistent,
+        Some(&working_dir),
+        &[
+            inner,
+            "--received-log".to_string(),
+            received_log_path.to_string_lossy().into_owned(),
+        ],
+    )?;
 
     let mut child = Command::new(&cli)
         .args([
             "--bind",
-            &bind,
+            "127.0.0.1:0",
             "--audience",
             fixtures.audience(),
             "--server-signer",
@@ -246,9 +269,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--trust",
             &files.trust_path().to_string_lossy(),
             "--replay-cache",
-            "file",
-            "--replay-path",
-            &replay_path.to_string_lossy(),
+            "memory",
             "--transport-binding",
             "exact",
             "--transport-identity-source",
@@ -259,17 +280,9 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
             "--allow-empty-revocation",
             "--max-client-cert-lifetime",
             "175200h",
-            "--inner-mode",
-            "persistent",
-            "--inner-working-dir",
-            &working_dir,
-            // `--inner-command` consumes the remainder of argv: the inner binary
-            // plus its OWN `--received-log` flag, so the long-lived inner records
-            // every tools/call it actually serves.
-            "--inner-command",
-            &inner,
-            "--received-log",
-            &received_log_path.to_string_lossy(),
+            // The inner plane is HTTP: point it at the PERSISTENT bridge above.
+            "--inner-http-url",
+            bridge.url(),
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -281,23 +294,42 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
     // here the instant it launches the persistent inner — the independent
     // spawn-count oracle.
     let stderr = Arc::new(Mutex::new(String::new()));
-    if let Some(mut pipe) = child.stderr.take() {
-        let sink = Arc::clone(&stderr);
-        std::thread::spawn(move || {
-            let mut chunk = [0u8; 4096];
-            loop {
-                match pipe.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if let Ok(mut buf) = sink.lock() {
-                            buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                        }
+    let mut pipe = child.stderr.take().ok_or("proxy stderr not piped")?;
+    let sink = Arc::clone(&stderr);
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Ok(mut buf) = sink.lock() {
+                        buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
                     }
-                    Err(_) => break,
                 }
+                Err(_) => break,
             }
-        });
-    }
+        }
+    });
+
+    // Learn the resolved bound address from the same stderr buffer (the
+    // `serving on <addr>` line), failing fast if the CLI exits before serving.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let addr = loop {
+        if let Some(a) = stderr.lock().ok().and_then(|b| parse_serving_addr(&b)) {
+            break a;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let captured = stderr.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.wait();
+            return Err(format!("mcp_re_proxy_cli exited before serving (status {status}):\n{captured}"));
+        }
+        if Instant::now() > deadline {
+            let captured = stderr.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.kill();
+            return Err(format!("mcp_re_proxy_cli did not report a serving address within budget:\n{captured}"));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
 
     let mut up = false;
     for _ in 0..400 {
@@ -308,13 +340,14 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         std::thread::sleep(Duration::from_millis(25));
     }
     if !up {
-        return Err(format!("mcp_re_proxy_cli did not start listening on {addr}"));
+        return Err(format!("mcp_re_proxy_cli listening address {addr} is not accepting"));
     }
 
     Ok(ProxyProcess {
         child,
         addr,
         stderr,
+        bridge,
         received_log_path,
         _files: files,
         _replay_dir: replay_dir,

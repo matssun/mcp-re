@@ -21,7 +21,6 @@
 //! silent "allow". The L1 is a pure optimization: an L1 miss or eviction only ever
 //! costs an authoritative L2 round-trip, never a false `Fresh`.
 
-#![cfg(feature = "async_serve")]
 
 use std::collections::HashSet;
 use std::collections::VecDeque;

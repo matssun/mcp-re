@@ -82,13 +82,6 @@ hyper-util = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 
-# #4039: Linux kernel sandbox crates. Target-gated (NOT feature-gated): present in
-# the dependency graph ONLY on Linux, so the Mac dev build never compiles or links
-# them. The enforcement code is behind #[cfg(target_os = "linux")].
-[target.'cfg(target_os = "linux")'.dependencies]
-landlock = { workspace = true }
-seccompiler = { workspace = true }
-
 [features]
 # MCPS-076 (audit gap G-3): the environment-variable key source is DEV/CI-ONLY and
 # is gated behind this NON-DEFAULT feature. In a default (production) build the

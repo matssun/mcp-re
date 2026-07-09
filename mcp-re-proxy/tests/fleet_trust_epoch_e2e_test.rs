@@ -28,6 +28,7 @@ use mcp_re_core::VerificationKey;
 use mcp_re_host::HostSigner;
 use mcp_re_proxy::redis_trust_epoch_source;
 use mcp_re_proxy::trust_cache::UnixClock;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::Proxy;
 use mcp_re_proxy::PushInvalidationTrustCache;
 use serde_json::json;
@@ -124,8 +125,8 @@ fn push_replica(url: &str, epoch_key: &str, revoked: Arc<AtomicBool>) -> Proxy {
         Box::new(resolver),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
     )
+    .with_async_inner(Box::new(inner))
 }
 
 fn signed_request(now: i64, nonce: &str) -> Vec<u8> {
@@ -179,11 +180,11 @@ fn revocation_takes_effect_on_a_sibling_replica_when_the_epoch_advances() {
     // Both replicas admit the trusted signer (and cache its key in their bounded
     // trust caches).
     assert!(
-        !is_error(&node_a.handle(&signed_request(now, "trust-a-1"), now)),
+        !is_error(&block_on_handle(&node_a, &signed_request(now, "trust-a-1"), now)),
         "replica A must admit the trusted signer"
     );
     assert!(
-        !is_error(&node_b.handle(&signed_request(now, "trust-b-1"), now)),
+        !is_error(&block_on_handle(&node_b, &signed_request(now, "trust-b-1"), now)),
         "replica B must admit the trusted signer (and cache its key)"
     );
 
@@ -193,7 +194,7 @@ fn revocation_takes_effect_on_a_sibling_replica_when_the_epoch_advances() {
     // without a push signal.
     revoked.store(true, Ordering::SeqCst);
     assert!(
-        !is_error(&node_b.handle(&signed_request(now, "trust-b-2"), now)),
+        !is_error(&block_on_handle(&node_b, &signed_request(now, "trust-b-2"), now)),
         "before the epoch advance, replica B still serves the cached (now-stale) trust — \
          the bounded-T lag the push signal exists to close"
     );
@@ -208,7 +209,7 @@ fn revocation_takes_effect_on_a_sibling_replica_when_the_epoch_advances() {
     // against the now-revoked shared store, and REJECTS — the revocation has taken
     // effect on the sibling within the bound (one poll/request).
     assert!(
-        is_error(&node_b.handle(&signed_request(now, "trust-b-3"), now)),
+        is_error(&block_on_handle(&node_b, &signed_request(now, "trust-b-3"), now)),
         "after the epoch advance, replica B must reject the revoked signer"
     );
 

@@ -15,6 +15,8 @@ use mcp_re_core::SigningKey;
 use mcp_re_host::HostSigner;
 use mcp_re_proxy::ExactMatchBinding;
 use mcp_re_proxy::IdentitySource;
+use mcp_re_proxy::test_support::block_on_handle;
+use mcp_re_proxy::test_support::block_on_handle_with_transport;
 use mcp_re_proxy::Proxy;
 use mcp_re_proxy::TransportIdentity;
 use serde_json::json;
@@ -64,8 +66,8 @@ fn proxy(bind: bool) -> (Proxy, Calls) {
         Box::new(resolver()),
         AUDIENCE,
         SKEW,
-        Box::new(inner),
-    );
+    )
+    .with_async_inner(Box::new(inner));
     if bind {
         p = p.with_transport_binding(Box::new(ExactMatchBinding::new()));
     }
@@ -102,7 +104,7 @@ fn signer_bound_to_matching_identity_is_allowed() {
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-ok-1");
     let id = identity(SIGNER);
-    let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
+    let response = block_on_handle_with_transport(&proxy,&req, now(), Some(&id), None);
     assert_eq!(calls.lock().unwrap().len(), 1, "bound request reaches the inner");
     let value: Value = serde_json::from_slice(&response).unwrap();
     assert!(value.get("error").is_none(), "no error for a bound request");
@@ -113,7 +115,7 @@ fn mismatched_identity_is_denied_before_dispatch() {
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-mm-1");
     let id = identity("did:example:someone-else");
-    let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
+    let response = block_on_handle_with_transport(&proxy,&req, now(), Some(&id), None);
     assert_eq!(calls.lock().unwrap().len(), 0, "mismatch must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
@@ -122,7 +124,7 @@ fn mismatched_identity_is_denied_before_dispatch() {
 fn absent_identity_is_denied_when_binding_required() {
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-none1");
-    let response = proxy.handle_with_transport(&req, now(), None, None);
+    let response = block_on_handle_with_transport(&proxy,&req, now(), None, None);
     assert_eq!(calls.lock().unwrap().len(), 0, "absent identity must not reach the inner");
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }
@@ -133,7 +135,7 @@ fn without_binding_the_transport_identity_is_ignored() {
     let req = signed_request("nonce-bind-off1");
     // Even a clearly-wrong identity is ignored when no binding is configured.
     let id = identity("did:example:irrelevant");
-    let response = proxy.handle_with_transport(&req, now(), Some(&id), None);
+    let response = block_on_handle_with_transport(&proxy,&req, now(), Some(&id), None);
     assert_eq!(calls.lock().unwrap().len(), 1, "no binding → request is forwarded");
     let value: Value = serde_json::from_slice(&response).unwrap();
     assert!(value.get("error").is_none());
@@ -154,7 +156,7 @@ fn valid_identity_does_not_rescue_a_tampered_signature() {
 
     // The transport identity MATCHES the signer (binding would pass on its own).
     let id = identity(SIGNER);
-    let response = proxy.handle_with_transport(&tampered, now(), Some(&id), None);
+    let response = block_on_handle_with_transport(&proxy,&tampered, now(), Some(&id), None);
 
     assert_eq!(calls.lock().unwrap().len(), 0, "a tampered request must never reach the inner");
     assert_eq!(error_message(&response), "mcp-re.invalid_signature");
@@ -166,7 +168,7 @@ fn plain_handle_is_equivalent_to_no_identity() {
     // that means fail closed (no identity).
     let (proxy, calls) = proxy(true);
     let req = signed_request("nonce-bind-plain");
-    let response = proxy.handle(&req, now());
+    let response = block_on_handle(&proxy, &req, now());
     assert_eq!(calls.lock().unwrap().len(), 0);
     assert_eq!(error_message(&response), "mcp-re.transport_binding_failed");
 }

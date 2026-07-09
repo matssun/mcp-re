@@ -30,15 +30,19 @@ use std::sync::Arc;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_demo::build_demo_proxy_with_policy;
+use mcp_re_demo::demo_bridge_binary;
 use mcp_re_demo::demo_policy_evaluator;
 use mcp_re_demo::demo_revocation_source;
 use mcp_re_demo::mint_demo_grant;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoGrant;
 use mcp_re_demo::DemoGrantSpec;
 use mcp_re_demo::DemoHostClient;
 use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::FixedClock;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_host::SeededNonceSource;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
@@ -166,11 +170,21 @@ impl CapturingSink {
     }
 }
 
-fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
-    build_demo_proxy_with_policy(
+/// Spawn the out-of-TCB bridge fronting the real fileserver and build the
+/// policy-enabled demo proxy pointed at it. The returned `BridgeProcess` MUST be
+/// kept alive for the proxy's lifetime.
+fn build_proxy(sink: Arc<CapturingSink>) -> (mcp_re_proxy::Proxy, BridgeProcess) {
+    let root = demo_root();
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner_binary(), "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+    let proxy = build_demo_proxy_with_policy(
         DemoProxyConfig {
-            inner_binary: inner_binary(),
-            demo_root: demo_root(),
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -182,13 +196,14 @@ fn build_proxy(sink: Arc<CapturingSink>) -> mcp_re_proxy::Proxy {
         demo_policy_evaluator(),
         Box::new(demo_revocation_source()),
     )
-    .expect("policy-enabled demo proxy builds against the resolved binary + demo_root")
+    .expect("policy-enabled demo proxy builds against the bridge URL");
+    (proxy, bridge)
 }
 
 #[test]
 fn authorized_list_files_round_trips_client_through_proxy_to_inner() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
     let grant = demo_grant();
     let authorization_hash = grant.authorization_hash().expect("authorization_hash");
 
@@ -216,15 +231,12 @@ fn authorized_list_files_round_trips_client_through_proxy_to_inner() {
 
     // Drive the FULL proxy path: verify -> freshness/replay -> authorize (allow)
     // -> strip envelope -> inject verified context -> inner list_files -> sign.
-    let response = proxy.handle(&request, now());
+    let response = block_on_handle(&proxy, &request, now());
 
-    // The authorized request reached the inner subprocess and the proxy signed
-    // the response.
-    assert!(
-        sink.has("inner_spawned"),
-        "authorized request must spawn the inner: {:?}",
-        sink.event_tags()
-    );
+    // The authorized request was forwarded to the HTTP inner plane (the bridge,
+    // which relays it over stdio to the real fileserver) and the proxy signed the
+    // response. The subprocess lifecycle now lives on the BRIDGE's diagnostic
+    // channel, out of the PEP's TCB.
     assert!(
         sink.has("inner_request_forwarded"),
         "verified context must be forwarded to the inner: {:?}",

@@ -31,7 +31,6 @@
 //! breaking are the next increment (a slow/dead backend is today bounded only by
 //! the per-request timeout, not yet proactively ejected).
 
-#![cfg(feature = "async_serve")]
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;

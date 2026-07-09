@@ -106,6 +106,6 @@ pub fn documented_proxy_server() -> Proxy {
         Box::new(inbound_resolver()),
         AUDIENCE,
         MAX_CLOCK_SKEW_SECS,
-        Box::new(plain_echo_inner),
     )
+    .with_async_inner(Box::new(plain_echo_inner))
 }

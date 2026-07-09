@@ -36,6 +36,10 @@ const INNER_BIN_ENV: &str = "INNER_FILESERVER_BIN";
 const DEMO_ROOT_ENV: &str = "DEMO_ROOT_README";
 const INNER_BIN_NAME: &str = "mcp-re-demo-fileserver";
 const FIXTURE_README_REL: &str = "mcp-re-demo-fileserver/demo_root/readme.txt";
+/// The Bazel-stamped runfile env var pointing at the out-of-TCB stdio↔HTTP bridge
+/// binary (`mcp-re-stdio-bridge`), and its cargo `target/<profile>` binary name.
+const BRIDGE_BIN_ENV: &str = "MCP_RE_STDIO_BRIDGE";
+const BRIDGE_BIN_NAME: &str = "mcp-re-stdio-bridge";
 
 /// The directory holding the running binary's Cargo `target/<profile>/` output,
 /// derived from the current executable. Returns the `<profile>` dir (e.g.
@@ -118,6 +122,44 @@ pub fn demo_inner_binary() -> Result<PathBuf, String> {
         "cannot locate the inner '{INNER_BIN_NAME}' binary. Set {INNER_BIN_ENV}, \
          or build it with `cargo build -p mcp-re-demo-fileserver --bin {INNER_BIN_NAME}` \
          (or run via `bazel run //mcp-re-demo:demo_positive`)."
+    ))
+}
+
+/// Resolve the out-of-TCB `mcp-re-stdio-bridge` binary (ADR-MCPRE-051): the
+/// stdio↔HTTP adapter that fronts an unmodified local stdio MCP server behind a
+/// plain HTTP endpoint the proxy's async HTTP inner plane POSTs to. Fallback
+/// order mirrors [`demo_inner_binary`]: the Bazel-stamped env var
+/// (`MCP_RE_STDIO_BRIDGE`) wins when set, else the Cargo `target/{debug,release}`
+/// build output next to (or under the workspace of) the running binary.
+pub fn demo_bridge_binary() -> Result<PathBuf, String> {
+    // Tier 1: explicit Bazel-stamped env var (wins when set).
+    if let Some(p) = resolve_runfile(BRIDGE_BIN_ENV) {
+        return Ok(p);
+    }
+
+    // Tier 2: the Cargo-built binary, next to the running bin itself, then under
+    // the conventional target/{debug,release} dirs relative to the workspace.
+    let exe_name = if cfg!(windows) {
+        format!("{BRIDGE_BIN_NAME}.exe")
+    } else {
+        BRIDGE_BIN_NAME.to_string()
+    };
+    let mut cargo_candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = current_exe_dir() {
+        cargo_candidates.push(dir.join(&exe_name));
+    }
+    for root in workspace_candidates() {
+        cargo_candidates.push(root.join("target").join("debug").join(&exe_name));
+        cargo_candidates.push(root.join("target").join("release").join(&exe_name));
+    }
+    if let Some(p) = cargo_candidates.into_iter().find(|c| c.exists()) {
+        return Ok(p);
+    }
+
+    Err(format!(
+        "cannot locate the '{BRIDGE_BIN_NAME}' bridge binary. Set {BRIDGE_BIN_ENV}, \
+         or build it with `cargo build -p mcp-re-stdio-bridge` \
+         (or run via a Bazel target that data-deps //mcp-re-stdio-bridge:mcp_re_stdio_bridge)."
     ))
 }
 

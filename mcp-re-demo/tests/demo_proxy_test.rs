@@ -27,8 +27,12 @@ use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VERIFIED_META_KEY;
 use mcp_re_demo::build_demo_proxy;
+use mcp_re_demo::demo_bridge_binary;
+use mcp_re_demo::BridgeInnerMode;
+use mcp_re_demo::BridgeProcess;
 use mcp_re_demo::DemoProxyConfig;
 use mcp_re_host::HostSigner;
+use mcp_re_proxy::test_support::block_on_handle;
 use mcp_re_proxy::InnerLogSink;
 use serde_json::json;
 use serde_json::Value;
@@ -92,39 +96,41 @@ fn demo_root() -> String {
         .into_owned()
 }
 
-/// A capturing lifecycle sink so the test can assert on the inner-process
-/// events (spawn / exit / captured stderr) without scraping real stderr.
+/// A capturing lifecycle sink so the test can assert on the proxy-level events
+/// (`inner_request_forwarded` / `inner_response_signed`) without scraping stderr.
 #[derive(Default)]
 struct CapturingSink {
     events: std::sync::Mutex<Vec<String>>,
-    stderr: std::sync::Mutex<Vec<u8>>,
 }
 
 impl InnerLogSink for CapturingSink {
     fn log(&self, _inner_identity: &str, event: &mcp_re_proxy::InnerLogEvent) {
         self.events.lock().expect("lock").push(event.tag().to_string());
     }
-    fn log_stderr(&self, _inner_identity: &str, captured: &[u8]) {
-        self.stderr.lock().expect("lock").extend_from_slice(captured);
-    }
+    fn log_stderr(&self, _inner_identity: &str, _captured: &[u8]) {}
 }
 
 impl CapturingSink {
     fn event_tags(&self) -> Vec<String> {
         self.events.lock().expect("lock").clone()
     }
-    fn captured_stderr(&self) -> Vec<u8> {
-        self.stderr.lock().expect("lock").clone()
-    }
 }
 
-fn build_proxy(
-    sink: Arc<CapturingSink>,
-) -> mcp_re_proxy::Proxy {
-    build_demo_proxy(
+/// Spawn the out-of-TCB bridge fronting the real `mcp-re-demo-fileserver` (over
+/// `demo_root`) and build the demo proxy whose HTTP inner plane points at it. The
+/// returned `BridgeProcess` MUST be kept alive for the proxy's lifetime.
+fn build_proxy(sink: Arc<CapturingSink>) -> (mcp_re_proxy::Proxy, BridgeProcess) {
+    let root = demo_root();
+    let bridge = BridgeProcess::spawn(
+        &demo_bridge_binary().expect("resolve mcp-re-stdio-bridge"),
+        BridgeInnerMode::OneShot,
+        Some(&root),
+        &[inner_binary(), "--demo-root".to_string(), root.clone()],
+    )
+    .expect("spawn stdio bridge fronting the demo fileserver");
+    let proxy = build_demo_proxy(
         DemoProxyConfig {
-            inner_binary: inner_binary(),
-            demo_root: demo_root(),
+            inner_http_url: bridge.url().to_string(),
             server_signing_key: server_key(),
             server_signer: SERVER.to_string(),
             server_key_id: SERVER_KEY_ID.to_string(),
@@ -134,13 +140,14 @@ fn build_proxy(
         Box::new(inbound_resolver()),
         sink,
     )
-    .expect("demo proxy builds against the resolved binary + demo_root")
+    .expect("demo proxy builds against the bridge URL");
+    (proxy, bridge)
 }
 
 #[test]
 fn proxy_spawns_fileserver_and_tools_list_flows_through() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
 
     let request = host()
         .sign_request(
@@ -158,16 +165,21 @@ fn proxy_spawns_fileserver_and_tools_list_flows_through() {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    let response_bytes = proxy.handle(&request, now());
+    let response_bytes = block_on_handle(&proxy, &request, now());
     let response: Value = serde_json::from_slice(&response_bytes).expect("parse response");
 
-    // The inner subprocess was actually spawned and exited.
+    // The verified request was forwarded to the HTTP inner plane (the bridge,
+    // which spawns/relays the real fileserver over stdio) and the proxy signed the
+    // result. The subprocess lifecycle (`inner_spawned`/`inner_exited`) now lives
+    // on the BRIDGE's own diagnostic channel, out of the PEP's TCB.
     let tags = sink.event_tags();
-    assert!(tags.iter().any(|t| t == "inner_spawned"), "tags: {tags:?}");
-    assert!(tags.iter().any(|t| t == "inner_exited"), "tags: {tags:?}");
     assert!(
         tags.iter().any(|t| t == "inner_request_forwarded"),
         "the verified request must be forwarded: {tags:?}"
+    );
+    assert!(
+        tags.iter().any(|t| t == "inner_response_signed"),
+        "the proxy must sign the inner result: {tags:?}"
     );
 
     // The demo fileserver's five tools came back through the proxy, and the
@@ -191,7 +203,7 @@ fn proxy_spawns_fileserver_and_tools_list_flows_through() {
 #[test]
 fn caller_supplied_verified_metadata_is_stripped_before_the_inner_server() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
 
     // Smuggle a caller-owned `.verified` block inside the SIGNED params. It
     // verifies (it is part of the signed payload) but the proxy is the sole
@@ -222,7 +234,7 @@ fn caller_supplied_verified_metadata_is_stripped_before_the_inner_server() {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    let response_bytes = proxy.handle(&request, now());
+    let response_bytes = block_on_handle(&proxy, &request, now());
     let response: Value = serde_json::from_slice(&response_bytes).expect("parse response");
 
     // The request reached the inner server (it is verified) and returned a real
@@ -250,12 +262,12 @@ fn caller_supplied_verified_metadata_is_stripped_before_the_inner_server() {
 #[test]
 fn inner_runs_under_explicit_workdir_and_clean_stdout_stream() {
     let sink = Arc::new(CapturingSink::default());
-    let proxy = build_proxy(Arc::clone(&sink));
+    let (proxy, _bridge) = build_proxy(Arc::clone(&sink));
 
     // list_files with a RELATIVE path: it resolves against the inner server's
-    // demo root. The inner runs in the explicit working dir (the demo root) and
-    // its stdout carries ONLY the JSON-RPC protocol stream — so the proxy can
-    // frame, sign, and bind the result. Any inner stderr is captured separately.
+    // demo root. The inner runs in the bridge's explicit working dir (the demo
+    // root) and its stdout carries ONLY the JSON-RPC protocol stream — so the
+    // proxy can frame, sign, and bind the result.
     let request = host()
         .sign_tool_call(
             &Value::String("req-sub".to_string()),
@@ -272,10 +284,10 @@ fn inner_runs_under_explicit_workdir_and_clean_stdout_stream() {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    let response_bytes = proxy.handle(&request, now());
+    let response_bytes = block_on_handle(&proxy, &request, now());
     let response: Value = serde_json::from_slice(&response_bytes).expect("parse response");
 
-    // Clean stdout protocol stream: a parseable, signed, bound response.
+    // Clean protocol stream: a parseable, signed, bound response.
     assert!(response.get("error").is_none(), "response: {response}");
     verify_response(&response_bytes, &server_resolver(), &expected_hash)
         .expect("clean stdout stream yields a verifiable bound response");
@@ -288,17 +300,21 @@ fn inner_runs_under_explicit_workdir_and_clean_stdout_stream() {
         .collect();
     assert_eq!(names, vec!["q1.txt", "q2.txt"]);
 
-    // No protocol-error event: the inner stdout was a clean JSON-RPC frame, and
-    // stderr (captured separately) never corrupted it.
+    // The proxy forwarded the verified request and signed the inner result: the
+    // bridge relayed a clean JSON-RPC frame back over HTTP. (The inner's stderr is
+    // captured by the BRIDGE now, out of the PEP's TCB, so the proxy-level sink
+    // never sees a protocol-error event.)
     let tags = sink.event_tags();
     assert!(
-        !tags.iter().any(|t| t == "inner_protocol_error"),
-        "stdout protocol stream must stay clean: {tags:?}"
+        tags.iter().any(|t| t == "inner_request_forwarded"),
+        "the verified request must be forwarded: {tags:?}"
     );
-    // The fileserver writes nothing to stderr on a successful call.
     assert!(
-        sink.captured_stderr().is_empty(),
-        "unexpected inner stderr: {:?}",
-        String::from_utf8_lossy(&sink.captured_stderr())
+        tags.iter().any(|t| t == "inner_response_signed"),
+        "a clean inner frame yields a signed response: {tags:?}"
+    );
+    assert!(
+        !tags.iter().any(|t| t == "inner_protocol_error"),
+        "the proxy-level sink must see no protocol error: {tags:?}"
     );
 }
