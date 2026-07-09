@@ -82,6 +82,10 @@ _PROXY_LIB_SRCS = [
     "src/async_etcd_store.rs",
     # ADR-MCPS-020: declared replay-store durability tier (deployment assertion).
     "src/replay_tier.rs",
+    # MCPRE-104 (#308): proxy replay-tier adapter around the HTTP-profile dispatcher
+    # (ReplayDurabilityTier gate layered above the dispatcher's core single-process
+    # gate; tier type stays in the proxy).
+    "src/http_profile_dispatch.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     "src/revocation_tier.rs",
@@ -148,6 +152,10 @@ _PROXY_ASYNC_CRATES = [
 _PROXY_LIB_DEPS = [
     "//mcp-re-core:mcp_re_core",
     "//mcp-re-policy:mcp_re_policy",
+    # MCPRE-104 (#308): the pure HTTP-profile dispatcher the proxy replay-tier
+    # adapter (src/http_profile_dispatch.rs) wraps. Pure crate — mcp-re-core only,
+    # no reverse proxy dependency.
+    "//mcp-re-http-profile:mcp_re_http_profile",
     # MCPS-58 (ADR-023 §A1): CRL parsing for the static --client-crl freshness gate.
     "@crates_mcp_re//:der",
     "@crates_mcp_re//:libc",
@@ -333,6 +341,22 @@ nt_rust_test(
         "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
         "//mcp-re-policy:mcp_re_policy",
         "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# MCPRE-104 (#308): the proxy replay-tier adapter around the HTTP-profile
+# dispatcher, driven end-to-end (sub-minimum tier refused, wait-quorum/linearizable
+# admitted, verify→dispatch→sign→verify e2e, core single-process gate beneath).
+nt_rust_test(
+    name = "http_profile_dispatch_test",
+    srcs = ["tests/http_profile_dispatch_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
     ],
 )
 

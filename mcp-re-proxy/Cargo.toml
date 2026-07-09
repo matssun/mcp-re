@@ -14,6 +14,10 @@ description = "MCP-RE server-side sidecar (stdio-first): verify-before-dispatch,
 # identity). Blocking std::net, NO async runtime.
 mcp-re-core = { path = "../mcp-re-core" }
 mcp-re-policy = { path = "../mcp-re-policy" }
+# MCPRE-104 (#308): the pure HTTP-profile dispatcher the proxy replay-tier adapter
+# (src/http_profile_dispatch.rs) wraps. Pure crate (mcp-re-core only); the boundary
+# rule forbids only the REVERSE dependency (profile must not depend on the proxy).
+mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 serde_json = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
@@ -156,9 +160,9 @@ mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.
 mcp-re-test-paths = { path = "../mcp-re-test-paths" }
-# The HTTP-profile Cloud KMS custody lane (MCPRE-106) signs an RFC 9421 request/
-# response through the profile's external-signer seam backed by GcpKmsEd25519Backend.
-mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+# NOTE: mcp-re-http-profile moved to [dependencies] (MCPRE-104 #308) — the proxy
+# replay-tier adapter uses it in src/, and normal deps are available to tests too
+# (incl. the MCPRE-106 Cloud KMS custody lane).
 
 [lib]
 name = "mcp_re_proxy"

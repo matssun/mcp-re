@@ -115,6 +115,11 @@ pub mod redis_store;
 // semantic names, honest per-tier guarantee, tier-claim ceiling). Pure type — in
 // the default build.
 pub mod replay_tier;
+// MCPRE-104 (#308): the proxy replay-tier adapter around the pure HTTP-profile
+// dispatcher — layers ReplayDurabilityTier::meets_strict_production_minimum above
+// the dispatcher's core is_single_process_reference gate, keeping the tier type in
+// mcp-re-proxy (the pure profile crate gains no proxy dependency).
+pub mod http_profile_dispatch;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
