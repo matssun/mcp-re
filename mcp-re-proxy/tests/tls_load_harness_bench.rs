@@ -35,7 +35,6 @@ use std::convert::Infallible;
 use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
@@ -309,20 +308,15 @@ impl Drop for ProxyProcess {
     }
 }
 
-fn free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
-    listener.local_addr().expect("addr").port()
-}
-
 fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
-    let port = free_port();
-    let bind = format!("127.0.0.1:{port}");
-    let addr: SocketAddr = bind.parse().expect("addr");
 
-    let child = Command::new(&cli)
+    // Bind an EPHEMERAL port and read the resolved address back from the CLI's own
+    // `async fleet serving on <addr>` stderr line — race-free (the fleet owns the
+    // port from bind onward), unlike a bind-release-rebind `free_port()`.
+    let mut child = Command::new(&cli)
         .args([
-            "--bind", &bind,
+            "--bind", "127.0.0.1:0",
             "--audience", AUDIENCE,
             "--server-signer", SERVER,
             "--server-key-id", SERVER_KEY_ID,
@@ -341,8 +335,44 @@ fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn mcp_re_proxy_cli");
+
+    let stderr_buf = Arc::new(Mutex::new(String::new()));
+    let mut pipe = child.stderr.take().expect("piped stderr");
+    let sink = Arc::clone(&stderr_buf);
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Ok(mut buf) = sink.lock() {
+                        buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let addr = loop {
+        if let Some(a) = stderr_buf.lock().ok().and_then(|b| parse_serving_addr(&b)) {
+            break a;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let captured = stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+            panic!("mcp_re_proxy_cli exited before serving (status {status}):\n{captured}");
+        }
+        if Instant::now() > deadline {
+            let captured = stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.kill();
+            panic!("mcp_re_proxy_cli did not report a serving address within budget:\n{captured}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
 
     let mut up = false;
     for _ in 0..200 {
@@ -352,9 +382,19 @@ fn spawn_proxy(material: &Material, inner_http_url: &str) -> ProxyProcess {
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    assert!(up, "mcp_re_proxy_cli did not start listening on {addr}");
+    assert!(up, "mcp_re_proxy_cli listening address {addr} is not accepting connections");
 
     ProxyProcess { child, addr }
+}
+
+/// Parse the CLI's `... async fleet serving on <addr> (...)` stderr line into the
+/// bound [`SocketAddr`].
+fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
+    let marker = "async fleet serving on ";
+    let start = stderr.find(marker)? + marker.len();
+    let rest = &stderr[start..];
+    let end = rest.find(char::is_whitespace)?;
+    rest[..end].parse::<SocketAddr>().ok()
 }
 
 // --- TLS client ---------------------------------------------------------------

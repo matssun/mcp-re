@@ -36,7 +36,6 @@
 
 use std::io::Read;
 use std::net::SocketAddr;
-use std::net::TcpListener;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
@@ -45,6 +44,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -201,13 +201,19 @@ impl ProxyProcess {
     }
 }
 
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("bind ephemeral: {e}"))?;
-    Ok(listener.local_addr().map_err(|e| format!("addr: {e}"))?.port())
+/// Parse the CLI's `... async fleet serving on <addr> (...)` stderr line into the
+/// bound [`SocketAddr`].
+fn parse_serving_addr(stderr: &str) -> Option<SocketAddr> {
+    let marker = "async fleet serving on ";
+    let start = stderr.find(marker)? + marker.len();
+    let rest = &stderr[start..];
+    let end = rest.find(char::is_whitespace)?;
+    rest[..end].parse::<SocketAddr>().ok()
 }
 
 /// Spawn the real `mcp_re_proxy_cli --inner-mode persistent` wrapping the demo
-/// server, then poll the port until it accepts.
+/// server on an EPHEMERAL port, learning its bound address from the CLI's own
+/// `serving on <addr>` stderr line (race-free — no `free_port()` bind window).
 fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
     let files = fixtures
         .write_files()
@@ -238,14 +244,10 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         ],
     )?;
 
-    let port = free_port()?;
-    let bind = format!("127.0.0.1:{port}");
-    let addr: SocketAddr = bind.parse().map_err(|e| format!("addr: {e}"))?;
-
     let mut child = Command::new(&cli)
         .args([
             "--bind",
-            &bind,
+            "127.0.0.1:0",
             "--audience",
             fixtures.audience(),
             "--server-signer",
@@ -292,23 +294,42 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
     // here the instant it launches the persistent inner — the independent
     // spawn-count oracle.
     let stderr = Arc::new(Mutex::new(String::new()));
-    if let Some(mut pipe) = child.stderr.take() {
-        let sink = Arc::clone(&stderr);
-        std::thread::spawn(move || {
-            let mut chunk = [0u8; 4096];
-            loop {
-                match pipe.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if let Ok(mut buf) = sink.lock() {
-                            buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
-                        }
+    let mut pipe = child.stderr.take().ok_or("proxy stderr not piped")?;
+    let sink = Arc::clone(&stderr);
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if let Ok(mut buf) = sink.lock() {
+                        buf.push_str(&String::from_utf8_lossy(&chunk[..n]));
                     }
-                    Err(_) => break,
                 }
+                Err(_) => break,
             }
-        });
-    }
+        }
+    });
+
+    // Learn the resolved bound address from the same stderr buffer (the
+    // `serving on <addr>` line), failing fast if the CLI exits before serving.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let addr = loop {
+        if let Some(a) = stderr.lock().ok().and_then(|b| parse_serving_addr(&b)) {
+            break a;
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let captured = stderr.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.wait();
+            return Err(format!("mcp_re_proxy_cli exited before serving (status {status}):\n{captured}"));
+        }
+        if Instant::now() > deadline {
+            let captured = stderr.lock().map(|b| b.clone()).unwrap_or_default();
+            let _ = child.kill();
+            return Err(format!("mcp_re_proxy_cli did not report a serving address within budget:\n{captured}"));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
 
     let mut up = false;
     for _ in 0..400 {
@@ -319,7 +340,7 @@ fn spawn_proxy(fixtures: &DemoFixtures) -> Result<ProxyProcess, String> {
         std::thread::sleep(Duration::from_millis(25));
     }
     if !up {
-        return Err(format!("mcp_re_proxy_cli did not start listening on {addr}"));
+        return Err(format!("mcp_re_proxy_cli listening address {addr} is not accepting"));
     }
 
     Ok(ProxyProcess {

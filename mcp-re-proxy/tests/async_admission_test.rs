@@ -168,7 +168,14 @@ fn client_config(ca: &Ca) -> ClientConfig {
 /// One mTLS request (fresh connection); returns the HTTP status code and body.
 fn request_status(addr: SocketAddr, config: &ClientConfig, body: &[u8]) -> std::io::Result<(u16, Vec<u8>)> {
     let tcp = TcpStream::connect(addr)?;
-    tcp.set_read_timeout(Some(Duration::from_secs(10)))?;
+    // The read timeout is only a safety net against a genuinely wedged connection.
+    // It MUST exceed the test's own orchestration budget: an ADMITTED request in
+    // `over_cap_...` blocks in its handler until the test releases the gate, which
+    // happens only AFTER a `wait_until` bounded at 30s — so a shorter read timeout
+    // could spuriously abort a legitimately-blocked request (macOS surfaces the
+    // elapsed SO_RCVTIMEO as EAGAIN/`WouldBlock`) under load. 45s clears the 30s
+    // orchestration budget with margin while still bounding a real hang.
+    tcp.set_read_timeout(Some(Duration::from_secs(45)))?;
     let server_name = ServerName::try_from("localhost").expect("server name");
     let conn = ClientConnection::new(Arc::new(config.clone()), server_name)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -230,7 +237,24 @@ impl Drop for AsyncServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            // Bounded join. The server thread normally exits promptly once
+            // `shutdown` is observed and `serve()` drains. But these tests use
+            // SYNCHRONOUS handlers that block on a `std::sync::Condvar` to hold
+            // in-flight permits, and dropping the server's multi-thread tokio
+            // runtime JOINS its worker threads — a worker parked in that
+            // uninterruptible `cv.wait()` (a teardown race) makes the runtime drop,
+            // hence this join, hang forever (observed as an intermittent 300s test
+            // timeout under Bazel). Join off-thread and give up after a grace,
+            // leaking the about-to-die server thread rather than wedging the test;
+            // the process exits immediately after and reaps it. (Production
+            // `serve()` callers pass real async handlers that abort cleanly on
+            // runtime drop — this hazard is test-harness only.)
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = h.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(10));
         }
     }
 }
@@ -260,7 +284,18 @@ where
                                       assertion: Option<String>|
                   -> async_serve::HandlerResponseFuture {
                 let h = Arc::clone(&handler);
-                Box::pin(async move { h(&body, id, assertion.as_deref()) })
+                // These tests use SYNCHRONOUS handlers that block on a
+                // `std::sync::Condvar` to hold in-flight permits. Running that
+                // block directly on a `tokio` worker PARKS the worker thread, so a
+                // few blocked handlers deplete the runtime and — under external CPU
+                // load — the accept loop and other connections make no progress
+                // (observed as `over_cap` intermittently seeing only 1 of 3
+                // requests processed). `block_in_place` moves the blocking call off
+                // the worker and spins up a replacement, keeping the runtime healthy
+                // (production handlers are async and never need this).
+                Box::pin(async move {
+                    tokio::task::block_in_place(|| h(&body, id, assertion.as_deref()))
+                })
             };
             async_serve::serve(
                 listener,
@@ -272,7 +307,7 @@ where
             .await;
         });
     });
-    let addr = rx.recv_timeout(Duration::from_secs(5)).expect("server bound");
+    let addr = rx.recv_timeout(Duration::from_secs(30)).expect("server bound");
     AsyncServer {
         addr,
         shutdown,
@@ -332,7 +367,7 @@ fn over_cap_requests_are_rejected_503_fail_closed() {
 
     // Wait until exactly `ceiling` handlers are admitted and blocked (they hold their
     // permits), and the third request has recorded its rejection.
-    wait_until(Duration::from_secs(10), || {
+    wait_until(Duration::from_secs(30), || {
         admitted.load(Ordering::SeqCst) == ceiling && results.lock().expect("results").len() == 1
     });
 

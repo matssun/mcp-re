@@ -256,7 +256,18 @@ impl Drop for AsyncServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
         if let Some(h) = self.handle.take() {
-            let _ = h.join();
+            // Bounded join — a SYNCHRONOUS (Condvar-blocking) test handler parked on
+            // a tokio worker thread makes the server's runtime drop (which JOINS its
+            // workers) hang forever in a teardown race. Join off-thread and give up
+            // after a grace, leaking the about-to-die server thread; the process
+            // exits right after and reaps it. Production handlers are async and
+            // abort cleanly, so this hazard is test-harness only.
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = h.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(Duration::from_secs(10));
         }
     }
 }
@@ -287,7 +298,15 @@ where
                                       assertion: Option<String>|
                   -> async_serve::HandlerResponseFuture {
                 let h = Arc::clone(&handler);
-                Box::pin(async move { h(&body, id, assertion.as_deref()) })
+                // The drain tests use SYNCHRONOUS handlers that block until the
+                // test releases them; running that block directly on a `tokio`
+                // worker PARKS the worker, so several blocked handlers deplete the
+                // runtime and stall progress under load. `block_in_place` offloads
+                // the blocking call and spins up a replacement worker, keeping the
+                // runtime healthy (production handlers are async and never need it).
+                Box::pin(async move {
+                    tokio::task::block_in_place(|| h(&body, id, assertion.as_deref()))
+                })
             };
             async_serve::serve(
                 listener,
@@ -299,7 +318,7 @@ where
             .await;
         });
     });
-    let addr = rx.recv_timeout(Duration::from_secs(5)).expect("server bound");
+    let addr = rx.recv_timeout(Duration::from_secs(30)).expect("server bound");
     AsyncServer {
         addr,
         shutdown,
@@ -360,7 +379,7 @@ fn in_flight_request_completes_during_drain_zero_abandoned() {
     let addr = server.addr;
     let client = client_config(&client_ca);
     let status = std::thread::spawn(move || request_status(addr, &client, b"drain-me"));
-    wait_until(Duration::from_secs(5), || entered.load(Ordering::SeqCst) == 1);
+    wait_until(Duration::from_secs(30), || entered.load(Ordering::SeqCst) == 1);
 
     // Signal shutdown WHILE the request is in flight. Graceful drain must let it finish
     // (200), not abandon it — the handler is still mid-HANDLER_HOLD.
@@ -421,7 +440,7 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
         }));
     }
     // All n are in flight (entered their handlers, now holding).
-    wait_until(Duration::from_secs(5), || entered.load(Ordering::SeqCst) == n);
+    wait_until(Duration::from_secs(30), || entered.load(Ordering::SeqCst) == n);
 
     // Shut down WHILE all n are in flight; the drain must let every one finish (200).
     server.trigger_shutdown();

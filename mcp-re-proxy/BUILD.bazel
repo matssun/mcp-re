@@ -459,13 +459,6 @@ nt_rust_test(
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
-    # Spawns a real TLS server plus several concurrent TLS client threads and
-    # synchronizes on admission state. The work is bounded (internal waits cap at
-    # 30s), but under heavy parallel `bazel test //...` on a many-core host the
-    # scheduler thrash can push wall-clock past the default `medium` (300s) ceiling.
-    # `large` (900s) gives the headroom so oversubscription never trips a false
-    # timeout; a genuine hang still fails via the internal bounded waits.
-    size = "large",
     deps = [
         ":mcp_re_proxy_async",  # keep
         "@crates_mcp_re//:rcgen",
