@@ -37,8 +37,15 @@
 
 use std::path::PathBuf;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
+
+/// Validity (window duration) of the short-lived client leaf, in seconds. Kept
+/// safely under the proxy's strict `--max-client-cert-lifetime` ceiling of 3600s
+/// with margin, while long enough to run a validation pass.
+const SHORT_LIVED_CLIENT_CERT_SECS: i64 = 3000;
 
 use rcgen::BasicConstraints;
 use rcgen::CertificateParams;
@@ -50,6 +57,7 @@ use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
 
 use serde_json::json;
+use time::OffsetDateTime;
 
 /// The deterministic identities + seeds the demo material is minted around. The
 /// defaults match the rest of the demo (`did:example:*`), but every field is
@@ -127,14 +135,35 @@ fn make_leaf(
     common_name: Option<&str>,
     client_auth: bool,
 ) -> (rcgen::Certificate, KeyPair) {
+    make_leaf_windowed(
+        ca,
+        sans,
+        common_name,
+        client_auth,
+        rcgen::date_time_ymd(2020, 1, 1),
+        rcgen::date_time_ymd(2035, 1, 1),
+    )
+}
+
+/// A leaf signed by `ca` with an EXPLICIT validity window — used to mint a
+/// SHORT-LIVED client cert (lifetime ≤ the proxy's strict 3600s ceiling) that a
+/// `--strict` fleet accepts, unlike the ≈15y [`make_leaf`] default.
+fn make_leaf_windowed(
+    ca: &Ca,
+    sans: Vec<SanType>,
+    common_name: Option<&str>,
+    client_auth: bool,
+    not_before: OffsetDateTime,
+    not_after: OffsetDateTime,
+) -> (rcgen::Certificate, KeyPair) {
     let key = KeyPair::generate().expect("leaf key");
     let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
     params.subject_alt_names = sans;
     if let Some(cn) = common_name {
         params.distinguished_name.push(DnType::CommonName, cn);
     }
-    params.not_before = rcgen::date_time_ymd(2020, 1, 1);
-    params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+    params.not_before = not_before;
+    params.not_after = not_after;
     params.extended_key_usages = vec![if client_auth {
         ExtendedKeyUsagePurpose::ClientAuth
     } else {
@@ -177,6 +206,12 @@ pub struct DemoFixtures {
     client_ca_pem: String,
     client_cert_pem: String,
     client_key_pem: String,
+    // A SHORT-LIVED (≤ strict 3600s ceiling) client leaf with the SAME URI-SAN
+    // identity, chaining to the SAME client CA — so a `--strict` fleet (which
+    // refuses long-lived certs) can be driven live. Minted `now`-relative, so it
+    // expires ~50min after `generate()`; regenerate before a strict validation run.
+    short_lived_client_cert_pem: String,
+    short_lived_client_key_pem: String,
     mismatched_client_cert_pem: String,
     mismatched_client_key_pem: String,
 
@@ -199,6 +234,24 @@ impl DemoFixtures {
         let client_ca = make_ca("mcp-re-demo-client-ca");
         let (client_leaf, client_leaf_key) =
             make_leaf(&client_ca, vec![uri(&spec.signer)], None, true);
+        // A short-lived (< strict 3600s ceiling) client leaf, same identity + CA,
+        // valid from ~1min ago to +50min so it is currently valid AND its lifetime
+        // (window duration) is ≤ 3600s. `now`-relative — expires ~50min out.
+        let now = OffsetDateTime::from_unix_timestamp(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_secs() as i64,
+        )
+        .expect("valid unix time");
+        let (short_client_leaf, short_client_leaf_key) = make_leaf_windowed(
+            &client_ca,
+            vec![uri(&spec.signer)],
+            None,
+            true,
+            now - time::Duration::seconds(60),
+            now + time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS),
+        );
         let (mismatched_leaf, mismatched_leaf_key) = make_leaf(
             &client_ca,
             vec![uri(&spec.mismatched_identity)],
@@ -228,6 +281,8 @@ impl DemoFixtures {
             client_ca_pem: client_ca.cert.pem(),
             client_cert_pem: client_leaf.pem(),
             client_key_pem: client_leaf_key.serialize_pem(),
+            short_lived_client_cert_pem: short_client_leaf.pem(),
+            short_lived_client_key_pem: short_client_leaf_key.serialize_pem(),
             mismatched_client_cert_pem: mismatched_leaf.pem(),
             mismatched_client_key_pem: mismatched_leaf_key.serialize_pem(),
             trust_json,
@@ -316,6 +371,18 @@ impl DemoFixtures {
     /// The POSITIVE client leaf private-key PEM (the client's `--client-key-file`).
     pub fn client_key_pem(&self) -> &str {
         &self.client_key_pem
+    }
+    /// A SHORT-LIVED client leaf certificate PEM (URI SAN == signer, lifetime ≤ the
+    /// strict 3600s ceiling), chaining to the same client CA — for driving a
+    /// `--strict` fleet, which refuses the ≈15y [`Self::client_cert_pem`]. Minted
+    /// `now`-relative in [`Self::generate`]; expires ~50min out, so regenerate
+    /// before a strict validation run.
+    pub fn short_lived_client_cert_pem(&self) -> &str {
+        &self.short_lived_client_cert_pem
+    }
+    /// The private-key PEM partner of [`Self::short_lived_client_cert_pem`].
+    pub fn short_lived_client_key_pem(&self) -> &str {
+        &self.short_lived_client_key_pem
     }
     /// The MISMATCHED client leaf certificate PEM (URI SAN != signer); drives T3.
     pub fn mismatched_client_cert_pem(&self) -> &str {

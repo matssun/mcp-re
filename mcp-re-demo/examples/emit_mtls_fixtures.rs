@@ -35,6 +35,11 @@ fn main() {
     write("server_ca.pem", fx.server_ca_pem()); // verify the proxy's server cert
     write("client_cert.pem", fx.client_cert_pem()); // mTLS client cert (URI SAN == signer)
     write("client_key.pem", fx.client_key_pem());
+    // A SHORT-LIVED (≤ strict 3600s ceiling) client cert with the SAME identity,
+    // so a `--strict` fleet — which refuses the ≈15y client_cert.pem — can be driven
+    // live. Expires ~50min after this run; regenerate before a strict validation.
+    write("client_cert_short.pem", fx.short_lived_client_cert_pem());
+    write("client_key_short.pem", fx.short_lived_client_key_pem());
     // Client-side inputs: the client's OWN request-signing seed
     // (distinct from the proxy's response-signing `signing_seed` above) and the
     // server's response-signing PUBLIC key the client trusts (derived from the

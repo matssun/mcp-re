@@ -56,7 +56,7 @@ maintainable as the project evolves.
 | [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
 | [ADR-MCPS-049](adr-mcps-049.md) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence (Accepted, v0.10.1) |
 | [ADR-MCPRE-050](adr-mcpre-050.md) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports (Accepted) |
-| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Accepted 2026-07-09; capacity numbers ship provisional in v0.11, measured in a follow-up minor via MCPRE-110) |
+| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Accepted 2026-07-09; §7 SLO capacity/scaling numbers MEASURED on real GKE hardware and DECLARED in v0.11 — e2/c3-standard-8, gate-enforced, MCPRE-110) |
 | [ADR-MCPRE-052](adr-mcpre-052.md) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence (Accepted) |
 
 ## Active vs Legacy

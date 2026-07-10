@@ -87,7 +87,7 @@ Current implementation claim:
 > proven end-to-end client-integration path (client-side proxy + Python/TypeScript
 > SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
-### Recent releases (0.6 → 0.10)
+### Recent releases (0.6 → 0.11)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -120,6 +120,17 @@ in [`docs/adr/`](docs/adr/). In brief:
   byte-identical to Mode A (**zero draft-02 preimage change**). Ships with an offline
   rejection-conformance spine and a non-normative
   [Google Cloud cookbook](docs/mode-c-attested-ingress-gcp-cookbook.md).
+- **0.11** is the **HTTP-profile release**: the RFC 9421 + RFC 9530 HTTP standards
+  profile is the **sole carrier** (ADR-MCPRE-050), the async **per-core serving
+  fleet** lands (ADR-MCPRE-051), and **delegated signing** ships as a JOSE/JWS
+  credential (ADR-MCPRE-052, python-cryptography cross-verified). **stdio is removed
+  from MCP-RE** — HTTP in, HTTP out only; a stdio-only server is fronted by an
+  external adapter (e.g. FastMCP). Both **SDKs are retargeted to the HTTP model** and
+  exercised by live mTLS e2es against the real proxy. The fleet is proven on a **live
+  GKE cluster** (cross-replica replay coherence + zero-drop rolling update over a real
+  L4 LoadBalancer, fronting FastMCP), with live GCP-KMS custody lanes and an
+  **ADR-051 §7 SLO baseline measured on real GKE hardware** (e2/c3-standard-8) — the
+  targets flip from provisional to **declared**, gate-enforced.
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered

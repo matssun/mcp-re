@@ -27,7 +27,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.10.1"
+version = "0.11.0"
 license = "Apache-2.0"
 authors = ["Mats Sundvall"]
 repository = "https://github.com/matssun/mcp-re"
@@ -93,6 +93,10 @@ asn1-rs = "0.6"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
+# fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
+# ceiling) client cert. Same `time` version rcgen already resolves — no new pin.
+time = { version = "0.3", default-features = false, features = ["std"] }
 
 # Phase 7 external backends (ADR-MCPS-019). All used ONLY by mcp-re-proxy, all
 # OPTIONAL/feature- or target-gated so the DEFAULT (Mac dev) closure is unchanged

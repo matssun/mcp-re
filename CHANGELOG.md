@@ -12,6 +12,78 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.11.0] — 2026-07-10
+
+**The HTTP-profile release.** v0.11 makes the RFC 9421 + RFC 9530 HTTP standards
+profile the sole carrier (ADR-MCPRE-050), lands the async per-core serving fleet
+(ADR-MCPRE-051) and delegated signing (ADR-MCPRE-052), **removes stdio from MCP-RE
+entirely**, retargets both SDKs to the HTTP model, and proves the whole thing end to
+end on a **live GKE fleet — including an SLO baseline measured on real cloud
+hardware.**
+
+> **Net effect of this cycle on stdio.** Several entries in this section were added
+> earlier in the 0.11 cycle and then **removed by the owner decision that stdio is
+> out of scope for MCP-RE** — `mcp-re-stdio-bridge`, the stdio demo/fileserver and
+> server, `mcp-re-client-proxy-cli`, `mcp-re-walkthrough`, and the stdio conformance
+> harness were all deleted (not kept as compat), along with the Helm stdio-bridge
+> sidecar. The **shipped 0.11 contract is HTTP in, HTTP out only**; a stdio-only MCP
+> server is fronted by an external plain-MCP adapter (e.g. FastMCP) that speaks HTTP
+> to the proxy. Read the detailed subprocess/bridge entries below as *cycle history*,
+> superseded by "stdio removed" in the release highlights.
+
+### Release highlights (completing 0.11)
+
+- **ADR-MCPRE-050 controlling — one HTTP profile.** RFC 9421 + RFC 9530 is the sole
+  over-the-wire carrier; the legacy JCS/object envelope is superseded and new evidence
+  is JOSE/JWS.
+- **stdio removed — HTTP-profile only** (owner decision, see the note above).
+- **ADR-MCPRE-052 delegated signing** — JOSE/JWS delegation credential + custody, 22
+  golden vectors (d01–d22), and an independent python-cryptography JOSE cross-verify
+  gate (both directions), CI-wired.
+- **mTLS transport binding (RFC 8705 x5t#S256)** proven over a real mutual-TLS
+  handshake against the production stack: own channel accepts, a relayed request over
+  another valid channel fails closed.
+- **Both SDKs retargeted to the HTTP profile.** Python (PyO3) + TypeScript (napi-rs)
+  bind the audited `mcp-re-client-core`; `McpReHttpTransport` / `connectMtlsHttp` sign
+  outbound / verify inbound bytes so an unmodified `mcp` client speaks plain MCP over
+  one signed mTLS POST. **Live cross-process e2es against the real `mcp-re-proxy`**
+  front an in-process HTTP MCP backend; `read_file` declares an `outputSchema` so the
+  round trip is genuinely validated. (SDK stdio driver/transport removed.)
+- **Kubernetes / deployment surface.** HTTP-profile-only Helm chart (`strict` +
+  `fleet`, fail-safe defaults, gcpKms Workload-Identity custody), new chart knobs
+  `transportBinding` (default = the proxy's fail-safe `exact`) and `drainPreStopSeconds`
+  (preStop delay closing the L4 LB endpoint-propagation race); `deploy/docker/
+  Dockerfile{,.inner,.bench}`; a FastMCP Streamable-HTTP inner backend
+  (`tools/fastmcp_inner_backend.py`, `deploy/k8s/inner-fastmcp.yaml`); native amd64
+  builds via `deploy/cloudbuild/*`.
+- **Live GKE validation.** On a real 2-node GKE fleet (strict + exact binding, FastMCP
+  inner): **cross-replica replay coherence** (nonce accepted on replica A → rejected as
+  replay on B via the shared tier) and a **zero-drop rolling update** over a real L4
+  LoadBalancer. Runbook: `docs/security/gke-slo-baseline-runbook.md`.
+- **Live GCP Cloud KMS lanes** — object-signing, delegated-TLS handshake, draft-02, and
+  RFC 9421 request/response all signed by a real Cloud KMS Ed25519 key and verified by
+  the unmodified verifier (tamper / wrong-key / untrusted-client negatives).
+- **ADR-MCPRE-051 §7 SLO — DECLARED baseline.** `tls_load_harness_bench` (spawning the
+  real async proxy at N cores) baselined on **real GKE hardware** (e2-standard-8 +
+  c3-standard-8, 1 and 8 cores). `docs/bench/adr-051-slo-targets.json` flipped
+  `provisional → declared`: throughput floor 250 rps, p50/p99/p999 ceilings
+  250/600/900 ms, per-core linear factor ≥ 0.60, both classes' raw numbers recorded;
+  `scripts/slo_gate.py` enforces them (7 checks) and passes for both.
+- **Short-lived client cert for strict validation.** `DemoFixtures::short_lived_client_cert_pem`
+  mints a ≤3600s leaf (URI-SAN == signer) so a `--strict` fleet — which refuses
+  long-lived certs — can be driven live.
+- **Release verification.** `cargo test --workspace` 1205/0; feature-gated backends
+  649/0; `bazel test //...` 87/0; RFC 9421 + JOSE cross-verify (both directions);
+  Python SDK 107/0; TypeScript SDK 106/0; JCS / port-registry / Bazel-drift / SLO gates
+  green. Workspace version `0.10.1 → 0.11.0`.
+
+---
+
+_The detailed, chronological cycle entries follow (some superseded per the stdio note
+above)._
+
 ### Added
 
 - **`mcp-re-stdio-bridge` — the out-of-TCB stdio↔HTTP adapter (ADR-MCPRE-051,

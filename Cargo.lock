@@ -854,7 +854,7 @@ checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-core",
  "serde_json",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-client-proxy"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-conformance"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-demo"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-host",
@@ -912,11 +912,12 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "thiserror",
+ "time",
 ]
 
 [[package]]
 name = "mcp-re-host"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "getrandom 0.2.17",
  "mcp-re-core",
@@ -926,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-http-profile"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64",
  "mcp-re-core",
@@ -937,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-policy"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-host",
@@ -948,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-proxy"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "asn1-rs",
  "base64",
@@ -988,11 +989,11 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-test-paths"
-version = "0.10.1"
+version = "0.11.0"
 
 [[package]]
 name = "mcp-re-transport"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "mcp-re-proxy",
  "rcgen",
