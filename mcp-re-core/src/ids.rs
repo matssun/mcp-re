@@ -38,6 +38,12 @@ pub const VERSION_DRAFT_02: &str = "draft-02";
 /// scheme produced the preimage, self-describing for audit — but never DIRECTS
 /// the verifier (the canonicalizer is profile-selected, never field-directed).
 ///
+/// DEPRECATED (ADR-MCPRE-050 / ADR-MCPRE-052): `canonicalization_id` is a native
+/// / object-profile concept. That profile is deprecated — not a security
+/// mechanism and not an alternative carrier. The one carrier is the HTTP profile
+/// (RFC 9421 signature base + RFC 9530 Content-Digest), which has NO JSON
+/// canonicalization. Do not introduce `canonicalization_id` into new evidence.
+///
 /// The name encodes the scheme's restriction so the limitation is visible: JCS
 /// over an integer-only JSON number domain (±(2^53−1)); fractional/exponent
 /// numbers fail closed (decision B.1). A future float-capable scheme is admitted

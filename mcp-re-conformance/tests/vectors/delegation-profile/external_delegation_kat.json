@@ -1,0 +1,17 @@
+{
+  "note": "Compact JWS delegation credential (EdDSA) produced by python-cryptography, independent of ed25519-dalek. Consumed by delegation_cross_verification_test.rs (external -> us).",
+  "root_seed_b64url": "ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE",
+  "root_public_key_b64url": "iEuIV_TqoWE8YVBNs01L6vNGUXoOMd483dTZtCAdnQs",
+  "delegated_seed_b64url": "LCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCw",
+  "delegated_public_key_b64url": "lHXGzw7aNAV1KNhpR4HsySrWOdfivSd2HtPvdJJL6wc",
+  "issuer_kid": "root-kid",
+  "delegated_kid": "root-kid/delegated/1",
+  "verifier_audience": "verifier-1",
+  "expected_profile": "mcp-re-http-v1",
+  "expected_audience_hash": "aud-scope-1",
+  "expected_server_signer": "server:example.com:did%3Aexample%3Aserver:root-kid/delegated/1",
+  "trust_epoch": "epoch-1",
+  "now_unix": 1700000100,
+  "max_clock_skew": 60,
+  "compact_jws": "eyJ0eXAiOiJtY3AtcmUtZGVsZWdhdGlvbitqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6InJvb3Qta2lkIn0.eyJpc3MiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXIiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMzAwLCJqdGkiOiJldnQtMSIsImF1ZCI6InZlcmlmaWVyLTEiLCJtY3BfcmVfcHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwibWNwX3JlX2F1ZGllbmNlX2hhc2giOiJhdWQtc2NvcGUtMSIsIm1jcF9yZV9zZXJ2ZXJfc2lnbmVyIjoic2VydmVyOmV4YW1wbGUuY29tOmRpZCUzQWV4YW1wbGUlM0FzZXJ2ZXI6cm9vdC1raWQvZGVsZWdhdGVkLzEiLCJtY3BfcmVfa2V5X3VzZSI6InJlc3BvbnNlLXNpZ25pbmciLCJkZWxlZ2F0ZWRfa2lkIjoicm9vdC1raWQvZGVsZWdhdGVkLzEiLCJpc3N1ZXJfa2lkIjoicm9vdC1raWQiLCJ0cnVzdF9lcG9jaCI6ImVwb2NoLTEiLCJjbmYiOnsiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJyb290LWtpZC9kZWxlZ2F0ZWQvMSIsIngiOiJsSFhHenc3YU5BVjFLTmhwUjRIc3lTcldPZGZpdlNkMkh0UHZkSkpMNndjIn19fQ.JdZpqJXr61jA8KeJntepp77x6NUmdN9pUBMwzBSMoblN2kdcceo0N8nQjoYJ2ypWHRBGmXiKk7iTPKk9PwGUCg"
+}

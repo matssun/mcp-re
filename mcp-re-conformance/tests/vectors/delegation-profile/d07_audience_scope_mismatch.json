@@ -1,0 +1,69 @@
+{
+  "schema": "mcp-re-delegation-conformance/v1",
+  "name": "d07_audience_scope_mismatch",
+  "kind": "delegated_response",
+  "expected": "mcp-re.delegation_audience_mismatch",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp?route=a",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Authorization",
+        "Bearer access-token-xyz"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:eWkW48KQkc8xANV94r1Lu0OZZEdsaHaFelovQMewJjM=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-1\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:9o+yLBLSgTn26REghUanntl+w3ojIs6zHXLkRhy4Wtfum29dV7moVv+NUO0sagr4qb/a5MF9A/qo1vVWAv7qBw==:"
+      ]
+    ],
+    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.request\":{\"artifact_bindings\":[{\"artifact_type\":\"oauth-dpop\",\"binding_type\":\"opaque-digest\",\"digest_alg\":\"sha256\",\"digest_value\":\"4mItW39hLuuMD0aczyVn4eADTGi7kea1kamD5JqHr8A\"}],\"audience\":{\"audience_id\":\"verifier-1\",\"route\":\"a\",\"target_uri\":\"https://mcp.example.com/mcp?route=a\"},\"profile\":\"mcp-re-http-v1\"}},\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
+  },
+  "response": {
+    "method": null,
+    "target_uri": null,
+    "status": 200,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:JUApij7+L5M3coVLwFfRvFadKT4YiZYZwXTyw/tcRFE=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re-response=(\"@status\" \"content-digest\" \"content-type\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"root-kid/delegated/1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re-response=:PYp9B1nbMFO/1c3VQ/ATm+b29tQPo13M1Np9VP8ni2KChcK4t+aIaj9ZMQ7lkVYkcD2VeehxgXgjMd2doztBDA==:"
+      ]
+    ],
+    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"EBKPx6iyLDnay5v_pWkh9wBk05TQw0Pzt3YVtgpyWII\"},\"server_delegation\":\"eyJ0eXAiOiJtY3AtcmUtZGVsZWdhdGlvbitqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6InJvb3Qta2lkIn0.eyJpc3MiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXIiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMzAwLCJqdGkiOiJldnQtMSIsImF1ZCI6InZlcmlmaWVyLTEiLCJtY3BfcmVfcHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwibWNwX3JlX2F1ZGllbmNlX2hhc2giOiJhdWQtc2NvcGUtMSIsIm1jcF9yZV9zZXJ2ZXJfc2lnbmVyIjoic2VydmVyOmV4YW1wbGUuY29tOmRpZCUzQWV4YW1wbGUlM0FzZXJ2ZXI6cm9vdC1raWQvZGVsZWdhdGVkLzEiLCJtY3BfcmVfa2V5X3VzZSI6InJlc3BvbnNlLXNpZ25pbmciLCJkZWxlZ2F0ZWRfa2lkIjoicm9vdC1raWQvZGVsZWdhdGVkLzEiLCJpc3N1ZXJfa2lkIjoicm9vdC1raWQiLCJ0cnVzdF9lcG9jaCI6ImVwb2NoLTEiLCJjbmYiOnsiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJyb290LWtpZC9kZWxlZ2F0ZWQvMSIsIngiOiJsSFhHenc3YU5BVjFLTmhwUjRIc3lTcldPZGZpdlNkMkh0UHZkSkpMNndjIn19fQ.JdZpqJXr61jA8KeJntepp77x6NUmdN9pUBMwzBSMoblN2kdcceo0N8nQjoYJ2ypWHRBGmXiKk7iTPKk9PwGUCg\",\"server_signer\":{\"keyid\":\"root-kid/delegated/1\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
+  },
+  "check": {
+    "verifier_audiences": [
+      "verifier-1"
+    ],
+    "expected_audience_hash": "different-scope",
+    "accepted_epochs": [
+      "epoch-1"
+    ],
+    "max_clock_skew": 60,
+    "revoked_kids": []
+  }
+}

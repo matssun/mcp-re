@@ -26,6 +26,16 @@
 //!   code points are emitted as literal UTF-8 bytes — never `\u`-escaped.
 //! - Arrays in order; no insignificant whitespace anywhere; `true`/`false`/`null`
 //!   as literals.
+//!
+//! # DEPRECATED (ADR-MCPRE-050 / ADR-MCPRE-052)
+//! JCS canonicalization belongs to the **native / object profile**, which is
+//! **deprecated**. It is NOT a security mechanism, NOT an alternative carrier,
+//! and NOT a fallback: the one security carrier is the RFC 9421 + RFC 9530 HTTP
+//! profile (`mcp-re-http-profile`). This unit MUST NOT be extended or used as
+//! the foundation for any new signed evidence, delegated credential, or
+//! production profile — it exists only for frozen regression vectors and
+//! forensic verification of already-issued evidence. See
+//! `docs/design/active-profile-and-legacy-quarantine.md`.
 
 use crate::error::McpReError;
 

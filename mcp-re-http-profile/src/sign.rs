@@ -205,6 +205,9 @@ pub fn sign_response_full(
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
+        // Directly root-signed response; the delegated-signing path (ADR-MCPRE-052,
+        // MCPRE-122 custody slice) populates this.
+        server_delegation: None,
         request_evidence: RequestEvidenceDigest {
             digest_alg: request_evidence.digest_alg.clone(),
             digest_value: request_evidence.digest_value.clone(),
@@ -212,6 +215,44 @@ pub fn sign_response_full(
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
     sign_response(response, request, key, key_id, created, expires)
+}
+
+/// Full-profile response signing for the DELEGATED-key path (ADR-MCPRE-052 §2,
+/// MCPRE-122). Like [`sign_response_full`] except the response evidence block
+/// carries the inline `server_delegation` credential (protected by
+/// `content-digest`) and the response is signed by the DELEGATED key
+/// (`delegated_kid` == the block's `server_signer.keyid`). The root is NOT on this
+/// path: it signed only the credential, off the hot path at issuance/rotation.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_delegated_response_full(
+    response: &mut HttpResponse,
+    request: &HttpRequest,
+    request_evidence: &RequestEvidence,
+    server_signer: &ActorIdentity,
+    server_delegation: &str,
+    delegated_key: &SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: server_signer.clone(),
+        server_delegation: Some(server_delegation.to_owned()),
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence.digest_alg.clone(),
+            digest_value: request_evidence.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response(
+        response,
+        request,
+        delegated_key,
+        delegated_kid,
+        created,
+        expires,
+    )
 }
 
 /// Sign `response` in place, binding it to the verified originating request

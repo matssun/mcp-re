@@ -408,6 +408,13 @@ pub struct HttpResponseEvidenceBlock {
     /// keyid). Cross-checked against the keyid the response signature verified
     /// under.
     pub server_signer: ActorIdentity,
+    /// The inline delegation credential (compact JOSE/JWS), when the response is
+    /// signed by a delegated key (ADR-MCPRE-052 §2). A sibling of `server_signer`,
+    /// protected by the covered `content-digest` exactly as `server_signer` is.
+    /// Absent on directly root-signed responses (backward-compatible: pre-052
+    /// vectors omit it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_delegation: Option<String>,
     /// The request evidence handle (`SHA-256` over the request signature base)
     /// this response asserts it is answering.
     pub request_evidence: RequestEvidenceDigest,

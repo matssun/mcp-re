@@ -469,6 +469,53 @@ nt_rust_test(
     ],
 )
 
+# ADR-MCPRE-052 §9 (MCPRE-122): the delegated-signing conformance corpus —
+# frozen compact-JWS credential + delegated-key RFC 9421 response fixtures under
+# tests/vectors/delegation-profile/, verified black-box through
+# verify_delegated_response_full (writer test is #[ignore]d). Same dual-mode
+# fixture bridge as the http-profile corpus.
+nt_rust_test(
+    name = "delegation_vectors_test",
+    srcs = ["tests/delegation_vectors_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/delegation-profile/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_DELEGATION_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/delegation-profile/manifest.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPRE-052 §9 / MCPRE-122: external -> us direction of the JOSE/JWS cross-
+# verification gate. Verifies a compact-JWS delegation credential produced by an
+# INDEPENDENT JOSE/EdDSA implementation (python-cryptography, committed as
+# external_delegation_kat.json) under the Rust verifier, and confirms our issuer
+# reproduces its bytes. The ours -> external direction is the pinned Python gate
+# in tools/jose_cross_verify.py (see .github/workflows/ci.yml).
+nt_rust_test(
+    name = "delegation_cross_verification_test",
+    srcs = ["tests/delegation_cross_verification_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/delegation-profile/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_DELEGATION_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/delegation-profile/manifest.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 # ADR-MCPRE-050 / MCPRE-103: full-profile PARITY GATE. Drives the integrated
 # live path (verify_request_full -> dispatch_request -> verify_response_full) and
 # asserts every acceptance behaviour (#1-#6: body tamper, response splice,

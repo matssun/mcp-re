@@ -206,6 +206,59 @@ pub enum McpReError {
     /// digest (previous-request, input-required-response, or `requestState`).
     #[error("mcp-re.continuation_binding_failed")]
     ContinuationBindingFailed,
+
+    // Delegated signing-key attestation (ADR-MCPRE-052 §8). A delegated-key
+    // response is fail-closed on any uncertainty in the credential → root chain.
+    /// A delegated-key-signed response carried no inline delegation credential
+    /// (in required delegation mode, a directly root-signed response also lands
+    /// here). ADR-MCPRE-052 §3 step 1.
+    #[error("mcp-re.delegation_credential_missing")]
+    DelegationCredentialMissing,
+
+    /// The delegation JWS is malformed, `alg` ≠ `EdDSA`, JWS `kid` ≠ `issuer_kid`,
+    /// or the root signature does not verify. ADR-MCPRE-052 §3 step 3.
+    #[error("mcp-re.delegation_credential_invalid")]
+    DelegationCredentialInvalid,
+
+    /// `now` is outside the credential's `[nbf, exp]` window (+ skew).
+    /// ADR-MCPRE-052 §3 step 4.
+    #[error("mcp-re.delegation_credential_expired")]
+    DelegationCredentialExpired,
+
+    /// The credential's `issuer_kid` is not a trusted root anchor.
+    /// ADR-MCPRE-052 §3 step 2.
+    #[error("mcp-re.delegation_issuer_untrusted")]
+    DelegationIssuerUntrusted,
+
+    /// `mcp_re_profile` is not the active HTTP profile id. ADR-MCPRE-052 §3 step 5.
+    #[error("mcp-re.delegation_profile_mismatch")]
+    DelegationProfileMismatch,
+
+    /// The verifier is not named in `aud`, or `mcp_re_audience_hash` /
+    /// `mcp_re_server_signer` do not match the expected service/audience scope —
+    /// a credential lifted outside its scope. ADR-MCPRE-052 §3 step 5.
+    #[error("mcp-re.delegation_audience_mismatch")]
+    DelegationAudienceMismatch,
+
+    /// `mcp_re_key_use` does not permit this signature use. ADR-MCPRE-052 §3 step 5.
+    #[error("mcp-re.delegation_key_use_invalid")]
+    DelegationKeyUseInvalid,
+
+    /// The credential's `trust_epoch` is not in the verifier's active accepted
+    /// epoch set — a coarse, coherent invalidation independent of targeted
+    /// revocation. ADR-MCPRE-052 §3 step 6.
+    #[error("mcp-re.delegation_trust_epoch_stale")]
+    DelegationTrustEpochStale,
+
+    /// The RFC 9421 response `keyid` ≠ `delegated_kid`, or the response signature
+    /// does not verify under `cnf.jwk`. ADR-MCPRE-052 §3 step 8.
+    #[error("mcp-re.delegation_key_mismatch")]
+    DelegationKeyMismatch,
+
+    /// `delegated_kid` or `issuer_kid` is revoked at the current trust epoch.
+    /// ADR-MCPRE-052 §3 step 7.
+    #[error("mcp-re.delegation_revoked")]
+    DelegationRevoked,
 }
 
 impl McpReError {
@@ -258,6 +311,17 @@ impl McpReError {
             McpReError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             McpReError::RequestBindingMismatch => "mcp-re.request_binding_mismatch",
             McpReError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
+            // Delegated signing-key attestation (ADR-MCPRE-052 §8).
+            McpReError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
+            McpReError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
+            McpReError::DelegationCredentialExpired => "mcp-re.delegation_credential_expired",
+            McpReError::DelegationIssuerUntrusted => "mcp-re.delegation_issuer_untrusted",
+            McpReError::DelegationProfileMismatch => "mcp-re.delegation_profile_mismatch",
+            McpReError::DelegationAudienceMismatch => "mcp-re.delegation_audience_mismatch",
+            McpReError::DelegationKeyUseInvalid => "mcp-re.delegation_key_use_invalid",
+            McpReError::DelegationTrustEpochStale => "mcp-re.delegation_trust_epoch_stale",
+            McpReError::DelegationKeyMismatch => "mcp-re.delegation_key_mismatch",
+            McpReError::DelegationRevoked => "mcp-re.delegation_revoked",
         }
     }
 }
@@ -338,6 +402,47 @@ mod tests {
             McpReError::UnknownEnvelopeField,
             "mcp-re.unknown_envelope_field",
         );
+    }
+
+    #[test]
+    fn delegation_wire_strings() {
+        check(
+            McpReError::DelegationCredentialMissing,
+            "mcp-re.delegation_credential_missing",
+        );
+        check(
+            McpReError::DelegationCredentialInvalid,
+            "mcp-re.delegation_credential_invalid",
+        );
+        check(
+            McpReError::DelegationCredentialExpired,
+            "mcp-re.delegation_credential_expired",
+        );
+        check(
+            McpReError::DelegationIssuerUntrusted,
+            "mcp-re.delegation_issuer_untrusted",
+        );
+        check(
+            McpReError::DelegationProfileMismatch,
+            "mcp-re.delegation_profile_mismatch",
+        );
+        check(
+            McpReError::DelegationAudienceMismatch,
+            "mcp-re.delegation_audience_mismatch",
+        );
+        check(
+            McpReError::DelegationKeyUseInvalid,
+            "mcp-re.delegation_key_use_invalid",
+        );
+        check(
+            McpReError::DelegationTrustEpochStale,
+            "mcp-re.delegation_trust_epoch_stale",
+        );
+        check(
+            McpReError::DelegationKeyMismatch,
+            "mcp-re.delegation_key_mismatch",
+        );
+        check(McpReError::DelegationRevoked, "mcp-re.delegation_revoked");
     }
 
     #[test]

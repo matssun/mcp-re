@@ -54,11 +54,13 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 83
+    "bazel_test_targets": 85
   },
   "bazel_test_targets": [
     "//mcp-re-conformance:acceptance_test",
     "//mcp-re-conformance:audit_vocabulary_guard_test",
+    "//mcp-re-conformance:delegation_cross_verification_test",
+    "//mcp-re-conformance:delegation_vectors_test",
     "//mcp-re-conformance:discovery_enforcement_conformance_test",
     "//mcp-re-conformance:drift_guard_test",
     "//mcp-re-conformance:echo_server_test",
