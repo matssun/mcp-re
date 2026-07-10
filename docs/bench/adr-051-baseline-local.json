@@ -1,0 +1,54 @@
+{
+  "schema": "mcp-re-load-harness-baseline/v1",
+  "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+  "envelope_version": 1,
+  "classification": "provisional-local-regression-baseline",
+  "authoritative_for": ["local-regression-detection"],
+  "NOT_authoritative_for": [
+    "production release SLOs (absolute throughput/latency thresholds)",
+    "per-core linear-scaling acceptance"
+  ],
+  "caveat": "Recorded on a single developer workstation with the load generator CO-LOCATED with the proxy on the same cores. At the concurrency this anchor uses the run is client-concurrency-bound (128 concurrent cold mTLS handshakes; client-side Ed25519/TLS crypto costs as much as server-side), so throughput is a stable REGRESSION anchor but is NOT a production capacity number, and the 1->N core sweep below is recorded-but-NON-AUTHORITATIVE: on one box the loadgen contends with the fleet for cores and flattens the curve. Authoritative absolute SLOs and the real scaling curve require a dedicated load-generator host driving the proxy on the production hardware class (MCPRE-110 production half; blocked on the GKE fleet run).",
+  "recorded": {
+    "date": "2026-07-09",
+    "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+    "build_profile": "release"
+  },
+  "anchor": {
+    "comment": "The regression anchor: the least loadgen-distorted, most reproducible point (single served core, moderate concurrency). Values are the MEDIAN of 3 reps; throughput held within +/-1% across reps. `adr051_slo_gate.py` compares a fresh run of THIS config against these numbers under the local_regression tolerances in adr-051-slo-targets.json.",
+    "config": {
+      "hardware_class": "apple-m4-pro-14c-dev",
+      "declared_cores": 1,
+      "concurrency": 128,
+      "requests": 8000,
+      "connection_mode": "cold",
+      "replay_backend": "memory",
+      "tls_mode": "TLS1.3-mTLS"
+    },
+    "results": {
+      "throughput_rps": 4591.9,
+      "added_latency_us": {
+        "p50": 27320,
+        "p99": 44452,
+        "p999": 49260,
+        "mean": 27732,
+        "min": 16194,
+        "max": 50141
+      },
+      "reps": {
+        "throughput_rps": [4627.3, 4591.9, 4577.2],
+        "p99_us": [47094, 44452, 43055],
+        "p999_us": [54668, 49260, 47766]
+      }
+    }
+  },
+  "recorded_core_sweep_non_authoritative": {
+    "comment": "Recorded for the record only. Throughput is FLAT-to-negative as served cores rise because the co-located loadgen is the limiter, NOT because the per-core fleet fails to scale. Do NOT gate on this curve. cold mode, concurrency 128, 8000 requests each.",
+    "points": [
+      { "declared_cores": 1, "throughput_rps": 4707, "p99_us": 48915, "p999_us": 57656 },
+      { "declared_cores": 2, "throughput_rps": 4660, "p99_us": 36000, "p999_us": 41300 },
+      { "declared_cores": 4, "throughput_rps": 4584, "p99_us": 42200, "p999_us": 47600 },
+      { "declared_cores": 8, "throughput_rps": 4415, "p99_us": 40900, "p999_us": 49000 }
+    ]
+  }
+}

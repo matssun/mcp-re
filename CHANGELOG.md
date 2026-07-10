@@ -65,12 +65,16 @@ hardware.**
 - **Live GCP Cloud KMS lanes** — object-signing, delegated-TLS handshake, draft-02, and
   RFC 9421 request/response all signed by a real Cloud KMS Ed25519 key and verified by
   the unmodified verifier (tamper / wrong-key / untrusted-client negatives).
-- **ADR-MCPRE-051 §7 SLO — DECLARED baseline.** `tls_load_harness_bench` (spawning the
-  real async proxy at N cores) baselined on **real GKE hardware** (e2-standard-8 +
-  c3-standard-8, 1 and 8 cores). `docs/bench/adr-051-slo-targets.json` flipped
-  `provisional → declared`: throughput floor 250 rps, p50/p99/p999 ceilings
-  250/600/900 ms, per-core linear factor ≥ 0.60, both classes' raw numbers recorded;
-  `scripts/slo_gate.py` enforces them (7 checks) and passes for both.
+- **ADR-MCPRE-051 §7 SLO — production baseline DECLARED, two complementary gates.**
+  The MCPRE-110 `local_regression` gate (`scripts/adr051_slo_gate.py`, a fresh run vs
+  the committed dev-box anchor) and the MCPRE-123 `production_slo` gate
+  (`scripts/slo_gate.py`, absolute per-hardware SLO) are unified in one
+  `docs/bench/adr-051-slo-targets.json` (`local_regression` / `production_slo` /
+  `absolute_gates`). `tls_load_harness_bench` (spawning the real async proxy at N
+  cores) baselined on **real GKE hardware** (e2-standard-8 + c3-standard-8, 1 and 8
+  cores) flips `production_slo` `pending → declared`: throughput floor 250 rps,
+  p50/p99/p999 ceilings 250/600/900 ms, per-core linear factor ≥ 0.60, both classes'
+  raw numbers recorded; the gate enforces them and passes for both.
 - **Short-lived client cert for strict validation.** `DemoFixtures::short_lived_client_cert_pem`
   mints a ≤3600s leaf (URI-SAN == signer) so a `--strict` fleet — which refuses
   long-lived certs — can be driven live.

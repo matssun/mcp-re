@@ -1,46 +1,80 @@
 {
   "schema": "mcp-re-slo-targets/v1",
-  "adr": "ADR-MCPRE-051 §7 — benchmark-first, SLO-gated releases",
-  "issue": "MCPRE-110",
+  "adr": "ADR-MCPRE-051",
+  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
+  "issue": "MCPRE-110 (#317) + MCPRE-123",
+  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "baseline_ref": "docs/bench/adr-051-baseline-local.json",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
-  "envelope_version": 1,
-  "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
-  "gate": "scripts/slo_gate.py",
-  "status": "declared",
-  "ships_in": "Capacity/scaling numbers measured on declared GKE hardware (2026-07-10) and set here; status flipped provisional -> declared. Correctness floors were already enforced in v0.11.",
-  "status_note": "DECLARED: the capacity/scaling targets below are derived from a real baseline run on the declared hardware class (see measured_on + measurements). ADR-051 §7 requires SLO numbers be measured, not asserted — these are, on real GKE machines. The floor hardware is the WEAKER of the two classes measured (e2-standard-8), so a run on that class or better clears the floors (c3-standard-8, measured faster, also clears them). The gate ENFORCES every non-null target and the correctness floors; run it on the declared hardware (shared CI runners are not release-representative — CI runs slo_gate --selftest only).",
-  "hardware_class": "e2-standard-8",
-  "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve); cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant)",
-  "correctness_floors": {
-    "note": "Non-capacity invariants — enforced on every run regardless of status (they need no hardware baseline). A run that drops requests or fails closed spuriously fails the gate immediately.",
-    "min_success_fraction": 0.999,
-    "max_failure_fraction": 0.001
-  },
-  "capacity_targets": {
-    "note": "Derived from the DECLARED (weaker) hardware e2-standard-8 at 8 cores: throughput floor ~= 0.64x measured median (390 rps -> 250 floor); latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance. Both measured classes clear these.",
-    "throughput_floor_rps": 250.0,
-    "added_latency_ceilings_us": {
-      "p50": 250000,
-      "p99": 600000,
-      "p999": 900000
-    }
-  },
-  "scaling_targets": {
-    "note": "Per-core linear-scaling tolerance for the 1->N cores curve: achieved_N_core_throughput / (single_core_throughput * N) must be >= per_core_min_linear_factor. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin.",
-    "per_core_min_linear_factor": 0.60,
-    "cores_under_test": 8
-  },
-  "measurements": {
-    "note": "Raw measured baselines (no fabrication). throughput in verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
-    "e2-standard-8": {
-      "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
-      "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },
-      "per_core_linear_factor": 0.718
+  "local_regression_gate": "scripts/adr051_slo_gate.py",
+  "production_slo_gate": "scripts/slo_gate.py",
+
+  "local_regression": {
+    "status": "active",
+    "kind": "relative-to-committed-baseline",
+    "rationale": "Hardware-independent: catches a local change that regresses the serving path against its own recorded baseline, without pretending a dev box states production capacity. Enforced by scripts/adr051_slo_gate.py against a fresh run of the baseline anchor config.",
+    "tolerances": {
+      "throughput_rps_min_fraction": 0.85,
+      "p50_added_us_max_fraction": 1.25,
+      "p99_added_us_max_fraction": 1.30,
+      "p999_added_us_max_fraction": 1.50,
+      "comment": "A fresh anchor run must sustain >= 85% of baseline throughput and stay within the stated multiples of baseline added-latency percentiles. Bands are wider on the tail (p999) than the median because the tail is noisier on a co-located box; tighten them once a dedicated loadgen removes that noise."
     },
-    "c3-standard-8": {
-      "one_core": { "throughput_rps": 90.9, "p50_us": 701624, "p99_us": 763536, "p999_us": 919626, "success": "2000/2000" },
-      "eight_core": { "throughput_rps": 481.6, "p50_us": 121740, "p99_us": 318690, "p999_us": 362141, "success": "2000/2000" },
-      "per_core_linear_factor": 0.662
+    "per_core_scaling": {
+      "gated": false,
+      "comment": "NOT gated locally: the 1->N curve is non-authoritative on a single box (co-located loadgen contends for cores). Recorded only; the authoritative curve lives in production_slo below."
     }
+  },
+
+  "production_slo": {
+    "status": "declared",
+    "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve) as a K8s Job on a dedicated node; cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant). Enforced by scripts/slo_gate.py.",
+    "kind": "absolute-per-hardware-profile",
+    "hardware_class": "e2-standard-8",
+    "hardware_note": "The DECLARED floor is the WEAKER of the two measured classes (e2-standard-8); a run on that class or better clears these targets (c3-standard-8, measured faster, also clears them). Floors ~= 0.64x measured median throughput; latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance.",
+    "targets": {
+      "aggregate_throughput_rps_min": 250,
+      "p50_added_us_max": 250000,
+      "p99_added_us_max": 600000,
+      "p999_added_us_max": 900000
+    },
+    "per_core_scaling": {
+      "gated": true,
+      "linear_tolerance_min": 0.60,
+      "cores_under_test": 8,
+      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin."
+    },
+    "measurements": {
+      "note": "Raw measured baselines (no fabrication). throughput = verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
+      "e2-standard-8": {
+        "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
+        "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },
+        "per_core_linear_factor": 0.718
+      },
+      "c3-standard-8": {
+        "one_core": { "throughput_rps": 90.9, "p50_us": 701624, "p99_us": 763536, "p999_us": 919626, "success": "2000/2000" },
+        "eight_core": { "throughput_rps": 481.6, "p50_us": 121740, "p99_us": 318690, "p999_us": 362141, "success": "2000/2000" },
+        "per_core_linear_factor": 0.662
+      }
+    }
+  },
+
+  "absolute_gates": {
+    "status": "active",
+    "kind": "hardware-independent correctness gates — always required, every release",
+    "gates": [
+      {
+        "name": "replay-race",
+        "requirement": "N concurrent submissions of the same signed request across cores and across replicas yield EXACTLY ONE Fresh and N-1 Replay.",
+        "enforced_by": ["//mcp-re-proxy:replay_race_harness_test"],
+        "adr_ref": "ADR-MCPRE-051 §4"
+      },
+      {
+        "name": "bounded-drain",
+        "requirement": "Graceful drain joins all in-flight requests within the bounded grace window; zero abandoned requests.",
+        "enforced_by": ["//mcp-re-proxy:async_drain_test"],
+        "adr_ref": "ADR-MCPRE-051 §6"
+      }
+    ]
   }
 }

@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""ADR-MCPRE-051 §7 SLO release gate (MCPRE-123).
+"""ADR-MCPRE-051 §7 PRODUCTION-SLO release gate (MCPRE-123 + MCPRE-110 production half).
 
-Compares a load-harness report (`mcp-re-load-harness-report/v1`, written by
-`tls_load_harness_bench.rs` to `MCP_RE_LOADGEN_OUT`) against the declared SLO
-targets (`docs/bench/adr-051-slo-targets.json`, MCPRE-110) and FAILS the release
-when a run is below a throughput floor, above a latency ceiling, below the
-per-core scaling factor, or below the correctness floors.
+The companion to `scripts/adr051_slo_gate.py`: that one is the *local-regression*
+gate (a fresh run vs the committed dev-box anchor, hardware-independent). THIS one
+is the *absolute production SLO* gate — it enforces the `production_slo` block of
+`docs/bench/adr-051-slo-targets.json`, whose numbers are measured on the DECLARED
+hardware class (the GKE fleet run, MCPRE-110 production half).
 
-Honest-by-construction: capacity/scaling targets are `null` until a baseline run
-on the declared hardware fills them (the HITL step). The gate ENFORCES every
-non-null target plus the correctness floors, and SKIPS null targets with a
-warning — so it is wireable and green in CI now, and tightens automatically the
-moment real numbers land and `status` flips to `declared`. No fabricated numbers.
+Reads a load-harness report (`mcp-re-load-harness-report/v1`, written by
+`tls_load_harness_bench.rs` to `MCP_RE_LOADGEN_OUT`) and FAILS the release when a
+run is below the absolute throughput floor, above a latency ceiling, below the
+per-core linear-scaling tolerance, or produced any request failures.
+
+Honest-by-construction: while `production_slo.status` is `pending` (targets null),
+the gate SKIPS the capacity/scaling checks with a warning — so it is wireable and
+green in CI now. It ENFORCES automatically the moment the GKE baseline fills the
+numbers and `status` flips to `declared`. No fabricated numbers.
 
 Usage:
     slo_gate.py --report run.json --targets docs/bench/adr-051-slo-targets.json
@@ -46,48 +50,50 @@ class Gate:
         self.warnings.append(detail)
 
 
-def _success_fraction(report: dict) -> float:
-    r = report["results"]
-    succ = float(r["successes"])
-    fail = float(r["failures"])
-    total = succ + fail
-    return 1.0 if total == 0 else succ / total
+def _prod(targets: dict) -> dict:
+    return targets.get("production_slo", {}) or {}
+
+
+def _is_declared(targets: dict) -> bool:
+    return _prod(targets).get("status") == "declared"
 
 
 def check_report(report: dict, targets: dict, gate: Gate) -> None:
-    """Correctness floors (always) + capacity targets (when non-null)."""
+    """Absolute correctness (always) + production_slo capacity targets (when declared)."""
     r = report["results"]
 
-    floors = targets.get("correctness_floors", {})
-    if (mn := floors.get("min_success_fraction")) is not None:
-        sf = _success_fraction(report)
-        gate.enforce(sf >= mn, f"success_fraction {sf:.4f} < min {mn}")
-    if (mx := floors.get("max_failure_fraction")) is not None:
-        ff = 1.0 - _success_fraction(report)
-        gate.enforce(ff <= mx, f"failure_fraction {ff:.4f} > max {mx}")
+    # Correctness is hardware-independent and always enforced: a run that dropped
+    # requests is never a pass, regardless of production_slo status.
+    fails = int(r.get("failures", 0))
+    gate.enforce(fails == 0, f"{fails} request failure(s) in the run")
 
-    cap = targets.get("capacity_targets", {})
-    floor = cap.get("throughput_floor_rps")
+    prod = _prod(targets)
+    tgt = prod.get("targets", {}) or {}
+    if not _is_declared(targets):
+        gate.skip(f"production_slo.status is {prod.get('status', 'unset')!r} "
+                  f"(capacity targets null until the GKE baseline) — capacity checks skipped")
+        return
+
+    floor = tgt.get("aggregate_throughput_rps_min")
     if floor is None:
-        gate.skip("capacity_targets.throughput_floor_rps is null (not yet measured) — skipped")
+        gate.skip("production_slo.targets.aggregate_throughput_rps_min is null — skipped")
     else:
         tput = float(r["throughput_rps"])
         gate.enforce(tput >= floor, f"throughput_rps {tput:.1f} < floor {floor}")
 
-    ceilings = cap.get("added_latency_ceilings_us", {}) or {}
     measured = r.get("added_latency_us", {})
     for pct in ("p50", "p99", "p999"):
-        ceil = ceilings.get(pct)
+        ceil = tgt.get(f"{pct}_added_us_max")
         if ceil is None:
-            gate.skip(f"capacity_targets.added_latency_ceilings_us.{pct} is null — skipped")
+            gate.skip(f"production_slo.targets.{pct}_added_us_max is null — skipped")
         else:
             got = float(measured[pct])
             gate.enforce(got <= ceil, f"added_latency_us.{pct} {got:.1f} > ceiling {ceil}")
 
 
 def check_scaling(baseline: dict, scaled: dict, targets: dict, gate: Gate) -> None:
-    st = targets.get("scaling_targets", {})
-    factor = st.get("per_core_min_linear_factor")
+    scaling = _prod(targets).get("per_core_scaling", {}) or {}
+    factor = scaling.get("linear_tolerance_min")
     one = float(baseline["results"]["throughput_rps"])
     n_cores = int(scaled["config"]["declared_cores"])
     n_tput = float(scaled["results"]["throughput_rps"])
@@ -95,10 +101,10 @@ def check_scaling(baseline: dict, scaled: dict, targets: dict, gate: Gate) -> No
         gate.enforce(False, f"degenerate scaling inputs (cores={n_cores}, 1-core rps={one})")
         return
     achieved = n_tput / (one * n_cores)
-    if factor is None:
+    if factor is None or not _is_declared(targets):
         gate.skip(
-            f"scaling_targets.per_core_min_linear_factor is null — measured factor "
-            f"{achieved:.3f} at {n_cores} cores recorded but not enforced"
+            f"production_slo.per_core_scaling.linear_tolerance_min is null/pending — measured "
+            f"factor {achieved:.3f} at {n_cores} cores recorded but not enforced"
         )
     else:
         gate.enforce(
@@ -116,8 +122,8 @@ def _load(path: str, schema: str) -> dict:
 
 
 def _report_gate(gate: Gate, targets: dict) -> int:
-    status = targets.get("status", "provisional")
-    print(f"SLO gate — targets status: {status}; checks run: {gate.checks}")
+    status = _prod(targets).get("status", "unset")
+    print(f"SLO gate (production_slo) — status: {status}; checks run: {gate.checks}")
     for w in gate.warnings:
         print(f"  · skip: {w}")
     if gate.failures:
@@ -161,27 +167,28 @@ def _synth_report(succ, fail, tput, p50, p99, p999, cores=1):
     }
 
 
+def _targets(status, targets=None, factor=None):
+    return {"schema": TARGETS_SCHEMA,
+            "production_slo": {"status": status, "targets": targets or {},
+                               "per_core_scaling": {"gated": True, "linear_tolerance_min": factor}}}
+
+
 def selftest() -> int:
     ok = True
 
-    # 1. Provisional targets (all capacity null): a clean run passes on floors alone.
-    prov = {"schema": TARGETS_SCHEMA, "status": "provisional",
-            "correctness_floors": {"min_success_fraction": 0.999, "max_failure_fraction": 0.001},
-            "capacity_targets": {"throughput_floor_rps": None,
-                                 "added_latency_ceilings_us": {"p50": None, "p99": None, "p999": None}},
-            "scaling_targets": {"per_core_min_linear_factor": None}}
-    g = Gate(); check_report(_synth_report(1000, 0, 5000.0, 100, 900, 3000), prov, g)
-    ok &= (not g.failures) and (len(g.warnings) >= 4)
+    # 1. Pending targets: a clean run passes on correctness alone; capacity skipped.
+    pend = _targets("pending")
+    g = Gate(); check_report(_synth_report(1000, 0, 5000.0, 100, 900, 3000), pend, g)
+    ok &= (not g.failures) and (len(g.warnings) >= 1)
 
-    # 2. Correctness floor bites even when provisional: dropped requests fail.
-    g = Gate(); check_report(_synth_report(900, 100, 5000.0, 100, 900, 3000), prov, g)
-    ok &= any("success_fraction" in f for f in g.failures)
+    # 2. Correctness bites even when pending: dropped requests fail.
+    g = Gate(); check_report(_synth_report(900, 100, 5000.0, 100, 900, 3000), pend, g)
+    ok &= any("request failure" in f for f in g.failures)
 
-    # 3. Declared targets: a run below the throughput floor / above a ceiling fails.
-    decl = {"schema": TARGETS_SCHEMA, "status": "declared",
-            "correctness_floors": {"min_success_fraction": 0.999},
-            "capacity_targets": {"throughput_floor_rps": 4000.0,
-                                 "added_latency_ceilings_us": {"p50": 500, "p99": 2000, "p999": 5000}}}
+    # 3. Declared targets: below floor / above a ceiling fails.
+    decl = _targets("declared",
+                    {"aggregate_throughput_rps_min": 4000.0,
+                     "p50_added_us_max": 500, "p99_added_us_max": 2000, "p999_added_us_max": 5000})
     g = Gate(); check_report(_synth_report(1000, 0, 3999.0, 100, 900, 3000), decl, g)
     ok &= any("throughput_rps" in f for f in g.failures)
     g = Gate(); check_report(_synth_report(1000, 0, 9000.0, 100, 9001, 3000), decl, g)
@@ -190,9 +197,8 @@ def selftest() -> int:
     g = Gate(); check_report(_synth_report(1000, 0, 9000.0, 100, 900, 3000), decl, g)
     ok &= not g.failures
 
-    # 4. Scaling lane: below-factor fails, at/above passes.
-    scal = {"schema": TARGETS_SCHEMA, "status": "declared",
-            "scaling_targets": {"per_core_min_linear_factor": 0.8}}
+    # 4. Scaling lane: below-factor fails, at/above passes (only when declared).
+    scal = _targets("declared", factor=0.8)
     g = Gate(); check_scaling(_synth_report(1, 0, 1000.0, 0, 0, 0, cores=1),
                               _synth_report(1, 0, 3000.0, 0, 0, 0, cores=4), scal, g)
     ok &= any("per-core scaling" in f for f in g.failures)  # 3000/(1000*4)=0.75 < 0.8
@@ -205,7 +211,7 @@ def selftest() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="ADR-MCPRE-051 §7 SLO release gate")
+    ap = argparse.ArgumentParser(description="ADR-MCPRE-051 §7 production-SLO release gate")
     ap.add_argument("--report", help="load-harness report JSON (MCP_RE_LOADGEN_OUT)")
     ap.add_argument("--baseline", help="1-core report JSON (scaling lane)")
     ap.add_argument("--scaled", help="N-core report JSON (scaling lane)")

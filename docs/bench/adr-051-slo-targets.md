@@ -9,10 +9,19 @@ envelope pins the measurement **conditions**; this document declares the
 release **SLO targets** and the gate that enforces them, per ADR-MCPRE-051 §7
 ("benchmark-first, SLO-gated releases").
 
-The machine-readable targets are [`adr-051-slo-targets.json`](adr-051-slo-targets.json);
-the gate is [`scripts/slo_gate.py`](../../scripts/slo_gate.py).
+The machine-readable targets are [`adr-051-slo-targets.json`](adr-051-slo-targets.json),
+split into three blocks with **two complementary gates**:
 
-## Status: DECLARED (baseline measured on GKE, 2026-07-10)
+- **`local_regression`** (active) — a hardware-independent day-to-day gate: a fresh
+  run vs the committed dev-box anchor [`adr-051-baseline-local.json`](adr-051-baseline-local.json),
+  enforced by [`scripts/adr051_slo_gate.py`](../../scripts/adr051_slo_gate.py) (MCPRE-110).
+- **`production_slo`** (declared) — the absolute per-hardware SLO measured on the
+  declared GKE class, enforced by [`scripts/slo_gate.py`](../../scripts/slo_gate.py)
+  (MCPRE-123 + the MCPRE-110 production half). This is the baseline below.
+- **`absolute_gates`** (active) — always-on correctness gates (replay-race,
+  bounded-drain) enforced by their own tests.
+
+## Status: production_slo DECLARED (baseline measured on GKE, 2026-07-10)
 
 ADR-MCPRE-051 §7 is deliberate: *"the SLO numbers live with the harness and the
 release profile, not in this ADR,"* and *"capacity claims without a pinned
@@ -77,9 +86,9 @@ in a later minor release:
    ```
 2. Derive the release floor/ceilings from that baseline (e.g. throughput floor at
    a chosen fraction of measured median; p99/p999 ceilings at a chosen multiple
-   of measured tail), record `hardware_class` + `measured_on`, and set
-   `per_core_min_linear_factor` from `n_core / (one_core * N)`.
-3. Set `status` to `declared` and enforce in CI on representative hardware:
+   of measured tail), record `production_slo.hardware_class` + `measured_on`, and set
+   `production_slo.per_core_scaling.linear_tolerance_min` from `n_core / (one_core * N)`.
+3. Set `production_slo.status` to `declared` and enforce on representative hardware:
    ```
    python3 scripts/slo_gate.py --report n_core.json \
      --baseline one_core.json --scaled n_core.json \
@@ -93,10 +102,11 @@ is in place now; only the representative numbers need a real run.
 
 ## Targeted dimensions (ADR-051 §7)
 
-| Dimension | Target key | Enforced now? |
-| --- | --- | --- |
-| Request success fraction | `correctness_floors.min_success_fraction` | ✅ yes |
-| Failure fraction | `correctness_floors.max_failure_fraction` | ✅ yes |
-| Aggregate throughput floor | `capacity_targets.throughput_floor_rps` | ⏳ on `declared` |
-| Added latency p50/p99/p999 ceilings | `capacity_targets.added_latency_ceilings_us` | ⏳ on `declared` |
-| Per-core 1→N linear scaling | `scaling_targets.per_core_min_linear_factor` | ⏳ on `declared` |
+| Dimension | Target key | Gate | Enforced now? |
+| --- | --- | --- | --- |
+| Request-failure = 0 (correctness) | run `results.failures` | `slo_gate.py` | ✅ yes |
+| Local-regression throughput/latency | `local_regression.tolerances.*` | `adr051_slo_gate.py` | ✅ yes |
+| Aggregate throughput floor | `production_slo.targets.aggregate_throughput_rps_min` | `slo_gate.py` | ✅ declared |
+| Added latency p50/p99/p999 ceilings | `production_slo.targets.{p50,p99,p999}_added_us_max` | `slo_gate.py` | ✅ declared |
+| Per-core 1→N linear scaling | `production_slo.per_core_scaling.linear_tolerance_min` | `slo_gate.py` | ✅ declared |
+| replay-race / bounded-drain | `absolute_gates.*` | dedicated tests | ✅ yes |
