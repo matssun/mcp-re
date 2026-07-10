@@ -10,7 +10,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 
 - [All ADRs](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr)
 - [✅ Accepted](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aaccepted) · [✅ Implemented](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aimplemented) · [🟡 Proposed](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aproposed)
-- [↩️ Superseded](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Asuperseded) · [🗄️ Deprecated](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Adeprecated) · [⚠️ Needs review](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aneeds-review)
+- [↩️ Superseded](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Asuperseded) · [🗄️ Deprecated](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Adeprecated)
 
 ## Index
 
@@ -28,12 +28,12 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | ↩️ Superseded |
 | [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Accepted |
 | [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Accepted |
-| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | 🟡 Proposed ⚠️ _needs review_ |
-| [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | 🟡 Proposed ⚠️ _needs review_ |
-| [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | 🟡 Proposed ⚠️ _needs review_ |
-| [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | 🟡 Proposed ⚠️ _needs review_ |
-| [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | 🟡 Proposed ⚠️ _needs review_ |
-| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | ✅ Accepted |
+| [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | ✅ Accepted |
+| [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | ✅ Accepted |
+| [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | ✅ Accepted |
+| [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | ↩️ Superseded |
+| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ✅ Accepted |
 | [ADR-MCPS-019](https://github.com/matssun/mcp-re/discussions/368) | Phase 7 External Backends (stub) | ✅ Implemented |
 | [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Accepted |
 | [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Accepted |
@@ -43,7 +43,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Accepted |
 | [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Accepted |
 | [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Accepted |
-| [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | ✅ Accepted |
 | [ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded | ✅ Accepted |
 | [ADR-MCPS-031](https://github.com/matssun/mcp-re/discussions/379) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope | ✅ Accepted |
 | [ADR-MCPS-032](https://github.com/matssun/mcp-re/discussions/380) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs | ✅ Accepted |
@@ -58,29 +58,15 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Accepted |
 | [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Accepted |
 | [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Accepted |
-| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Accepted |
 | [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Accepted |
-| [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | ↩️ Superseded |
 | [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Accepted |
 | [ADR-MCPS-048](https://github.com/matssun/mcp-re/discussions/396) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated | ✅ Accepted |
 | [ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence | ✅ Accepted |
 | [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Accepted |
 | [ADR-MCPRE-051](https://github.com/matssun/mcp-re/discussions/399) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody | ✅ Accepted |
 | [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Accepted |
-
-## Status needing an owner ruling
-
-During the migration, statuses were corrected where the evidence was unambiguous (e.g. ADR-MCPS-049 → **Accepted**, shipped in v0.10.1). The following still read **Proposed** in their bodies but look stale given the project is at v0.11 — they carry the `status:needs-review` label pending your ruling (accept / supersede / keep proposed):
-
-- [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)
-- [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363)
-- [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364)
-- [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365)
-- [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366)
-- [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367)
-- [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377)
-- [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392)
-- [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394)
 
 ## Active vs Legacy
 
