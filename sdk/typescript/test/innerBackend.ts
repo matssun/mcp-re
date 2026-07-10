@@ -81,13 +81,32 @@ function dispatch(request: Record<string, unknown>): unknown {
     };
   }
   if (method === "tools/list") {
-    // No `outputSchema` on purpose (see the Python `_inner_backend`): the MCP client
-    // validates structuredContent against a tool's outputSchema; omitting it keeps this
-    // MCP-RE-unaware fixture from also owning schemas.
+    // The MCP client validates a tool's structuredContent against its outputSchema.
+    // `read_file` declares one that MATCHES the structuredContent it returns, so a
+    // `Client.callTool` genuinely validates the verified round trip. `delete_files`
+    // declares none: its first leg is an ADR-MCPS-047 InputRequiredResult (elicitation),
+    // not plain structured tool output. (Mirrors the Python `_inner_backend`.)
     return {
       tools: [
-        { name: "read_file", description: "Read a UTF-8 text file.", inputSchema: { type: "object" } },
-        { name: "delete_files", description: "Delete files (elicits first; dry-run).", inputSchema: { type: "object" } },
+        {
+          name: "read_file",
+          description: "Read a UTF-8 text file.",
+          inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+          outputSchema: {
+            type: "object",
+            properties: { content: { type: "string" }, size: { type: "integer" } },
+            required: ["content", "size"],
+          },
+        },
+        {
+          name: "delete_files",
+          description: "Delete files (elicits first; dry-run).",
+          inputSchema: {
+            type: "object",
+            properties: { paths: { type: "array", items: { type: "string" } } },
+            required: ["paths"],
+          },
+        },
       ],
     };
   }

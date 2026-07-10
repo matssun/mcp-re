@@ -103,9 +103,12 @@ def _dispatch(request: dict) -> dict:
             "serverInfo": {"name": SERVER_NAME, "version": "0"},
         }
     if method == "tools/list":
-        # No `outputSchema` on purpose: the MCP client validates a tool's
-        # structuredContent against its outputSchema (calling tools/list to find it);
-        # omitting it keeps this MCP-RE-unaware fixture from also owning schemas.
+        # The MCP client validates a tool's structuredContent against its outputSchema
+        # (it calls tools/list to find it). `read_file` declares one that MATCHES the
+        # structuredContent it returns, so `ClientSession.call_tool` genuinely validates
+        # the verified round trip (not skips it). `delete_files` declares none: its first
+        # leg is an ADR-MCPS-047 InputRequiredResult (elicitation), not plain structured
+        # tool output, so a fixed outputSchema would not apply.
         return {
             "tools": [
                 {
@@ -115,6 +118,14 @@ def _dispatch(request: dict) -> dict:
                         "type": "object",
                         "properties": {"path": {"type": "string"}},
                         "required": ["path"],
+                    },
+                    "outputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "size": {"type": "integer"},
+                        },
+                        "required": ["content", "size"],
                     },
                 },
                 {
