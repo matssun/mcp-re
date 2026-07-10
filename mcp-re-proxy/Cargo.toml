@@ -147,6 +147,10 @@ async_serve = []
 [dev-dependencies]
 # In-process test cert generation for the mTLS round-trip tests.
 rcgen = { workspace = true }
+# The production client-side mTLS config (presents a client cert + verifies the
+# server) — used by the mTLS transport-binding channel-binding test to drive a
+# REAL rustls handshake whose negotiated peer leaf DER is the x5t#S256 material.
+mcp-re-transport = { path = "../mcp-re-transport" }
 # Mints the signed OCSP fixtures in the `online_ocsp` module's in-tree tests
 # (the Bazel ocsp test target wires this same crate); a dev-dep so the ocsp unit
 # tests build + run under `cargo test --features online_ocsp`, not only Bazel.

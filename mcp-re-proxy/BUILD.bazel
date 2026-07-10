@@ -641,6 +641,28 @@ nt_rust_test(
     ],
 )
 
+# ADR-MCPRE-050 mTLS transport binding: the RFC 9421 signer bound to the presented
+# TLS client cert (RFC 8705 x5t#S256), proven over a REAL mutual-TLS handshake —
+# the production server config + the mcp-re-transport client presenting a cert; the
+# negotiated peer leaf DER is fed into verify_request_full. Positive (own channel),
+# relayed-onto-a-different-channel, and plain-HTTP-no-cert all fail closed.
+nt_rust_test(
+    name = "mtls_transport_binding_test",
+    srcs = ["tests/mtls_transport_binding_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+    ],
+)
+
 # MCPS-025: RustlsDirectProvider — identity extraction (URI/DNS/CN priority) +
 # a full blocking mTLS round-trip (certs minted in-process via rcgen).
 nt_rust_test(

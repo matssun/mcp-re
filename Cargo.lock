@@ -1032,6 +1032,7 @@ dependencies = [
  "mcp-re-http-profile",
  "mcp-re-policy",
  "mcp-re-test-paths",
+ "mcp-re-transport",
  "rcgen",
  "redis",
  "rustls",
