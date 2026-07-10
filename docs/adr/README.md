@@ -38,12 +38,12 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Implemented |
 | [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Implemented |
 | [ADR-MCPS-022](https://github.com/matssun/mcp-re/discussions/371) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS | ✅ Implemented |
-| [ADR-MCPS-023](https://github.com/matssun/mcp-re/discussions/372) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion | ✅ Accepted |
+| [ADR-MCPS-023](https://github.com/matssun/mcp-re/discussions/372) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion | ✅ Implemented |
 | [ADR-MCPS-024](https://github.com/matssun/mcp-re/discussions/373) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) | ✅ Accepted |
 | [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Implemented |
 | [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Implemented |
 | [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Implemented |
-| [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | ✅ Accepted |
+| [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | ✅ Implemented |
 | [ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded | ✅ Implemented |
 | [ADR-MCPS-031](https://github.com/matssun/mcp-re/discussions/379) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope | ✅ Implemented |
 | [ADR-MCPS-032](https://github.com/matssun/mcp-re/discussions/380) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs | ✅ Implemented |
