@@ -99,6 +99,23 @@ nt_rust_test(
     ],
 )
 
+# ADR-MCPRE-052 (MCPRE-122): delegated-signing end-to-end — issue a root-signed
+# JOSE/JWS delegation credential, sign a response with the delegated key via the
+# custody state machine, and verify the whole chain (required mode, rotation
+# overlap, fail-closed). In-process, hermetic.
+nt_rust_test(
+    name = "delegation_e2e_test",
+    srcs = ["tests/delegation_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 # MCPRE-106: external-signer custody seam — sign_request_with_signer /
 # sign_response_with_signer wire-identical to local-key signing, the raw
 # 64-byte Ed25519 length contract, and tamper / wrong-key negatives.

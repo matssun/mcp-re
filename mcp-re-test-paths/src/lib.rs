@@ -51,15 +51,7 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
     match env_key {
         // Same-crate bins
         "MCP_RE_PROXY_CLI" => find_bin(&workspace_root, "mcp-re-proxy"),
-        "MCP_RE_CLIENT_PROXY_CLI" => find_bin(&workspace_root, "mcp-re-client-proxy-cli"),
-        "MCP_RE_STDIO_SERVER" => find_bin(&workspace_root, "mcp-re-stdio-server"),
-        "DEMO_SERVER_BIN" => find_bin(&workspace_root, "mcp-re-demo-server"),
-        "INNER_FILESERVER_BIN" | "DEMO_FILESERVER_BIN" => {
-            find_bin(&workspace_root, "mcp-re-demo-fileserver")
-        }
         "MCP_RE_ECHO_INNER" => find_bin(&workspace_root, "echo-inner"),
-        // Data fixtures
-        "DEMO_ROOT_README" => workspace_root.join("mcp-re-demo-fileserver/demo_root/readme.txt"),
         // Conformance + traceability manifests
         "MCP_RE_MANIFEST" => workspace_root.join("mcp-re-conformance/conformance_manifest.json"),
         "MCP_RE_SECURITY_MANIFEST" => {
@@ -77,12 +69,9 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCP_RE_BUILD_CONFORMANCE" => workspace_root.join("mcp-re-conformance/BUILD.bazel"),
         "MCP_RE_BUILD_CORE" => workspace_root.join("mcp-re-core/BUILD.bazel"),
         "MCP_RE_BUILD_DEMO" => workspace_root.join("mcp-re-demo/BUILD.bazel"),
-        "MCP_RE_BUILD_DEMO_SERVER" => workspace_root.join("mcp-re-demo-server/BUILD.bazel"),
-        "MCP_RE_BUILD_FILESERVER" => workspace_root.join("mcp-re-demo-fileserver/BUILD.bazel"),
         "MCP_RE_BUILD_HOST" => workspace_root.join("mcp-re-host/BUILD.bazel"),
         "MCP_RE_BUILD_POLICY" => workspace_root.join("mcp-re-policy/BUILD.bazel"),
         "MCP_RE_BUILD_PROXY" => workspace_root.join("mcp-re-proxy/BUILD.bazel"),
-        "MCP_RE_BUILD_STDIO_BRIDGE" => workspace_root.join("mcp-re-stdio-bridge/BUILD.bazel"),
         "MCP_RE_BUILD_TRANSPORT" => workspace_root.join("mcp-re-transport/BUILD.bazel"),
         // Per-test source files (read by the security-traceability guard)
         "MCP_RE_SRC_OBJECT_SUITE" => {
@@ -100,32 +89,19 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcp-re-conformance/tests/method_name_drift_guard_test.rs")
         }
         "MCP_RE_SRC_HOST_SESSION" => workspace_root.join("mcp-re-host/tests/host_session_test.rs"),
-        // ADR-MCPRE-051 Phase B (MCPRE-118): the persistent-inner / subprocess
-        // hardening proofs relocated to the out-of-TCB mcp-re-stdio-bridge crate,
-        // where the subprocess surface now lives (the proxy-owned persistent_*
-        // tests were retired with that topology).
-        "MCP_RE_SRC_PERSISTENT_INNER_HARDENING" => {
-            workspace_root.join("mcp-re-stdio-bridge/tests/persistent_inner_hardening_test.rs")
-        }
         "MCP_RE_SRC_PROXY" => workspace_root.join("mcp-re-proxy/tests/proxy_test.rs"),
+        // MCP-RE is HTTP-profile only: the over-the-wire security properties the
+        // deleted stdio demo-e2e tests used to witness are now witnessed by the
+        // HTTP harness + the proxy transport-binding test.
+        "MCP_RE_SRC_HTTP_HARNESS" => {
+            workspace_root.join("mcp-re-conformance/tests/http_harness_test.rs")
+        }
+        "MCP_RE_SRC_PROXY_TRANSPORT" => {
+            workspace_root.join("mcp-re-proxy/tests/proxy_transport_test.rs")
+        }
         "MCP_RE_SRC_KEY_SOURCE" => workspace_root.join("mcp-re-proxy/tests/key_source_test.rs"),
         "MCP_RE_SRC_DEV_ENV_KEY_SOURCE" => {
             workspace_root.join("mcp-re-proxy/tests/dev_env_key_source_test.rs")
-        }
-        "MCP_RE_SRC_DEMO_NEGATIVE_E2E" => {
-            workspace_root.join("mcp-re-demo/tests/demo_negative_e2e_test.rs")
-        }
-        "MCP_RE_SRC_DEMO_TRANSPORT_E2E" => {
-            workspace_root.join("mcp-re-demo/tests/demo_transport_e2e_test.rs")
-        }
-        "MCP_RE_SRC_DEMO_E2E_PERSISTENT" => {
-            workspace_root.join("mcp-re-demo/tests/demo_e2e_persistent_test.rs")
-        }
-        "MCP_RE_SRC_DEMO_POSTURE_E2E" => {
-            workspace_root.join("mcp-re-demo/tests/demo_posture_e2e_test.rs")
-        }
-        "MCP_RE_SRC_RECEIVED_LOG" => {
-            workspace_root.join("mcp-re-demo-server/tests/received_log_test.rs")
         }
         "MCP_RE_SRC_MTLS_CLIENT" => workspace_root.join("mcp-re-transport/tests/mtls_client_test.rs"),
         "MCP_RE_SRC_KEYSET_ADMISSION" => {

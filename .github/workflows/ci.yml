@@ -173,10 +173,9 @@ jobs:
         run: rustup show && rustc --version && cargo --version
 
       # Build the WHOLE workspace (not just -p mcp-re-proxy): the proxy's
-      # integration tests (persistent_inner_test, persistent_scope_test) spawn
-      # the cross-crate `mcp-re-demo-server` fixture binary, which cargo does NOT
-      # auto-build for another crate's integration tests. `--workspace` puts it
-      # (and the echo-inner fixture) in target/debug for mcp-re-test-paths to find.
+      # integration tests spawn the cross-crate `echo-inner` fixture binary, which
+      # cargo does NOT auto-build for another crate's integration tests.
+      # `--workspace` puts it in target/debug for mcp-re-test-paths to find.
       # `async_serve,cpstore_etcd` are included so the async serving-path tests and
       # the async etcd authoritative replay store (MCPRE-117) get per-PR compile
       # coverage here: the replay_race_harness_test async lanes compile, the in-memory

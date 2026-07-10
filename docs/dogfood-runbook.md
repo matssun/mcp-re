@@ -1,19 +1,18 @@
 # MCP-RE Dogfood Runbook — wrapping the real `intelli_code_mcp` server
 
-> **⚠ Superseded serving model (ADR-MCPRE-051 / MCPRE-118).** This runbook was
-> written for the pre-ADR-051 architecture in which the **proxy launched and
-> env-minimized the inner stdio subprocess** (`--inner-command`, `--inner-env*`,
-> `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer exist on the
-> proxy**: the PEP's inner plane is now stateless Streamable-HTTP
-> (`--inner-http-url`), and the entire subprocess/env/sandbox surface has been
-> relocated **out of the TCB** into the `mcp-re-stdio-bridge` adapter. To dogfood a
-> stdio server today, front it with the bridge and point the proxy at it — see the
-> rewritten [Sidecar Deployment Guide](sidecar-deployment-guide.md#wrapping-a-stdio-server-with-mcp-re-stdio-bridge).
-> The env-minimization sections (§2.2) and several of the 12 checks below exercise
-> a proxy surface that no longer exists; a bridge-oriented rewrite of this runbook
-> is a tracked follow-up (part of MCPRE-123 docs). The security *intent* (verify
-> before dispatch, sign responses, minimize the child's environment) is unchanged —
-> only the component that owns the child moved.
+> **⚠ Superseded serving model — stdio is OUT OF SCOPE for MCP-RE (2026-07-10).**
+> This runbook was written for the pre-ADR-051 architecture in which the **proxy
+> launched and env-minimized an inner stdio subprocess** (`--inner-command`,
+> `--inner-env*`, `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer
+> exist**, and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
+> PEP's inner plane is stateless Streamable-HTTP (`--inner-http-url`). To protect a
+> stdio-only MCP server today, front it with an **external** plain-MCP adapter
+> (e.g. FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the proxy's
+> `--inner-http-url` at that adapter — MCP-RE talks HTTP to it. The parts of this
+> runbook that drive an in-proxy stdio child (§2.2 env-minimization and several of
+> the 12 checks) exercise a surface that no longer exists; **this runbook is
+> pending an HTTP-profile rewrite.** The security *intent* (verify before dispatch,
+> sign responses) is unchanged — only the transport is HTTP-only now.
 
 > **Note for public-repo readers.** This runbook documents an internal dogfood
 > exercise: wrapping the author's private `intelli_code_mcp` server (not present

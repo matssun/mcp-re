@@ -40,7 +40,9 @@ It provides a reference implementation and conformance package for protecting MC
 - **stateless multi-round-trip continuation** — request-associated elicitation
   stays cryptographically bound turn to turn (ADR-MCPS-047);
 - Rust-native mTLS transport hardening;
-- sidecar-based protection of ordinary MCP stdio servers;
+- sidecar-based protection of ordinary Streamable-HTTP MCP servers (MCP-RE is
+  HTTP-profile only; a stdio-only server is fronted by an external plain-MCP
+  adapter such as FastMCP);
 - signed response verification on the host/client side, via a client-side proxy
   **or** a native SDK (**Python and TypeScript**, both bound to the same audited
   `mcp-re-client-core` so the signed evidence is byte-identical across languages).
@@ -66,11 +68,12 @@ Full walkthrough, the grouped fail-closed output, and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
 KMS key-custody path (optional, separate): [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md).
 
-For the **end-to-end four-hop** path (an unmodified plain-MCP client → client-side
-proxy/SDK → mTLS → server-side proxy → inner MCP server) the `mcp-re-walkthrough`
-crate runs the full topology as separate OS processes, and the same tiers drive
-the **Python** and **TypeScript** SDKs interchangeably (`MCP_RE_DRIVER_PYTHON` /
-`MCP_RE_DRIVER_TS`). See [`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript).
+For the **end-to-end** path (a plain-MCP client → client-side proxy/SDK → mTLS →
+server-side MCP-RE proxy → Streamable-HTTP MCP backend), the **Python** and
+**TypeScript** SDKs bind to the same audited `mcp-re-client-core`. See
+[`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript). MCP-RE is
+HTTP-profile only; the over-the-wire persona-ladder walkthrough runs over the HTTP
+profile (a stdio-only endpoint is fronted by an external adapter such as FastMCP).
 
 ## Project status
 
@@ -267,13 +270,9 @@ mcp-re-transport/            Verifying mTLS client.
 mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcp-re-policy/               Delegated-authorization profiles (Phase 5).
 mcp-re-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
-mcp-re-client-proxy/         Local client-side MCP-RE proxy — the first adoption bridge (plain-MCP -> sign -> forward -> verify).
-mcp-re-client-proxy-cli/     Binary front-end for the client proxy (plain-MCP stdio -> sign draft-02 -> mTLS to remote).
-mcp-re-conformance/          Black-box conformance harness.
-mcp-re-walkthrough/          End-to-end four-hop persona-ladder walkthrough (ADR-MCPS-045).
-mcp-re-demo/                 Single-node demo harness.
-mcp-re-demo-server/          Long-lived stdio MCP server (demo target).
-mcp-re-demo-fileserver/      Minimal stdio MCP server (demo target).
+mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agnostic seam (plain-MCP -> sign -> forward -> verify).
+mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
+mcp-re-demo/                 mTLS/fixtures demo surface (host-side HostSession client + DemoFixtures).
 mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
 
 sdk/python/                Python SDK — maturin/PyO3 binding to mcp-re-client-core (ADR-MCPS-044).

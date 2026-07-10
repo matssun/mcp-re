@@ -2,16 +2,12 @@
 //!
 //! Proves the headline guarantees end-to-end:
 //!   1. A native MCP-RE server and a sidecar-wrapped ORDINARY server produce
-//!      identical Core outcomes for the full request-vector matrix, over BOTH
-//!      stdio and Streamable HTTP — i.e. native ≡ sidecar across transports.
+//!      identical Core outcomes for the full request-vector matrix over Streamable
+//!      HTTP — i.e. native ≡ sidecar (MCP-RE is HTTP-profile only; stdio is out of
+//!      scope).
 //!   2. The model holds no private key: requests are signed by a `HostSigner`
 //!      (which exposes no key accessor), and the sidecar-wrapped ordinary server
 //!      still accepts them and returns a signed, bound response.
-//!
-//! The stdio server binary is located from `MCP_RE_STDIO_SERVER`
-//! (`$(rlocationpath)`) resolved against the runfiles root.
-
-use std::path::PathBuf;
 
 use mcp_re_conformance::now_unix_for_case;
 use mcp_re_conformance::outcome_token;
@@ -22,7 +18,6 @@ use mcp_re_conformance::HttpHarness;
 use mcp_re_conformance::ObjectTarget;
 use mcp_re_conformance::RunContext;
 use mcp_re_conformance::ServerKind;
-use mcp_re_conformance::StdioHarness;
 use mcp_re_conformance::VectorCase;
 use mcp_re_core::parse_rfc3339_utc;
 use mcp_re_core::request_hash;
@@ -38,7 +33,7 @@ const EXPIRED: &str = include_str!("../../mcp-re-core/tests/vectors/expired_requ
 const WRONG_AUDIENCE: &str =
     include_str!("../../mcp-re-core/tests/vectors/wrong_audience_request.json");
 // MCPS-082 (audit M-12): P182 names these two as well; they must agree
-// object == stdio == http like the rest, not be object-only.
+// object == http like the rest, not be object-only.
 const TAMPERED_ID: &str = include_str!("../../mcp-re-core/tests/vectors/tampered_id.json");
 const MISSING_ENVELOPE: &str =
     include_str!("../../mcp-re-core/tests/vectors/missing_envelope_request.json");
@@ -50,42 +45,6 @@ const ON_BEHALF_OF: &str = "did:example:user-1";
 const AUTH_HASH: &str = "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
 const ISSUED_AT: &str = "2026-05-28T20:00:00Z";
 const EXPIRES_AT: &str = "2026-05-28T20:05:00Z";
-
-fn locate_server() -> PathBuf {
-    // Bazel mode: MCP_RE_STDIO_SERVER is a runfile-relative path injected by the
-    // test target; resolve it under TEST_SRCDIR / RUNFILES_DIR.
-    if let Ok(rel) = std::env::var("MCP_RE_STDIO_SERVER") {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
-            if let Ok(root) = std::env::var(key) {
-                candidates.push(PathBuf::from(root).join(&rel));
-            }
-        }
-        candidates.push(PathBuf::from(&rel));
-        for candidate in &candidates {
-            if candidate.exists() {
-                return candidate.clone();
-            }
-        }
-        panic!("cannot locate stdio server binary (rel='{rel}'); tried: {candidates:?}");
-    }
-    // Cargo mode: the `mcp-re-stdio-server` `[[bin]]` is a same-crate target, so
-    // CARGO_BIN_EXE_<name> is set automatically when this integration test is
-    // compiled by Cargo. Under Bazel that env is ABSENT at compile time, so use
-    // `option_env!` (compiles to `None`) rather than `env!` (which would fail the
-    // build) — this branch is unreachable under Bazel, which always takes the
-    // `MCP_RE_STDIO_SERVER` runfiles branch above (ADR-MCPS-048 / #220 parity).
-    PathBuf::from(
-        option_env!("CARGO_BIN_EXE_mcp-re-stdio-server").expect(
-            "neither MCP_RE_STDIO_SERVER (Bazel) nor CARGO_BIN_EXE_mcp-re-stdio-server \
-             (Cargo) is set — cannot locate the stdio server binary",
-        ),
-    )
-}
-
-fn stdio() -> StdioHarness {
-    StdioHarness::new(locate_server())
-}
 
 fn request_bytes(case: &VectorCase) -> Vec<u8> {
     serde_json::to_vec(case.message.as_ref().expect("message")).expect("serialize")
@@ -117,12 +76,11 @@ fn transport_token(
 }
 
 #[test]
-fn native_and_sidecar_agree_across_both_transports() {
+fn native_and_sidecar_agree_over_http() {
     let object = ObjectTarget::new();
     let ctx = RunContext {
         canonical_request_hash: None,
     };
-    let stdio = stdio();
     let http = HttpHarness::new();
 
     for raw in [
@@ -141,19 +99,9 @@ fn native_and_sidecar_agree_across_both_transports() {
             .as_token()
             .to_string();
 
-        // Four target instantiations: {native, sidecar} × {stdio, HTTP}.
-        let combos: [(&str, String); 4] = [
-            (
-                "stdio-native",
-                transport_token(|r, n| stdio.serve_kind(r, n, ServerKind::Native), &case),
-            ),
-            (
-                "stdio-sidecar",
-                transport_token(
-                    |r, n| stdio.serve_kind(r, n, ServerKind::SidecarWrapped),
-                    &case,
-                ),
-            ),
+        // Both server shapes over the ONE production transport (HTTP): native and
+        // sidecar-wrapped ordinary server must match the object outcome.
+        let combos: [(&str, String); 2] = [
             (
                 "http-native",
                 transport_token(|r, n| http.serve_kind(r, n, ServerKind::Native), &case),
@@ -204,9 +152,9 @@ fn model_holds_no_key_yet_sidecar_accepts_host_signed_request() {
     let expected_hash =
         request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).expect("request_hash");
 
-    // The sidecar-wrapped ORDINARY server accepts it over stdio and returns a
+    // The sidecar-wrapped ORDINARY server accepts it over HTTP and returns a
     // signed response bound to the request.
-    let responses = stdio()
+    let responses = HttpHarness::new()
         .serve_kind(&[request], now, ServerKind::SidecarWrapped)
         .expect("sidecar serves");
     let token = outcome_token(&responses[0], &expected_hash, &response_resolver());

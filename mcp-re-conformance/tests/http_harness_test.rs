@@ -1,16 +1,10 @@
 //! MCPS-013 — Streamable HTTP harness conformance tests.
 //!
 //! Drives the full MCP-RE outcome matrix over real loopback HTTP and asserts the
-//! SAME wire tokens as the stdio harness and the in-process object target — the
-//! transport-agnostic headline claim (ADR-MCPS-011). The closing test runs each
-//! shared request vector through all three targets (object, stdio, HTTP) and
-//! asserts identical outcomes.
-//!
-//! The stdio comparison launches the `mcp_re_stdio_server` child process, located
-//! from `MCP_RE_STDIO_SERVER` ($(rlocationpath)) resolved against the runfiles
-//! root — no runfiles-crate dependency.
-
-use std::path::PathBuf;
+//! SAME wire tokens as the in-process object target — the transport-agnostic
+//! headline claim (ADR-MCPS-011). MCP-RE is HTTP-profile only, so the parity
+//! surface is object == HTTP (stdio is out of scope). The closing test runs each
+//! shared request vector through both targets and asserts identical outcomes.
 
 use mcp_re_conformance::now_unix_for_case;
 use mcp_re_conformance::outcome_token;
@@ -20,7 +14,6 @@ use mcp_re_conformance::ConformanceTarget;
 use mcp_re_conformance::HttpHarness;
 use mcp_re_conformance::ObjectTarget;
 use mcp_re_conformance::RunContext;
-use mcp_re_conformance::StdioHarness;
 use mcp_re_conformance::VectorCase;
 use mcp_re_core::parse_rfc3339_utc;
 use mcp_re_core::request_hash;
@@ -34,23 +27,15 @@ const EXPIRED: &str = include_str!("../../mcp-re-core/tests/vectors/expired_requ
 const WRONG_AUDIENCE: &str =
     include_str!("../../mcp-re-core/tests/vectors/wrong_audience_request.json");
 // MCPS-082 (audit M-12): P182 names these two as well; they must agree
-// object == stdio == http like the rest, not be object-only.
+// object == http like the rest, not be object-only.
 const TAMPERED_ID: &str = include_str!("../../mcp-re-core/tests/vectors/tampered_id.json");
 const MISSING_ENVELOPE: &str =
     include_str!("../../mcp-re-core/tests/vectors/missing_envelope_request.json");
 
 const ISSUED_AT: &str = "2026-05-28T20:00:00Z";
 
-fn locate_server() -> PathBuf {
-    mcp_re_test_paths::resolve_runfile("MCP_RE_STDIO_SERVER")
-}
-
 fn http() -> HttpHarness {
     HttpHarness::new()
-}
-
-fn stdio() -> StdioHarness {
-    StdioHarness::new(locate_server())
 }
 
 /// `now` 60s after the canonical issued_at — inside the freshness window.
@@ -172,13 +157,12 @@ fn transport_token(
 }
 
 #[test]
-fn http_stdio_and_object_agree_for_all_shared_request_vectors() {
+fn http_and_object_agree_for_all_shared_request_vectors() {
     let object = ObjectTarget::new();
     let ctx = RunContext {
         canonical_request_hash: None,
     };
     let http = http();
-    let stdio = stdio();
 
     for raw in [
         V1,
@@ -197,21 +181,10 @@ fn http_stdio_and_object_agree_for_all_shared_request_vectors() {
             .as_token()
             .to_string();
         let http_token = transport_token(|r, n| http.serve(r, n), &case);
-        let stdio_token = transport_token(|r, n| stdio.serve(r, n), &case);
 
         assert_eq!(
             http_token, object_token,
             "HTTP must match object for '{}' (object={object_token}, http={http_token})",
-            case.name
-        );
-        assert_eq!(
-            stdio_token, object_token,
-            "stdio must match object for '{}' (object={object_token}, stdio={stdio_token})",
-            case.name
-        );
-        assert_eq!(
-            http_token, stdio_token,
-            "HTTP and stdio must be identical for '{}' (http={http_token}, stdio={stdio_token})",
             case.name
         );
     }

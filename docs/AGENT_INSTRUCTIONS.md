@@ -19,9 +19,11 @@ option. It is not.
 4. Do **not** use ingress / header-mangling survival as a reason to revive JCS.
    Ingress compatibility is a deployment contract, not an evidence-profile
    concern.
-5. Do **not** put stdio in the production profile. stdio compatibility is handled
-   by the out-of-TCB adapter / proxy-to-proxy bridge (`mcp-re-stdio-bridge`),
-   reached over HTTP like any other backend (ADR-MCPRE-051 §3).
+5. **stdio is OUT OF SCOPE for MCP-RE** (owner decision 2026-07-10). MCP-RE is
+   HTTP-profile only — do not add stdio serving, a stdio inner transport, stdio
+   proxying, stdio CLI flags, or stdio tests. A stdio-only client/server is bridged
+   to HTTP by an EXTERNAL plain-MCP adapter (e.g. FastMCP); MCP-RE talks HTTP to it.
+   Do not reintroduce a stdio bridge or frame stdio as "legacy compatibility."
 6. **ADR-MCPRE-052** defines delegated signing as a standards-shaped JOSE/JWS
    credential carried in the RFC 9421 HTTP evidence — **not** a JCS-signed
    object. Do not regress it toward an object profile.

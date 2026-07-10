@@ -136,32 +136,39 @@ Message Signatures. (ADR-MCPRE-052 §2 is the worked example: the delegation
 credential rides inline in the body `_meta` block, protected by the covered
 `content-digest`.)
 
-### D4 — stdio is outside the production MCP-RE profile
+### D4 — stdio is OUT OF SCOPE for MCP-RE
 
-Consistent with ADR-MCPRE-051 §3 / §Alternatives (stdio subprocess mode
-RELOCATED out of the PEP/TCB into `mcp-re-stdio-bridge`):
+**Owner decision (2026-07-10): MCP-RE will not own stdio transport support.** The
+production contract is **HTTP in, HTTP out** — the RFC 9421 + Content-Digest HTTP
+profile is the only carrier and the only transport MCP-RE implements. MCP-RE-owned
+stdio serving, stdio inner transport, stdio proxying, and stdio test topology have
+been REMOVED (there is no `mcp-re-stdio-bridge`, no stdio serving path, no stdio
+CLI flags, no stdio conformance/demo topology). This is not "legacy compatibility"
+framing — stdio is simply **out of scope**.
 
 ```
-Production MCP-RE:
+MCP-RE (the only shape):
   RFC 9421 + Content-Digest HTTP profile in
   Streamable-HTTP inner backend out
-
-Local stdio compatibility:
-  provided by an adapter / proxy-to-proxy bridge (mcp-re-stdio-bridge),
-  NOT by the production MCP-RE data plane itself.
 ```
 
+If a client or server is stdio-only, an **EXTERNAL plain-MCP adapter** does the
+stdio↔HTTP bridging, entirely outside MCP-RE — for example
+[FastMCP remote](https://github.com/jlowin/fastmcp) (bridges a remote
+Streamable-HTTP/SSE MCP server into a stdio host) or FastMCP's proxy provider
+(HTTP↔stdio). MCP-RE talks HTTP to that adapter:
+
 ```
-LLM / MCP client
+stdio-only MCP client
+  → EXTERNAL plain-MCP stdio→HTTP adapter (e.g. FastMCP)   ← NOT part of MCP-RE
   → RFC 9421 + Content-Digest  (MCP-RE HTTP profile)
-  → production MCP-RE proxy
+  → MCP-RE proxy
   → Streamable HTTP
-  → stdio adapter proxy (if needed)   ← outside the production SLO profile
-  → local stdio MCP server
+  → HTTP MCP backend  (a stdio-only backend is likewise fronted by an external adapter)
 ```
 
-The stdio adapter is outside the production SLO profile and MUST advertise
-itself as compatibility / development infrastructure.
+Any remaining stdio reference in the tree is **pending deletion**, never a
+supported compatibility mode.
 
 ### D5 — Ingress mutation is not a reason to keep JCS
 

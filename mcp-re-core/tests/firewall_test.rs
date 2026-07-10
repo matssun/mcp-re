@@ -93,8 +93,6 @@ const FORBIDDEN_UPSTACK_CRATES: &[&str] = &[
     "mcp_re_host",
     "mcp-re-policy",
     "mcp_re_policy",
-    "mcp-re-stdio-bridge",
-    "mcp_re_stdio_bridge",
     "mcp-re-client-core",
     "mcp_re_client_core",
 ];

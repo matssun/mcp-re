@@ -18,8 +18,6 @@ nt_rust_library(
         "src/loader.rs",
         "src/runner.rs",
         "src/server.rs",
-        "src/stdio.rs",
-        "src/stdio_target.rs",
         "src/target.rs",
         "src/vector.rs",
     ],
@@ -37,19 +35,6 @@ nt_rust_binary(
     name = "mcp_re_conformance",
     srcs = ["src/main.rs"],
     crate_name = "mcp_re_conformance_bin",
-    edition = "2021",
-    deps = [
-        ":mcp_re_conformance_lib",
-    ],
-)
-
-# MCPS-012: the documented MCP-RE echo server over stdio. The stdio harness test
-# launches this binary as a child process and drives signed JSON-RPC over its
-# stdin/stdout.
-nt_rust_binary(
-    name = "mcp_re_stdio_server",
-    srcs = ["src/stdio_server_main.rs"],
-    crate_name = "mcp_re_stdio_server_bin",
     edition = "2021",
     deps = [
         ":mcp_re_conformance_lib",
@@ -213,20 +198,16 @@ nt_rust_test(
 
 # MCPS-013: Streamable HTTP harness — runs the documented echo server on a
 # loopback socket and drives the same outcome matrix over HTTP, then asserts
-# HTTP == stdio == object for every shared request vector (the transport-
-# agnostic headline claim). Needs the stdio server binary for the cross-
-# transport comparison, delivered via runfiles (same MCP_RE_STDIO_SERVER scheme).
+# HTTP == object for every shared request vector (the transport-agnostic headline
+# claim; MCP-RE is HTTP-profile only).
 nt_rust_test(
     name = "http_harness_test",
     srcs = ["tests/http_harness_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     compile_data = ["//mcp-re-core:vectors"],
-    data = [":mcp_re_stdio_server"],
     edition = "2021",
-    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
     deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
         ":mcp_re_conformance_lib",
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:serde_json",
@@ -234,18 +215,16 @@ nt_rust_test(
 )
 
 # MCPS-017: acceptance — a sidecar-wrapped ordinary server AND a native MCP-RE
-# server run the SAME outcome matrix over BOTH transports (stdio + HTTP) and must
-# produce identical Core outcomes. The host (which holds the key, not the model)
-# signs the requests. Needs the stdio server binary (native + proxy modes).
+# server run the SAME outcome matrix over HTTP and must produce identical Core
+# outcomes (MCP-RE is HTTP-profile only). The host (which holds the key, not the
+# model) signs the requests.
 nt_rust_test(
     name = "acceptance_test",
     srcs = ["tests/acceptance_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     compile_data = ["//mcp-re-core:vectors"],
-    data = [":mcp_re_stdio_server"],
     edition = "2021",
-    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
     deps = [
         ":mcp_re_conformance_lib",
         "//mcp-re-core:mcp_re_core",
@@ -277,11 +256,8 @@ nt_rust_test(
         "//mcp-re-policy:BUILD.bazel",
         "//mcp-re-policy:tests/vectors/phase5_vectors.json",
         "//mcp-re-proxy:BUILD.bazel",
-        "//mcp-re-stdio-bridge:BUILD.bazel",
         "//mcp-re-demo:BUILD.bazel",
-        "//mcp-re-demo-server:BUILD.bazel",
         "//mcp-re-transport:BUILD.bazel",
-        "//mcp-re-demo-fileserver:BUILD.bazel",
     ],
     edition = "2021",
     env = {
@@ -293,12 +269,8 @@ nt_rust_test(
         "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
         "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
         "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
-        "MCP_RE_BUILD_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:BUILD.bazel)",
-        # MCPS-082: the four previously-unscanned packages.
         "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
-        "MCP_RE_BUILD_DEMO_SERVER": "$(rlocationpath //mcp-re-demo-server:BUILD.bazel)",
         "MCP_RE_BUILD_TRANSPORT": "$(rlocationpath //mcp-re-transport:BUILD.bazel)",
-        "MCP_RE_BUILD_FILESERVER": "$(rlocationpath //mcp-re-demo-fileserver:BUILD.bazel)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",
@@ -334,8 +306,8 @@ nt_rust_test(
         "//mcp-re-host:tests/host_session_test.rs",
         "//mcp-re-policy:BUILD.bazel",
         "//mcp-re-proxy:BUILD.bazel",
-        "//mcp-re-stdio-bridge:BUILD.bazel",
-        "//mcp-re-stdio-bridge:tests/persistent_inner_hardening_test.rs",
+        "tests/http_harness_test.rs",
+        "//mcp-re-proxy:tests/proxy_transport_test.rs",
         "//mcp-re-proxy:tests/proxy_test.rs",
         "//mcp-re-proxy:tests/key_source_test.rs",
         "//mcp-re-proxy:tests/dev_env_key_source_test.rs",
@@ -350,12 +322,6 @@ nt_rust_test(
         "//mcp-re-proxy:src/gcp_kms_keysource.rs",
         "//mcp-re-proxy:src/aws_kms_keysource.rs",
         "//mcp-re-demo:BUILD.bazel",
-        "//mcp-re-demo:tests/demo_negative_e2e_test.rs",
-        "//mcp-re-demo:tests/demo_transport_e2e_test.rs",
-        "//mcp-re-demo:tests/demo_e2e_persistent_test.rs",
-        "//mcp-re-demo:tests/demo_posture_e2e_test.rs",
-        "//mcp-re-demo-server:BUILD.bazel",
-        "//mcp-re-demo-server:tests/received_log_test.rs",
         "//mcp-re-transport:BUILD.bazel",
         "//mcp-re-transport:tests/mtls_client_test.rs",
     ],
@@ -367,9 +333,7 @@ nt_rust_test(
         "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
         "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
         "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
-        "MCP_RE_BUILD_STDIO_BRIDGE": "$(rlocationpath //mcp-re-stdio-bridge:BUILD.bazel)",
         "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
-        "MCP_RE_BUILD_DEMO_SERVER": "$(rlocationpath //mcp-re-demo-server:BUILD.bazel)",
         "MCP_RE_BUILD_TRANSPORT": "$(rlocationpath //mcp-re-transport:BUILD.bazel)",
         "MCP_RE_CLAIM_MATRIX": "$(rlocationpath //docs:spec/v0.5-claim-matrix.md)",
         "MCP_RE_SRC_OBJECT_SUITE": "$(rlocationpath tests/object_suite_test.rs)",
@@ -379,21 +343,17 @@ nt_rust_test(
         "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD": "$(rlocationpath tests/audit_vocabulary_guard_test.rs)",
         "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD": "$(rlocationpath tests/forbidden_claim_guard_test.rs)",
         "MCP_RE_SRC_HOST_SESSION": "$(rlocationpath //mcp-re-host:tests/host_session_test.rs)",
+        "MCP_RE_SRC_HTTP_HARNESS": "$(rlocationpath tests/http_harness_test.rs)",
+        "MCP_RE_SRC_PROXY_TRANSPORT": "$(rlocationpath //mcp-re-proxy:tests/proxy_transport_test.rs)",
         "MCP_RE_SRC_KEYSET_ADMISSION": "$(rlocationpath //mcp-re-proxy:tests/keyset_admission_test.rs)",
         "MCP_RE_SRC_PROXY_LB_ASSERTION": "$(rlocationpath //mcp-re-proxy:tests/proxy_lb_assertion_test.rs)",
         "MCP_RE_SRC_CLI": "$(rlocationpath //mcp-re-proxy:src/cli.rs)",
         "MCP_RE_SRC_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/kms_keysource.rs)",
         "MCP_RE_SRC_GCP_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/gcp_kms_keysource.rs)",
         "MCP_RE_SRC_AWS_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/aws_kms_keysource.rs)",
-        "MCP_RE_SRC_PERSISTENT_INNER_HARDENING": "$(rlocationpath //mcp-re-stdio-bridge:tests/persistent_inner_hardening_test.rs)",
         "MCP_RE_SRC_PROXY": "$(rlocationpath //mcp-re-proxy:tests/proxy_test.rs)",
         "MCP_RE_SRC_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/key_source_test.rs)",
         "MCP_RE_SRC_DEV_ENV_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/dev_env_key_source_test.rs)",
-        "MCP_RE_SRC_DEMO_NEGATIVE_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_negative_e2e_test.rs)",
-        "MCP_RE_SRC_DEMO_TRANSPORT_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_transport_e2e_test.rs)",
-        "MCP_RE_SRC_DEMO_E2E_PERSISTENT": "$(rlocationpath //mcp-re-demo:tests/demo_e2e_persistent_test.rs)",
-        "MCP_RE_SRC_DEMO_POSTURE_E2E": "$(rlocationpath //mcp-re-demo:tests/demo_posture_e2e_test.rs)",
-        "MCP_RE_SRC_RECEIVED_LOG": "$(rlocationpath //mcp-re-demo-server:tests/received_log_test.rs)",
         "MCP_RE_SRC_MTLS_CLIENT": "$(rlocationpath //mcp-re-transport:tests/mtls_client_test.rs)",
     },
     deps = [
@@ -402,27 +362,6 @@ nt_rust_test(
     ],
 )
 
-# MCPS-012: stdio harness — launches the mcp_re_stdio_server child process and
-# drives the full outcome matrix over real stdin/stdout, asserting identical
-# Core outcomes to the in-process object target. The server binary is delivered
-# via runfiles; its path is passed through MCP_RE_STDIO_SERVER ($(rlocationpath))
-# and resolved against TEST_SRCDIR in the test (no runfiles-crate dependency).
-nt_rust_test(
-    name = "stdio_harness_test",
-    srcs = ["tests/stdio_harness_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    compile_data = ["//mcp-re-core:vectors"],
-    data = [":mcp_re_stdio_server"],
-    edition = "2021",
-    env = {"MCP_RE_STDIO_SERVER": "$(rlocationpath :mcp_re_stdio_server)"},
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_conformance_lib",
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
 
 # ADR-MCPRE-050 (seed Work Item 4): the HTTP standards-profile conformance
 # corpus — frozen fixtures + static oracle under tests/vectors/http-profile/,

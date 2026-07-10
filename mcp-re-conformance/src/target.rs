@@ -16,6 +16,7 @@ use mcp_re_core::verify_response;
 use mcp_re_core::InMemoryReplayCache;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::McpReError;
+use mcp_re_core::TrustResolver;
 use mcp_re_core::VerificationConfig;
 use mcp_re_core::VerificationKey;
 use serde_json::Value;
@@ -252,5 +253,37 @@ impl ConformanceTarget for ObjectTarget {
             "response" => self.run_response(case, &bytes, ctx),
             other => Err(format!("unknown vector kind '{other}' for '{}'", case.name)),
         }
+    }
+}
+
+/// Reduce a server response to the wire token the object target compares
+/// against:
+///   - a JSON-RPC error object ⇒ its `error.message` (the frozen `mcp-re.*` code),
+///   - otherwise verify the signed response binds to `expected_request_hash`:
+///     `Ok ⇒ "verify_ok"`, `Err(e) ⇒ e.wire_code()`.
+///
+/// Transport-neutral (relocated here when the stdio harness was removed): the
+/// HTTP harness and the acceptance tests reduce a response to this same token so
+/// the SAME assertions prove object == HTTP Core-outcome parity (ADR-MCPS-011).
+pub fn outcome_token(
+    response: &[u8],
+    expected_request_hash: &str,
+    resolver: &dyn TrustResolver,
+) -> String {
+    let value: Value = match serde_json::from_slice(response) {
+        Ok(value) => value,
+        Err(e) => return format!("harness_error: parse response: {e}"),
+    };
+
+    if let Some(message) = value.get("error").and_then(|e| e.get("message")) {
+        return message
+            .as_str()
+            .unwrap_or("harness_error: non-string error.message")
+            .to_string();
+    }
+
+    match verify_response(response, resolver, expected_request_hash) {
+        Ok(_) => "verify_ok".to_string(),
+        Err(err) => err.wire_code().to_string(),
     }
 }

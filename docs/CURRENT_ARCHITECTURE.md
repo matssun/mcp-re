@@ -22,9 +22,11 @@ production design. Any JCS code that remains is retained for reasons unrelated t
 security evidence and is exercised only against frozen regression vectors and
 forensic verification of already-issued evidence.
 
-**stdio** support is development / compatibility only and is provided through an
-adapter / proxy-to-proxy bridge (`mcp-re-stdio-bridge`), **not** by the
-production MCP-RE data plane (ADR-MCPRE-051 §3).
+**stdio is OUT OF SCOPE for MCP-RE** (owner decision 2026-07-10). MCP-RE is
+HTTP-profile only — HTTP in, HTTP out. A stdio-only client or server is bridged to
+HTTP by an **external** plain-MCP adapter (e.g. FastMCP), entirely outside MCP-RE;
+MCP-RE owns no stdio serving, inner transport, or bridge. See
+[`docs/design/active-profile-and-legacy-quarantine.md` §D4](design/active-profile-and-legacy-quarantine.md).
 
 **Ingress / gateway / header-mangling survival is not an MCP-RE evidence-profile
 responsibility.** Deployments must verify before mutation, preserve the covered
@@ -36,7 +38,7 @@ body-signed JCS profile.
 | ADR | Role |
 |---|---|
 | ADR-MCPRE-050 (Accepted) | Standards HTTP profile is the one carrier |
-| ADR-MCPRE-051 (Proposed) | Per-core async data plane; stateless inner plane; authoritative replay; delegated custody; stdio out of the TCB |
+| ADR-MCPRE-051 (Accepted) | Per-core async data plane; stateless inner plane; authoritative replay; delegated custody; HTTP-profile only (stdio out of scope) |
 | ADR-MCPRE-052 (Proposed) | Delegated signing = JOSE/JWS credential in the RFC 9421 evidence (not a JCS object) |
 | [Active Profile Boundary and Legacy Quarantine](design/active-profile-and-legacy-quarantine.md) | Freezes this worldview; quarantines legacy JCS |
 
