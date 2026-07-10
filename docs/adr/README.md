@@ -16,57 +16,57 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 
 | ID | Title | Status |
 |---|---|---|
-| [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait | ✅ Accepted |
-| [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351) | Frozen Public Envelope Vocabulary | ✅ Accepted |
-| [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352) | Signing Locus — What signer and a Signature Prove | ✅ Accepted |
+| [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait | ✅ Implemented |
+| [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351) | Frozen Public Envelope Vocabulary | ✅ Implemented |
+| [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352) | Signing Locus — What signer and a Signature Prove | ✅ Implemented |
 | [ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353) | Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object | 🗄️ Deprecated |
 | [ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354) | JCS-Safe JSON Value Domain with Fail-Closed Canonicalization | 🗄️ Deprecated |
-| [ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355) | Freshness and Replay Model — Injected ReplayCache, No sequence in Core v1 | ✅ Accepted |
-| [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356) | Trust Resolution, Key Rotation, and Revocation Model | ✅ Accepted |
-| [ADR-MCPS-008](https://github.com/matssun/mcp-re/discussions/357) | Verified-Context Propagation to Inner MCP Servers | ✅ Accepted |
-| [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358) | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection | ✅ Accepted |
+| [ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355) | Freshness and Replay Model — Injected ReplayCache, No sequence in Core v1 | ✅ Implemented |
+| [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356) | Trust Resolution, Key Rotation, and Revocation Model | ✅ Implemented |
+| [ADR-MCPS-008](https://github.com/matssun/mcp-re/discussions/357) | Verified-Context Propagation to Inner MCP Servers | ✅ Implemented |
+| [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358) | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection | ✅ Implemented |
 | [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | ↩️ Superseded |
-| [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Accepted |
-| [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Accepted |
-| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | ✅ Accepted |
-| [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | ✅ Accepted |
-| [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | ✅ Accepted |
-| [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | ✅ Accepted |
+| [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Implemented |
+| [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Implemented |
+| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | ✅ Implemented |
+| [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | ✅ Implemented |
+| [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | ✅ Implemented |
+| [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | ✅ Implemented |
 | [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | ↩️ Superseded |
-| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ✅ Accepted |
+| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | ✅ Implemented |
 | [ADR-MCPS-019](https://github.com/matssun/mcp-re/discussions/368) | Phase 7 External Backends (stub) | ✅ Implemented |
-| [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Accepted |
-| [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Accepted |
-| [ADR-MCPS-022](https://github.com/matssun/mcp-re/discussions/371) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS | ✅ Accepted |
+| [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Implemented |
+| [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Implemented |
+| [ADR-MCPS-022](https://github.com/matssun/mcp-re/discussions/371) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS | ✅ Implemented |
 | [ADR-MCPS-023](https://github.com/matssun/mcp-re/discussions/372) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion | ✅ Accepted |
 | [ADR-MCPS-024](https://github.com/matssun/mcp-re/discussions/373) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) | ✅ Accepted |
-| [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Accepted |
-| [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Accepted |
-| [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Accepted |
+| [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Implemented |
+| [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Implemented |
+| [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Implemented |
 | [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | ✅ Accepted |
-| [ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded | ✅ Accepted |
-| [ADR-MCPS-031](https://github.com/matssun/mcp-re/discussions/379) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope | ✅ Accepted |
-| [ADR-MCPS-032](https://github.com/matssun/mcp-re/discussions/380) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs | ✅ Accepted |
-| [ADR-MCPS-033](https://github.com/matssun/mcp-re/discussions/381) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A | ✅ Accepted |
-| [ADR-MCPS-034](https://github.com/matssun/mcp-re/discussions/382) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard | ✅ Accepted |
-| [ADR-MCPS-035](https://github.com/matssun/mcp-re/discussions/383) | MCP-S Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy | ✅ Accepted |
-| [ADR-MCPS-036](https://github.com/matssun/mcp-re/discussions/384) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine | ✅ Accepted |
-| [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) | Draft-02 Canonical Number Domain — Integer-Only, With a Documented Float Limitation | ✅ Accepted |
-| [ADR-MCPS-038](https://github.com/matssun/mcp-re/discussions/386) | Draft-02 Envelope Identifiers and Canonical Preimage Field Set | ✅ Accepted |
+| [ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded | ✅ Implemented |
+| [ADR-MCPS-031](https://github.com/matssun/mcp-re/discussions/379) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope | ✅ Implemented |
+| [ADR-MCPS-032](https://github.com/matssun/mcp-re/discussions/380) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs | ✅ Implemented |
+| [ADR-MCPS-033](https://github.com/matssun/mcp-re/discussions/381) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A | ✅ Implemented |
+| [ADR-MCPS-034](https://github.com/matssun/mcp-re/discussions/382) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard | ✅ Implemented |
+| [ADR-MCPS-035](https://github.com/matssun/mcp-re/discussions/383) | MCP-S Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy | ✅ Implemented |
+| [ADR-MCPS-036](https://github.com/matssun/mcp-re/discussions/384) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine | ✅ Implemented |
+| [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) | Draft-02 Canonical Number Domain — Integer-Only, With a Documented Float Limitation | ✅ Implemented |
+| [ADR-MCPS-038](https://github.com/matssun/mcp-re/discussions/386) | Draft-02 Envelope Identifiers and Canonical Preimage Field Set | ✅ Implemented |
 | [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Accepted |
-| [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Accepted |
-| [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Accepted |
-| [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Accepted |
+| [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Implemented |
+| [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Implemented |
+| [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Implemented |
 | [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Accepted |
 | [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Accepted |
-| [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Accepted |
+| [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Implemented |
 | [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | ↩️ Superseded |
-| [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Accepted |
-| [ADR-MCPS-048](https://github.com/matssun/mcp-re/discussions/396) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated | ✅ Accepted |
+| [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Implemented |
+| [ADR-MCPS-048](https://github.com/matssun/mcp-re/discussions/396) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated | ✅ Implemented |
 | [ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence | ✅ Accepted |
-| [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Accepted |
+| [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Implemented |
 | [ADR-MCPRE-051](https://github.com/matssun/mcp-re/discussions/399) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody | ✅ Accepted |
-| [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Accepted |
+| [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Implemented |
 
 ## Active vs Legacy
 
