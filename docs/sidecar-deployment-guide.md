@@ -57,7 +57,7 @@ shown are the real defaults from that parser.
 
 | Flag | Meaning |
 | --- | --- |
-| `--bind` | Listen address, e.g. `127.0.0.1:8443`. |
+| `--bind` | Listen address, e.g. `127.0.0.1:8600` (the `mcp_re_proxy` port in `config/ports.toml`, the repo's reserved 8600-8699 band). |
 | `--audience` | This server's identity (expected request audience). |
 | `--server-signer` / `--server-key-id` | Response-signing identity + key id. |
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
@@ -197,8 +197,9 @@ bazel run //mcp-re-stdio-bridge:mcp_re_stdio_bridge -- \
   -- /usr/local/bin/my-mcp-server --config /etc/mcp.toml &
 
 # 2. Run the PEP; its inner plane is the bridge's HTTP endpoint.
+#    Port 8600 = mcp_re_proxy in config/ports.toml (reserved 8600-8699 band).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
-  --bind 127.0.0.1:8443 \
+  --bind 127.0.0.1:8600 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
   --server-key-id server-key-1 \

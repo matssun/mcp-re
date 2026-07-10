@@ -206,6 +206,50 @@ fn proxy_drives_input_required_then_continuation() {
     assert_eq!(out2.path, mcp_re_client_core::ClientPath::McpReVerified);
 }
 
+/// The two-process MRT proof (MCPS-82 live shape): a continuation OPENED on one
+/// proxy is answered on a DIFFERENT proxy after transferring it via
+/// `take_continuation` / `insert_continuation` — the seam the CLI persists across
+/// processes (`--save-cont` / `--load-cont`) to answer against another replica.
+#[test]
+fn continuation_transfers_across_proxies() {
+    // Replica A: open the elicitation.
+    let mut proxy_a = proxy();
+    let first = json!({
+        "jsonrpc": "2.0", "id": "req-1", "method": "tools/call",
+        "params": { "name": "delete_files", "arguments": { "paths": ["a", "b", "c"] } }
+    });
+    let out1 = proxy_a.handle("tools", &first, &params(1)).expect("leg 1 on A");
+    assert_eq!(out1.plain_response["result"]["requestState"], REQUEST_STATE);
+
+    // Transfer the retained continuation off replica A (what --save-cont persists).
+    let cont = proxy_a
+        .take_continuation(REQUEST_STATE)
+        .expect("A retained a continuation");
+
+    // Replica B: a FRESH proxy with no shared state — inject the transferred
+    // continuation (what --load-cont does) and answer there.
+    let mut proxy_b = proxy();
+    proxy_b.insert_continuation(REQUEST_STATE.to_string(), cont);
+    let second = json!({
+        "jsonrpc": "2.0", "id": "req-2", "method": "tools/call",
+        "params": {
+            "name": "delete_files",
+            "arguments": { "paths": ["a", "b", "c"] },
+            "inputResponses": { "confirm": true },
+            "requestState": REQUEST_STATE
+        }
+    });
+    let out2 = proxy_b.handle("tools", &second, &params(2)).expect("leg 2 on B");
+    assert_eq!(
+        out2.plain_response["result"]["content"][0]["text"],
+        "deleted 3 files"
+    );
+    assert_eq!(out2.path, mcp_re_client_core::ClientPath::McpReVerified);
+
+    // A no longer holds it — take consumed it, preserving single-use across the transfer.
+    assert!(proxy_a.take_continuation(REQUEST_STATE).is_none());
+}
+
 #[test]
 fn continuation_is_single_use() {
     let mut proxy = proxy();

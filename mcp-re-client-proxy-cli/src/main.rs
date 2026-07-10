@@ -50,10 +50,12 @@ use mcp_re_client_core::SoftwareSigner;
 use mcp_re_client_proxy::CallParams;
 use mcp_re_client_proxy::ClientProxy;
 use mcp_re_client_proxy::ProxyError;
+use mcp_re_client_proxy::ProxyResponse;
 use mcp_re_client_proxy::Route;
 use mcp_re_client_proxy::RouteRegistry;
 use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
+use mcp_re_core::Continuation;
 use mcp_re_core::unix_to_rfc3339_utc;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
@@ -101,6 +103,21 @@ struct CliArgs {
     route_id: String,
     on_behalf_of: String,
     ttl_secs: i64,
+    /// Pin the anti-replay nonce instead of drawing a fresh CSPRNG one, so the
+    /// SAME `(signer, audience, nonce)` can be sent to two replicas to prove
+    /// cross-replica replay coherence. Off by default (fresh nonce per call).
+    nonce_override: Option<String>,
+    /// Assert the proxy verdict for each request: the observed verdict token must
+    /// equal `--expect` (aliases: `ok`/`fresh`/`accepted`, `replay`, `expired`,
+    /// `revoked`; or a raw `mcp-re.*` wire code). A mismatch exits non-zero.
+    expect: Option<String>,
+    /// After an `InputRequiredResult`, persist the retained continuation (+ its
+    /// server `requestState`) to this path, to answer it from another process /
+    /// against another replica.
+    save_cont: Option<String>,
+    /// Load a continuation persisted by `--save-cont` before serving, so an answer
+    /// request (echoing `requestState` + `inputResponses`) binds it here.
+    load_cont: Option<String>,
 }
 
 fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
@@ -123,6 +140,10 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
     let mut route_id = "tools".to_string();
     let mut on_behalf_of = "user:demo".to_string();
     let mut ttl_secs: i64 = 300;
+    let mut nonce_override = None;
+    let mut expect = None;
+    let mut save_cont = None;
+    let mut load_cont = None;
 
     let mut iter = argv.iter();
     while let Some(arg) = iter.next() {
@@ -155,6 +176,10 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
                     .parse()
                     .map_err(|_| "invalid --ttl-secs".to_string())?
             }
+            "--nonce" => nonce_override = Some(take("--nonce")?),
+            "--expect" => expect = Some(take("--expect")?),
+            "--save-cont" => save_cont = Some(take("--save-cont")?),
+            "--load-cont" => load_cont = Some(take("--load-cont")?),
             other => return Err(format!("unknown argument '{other}'")),
         }
     }
@@ -198,6 +223,10 @@ fn parse_args(argv: &[String]) -> Result<CliArgs, String> {
         route_id,
         on_behalf_of,
         ttl_secs,
+        nonce_override,
+        expect,
+        save_cont,
+        load_cont,
     })
 }
 
@@ -353,17 +382,31 @@ fn build_proxy(args: &CliArgs) -> Result<(ClientProxy, SocketAddr), String> {
 }
 
 /// Build the per-call freshness parameters from the OS clock + CSPRNG nonce.
-fn call_params(nonce_source: &mut SystemNonceSource, on_behalf_of: &str, ttl_secs: i64) -> CallParams {
+/// `nonce_override`, when set (`--nonce`), pins the anti-replay nonce instead of
+/// drawing a fresh one — the seam that lets the replay-coherence proof send the
+/// same `(signer, audience, nonce)` to two replicas.
+fn call_params(
+    nonce_source: &mut SystemNonceSource,
+    on_behalf_of: &str,
+    ttl_secs: i64,
+    nonce_override: Option<&str>,
+) -> CallParams {
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before UNIX epoch")
         .as_secs() as i64;
     let deadline_unix = now_unix + ttl_secs;
-    let mut nonce_bytes = [0u8; 16]; // 128 bits of OS entropy
-    nonce_source.fill(&mut nonce_bytes);
+    let nonce = match nonce_override {
+        Some(n) => n.to_string(),
+        None => {
+            let mut nonce_bytes = [0u8; 16]; // 128 bits of OS entropy
+            nonce_source.fill(&mut nonce_bytes);
+            b64url_encode(&nonce_bytes)
+        }
+    };
     CallParams {
         on_behalf_of: on_behalf_of.to_string(),
-        nonce: b64url_encode(&nonce_bytes),
+        nonce,
         issued_at: unix_to_rfc3339_utc(now_unix),
         expires_at: unix_to_rfc3339_utc(deadline_unix),
         now_unix,
@@ -384,10 +427,87 @@ fn error_response(id: Value, err: &ProxyError) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
+/// The observed verdict token for a completed exchange — what `--expect` asserts
+/// against and what the CLI always prints as `verdict=...` for the harness to read.
+/// A verified but error-carrying response surfaces the server's frozen wire code.
+fn verdict_token(result: &Result<ProxyResponse, ProxyError>) -> String {
+    match result {
+        Ok(ok) => match ok.plain_response.get("error") {
+            Some(e) => e
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("error")
+                .to_string(),
+            None => "accepted".to_string(),
+        },
+        Err(ProxyError::FailedClosed(e)) => e.wire_code().to_string(),
+        Err(ProxyError::Transport(_)) => "transport_error".to_string(),
+        Err(ProxyError::UnknownRoute(_)) => "unknown_route".to_string(),
+        Err(ProxyError::MalformedRequest) => "malformed_request".to_string(),
+    }
+}
+
+/// Does the observed verdict satisfy `--expect`? Accepts friendly aliases and, for
+/// `revoked`, the family of trust/revocation wire codes; otherwise an exact match,
+/// so a raw `mcp-re.*` code can be asserted verbatim.
+fn expect_matches(expected: &str, actual: &str) -> bool {
+    match expected {
+        "ok" | "fresh" | "accepted" => actual == "accepted",
+        "replay" => actual == "mcp-re.replay_detected",
+        "expired" => actual == "mcp-re.expired_request",
+        "revoked" => {
+            actual.contains("revoked") || actual.contains("trust") || actual.contains("untrusted")
+        }
+        raw => actual == raw,
+    }
+}
+
+/// Persist a retained MRT continuation (+ its server `requestState`) so another
+/// process — e.g. a call against a different replica — can answer it (`--save-cont`).
+fn save_continuation(path: &str, request_state: &str, cont: &Continuation) -> Result<(), String> {
+    let doc = json!({
+        "request_state": request_state,
+        "continuation": serde_json::to_value(cont).map_err(|e| format!("encode continuation: {e}"))?,
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&doc).map_err(|e| format!("serialize continuation: {e}"))?,
+    )
+    .map_err(|e| format!("write {path}: {e}"))
+}
+
+/// Load a continuation persisted by [`save_continuation`] (`--load-cont`), returning
+/// `(request_state, continuation)` to inject before serving the answer leg.
+fn load_continuation(path: &str) -> Result<(String, Continuation), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+    let doc: Value = serde_json::from_slice(&bytes).map_err(|e| format!("parse {path}: {e}"))?;
+    let state = doc
+        .get("request_state")
+        .and_then(Value::as_str)
+        .ok_or("saved continuation missing request_state")?
+        .to_string();
+    let cont: Continuation = serde_json::from_value(
+        doc.get("continuation")
+            .cloned()
+            .ok_or("saved continuation missing continuation")?,
+    )
+    .map_err(|e| format!("decode continuation: {e}"))?;
+    Ok((state, cont))
+}
+
 fn run() -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let args = parse_args(&argv)?;
-    let (mut proxy, addr) = build_proxy(&args)?;
+    let (mut proxy, _addr) = build_proxy(&args)?;
+
+    // Pre-load a persisted continuation (`--load-cont`) so an answer request served
+    // below binds it exactly as if the opening leg had run in this process — the
+    // out-of-process half of the MRT-across-replica proof.
+    if let Some(path) = args.load_cont.as_deref() {
+        let (state, cont) = load_continuation(path)?;
+        proxy.insert_continuation(state, cont);
+    }
+
     // Startup diagnostic: keep this message constant to avoid emitting any
     // user-supplied or runtime-derived values to stderr/log sinks.
     eprintln!("mcp-re-client-proxy-cli: proxy started");
@@ -395,6 +515,9 @@ fn run() -> Result<(), String> {
     let mut nonce_source = SystemNonceSource::new();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    // Set when an --expect assertion fails; the process exits non-zero so a harness
+    // step (`... --expect replay || fail`) fails the proof. All lines still process.
+    let mut expectation_failed = false;
     for line in BufReader::new(stdin.lock()).lines() {
         let line = line.map_err(|e| format!("read stdin: {e}"))?;
         if line.trim().is_empty() {
@@ -411,19 +534,68 @@ fn run() -> Result<(), String> {
             }
         };
         let id = request.get("id").cloned().unwrap_or(Value::Null);
-        let params = call_params(&mut nonce_source, &args.on_behalf_of, args.ttl_secs);
-        let response = match proxy.handle(&args.route_id, &request, &params) {
+        let params = call_params(
+            &mut nonce_source,
+            &args.on_behalf_of,
+            args.ttl_secs,
+            args.nonce_override.as_deref(),
+        );
+        let result = proxy.handle(&args.route_id, &request, &params);
+
+        // Verdict: always emit `verdict=...`; enforce `--expect` if set.
+        let verdict = verdict_token(&result);
+        eprintln!("mcp-re-client-proxy-cli: verdict={verdict}");
+        if let Some(expected) = args.expect.as_deref() {
+            if expect_matches(expected, &verdict) {
+                eprintln!("mcp-re-client-proxy-cli: expect OK ({expected})");
+            } else {
+                eprintln!(
+                    "mcp-re-client-proxy-cli: expect MISMATCH — wanted '{expected}', got '{verdict}'"
+                );
+                expectation_failed = true;
+            }
+        }
+
+        let response = match &result {
             Ok(ok) => {
                 eprintln!("mcp-re-client-proxy-cli: path={:?}", ok.path);
-                ok.plain_response
+                // Persist a freshly-retained continuation (`--save-cont`): an
+                // InputRequiredResult carries `result.requestState`, the handle the
+                // proxy keyed the continuation under.
+                if let Some(path) = args.save_cont.as_deref() {
+                    if let Some(state) = ok
+                        .plain_response
+                        .get("result")
+                        .and_then(|r| r.get("requestState"))
+                        .and_then(Value::as_str)
+                    {
+                        match proxy.take_continuation(state) {
+                            Some(cont) => {
+                                save_continuation(path, state, &cont)?;
+                                eprintln!("mcp-re-client-proxy-cli: saved continuation -> {path}");
+                            }
+                            None => eprintln!(
+                                "mcp-re-client-proxy-cli: --save-cont: no continuation retained for requestState"
+                            ),
+                        }
+                    } else {
+                        eprintln!(
+                            "mcp-re-client-proxy-cli: --save-cont: response carried no requestState (not an InputRequiredResult)"
+                        );
+                    }
+                }
+                ok.plain_response.clone()
             }
             Err(err) => {
                 eprintln!("mcp-re-client-proxy-cli: fail: {err:?}");
-                error_response(id, &err)
+                error_response(id, err)
             }
         };
         writeln!(stdout, "{response}").map_err(|e| format!("write stdout: {e}"))?;
         stdout.flush().map_err(|e| format!("flush stdout: {e}"))?;
+    }
+    if expectation_failed {
+        return Err("one or more --expect assertions failed".to_string());
     }
     Ok(())
 }
@@ -486,9 +658,93 @@ mod tests {
     #[test]
     fn call_params_nonce_is_128_bit_b64url() {
         let mut ns = SystemNonceSource::new();
-        let p = call_params(&mut ns, "user:x", 300);
+        let p = call_params(&mut ns, "user:x", 300, None);
         // 16 bytes -> 22 base64url chars (unpadded).
         assert_eq!(p.nonce.len(), 22);
         assert_eq!(p.deadline_unix - p.now_unix, 300);
+    }
+
+    #[test]
+    fn call_params_pins_nonce_when_overridden() {
+        let mut ns = SystemNonceSource::new();
+        let pinned = "pinned-nonce-value-abc";
+        let a = call_params(&mut ns, "user:x", 300, Some(pinned));
+        let b = call_params(&mut ns, "user:x", 300, Some(pinned));
+        // Same override -> identical nonce across calls (the replay-proof seam);
+        // without an override two calls would draw distinct random nonces.
+        assert_eq!(a.nonce, pinned);
+        assert_eq!(b.nonce, pinned);
+    }
+
+    #[test]
+    fn parse_args_reads_proof_flags() {
+        let mut argv = base_argv();
+        argv.extend(
+            [
+                "--nonce", "N", "--expect", "replay", "--save-cont", "/s.json",
+                "--load-cont", "/l.json",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
+        let args = parse_args(&argv).expect("parse");
+        assert_eq!(args.nonce_override.as_deref(), Some("N"));
+        assert_eq!(args.expect.as_deref(), Some("replay"));
+        assert_eq!(args.save_cont.as_deref(), Some("/s.json"));
+        assert_eq!(args.load_cont.as_deref(), Some("/l.json"));
+    }
+
+    #[test]
+    fn expect_matches_aliases_and_exact_codes() {
+        // accepted-family aliases
+        assert!(expect_matches("ok", "accepted"));
+        assert!(expect_matches("fresh", "accepted"));
+        assert!(expect_matches("accepted", "accepted"));
+        assert!(!expect_matches("ok", "mcp-re.replay_detected"));
+        // replay / expired aliases -> exact wire codes
+        assert!(expect_matches("replay", "mcp-re.replay_detected"));
+        assert!(expect_matches("expired", "mcp-re.expired_request"));
+        assert!(!expect_matches("replay", "accepted"));
+        // revoked family (any trust/revocation code)
+        assert!(expect_matches("revoked", "mcp-re.delegation_revoked"));
+        assert!(expect_matches("revoked", "mcp-re.delegation_trust_epoch_stale"));
+        // raw wire code asserted verbatim
+        assert!(expect_matches("mcp-re.replay_detected", "mcp-re.replay_detected"));
+        assert!(!expect_matches("mcp-re.replay_detected", "accepted"));
+    }
+
+    #[test]
+    fn verdict_token_maps_outcomes() {
+        // Accepted: verified success response, no error object.
+        let ok = Ok(ProxyResponse {
+            plain_response: json!({"jsonrpc":"2.0","id":1,"result":{}}),
+            audit: mcp_re_client_core::ClientAuditEvent::rejected(
+                &mcp_re_core::McpReError::ReplayDetected,
+            ),
+            path: mcp_re_client_core::ClientPath::McpReVerified,
+        });
+        assert_eq!(verdict_token(&ok), "accepted");
+        // Fail-closed rejection surfaces the frozen wire code.
+        let replay: Result<ProxyResponse, ProxyError> =
+            Err(ProxyError::FailedClosed(mcp_re_core::McpReError::ReplayDetected));
+        assert_eq!(verdict_token(&replay), "mcp-re.replay_detected");
+    }
+
+    #[test]
+    fn continuation_save_load_round_trips() {
+        let dir = std::env::temp_dir();
+        let path = dir
+            .join(format!("mcp-re-cont-{}.json", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let cont = Continuation::McpMrt {
+            previous_request_hash: "sha256:aaa".to_string(),
+            input_required_response_hash: "sha256:bbb".to_string(),
+        };
+        save_continuation(&path, "state-xyz", &cont).expect("save");
+        let (state, loaded) = load_continuation(&path).expect("load");
+        assert_eq!(state, "state-xyz");
+        assert_eq!(loaded, cont);
+        let _ = std::fs::remove_file(&path);
     }
 }

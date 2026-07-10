@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-{{- include "mcp-re-proxy.validate" . -}}
+{{- include "mcp-re-proxy.validate" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -155,6 +155,9 @@ spec:
         - name: material
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
+            # --strict refuses a group/world-readable key file (signing-seed,
+            # tls.key). Secret volumes default to 0644; mount owner-read-only.
+            defaultMode: 0400
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

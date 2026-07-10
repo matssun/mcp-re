@@ -1,0 +1,33 @@
+{
+  "schema": "mcp-re-slo-targets/v1",
+  "adr": "ADR-MCPRE-051 §7 — benchmark-first, SLO-gated releases",
+  "issue": "MCPRE-110",
+  "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+  "envelope_version": 1,
+  "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
+  "gate": "scripts/slo_gate.py",
+  "status": "provisional",
+  "ships_in": "v0.11 ships these targets PROVISIONAL by design — the release is not gated on the capacity baseline. The measured capacity/scaling numbers land in a follow-up MINOR (status flips to 'declared' then). v0.11 correctness floors are enforced now.",
+  "status_note": "PROVISIONAL until a baseline run on the DECLARED hardware class fills the capacity/scaling numbers and an owner flips status to 'declared' (MCPRE-110). This is deliberately NOT a v0.11 blocker: v0.11 publishes the gate mechanism + enforced correctness floors + null (preliminary) capacity targets; the representative measured numbers arrive in a later minor. ADR-051 §7 is explicit that SLO numbers are measured, not asserted ('capacity claims without a pinned benchmark envelope are marketing, not engineering'), so the capacity/scaling targets below are null on purpose. The gate ENFORCES every non-null target and the correctness floors now; it SKIPS null targets with a warning. Nothing here is fabricated.",
+  "hardware_class": null,
+  "measured_on": null,
+  "correctness_floors": {
+    "note": "Non-capacity invariants — enforced on every run regardless of status (they need no hardware baseline). A run that drops requests or fails closed spuriously fails the gate immediately.",
+    "min_success_fraction": 0.999,
+    "max_failure_fraction": 0.001
+  },
+  "capacity_targets": {
+    "note": "null until measured (MCPRE-110, HITL). Once a baseline run on the declared hardware records numbers, set these to the release floor/ceilings derived from that baseline and flip status to 'declared'.",
+    "throughput_floor_rps": null,
+    "added_latency_ceilings_us": {
+      "p50": null,
+      "p99": null,
+      "p999": null
+    }
+  },
+  "scaling_targets": {
+    "note": "Per-core linear-scaling tolerance for the 1→N cores curve: achieved_N_core_throughput / (single_core_throughput * N) must be >= per_core_min_linear_factor. Requires a 1-core run and an N-core run on the same declared hardware (MCP_RE_LOADGEN_CORES=1 then =N). null until measured.",
+    "per_core_min_linear_factor": null,
+    "cores_under_test": null
+  }
+}

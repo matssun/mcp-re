@@ -178,8 +178,10 @@ durable replay cache, env minimization, an explicit working dir, stderr caps, an
 rlimits, and wraps the real `intelli_code_mcp` inner.
 
 ```bash
+# --bind port 8600 is the mcp_re_proxy port registered in config/ports.toml
+# (the repo's reserved 8600-8699 band — the single source of truth for ports).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
-  --bind 127.0.0.1:8443 \
+  --bind 127.0.0.1:8600 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
   --server-key-id server-key-1 \
@@ -294,7 +296,7 @@ the host verifies. Record each in the §4 template.
 
 | # | Check | How to exercise + observe | Pass criterion |
 | --- | --- | --- | --- |
-| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcp-re-proxy: listening on 127.0.0.1:8443 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcp_re_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
+| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcp-re-proxy: listening on 127.0.0.1:8600 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcp_re_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
 | 2 | **`bazel run` / built inner starts under env-minimization (allowlist, not disable)** | Use the §2.2 allowlist (e.g. `--inner-env-allow PATH`) with the **default** `--inherit-env false`. Send a request; the inner must start and answer. | The inner starts and produces a valid protocol frame **with** minimization on and **without** `--inherit-env true`. Record the exact allowlist used. |
 | 3 | **Explicit working dir** | Pass `--inner-working-dir "$INNERWD"`. Read the startup line `inner working dir = $INNERWD (controlled start dir ...)`. | The effective working dir is the explicit `$INNERWD`, never silently the proxy's cwd. (A bogus dir must fail startup — optional negative spot-check.) |
 | 4 | **Required env allowlisted, not inherited** | With `--inherit-env false`, confirm the inner sees **only** the allowlisted vars. Spot-check: put a secret-looking var in the proxy env (as an env KeySource would) and confirm the inner cannot see it. | The inner runs with only the §2.2 allowlist; non-allowlisted proxy vars (incl. any secret) are **not** visible to the inner. |

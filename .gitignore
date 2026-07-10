@@ -19,3 +19,7 @@
 
 # work directory not to be tracked
 /work/
+
+# Python bytecode cache
+__pycache__/
+*.pyc

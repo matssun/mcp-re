@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# MCP-RE port registry — the SINGLE SOURCE OF TRUTH for every port this repo
+# binds on a developer machine. Mirrors the machine-wide service-registry
+# pattern (the ws_f monorepo's
+# `infrastructure/config/services/service_registry.toml`) but is
+# SELF-CONTAINED: mcp-re is a standalone, clean-room repo with its own Bazel /
+# crate universe and MUST NOT import that monorepo's `ServiceRegistry` at
+# runtime. This file is that registry's mcp-re-local counterpart.
+#
+# COLLISION SAFETY. The band below (8600-8699) is RESERVED for the mcp-re repo
+# in the machine-wide registry. Two invariants:
+#   1. Nothing else on the machine may claim a port in 8600-8699 (enforced by
+#      the reservation you add to the ws_f registry — see docs/dev/port-registry.md).
+#   2. Nothing in THIS repo may bind a port outside 8600-8699, and no consumer
+#      may restate a literal — every port is resolved from here.
+#
+# CONSUMERS (all resolve from this file; none restate a literal):
+#   * local proxy launch  ->  --bind 127.0.0.1:{mcp_re_proxy.port}
+#                             (docs/dogfood-runbook.md, docs/sidecar-deployment-guide.md)
+#   * Helm chart bindPort ->  deploy/helm/mcp-re-proxy/values.yaml, held EQUAL to
+#                             mcp_re_proxy.port and CI-gated by
+#                             scripts/check_port_registry.py (ADR-MCPS-048 idiom:
+#                             a mirrored value, staleness-checked, never a hopeful comment)
+#   * validation harness  ->  docs/security/gke-multi-replica-validation.sh
+#
+# ENV OVERRIDE. A port may be overridden at run time with <KEY>_PORT (e.g.
+# MCP_RE_PROXY_PORT=8650), matching the monorepo's <SERVICE_NAME>_PORT convention.
+# An override must still fall inside the reserved band.
+
+[metadata]
+band = "8600-8699"
+band_owner = "mcp-re repo"
+reserved_in = "ws_f: infrastructure/config/services/service_registry.toml"
+notes = "Standalone mirror of the machine-wide registry pattern; no runtime dependency on the monorepo."
+
+# The TLS-terminating MCP-RE proxy (Policy Enforcement Point). Production binds
+# 0.0.0.0:<port> inside the container (Helm); local dev binds 127.0.0.1:<port>.
+[services.mcp_re_proxy]
+host = "127.0.0.1"
+port = 8600
+scheme = "https"
+description = "MCP-RE proxy — TLS-terminating PEP (ADR-MCPS-014 / ADR-MCPRE-051)."
+
+# Two DISTINCT loopback port-forward endpoints for the live multi-replica
+# validation harness, so it can address two replicas at once (a local port
+# cannot be bound twice). Both forward to the in-cluster mcp_re_proxy port.
+[services.mcp_re_validation_fwd_a]
+host = "127.0.0.1"
+port = 8610
+scheme = "https"
+description = "gke-multi-replica-validation.sh — local forward to replica A."
+
+[services.mcp_re_validation_fwd_b]
+host = "127.0.0.1"
+port = 8611
+scheme = "https"
+description = "gke-multi-replica-validation.sh — local forward to replica B."
+
+# The HTTP-profile proxy front for the LOCAL plain-HTTP proof (ADR-MCPRE-050).
+# Distinct from mcp_re_proxy (8600, https/TLS): this is the application-layer
+# RFC 9421 proof front, where security lives in the request/response signatures,
+# not the channel — so a plain-HTTP local proof isolates the profile crypto. TLS
+# is an additive layer folded in later on 8600.
+[services.mcp_re_http_profile_proxy]
+host = "127.0.0.1"
+port = 8601
+scheme = "http"
+description = "HTTP-profile proxy front (local plain-HTTP proof of the RFC 9421 pipeline)."
+
+# A SECOND HTTP-profile proxy replica for the multi-replica proof: replicas A and B
+# share one Redis replay tier, so a nonce admitted on A is rejected as a replay on
+# B (cross-replica replay detection — the horizontal-scaling security linchpin).
+[services.mcp_re_http_profile_proxy_b]
+host = "127.0.0.1"
+port = 8602
+scheme = "http"
+description = "HTTP-profile proxy replica B (multi-replica shared-replay proof)."
+
+# The shared replay store (Redis) both replicas write to. Run locally in Docker
+# (primary + replicas for the redis-wait-quorum tier). Band port, not redis 6379.
+[services.mcp_re_redis]
+host = "127.0.0.1"
+port = 8630
+scheme = "tcp"
+description = "Shared Redis replay tier (primary; replicas provide WAIT quorum acks)."
+
+# The Streamable-HTTP inner MCP backend the proxy forwards to (ADR-MCPRE-051 §3).
+# A real HTTP MCP server (FastMCP) — the ALLOWED inner plane. NOT stdio: stdio is
+# compat-only (out-of-TCB bridge) and never the production inner. Local dev runs it
+# on loopback; the proxy addresses it via --inner-http-url http://127.0.0.1:<port>/mcp/.
+[services.mcp_re_inner_backend]
+host = "127.0.0.1"
+port = 8620
+scheme = "http"
+description = "FastMCP Streamable-HTTP inner MCP backend (test/dev inner plane)."

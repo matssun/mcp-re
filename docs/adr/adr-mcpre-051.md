@@ -4,7 +4,25 @@
 
 ## Status
 
-Proposed
+Accepted — ratified 2026-07-09.
+
+The architecture and its Phase 0–4 implementation are in place and the release-gate
+machinery is wired and green: the per-core async data plane, the stateless
+Streamable-HTTP inner plane with concurrent in-flight dispatch and bounded
+pool-exhaustion backpressure (MCPRE-118), the authoritative atomic replay tier
+(MCPRE-117), and delegated-signing custody (companion [ADR-MCPRE-052](adr-mcpre-052.md),
+ratified) — root-in-HSM/KMS, short-TTL in-memory delegated keys, rotation overlap,
+audited lifecycle, fail-closed issuance. The load / replay-race / bounded-drain /
+SLO gates run as named required CI lanes (MCPRE-123), and the SLO target framework
+is declared in [`docs/bench/adr-051-slo-targets.md`](../bench/adr-051-slo-targets.md)
+(status `provisional`).
+
+**One physical step remains before any release may CLAIM specific SLO numbers:** the
+representative baseline measurement on the declared hardware class (MCPRE-110, HITL),
+which fills the provisional capacity/scaling targets and flips the gate from
+correctness-only to full enforcement. This acceptance ratifies the *decision* and the
+*mechanism*; per §7 no release ships below its **measured** SLOs — acceptance is not a
+capacity claim.
 
 ## Context
 
@@ -96,10 +114,15 @@ subprocess mode is **excluded from the production architecture**.
 
 ### 2. Security core — pure, synchronous, inline (unchanged)
 
-- `mcp-re-core` verification (Ed25519 + JCS canonicalization + freshness) is
-  sub-millisecond CPU work and runs **inline on the async task** — no
-  `spawn_blocking`, no runtime coupling. The core stays free of networking,
-  async, and fs; the firewall test continues to enforce this.
+- The pure verification layers run **inline on the async task** —
+  sub-millisecond CPU work, no `spawn_blocking`, no runtime coupling. The
+  **active production path is the HTTP profile** (`mcp-re-http-profile`):
+  RFC 9421 signature bases, RFC 9530 Content-Digest, freshness, replay, and
+  profile-specific bindings (ADR-MCPRE-050). `mcp-re-core` retains legacy
+  JCS/object-profile verification (Ed25519 over JCS canonicalization +
+  freshness) **only for legacy-object-profile compatibility**, not the
+  production path. Both layers stay free of networking, async, and fs; the
+  firewall test continues to enforce this.
 - `Proxy` becomes `Send + Sync`: `ReplayCache::check_and_insert` moves from
   `&mut self` to `&self` (the shared/atomic stores already are —
   `shared_replay.rs:114-116`), the `RefCell` is removed, and the five boxed
@@ -145,10 +168,11 @@ service (fail-closed), never the security claim. The rule:
 > A request is dispatchable **only** if its replay key is **atomically
 > inserted** into the **authoritative replay tier**.
 
-- **Replay key**: the high-entropy logical key already fixed by the profiles —
-  `(signer/actor, audience, nonce)` for the object profile; the HTTP profile's
-  key adds `profile_id` / `signature_label` per ADR-MCPRE-050. TTL =
-  `expires_at + max_clock_skew`.
+- **Replay key**: the production HTTP-profile replay key is
+  `(profile_id, signature_label, actor_id, audience_hash, nonce)`
+  (ADR-MCPRE-050). TTL = `expires_at + max_clock_skew`. Legacy object-profile
+  replay keys (`(signer/actor, audience, nonce)`) remain confined to legacy
+  compatibility code and are **not** part of the production replay profile.
 - **Authoritative tier (L2)** — an abstract store contract, not a product:
 
   ```

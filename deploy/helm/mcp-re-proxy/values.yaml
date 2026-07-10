@@ -15,7 +15,13 @@ image:
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
 # probes target this port.
-bindPort: 8443
+#
+# MIRRORED VALUE — the single source of truth is config/ports.toml
+# ([services.mcp_re_proxy].port, in the repo's reserved 8600-8699 band). Helm
+# cannot read that TOML at template time, so this scalar holds a copy that
+# scripts/check_port_registry.py CI-gates equal. Change the port in
+# config/ports.toml, then update this line to match (the gate enforces it).
+bindPort: 8600
 
 # Security posture (ADR-MCPS-049 clause 1). BOTH are required for the fleet
 # strict-production guarantee: strict rejects insecure config; fleet rejects

@@ -1,0 +1,7 @@
+# Keep the build context small + reproducible. target/ is huge and host-arch;
+# .git and local scratch never belong in an image build.
+target/
+**/target/
+.git/
+**/*.rs.bk
+*.log
