@@ -245,18 +245,6 @@ nt_rust_binary(
     ] + _PROXY_ASYNC_CRATES,
 )
 
-# Phase 6.1: a plain (MCP-RE-unaware) inner MCP echo server used as the inner
-# subprocess in the full-stack CLI smoke test. Echoes back params._meta so the
-# test can prove the proxy injected a fresh verified-context block.
-nt_rust_binary(
-    name = "echo_inner",
-    srcs = ["tests/fixtures/echo_inner.rs"],
-    edition = "2021",
-    deps = [
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # MCPS-015/016: server-side sidecar library. Pure — depends only on the
 # verification crate plus serde_json. Transport is layered on by the conformance
 # harnesses (MCPS-017); the stdio-first binary entry arrives there too.

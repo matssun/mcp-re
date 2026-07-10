@@ -51,7 +51,6 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
     match env_key {
         // Same-crate bins
         "MCP_RE_PROXY_CLI" => find_bin(&workspace_root, "mcp-re-proxy"),
-        "MCP_RE_ECHO_INNER" => find_bin(&workspace_root, "echo-inner"),
         // Conformance + traceability manifests
         "MCP_RE_MANIFEST" => workspace_root.join("mcp-re-conformance/conformance_manifest.json"),
         "MCP_RE_SECURITY_MANIFEST" => {

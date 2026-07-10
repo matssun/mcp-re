@@ -175,11 +175,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "mcp-re-proxy"
 path = "src/main.rs"
-
-# A fixture: a plain MCP-RE-unaware inner MCP server used by full_stack_test as a
-# child process. In Bazel this is a separate `nt_rust_binary` (`:echo_inner`)
-# delivered via runfiles; under Cargo we surface it as a `[[bin]]` so the test
-# can spawn it via the mcp_re_test_paths fallback at `target/<profile>/echo-inner`.
-[[bin]]
-name = "echo-inner"
-path = "tests/fixtures/echo_inner.rs"
