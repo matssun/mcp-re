@@ -9,17 +9,21 @@ ONE signed MCP-RE request per connection at the wire level:
       -> one mTLS connection (client cert; server cert verified as proxy.internal)
       -> POST / HTTP/1.1  (MCP-RE request body)
       -> REAL mcp-re-proxy   verifies signature + freshness + audience, strips envelope
-      -> REAL mcp-re-demo-fileserver  executes read_file
+      -> HTTP inner backend  (MCP-RE-unaware; --inner-http-url) executes read_file
       -> mcp-re-proxy signs the draft-02 response
       -> Python verifies the signature + request_hash binding, strips to plain MCP
+
+MCP-RE is HTTP-profile only: the inner MCP server is reached over HTTP (a stdio-only
+server would be fronted by an external adapter such as FastMCP). Here the inner is a
+tiny in-process threaded HTTP backend (`_inner_backend.start_inner_backend`).
 
 Full `ClientSession.initialize()` over this request/response HTTP transport is the
 SEPARATE, larger adapter slice (step ii) — it is NOT exercised here.
 
 Materials come from `DemoFixtures` via the `emit_mtls_fixtures` example (TLS certs
 vary per run; identities/seeds/audience are the deterministic defaults). Needs the
-built binaries + cargo:
-    cargo build -p mcp-re-proxy && cargo build -p mcp-re-demo-fileserver
+built binary + cargo:
+    cargo build -p mcp-re-proxy
 """
 
 import json
@@ -38,14 +42,14 @@ import pytest
 
 import mcp_re_sdk
 
+from _inner_backend import FILE_TEXT, start_inner_backend
+
 ROOT = Path(__file__).resolve().parents[3]
 PROXY = ROOT / "target" / "debug" / "mcp-re-proxy"
-FILESERVER = ROOT / "target" / "debug" / "mcp-re-demo-fileserver"
 
-if not (PROXY.exists() and FILESERVER.exists() and shutil.which("cargo")):
+if not (PROXY.exists() and shutil.which("cargo")):
     pytest.skip(
-        "needs cargo + built mcp-re-proxy and mcp-re-demo-fileserver "
-        "(cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver)",
+        "needs cargo + built mcp-re-proxy (cargo build -p mcp-re-proxy)",
         allow_module_level=True,
     )
 
@@ -57,14 +61,12 @@ SERVER, SERVER_KEY = "did:example:server-1", "server-key-1"
 AUDIENCE, SERVER_NAME = "did:example:server-1", "proxy.internal"
 ON_BEHALF_OF = "did:example:user-1"
 AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
-FILE_TEXT = "hello from the inner fileserver\n"
 
 
 @pytest.fixture(scope="module")
 def proxy():
     out = tempfile.mkdtemp(prefix="mcp_re_mtls_fx_")
-    demo = tempfile.mkdtemp(prefix="mcp_re_demo_root_")
-    (Path(demo) / "greeting.txt").write_text(FILE_TEXT)
+    inner_http_url, inner = start_inner_backend()
     subprocess.run(
         ["cargo", "run", "-q", "-p", "mcp-re-demo", "--example", "emit_mtls_fixtures", "--", out],
         cwd=ROOT, check=True, capture_output=True,
@@ -78,8 +80,7 @@ def proxy():
          "--tls-cert", f"{out}/server_cert.pem", "--tls-key", f"{out}/server_key.pem",
          "--client-ca", f"{out}/client_ca.pem", "--trust", f"{out}/trust.json",
          "--max-client-cert-lifetime", "175200h", "--transport-binding", "none",
-         "--inner-working-dir", demo,
-         "--inner-command", str(FILESERVER), "--demo-root", demo],
+         "--inner-http-url", inner_http_url],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     port = None
@@ -88,24 +89,25 @@ def proxy():
         line = p.stderr.readline()
         if not line:
             break
-        if "listening on 127.0.0.1:" in line:
-            port = int(line.split("listening on 127.0.0.1:")[1].split()[0])
+        if "async fleet serving on 127.0.0.1:" in line:
+            port = int(line.split("async fleet serving on 127.0.0.1:")[1].split()[0])
             break
     # Drain remaining stderr so the proxy's per-request logging never blocks on a full pipe.
     threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
     if port is None:
         p.terminate()
-        pytest.fail("mcp-re-proxy did not report a listening port")
+        inner.shutdown()
+        pytest.fail("mcp-re-proxy did not report a serving address")
     try:
-        yield {"port": port, "out": out, "demo": demo}
+        yield {"port": port, "out": out}
     finally:
         p.terminate()
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
             p.kill()
+        inner.shutdown()
         shutil.rmtree(out, ignore_errors=True)
-        shutil.rmtree(demo, ignore_errors=True)
 
 
 def _sign(tool, arguments):

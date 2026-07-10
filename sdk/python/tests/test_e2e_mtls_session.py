@@ -3,14 +3,15 @@
 Where step (i) (`test_e2e_mtls.py`) drove ONE raw signed request per mTLS
 connection, this runs a REAL `mcp.ClientSession` — `initialize()` then
 `call_tool("read_file")` — through :func:`mcp_re_sdk.connect_mtls_http`, against the
-REAL production `mcp-re-proxy` fronting the REAL `mcp-re-demo-fileserver`:
+REAL production `mcp-re-proxy` fronting an HTTP inner MCP backend (MCP-RE is
+HTTP-profile only; the inner is reached over `--inner-http-url`):
 
     ClientSession.initialize()
       -> McpReHttpTransport signs the `initialize` request
-      -> one mTLS POST -> mcp-re-proxy verifies -> fileserver -> signed InitializeResult
+      -> one mTLS POST -> mcp-re-proxy verifies -> HTTP inner -> signed InitializeResult
       -> verified + stripped -> ClientSession negotiates the protocol version
     ClientSession sends notifications/initialized
-      -> dropped (no fire-and-forget channel; fileserver is stateless)
+      -> dropped (no fire-and-forget channel; the inner is stateless)
     ClientSession.call_tool("read_file", ...)
       -> one more signed mTLS POST -> verified file content
 
@@ -20,9 +21,12 @@ model onto that request/response wire. Fail-closed verification surfaces as a
 JSON-RPC error correlated to the request id, so the awaiting call RAISES (a
 read-stream Exception would instead hang the call — see http_transport.py).
 
-Materials come from `DemoFixtures` via the `emit_mtls_fixtures` example; needs the
-built binaries + cargo (skips cleanly otherwise):
-    cargo build -p mcp-re-proxy && cargo build -p mcp-re-demo-fileserver
+The inner MCP server is a tiny in-process threaded HTTP backend
+(`_inner_backend.start_inner_backend`) — MCP-RE-unaware, exactly the surface a real
+Streamable-HTTP MCP server exposes. Materials come from `DemoFixtures` via the
+`emit_mtls_fixtures` example; needs the built binary + cargo (skips cleanly
+otherwise):
+    cargo build -p mcp-re-proxy
 """
 
 import json
@@ -37,6 +41,10 @@ import pytest
 
 import mcp_re_sdk
 
+from _inner_backend import FILE_TEXT, PROTOCOL_VERSION
+from _inner_backend import SERVER_NAME as INNER_SERVER_NAME
+from _inner_backend import start_inner_backend
+
 anyio = pytest.importorskip("anyio")
 pytest.importorskip("mcp")
 from mcp.shared.exceptions import McpError  # noqa: E402
@@ -45,12 +53,10 @@ from mcp.types import JSONRPCMessage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 PROXY = ROOT / "target" / "debug" / "mcp-re-proxy"
-FILESERVER = ROOT / "target" / "debug" / "mcp-re-demo-fileserver"
 
-if not (PROXY.exists() and FILESERVER.exists() and shutil.which("cargo")):
+if not (PROXY.exists() and shutil.which("cargo")):
     pytest.skip(
-        "needs cargo + built mcp-re-proxy and mcp-re-demo-fileserver "
-        "(cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver)",
+        "needs cargo + built mcp-re-proxy (cargo build -p mcp-re-proxy)",
         allow_module_level=True,
     )
 
@@ -61,14 +67,12 @@ SIGNER, SIGNER_KEY = "did:example:agent-1", "key-1"
 SERVER, SERVER_KEY = "did:example:server-1", "server-key-1"
 AUDIENCE, SERVER_NAME = "did:example:server-1", "proxy.internal"
 ON_BEHALF_OF = "did:example:user-1"
-FILE_TEXT = "hello from the inner fileserver\n"
 
 
 @pytest.fixture(scope="module")
 def proxy():
     out = tempfile.mkdtemp(prefix="mcp_re_mtls_sess_fx_")
-    demo = tempfile.mkdtemp(prefix="mcp_re_mtls_sess_root_")
-    (Path(demo) / "greeting.txt").write_text(FILE_TEXT)
+    inner_http_url, inner = start_inner_backend()
     subprocess.run(
         ["cargo", "run", "-q", "-p", "mcp-re-demo", "--example", "emit_mtls_fixtures", "--", out],
         cwd=ROOT, check=True, capture_output=True,
@@ -82,8 +86,7 @@ def proxy():
          "--tls-cert", f"{out}/server_cert.pem", "--tls-key", f"{out}/server_key.pem",
          "--client-ca", f"{out}/client_ca.pem", "--trust", f"{out}/trust.json",
          "--max-client-cert-lifetime", "175200h", "--transport-binding", "none",
-         "--inner-working-dir", demo,
-         "--inner-command", str(FILESERVER), "--demo-root", demo],
+         "--inner-http-url", inner_http_url],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
     port = None
@@ -92,23 +95,24 @@ def proxy():
         line = p.stderr.readline()
         if not line:
             break
-        if "listening on 127.0.0.1:" in line:
-            port = int(line.split("listening on 127.0.0.1:")[1].split()[0])
+        if "async fleet serving on 127.0.0.1:" in line:
+            port = int(line.split("async fleet serving on 127.0.0.1:")[1].split()[0])
             break
     threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
     if port is None:
         p.terminate()
-        pytest.fail("mcp-re-proxy did not report a listening port")
+        inner.shutdown()
+        pytest.fail("mcp-re-proxy did not report a serving address")
     try:
-        yield {"port": port, "out": out, "demo": demo}
+        yield {"port": port, "out": out}
     finally:
         p.terminate()
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
             p.kill()
+        inner.shutdown()
         shutil.rmtree(out, ignore_errors=True)
-        shutil.rmtree(demo, ignore_errors=True)
 
 
 def _config(resolver, expected_server_signer):
@@ -156,8 +160,8 @@ def test_clientsession_initialize_and_call_over_mtls(proxy):
         with anyio.fail_after(30):
             async with _conn(proxy, config) as session:
                 init = await session.initialize()
-                assert init.serverInfo.name == "mcp-re-demo-fileserver"
-                assert init.protocolVersion == "2025-06-18"
+                assert init.serverInfo.name == INNER_SERVER_NAME
+                assert init.protocolVersion == PROTOCOL_VERSION
                 result = await session.call_tool("read_file", {"path": "greeting.txt"})
                 assert result.content[0].text == FILE_TEXT
 

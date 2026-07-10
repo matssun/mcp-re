@@ -36,8 +36,8 @@
 #   * gcloud auth login && gcloud config set project <PROJECT_ID>
 #   * a Kubernetes Secret `mcp-re-tls` with tls.crt/tls.key/client-ca.pem/trust.json
 #     (+ signing-seed) — the same material the fleet guide describes
-#   * a client capable of emitting signed MCP-RE draft-02 requests
-#     (mcp-re-client-proxy-cli, built from this repo) to drive the proofs
+#   * the `mcp-re-sdk` Python package installed (`pip install ./sdk/python`) — the
+#     HTTP-profile proof client `mcp_re_gke_client.py` drives the proofs over mTLS
 #
 # Usage:
 #   PROJECT_ID=my-proj ./gke-multi-replica-validation.sh [--teardown]
@@ -148,14 +148,18 @@ sleep 3
 REPLICA_A="127.0.0.1:${LOCAL_PORT_A}"
 REPLICA_B="127.0.0.1:${LOCAL_PORT_B}"
 
-# The signed-request client, built from this repo:
-#   cargo build --release -p mcp-re-client-proxy-cli
-# It reads one plain JSON-RPC request per line on stdin, signs a draft-02 envelope,
-# forwards it over verifying mTLS, and prints `verdict=<token>` to stderr; with
-# --expect it exits non-zero on a verdict mismatch. Proof flags added for this
-# harness: --nonce (pin the nonce), --expect, --save-cont/--load-cont (MRT).
-CLIENT="${MCP_RE_CLIENT:-$REPO_ROOT/target/release/mcp-re-client-proxy-cli}"
-[[ -x "$CLIENT" ]] || fail "client not built: $CLIENT (cargo build --release -p mcp-re-client-proxy-cli)"
+# The signed-request client — the HTTP-profile proof client shipped in this repo
+# (MCP-RE is HTTP-profile only; there is no stdio client). It reads one plain
+# JSON-RPC request on stdin, signs a draft-02 envelope with the `mcp-re-sdk` core,
+# forwards it over verifying mTLS as one HTTP POST, and prints `verdict=<token>` to
+# stderr; with --expect it exits non-zero on a verdict mismatch. Proof flags: --nonce
+# (pin the nonce), --expect, --save-cont/--load-cont (MRT). Override MCP_RE_CLIENT to
+# run it under a specific interpreter/venv (default: python3).
+CLIENT_SCRIPT="$REPO_ROOT/docs/security/mcp_re_gke_client.py"
+CLIENT="${MCP_RE_CLIENT:-python3 $CLIENT_SCRIPT}"
+[[ -f "$CLIENT_SCRIPT" ]] || fail "proof client missing: $CLIENT_SCRIPT"
+python3 -c 'import mcp_re_sdk' 2>/dev/null \
+  || fail "mcp-re-sdk not importable — run: pip install $REPO_ROOT/sdk/python"
 
 # Client identity + the fleet's TLS/trust material — the SAME material as the
 # `mcp-re-tls` Secret. Supplied via env (no secrets, no host/port literals here).
@@ -182,22 +186,22 @@ log "Proof 1 — cross-replica replay coherence"
 # A proper 128-bit b64url nonce, PINNED so both replicas see the identical
 # (signer, audience, nonce) triple — the whole point of the coherence proof.
 NONCE="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
-printf '%s\n' "$REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" \
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
   --remote-addr "$REPLICA_A" --nonce "$NONCE" --expect accepted \
   || fail "replica A did not accept a fresh pinned nonce"
-printf '%s\n' "$REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" \
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
   --remote-addr "$REPLICA_B" --nonce "$NONCE" --expect replay \
   || fail "replica B accepted a nonce already spent on A (replay coherence broken)"
 echo "  OK: nonce Fresh on A, Replay on B."
 
 # --- Proof 2: cross-replica trust revocation ---------------------------------
 log "Proof 2 — cross-replica trust-epoch revocation"
-printf '%s\n' "$REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
   || fail "baseline request rejected before revocation"
 kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
   redis-cli INCR mcp-re:trust:epoch >/dev/null
 sleep 2  # bounded propagation window
-printf '%s\n' "$REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect revoked \
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect revoked \
   || fail "sibling B still trusted a credential revoked by the epoch bump"
 echo "  OK: epoch bump on the shared tier revoked across replicas."
 
@@ -215,14 +219,14 @@ else
   MRT_OPEN_REQ="${MCP_RE_MRT_OPEN_REQ:-}"
   [[ -n "$MRT_OPEN_REQ" ]] || MRT_OPEN_REQ="$(jq -nc --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:$t,arguments:{}}}')"
-  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" \
+  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
     --remote-addr "$REPLICA_A" --save-cont "$CONT_FILE")" \
     || fail "could not open a multi-round-trip continuation on A"
   STATE="$(printf '%s' "$OPEN_RESP" | jq -r '.result.requestState // empty')"
   [[ -n "$STATE" ]] || fail "A's response carried no requestState (tool did not elicit input)"
   ANSWER_REQ="$(jq -nc --arg s "$STATE" --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:$t,arguments:{},inputResponses:{confirm:true},requestState:$s}}')"
-  printf '%s\n' "$ANSWER_REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" \
+  printf '%s\n' "$ANSWER_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
     --remote-addr "$REPLICA_B" --load-cont "$CONT_FILE" --expect accepted \
     || fail "continuation opened on A was not honoured on B"
   rm -f "$CONT_FILE"
@@ -232,7 +236,7 @@ fi
 # --- Proof 4: zero-drop rolling update ---------------------------------------
 log "Proof 4 — zero-drop rolling update with drain"
 ( for _ in $(seq 1 200); do
-    printf '%s\n' "$REQ" | "$CLIENT" "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
+    printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
       >/dev/null 2>&1 || echo DROP
   done ) > /tmp/mcps90.load 2>&1 & LOAD=$!
 kubectl -n "$NAMESPACE" set env deploy/"$RELEASE" ROLLOUT_NONCE="$(date +%s)"

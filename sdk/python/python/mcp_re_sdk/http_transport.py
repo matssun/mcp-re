@@ -5,10 +5,9 @@ persistent-stream model onto the production ``mcp-re-proxy``'s wire, which is **
 HTTP/1.1 POST per (mTLS) connection, ``Connection: close``** — a pure
 request/response channel with NO server push (``mcp-re-proxy/src/tls.rs::serve_once``).
 
-The byte-level security is the SAME audited pipeline the stdio
-:class:`~mcp_re_sdk.transport.McpReTransport` uses — :func:`sign_outbound` (sign +
-register correlation) and :func:`verify_inbound` (correlate + verify + strip). What
-differs is the *shape*: instead of pumping a persistent byte stream, every outbound
+The byte-level security is the audited pipeline in
+:mod:`~mcp_re_sdk.transport` — :func:`sign_outbound` (sign + register correlation)
+and :func:`verify_inbound` (correlate + verify + strip). Every outbound
 ``ClientSession`` **request** becomes exactly one ``post(request_bytes) ->
 response_bytes`` round trip, and that response is the only inbound message for it.
 
@@ -22,20 +21,19 @@ exists to answer):
   fire-and-forget: it has no ``id`` and expects no response. This transport has no
   channel to deliver a fire-and-forget message — the proxy treats every POST as a
   signed request that MUST verify and MUST get a response — so notifications are
-  **dropped** (the minimal proxy + stateless fileserver do not consume them). A
+  **dropped** (the minimal proxy + stateless inner backend do not consume them). A
   stricter inner server that required ``initialized`` would need a tunnelling
   convention; that is out of scope for this transport.
-* A **fail-closed** verification cannot be surfaced as a read-stream ``Exception``
-  here the way the stdio adapter does: ``ClientSession``'s receive loop routes a
-  stream ``Exception`` to ``_handle_incoming`` (it does NOT fail the awaiting call),
-  so the in-flight request would hang. Instead a rejected response is delivered as a
-  **JSON-RPC error correlated to the request id**, carrying the frozen ``mcp-re.*``
-  reason — so the awaiting ``ClientSession`` call raises cleanly.
+* A **fail-closed** verification must not be surfaced as a read-stream ``Exception``:
+  ``ClientSession``'s receive loop routes a stream ``Exception`` to
+  ``_handle_incoming`` (it does NOT fail the awaiting call), so the in-flight request
+  would hang. Instead a rejected response is delivered as a **JSON-RPC error
+  correlated to the request id**, carrying the frozen ``mcp-re.*`` reason — so the
+  awaiting ``ClientSession`` call raises cleanly.
 
 The TLS/socket specifics live OUTSIDE this module: the caller supplies a synchronous
-``post(request_bytes: bytes) -> response_bytes: bytes`` (mirroring how
-:class:`McpReTransport` takes ``byte_send`` / ``byte_lines``). The blocking POST is
-run off the event loop with ``anyio.to_thread``. See
+``post(request_bytes: bytes) -> response_bytes: bytes``. The blocking POST is run off
+the event loop with ``anyio.to_thread``. See
 :func:`mcp_re_sdk.client.connect_mtls_http` for the production mTLS wiring.
 """
 

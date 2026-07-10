@@ -1,87 +1,19 @@
-"""High-level entry points: open an MCP-RE-secured ``ClientSession``.
+"""High-level entry point: open an MCP-RE-secured ``ClientSession`` over mTLS/HTTP.
 
-``connect`` wraps a byte channel + :class:`~mcp_re_sdk.transport.McpReConfig` in the
-adapter and hands the resulting plain-MCP streams to ``mcp.ClientSession`` — so
-application code is unchanged from ordinary MCP while every request is signed and
-every response verified. ``connect_stdio`` builds that byte channel from a
-subprocess (the common MCP stdio case).
+MCP-RE is HTTP-profile only. :func:`connect_mtls_http` wraps a synchronous mTLS
+``post`` in :class:`~mcp_re_sdk.http_transport.McpReHttpTransport` and hands the
+resulting plain-MCP streams to ``mcp.ClientSession`` — so application code is
+unchanged from ordinary MCP while every request is signed and every response
+verified. (A stdio-only MCP server is fronted by an EXTERNAL plain-MCP adapter such
+as FastMCP that speaks HTTP to ``mcp-re-proxy``; MCP-RE itself owns no stdio path.)
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
-from .transport import ByteSend, McpReConfig, McpReTransport
-
-
-@asynccontextmanager
-async def connect(
-    byte_send: ByteSend,
-    byte_lines: Any,
-    config: McpReConfig,
-    *,
-    correlation: Any = None,
-    clock=None,
-    nonce_factory=None,
-):
-    """Yield an ``mcp.ClientSession`` whose traffic is MCP-RE signed/verified over the
-    given byte channel (``byte_send`` writes framed bytes; ``byte_lines`` is an async
-    iterator of inbound newline-delimited JSON)."""
-    from mcp import ClientSession  # lazy: keeps `import mcp_re_sdk` mcp-free
-
-    transport = McpReTransport(
-        byte_send, byte_lines, config, correlation, clock=clock, nonce_factory=nonce_factory
-    )
-    async with transport as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            yield session
-
-
-@asynccontextmanager
-async def connect_stdio(
-    command: str,
-    args: list[str],
-    config: McpReConfig,
-    *,
-    env: Optional[dict] = None,
-):
-    """Spawn an MCP-RE endpoint subprocess and open a secured session over its stdio.
-
-    The subprocess must speak the MCP-RE wire (a server-side MCP-RE proxy/server). A
-    full cross-process end-to-end against the Rust MCP-RE server is the next slice;
-    the byte plumbing here is the integration point.
-    """
-    import anyio
-
-    process = await anyio.open_process(
-        [command, *args], stdin=anyio.subprocess.PIPE, stdout=anyio.subprocess.PIPE, env=env
-    )
-
-    async def byte_send(data: bytes) -> None:
-        await process.stdin.send(data)
-
-    async def byte_lines():
-        buffer = b""
-        async for chunk in process.stdout:
-            buffer += chunk
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                yield line
-        # Yield a final unterminated line (stdout closed without a trailing '\n')
-        # rather than silently dropping the last message.
-        if buffer:
-            yield buffer
-
-    try:
-        async with connect(byte_send, byte_lines(), config) as session:
-            yield session
-    finally:
-        # Close stdin then reap the subprocess so we don't leave a dangling child.
-        with anyio.move_on_after(5, shield=True):
-            await process.stdin.aclose()
-            process.terminate()
-            await process.wait()
+from .transport import McpReConfig
 
 
 def make_mtls_post_sync(
@@ -162,8 +94,7 @@ async def connect_mtls_http(
     """Yield an ``mcp.ClientSession`` whose every request is one MCP-RE-signed mTLS
     POST to the production ``mcp-re-proxy`` (verified server-signed response).
 
-    This is the request/response counterpart to :func:`connect_stdio`: the proxy
-    serves one HTTP/1.1 POST per mTLS connection (``Connection: close``), so each
+    The proxy serves one HTTP/1.1 POST per mTLS connection (``Connection: close``), so each
     ``ClientSession`` request opens its own connection. ``initialize`` round-trips
     as a normal signed request; client→server notifications are dropped (the
     transport has no fire-and-forget channel and the minimal proxy never pushes).

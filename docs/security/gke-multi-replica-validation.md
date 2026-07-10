@@ -16,8 +16,10 @@ single-node non-claim retirement (MCPS-91) depend on.
 gcloud auth login && gcloud config set project <PROJECT_ID>
 # provide the fleet TLS + trust Secret `mcp-re-tls` (see docs/fleet-deployment-guide.md)
 
-# 1. Build the signed-request client the proofs drive (needs jq + the client on PATH):
-cargo build --release -p mcp-re-client-proxy-cli   # script defaults to target/release/…
+# 1. Install the signed-request client the proofs drive (needs jq). MCP-RE is
+#    HTTP-profile only: the proofs are driven by the HTTP client mcp_re_gke_client.py,
+#    which signs over the mcp-re-sdk core and forwards over mTLS.
+pip install ./sdk/python   # provides `mcp_re_sdk`; script runs docs/security/mcp_re_gke_client.py
 
 # 2. Point the client at the fleet's identity + TLS/trust material (same material as
 #    the mcp-re-tls Secret). These are the ONLY per-run inputs besides PROJECT_ID:
@@ -39,7 +41,8 @@ reference (`deploy/helm/mcp-re-proxy`) with `strict=true fleet=true` over a shar
 Redis replay + trust-epoch tier — the fleet guardrail refuses to start on a
 node-local cache, so a green rollout already proves the shared tier is wired.
 
-The four proofs are driven by `mcp-re-client-proxy-cli` using its proof flags —
+The four proofs are driven by the HTTP-profile client `mcp_re_gke_client.py` (one
+signed mTLS POST per request; MCP-RE owns no stdio client) using its proof flags —
 `--nonce` (pin a nonce across two replicas for the replay proof), `--expect`
 (assert the proxy verdict), and `--save-cont`/`--load-cont` (persist an MRT
 continuation opened on one replica and answer it on another). All ports resolve
