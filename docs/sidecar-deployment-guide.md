@@ -1,12 +1,13 @@
 # MCP-RE Sidecar Deployment Guide
 
 **Audience:** an operator who wants to put the MCP-RE production sidecar in front
-of an MCP server — including an ordinary **stdio** MCP server — so requests are
-verified before they reach the inner server and responses are signed.
+of a **Streamable-HTTP** MCP server so requests are verified before they reach the
+inner server and responses are signed. MCP-RE is HTTP-profile only; a stdio-only
+inner server is out of scope — front it with an EXTERNAL plain-MCP adapter (e.g.
+FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the PEP at that adapter.
 
-This guide explains **how to run** the `mcp-re-proxy` production CLI and, for a
-stdio-only inner server, the companion `mcp-re-stdio-bridge`. The rules the proxy
-enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md); the
+This guide explains **how to run** the `mcp-re-proxy` production CLI. The rules the
+proxy enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md); the
 rationale is in ADR-MCPS-014 ([view](adr/adr-mcps-014.md), transport hardening),
 ADR-MCPS-016 ([view](adr/adr-mcps-016.md), inner-server isolation boundary) and
 ADR-MCPRE-051 ([view](adr/adr-mcpre-051.md), high-throughput serving
@@ -41,9 +42,9 @@ Two things changed with ADR-MCPRE-051 and matter to operators:
   inner plane is a pooled, keep-alive `hyper` client to one or more HTTP MCP
   backends named by `--inner-http-url`. The entire ~3k-line subprocess/sandbox
   surface (subprocess lifecycle, environment allow-listing, Landlock/seccomp,
-  `setrlimit`) has been **removed from the PEP's Trusted Computing Base** and
-  relocated to the separate, un-privileged `mcp-re-stdio-bridge` adapter
-  (MCPRE-118). See [Wrapping a stdio server](#wrapping-a-stdio-server-with-mcp-re-stdio-bridge).
+  `setrlimit`) has been **removed** — MCP-RE is HTTP-profile only and owns no stdio
+  serving or bridge. A stdio-only inner server is fronted by an external plain-MCP
+  adapter that exposes HTTP; see [Fronting a stdio-only inner server](#fronting-a-stdio-only-inner-server-out-of-scope-for-mcp-re).
 
 An invalid request never reaches the inner server — verification happens first,
 and a failure returns a signed/`mcp-re.*` error instead of dispatching.
@@ -76,8 +77,8 @@ Repeated and/or comma-separated values add backends; the PEP spreads requests
 across them round-robin over a per-core keep-alive connection pool. A dead,
 non-2xx, or timed-out backend fails that request closed with a synthesized
 `mcp-re.*` JSON-RPC error — it never returns an unsigned or unverified body. To
-front a **stdio-only** server, point `--inner-http-url` at a local
-`mcp-re-stdio-bridge` (below).
+front a **stdio-only** server, point `--inner-http-url` at an external plain-MCP
+stdio↔HTTP adapter (below).
 
 ### KeySource (`key_source.rs`)
 
@@ -133,71 +134,33 @@ authorization-issuer keys. A bad key fails startup closed.
 `0` disables). Every limit fails closed. The per-core in-flight admission ceiling
 returns `503` at saturation rather than queuing unbounded.
 
-## Wrapping a stdio server with `mcp-re-stdio-bridge`
+## Fronting a stdio-only inner server (out of scope for MCP-RE)
 
-The PEP speaks HTTP to its inner plane. A stdio-only MCP server (JSON-RPC over a
-child's stdin/stdout) is fronted by the **out-of-TCB** `mcp-re-stdio-bridge`,
-which the PEP reaches over loopback HTTP like any other backend:
+MCP-RE is HTTP-profile only: the PEP speaks HTTP to its inner plane and MCP-RE
+ships **no stdio bridge**. A stdio-only MCP server (JSON-RPC over a child's
+stdin/stdout) is fronted by an **external** plain-MCP adapter that exposes HTTP —
+for example [FastMCP](https://github.com/jlowin/fastmcp)'s stdio↔HTTP proxy — run
+as your own process/sidecar. The PEP reaches that adapter over loopback HTTP like
+any other backend:
 
 ```text
-  client ──mTLS──▶  mcp-re-proxy (PEP, signs)  ──HTTP──▶  mcp-re-stdio-bridge  ──stdio──▶  unmodified MCP server
-                    └ cryptographic TCB ──────┘            └ subprocess + launch hygiene live HERE, outside the TCB ┘
+  client ──mTLS──▶  mcp-re-proxy (PEP, signs)  ──HTTP──▶  external stdio↔HTTP adapter (e.g. FastMCP)  ──stdio──▶  unmodified MCP server
+                    └ cryptographic TCB ──────┘            └ NOT part of MCP-RE; run + isolate it yourself ┘
 ```
 
-A compromise of the bridge **cannot forge a signature or defeat replay** — those
-guarantees live entirely in the PEP. The bridge's only job is to launch and
-contain the child; keeping it out here is what shrinks the PEP's TCB.
-
-### The bridge flags (`mcp-re-stdio-bridge`)
-
-| Flag | Meaning |
-| --- | --- |
-| `--listen <addr>` | **Required.** The loopback HTTP address the bridge serves on (e.g. `127.0.0.1:8080`). Point `--inner-http-url` at it. Keep it on `127.0.0.1` so the un-TLS'd inner hop never leaves the host/pod. |
-| `--inner-mode oneshot` (default) | A fresh child per request (stateless). |
-| `--inner-mode persistent` | One long-lived child; requests serialized over it (stateful servers). |
-| `--inner-working-dir <dir>` | Controlled **start** directory for the child. Omit for the hardened default (never silently the bridge's cwd). |
-| `-- <cmd> [args...]` | Everything after the `--` separator is the inner command + argv, verbatim. **Required.** |
-
-### The inner-server boundary (be honest about it)
-
-The bridge applies **launch hygiene** to the child — it is **NOT** a kernel,
-filesystem, or network sandbox (ADR-MCPS-016):
-
-- The controlled working directory is a controlled **start** directory, not a
-  filesystem jail — the child can still `chdir` and open any path its OS
-  credentials allow.
-- The `setrlimit` ceilings the bridge applies are **resource hardening**, not
-  access control.
-- Bounded stderr capture is size-bounded, not secrets-safe.
-
-If you need true isolation, run the bridge + inner server inside an OS sandbox
-(container, namespace, jail) — that is the deployment operator's responsibility.
-
-### Current hardening surface (honest status)
-
-The bridge applies its secure launch defaults today: an **empty child
-environment**, a controlled working directory, bounded stderr, and resource
-ceilings (sandbox off by default). The **richer per-flag hardening surface** the
-in-proxy sidecar once exposed — `--inner-env` / `--inner-env-allow`,
-`--inner-rlimit-*`, explicit sandbox profiles — is **not yet exposed on the bridge
-CLI**; it is a tracked Phase-B follow-up (the modules are already relocated into
-`mcp-re-stdio-bridge`). Until then, tune child environment and limits at the OS /
-container layer (systemd unit, container `securityContext`, cgroup limits).
+A compromise of that adapter **cannot forge a signature or defeat replay** — those
+guarantees live entirely in the PEP. Running and isolating the adapter (its child
+environment, working directory, resource limits, and any OS sandbox) is the
+deployment operator's responsibility, exactly as for any inner backend.
 
 ## Worked example
 
-Two processes: the bridge wrapping a stdio server, and the PEP in front of it.
+Run the PEP in front of a Streamable-HTTP inner backend (a native HTTP MCP server,
+or an external stdio↔HTTP adapter exposing HTTP):
 
 ```bash
-# 1. Front the stdio MCP server with the out-of-TCB bridge on loopback.
-bazel run //mcp-re-stdio-bridge:mcp_re_stdio_bridge -- \
-  --listen 127.0.0.1:8080 \
-  --inner-mode oneshot \
-  --inner-working-dir /srv/inner \
-  -- /usr/local/bin/my-mcp-server --config /etc/mcp.toml &
-
-# 2. Run the PEP; its inner plane is the bridge's HTTP endpoint.
-#    Port 8600 = mcp_re_proxy in config/ports.toml (reserved 8600-8699 band).
+# The PEP; its inner plane is the HTTP backend on loopback.
+# Port 8600 = mcp_re_proxy in config/ports.toml (reserved 8600-8699 band).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --bind 127.0.0.1:8600 \
   --audience did:example:server-1 \
@@ -218,16 +181,9 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --inner-http-url http://127.0.0.1:8080/mcp
 ```
 
-The `--` separator on the bridge is what makes the inner command unambiguous:
-everything after it is the child command and its arguments, not bridge flags.
-
-For a native Streamable-HTTP inner backend (no stdio, no bridge), skip step 1 and
-point `--inner-http-url` straight at the backend (or repeat it across a fleet).
-
-On startup the bridge emits its listen address labelled "stdio inner, out of the
-PEP TCB"; the PEP emits its async-fleet listen line with the worker count and the
-configured HTTP inner backends. The Kubernetes form of this two-container pattern
-is the Helm chart's `inner.stdioBridge` sidecar
+Repeat `--inner-http-url` to round-robin across a backend fleet. On startup the PEP
+emits its async-fleet listen line with the worker count and the configured HTTP
+inner backends. The Kubernetes form sets `inner.httpUrls` on the Helm chart
 ([`deploy/helm/mcp-re-proxy`](../deploy/helm/mcp-re-proxy)).
 
 ## Always use Bazel

@@ -35,7 +35,7 @@ fn main() {
     write("server_ca.pem", fx.server_ca_pem()); // verify the proxy's server cert
     write("client_cert.pem", fx.client_cert_pem()); // mTLS client cert (URI SAN == signer)
     write("client_key.pem", fx.client_key_pem());
-    // Rust `mcp-re-client-proxy-cli` inputs: the client's OWN request-signing seed
+    // Client-side inputs: the client's OWN request-signing seed
     // (distinct from the proxy's response-signing `signing_seed` above) and the
     // server's response-signing PUBLIC key the client trusts (derived from the
     // server seed). These complete the client env without hardcoding key material.

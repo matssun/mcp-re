@@ -14,8 +14,8 @@ how to use it, and the tests prove it.
 The conformance corpus is the executable specification (ADR-MCPS-011,
 [view](adr/adr-mcps-011.md)). It is a set of
 committed JSON vectors plus harnesses that replay them, transport-agnostically,
-as in-process objects, over stdio, and over Streamable HTTP — so a vector that
-passes proves object/stdio/HTTP parity.
+as in-process objects and over Streamable HTTP — so a vector that
+passes proves object/HTTP parity (MCP-RE is HTTP-profile only).
 
 The vectors fall into three categories:
 
@@ -82,7 +82,7 @@ labels are real, but always cross-check against the manifest):
 # Just the Core crate + its vector replay.
 bazel test //mcp-re-core/...
 
-# Just the conformance harnesses (object / stdio / HTTP / acceptance).
+# Just the conformance harnesses (object / HTTP / acceptance).
 bazel test //mcp-re-conformance/...
 
 # The drift guard alone (fast; proves the manifest matches reality).
@@ -98,7 +98,7 @@ alters the corpus.
 
 - Each Core vector reaches its recorded outcome (`verify_ok` or an exact
   `mcp-re.*` error token) — and reaches the **same** outcome as an object, over
-  stdio, and over HTTP (transport parity).
+  and over HTTP (transport parity).
 - The Phase-5 authorization vectors exercise the `PolicyEvaluator` + Reference
   Profile to their recorded allow/deny verdicts.
 - The Phase-6 proxy targets exercise mTLS termination, transport binding, the
