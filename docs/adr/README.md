@@ -2,99 +2,99 @@
 
 # MCP-RE Architecture Decision Records
 
-This directory holds the Architecture Decision Records that govern MCP-RE.
+The ADRs now live as **GitHub Discussions** in the [**ADRs** category](https://github.com/matssun/mcp-re/discussions/categories/adrs) — that is the single source of truth for both the decision text and its current status. This file is a generated index; the committed `adr-*.md` bodies were retired on 2026-07-10 (recover any from git history if needed).
 
-Each ADR records the context, decision, rationale, alternatives, and
-consequences of one architectural choice. They are intentionally short — the
-shortest defensible form of "what we decided and why" — so they remain
-maintainable as the project evolves.
+## Track status at a glance
+
+Every ADR discussion carries the `adr` label plus one status label. Filter:
+
+- [All ADRs](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr)
+- [✅ Accepted](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aaccepted) · [✅ Implemented](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aimplemented) · [🟡 Proposed](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aproposed)
+- [↩️ Superseded](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Asuperseded) · [🗄️ Deprecated](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Adeprecated) · [⚠️ Needs review](https://github.com/matssun/mcp-re/discussions?discussions_q=label%3Aadr+label%3Astatus%3Aneeds-review)
 
 ## Index
 
-| ID | Title |
-|---|---|
-| [ADR-MCPS-001](adr-mcps-001.md) | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait |
-| [ADR-MCPS-002](adr-mcps-002.md) | Frozen Public Envelope Vocabulary |
-| [ADR-MCPS-003](adr-mcps-003.md) | Signing Locus — What `signer` and a Signature Prove |
-| [ADR-MCPS-004](adr-mcps-004.md) | Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object |
-| [ADR-MCPS-005](adr-mcps-005.md) | JCS-Safe JSON Value Domain with Fail-Closed Canonicalization |
-| [ADR-MCPS-006](adr-mcps-006.md) | Freshness and Replay Model — Injected ReplayCache, No `sequence` in Core v1 |
-| [ADR-MCPS-007](adr-mcps-007.md) | Trust Resolution, Key Rotation, and Revocation Model |
-| [ADR-MCPS-008](adr-mcps-008.md) | Verified-Context Propagation to Inner MCP Servers |
-| [ADR-MCPS-009](adr-mcps-009.md) | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection |
-| [ADR-MCPS-010](adr-mcps-010.md) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule (identifier superseded by ADR-MCPS-027) |
-| [ADR-MCPS-011](adr-mcps-011.md) | Workspace Structure, Phased Delivery, and Conformance-as-Specification |
-| [ADR-MCPS-012](adr-mcps-012.md) | Project Placement & Build Integration |
-| [ADR-MCPS-013](adr-mcps-013.md) | Delegated Authorization — AuthorizationProfile Abstraction (Phase 5) |
-| [ADR-MCPS-014](adr-mcps-014.md) | Phase 6 — Rust-Native Transport Hardening |
-| [ADR-MCPS-015](adr-mcps-015.md) | Client Host-Session Architecture |
-| [ADR-MCPS-016](adr-mcps-016.md) | Inner-Server Isolation Boundary |
-| [ADR-MCPS-017](adr-mcps-017.md) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities |
-| [ADR-MCPS-018](adr-mcps-018.md) | CI Reproducibility Posture and Conformance-Manifest Authority |
-| [ADR-MCPS-019](adr-mcps-019.md) | Phase 7 External Backends (stub — published here for the first time) |
-| [ADR-MCPS-020](adr-mcps-020.md) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety (v0.3 sketch) |
-| [ADR-MCPS-021](adr-mcps-021.md) | Cluster Trust State — Revocation and Rotation Propagation Across Nodes (v0.3 sketch) |
-| [ADR-MCPS-022](adr-mcps-022.md) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS (v0.3 sketch) |
-| [ADR-MCPS-023](adr-mcps-023.md) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion (v0.3 sketch) |
-| [ADR-MCPS-024](adr-mcps-024.md) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) — v0.3 RC delta |
-| [ADR-MCPS-025](adr-mcps-025.md) | Untrusted Transport Routing Headers — MCP-RE Composition with SEP-2243 — v0.3 RC delta |
-| [ADR-MCPS-026](adr-mcps-026.md) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) — v0.3 RC delta |
-| [ADR-MCPS-027](adr-mcps-027.md) | Extension Identifier Reassignment to `se.syncom/mcp-re` (supersedes ADR-MCPS-010 identifier) |
-| [ADR-MCPS-028](adr-mcps-028.md) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) |
-| [ADR-MCPS-030](adr-mcps-030.md) | MCP-RE Core Is Method-Transparent — Tool Catalog Integrity Is Excluded (the former ADR-MCPS-029 manifest design was removed and relocated to `mcp-tool-catalog-integrity` ADR-MTCI-002) |
-| [ADR-MCPS-031](adr-mcps-031.md) | MCP-RE 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope (Proposed) |
-| [ADR-MCPS-032](adr-mcps-032.md) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs (Proposed) |
-| [ADR-MCPS-033](adr-mcps-033.md) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A (Proposed) |
-| [ADR-MCPS-034](adr-mcps-034.md) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard (Proposed) |
-| [ADR-MCPS-035](adr-mcps-035.md) | MCP-RE Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy (Proposed) |
-| [ADR-MCPS-036](adr-mcps-036.md) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine (Proposed) |
-| [ADR-MCPS-043](adr-mcps-043.md) | MCP-RE Discovery, Capability Advertisement, and Enforcement Policy (Accepted, v0.7) |
-| [ADR-MCPS-044](adr-mcps-044.md) | Client-Side MCP-RE Integration Model (Proposed, v0.7/v0.8) |
-| [ADR-MCPS-045](adr-mcps-045.md) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop (Accepted, v0.7) |
-| [ADR-MCPS-046](adr-mcps-046.md) | Signed Rejection Receipts (Proposed, v0.7+) |
-| [ADR-MCPS-047](adr-mcps-047.md) | Stateless Multi-Round-Trip Continuation Evidence (Accepted, v0.8) |
-| [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
-| [ADR-MCPS-049](adr-mcps-049.md) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence (Accepted, v0.10.1) |
-| [ADR-MCPRE-050](adr-mcpre-050.md) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports (Accepted) |
-| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Accepted 2026-07-09; §7 SLO capacity/scaling numbers MEASURED on real GKE hardware and DECLARED in v0.11 — e2/c3-standard-8, gate-enforced, MCPRE-110) |
-| [ADR-MCPRE-052](adr-mcpre-052.md) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence (Accepted) |
+| ID | Title | Status |
+|---|---|---|
+| [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait | ✅ Accepted |
+| [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351) | Frozen Public Envelope Vocabulary | ✅ Accepted |
+| [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352) | Signing Locus — What signer and a Signature Prove | ✅ Accepted |
+| [ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353) | Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object | 🗄️ Deprecated |
+| [ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354) | JCS-Safe JSON Value Domain with Fail-Closed Canonicalization | 🗄️ Deprecated |
+| [ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355) | Freshness and Replay Model — Injected ReplayCache, No sequence in Core v1 | ✅ Accepted |
+| [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356) | Trust Resolution, Key Rotation, and Revocation Model | ✅ Accepted |
+| [ADR-MCPS-008](https://github.com/matssun/mcp-re/discussions/357) | Verified-Context Propagation to Inner MCP Servers | ✅ Accepted |
+| [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358) | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection | ✅ Accepted |
+| [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359) | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | ↩️ Superseded |
+| [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) | Workspace Structure, Phased Delivery, and Conformance-as-Specification | ✅ Accepted |
+| [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361) | Project Placement & Build Integration — components/mcps as an Isolated rules_rust Workspace | ✅ Accepted |
+| [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) | Delegated Authorization — AuthorizationProfile Abstraction and the Reference Signed Authorization Profile (Phase 5) | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) | Phase 6 — Rust-Native Transport Hardening (RustlsDirectProvider, mTLS Channel Binding; Granian Decoupled) | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) | Client Host-Session Architecture | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) | Inner-Server Isolation Boundary | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366) | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) | CI Reproducibility Posture and Conformance-Manifest Authority | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-019](https://github.com/matssun/mcp-re/discussions/368) | Phase 7 External Backends (stub) | ✅ Implemented |
+| [ADR-MCPS-020](https://github.com/matssun/mcp-re/discussions/369) | Distributed Atomic Replay Store — Durability Contract for Horizontally-Scaled Replay Safety | ✅ Accepted |
+| [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Accepted |
+| [ADR-MCPS-022](https://github.com/matssun/mcp-re/discussions/371) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS | ✅ Accepted |
+| [ADR-MCPS-023](https://github.com/matssun/mcp-re/discussions/372) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion | ✅ Accepted |
+| [ADR-MCPS-024](https://github.com/matssun/mcp-re/discussions/373) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) | ✅ Accepted |
+| [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Accepted |
+| [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Accepted |
+| [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Accepted |
+| [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Native Cloud-KMS Response Signers — AWS KMS and GCP Cloud KMS (Ed25519, non-exporting) | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378) | MCP-S Core Is Method-Transparent — Tool Catalog Integrity Is Excluded | ✅ Accepted |
+| [ADR-MCPS-031](https://github.com/matssun/mcp-re/discussions/379) | MCP-S 0.5 Is a Proposal-Readiness Release Over a Frozen draft-01 Envelope | ✅ Accepted |
+| [ADR-MCPS-032](https://github.com/matssun/mcp-re/discussions/380) | Documentation Consolidation for 0.5 — One Canonical Boundary, One Docs Root, Redirect Stubs | ✅ Accepted |
+| [ADR-MCPS-033](https://github.com/matssun/mcp-re/discussions/381) | v0.5 Claim Matrix — Two Cross-Linked Sections; NSA Matrix Derived From §A | ✅ Accepted |
+| [ADR-MCPS-034](https://github.com/matssun/mcp-re/discussions/382) | Method-Transparency Is CI-Enforced — Behavioral Equivalence Test + Static Drift Guard | ✅ Accepted |
+| [ADR-MCPS-035](https://github.com/matssun/mcp-re/discussions/383) | MCP-S Audit-Evidence Vocabulary Is Derived From the Frozen Error Taxonomy | ✅ Accepted |
+| [ADR-MCPS-036](https://github.com/matssun/mcp-re/discussions/384) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine | ✅ Accepted |
+| [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) | Draft-02 Canonical Number Domain — Integer-Only, With a Documented Float Limitation | ✅ Accepted |
+| [ADR-MCPS-038](https://github.com/matssun/mcp-re/discussions/386) | Draft-02 Envelope Identifiers and Canonical Preimage Field Set | ✅ Accepted |
+| [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Accepted |
+| [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Accepted |
+| [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Accepted |
+| [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Accepted |
+| [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Accepted |
+| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Accepted |
+| [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | 🟡 Proposed ⚠️ _needs review_ |
+| [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Accepted |
+| [ADR-MCPS-048](https://github.com/matssun/mcp-re/discussions/396) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated | ✅ Accepted |
+| [ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence | ✅ Accepted |
+| [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Accepted |
+| [ADR-MCPRE-051](https://github.com/matssun/mcp-re/discussions/399) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody | ✅ Accepted |
+| [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Accepted |
+
+## Status needing an owner ruling
+
+During the migration, statuses were corrected where the evidence was unambiguous (e.g. ADR-MCPS-049 → **Accepted**, shipped in v0.10.1). The following still read **Proposed** in their bodies but look stale given the project is at v0.11 — they carry the `status:needs-review` label pending your ruling (accept / supersede / keep proposed):
+
+- [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)
+- [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363)
+- [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364)
+- [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365)
+- [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366)
+- [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367)
+- [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377)
+- [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392)
+- [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394)
 
 ## Active vs Legacy
 
-The current MCP-RE worldview is frozen in
-[`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md)
-and summarized in [`docs/CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md).
-In short:
+The current MCP-RE worldview is frozen in [`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md) and summarized in [`docs/CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md). In short:
 
-- **Active production evidence profile:** ADR-MCPRE-050 (RFC 9421 + RFC 9530 HTTP
-  profile — the one carrier), ADR-MCPRE-051 (serving architecture), ADR-MCPRE-052
-  (delegated signing via a JOSE/JWS credential in the HTTP evidence), and later
-  `ADR-MCPRE-*` records.
-- **Deprecated:** the Native JCS / object profile — ADR-MCPS-004
-  (Ed25519-over-JCS), ADR-MCPS-005 (JCS canonicalization), and the draft-01/02
-  native-envelope material. These are **historical**. The profile is deprecated:
-  not a security mechanism, not an alternative carrier, not a fallback. It MUST
-  NOT be the foundation for new evidence, delegated signing, runtime profiles,
-  SEP/IG proposals, or production design.
-
-Do not read the deprecated `ADR-MCPS-*` JCS records as current production
-architecture, and do not treat the native profile as a second security carrier.
-
-## Provenance
-
-ADR-MCPS-001 through ADR-MCPS-018 were originally published as GitHub
-Discussions in the maintainer's private monorepo and have been copied here
-verbatim (with only an SPDX header added) so they ship with the codebase they
-govern. ADR-MCPS-019 was implemented but not previously written up; the
-[stub](adr-mcps-019.md) consolidates the rule as it was applied in the v0.2.0
-release.
+- **Active production evidence profile:** ADR-MCPRE-050 (RFC 9421 + RFC 9530 HTTP profile — the one carrier), ADR-MCPRE-051 (serving architecture), ADR-MCPRE-052 (delegated signing via a JOSE/JWS credential in the HTTP evidence), and later `ADR-MCPRE-*` records.
+- **Deprecated:** the Native JCS / object profile — ADR-MCPS-004 (Ed25519-over-JCS), ADR-MCPS-005 (JCS canonicalization), and the draft-01/02 native-envelope material (`status:deprecated`). These are **historical**: not a security mechanism, not an alternative carrier, not a fallback. They MUST NOT be the foundation for new evidence, delegated signing, runtime profiles, SEP/IG proposals, or production design.
 
 ## Conventions
 
-- Each ADR is one markdown file named `adr-mcps-NNN.md` where `NNN` is the
-  zero-padded three-digit ADR number.
-- Status values: **Proposed**, **Accepted**, **Implemented**, **Superseded by
-  ADR-MCPS-NNN**, **Deprecated**, **Withdrawn**.
-- New ADRs are appended with the next sequential number. A decision that
-  changes an earlier decision supersedes that ADR with an explicit note in
-  both directions.
+- One decision per ADR discussion, titled `ADR-<TAG>-<NNN>: <title>`. Historical IDs are preserved: `ADR-MCPS-001…049` keep the `MCPS` tag; `ADR-MCPRE-050+` use `MCPRE`.
+- Status label values: `status:proposed`, `status:accepted`, `status:implemented`, `status:superseded`, `status:deprecated`, `status:withdrawn`, plus `status:needs-review` for uncertain ones. Update the label when a decision changes state.
+- A decision that changes an earlier one supersedes that ADR with an explicit note in both discussions and flips the older one to `status:superseded`.
+
+## Provenance
+
+ADR-MCPS-001 through ADR-MCPS-018 were originally published as GitHub Discussions in the maintainer's private monorepo, later copied into this repo as files, and are now re-published here as Discussions. ADR-MCPS-019 was implemented but not previously written up; its stub records the rule as applied in the v0.2.0 release.

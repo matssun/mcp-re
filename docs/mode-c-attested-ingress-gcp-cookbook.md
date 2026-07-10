@@ -5,7 +5,7 @@
 reviewing what that posture does and does **not** prove.
 
 **Status: NON-NORMATIVE.** This cookbook is the Google-specific companion to
-[ADR-MCPS-023 §C](adr/adr-mcps-023.md) (§C4). The **normative** surface is only the
+[ADR-MCPS-023 §C](https://github.com/matssun/mcp-re/discussions/372) (§C4). The **normative** surface is only the
 abstract contract in the ADR: the `mcp-re/lb-ingress-assertion/v2` field set, the
 length-prefixed preimage + domain tag, the ordered fail-closed node verifier, the
 pinned-channel requirement, and the three audit facts. Everything below — GCLB
@@ -375,5 +375,5 @@ is the offline node-side rejection above). Recommended live checks:
   assertion-level nonce.
 
 For the rationale and the normative contract, see
-[ADR-MCPS-023 §C](adr/adr-mcps-023.md) and the two-posture statement in
+[ADR-MCPS-023 §C](https://github.com/matssun/mcp-re/discussions/372) and the two-posture statement in
 [`docs/spec/security-boundary.md` §11](spec/security-boundary.md).

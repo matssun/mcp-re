@@ -8,9 +8,9 @@ FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the PEP at that adapt
 
 This guide explains **how to run** the `mcp-re-proxy` production CLI. The rules the
 proxy enforces are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md); the
-rationale is in ADR-MCPS-014 ([view](adr/adr-mcps-014.md), transport hardening),
-ADR-MCPS-016 ([view](adr/adr-mcps-016.md), inner-server isolation boundary) and
-ADR-MCPRE-051 ([view](adr/adr-mcpre-051.md), high-throughput serving
+rationale is in ADR-MCPS-014 ([view](https://github.com/matssun/mcp-re/discussions/363), transport hardening),
+ADR-MCPS-016 ([view](https://github.com/matssun/mcp-re/discussions/365), inner-server isolation boundary) and
+ADR-MCPRE-051 ([view](https://github.com/matssun/mcp-re/discussions/399), high-throughput serving
 architecture). The proofs are the `//mcp-re-proxy:*` test targets (see the
 [conformance manifest](../mcp-re-conformance/conformance_manifest.json)).
 

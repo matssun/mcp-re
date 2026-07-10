@@ -76,5 +76,5 @@ the correct frozen wire code; and the private key never leaving KMS.
 
 - [`docs/security/google-validation-plan.md`](security/google-validation-plan.md) — the full staged plan and cost reality.
 - [`docs/security/gcloud-kms-validation.sh`](security/gcloud-kms-validation.sh) — the harness.
-- [`docs/adr/adr-mcps-028.md`](adr/adr-mcps-028.md) — native Cloud-KMS response signers (AWS + GCP).
+- [`docs/adr/adr-mcps-028.md`](https://github.com/matssun/mcp-re/discussions/377) — native Cloud-KMS response signers (AWS + GCP).
 - `mcp-re-proxy/src/gcp_kms_keysource.rs` — the adapter under test.

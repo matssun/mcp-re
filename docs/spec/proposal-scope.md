@@ -31,7 +31,7 @@ field change.
 
 Authorization in 0.5 is wording only; it adds no new authorization mechanism.
 MCP-RE Core *binds* authorization and leaves *interpretation* to a configured
-profile ([ADR-MCPS-013](../adr/adr-mcps-013.md)):
+profile ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)):
 
 - **Core binds `authorization_hash`.** Core carries the opaque
   `authorization_hash` inside the signed request envelope and binds it

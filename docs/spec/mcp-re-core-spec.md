@@ -1,6 +1,6 @@
 # MCP-RE Core Specification
 
-**Status:** Normative for MCP-RE Core. The released field baseline is `draft-01` (v0.5.1); v0.6 adds the strictly-separated `draft-02` profile (runtime-evidence preimages — ADRs [037](../adr/adr-mcps-037.md)–[042](../adr/adr-mcps-042.md)), verified alongside `draft-01` by a version-dispatched dual verifier. `draft-01` rules below are unchanged; `draft-02` deltas are called out inline.
+**Status:** Normative for MCP-RE Core. The released field baseline is `draft-01` (v0.5.1); v0.6 adds the strictly-separated `draft-02` profile (runtime-evidence preimages — ADRs [037](https://github.com/matssun/mcp-re/discussions/385)–[042](https://github.com/matssun/mcp-re/discussions/390)), verified alongside `draft-01` by a version-dispatched dual verifier. `draft-01` rules below are unchanged; `draft-02` deltas are called out inline.
 **Scope:** The frozen wire vocabulary, signing rule, canonicalization domain, freshness/replay model, trust resolution, message constraints, error taxonomy, and verification pipeline of MCP-RE Core.
 
 This document **states the current rule**. It does **not** restate the rationale: every major rule cites the ADR that records *why* it is so. Conformance counts (vectors, Bazel test targets) are **not** hardcoded here — they are owned by the drift-guarded conformance manifest (see [§12](#12-conformance-manifest-counts)). The convention is: the spec states the rule, the ADR records why, the guide explains how to use it, and the tests prove it — each fact has one home.
@@ -22,30 +22,30 @@ The decisions behind this spec are recorded as ADRs:
 
 | ADR | Title | Source |
 | --- | --- | --- |
-| ADR-MCPS-001 | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait | [view](../adr/adr-mcps-001.md) |
-| ADR-MCPS-002 | Frozen Public Envelope Vocabulary | [view](../adr/adr-mcps-002.md) |
-| ADR-MCPS-003 | Signing Locus — What `signer` and a Signature Prove | [view](../adr/adr-mcps-003.md) |
-| ADR-MCPS-004 | Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object | [view](../adr/adr-mcps-004.md) |
-| ADR-MCPS-005 | JCS-Safe JSON Value Domain with Fail-Closed Canonicalization | [view](../adr/adr-mcps-005.md) |
-| ADR-MCPS-006 | Freshness and Replay Model — Injected ReplayCache, No `sequence` in Core v1 | [view](../adr/adr-mcps-006.md) |
-| ADR-MCPS-007 | Trust Resolution, Key Rotation, and Revocation Model | [view](../adr/adr-mcps-007.md) |
-| ADR-MCPS-008 | Verified-Context Propagation to Inner MCP Servers | [view](../adr/adr-mcps-008.md) |
-| ADR-MCPS-009 | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection | [view](../adr/adr-mcps-009.md) |
-| ADR-MCPS-010 | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | [view](../adr/adr-mcps-010.md) |
-| ADR-MCPS-011 | Workspace Structure, Phased Delivery, and Conformance-as-Specification | [view](../adr/adr-mcps-011.md) |
-| ADR-MCPS-012 | Project Placement & Build Integration | [view](../adr/adr-mcps-012.md) |
-| ADR-MCPS-013 | Delegated Authorization — AuthorizationProfile Abstraction (Phase 5) | [view](../adr/adr-mcps-013.md) |
-| ADR-MCPS-014 | Phase 6 — Rust-Native Transport Hardening | [view](../adr/adr-mcps-014.md) |
-| ADR-MCPS-015 | Client Host-Session Architecture | [view](../adr/adr-mcps-015.md) |
-| ADR-MCPS-016 | Inner-Server Isolation Boundary | [view](../adr/adr-mcps-016.md) |
-| ADR-MCPS-017 | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | [view](../adr/adr-mcps-017.md) |
-| ADR-MCPS-018 | CI Reproducibility Posture and Conformance-Manifest Authority | [view](../adr/adr-mcps-018.md) |
+| ADR-MCPS-001 | Clean-Room Public Protocol — Vocabulary Firewall and Public TrustResolver Trait | [view](https://github.com/matssun/mcp-re/discussions/350) |
+| ADR-MCPS-002 | Frozen Public Envelope Vocabulary | [view](https://github.com/matssun/mcp-re/discussions/351) |
+| ADR-MCPS-003 | Signing Locus — What `signer` and a Signature Prove | [view](https://github.com/matssun/mcp-re/discussions/352) |
+| ADR-MCPS-004 | Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object | [view](https://github.com/matssun/mcp-re/discussions/353) |
+| ADR-MCPS-005 | JCS-Safe JSON Value Domain with Fail-Closed Canonicalization | [view](https://github.com/matssun/mcp-re/discussions/354) |
+| ADR-MCPS-006 | Freshness and Replay Model — Injected ReplayCache, No `sequence` in Core v1 | [view](https://github.com/matssun/mcp-re/discussions/355) |
+| ADR-MCPS-007 | Trust Resolution, Key Rotation, and Revocation Model | [view](https://github.com/matssun/mcp-re/discussions/356) |
+| ADR-MCPS-008 | Verified-Context Propagation to Inner MCP Servers | [view](https://github.com/matssun/mcp-re/discussions/357) |
+| ADR-MCPS-009 | Fail-Closed Message Constraints — Batch, Notification, Unknown-Field Rejection | [view](https://github.com/matssun/mcp-re/discussions/358) |
+| ADR-MCPS-010 | Incubation Strategy, Extension Identifier, and Preimage-Stability Rule | [view](https://github.com/matssun/mcp-re/discussions/359) |
+| ADR-MCPS-011 | Workspace Structure, Phased Delivery, and Conformance-as-Specification | [view](https://github.com/matssun/mcp-re/discussions/360) |
+| ADR-MCPS-012 | Project Placement & Build Integration | [view](https://github.com/matssun/mcp-re/discussions/361) |
+| ADR-MCPS-013 | Delegated Authorization — AuthorizationProfile Abstraction (Phase 5) | [view](https://github.com/matssun/mcp-re/discussions/362) |
+| ADR-MCPS-014 | Phase 6 — Rust-Native Transport Hardening | [view](https://github.com/matssun/mcp-re/discussions/363) |
+| ADR-MCPS-015 | Client Host-Session Architecture | [view](https://github.com/matssun/mcp-re/discussions/364) |
+| ADR-MCPS-016 | Inner-Server Isolation Boundary | [view](https://github.com/matssun/mcp-re/discussions/365) |
+| ADR-MCPS-017 | Single-Node Production Claim Ceiling and Deferred Enterprise Capabilities | [view](https://github.com/matssun/mcp-re/discussions/366) |
+| ADR-MCPS-018 | CI Reproducibility Posture and Conformance-Manifest Authority | [view](https://github.com/matssun/mcp-re/discussions/367) |
 
 ---
 
 ## 1. Identifiers and keys
 
-Cites: [ADR-MCPS-002](../adr/adr-mcps-002.md), [ADR-MCPS-010](../adr/adr-mcps-010.md).
+Cites: [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351), [ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359).
 
 These strings are part of the signed preimage; the rationale for treating them as preimage-stable and explicitly non-official lives in ADR-MCPS-010.
 
@@ -59,7 +59,7 @@ These strings live inside the signed `_meta` keys, so changing them changes the 
 
 ## 2. Frozen wire vocabulary
 
-Cites: [ADR-MCPS-002](../adr/adr-mcps-002.md) (frozen vocabulary), [ADR-MCPS-003](../adr/adr-mcps-003.md) (what `signer`/`on_behalf_of` prove), [ADR-MCPS-008](../adr/adr-mcps-008.md) (verified-context block).
+Cites: [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351) (frozen vocabulary), [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352) (what `signer`/`on_behalf_of` prove), [ADR-MCPS-008](https://github.com/matssun/mcp-re/discussions/357) (verified-context block).
 
 Request envelope object (value under the request key):
 
@@ -89,11 +89,11 @@ signature    : { alg: "Ed25519", key_id: string, value: string(b64url-no-pad) }
 
 ## 3. Signing rule
 
-Cites: [ADR-MCPS-004](../adr/adr-mcps-004.md) (Ed25519-over-JCS over the whole JSON-RPC object), [ADR-MCPS-003](../adr/adr-mcps-003.md) (signing locus).
+Cites: [ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353) (Ed25519-over-JCS over the whole JSON-RPC object), [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352) (signing locus).
 
 - Sign the COMPLETE JSON-RPC object, not just the envelope.
 - Preimage construction: take the full object, remove the two explicitly-excluded sets below, canonicalize with RFC 8785 / JCS to UTF-8 bytes; sign those bytes DIRECTLY with Ed25519 (NO pre-hash — Ed25519ph is forbidden). Insert the Base64URL-no-pad signature into `signature.value`.
-- Explicit signed/unsigned `_meta` partition ([ADR-MCPS-026](../adr/adr-mcps-026.md)). EXCLUDED from the preimage: (1) the envelope's `signature.value` (`signature.alg` and `signature.key_id` are RETAINED); and (2) the W3C Trace Context observability keys `traceparent` / `tracestate` / `baggage` under the located container's `_meta` (`mcp_re_core::ids::OBSERVABILITY_META_KEYS`) — they are rewritten by legitimate tracing middle boxes and MUST NOT influence any security decision. IN scope (signed, integrity-protected): everything else, including a per-request `protocolVersion` and any unknown `_meta` key. Decision-influencing `_meta` is therefore either signed or it is not consulted — there is no third state.
+- Explicit signed/unsigned `_meta` partition ([ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375)). EXCLUDED from the preimage: (1) the envelope's `signature.value` (`signature.alg` and `signature.key_id` are RETAINED); and (2) the W3C Trace Context observability keys `traceparent` / `tracestate` / `baggage` under the located container's `_meta` (`mcp_re_core::ids::OBSERVABILITY_META_KEYS`) — they are rewritten by legitimate tracing middle boxes and MUST NOT influence any security decision. IN scope (signed, integrity-protected): everything else, including a per-request `protocolVersion` and any unknown `_meta` key. Decision-influencing `_meta` is therefore either signed or it is not consulted — there is no third state.
 - Verification: remove `signature.value` and the excluded observability keys (identically to signing — one shared `signing_preimage`), canonicalize, resolve key, verify Ed25519 over the bytes.
 - Response signing is symmetric (response envelope's `signature`).
 - Encoding: Base64URL WITHOUT padding for all signature and hash values.
@@ -103,7 +103,7 @@ Cites: [ADR-MCPS-004](../adr/adr-mcps-004.md) (Ed25519-over-JCS over the whole J
 
 ## 4. JCS-safe value domain — fail closed
 
-Cites: [ADR-MCPS-005](../adr/adr-mcps-005.md).
+Cites: [ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354).
 
 Before signature verification, the protected message MUST be validated against this domain; any violation → `mcp-re.canonicalization_failed` (NOT `invalid_signature`):
 
@@ -115,8 +115,8 @@ Before signature verification, the protected message MUST be validated against t
 
 > **Draft-02 (v0.6) — named scheme and documented float limitation.** The
 > draft-02 profile names this exact domain `mcp-re-jcs-int53-json-v1` (the
-> protected `canonicalization_id`, [ADR-MCPS-037](../adr/adr-mcps-037.md) /
-> [038](../adr/adr-mcps-038.md)). **MCP-RE v0.6 therefore does NOT protect a
+> protected `canonicalization_id`, [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) /
+> [038](https://github.com/matssun/mcp-re/discussions/386)). **MCP-RE v0.6 therefore does NOT protect a
 > signed payload that contains JSON fractional numbers** — `{"temperature":0.7}`,
 > `{"price":19.99}`, a latitude — such a message fails closed with
 > `mcp-re.canonicalization_failed` unless the value is carried as a string. This is
@@ -138,7 +138,7 @@ Canonicalization is implemented IN-HOUSE in `mcp-re-core` (no external JCS crate
 
 ## 5. Freshness and replay
 
-Cites: [ADR-MCPS-006](../adr/adr-mcps-006.md).
+Cites: [ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355).
 
 - Freshness: with a configured symmetric `max_clock_skew`, the valid window is `[issued_at − skew, expires_at + skew]`. Outside it (stale OR future-dated beyond skew) → `mcp-re.expired_request`.
 - Replay: caller-injected trait `ReplayCache::check_and_insert(signer, audience, nonce, expires_at) -> Result<ReplayDecision, ReplayCacheError>`, keyed by `(signer, audience, nonce)`, INVOKED ONLY AFTER signature verification succeeds (so invalid-sig garbage can't burn nonces). Retain entries until `expires_at + max_clock_skew`.
@@ -150,7 +150,7 @@ Cites: [ADR-MCPS-006](../adr/adr-mcps-006.md).
 
 ## 6. Trust resolution
 
-Cites: [ADR-MCPS-007](../adr/adr-mcps-007.md), [ADR-MCPS-001](../adr/adr-mcps-001.md) (public `TrustResolver` trait).
+Cites: [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356), [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) (public `TrustResolver` trait).
 
 - `TrustResolver::resolve(signer, key_id) -> Result<VerificationKey, TrustResolverError>`, authoritative at verify time. Rotation = multiple `key_id`s per signer. Revocation = remove/disable mapping.
 - Error mapping: not-found / revoked / disabled / malformed key → `mcp-re.actor_binding_failed` (KEPT verbatim per ADR-MCPS-007 — this error name retains "actor" even though the field is `signer`). Operational/transient resolver failure → `mcp-re.trust_resolver_unavailable`.
@@ -159,7 +159,7 @@ Cites: [ADR-MCPS-007](../adr/adr-mcps-007.md), [ADR-MCPS-001](../adr/adr-mcps-00
 
 ## 7. Message constraints — fail closed
 
-Cites: [ADR-MCPS-009](../adr/adr-mcps-009.md).
+Cites: [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358).
 
 - JSON-RPC batch (top-level array) → `mcp-re.batch_forbidden`.
 - Security-relevant notification (no `id`, but is a security-consequential method) → `mcp-re.notification_forbidden`. Operations with security consequences MUST be id-bearing requests.
@@ -167,7 +167,7 @@ Cites: [ADR-MCPS-009](../adr/adr-mcps-009.md).
 
 ## 8. Frozen error taxonomy
 
-Cites: [ADR-MCPS-002](../adr/adr-mcps-002.md), [ADR-MCPS-007](../adr/adr-mcps-007.md), [ADR-MCPS-009](../adr/adr-mcps-009.md).
+Cites: [ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351), [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356), [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358).
 
 ```text
 mcp-re.missing_envelope
@@ -215,7 +215,7 @@ Code `-32003` is used for signature/verification failures; other codes follow a 
 
 ## 9. Verification pipeline — canonical step order
 
-Cites: [ADR-MCPS-004](../adr/adr-mcps-004.md), [ADR-MCPS-005](../adr/adr-mcps-005.md), [ADR-MCPS-006](../adr/adr-mcps-006.md), [ADR-MCPS-007](../adr/adr-mcps-007.md), [ADR-MCPS-009](../adr/adr-mcps-009.md).
+Cites: [ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353), [ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354), [ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355), [ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356), [ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358).
 
 ### `verify_request`
 
@@ -246,7 +246,7 @@ Steps 1–2 and 4–7 are cheap structural checks before the expensive crypto; t
 
 ### `verify_response`
 
-Cites: [ADR-MCPS-004](../adr/adr-mcps-004.md) §6.7.
+Cites: [ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353) §6.7.
 
 ```text
  1. JCS-safe domain validation                          -> mcp-re.canonicalization_failed
@@ -262,7 +262,7 @@ Vector `v4b_signed_wrong_hash_response` proves step 7 fires even when the signat
 
 ## 10. Conformance vectors
 
-Cites: [ADR-MCPS-011](../adr/adr-mcps-011.md) (conformance-as-specification), [ADR-MCPS-018](../adr/adr-mcps-018.md) (conformance-manifest authority).
+Cites: [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) (conformance-as-specification), [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367) (conformance-manifest authority).
 
 Vectors are the executable spec and are regenerated against the frozen vocabulary/identifier (the brief's are stale). They are committed JSON fixtures under `mcp-re-core/tests/vectors/` with a generator (a test-only Rust bin/fn using the core primitives) so they are reproducible. They are also re-run, transport-agnostically, over stdio and Streamable HTTP, so they constitute the Core AND transport conformance corpus.
 
@@ -274,7 +274,7 @@ The vector families cover, at minimum: valid signed request/response; tampered a
 
 ## 11. Crate boundaries
 
-Cites: [ADR-MCPS-011](../adr/adr-mcps-011.md), [ADR-MCPS-012](../adr/adr-mcps-012.md), [ADR-MCPS-013](../adr/adr-mcps-013.md) (`mcp-re-policy`), [ADR-MCPS-014](../adr/adr-mcps-014.md) (`mcp-re-proxy` transport), [ADR-MCPS-015](../adr/adr-mcps-015.md) / [ADR-MCPS-016](../adr/adr-mcps-016.md) (`mcp-re-host` / inner-server isolation).
+Cites: [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360), [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361), [ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362) (`mcp-re-policy`), [ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363) (`mcp-re-proxy` transport), [ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364) / [ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365) (`mcp-re-host` / inner-server isolation).
 
 - `mcp-re-core`: pure. deps = serde, serde_json (parse only — NOT for canonical output), ed25519-dalek, sha2, base64 (+ thiserror, hex optional). NO networking, async runtime, filesystem, tokio, reqwest, axum. The `BUILD.bazel` deps list must contain none of those. This is checkable.
 - `mcp-re-conformance`: depends on `mcp-re-core`; runs vectors + stdio/HTTP harnesses.
@@ -285,7 +285,7 @@ Cites: [ADR-MCPS-011](../adr/adr-mcps-011.md), [ADR-MCPS-012](../adr/adr-mcps-01
 
 ## 12. Conformance manifest (counts)
 
-Cites: [ADR-MCPS-018](../adr/adr-mcps-018.md).
+Cites: [ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367).
 
 This spec **does not hardcode** vector or test-target counts. The single source of truth is the drift-guarded manifest:
 
@@ -296,13 +296,13 @@ The guard re-derives every count from reality (on-disk fixtures + BUILD files) a
 
 ## 13. Production claim ceiling
 
-Cites: [ADR-MCPS-017](../adr/adr-mcps-017.md).
+Cites: [ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366).
 
 MCP-RE Core's production claim is bounded to a single node. Enterprise capabilities (e.g. distributed/durable replay cache backends, HSM-backed key sources, multi-node trust distribution) are explicitly deferred future seams, not part of the Core v1 claim. See ADR-MCPS-017 for the exact ceiling and the deferred-capability list.
 
 ## 14. Conventions
 
-Cites: [ADR-MCPS-011](../adr/adr-mcps-011.md), [ADR-MCPS-012](../adr/adr-mcps-012.md).
+Cites: [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360), [ADR-MCPS-012](https://github.com/matssun/mcp-re/discussions/361).
 
 - Rust edition 2021. RustCrypto ecosystem (audited; no custom crypto). Match `rust_components` dep style (`[workspace.dependencies]` + `.workspace = true` in members).
 - One logical type per file is NOT required for Rust (that is a Python rule); follow idiomatic Rust module layout.

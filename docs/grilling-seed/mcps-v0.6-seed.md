@@ -3,7 +3,7 @@
 > **Note:** this is the **grill seed**, not a numbered ADR. Its earlier self-title
 > "ADR-MCPS-019" collided with an existing ADR (`adr-mcps-019.md`) and was incorrect.
 > The resolved decisions (§20) are published as the focused sibling ADRs
-> **[ADR-MCPS-037](../adr/adr-mcps-037.md)–[042](../adr/adr-mcps-042.md)**.
+> **[ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385)–[042](https://github.com/matssun/mcp-re/discussions/390)**.
 
 **Status:** Grilled — decisions resolved 2026-06-29 (local draft, pre-implementation). See §20.
 **Target:** MCP-S draft-02 / v0.6 candidate — to be implemented on a branch and **merged to main as v0.6**.

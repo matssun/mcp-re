@@ -6,8 +6,8 @@ ambassador) so it signs MCP-RE requests and verifies the bound responses.
 This guide explains **how to use** the `mcp-re-host` crate. The rules it enforces
 are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md);
 the rationale is in ADR-MCPS-003
-([view](adr/adr-mcps-003.md), signing locus) and
-ADR-MCPS-015 ([view](adr/adr-mcps-015.md),
+([view](https://github.com/matssun/mcp-re/discussions/352), signing locus) and
+ADR-MCPS-015 ([view](https://github.com/matssun/mcp-re/discussions/364),
 client host-session architecture). The proofs are the
 `//mcp-re-host:*` test targets (see the
 [conformance manifest](../mcp-re-conformance/conformance_manifest.json)).

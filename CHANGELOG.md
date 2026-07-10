@@ -525,7 +525,7 @@ CI-gated against drift. Built on top of v0.8.0.
 
 **Stateless multi-round-trip continuation + the TypeScript SDK.** v0.8 folds
 request-associated elicitation into strict MCP-S as signed multi-round-trip (MRT)
-continuation evidence (ADR [047](docs/adr/adr-mcps-047.md)), and ships a second
+continuation evidence (ADR [047](https://github.com/matssun/mcp-re/discussions/395)), and ships a second
 client SDK — TypeScript — bound to the SAME audited `mcps-client-core` as the Python
 SDK and the proxy. Built on top of the released v0.7.0.
 
@@ -598,7 +598,7 @@ SDK and the proxy. Built on top of the released v0.7.0.
 plain-MCP client → `mcps-client-proxy-cli` (signs draft-02, dials mTLS) →
 `mcps-proxy` server PEP (verifies draft-02, strips, injects verified context,
 serves) → an unmodified inner MCP server, organized as a persona ladder of
-runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
+runnable tiers (ADR [045](https://github.com/matssun/mcp-re/discussions/393)).
 
 ### Proven in v0.7
 
@@ -634,7 +634,7 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
   sanitized committed placeholder.
 - **Python SDK — request-side slice (#199).** `mcps-python-sdk` gains request
   signing + custody/signer-policy binding (request side only;
-  ADR [044](docs/adr/adr-mcps-044.md)).
+  ADR [044](https://github.com/matssun/mcp-re/discussions/392)).
 - **Multi-SDK test architecture — pluggable client leg.** The four-hop harness's
   client leg is a `ClientDriver` seam: every MCP-S SDK is an interchangeable client
   behind one stdio + CLI contract (`mcps-client-proxy-cli` is the reference), and
@@ -658,7 +658,7 @@ runnable tiers (ADR [045](docs/adr/adr-mcps-045.md)).
   yet surface the remote's specific reason (e.g. `transport_binding_failed`) — it
   rides an unsigned error body the client rightly distrusts. The fix (signed
   rejection receipts) is designed, not built: ADR
-  [046](docs/adr/adr-mcps-046.md).
+  [046](https://github.com/matssun/mcp-re/discussions/394).
 
 ### Build & test
 
@@ -683,7 +683,7 @@ verifier with strict version dispatch and a required expected-version policy, an
 a separate frozen conformance corpus with a static interop oracle.
 `draft-01`/v0.5.1 stays byte-for-byte and verdict-for-verdict unchanged.
 Resolved in the v0.6 grill (2026-06-29);
-ADRs [037](docs/adr/adr-mcps-037.md)–[042](docs/adr/adr-mcps-042.md).
+ADRs [037](https://github.com/matssun/mcp-re/discussions/385)–[042](https://github.com/matssun/mcp-re/discussions/390).
 
 **Scope.** v0.6 ships the draft-02 profile, verifier, authorization-binding
 policy wiring, and conformance corpus (including a live Cloud KMS draft-02
@@ -704,7 +704,7 @@ conformance vector proves `0.7`/`19.99` are rejected), not a defect: full
 RFC 8785 fractional-number serialization is the highest-risk cross-implementation
 interop surface and is **deferred to a future, separately-named, separately-
 vector-hardened `mcps-jcs-…-v2` scheme** admitted through the canonicalization
-allowlist — never by widening v1 ([ADR-MCPS-037](docs/adr/adr-mcps-037.md)).
+allowlist — never by widening v1 ([ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385)).
 
 ## [0.5.1] — 2026-06-24
 

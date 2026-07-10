@@ -9,7 +9,7 @@ Purpose: clarify how MCP-RE composes with adjacent MCP extensions without defini
 MCP-RE is a transport-agnostic message-security profile. It signs and verifies MCP
 messages and the verified security context they carry; it is deliberately
 *method-transparent* and treats every MCP message body as an opaque signed payload
-([ADR-MCPS-030](../adr/adr-mcps-030.md)). Adjacent layers own their own semantics.
+([ADR-MCPS-030](https://github.com/matssun/mcp-re/discussions/378)). Adjacent layers own their own semantics.
 MCP-RE protects the messages that carry those semantics without interpreting them,
 so an extension can ride on a message MCP-RE authenticates without MCP-RE becoming
 aware of, or responsible for, what that extension means.
@@ -24,7 +24,7 @@ what *MCP-RE does NOT provide* (and therefore leaves to the layer's own speciali
 |---|---|---|---|
 | Transport | The wire connection and, where used, the mTLS peer certificate and channel. | Optional transport termination and transport binding — binding the verified transport peer to the object signer. | The transport itself as a security claim; a valid transport peer is not by itself a valid signer. |
 | Admission / identity | Whether a server was admitted as a tool provider, and at what sensitivity. | The admitted-identity anchor as the trust root for verifying response signatures. | The admission decision, the admission registry, or the sensitivity classification. |
-| Caller governance | Who may invoke a call, for what purpose, under what approval context. | Binding of the signer's authorization artifact (`authorization_hash`) and the signer's signed assertion of acting-for (`on_behalf_of`). | Interpretation of the grant, RBAC, role hierarchies, or any allow/deny ruling — the configured AuthorizationProfile decides ([ADR-MCPS-013](../adr/adr-mcps-013.md)). |
+| Caller governance | Who may invoke a call, for what purpose, under what approval context. | Binding of the signer's authorization artifact (`authorization_hash`) and the signer's signed assertion of acting-for (`on_behalf_of`). | Interpretation of the grant, RBAC, role hierarchies, or any allow/deny ruling — the configured AuthorizationProfile decides ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)). |
 | Runtime security evidence | The per-call cryptographic facts about a single message. | Authenticity, integrity, freshness, replay resistance, audience binding, authorization binding, response binding, and verified security context. | Method semantics; MCP-RE never parses an MCP method body to reach an enforcement decision. |
 | Tool-catalog integrity | Whether a tool descriptor changed, whether a catalog was operator-approved, rug-pull / drift detection. | Authenticity and integrity for the *messages* that carry tool descriptors or catalog data. | Descriptor hashing, catalog pinning, signed tool manifests, or any tool-catalog governance semantics. |
 | Interception / enforcement | The seam at which evidence and authorization are evaluated before a call reaches the inner server. | A verify-before-dispatch sidecar (`mcp-re-proxy`) that fails closed when verification or an enabled authorization profile denies. | The policy a deployment chooses to enforce, or any enforcement of semantics MCP-RE does not itself verify. |
