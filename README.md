@@ -51,20 +51,20 @@ MCP-RE is not part of the official MCP specification unless and until it is acce
 
 ## Quickstart — see MCP-RE fail closed
 
-Run the single-node demo and watch the proxy accept exactly one valid signed
-call and fail closed on ten tampered, stale, replayed, mis-routed, unauthorized,
-or unbound calls — no cloud credentials:
+Run the single-node HTTP-profile demo and watch the **real `mcp_re_proxy_cli` PEP**
+— over real mTLS, in front of a Streamable-HTTP inner backend — accept a valid
+signed call and fail closed on a missing/untrusted client cert, a tampered object
+signature, and a wrong transport binding — no cloud credentials, no external infra:
 
 ```sh
 ./scripts/demo-local.sh
 ```
 
-Expected final line: `OK: MCP-RE local demo completed`. The two bins also run
-directly under Cargo (`cargo run -p mcp-re-demo --bin demo_positive` /
-`demo_negative`, after `cargo build --workspace --bins`) or Bazel
-(`bazel run //mcp-re-demo:demo_negative`) with no env setup.
+Expected final line: `OK: MCP-RE local demo completed`. The underlying proofs also
+run directly: `bazel test //mcp-re-proxy:full_stack_test //mcp-re-demo:demo_mtls_client_test`
+(or the `cargo test --test …` equivalents). See [`docs/quickstart-local.md`](docs/quickstart-local.md).
 
-Full walkthrough, the grouped fail-closed output, and what each case proves:
+Full walkthrough and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
 KMS key-custody path (optional, separate): [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md).
 
