@@ -6,13 +6,13 @@
 //! `mcp_re_core::verify_request` / `verify_response` and produces a deterministic,
 //! machine-readable [`runner::RunReport`].
 //!
-//! The [`target::ConformanceTarget`] trait is the seam future transport
-//! harnesses reuse: MCPS-012 (stdio) and MCPS-013 (Streamable HTTP) implement
-//! the same trait so the [`runner`] is transport-agnostic.
+//! The [`target::ConformanceTarget`] trait is the seam the transport harness
+//! reuses: MCPS-013 (Streamable HTTP) implements the same trait so the [`runner`]
+//! is transport-agnostic. MCP-RE is HTTP-profile only — the object and HTTP
+//! harnesses are the transport conformance surface; stdio is out of scope.
 //!
 //! Crate boundary (ADR-MCPS-011/012): `mcp-re-conformance` may use `std::fs`
-//! (vector loading) — `mcp-re-core` must not, and stays pure. No networking/async
-//! is introduced here yet (that is MCPS-012/013).
+//! (vector loading) — `mcp-re-core` must not, and stays pure.
 
 pub mod echo_server;
 pub mod fixtures;
@@ -21,8 +21,6 @@ pub mod http_target;
 pub mod loader;
 pub mod runner;
 pub mod server;
-pub mod stdio;
-pub mod stdio_target;
 pub mod target;
 pub mod vector;
 
@@ -44,10 +42,8 @@ pub use runner::RunReport;
 pub use server::build_server;
 pub use server::McpReServer;
 pub use server::ServerKind;
-pub use stdio::serve_stdio;
-pub use stdio_target::outcome_token;
-pub use stdio_target::StdioHarness;
 pub use target::canonical_request_hash;
+pub use target::outcome_token;
 pub use target::now_unix_for_case;
 pub use target::ConformanceTarget;
 pub use target::ObjectTarget;

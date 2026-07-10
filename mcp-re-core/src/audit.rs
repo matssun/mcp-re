@@ -4,8 +4,10 @@
 //! Its **rejection reasons are derived from the frozen `McpReError::wire_code()`
 //! taxonomy** ([`crate::error`] is the sole authority): a rejection event carries
 //! the EXACT `mcp-re.*` wire token as its `reason`, never a parallel sub-name. The
-//! only net-new surface is the pair of success/lifecycle events the error enum
-//! cannot express (`mcp-re.request.accepted`, `mcp-re.response.signed`).
+//! net-new surface is the pair of success events the error enum cannot express
+//! (`mcp-re.request.accepted`, `mcp-re.response.signed`) plus the three
+//! delegated-key lifecycle events authorized by ADR-MCPRE-052 §7
+//! (`mcp-re.delegated_key.{issued,rotated,retired}`).
 //!
 //! This keeps the audit layer inside the same bind-not-interpret boundary as the
 //! rest of Core: there is no `authorization_hash_mismatch` audit reason, because
@@ -35,6 +37,17 @@ pub mod event_type {
     pub const REQUEST_REJECTED: &str = "mcp-re.request.rejected";
     /// A response was rejected; `reason` is the exact `McpReError::wire_code()`.
     pub const RESPONSE_REJECTED: &str = "mcp-re.response.rejected";
+
+    // Delegated-key lifecycle events (ADR-MCPRE-052 §7 — the authorizing ADR for
+    // this third audit category). Emitted by the custody layer at issuance /
+    // rotation / retirement; they carry no `reason` (not a verdict) and no key
+    // material or nonce/correlation data (ADR-MCPS-020 startup-line discipline).
+    /// A delegated signing key + credential was issued.
+    pub const DELEGATED_KEY_ISSUED: &str = "mcp-re.delegated_key.issued";
+    /// A successor delegated key was minted during the rotation-overlap window.
+    pub const DELEGATED_KEY_ROTATED: &str = "mcp-re.delegated_key.rotated";
+    /// A delegated key reached `exp` (or was revoked) and was retired.
+    pub const DELEGATED_KEY_RETIRED: &str = "mcp-re.delegated_key.retired";
 }
 
 /// The exact, exhaustive success/lifecycle allowlist (ADR-MCPS-035 §3). These
@@ -48,6 +61,17 @@ pub const SUCCESS_EVENT_TYPES: &[&str] =
 /// `mcp-re.request.rejected.bad_signature`, no `…authorization_hash_mismatch`).
 pub const REJECTION_EVENT_TYPES: &[&str] =
     &[event_type::REQUEST_REJECTED, event_type::RESPONSE_REJECTED];
+
+/// The delegated-key lifecycle `event_type` allowlist — the third audit category,
+/// authorized by ADR-MCPRE-052 §7 (issuance / rotation / retirement). Like the
+/// success events these carry no `reason` (not a verdict); unlike them they are
+/// emitted by the custody layer, not by a Core verification outcome. The drift
+/// guard pins this set to exactly these three.
+pub const KEY_LIFECYCLE_EVENT_TYPES: &[&str] = &[
+    event_type::DELEGATED_KEY_ISSUED,
+    event_type::DELEGATED_KEY_ROTATED,
+    event_type::DELEGATED_KEY_RETIRED,
+];
 
 /// The frozen rejection reason for an `McpReError` — its EXACT `wire_code()`.
 ///
@@ -104,6 +128,17 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::ArtifactBindingFailed => "Artifact binding failed",
         McpReError::RequestBindingMismatch => "Response/request binding mismatch",
         McpReError::ContinuationBindingFailed => "Continuation binding failed",
+        // Delegated signing-key attestation (ADR-MCPRE-052).
+        McpReError::DelegationCredentialMissing => "Delegation credential missing",
+        McpReError::DelegationCredentialInvalid => "Delegation credential invalid",
+        McpReError::DelegationCredentialExpired => "Delegation credential expired",
+        McpReError::DelegationIssuerUntrusted => "Delegation issuer untrusted",
+        McpReError::DelegationProfileMismatch => "Delegation profile mismatch",
+        McpReError::DelegationAudienceMismatch => "Delegation audience/scope mismatch",
+        McpReError::DelegationKeyUseInvalid => "Delegation key-use invalid",
+        McpReError::DelegationTrustEpochStale => "Delegation trust epoch stale",
+        McpReError::DelegationKeyMismatch => "Delegation key mismatch",
+        McpReError::DelegationRevoked => "Delegation revoked",
     }
 }
 

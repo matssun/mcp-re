@@ -5,9 +5,9 @@
  *
  *     application code
  *       -> new Client(...).connect(transport)   (plain MCP; unaware of MCP-RE)
- *       -> McpReTransport / McpReHttpTransport     (signs outbound bytes, verifies inbound)
+ *       -> McpReHttpTransport                       (signs outbound bytes, verifies inbound)
  *       -> native mcp-re-sdk-core (napi-rs)         (the AUDITED mcp-re-client-core logic, in Rust)
- *       -> remote MCP-RE server / proxy
+ *       -> mcp-re-proxy (HTTP profile)              (one signed mTLS POST per request)
  *
  * The spike verdict (Python, #199) was **transport adapter**, not a transparent
  * wrapper: the MCP SDK serializes JSON-RPC *inside* each transport, so the only place
@@ -46,7 +46,6 @@ export type {
 
 // --- the transport adapter + policy (plain TypeScript) ---------------------
 export {
-  McpReTransport,
   McpReVerificationError,
   signOutbound,
   verifyInbound,
@@ -56,7 +55,6 @@ export type {
   InboundOutcome,
   AuthorizationBindingProvider,
   BindingRequestContext,
-  ByteSend,
   MrtStore,
   SignOutboundOptions,
   VerifyInboundOptions,
@@ -75,4 +73,4 @@ export {
 } from "./authorization.js";
 export type { AuthzReference, ArtifactSource } from "./authorization.js";
 
-export { connectStdio, connectMtlsHttp } from "./client.js";
+export { connectMtlsHttp } from "./client.js";

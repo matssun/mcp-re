@@ -2,9 +2,10 @@
 //! (Phase 6.1 hardening — ADR-MCPS-014 follow-up).
 //!
 //! This proves the EXECUTABLE end to end, not just library behavior: it spawns
-//! the real `mcp_re_proxy_cli` process (TLS-terminating PEP) wired to a real inner
-//! MCP echo subprocess, with real client certificates over real mTLS, and drives
-//! the security matrix the review requires:
+//! the real `mcp_re_proxy_cli` process (TLS-terminating PEP) wired over HTTP to a
+//! real in-process Streamable-HTTP inner MCP echo backend (ADR-MCPRE-051 §3;
+//! MCP-RE is HTTP-profile only), with real client certificates over real mTLS, and
+//! drives the security matrix the review requires:
 //!
 //!   * valid client cert + signed request → inner receives the injected verified
 //!     context AND the response is signed and binds to the request hash;
@@ -16,8 +17,8 @@
 //!     `mcp-re.transport_binding_failed`.
 //!
 //! Certificates are minted in-process with `rcgen` (no committed key fixtures).
-//! The two binaries are delivered via runfiles (`$(rlocationpath ...)`), the same
-//! scheme the conformance harnesses use.
+//! The proxy CLI binary is delivered via runfiles (`$(rlocationpath ...)`), the
+//! same scheme the conformance harnesses use; the inner backend is in-process.
 
 use std::convert::Infallible;
 use std::io::Read;

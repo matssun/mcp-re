@@ -9,20 +9,19 @@ verifies every inbound response against the audited ``mcp-re-client-core`` bindi
 
 The security core is two sync, deterministic functions — :func:`sign_outbound`
 (steps 1-4 of the proxy pipeline: sign + register correlation) and
-:func:`verify_inbound` (steps 5-9: correlate + verify + strip envelope). The
-:class:`McpReTransport` class is thin async glue that pumps those over a byte
-channel and a pair of memory streams. ``mcp`` is imported lazily so the rest of the
-SDK loads without it.
+:func:`verify_inbound` (steps 5-9: correlate + verify + strip envelope). MCP-RE is
+HTTP-profile only, so the transport that drives these over the wire is
+:class:`~mcp_re_sdk.http_transport.McpReHttpTransport` (one signed mTLS POST per
+``ClientSession`` request against the production ``mcp-re-proxy``). ``mcp`` is
+imported lazily so the rest of the SDK loads without it.
 """
 
 from __future__ import annotations
 
 import json
-import secrets
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Callable, Optional
 
 import mcp_re_sdk
 
@@ -344,85 +343,3 @@ def verify_inbound(
     # Fail closed: consume the slot so a rejected response cannot be retried.
     correlation.cancel(str(rid))
     return InboundOutcome("reject", reason=result.reason)
-
-
-# Byte-channel callables the async transport pumps over.
-ByteSend = Callable[[bytes], Awaitable[None]]  # write framed bytes to the wire
-
-
-class McpReTransport:
-    """Thin async glue: pumps :func:`sign_outbound` / :func:`verify_inbound` between
-    a byte channel (the real wire) and the in-memory streams ``ClientSession`` uses.
-
-    ``byte_send`` writes framed bytes to the wire; ``byte_lines`` is an async
-    iterator of inbound raw lines (newline-delimited JSON, the MCP stdio framing).
-    Inject these from a subprocess (stdio) — or, in tests, from in-memory pipes.
-    """
-
-    def __init__(
-        self,
-        byte_send: ByteSend,
-        byte_lines: Any,  # async iterator of bytes lines
-        config: McpReConfig,
-        correlation: Any = None,
-        *,
-        clock: Optional[Callable[[], int]] = None,
-        nonce_factory: Optional[Callable[[], str]] = None,
-    ) -> None:
-        self._byte_send = byte_send
-        self._byte_lines = byte_lines
-        self._config = config
-        self._correlation = correlation or mcp_re_sdk.CorrelationStore()
-        self._clock = clock or (lambda: int(time.time()))
-        self._nonce_factory = nonce_factory or (lambda: secrets.token_urlsafe(16))
-        # ADR-MCPS-047 multi-round-trip state: requestState handle -> recorded
-        # continuation binding, shared between the reader (records it) and writer
-        # (consumes it on the answer leg).
-        self._mrt: dict = {}
-        self._tg = None
-        self._app_read_send = None
-        self._app_write_recv = None
-
-    async def __aenter__(self):
-        import anyio
-
-        # we -> ClientSession (verified responses); ClientSession -> we (requests).
-        self._app_read_send, app_read_recv = anyio.create_memory_object_stream(0)
-        app_write_send, self._app_write_recv = anyio.create_memory_object_stream(0)
-        self._tg = anyio.create_task_group()
-        await self._tg.__aenter__()
-        self._tg.start_soon(self._writer_loop)
-        self._tg.start_soon(self._reader_loop)
-        return app_read_recv, app_write_send
-
-    async def __aexit__(self, *exc):
-        if self._tg is not None:
-            self._tg.cancel_scope.cancel()
-            await self._tg.__aexit__(*exc)
-
-    async def _writer_loop(self):
-        async for session_message in self._app_write_recv:
-            now = self._clock()
-            wire = sign_outbound(
-                session_message,
-                self._config,
-                self._correlation,
-                now_unix=now,
-                nonce=self._nonce_factory(),
-                expires_unix=now + self._config.ttl_seconds,
-                mrt=self._mrt,
-            )
-            await self._byte_send(wire + b"\n")
-
-    async def _reader_loop(self):
-        async for line in self._byte_lines:
-            if not line:
-                continue
-            outcome = verify_inbound(
-                line, self._config, self._correlation, now_unix=self._clock(), mrt=self._mrt
-            )
-            if outcome.kind in ("accept", "passthrough"):
-                await self._app_read_send.send(outcome.message)
-            else:
-                # Fail closed: surface to ClientSession via the read stream.
-                await self._app_read_send.send(McpReVerificationError(outcome.reason))

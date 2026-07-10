@@ -1,0 +1,28 @@
+{
+  "schema": "mcp-re-delegation-conformance/v1",
+  "verify_at_unix": 1700000100,
+  "fixtures": [
+    "d01_valid.json",
+    "d02_credential_expired.json",
+    "d03_not_yet_valid.json",
+    "d04_key_use_invalid.json",
+    "d05_profile_mismatch.json",
+    "d06_verifier_not_in_aud.json",
+    "d07_audience_scope_mismatch.json",
+    "d08_trust_epoch_stale.json",
+    "d09_bounded_rollout_previous_epoch.json",
+    "d10_required_rejects_direct_root.json",
+    "d11_revoked_delegated_key.json",
+    "d12_keyid_not_delegated_kid.json",
+    "d13_signed_by_non_cnf_key.json",
+    "d14_credential_stripped.json",
+    "d15_credential_lifted_wrong_server_signer.json",
+    "d16_issuer_untrusted.json",
+    "d17_wrong_alg.json",
+    "d18_forged_root_signature.json",
+    "d19_rotation_overlap_key_a.json",
+    "d20_rotation_overlap_key_b.json",
+    "d21_body_tamper.json",
+    "d22_response_signature_tamper.json"
+  ]
+}

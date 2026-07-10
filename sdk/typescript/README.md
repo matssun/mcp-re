@@ -8,12 +8,16 @@ signed requests and verified responses, added without changing application code.
 > SDK's PyO3 binding: request signing (`signRequest`), custody/signer policy (`Signer` /
 > `SignerPolicy`), response verification (`verifyResponse` / `TrustResolver`), in-flight
 > correlation (`CorrelationStore`), authorization-binding providers, ADR-MCPS-047
-> stateless multi-round-trip continuation, and the **transport adapters**
-> (`McpReTransport` / `McpReHttpTransport`) that sign/verify at the byte boundary so an
-> `mcp` `Client` speaks plain MCP. **104 tests pass**, all parity against the SAME
-> independent `mcp-re-client-core` oracle vectors the Python SDK and the proxy are checked
-> against (`sign_request_vector.json`, `verify_response_vectors.json`,
-> `correlation_wire_codes.json`).
+> stateless multi-round-trip continuation, and the **transport adapter**
+> (`McpReHttpTransport`) that signs/verifies at the byte boundary so an `mcp` `Client`
+> speaks plain MCP. MCP-RE is **HTTP-profile only** — one signed mTLS POST per request
+> against the production `mcp-re-proxy`; a stdio-only MCP server is fronted by an external
+> plain-MCP adapter (e.g. FastMCP) that speaks HTTP to the proxy. All tests pass —
+> including **two live cross-process e2es against the real Rust `mcp-re-proxy`** (a
+> `read_file` round trip and an ADR-047 `delete_files` continuation, both over real mTLS,
+> fronting an in-process HTTP inner MCP backend) — all parity against the SAME independent
+> `mcp-re-client-core` oracle vectors the Python SDK and the proxy are checked against
+> (`sign_request_vector.json`, `verify_response_vectors.json`, `correlation_wire_codes.json`).
 >
 > **Server-initiated policy.** Server-initiated messages (a server→client
 > request/notification) carry no `request_hash`, so the core cannot verify them and
@@ -29,7 +33,7 @@ signed requests and verified responses, added without changing application code.
 > `InputRequiredResult` (`inputRequired`, `responseHash`); `CorrelationStore.recordInputRequired`
 > associates-without-consuming and returns the `(previousRequestHash,
 > inputRequiredResponseHash)` binding; `signRequest(..., continuation*)` embeds the signed
-> `continuation`. `McpReTransport` drives the elicitation → continuation round trip
+> `continuation`. `McpReHttpTransport` drives the elicitation → continuation round trip
 > transparently, keyed by the opaque `requestState`, with every fail-closed boundary
 > (tampered/absent/replayed state, first-round splice, arbitrary push) tested.
 >
@@ -42,12 +46,9 @@ signed requests and verified responses, added without changing application code.
 > The delegation is byte-identical to the direct software path (same evidence, key just
 > moved behind the device); a device that can't sign fails closed.
 >
-> **Remaining (clearly scoped):** live cross-process e2es against the real Rust binaries
-> (stdio proxy + mTLS `mcp-re-proxy`/`mcp-re-demo-fileserver`) and wiring `driver.ts` into the
-> `mcp-re-walkthrough` `sdk_driver_matrix` as the TypeScript client leg. The pieces those
-> need — `connectStdio`, `connectMtlsHttp`, `McpReHttpTransport`, `driver.ts` — are all
-> implemented; what is pending is the harness integration + minting the demo mTLS
-> material, mirroring the Python `test_e2e_*`.
+> **Remaining (clearly scoped):** pinning upstream `mcp` and an incremental SSE
+> *streaming* transport (consuming events on a long-lived connection — the multi-path
+> decoder is the layer it plugs into).
 
 ## Why this exists, and why it's an *adapter*
 
@@ -65,9 +66,9 @@ wrapper): we ship our own implementation of the SDK's public `Transport` interfa
 ```
 application code
   -> new Client(...).connect(transport)   plain MCP; unaware of MCP-RE
-  -> McpReTransport (this SDK)              signs outbound bytes / verifies inbound bytes
+  -> McpReHttpTransport (this SDK)          signs outbound bytes / verifies inbound bytes
   -> mcp-re-sdk-core (napi-rs)               the AUDITED mcp-re-client-core logic, in Rust
-  -> remote MCP-RE server / proxy
+  -> mcp-re-proxy (HTTP profile)             one signed mTLS POST per request
 ```
 
 ## Why napi-rs, not pure TypeScript
@@ -77,7 +78,7 @@ The signing/verification/enforcement logic lives **once**, in the audited Rust
 (rather than reimplementing it in TypeScript) guarantees the canonical signed preimage is
 byte-identical across every SDK and the proxy, **by construction**, and means a
 draft-spec change is edited in one place. The TypeScript you actually touch — the
-transport adapter, `connect*` helpers, policy, tests — stays plain TypeScript. napi-rs
+transport adapter, `connectMtlsHttp`, policy, tests — stays plain TypeScript. napi-rs
 (vs WASM) was chosen because an MCP-RE client needs real crypto, filesystem key custody,
 and mTLS sockets, and has no browser requirement; the native addon is the direct analog
 of the Python SDK's PyO3 wheel.
@@ -86,9 +87,10 @@ of the Python SDK's PyO3 wheel.
 
 ```ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { Signer, SignerPolicy, TrustResolver, connectStdio, OpaqueBytesProvider } from "@mcp-re/sdk";
+import { Signer, SignerPolicy, TrustResolver, connectMtlsHttp, OpaqueBytesProvider } from "@mcp-re/sdk";
 
-const transport = connectStdio("mcp-re-stdio-server", ["--mode", "proxy"], {
+// MCP-RE is HTTP-profile only: every request is one signed mTLS POST to mcp-re-proxy.
+const transport = connectMtlsHttp("proxy.internal", 8600, {
   signer: Signer.software(seed, "did:example:client", "client-key-1"),
   policy: new SignerPolicy("did:example:client", "production", true),
   resolver: (() => { const r = new TrustResolver(); r.insertPublicKey(serverId, serverKeyId, serverPubKey); return r; })(),
@@ -96,6 +98,8 @@ const transport = connectStdio("mcp-re-stdio-server", ["--mode", "proxy"], {
   onBehalfOf: "user:alice",
   authorization: new OpaqueBytesProvider(capabilityBytes),
   expectedServerSigner: serverId,
+}, {
+  serverCa, clientCert, clientKey, serverName: "proxy.internal",
 });
 
 const client = new Client({ name: "app", version: "1.0.0" });
@@ -113,13 +117,13 @@ sdk/typescript/
   native/                # generated: binding.js + binding.d.ts + *.node
   src/
     index.ts             # public surface (re-exports the native core + the modules)
-    transport.ts         # McpReTransport — the pipeline mirroring proxy.rs::handle
-    httpTransport.ts     # McpReHttpTransport — one signed POST per request
+    transport.ts         # signOutbound / verifyInbound — the pipeline mirroring proxy.rs::handle
+    httpTransport.ts     # McpReHttpTransport — one signed mTLS POST per request
     streamable.ts        # multi-path inbound decode (direct JSON / POST-SSE / GET-SSE)
     authorization.ts     # authorization-binding providers
-    client.ts            # connectStdio / connectMtlsHttp transport factories
-    driver.ts            # the SDK as an interchangeable conformance client leg
+    client.ts            # connectMtlsHttp transport factory
   test/                  # vitest suite; reuses the shared oracle fixtures from sdk/python
+    innerBackend.ts      # the in-process HTTP inner MCP backend the live mTLS e2e fronts
 ```
 
 ## Develop

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-{{- include "mcp-re-proxy.validate" . -}}
+{{- include "mcp-re-proxy.validate" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -96,18 +96,24 @@ spec:
             - "{{ .Values.tls.mountPath }}/client-ca.pem"
             - "--trust"
             - "{{ .Values.tls.mountPath }}/trust.json"
-            # Inner plane (ADR-MCPRE-051 §3): the PEP forwards to a stateless
-            # Streamable-HTTP backend. With stdioBridge enabled the backend is the
-            # in-pod out-of-TCB adapter on loopback; otherwise the operator's own
-            # HTTP backend fleet (repeated --inner-http-url ⇒ round-robin).
-            {{- if .Values.inner.stdioBridge.enabled }}
-            - "--inner-http-url"
-            - {{ printf "http://%s%s" .Values.inner.stdioBridge.listen .Values.inner.stdioBridge.path | quote }}
-            {{- else }}
+            {{- if .Values.transportBinding }}
+            # mTLS channel binding (ADR-MCPS-023). `exact` (the proxy default and
+            # the fail-safe) binds each signed request to the verified client-cert
+            # identity. `none` decouples them — only for a reference deploy driven
+            # by an HTTP-profile client that carries no channel-binding claim (the
+            # shipped mcp_re_gke_client / SDK e2e). lb-assertion / attested-ingress
+            # need their own ingress key/anchor values.
+            - "--transport-binding"
+            - {{ .Values.transportBinding | quote }}
+            {{- end }}
+            # Inner plane (ADR-MCPRE-051 §3): the PEP forwards to one or more
+            # stateless Streamable-HTTP backends (repeated --inner-http-url ⇒
+            # round-robin). MCP-RE is HTTP-profile only — a stdio-only server is
+            # fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes
+            # HTTP; point httpUrls at that adapter.
             {{- range .Values.inner.httpUrls }}
             - "--inner-http-url"
             - {{ . | quote }}
-            {{- end }}
             {{- end }}
           ports:
             - name: mcp-re
@@ -123,6 +129,18 @@ spec:
             tcpSocket:
               port: mcp-re
             periodSeconds: 10
+          {{- if gt (int .Values.drainPreStopSeconds) 0 }}
+          # Close the L4 LoadBalancer endpoint-propagation race: on pod deletion
+          # keep serving for a short window BEFORE the proxy receives SIGTERM, so
+          # the LB stops routing new connections to this pod before it drains. The
+          # proxy's own SIGTERM drain (finish in-flight, stop accepting) then runs
+          # within terminationGracePeriodSeconds. Without this, a new connection can
+          # reach a pod in the ~1s between SIGTERM and its removal from the LB.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.drainPreStopSeconds }}"]
+          {{- end }}
           volumeMounts:
             - name: material
               mountPath: {{ .Values.tls.mountPath | quote }}
@@ -131,30 +149,13 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-        {{- if .Values.inner.stdioBridge.enabled }}
-        # Out-of-TCB stdio↔HTTP adapter (ADR-MCPRE-051 §3, MCPRE-118). Fronts a
-        # stdio-only MCP server so the PEP reaches it over loopback HTTP like any
-        # backend. This container carries the subprocess/sandbox surface that was
-        # REMOVED from the PEP; a compromise here cannot forge a signature or
-        # defeat replay — those live entirely in the mcp-re-proxy container.
-        - name: mcp-re-stdio-bridge
-          image: "{{ .Values.inner.stdioBridge.image.repository }}:{{ .Values.inner.stdioBridge.image.tag }}"
-          imagePullPolicy: {{ .Values.inner.stdioBridge.image.pullPolicy }}
-          args:
-            - "--listen"
-            - {{ .Values.inner.stdioBridge.listen | quote }}
-            - "--inner-mode"
-            - {{ .Values.inner.stdioBridge.mode | quote }}
-            # Everything after `--` is the wrapped stdio server command, verbatim.
-            - "--"
-            {{- range .Values.inner.stdioBridge.command }}
-            - {{ . | quote }}
-            {{- end }}
-        {{- end }}
       volumes:
         - name: material
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
+            # --strict refuses a group/world-readable key file (signing-seed,
+            # tls.key). Secret volumes default to 0644; mount owner-read-only.
+            defaultMode: 0400
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

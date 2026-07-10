@@ -4,12 +4,25 @@
 
 ## Status
 
-Proposed
+Accepted — ratified 2026-07-09 after a targeted four-point clarification pass
+(no broad re-grill; owner rulings folded in):
+
+1. **`aud` semantics** — `aud` identifies the verifier/service audience (RFC 7519),
+   NOT the profile; profile/scope/signer move to `mcp_re_profile` /
+   `mcp_re_audience_hash` / `mcp_re_server_signer` (§1, §3 step 5).
+2. **`trust_epoch`** — a HARD verifier gate: accept only credentials whose epoch is
+   in the active accepted set (§3 step 6, §5; token `delegation_trust_epoch_stale`).
+3. **Delegation mode** — REQUIRED by default; a directly root-signed response is
+   rejected. Mixed direct/delegated is an explicit, audited `mixed-migration` mode,
+   excluded from the production SLO profile (§3).
+4. **Credential replay** — no independent per-use anti-replay; possession of the
+   delegated private key is the control, and the credential is covered by the
+   RFC 9421 response signature; `jti` is audit/revocation only (§5a).
 
 Companion to ADR-MCPRE-051 §5 (High-Throughput Serving Architecture — delegated
 signing custody). **This ADR is BLOCKING for any production delegated-signing
 release (ADR-MCPRE-051 §5): no release signs responses with a delegated key before
-this ADR is ratified (Status → Accepted) and its conformance vectors are green.**
+its conformance vectors (§9) are green.**
 The *decision to adopt* delegated signing is already made in ADR-MCPRE-051; this
 ADR ratifies only the **credential format**, the verifier trust chain, and the
 lifecycle taxonomy.
@@ -109,12 +122,15 @@ Claims:
     "iat":            <unix seconds>,
     "nbf":            <unix seconds>,            # not-before
     "exp":            <unix seconds>,            # bounded lifetime; short TTL
-    "jti":            "<delegation event id>",   # ties to the audit issuance event
-    "aud":            "<http profile id>",       # this HTTP profile; cross-checked
+    "jti":            "<delegation event id>",   # ties to the audit issuance event; NOT a replay-cache key (§5a)
+    "aud":                   "<verifier/service audience>",  # RFC 7519 aud: WHO may process this credential; a verifier not named here MUST reject
+    "mcp_re_profile":        "<http profile id>",  # the MCP-RE evidence profile this credential is valid for (e.g. mcp-re-http-v1)
+    "mcp_re_audience_hash":  "<service/audience scope hash>",  # the service/audience scope the delegated key may sign for (matches the request audience tuple, ADR-MCPRE-050)
+    "mcp_re_server_signer":  "<expected server signer>",  # the resolved server-signer identity this delegation is bound to
     "mcp_re_key_use": "response-signing",        # the ONLY use this credential authorizes
     "delegated_kid":  "<delegated key_id>",      # the delegated key's own id — never the root's
     "issuer_kid":     "<root key_id>",           # equals the protected-header kid
-    "trust_epoch":    "<epoch at issuance>",     # for revocation coherence
+    "trust_epoch":    "<epoch at issuance>",     # HARD verifier gate (§3 step 6) — accepted only if in the verifier's active epoch set
     "cnf": {                                     # RFC 7800 proof-of-possession
       "jwk": {
         "kty": "OKP", "crv": "Ed25519",
@@ -137,6 +153,15 @@ Claims:
   confused for the root's.
 - `alg` is **pinned to `EdDSA`**; any other `alg` (including `none`) is rejected —
   no algorithm agility, no downgrade surface.
+- **`aud` is not the profile.** Per RFC 7519, `aud` identifies the parties that
+  may **process** the credential; a verifier that does not identify itself in
+  `aud` MUST reject. The evidence **profile** is a separate claim
+  (`mcp_re_profile`), and the **service/audience scope** the delegated key may
+  sign for is `mcp_re_audience_hash` (the same audience the request evidence
+  binds, ADR-MCPRE-050), with `mcp_re_server_signer` naming the bound signer
+  identity. This scoping is what stops a valid-but-lifted credential from being
+  accepted anywhere else that merely speaks the same MCP-RE profile — a leaked
+  credential is inert outside its `aud` / audience / signer / key-use scope.
 
 ### 2. Wire carriage — inline in the response evidence, covered by the RFC 9421 signature
 
@@ -170,10 +195,22 @@ credential.
 
 ### 3. Verifier trust chain — credential → root, no ephemeral enrollment
 
-A verifier presented with a delegated-key-signed HTTP response:
+**Delegation mode is REQUIRED by default.** In a delegated-signing deployment,
+every accepted response MUST carry a valid delegation credential and verify under
+the delegated key. A directly **root-signed** response (or any response with no
+delegation credential) is **rejected** — the direct-root path is not a silent
+fallback, because it would bypass the delegated-key lifecycle (short TTL,
+rotation, audit, revocation) and open a downgrade seam. A mixed direct/delegated
+deployment is permitted ONLY as an explicit `delegation_mode = "mixed-migration"`:
+it MUST audit every direct-root acceptance, is **excluded from the high-throughput
+production SLO profile**, and a conformance vector MUST prove that the default
+(required) mode rejects a direct-root response.
 
-1. Reads `server_delegation` from the response evidence block. A delegated-key
-   response with no inline credential ⇒ `mcp-re.delegation_credential_missing`.
+A verifier presented with a response under a delegated-signing policy:
+
+1. Reads `server_delegation` from the response evidence block. In required mode, a
+   response with no valid inline credential — including a directly root-signed one
+   — ⇒ `mcp-re.delegation_credential_missing`.
 2. Resolves `issuer_kid` to a trusted **root** anchor via the existing trust
    resolver / by-`key_id` trust map. Unknown issuer ⇒
    `mcp-re.delegation_issuer_untrusted`.
@@ -182,13 +219,27 @@ A verifier presented with a delegated-key-signed HTTP response:
    `mcp-re.delegation_credential_invalid`.
 4. Enforces freshness: `nbf ≤ now ≤ exp` (+ `max_clock_skew`). Outside the window ⇒
    `mcp-re.delegation_credential_expired`.
-5. Cross-checks binding: `aud` == this HTTP profile id and
-   `mcp_re_key_use == "response-signing"`. Wrong profile ⇒
-   `mcp-re.delegation_profile_mismatch`; wrong use ⇒
-   `mcp-re.delegation_key_use_invalid`.
-6. Checks revocation: neither `delegated_kid` nor `issuer_kid` is revoked at the
+5. Cross-checks **scope** (all four, fail-closed):
+   - **Audience:** the verifier identifies itself in `aud`; else
+     `mcp-re.delegation_audience_mismatch`.
+   - **Profile:** `mcp_re_profile` == the active HTTP profile id; else
+     `mcp-re.delegation_profile_mismatch`.
+   - **Service/audience scope:** `mcp_re_audience_hash` == the expected
+     request/service audience hash **and** `mcp_re_server_signer` == the expected
+     server signer; else `mcp-re.delegation_audience_mismatch`.
+   - **Key use:** `mcp_re_key_use` permits this signature use
+     (`"response-signing"`); else `mcp-re.delegation_key_use_invalid`.
+6. Enforces the **trust epoch as a hard gate**: `trust_epoch` MUST be in the
+   verifier's **active accepted epoch set** — default `{ current_trust_epoch }`,
+   optionally `{ current, immediately_previous }` only when an explicit, bounded
+   rollout window is configured. A credential minted under a superseded epoch not
+   in that set ⇒ `mcp-re.delegation_trust_epoch_stale`, **even without a targeted
+   `delegated_kid` revocation** — epoch advancement is itself a coarse, coherent
+   invalidation (ADR-MCPS-021; the epoch is explicit coherent state per
+   ADR-MCPRE-051 §4).
+7. Checks revocation: neither `delegated_kid` nor `issuer_kid` is revoked at the
    current trust epoch (§5). Revoked ⇒ `mcp-re.delegation_revoked`.
-7. Verifies the **RFC 9421 response signature** with `cnf.jwk`, requiring the
+8. Verifies the **RFC 9421 response signature** with `cnf.jwk`, requiring the
    response signature `keyid == delegated_kid`. A response signed by any other key,
    or a `keyid`/`cnf` mismatch ⇒ `mcp-re.delegation_key_mismatch`; a body/digest
    tamper is caught by the existing HTTP-profile response-signature-invalid token.
@@ -216,9 +267,12 @@ Trust flows **only** through the credential to the root — a delegated key is
   `revocation_tier.rs`): revoking a `delegated_kid` publishes it to the revocation
   tier and advances the monotonic **trust epoch**, flushing caches fleet-wide with
   the per-tier bounded lag the fleet already declares. The credential's
-  `trust_epoch` claim lets a verifier detect a credential minted under a
-  now-superseded epoch. Revoking the `issuer_kid` (root) invalidates **every**
-  credential it signed.
+  `trust_epoch` claim is a **hard verifier gate** (§3 step 6), not merely a
+  detection hint: a credential whose `trust_epoch` is not in the verifier's active
+  accepted epoch set is rejected, so an epoch advance invalidates all prior-epoch
+  credentials unless the previous epoch is explicitly retained for a bounded
+  rollout window. Revoking the `issuer_kid` (root) invalidates **every** credential
+  it signed.
 - **Blast radius.**
   - *Delegated key compromised:* an attacker can forge signatures only until
     `min(exp, revocation-takes-effect)` — bounded by `T` and cut shorter by
@@ -229,6 +283,28 @@ Trust flows **only** through the credential to the root — a delegated key is
     root's exposure by removing it from the hot path — the root signs only
     credentials at issuance/rotation, orders of magnitude less often than
     per-request signing would touch it.
+
+### 5a. Credential replay — no independent anti-replay; possession is the control
+
+The delegation credential is a **public, reusable, short-lived authorization for a
+delegated public key**; it does **not** authorize a response by itself. A response
+is accepted only if the **delegated private key** signs the RFC 9421 response
+evidence (RFC 7800 proof-of-possession: the credential carries the PoP public key
+in `cnf.jwk`; the presenter must prove possession of the matching private key).
+Two rules make this safe without a per-use replay cache:
+
+1. The credential **MUST be covered by the RFC 9421 response signature** — it rides
+   in the `content-digest`-covered evidence block (§2), so it cannot be stripped or
+   swapped without breaking verification.
+2. `jti` is for **audit / revocation / correlation only** — it is **not** a
+   request-replay admission key. Response replay is handled by the existing
+   HTTP-profile replay tier (ADR-MCPRE-050/051 §4), unchanged.
+
+Lift-and-reuse of a credential is therefore inert except **within its own scope**:
+same `delegated_kid`, `mcp_re_profile`, `mcp_re_key_use`, `mcp_re_server_signer`,
+`mcp_re_audience_hash`/`aud`, a valid `nbf`/`exp` window, an accepted `trust_epoch`,
+and not revoked. Any difference ⇒ reject (§3 steps 5–7). An attacker without the
+delegated private key gains nothing from a copied credential.
 
 ### 6. Fail-closed issuance
 
@@ -266,8 +342,10 @@ conformance vectors, §9; subject to the ADR-MCPS-002 vocabulary firewall):
 | `mcp-re.delegation_credential_invalid` | JWS malformed, `alg` ≠ `EdDSA`, JWS `kid` ≠ `issuer_kid`, or the root signature does not verify. |
 | `mcp-re.delegation_credential_expired` | `now` outside `[nbf, exp]` (+ skew). |
 | `mcp-re.delegation_issuer_untrusted` | `issuer_kid` is not a trusted root anchor. |
-| `mcp-re.delegation_profile_mismatch` | `aud` ≠ this HTTP profile id. |
-| `mcp-re.delegation_key_use_invalid` | `mcp_re_key_use` ≠ `response-signing`. |
+| `mcp-re.delegation_profile_mismatch` | `mcp_re_profile` ≠ the active HTTP profile id. |
+| `mcp-re.delegation_audience_mismatch` | verifier not named in `aud`, or `mcp_re_audience_hash`/`mcp_re_server_signer` ≠ the expected service/audience scope. |
+| `mcp-re.delegation_key_use_invalid` | `mcp_re_key_use` does not permit this signature use. |
+| `mcp-re.delegation_trust_epoch_stale` | `trust_epoch` not in the verifier's active accepted epoch set (§3 step 6), independent of targeted revocation. |
 | `mcp-re.delegation_key_mismatch` | RFC 9421 response `keyid` ≠ `delegated_kid`, or the response signature does not verify under `cnf.jwk`. |
 | `mcp-re.delegation_revoked` | `delegated_kid` or `issuer_kid` revoked at the current trust epoch. |
 
@@ -347,9 +425,12 @@ machinery.
 - Delegated responses are self-verifying from the pre-existing root anchor.
 
 ### Negative
-- A new, ADR-frozen vocabulary (eight `mcp-re.delegation_*` tokens + three audit
-  event types), a new `typ` media type (`mcp-re-delegation+jwt`), and a new
-  `server_delegation` evidence-block field — additive, but frozen surface.
+- A new, ADR-frozen vocabulary (ten `mcp-re.delegation_*` tokens — including
+  `delegation_audience_mismatch` and `delegation_trust_epoch_stale` — plus three
+  audit event types), four MCP-RE JWT claims (`mcp_re_profile`,
+  `mcp_re_audience_hash`, `mcp_re_server_signer`, `mcp_re_key_use`), a new `typ`
+  media type (`mcp-re-delegation+jwt`), and a new `server_delegation`
+  evidence-block field — additive, but frozen surface.
 - The HTTP-profile layer gains a compact-JWS/JOSE verifier (Ed25519/EdDSA only,
   `cnf.jwk` extraction) — a standards-track parser, but net-new code with its own
   hardening obligations (strict `alg`, no `none`, no header injection).
@@ -379,8 +460,21 @@ runner and gated in CI. Vectors are compact-JWS credentials + RFC 9421 responses
 3. **not_yet_valid** — `now < nbf` ⇒ reject (same token).
 4. **key_use_invalid** — `mcp_re_key_use` ≠ `response-signing` ⇒ reject
    `mcp-re.delegation_key_use_invalid`.
-5. **profile_mismatch** — `aud` ≠ this HTTP profile id ⇒ reject
+5. **profile_mismatch** — `mcp_re_profile` ≠ the active HTTP profile id ⇒ reject
    `mcp-re.delegation_profile_mismatch`.
+5a. **audience_mismatch** — verifier not named in `aud`, OR `mcp_re_audience_hash` /
+    `mcp_re_server_signer` ≠ the expected service/audience scope ⇒ reject
+    `mcp-re.delegation_audience_mismatch` (proves a valid credential for one
+    service/scope is not accepted by a different verifier of the same profile).
+5b. **trust_epoch_stale** — a valid, unrevoked credential whose `trust_epoch` is
+    not in the verifier's active accepted epoch set ⇒ reject
+    `mcp-re.delegation_trust_epoch_stale`; a companion vector proves the bounded
+    rollout window `{ current, previous }` accepts a previous-epoch credential
+    only when explicitly configured.
+5c. **delegation_required_rejects_direct_root** — in the default (required) mode, a
+    directly root-signed response with no delegation credential ⇒ reject
+    `mcp-re.delegation_credential_missing`; the `mixed-migration` mode accepts it
+    only with an audit event emitted.
 6. **revoked** — `delegated_kid` revoked at the current trust epoch ⇒ reject
    `mcp-re.delegation_revoked`; and root-revocation invalidates its credentials.
 7. **substituted_delegated_key** — response signed by a key other than `cnf.jwk` /
@@ -412,8 +506,10 @@ standards-conformant, not merely self-consistent.
 - Companion to: ADR-MCPRE-051 §5 (delegated signing custody — the decision this ADR
   gives a wire format).
 - Controlled by: ADR-MCPRE-050 (Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530
-  as the one carrier; native JCS/object signing is legacy and not the foundation for
-  new evidence).
+  as the one carrier; native JCS/object signing is deprecated and not the foundation
+  for new evidence), reinforced by the control note
+  [`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md)
+  (D6: this ADR must not use a JCS-signed delegation object — satisfied here).
 - Builds on: ADR-MCPS-028 (KMS/HSM custody — root retained, unchanged),
   ADR-MCPS-003 (signing-locus rule — evidence never impersonates the root),
   ADR-MCPRE-050 (HTTP profile / RFC 9421 carrier), ADR-MCPS-020 (durability /

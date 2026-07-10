@@ -3,8 +3,8 @@
 The adapter's security core is two sync functions: sign_outbound (sign + register)
 and verify_inbound (correlate + verify + strip). These are tested against the same
 golden vectors as the bindings, proving the adapter writes byte-identical signed
-requests and verifies responses exactly. Two async tests drive the McpReTransport
-pumps over in-memory byte channels via anyio.run (no live subprocess needed).
+requests and verifies responses exactly — the exact pipeline
+:class:`~mcp_re_sdk.http_transport.McpReHttpTransport` drives over the mTLS wire.
 
 Requires `mcp` installed (Python >= 3.10).
 """
@@ -18,8 +18,6 @@ import pytest
 import mcp_re_sdk
 from mcp_re_sdk.transport import (
     McpReConfig,
-    McpReTransport,
-    McpReVerificationError,
     sign_outbound,
     verify_inbound,
 )
@@ -175,69 +173,3 @@ def test_verify_inbound_passes_through_server_request_when_allowed():
     assert out.kind == "passthrough"
     assert out.message.message.root.method == "sampling/createMessage"
     assert str(out.message.message.root.id) == "s-7"
-
-
-# --- async pump wiring (anyio.run, no subprocess) --------------------------
-
-def test_transport_writer_pump_signs_to_wire():
-    async def scenario():
-        sent = []
-
-        async def byte_send(b):
-            sent.append(b)
-
-        _send_lines, recv_lines = anyio.create_memory_object_stream(0)
-        corr = mcp_re_sdk.CorrelationStore()
-        transport = McpReTransport(
-            byte_send, recv_lines, _config(), corr,
-            clock=lambda: NOW, nonce_factory=lambda: REQ["nonce"],
-        )
-        async with transport as (_read_stream, write_stream):
-            await write_stream.send(
-                _sm_request("req-1", "tools/call", {"name": "echo", "arguments": {"text": "hello"}})
-            )
-            await anyio.sleep(0.05)
-        return sent, corr.outstanding
-
-    sent, outstanding = anyio.run(scenario)
-    assert sent and sent[0].rstrip(b"\n").decode() == REQ_EXPECTED_WIRE
-    assert outstanding == 1
-
-
-def test_transport_reader_pump_verifies_and_delivers():
-    async def scenario():
-        send_lines, recv_lines = anyio.create_memory_object_stream(10)
-
-        async def byte_send(_b):
-            pass
-
-        corr = mcp_re_sdk.CorrelationStore()
-        _register_for_valid(corr)
-        transport = McpReTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
-        async with transport as (read_stream, _write_stream):
-            await send_lines.send(_valid_response_bytes())
-            return await read_stream.receive()
-
-    msg = anyio.run(scenario)
-    assert not isinstance(msg, Exception)
-    assert str(msg.message.root.id) == "req-1"
-
-
-def test_transport_reader_pump_surfaces_rejection_as_exception():
-    async def scenario():
-        send_lines, recv_lines = anyio.create_memory_object_stream(10)
-
-        async def byte_send(_b):
-            pass
-
-        corr = mcp_re_sdk.CorrelationStore()
-        _register_for_valid(corr)
-        tampered = next(s for s in RESP["scenarios"] if s["name"] == "tampered_signature")
-        transport = McpReTransport(byte_send, recv_lines, _config(), corr, clock=lambda: NOW + 1)
-        async with transport as (read_stream, _write_stream):
-            await send_lines.send(tampered["response_bytes"].encode())
-            return await read_stream.receive()
-
-    msg = anyio.run(scenario)
-    assert isinstance(msg, McpReVerificationError)
-    assert msg.reason == "mcp-re.response_sig_invalid"

@@ -1,10 +1,10 @@
 [package]
 name = "mcp-re-demo"
-version = "0.10.1"
+version = "0.11.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "MCP-RE single-node demo harness: the host-side HostSession demo client (the model never holds keys)."
+description = "MCP-RE mTLS/fixtures demo surface: the host-side HostSession demo client + DemoFixtures cert material (HTTP-profile only; the model never holds keys)."
 
 # MCPS-046 (MCP-RE-EPIC-P6.5): the demo client drives the EXISTING mcp-re-host
 # HostSession to sign requests and verify the bound responses. It depends only on
@@ -12,13 +12,13 @@ description = "MCP-RE single-node demo harness: the host-side HostSession demo c
 # request params — no crate outside the workspace, no async runtime. Transport
 # stays in this crate; mcp-re-host remains networking-free (ADR-MCPS-015).
 [dependencies]
-# The deterministic demo BINARIES (src/bin/demo_positive.rs, demo_negative.rs,
-# demo_mtls_client.rs) and the integration tests use mcp-re-host's `FixedClock` /
-# `SeededNonceSource` fixtures, compiled only under its `test-fixtures` feature
-# (audit #81). Because the consumers are normal (non-test) bin targets, the
-# feature is enabled on the NORMAL dependency here. mcp-re-demo is itself the
-# demo/test harness crate (not a production-deployable), so this does not widen
-# any production surface; the demo lib uses only SystemClock/SystemNonceSource.
+# The deterministic demo binary (src/bin/demo_mtls_client.rs) and the integration
+# tests use mcp-re-host's `FixedClock` / `SeededNonceSource` fixtures, compiled only
+# under its `test-fixtures` feature (audit #81). Because the consumer is a normal
+# (non-test) bin target, the feature is enabled on the NORMAL dependency here.
+# mcp-re-demo is itself the demo/test harness crate (not a production-deployable),
+# so this does not widen any production surface; the demo lib uses only
+# SystemClock/SystemNonceSource.
 mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 mcp-re-core = { path = "../mcp-re-core" }
 mcp-re-policy = { path = "../mcp-re-policy" }
@@ -32,6 +32,9 @@ thiserror = { workspace = true }
 # at RUNTIME for `bazel run`. rcgen stays OUT of mcp-re-core/mcp-re-host (pure /
 # transport-free).
 rcgen = { workspace = true }
+# `now`-relative validity for the short-lived (< strict 3600s) client leaf that
+# lets a `--strict` fleet be driven live (see demo_fixtures::make_leaf_windowed).
+time = { workspace = true }
 
 # Integration tests build a real rustls TLS stack against the proxy, so the
 # transport-layer crates are dev-dependencies of the test binaries even though

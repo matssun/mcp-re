@@ -73,6 +73,33 @@ pub enum HttpProfileError {
     /// An MRTR continuation handle does not match its mandated signature-base
     /// digest (MCPRE-97). Maps to `mcp-re.continuation_binding_failed`.
     ContinuationBindingFailed,
+
+    // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
+    // to its precise frozen `mcp-re.delegation_*` token.
+    /// A delegated-key response carried no valid delegation credential (in
+    /// required mode, a directly root-signed response also lands here).
+    DelegationCredentialMissing,
+    /// The JWS is malformed, `alg` ≠ `EdDSA`, `kid` ≠ `issuer_kid`, `cnf` is
+    /// self-inconsistent, or the root signature does not verify.
+    DelegationCredentialInvalid,
+    /// `now` is outside the credential's `[nbf, exp]` window (+ skew).
+    DelegationCredentialExpired,
+    /// The credential's `issuer_kid` is not a trusted root anchor.
+    DelegationIssuerUntrusted,
+    /// `mcp_re_profile` is not the active HTTP profile id.
+    DelegationProfileMismatch,
+    /// The verifier is not named in `aud`, or the audience-scope / server-signer
+    /// binding does not match — a credential lifted outside its scope.
+    DelegationAudienceMismatch,
+    /// `mcp_re_key_use` does not permit this signature use.
+    DelegationKeyUseInvalid,
+    /// The credential's `trust_epoch` is not in the verifier's accepted set.
+    DelegationTrustEpochStale,
+    /// The RFC 9421 response `keyid` ≠ `delegated_kid`, or the response signature
+    /// does not verify under `cnf.jwk`.
+    DelegationKeyMismatch,
+    /// `delegated_kid` or `issuer_kid` is revoked at the current trust epoch.
+    DelegationRevoked,
 }
 
 impl HttpProfileError {
@@ -116,6 +143,17 @@ impl HttpProfileError {
             HttpProfileError::ResponseBindingMismatch => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
+            // Delegated signing-key attestation (ADR-MCPRE-052 §8).
+            HttpProfileError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
+            HttpProfileError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",
+            HttpProfileError::DelegationCredentialExpired => "mcp-re.delegation_credential_expired",
+            HttpProfileError::DelegationIssuerUntrusted => "mcp-re.delegation_issuer_untrusted",
+            HttpProfileError::DelegationProfileMismatch => "mcp-re.delegation_profile_mismatch",
+            HttpProfileError::DelegationAudienceMismatch => "mcp-re.delegation_audience_mismatch",
+            HttpProfileError::DelegationKeyUseInvalid => "mcp-re.delegation_key_use_invalid",
+            HttpProfileError::DelegationTrustEpochStale => "mcp-re.delegation_trust_epoch_stale",
+            HttpProfileError::DelegationKeyMismatch => "mcp-re.delegation_key_mismatch",
+            HttpProfileError::DelegationRevoked => "mcp-re.delegation_revoked",
         }
     }
 }
@@ -143,6 +181,16 @@ mod tests {
             McpReError::ResponseHashMismatch.wire_code(),
             McpReError::ResponseSigInvalid.wire_code(),
             McpReError::ContinuationBindingFailed.wire_code(),
+            McpReError::DelegationCredentialMissing.wire_code(),
+            McpReError::DelegationCredentialInvalid.wire_code(),
+            McpReError::DelegationCredentialExpired.wire_code(),
+            McpReError::DelegationIssuerUntrusted.wire_code(),
+            McpReError::DelegationProfileMismatch.wire_code(),
+            McpReError::DelegationAudienceMismatch.wire_code(),
+            McpReError::DelegationKeyUseInvalid.wire_code(),
+            McpReError::DelegationTrustEpochStale.wire_code(),
+            McpReError::DelegationKeyMismatch.wire_code(),
+            McpReError::DelegationRevoked.wire_code(),
         ];
         let all = [
             HttpProfileError::MissingEvidence("x"),
@@ -162,6 +210,16 @@ mod tests {
             HttpProfileError::ResponseBindingMismatch,
             HttpProfileError::ResponseSignatureInvalid,
             HttpProfileError::ContinuationBindingFailed,
+            HttpProfileError::DelegationCredentialMissing,
+            HttpProfileError::DelegationCredentialInvalid,
+            HttpProfileError::DelegationCredentialExpired,
+            HttpProfileError::DelegationIssuerUntrusted,
+            HttpProfileError::DelegationProfileMismatch,
+            HttpProfileError::DelegationAudienceMismatch,
+            HttpProfileError::DelegationKeyUseInvalid,
+            HttpProfileError::DelegationTrustEpochStale,
+            HttpProfileError::DelegationKeyMismatch,
+            HttpProfileError::DelegationRevoked,
         ];
         for e in all {
             assert!(

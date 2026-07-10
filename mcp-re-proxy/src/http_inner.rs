@@ -45,12 +45,14 @@
 //! ## Fail-closed
 //!
 //! `dispatch` NEVER errors (the [`AsyncInnerServer`] contract): a connect/transport
-//! failure, a per-request timeout, a non-2xx status, an unreadable body, OR every
-//! backend being ejected (circuit open) all yield the synthesized
-//! [`inner_unavailable_response`] — a JSON-RPC error the proxy still SIGNS. When all
-//! backends are Open the request fails closed WITHOUT dispatching and WITHOUT
-//! queuing (bounded, never unbounded). A dead or hostile backend can never suppress
-//! the signature or cause a silent allow.
+//! failure, a per-request timeout, a non-2xx status, an unreadable body, every
+//! backend being ejected (circuit open), OR the pool being saturated at its
+//! in-flight bound all yield the synthesized [`inner_unavailable_response`] — a
+//! JSON-RPC error the proxy still SIGNS. When all backends are Open the request
+//! fails closed WITHOUT dispatching; when the in-flight bound
+//! ([`DEFAULT_MAX_IN_FLIGHT`]) is reached, a further request fails closed WITHOUT
+//! queuing — bounded backpressure, never an unbounded backlog. A dead, hostile, or
+//! overloaded inner fleet can never suppress the signature or cause a silent allow.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
@@ -58,6 +60,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -71,6 +74,7 @@ use hyper::Uri;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
+use tokio::sync::Semaphore;
 
 use crate::async_inner::inner_unavailable_response;
 use crate::async_inner::AsyncInnerServer;
@@ -92,6 +96,12 @@ const STATE_HALF_OPEN: u8 = 2;
 pub const DEFAULT_FAILURE_THRESHOLD: u32 = 5;
 /// Default ejection duration a backend stays Open before a Half-Open probe.
 pub const DEFAULT_EJECTION_DURATION: Duration = Duration::from_secs(30);
+/// Default cap on concurrent in-flight inner dispatches per pool. Bounds inner-plane
+/// concurrency so a saturated or slow inner fleet fails closed with backpressure
+/// instead of queuing unboundedly (ADR-MCPRE-051 §3 pool-exhaustion). Generous for a
+/// per-core pool to a small stateless backend fleet; override with
+/// [`HttpInnerPool::with_max_in_flight`].
+pub const DEFAULT_MAX_IN_FLIGHT: usize = 1024;
 
 /// Outlier-ejection / circuit-breaker tuning for the inner pool.
 #[derive(Debug, Clone, Copy)]
@@ -161,6 +171,14 @@ pub struct HttpInnerPool {
     request_timeout: Duration,
     /// Outlier-ejection / breaker tuning.
     breaker: BreakerConfig,
+    /// Bounded inner-plane concurrency: a dispatch must acquire a permit. When all
+    /// permits are held (the inner fleet is saturated / slow), `dispatch` fails
+    /// closed IMMEDIATELY with a synthesized inner-unavailable response rather than
+    /// queue — so backpressure is bounded and the per-core backlog can never grow
+    /// unboundedly (ADR-MCPRE-051 §3).
+    in_flight: Arc<Semaphore>,
+    /// The permit count `in_flight` was built with (introspection; not on the hot path).
+    max_in_flight: usize,
     /// Monotonic clock origin for breaker timing (all `*_nanos` are relative to it).
     origin: Instant,
 }
@@ -195,8 +213,22 @@ impl HttpInnerPool {
             next: AtomicUsize::new(0),
             request_timeout,
             breaker,
+            in_flight: Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT)),
+            max_in_flight: DEFAULT_MAX_IN_FLIGHT,
             origin: Instant::now(),
         })
+    }
+
+    /// Override the bound on concurrent in-flight inner dispatches (default
+    /// [`DEFAULT_MAX_IN_FLIGHT`]). Beyond `n` concurrent dispatches the pool fails
+    /// closed immediately rather than queue (ADR-MCPRE-051 §3 pool-exhaustion
+    /// backpressure). `n` must be > 0.
+    #[must_use]
+    pub fn with_max_in_flight(mut self, n: usize) -> Self {
+        assert!(n > 0, "HttpInnerPool max_in_flight must be > 0");
+        self.in_flight = Arc::new(Semaphore::new(n));
+        self.max_in_flight = n;
+        self
     }
 
     /// Build a pool from string URLs (each parsed to a [`Uri`]), so callers (e.g.
@@ -220,6 +252,18 @@ impl HttpInnerPool {
             .iter()
             .filter(|b| b.state.load(Ordering::Acquire) == STATE_OPEN)
             .count()
+    }
+
+    /// The configured maximum concurrent in-flight inner dispatches.
+    pub fn max_in_flight(&self) -> usize {
+        self.max_in_flight
+    }
+
+    /// In-flight permits currently available (`max_in_flight` minus dispatches in
+    /// flight). Introspection for tests/metrics; not on the hot path. Zero means the
+    /// inner plane is saturated and further dispatches fail closed.
+    pub fn in_flight_available(&self) -> usize {
+        self.in_flight.available_permits()
     }
 
     /// Monotonic nanoseconds since the pool's clock origin.
@@ -327,8 +371,13 @@ impl HttpInnerPool {
         let req = Request::builder()
             .method(Method::POST)
             .uri(uri)
+            // MCP Streamable HTTP (2025-06-18 §Sending Messages): a client POST MUST
+            // Accept BOTH application/json and text/event-stream — a spec-conformant
+            // backend (e.g. FastMCP) rejects a json-only Accept with 406. We forward
+            // stateless single request/response, so a JSON body is what we parse; the
+            // dual Accept is the required handshake, not an opt-in to streaming.
             .header(header::CONTENT_TYPE, "application/json")
-            .header(header::ACCEPT, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream")
             .body(Full::new(body))
             .map_err(|_| ())?;
 
@@ -359,7 +408,17 @@ impl AsyncInnerServer for HttpInnerPool {
         let body = Bytes::copy_from_slice(request);
         let client = self.client.clone();
         let timeout = self.request_timeout;
+        let in_flight = self.in_flight.clone();
         Box::pin(async move {
+            // Bounded inner-plane concurrency: take an in-flight permit or fail closed
+            // IMMEDIATELY. Saturation ⇒ synthesized inner-unavailable WITHOUT queuing,
+            // so a slow/overloaded inner fleet cannot build an unbounded per-core
+            // backlog (ADR-MCPRE-051 §3 pool-exhaustion backpressure). The permit is
+            // held for the whole round-trip and released on completion.
+            let _permit = match in_flight.try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => return inner_unavailable_response(),
+            };
             let now = self.now_nanos();
             // Health-aware selection. All backends ejected ⇒ fail closed WITHOUT
             // dispatching and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3).

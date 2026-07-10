@@ -6,11 +6,11 @@
  * `Connection: close`** — a pure request/response channel with NO server push
  * (`mcp-re-proxy/src/tls.rs::serve_once`).
  *
- * The byte-level security is the SAME audited pipeline the stdio {@link McpReTransport}
- * uses — {@link signOutbound} (sign + register correlation) and
- * {@link verifyInboundMessages} (correlate + verify + strip). What differs is the
- * *shape*: every outbound **request** becomes exactly one `post(requestBytes) ->
- * response` round trip, and that response is the only inbound message for it.
+ * The byte-level security is the audited pipeline in `./transport` —
+ * {@link signOutbound} (sign + register correlation) and
+ * {@link verifyInboundMessages} (correlate + verify + strip). Every outbound
+ * **request** becomes exactly one `post(requestBytes) -> response` round trip, and that
+ * response is the only inbound message for it.
  *
  * Lifecycle over a no-server-push request/response transport:
  *
@@ -26,8 +26,8 @@
  *   rejects cleanly rather than hanging.
  *
  * The TLS/socket specifics live OUTSIDE this module: the caller supplies an async
- * `post(requestBytes) -> { contentType, body }` (mirroring how {@link McpReTransport}
- * takes `byteSend` / `byteLines`). See {@link connectMtlsHttp} for the mTLS wiring.
+ * `post(requestBytes) -> { contentType, body }`. See {@link connectMtlsHttp} for the
+ * mTLS wiring.
  */
 
 import * as core from "../native/binding.js";

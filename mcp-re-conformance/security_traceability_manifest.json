@@ -3,67 +3,11 @@
   "description": "MCPS-070 (MCP-RE-EPIC-P6.6C). The checked-in, machine-checkable map from each MCP-RE security property (P6.6A + P6.6B) to the Bazel test target AND the named test function that PROVES it. Docs reference this manifest ('see the manifest') instead of stale literal counts. Guarded by //mcp-re-conformance:security_traceability_guard_test (MCPS-070): every entry's bazel_target must be declared by a real BUILD.bazel rule and every test_fn must appear in the referenced test source on disk. A renamed or removed target/fn makes that guard FAIL. Each entry's source is read from DISK at test time via runfiles (the same $(rlocationpath) scheme as the conformance drift_guard); nothing is trusted as written.",
   "entries": [
     {
-      "property": "request object signature verified; tampered request body rejected over the wire",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a1_tampered_request_body_rejected_over_wire",
-      "notes": "demo_negative A1. Mutating a signed param byte breaks the request-object signature; the proxy rejects before any forward. Mirrors mcp-re-core vector v2_tampered_argument.json."
-    },
-    {
-      "property": "tampered JSON-RPC id rejected over the wire",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a2_tampered_jsonrpc_id_rejected_over_wire",
-      "notes": "demo_negative A2. The signed id binding is broken by editing the id; rejected. Mirrors mcp-re-core vector tampered_id.json."
-    },
-    {
-      "property": "core conformance vectors: tampered body/id + replay/expiry/audience/envelope (object == stdio == http parity)",
+      "property": "core conformance vectors: tampered body/id + replay/expiry/audience/envelope (object == http parity)",
       "bazel_target": "//mcp-re-conformance:object_suite_test",
       "source": "mcp-re-conformance/tests/object_suite_test.rs",
       "test_fn": "object_runner_every_case_actual_equals_expected",
-      "notes": "The committed mcp-re-core vectors (tampered_id.json, v2_tampered_argument.json, replay_request.json, expired_request.json, wrong_audience_request.json, missing_envelope_request.json) are replayed in-process. Cross-transport parity is in http_harness_test / stdio_harness_test. The vector corpus itself is drift-guarded by conformance_manifest.json + drift_guard_test."
-    },
-    {
-      "property": "freshness + replay rejected on a fresh connection (replay across connection)",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a3_replayed_request_rejected_on_fresh_connection",
-      "notes": "demo_negative A3. A previously-accepted signed request replayed on a NEW mTLS connection is rejected by the proxy's nonce/freshness cache \u2014 replay protection spans connections, not just one socket."
-    },
-    {
-      "property": "freshness: expired request rejected over the wire",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a4_expired_request_rejected_over_wire",
-      "notes": "demo_negative A4. A request whose signed expiry is in the past is rejected (freshness window enforced)."
-    },
-    {
-      "property": "replay detected across a proxy RESTART via the shared durable nonce cache",
-      "bazel_target": "//mcp-re-demo:demo_posture_e2e_test",
-      "source": "mcp-re-demo/tests/demo_posture_e2e_test.rs",
-      "test_fn": "c2_replay_detected_after_proxy_restart_with_shared_durable_cache",
-      "notes": "P6.6B C2. A request accepted by one proxy process is replayed after the proxy is killed and a fresh process starts against the SAME durable cache; the replay is still rejected. Durable, not in-memory-only."
-    },
-    {
-      "property": "response signing + request_hash binding, independently verified by the client",
-      "bazel_target": "//mcp-re-demo:demo_e2e_persistent_test",
-      "source": "mcp-re-demo/tests/demo_e2e_persistent_test.rs",
-      "test_fn": "persistent_multi_call_multi_process_mtls",
-      "notes": "demo_e2e_persistent. Each signed response is verified against the request hash the HostSession STORED at sign time, and independently re-verified via mcp_re_demo::independently_verify_response against the server signer's public key (a path independent of the client's own session state)."
-    },
-    {
-      "property": "wrong response hash rejected by the client over the wire",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a9_wrong_response_hash_rejected_by_client_over_wire",
-      "notes": "demo_negative A9. A response bound to the wrong request hash fails client-side verification. Mirrors mcp-re-core vector v4b_signed_wrong_hash_response.json."
-    },
-    {
-      "property": "bad response signature rejected by the client over the wire",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a10_bad_response_signature_rejected_by_client_over_wire",
-      "notes": "demo_negative A10. A response with a garbage/forged signature fails client-side verification. Mirrors mcp-re-core vector v4_wrong_hash_garbage_sig_response.json."
+      "notes": "The committed mcp-re-core vectors (tampered_id.json, v2_tampered_argument.json, replay_request.json, expired_request.json, wrong_audience_request.json, missing_envelope_request.json) are replayed in-process. Cross-transport parity is in http_harness_test (object == http; MCP-RE is HTTP-profile only). The vector corpus itself is drift-guarded by conformance_manifest.json + drift_guard_test."
     },
     {
       "property": "HostSession sign produces a request the verifier accepts (round trip)",
@@ -129,67 +73,11 @@
       "notes": "Defense-in-depth for the four server-auth cases: an empty server trust anchor set does not silently accept any server \u2014 it fails closed."
     },
     {
-      "property": "transport-binding EXACT: identity (mTLS client cert URI SAN) must equal the request signer",
-      "bazel_target": "//mcp-re-demo:demo_transport_e2e_test",
-      "source": "mcp-re-demo/tests/demo_transport_e2e_test.rs",
-      "test_fn": "t3_identity_not_signer_transport_binding_failed",
-      "notes": "demo_transport T3. A valid mTLS client whose cert SAN identity does NOT equal the request signer is rejected: the transport identity is bound exactly to the signer."
-    },
-    {
-      "property": "valid mTLS does NOT rescue an invalid request signature (transport != authn of the object)",
-      "bazel_target": "//mcp-re-demo:demo_negative_e2e_test",
-      "source": "mcp-re-demo/tests/demo_negative_e2e_test.rs",
-      "test_fn": "a1_tampered_request_body_rejected_over_wire",
-      "notes": "Every demo_negative A* case runs over a fully VALID mTLS connection, yet the tampered/forged request object is still rejected \u2014 a valid transport channel never rescues a broken object signature. A1 is the canonical witness."
-    },
-    {
-      "property": "transport: untrusted server cert refused by the client in the demo end-to-end path",
-      "bazel_target": "//mcp-re-demo:demo_transport_e2e_test",
-      "source": "mcp-re-demo/tests/demo_transport_e2e_test.rs",
-      "test_fn": "t5_untrusted_server_cert_refused_by_client",
-      "notes": "demo_transport T5. End-to-end echo of the server-auth property: the demo host client refuses an untrusted proxy server cert."
-    },
-    {
-      "property": "admin tool denied before dispatch, end-to-end (denied call never forwarded to the persistent inner)",
-      "bazel_target": "//mcp-re-demo:demo_e2e_persistent_test",
-      "source": "mcp-re-demo/tests/demo_e2e_persistent_test.rs",
-      "test_fn": "persistent_multi_call_multi_process_mtls",
-      "notes": "demo_e2e_persistent. The admin reset_items call (no grant) is denied with mcp-re.authorization_scope_denied; the inner's own received-log (an INDEPENDENT signal) shows it was never forwarded."
-    },
-    {
-      "property": "persistent inner reused: one spawn, multiple dispatches (single process serves N calls)",
-      "bazel_target": "//mcp-re-stdio-bridge:persistent_inner_hardening_test",
-      "source": "mcp-re-stdio-bridge/tests/persistent_inner_hardening_test.rs",
-      "test_fn": "n_dispatches_over_one_persistent_inner_process",
-      "notes": "ADR-MCPRE-051 Phase B. N requests are served over ONE long-lived PersistentSubprocessInner process (one spawn, many dispatches), driven directly through the InnerServer seam in the out-of-TCB bridge crate where the subprocess surface now lives. Relocated from the retired proxy-owned persistent_inner_test."
-    },
-    {
-      "property": "demo server received-log lists ONLY calls the inner actually served (independent oracle)",
-      "bazel_target": "//mcp-re-demo-server:received_log_test",
-      "source": "mcp-re-demo-server/tests/received_log_test.rs",
-      "test_fn": "received_log_omits_unknown_tool_calls_that_were_not_executed",
-      "notes": "Validates the received-log oracle itself: it records only executed calls, so 'denied never reached' assertions built on it are sound."
-    },
-    {
       "property": "caller-supplied .verified is stripped and replaced even when it is part of the signed payload (in-process)",
       "bazel_target": "//mcp-re-proxy:proxy_test",
       "source": "mcp-re-proxy/tests/proxy_test.rs",
       "test_fn": "caller_supplied_verified_context_is_stripped_even_when_signed",
       "notes": "In-process unit witness of the strip/replace property: a signed-in .verified block is still stripped before forwarding."
-    },
-    {
-      "property": "env-keysource fail-closed: production binary refuses --key-source env without --allow-env-keysource (no listener bound)",
-      "bazel_target": "//mcp-re-demo:demo_posture_e2e_test",
-      "source": "mcp-re-demo/tests/demo_posture_e2e_test.rs",
-      "test_fn": "c1_env_keysource_without_opt_in_fails_closed_no_listener",
-      "notes": "P6.6B C1. The production CLI exits non-zero and binds NO listener when env key material is offered without the explicit opt-in flag (parse-time gate)."
-    },
-    {
-      "property": "env-keysource compile-time gate (MCPS-076): production binary fails closed on --key-source env EVEN WITH --allow-env-keysource (EnvKeySource not compiled)",
-      "bazel_target": "//mcp-re-demo:demo_posture_e2e_test",
-      "source": "mcp-re-demo/tests/demo_posture_e2e_test.rs",
-      "test_fn": "c1_env_keysource_fails_closed_even_with_opt_in_in_production_build",
-      "notes": "MCPS-076 (audit gap G-3): EnvKeySource is gated behind the non-default dev_env_key_source feature, so the production binary refuses env key material at construction even with the runtime opt-in; the diagnostic names the required feature rebuild."
     },
     {
       "property": "env key source loads + signs (MCPS-076): dev-feature build reads the seed and signs correctly WITHOUT mutating the process environment (issue #25)",
@@ -512,10 +400,52 @@
       "source": "mcp-re-proxy/src/cli.rs",
       "test_fn": "strict_rejects_reverse_proxy_identity_header_ingress",
       "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The forwarded trusted-ingress identity header (Tier 2) is spoofable by any peer that can reach the socket; strict refuses it. Raw forwarded-identity headers remain forbidden under strict. GREEN-OFFLINE."
+    },
+    {
+      "property": "request object signature verified; tampered request body rejected over HTTP",
+      "bazel_target": "//mcp-re-conformance:http_harness_test",
+      "source": "mcp-re-conformance/tests/http_harness_test.rs",
+      "test_fn": "tampered_request_over_http_is_rejected",
+      "notes": "Over-the-wire message authenticity (HTTP-profile only, replacing the retired stdio demo-e2e A1). A mutated signed body breaks the request-object signature; the HTTP harness rejects it with mcp-re.invalid_signature. object==http parity is drift-guarded by object_suite_test + http_and_object_agree_for_all_shared_request_vectors."
+    },
+    {
+      "property": "valid transport identity does NOT rescue an invalid request signature (transport != authn of the object)",
+      "bazel_target": "//mcp-re-proxy:proxy_transport_test",
+      "source": "mcp-re-proxy/tests/proxy_transport_test.rs",
+      "test_fn": "valid_identity_does_not_rescue_a_tampered_signature",
+      "notes": "A fully valid bound transport identity never rescues a tampered request object: the object signature is verified independently and fails closed before dispatch."
+    },
+    {
+      "property": "freshness: expired request rejected over HTTP",
+      "bazel_target": "//mcp-re-conformance:http_harness_test",
+      "source": "mcp-re-conformance/tests/http_harness_test.rs",
+      "test_fn": "expired_request_over_http_is_rejected",
+      "notes": "Over-the-wire freshness (HTTP-profile only, replacing the retired stdio demo-e2e A4). A request whose signed expiry is in the past is rejected with mcp-re.expired_request."
+    },
+    {
+      "property": "freshness + replay rejected over HTTP on a second submission (replay across submissions)",
+      "bazel_target": "//mcp-re-conformance:http_harness_test",
+      "source": "mcp-re-conformance/tests/http_harness_test.rs",
+      "test_fn": "replayed_request_over_http_is_rejected_on_second_submission",
+      "notes": "Over-the-wire replay resistance (HTTP-profile only, replacing the retired stdio demo-e2e A3). The first signed request is accepted; the identical bytes replayed are rejected with mcp-re.replay_detected. Cross-node/durable replay strength is deployment-dependent (redis_replay_e2e_test / fleet_replay_e2e_test, \u00a7B Axis 1)."
+    },
+    {
+      "property": "transport-binding EXACT: the verified transport identity must equal the request signer (mismatch denied before dispatch)",
+      "bazel_target": "//mcp-re-proxy:proxy_transport_test",
+      "source": "mcp-re-proxy/tests/proxy_transport_test.rs",
+      "test_fn": "mismatched_identity_is_denied_before_dispatch",
+      "notes": "Ingress binding EXACT (replacing the retired stdio demo_transport T3): a verified transport identity that does not equal the request signer is denied with mcp-re.transport_binding_failed before the inner is reached. The x5t#S256 channel binding of the RFC 9421 signer to the presented cert is additionally proven by //mcp-re-proxy:mtls_transport_binding_test."
+    },
+    {
+      "property": "response bound to its originating request hash; a response bound to the WRONG request is rejected over HTTP",
+      "bazel_target": "//mcp-re-conformance:http_harness_test",
+      "source": "mcp-re-conformance/tests/http_harness_test.rs",
+      "test_fn": "signed_response_bound_to_wrong_request_is_rejected_over_http",
+      "notes": "Over-the-wire response binding (HTTP-profile only, replacing the retired stdio demo-e2e A9/A10). A signed response verified against the wrong request hash fails with mcp-re.response_hash_mismatch; the HostSession stored-hash correlation is unit-proven by host_session_test."
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 73
+    "entries": 63
   }
 }

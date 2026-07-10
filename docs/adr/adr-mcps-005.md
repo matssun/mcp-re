@@ -2,9 +2,16 @@
 
 # ADR-MCPS-005: JCS-Safe JSON Value Domain with Fail-Closed Canonicalization
 
+> **DEPRECATED (native / object profile).** JCS canonicalization belongs to the
+> native/object profile, which is **deprecated** as of ADR-MCPRE-050 — not a
+> security mechanism and not an alternative carrier. The one carrier, the HTTP
+> profile, has no JSON canonicalization (RFC 9421 signature base + RFC 9530
+> Content-Digest). Do not build new evidence on this. See
+> [`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md).
+
 ## Status
 
-Accepted
+Accepted (historical; native/object profile is DEPRECATED — see note above)
 
 ## Context
 

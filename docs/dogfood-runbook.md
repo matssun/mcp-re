@@ -1,19 +1,18 @@
 # MCP-RE Dogfood Runbook — wrapping the real `intelli_code_mcp` server
 
-> **⚠ Superseded serving model (ADR-MCPRE-051 / MCPRE-118).** This runbook was
-> written for the pre-ADR-051 architecture in which the **proxy launched and
-> env-minimized the inner stdio subprocess** (`--inner-command`, `--inner-env*`,
-> `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer exist on the
-> proxy**: the PEP's inner plane is now stateless Streamable-HTTP
-> (`--inner-http-url`), and the entire subprocess/env/sandbox surface has been
-> relocated **out of the TCB** into the `mcp-re-stdio-bridge` adapter. To dogfood a
-> stdio server today, front it with the bridge and point the proxy at it — see the
-> rewritten [Sidecar Deployment Guide](sidecar-deployment-guide.md#wrapping-a-stdio-server-with-mcp-re-stdio-bridge).
-> The env-minimization sections (§2.2) and several of the 12 checks below exercise
-> a proxy surface that no longer exists; a bridge-oriented rewrite of this runbook
-> is a tracked follow-up (part of MCPRE-123 docs). The security *intent* (verify
-> before dispatch, sign responses, minimize the child's environment) is unchanged —
-> only the component that owns the child moved.
+> **⚠ Superseded serving model — stdio is OUT OF SCOPE for MCP-RE (2026-07-10).**
+> This runbook was written for the pre-ADR-051 architecture in which the **proxy
+> launched and env-minimized an inner stdio subprocess** (`--inner-command`,
+> `--inner-env*`, `--inner-rlimit-*`, `--inherit-env`). Those flags **no longer
+> exist**, and MCP-RE no longer owns any stdio serving/inner/bridge at all: the
+> PEP's inner plane is stateless Streamable-HTTP (`--inner-http-url`). To protect a
+> stdio-only MCP server today, front it with an **external** plain-MCP adapter
+> (e.g. FastMCP's stdio↔HTTP proxy) that exposes HTTP, and point the proxy's
+> `--inner-http-url` at that adapter — MCP-RE talks HTTP to it. The parts of this
+> runbook that drive an in-proxy stdio child (§2.2 env-minimization and several of
+> the 12 checks) exercise a surface that no longer exists; **this runbook is
+> pending an HTTP-profile rewrite.** The security *intent* (verify before dispatch,
+> sign responses) is unchanged — only the transport is HTTP-only now.
 
 > **Note for public-repo readers.** This runbook documents an internal dogfood
 > exercise: wrapping the author's private `intelli_code_mcp` server (not present
@@ -178,8 +177,10 @@ durable replay cache, env minimization, an explicit working dir, stderr caps, an
 rlimits, and wraps the real `intelli_code_mcp` inner.
 
 ```bash
+# --bind port 8600 is the mcp_re_proxy port registered in config/ports.toml
+# (the repo's reserved 8600-8699 band — the single source of truth for ports).
 bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
-  --bind 127.0.0.1:8443 \
+  --bind 127.0.0.1:8600 \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
   --server-key-id server-key-1 \
@@ -294,7 +295,7 @@ the host verifies. Record each in the §4 template.
 
 | # | Check | How to exercise + observe | Pass criterion |
 | --- | --- | --- | --- |
-| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcp-re-proxy: listening on 127.0.0.1:8443 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcp_re_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
+| 1 | **Inner launched via production mechanism** | Start the proxy from §2.1. Watch its startup stderr: `mcp-re-proxy: listening on 127.0.0.1:8600 (PEP; inner = [...])` and an `inner_spawned` lifecycle event on the first request. | The inner is the real `intelli_code_mcp` `mcp_server`, spawned by `mcp_re_proxy_cli` via `SubprocessInner` (per-request spawn), not started by hand. |
 | 2 | **`bazel run` / built inner starts under env-minimization (allowlist, not disable)** | Use the §2.2 allowlist (e.g. `--inner-env-allow PATH`) with the **default** `--inherit-env false`. Send a request; the inner must start and answer. | The inner starts and produces a valid protocol frame **with** minimization on and **without** `--inherit-env true`. Record the exact allowlist used. |
 | 3 | **Explicit working dir** | Pass `--inner-working-dir "$INNERWD"`. Read the startup line `inner working dir = $INNERWD (controlled start dir ...)`. | The effective working dir is the explicit `$INNERWD`, never silently the proxy's cwd. (A bogus dir must fail startup — optional negative spot-check.) |
 | 4 | **Required env allowlisted, not inherited** | With `--inherit-env false`, confirm the inner sees **only** the allowlisted vars. Spot-check: put a secret-looking var in the proxy env (as an env KeySource would) and confirm the inner cannot see it. | The inner runs with only the §2.2 allowlist; non-allowlisted proxy vars (incl. any secret) are **not** visible to the inner. |

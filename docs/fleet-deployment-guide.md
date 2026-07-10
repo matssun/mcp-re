@@ -54,18 +54,14 @@ helm install my-fleet deploy/helm/mcp-re-proxy \
   --set revocation.tier=push:60 \
   --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
   --set tls.secretName=mcp-re-proxy-material \
-  --set-json 'inner.httpUrls=["http://inner-mcp.default.svc.cluster.local:8080/mcp"]' \
-  --set inner.stdioBridge.enabled=false
+  --set-json 'inner.httpUrls=["http://inner-mcp.default.svc.cluster.local:8080/mcp"]'
 ```
 
-To wrap a **stdio-only** inner server instead of a native HTTP backend, enable the
-out-of-TCB `mcp-re-stdio-bridge` sidecar (ADR-MCPRE-051 §3) and give it the
-server command:
-
-```sh
-  --set inner.stdioBridge.enabled=true \
-  --set-json 'inner.stdioBridge.command=["/usr/local/bin/your-mcp-server"]'
-```
+MCP-RE is HTTP-profile only: the inner plane is one or more Streamable-HTTP MCP
+backends (`inner.httpUrls`). A **stdio-only** inner server is out of scope for
+MCP-RE — front it with an EXTERNAL plain-MCP adapter (e.g. FastMCP's stdio↔HTTP
+proxy) that exposes HTTP, run that adapter as your own sidecar/deployment, and
+point `inner.httpUrls` at it.
 
 The chart renders `--strict --fleet` by default and includes a **fail-closed
 guardrail**: `helm template`/`install` errors out if `fleet=true` is paired with
@@ -149,8 +145,9 @@ mode, MCPRE-118). Set it via the chart's `service.sessionAffinity`:
 - `None` (default) — any replica may serve any request; plain round-robin. This is
   correct for a stateless HTTP inner backend.
 - `ClientIP` — the Service pins a client to one replica. Use only when the inner
-  **backend** you front is itself session-stateful and has no stickiness of its
-  own (e.g. a `persistent`-mode `mcp-re-stdio-bridge` wrapping a stateful server).
+  **HTTP backend** you front is itself session-stateful and has no stickiness of
+  its own (e.g. an external stateful MCP server, or the external plain-MCP adapter
+  fronting one).
 
 The MCP-RE authenticity checks are identical on every replica either way; affinity
 is only about inner-session continuity. MRT continuations are replica-independent

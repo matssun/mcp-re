@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   CorrelationStore,
   McpReHttpTransport,
-  McpReTransport,
   Signer,
   SignerPolicy,
   TrustResolver,
@@ -20,7 +19,6 @@ import {
   type MrtStore,
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, SIGN_VECTOR, scenario } from "./fixtures.js";
-import { pushableStream } from "./helpers.js";
 
 const REQUEST_META_KEY = "se.syncom/mcp-re.request";
 const REQ = SIGN_VECTOR.inputs;
@@ -174,39 +172,6 @@ describe("fail-closed boundaries", () => {
     const out = verifyInbound(push, config(), new CorrelationStore(), { nowUnix: NOW });
     expect(out.kind).toBe("reject");
     expect(out.reason).toBe("mcp-re.missing_envelope");
-  });
-});
-
-describe("async transport drives the round trip", () => {
-  it("reader records, writer binds (shared MRT state)", async () => {
-    const sent: Buffer[] = [];
-    const byteSend = async (b: Buffer): Promise<void> => {
-      sent.push(b);
-    };
-    const lines = pushableStream();
-    const corr = new CorrelationStore();
-    registerFirst(corr);
-    const transport = new McpReTransport(byteSend, lines.iterable, config(), {
-      correlation: corr,
-      clock: () => NOW + 1,
-      nonceFactory: () => "asyncanswernonce1",
-    });
-    const elicited = new Promise<any>((resolve) => {
-      transport.onmessage = resolve;
-    });
-    await transport.start();
-    lines.push(inputRequiredBytes());
-    const elicit = await elicited;
-    expect(elicit.result.resultType).toBe("inputRequired");
-
-    await transport.send(answer());
-    lines.close();
-    await transport.close();
-
-    expect(sent.length).toBeGreaterThan(0);
-    const cont = envelope(sent[sent.length - 1].subarray(0, sent[sent.length - 1].length - 1)).continuation;
-    expect(cont.previous_request_hash).toBe(H1);
-    expect(cont.input_required_response_hash).toBe(irrResponseHash());
   });
 });
 

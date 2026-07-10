@@ -301,6 +301,24 @@ impl ClientProxy {
             EnforcementDecision::FailClosed(err) => Err(ProxyError::FailedClosed(err)),
         }
     }
+
+    /// Extract a stored multi-round-trip continuation by its server `requestState`,
+    /// for OUT-OF-PROCESS persistence (open the MRT against one replica, answer it
+    /// against another). Removes it — a continuation is single-use, exactly as the
+    /// in-process answer leg consumes it. Returns `None` if no continuation is held
+    /// for that `requestState`.
+    #[must_use]
+    pub fn take_continuation(&mut self, request_state: &str) -> Option<Continuation> {
+        self.continuations.remove(request_state)
+    }
+
+    /// Inject a continuation retained from a prior process under its server
+    /// `requestState`, so this proxy's answer leg — which echoes that `requestState`
+    /// alongside its `inputResponses` — binds it exactly as if the opening leg had
+    /// run in-process. The counterpart to [`Self::take_continuation`].
+    pub fn insert_continuation(&mut self, request_state: String, continuation: Continuation) {
+        self.continuations.insert(request_state, continuation);
+    }
 }
 
 /// Extract the authorization digest value from a binding (for correlation state).

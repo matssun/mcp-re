@@ -56,8 +56,29 @@ maintainable as the project evolves.
 | [ADR-MCPS-048](adr-mcps-048.md) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated (Accepted) |
 | [ADR-MCPS-049](adr-mcps-049.md) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence (Accepted, v0.10.1) |
 | [ADR-MCPRE-050](adr-mcpre-050.md) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports (Accepted) |
-| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Proposed) |
-| [ADR-MCPRE-052](adr-mcpre-052.md) | Delegated Signing-Key Attestation — Wire Evidence Format, Verifier Trust Chain, Rotation, Revocation, and Audit (Proposed) |
+| [ADR-MCPRE-051](adr-mcpre-051.md) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody (Accepted 2026-07-09; §7 SLO capacity/scaling numbers MEASURED on real GKE hardware and DECLARED in v0.11 — e2/c3-standard-8, gate-enforced, MCPRE-110) |
+| [ADR-MCPRE-052](adr-mcpre-052.md) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence (Accepted) |
+
+## Active vs Legacy
+
+The current MCP-RE worldview is frozen in
+[`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md)
+and summarized in [`docs/CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md).
+In short:
+
+- **Active production evidence profile:** ADR-MCPRE-050 (RFC 9421 + RFC 9530 HTTP
+  profile — the one carrier), ADR-MCPRE-051 (serving architecture), ADR-MCPRE-052
+  (delegated signing via a JOSE/JWS credential in the HTTP evidence), and later
+  `ADR-MCPRE-*` records.
+- **Deprecated:** the Native JCS / object profile — ADR-MCPS-004
+  (Ed25519-over-JCS), ADR-MCPS-005 (JCS canonicalization), and the draft-01/02
+  native-envelope material. These are **historical**. The profile is deprecated:
+  not a security mechanism, not an alternative carrier, not a fallback. It MUST
+  NOT be the foundation for new evidence, delegated signing, runtime profiles,
+  SEP/IG proposals, or production design.
+
+Do not read the deprecated `ADR-MCPS-*` JCS records as current production
+architecture, and do not treat the native profile as a second security carrier.
 
 ## Provenance
 

@@ -7,6 +7,15 @@ This document **states the current rule**. It does **not** restate the rationale
 
 Where this spec and any older planning brief disagree, **this spec and the cited ADRs win**. The original planning brief (`documents/mcp-re/MCP-RE Project Planning Brief.md`) is BACKGROUND ONLY and contains stale field names (`actor`/`capability_hash`/`server_actor`/`trust_label`) that MUST NOT be copied.
 
+> **Profile status (ADR-MCPRE-050).** This spec governs the MCP-RE **native /
+> object profile** (JCS canonicalization, `_meta` envelope). That profile is
+> **DEPRECATED** — it is not a security mechanism, not an alternative carrier,
+> and not a fallback. The one security carrier is the RFC 9421 + RFC 9530 HTTP
+> profile (ADR-MCPRE-050, `mcp-re-http-profile`). This spec is retained as
+> frozen historical/regression reference only; it MUST NOT be the foundation for
+> new evidence, delegated signing, or production design. See
+> [`../design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md).
+
 ## ADR index
 
 The decisions behind this spec are recorded as ADRs:

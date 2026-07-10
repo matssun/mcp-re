@@ -61,25 +61,9 @@ from collections import Counter
 # unit under a hand-chosen target name (e.g. `mcp_re_proxy_cli`, `proxy_unit_test`).
 # Adopting gazelle's name would duplicate, not add coverage.
 ALLOW_NAMING_COLLISION = {
-    "mcp-re-client-proxy-cli",       # == :mcp_re_client_proxy_cli (bin)
-    "mcp-re-client-proxy-cli_test",  # == crate unit test of the cli
     "mcp-re-conformance",            # == conformance lib/bin, hand-named
-    "mcp-re-stdio-server",           # == :mcp_re_stdio_server (bin)
-    "mcp-re-demo-fileserver",        # == hand-named demo bin
-    "mcp-re-demo-server",            # == hand-named demo bin
     "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
-    "mcp-re-stdio-bridge",           # == :mcp_re_stdio_bridge (bin, hand-named)
-    # The bridge is a lib+bin crate (MCPRE-118 C3): the library owns the relocated
-    # subprocess/sandbox surface, the bin is the thin HTTP front end. gazelle names
-    # a single crate-unit-test after the crate_name; the repo hand-splits it into
-    # :mcp_re_stdio_bridge_lib_test + :mcp_re_stdio_bridge_bin_test (so the lib's
-    # security-critical machinery is exercised on its own). Adopting gazelle's name
-    # would duplicate, not add coverage.
-    "mcp_re_stdio_bridge_test",      # == :mcp_re_stdio_bridge_lib_test (lib crate_name)
-    "mcp-re-stdio-bridge_test",      # == :mcp_re_stdio_bridge_bin_test (bin [[bin]] name)
-    "mcp_re_stdio_bridge_lib",       # == :mcp_re_stdio_bridge_lib (hand-named library)
-    "echo-inner",                  # == hand-named inner echo bin
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }
 
@@ -132,7 +116,13 @@ ALLOW_CARGO_ONLY_FIXTURE = {
 # and then sdk_driver_matrix (MCPS-77) are all real Bazel targets;
 # no_tracked_secrets moved to ALLOW_NON_HERMETIC as a permanent cargo-only guard.)
 ALLOW_TRACKED_DRIFT = {
-    # name: "issue — why it is not yet a Bazel target"
+    # The HTTP-profile proof-front EXAMPLES (not tests): a runnable RFC 9421 client
+    # + proxy pair that drive a real external FastMCP Streamable-HTTP backend over
+    # the wire. They cannot be a hermetic Bazel test (they need the external FastMCP
+    # process + a bound port); they run via tools/http_profile_proof.sh. Will be
+    # Bazel-wired if/when the HTTP persona-ladder walkthrough is made hermetic.
+    "http_profile_client": "MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic",
+    "http_profile_proxy": "MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic",
 }
 
 ALLOWLIST = (

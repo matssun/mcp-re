@@ -5,13 +5,12 @@
 #
 # Proves the public demo entry points actually work, end to end, on a clean
 # checkout — so a stale binary, a moved fixture, or a broken path-resolution
-# fallback is caught here rather than by an evaluator. It asserts:
+# fallback is caught here rather than by an evaluator. MCP-RE is HTTP-profile only;
+# the local demo runs the hermetic HTTP-profile end-to-end proofs. It asserts:
 #
-#   1. ./scripts/demo-local.sh exits 0 and prints the completion line;
-#   2. demo_positive's authorized call round-trips and the response verifies;
-#   3. demo_negative surfaces ALL ten fail-closed cases, each with its frozen
-#      mcp-re.* reason code (and the caller-verified strip/replace case);
-#   4. ./scripts/demo-gcp-kms.sh fails closed (exit 2) when PROJECT_ID is unset,
+#   1. ./scripts/demo-local.sh exits 0 and prints the completion line (the HTTP
+#      full_stack_test + client mTLS proofs pass — no stdio, no external infra);
+#   2. ./scripts/demo-gcp-kms.sh fails closed (exit 2) when PROJECT_ID is unset,
 #      WITHOUT contacting any cloud — the guard is testable offline.
 #
 # No cloud credentials are required. Run from anywhere:
@@ -25,22 +24,7 @@ cd "$REPO_ROOT"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok: $*"; }
 
-# The frozen mcp-re.* reason codes the negative demo must surface, plus the
-# non-denial strip/replace marker. Kept in sync with demo_negative.rs by this
-# test failing loudly if any goes missing.
-EXPECT=(
-  "mcp-re.invalid_signature"
-  "mcp-re.replay_detected"
-  "mcp-re.expired_request"
-  "mcp-re.invalid_audience"
-  "mcp-re.missing_envelope"
-  "stripped+replaced"
-  "mcp-re.authorization_scope_denied"
-  "mcp-re.response_hash_mismatch"
-  "mcp-re.response_sig_invalid"
-)
-
-echo "== 1. ./scripts/demo-local.sh (build + positive + negative) =="
+echo "== 1. ./scripts/demo-local.sh (HTTP-profile end-to-end) =="
 # Capture combined output; -e would abort on the script's exit code, so guard it.
 set +e
 LOCAL_OUT="$(./scripts/demo-local.sh 2>&1)"
@@ -55,23 +39,6 @@ pass "demo-local.sh exited 0"
 grep -q "OK: MCP-RE local demo completed" <<<"$LOCAL_OUT" \
   || fail "missing final completion line"
 pass "completion line present"
-
-# Positive path must round-trip and verify.
-grep -q "OK: authorized list_files round-tripped" <<<"$LOCAL_OUT" \
-  || fail "positive path did not round-trip"
-grep -q "response-verified server_signer=" <<<"$LOCAL_OUT" \
-  || fail "positive response was not verified"
-pass "positive path round-tripped and response verified"
-
-# Negative path must surface every expected security property.
-grep -q "OK: all 10 fail-closed cases rejected" <<<"$LOCAL_OUT" \
-  || fail "negative path did not confirm all 10 cases"
-for code in "${EXPECT[@]}"; do
-  grep -qF "$code" <<<"$LOCAL_OUT" || fail "negative output missing: $code"
-done
-PASS_COUNT="$(grep -c '  PASS ' <<<"$LOCAL_OUT" || true)"
-[[ "$PASS_COUNT" -eq 10 ]] || fail "expected 10 PASS lines, saw $PASS_COUNT"
-pass "all 10 fail-closed cases surfaced with frozen reason codes"
 
 echo
 echo "== 2. ./scripts/demo-gcp-kms.sh guard (offline) =="

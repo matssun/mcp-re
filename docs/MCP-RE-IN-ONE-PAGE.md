@@ -17,7 +17,7 @@ reaches the inner MCP server. The response is signed and bound back to the
 request hash, so the host can prove the answer it received belongs to the
 question it asked.
 
-It is built to wrap ordinary MCP stdio servers without modifying them: the
+It is built to wrap ordinary Streamable-HTTP MCP servers without modifying them (MCP-RE is HTTP-profile only; a stdio-only server is fronted by an external plain-MCP adapter such as FastMCP): the
 sidecar terminates mTLS, verifies, strips any caller-supplied "verified context,"
 injects its own sidecar-owned context, and forwards to a long-lived inner
 process. Denied requests never reach that process.

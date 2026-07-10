@@ -245,18 +245,6 @@ nt_rust_binary(
     ] + _PROXY_ASYNC_CRATES,
 )
 
-# Phase 6.1: a plain (MCP-RE-unaware) inner MCP echo server used as the inner
-# subprocess in the full-stack CLI smoke test. Echoes back params._meta so the
-# test can prove the proxy injected a fresh verified-context block.
-nt_rust_binary(
-    name = "echo_inner",
-    srcs = ["tests/fixtures/echo_inner.rs"],
-    edition = "2021",
-    deps = [
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # MCPS-015/016: server-side sidecar library. Pure — depends only on the
 # verification crate plus serde_json. Transport is layered on by the conformance
 # harnesses (MCPS-017); the stdio-first binary entry arrives there too.
@@ -638,6 +626,28 @@ nt_rust_test(
         ":mcp_re_proxy",
         "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:serde_json",
+    ],
+)
+
+# ADR-MCPRE-050 mTLS transport binding: the RFC 9421 signer bound to the presented
+# TLS client cert (RFC 8705 x5t#S256), proven over a REAL mutual-TLS handshake —
+# the production server config + the mcp-re-transport client presenting a cert; the
+# negotiated peer leaf DER is fed into verify_request_full. Positive (own channel),
+# relayed-onto-a-different-channel, and plain-HTTP-no-cert all fail closed.
+nt_rust_test(
+    name = "mtls_transport_binding_test",
+    srcs = ["tests/mtls_transport_binding_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
     ],
 )
 

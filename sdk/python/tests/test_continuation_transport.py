@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 import mcp_re_sdk
-from mcp_re_sdk.transport import McpReConfig, McpReTransport, sign_outbound, verify_inbound
+from mcp_re_sdk.transport import McpReConfig, sign_outbound, verify_inbound
 
 anyio = pytest.importorskip("anyio")
 pytest.importorskip("mcp.types")
@@ -240,42 +240,6 @@ def test_server_initiated_elicitation_request_still_fails_closed():
     out = verify_inbound(push, _config(), mcp_re_sdk.CorrelationStore(), now_unix=NOW)
     assert out.kind == "reject"
     assert out.reason == "mcp-re.missing_envelope"
-
-
-# --- async end to end: reader records, writer binds (shared self._mrt) -------
-
-
-def test_async_transport_drives_elicitation_round_trip():
-    async def scenario():
-        sent = []
-
-        async def byte_send(b):
-            sent.append(b)
-
-        send_lines, recv_lines = anyio.create_memory_object_stream(10)
-        corr = mcp_re_sdk.CorrelationStore()
-        _register_first(corr)
-        transport = McpReTransport(
-            byte_send, recv_lines, _config(), corr,
-            clock=lambda: NOW + 1, nonce_factory=lambda: "asyncanswernonce1",
-        )
-        async with transport as (read_stream, write_stream):
-            # Server elicits.
-            await send_lines.send(_input_required_bytes())
-            elicit = await read_stream.receive()
-            # Client answers; the writer must pick up the recorded MRT state.
-            await write_stream.send(_answer())
-            await anyio.sleep(0.05)
-        return elicit, sent
-
-    elicit, sent = anyio.run(scenario)
-    # `elicit` is the SessionMessage the reader delivered; `.message` is its JSONRPCMessage.
-    dumped = json.loads(elicit.message.model_dump_json(by_alias=True, exclude_none=True))
-    assert dumped["result"]["resultType"] == "inputRequired"
-    assert sent, "the answer leg must have been signed to the wire"
-    env = json.loads(sent[-1].rstrip(b"\n"))["params"]["_meta"][REQUEST_META_KEY]
-    assert env["continuation"]["previous_request_hash"] == H1
-    assert env["continuation"]["input_required_response_hash"] == _irr_response_hash()
 
 
 # --- request/response (mTLS/HTTP) transport: same MRT threading, one POST per leg -

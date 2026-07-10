@@ -2,9 +2,17 @@
 
 # ADR-MCPS-004: Ed25519-over-JCS Signing Rule for the Whole JSON-RPC Object
 
+> **DEPRECATED (native / object profile).** This decision governs the native
+> JCS/object profile, which is **deprecated** as of ADR-MCPRE-050 — not a
+> security mechanism, not an alternative carrier, and not a fallback. It MUST NOT
+> be the foundation for new evidence, delegated signing, runtime profiles, SEP/IG
+> proposals, or production design. The one carrier is ADR-MCPRE-050 (RFC 9421 +
+> RFC 9530). See
+> [`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md).
+
 ## Status
 
-Accepted
+Accepted (historical; native/object profile is DEPRECATED — see note above)
 
 ## Context
 

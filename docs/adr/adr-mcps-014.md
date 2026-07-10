@@ -4,7 +4,11 @@
 
 ## Status
 
-Proposed
+Proposed. **§1 (blocking, thread-per-connection, no-async serving path) is
+SUPERSEDED by [ADR-MCPRE-051](adr-mcpre-051.md) (Accepted 2026-07-09)**, which
+replaces it with the per-core async data plane. The rest of this ADR (mTLS
+binding, the firewall refinement, the pure-core discipline) stands and is
+retained by ADR-MCPRE-051.
 
 ## Context
 
@@ -18,7 +22,7 @@ Object-level MCP-S signatures remain mandatory; `authorization_hash` still requi
 
 Phase 6 is implemented as **Rust-native transport hardening inside `mcps-proxy`**, with no dependency on Granian or any external TLS terminator.
 
-1. **TLS-terminating Streamable HTTP server, blocking, no async runtime.** A `std::net::TcpListener` + `rustls` (0.23, `ring` crypto provider) server connection, thread-per-connection, blocking IO. NO `tokio`/async — this mirrors the existing `std::net` conformance HTTP harness philosophy and keeps the isolated `crates_mcps` hub free of an async runtime.
+1. **TLS-terminating Streamable HTTP server, blocking, no async runtime.** A `std::net::TcpListener` + `rustls` (0.23, `ring` crypto provider) server connection, thread-per-connection, blocking IO. NO `tokio`/async — this mirrors the existing `std::net` conformance HTTP harness philosophy and keeps the isolated `crates_mcps` hub free of an async runtime. **[SUPERSEDED 2026-07-09 by [ADR-MCPRE-051](adr-mcpre-051.md): the serving path is now the per-core async (`tokio`/`hyper`/`tokio-rustls`) data plane; `mcp-re-core` stays pure. TLS binding + verified-identity extraction below are unchanged.]**
 
 2. **`TransportBindingProvider` abstraction; `RustlsDirectProvider` is the production target.** The provider terminates TLS, verifies the client certificate against a configured client-CA (rustls `WebPkiClientVerifier`), and extracts the **verified client identity** from the leaf certificate. `ReverseProxyMtlsProvider` (identity from a trusted header set by an upstream terminator) is a documented LATER integration option — NOT built in this phase.
 

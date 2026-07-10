@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-conformance"
-version = "0.10.1"
+version = "0.11.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -35,12 +35,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "mcp-re-conformance"
 path = "src/main.rs"
-
-# A documented stdio MCP-RE server (MCPS-012/017) used as a child process by the
-# stdio + acceptance conformance tests. In Bazel this is built as a separate
-# rust_binary and delivered to tests via runfiles; under Cargo we surface it as
-# a normal `[[bin]]` so the build.rs fallback can find it at
-# `target/<profile>/mcp-re-stdio-server` and the tests don't depend on Bazel.
-[[bin]]
-name = "mcp-re-stdio-server"
-path = "src/stdio_server_main.rs"

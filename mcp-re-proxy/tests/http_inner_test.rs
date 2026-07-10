@@ -399,3 +399,101 @@ fn ejected_backend_is_readmitted_after_cooldown_probe_succeeds() {
         assert_eq!(pool.ejected_backend_count(), 0, "a successful probe closes the breaker");
     });
 }
+
+// --- concurrency + pool-exhaustion backpressure (MCPRE-118, ADR-051 §3) -------
+
+#[test]
+fn concurrent_dispatches_are_in_flight_together_not_serialized() {
+    rt().block_on(async {
+        // One slow backend (300ms/req). Six dispatches issued concurrently must
+        // OVERLAP: a serial pipe would take ~1.8s; concurrent keep-alive/H2 in-flight
+        // finishes in ~one backend delay. This is the "no serial pipe" proof (#1).
+        let (addr, hits) = spawn_slow_counting_backend(Duration::from_millis(300), INNER_OK).await;
+        let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(5)).expect("pool");
+
+        let req = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#;
+        let start = std::time::Instant::now();
+        let (a, b, c, d, e, f) = tokio::join!(
+            pool.dispatch(req),
+            pool.dispatch(req),
+            pool.dispatch(req),
+            pool.dispatch(req),
+            pool.dispatch(req),
+            pool.dispatch(req),
+        );
+        let elapsed = start.elapsed();
+
+        for out in [&a, &b, &c, &d, &e, &f] {
+            assert_eq!(
+                out.as_slice(),
+                INNER_OK,
+                "every concurrent dispatch returns the inner response verbatim"
+            );
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 6, "all six requests reached the backend");
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "6×300ms dispatches took {elapsed:?}; concurrent in-flight must finish far below \
+             the ~1.8s serial time (no serial pipe)"
+        );
+    });
+}
+
+#[test]
+fn pool_exhaustion_fails_closed_immediately_without_queuing() {
+    rt().block_on(async {
+        // A backend that sleeps far longer than the test, so a dispatch that acquires
+        // an in-flight permit holds it. Cap concurrency at 2. Two dispatches occupy both
+        // permits; a third, attempted while they are in flight, must fail closed
+        // IMMEDIATELY — no queue, no wait, never reaching a backend (#2).
+        let (addr, hits) = spawn_slow_counting_backend(Duration::from_secs(30), INNER_OK).await;
+        let pool = HttpInnerPool::new(vec![uri_for(addr)], Duration::from_secs(60))
+            .expect("pool")
+            .with_max_in_flight(2);
+        assert_eq!(pool.max_in_flight(), 2);
+
+        let req = br#"{"jsonrpc":"2.0","id":1}"#;
+
+        // Two long-lived dispatches hold both permits.
+        let holders = async {
+            tokio::join!(pool.dispatch(req), pool.dispatch(req))
+        };
+        // Concurrently: once both permits are held, a third dispatch must be rejected
+        // fast and never touch a backend. Completing the prober ends the test; the
+        // holders are then dropped (no 30s wait).
+        let prober = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(
+                pool.in_flight_available(),
+                0,
+                "both in-flight permits must be held by the two long dispatches"
+            );
+            let start = std::time::Instant::now();
+            let out = pool.dispatch(req).await;
+            let took = start.elapsed();
+            assert!(
+                is_error(&out),
+                "a saturated pool must fail closed: {:?}",
+                String::from_utf8_lossy(&out)
+            );
+            assert!(
+                took < Duration::from_millis(100),
+                "fail-closed on saturation must be immediate, not queued: {took:?}"
+            );
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                2,
+                "the rejected dispatch must never reach a backend (2 holders only)"
+            );
+        };
+
+        tokio::select! {
+            _ = holders => unreachable!("holders sleep well past the prober"),
+            _ = prober => {}
+        }
+
+        // Permits are released once the holders are dropped: a fresh dispatch is
+        // admitted again (bounded, not permanently wedged).
+        assert_eq!(pool.in_flight_available(), 2, "permits are released after the holders drop");
+    });
+}

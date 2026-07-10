@@ -62,6 +62,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # JCS vocabulary firewall (D1 of the active-profile/legacy-quarantine note):
+      # forward-design docs must not frame a live "object profile + HTTP profile"
+      # world. Fast, python-only — fails before the slow build.
+      - name: JCS vocabulary firewall (deprecated-profile framing gate)
+        run: |
+          python3 scripts/jcs_vocabulary_gate.py --selftest
+          python3 scripts/jcs_vocabulary_gate.py
+
+      # Port-registry staleness gate: config/ports.toml is the single source of
+      # truth for every port this repo binds (reserved band 8600-8699). The Helm
+      # bindPort mirror must equal it and no registered port may fall outside the
+      # band. Fast, python-only — fails before the slow build.
+      - name: Port-registry gate (single-source ports, no drift)
+        run: python3 scripts/check_port_registry.py
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.
@@ -124,6 +139,23 @@ jobs:
       - name: Cross-verify (external → us) under the Rust verifier
         run: cargo test -p mcp-re-conformance --test rfc9421_cross_verification_test
 
+      # ADR-MCPRE-052 §9 (MCPRE-122): the same two-direction gate for the compact-
+      # JWS delegation credential, against an independent JOSE/EdDSA impl.
+      # Direction 1: our committed delegation credential verifies under
+      # python-cryptography and is byte-identical to its independent build.
+      - name: Cross-verify the delegation credential (ours → external)
+        run: python3 mcp-re-conformance/tools/jose_cross_verify.py
+
+      - name: External delegation vector is up to date
+        run: |
+          python3 mcp-re-conformance/tools/jose_cross_verify.py --emit-external-kat
+          git diff --exit-code mcp-re-conformance/tests/vectors/delegation-profile/external_delegation_kat.json
+
+      # Direction 2: the externally produced credential verifies under the Rust
+      # MCP-RE delegation verifier.
+      - name: Cross-verify delegation (external → us) under the Rust verifier
+        run: cargo test -p mcp-re-conformance --test delegation_cross_verification_test
+
   cargo-features:
     name: cargo test (feature-gated backends, 1.94.1)
     runs-on: ubuntu-latest
@@ -141,10 +173,9 @@ jobs:
         run: rustup show && rustc --version && cargo --version
 
       # Build the WHOLE workspace (not just -p mcp-re-proxy): the proxy's
-      # integration tests (persistent_inner_test, persistent_scope_test) spawn
-      # the cross-crate `mcp-re-demo-server` fixture binary, which cargo does NOT
-      # auto-build for another crate's integration tests. `--workspace` puts it
-      # (and the echo-inner fixture) in target/debug for mcp-re-test-paths to find.
+      # integration tests spawn the cross-crate `echo-inner` fixture binary, which
+      # cargo does NOT auto-build for another crate's integration tests.
+      # `--workspace` puts it in target/debug for mcp-re-test-paths to find.
       # `async_serve,cpstore_etcd` are included so the async serving-path tests and
       # the async etcd authoritative replay store (MCPRE-117) get per-PR compile
       # coverage here: the replay_race_harness_test async lanes compile, the in-memory
@@ -160,6 +191,34 @@ jobs:
         run: >-
           cargo test -p mcp-re-proxy
           --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
+
+      # ADR-MCPRE-051 §7 release gates as NAMED, attributable lanes (MCPRE-123).
+      # These targets also run inside the whole-suite step above; naming them makes
+      # each a required release gate whose failure is unambiguous. Fast (cached build).
+
+      # §4 — cross-core / cross-replica replay race: exactly one Fresh, N-1 Replay,
+      # zero Fresh when the store is Unavailable (fail-closed). (#314)
+      - name: Release gate — replay race
+        run: >-
+          cargo test -p mcp-re-proxy --features async_serve,cpstore_etcd,redis_replay
+          --test replay_race_harness_test
+
+      # §6 — bounded graceful drain: in-flight requests complete, zero abandoned,
+      # a stuck request cannot delay exit past the grace bound. (MCPRE-115)
+      - name: Release gate — bounded drain
+        run: cargo test -p mcp-re-proxy --features async_serve --test async_drain_test
+
+      # §3 — inner plane: concurrent in-flight (no serial pipe) + pool-exhaustion
+      # backpressure fails closed without queuing. (MCPRE-118)
+      - name: Release gate — inner-plane concurrency + backpressure
+        run: cargo test -p mcp-re-proxy --features async_serve --test http_inner_test
+
+      # §7 — SLO gate mechanism self-check (MCPRE-110/123). Proves the gate logic
+      # (correctness floors bite; declared capacity/scaling targets enforce; null
+      # targets skip). Representative capacity ENFORCEMENT runs on the declared
+      # hardware class per docs/bench/adr-051-slo-targets.md — the one HITL step.
+      - name: Release gate — SLO gate mechanism (self-test)
+        run: python3 scripts/slo_gate.py --selftest
 
   bazel:
     name: bazel semantic-drift gate + test parity

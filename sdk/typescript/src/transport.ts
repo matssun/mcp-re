@@ -11,8 +11,10 @@
  *
  * The security core is two synchronous, deterministic functions — {@link signOutbound}
  * (steps 1-4 of the proxy pipeline: sign + register correlation) and
- * {@link verifyInbound} (steps 5-9: correlate + verify + strip envelope). The
- * {@link McpReTransport} class is thin async glue that pumps those over a byte channel.
+ * {@link verifyInbound} (steps 5-9: correlate + verify + strip envelope). MCP-RE is
+ * HTTP-profile only, so the transport that drives these over the wire is
+ * {@link McpReHttpTransport} (one signed mTLS POST per `Client` request against the
+ * production `mcp-re-proxy`).
  */
 
 import * as core from "../native/binding.js";
@@ -24,9 +26,7 @@ import type {
   SignerPolicy,
   TrustResolver,
 } from "../native/binding.js";
-import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { randomBytes } from "node:crypto";
 
 /**
  * Raised/surfaced when an inbound response fails closed. Carries the frozen `mcp-re.*`
@@ -427,16 +427,6 @@ export function lastWireCode(exc: unknown): string {
   return idx >= 0 ? msg.slice(idx + 2) : msg;
 }
 
-/** A byte-channel sink the async transport pumps framed wire bytes into. */
-export type ByteSend = (bytes: Buffer) => Promise<void>;
-
-function defaultNonce(): string {
-  return randomBytes(16).toString("base64url");
-}
-function defaultClock(): number {
-  return Math.floor(Date.now() / 1000);
-}
-
 /** Hooks for injecting a deterministic clock / nonce (tests) into a transport. */
 export interface TransportHooks {
   clock?: () => number;
@@ -444,94 +434,3 @@ export interface TransportHooks {
   correlation?: CorrelationStore;
 }
 
-/**
- * Thin async glue implementing the MCP TypeScript SDK `Transport`: pumps
- * {@link signOutbound} / {@link verifyInbound} between a byte channel (the real wire)
- * and the `Client`'s `send` / `onmessage` callbacks.
- *
- * `byteSend` writes framed bytes to the wire; `byteLines` is an async iterator of
- * inbound raw lines (newline-delimited JSON, the MCP stdio framing). Inject these from
- * a subprocess (stdio) — or, in tests, from an in-memory pipe. A fail-closed correlated
- * response is delivered as a JSON-RPC error bound to the request id (so the awaiting
- * `Client` call rejects, not hangs); an uncorrelatable/server-initiated rejection is
- * surfaced via `onerror`.
- */
-export class McpReTransport implements Transport {
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  onmessage?: (message: JSONRPCMessage) => void;
-
-  private readonly byteSend: ByteSend;
-  private readonly byteLines: AsyncIterable<Buffer>;
-  private readonly config: McpReConfig;
-  private readonly correlation: CorrelationStore;
-  private readonly clock: () => number;
-  private readonly nonceFactory: () => string;
-  // ADR-MCPS-047 multi-round-trip state: requestState handle -> recorded continuation
-  // binding, shared between the reader (records it) and send (consumes it on the answer).
-  private readonly mrt: MrtStore = new Map();
-  private started = false;
-  private closed = false;
-
-  constructor(byteSend: ByteSend, byteLines: AsyncIterable<Buffer>, config: McpReConfig, hooks: TransportHooks = {}) {
-    this.byteSend = byteSend;
-    this.byteLines = byteLines;
-    this.config = config;
-    this.correlation = hooks.correlation ?? new core.CorrelationStore();
-    this.clock = hooks.clock ?? defaultClock;
-    this.nonceFactory = hooks.nonceFactory ?? defaultNonce;
-  }
-
-  async start(): Promise<void> {
-    if (this.started) throw new Error("McpReTransport already started");
-    this.started = true;
-    void this.readerLoop();
-  }
-
-  async send(message: JSONRPCMessage, _options?: TransportSendOptions): Promise<void> {
-    const now = this.clock();
-    const wire = signOutbound(message, this.config, this.correlation, {
-      nowUnix: now,
-      nonce: this.nonceFactory(),
-      expiresUnix: now + ttlSeconds(this.config),
-      mrt: this.mrt,
-    });
-    await this.byteSend(Buffer.concat([wire, Buffer.from("\n")]));
-  }
-
-  async close(): Promise<void> {
-    this.closed = true;
-    this.onclose?.();
-  }
-
-  private async readerLoop(): Promise<void> {
-    try {
-      for await (const line of this.byteLines) {
-        if (this.closed) break;
-        if (!line || line.length === 0) continue;
-        let outcome: InboundOutcome;
-        try {
-          outcome = verifyInbound(line, this.config, this.correlation, {
-            nowUnix: this.clock(),
-            mrt: this.mrt,
-          });
-        } catch {
-          // A single malformed line (bad JSON / non-UTF-8) must not tear down the whole
-          // reader — fail closed for THIS line and keep reading subsequent messages.
-          this.onerror?.(new McpReVerificationError("mcp-re.missing_envelope"));
-          continue;
-        }
-        if (outcome.kind === "accept" || outcome.kind === "passthrough") {
-          this.onmessage?.(outcome.message as JSONRPCMessage);
-        } else {
-          // Fail closed: surface via onerror. (For a request/response transport prefer
-          // McpReHttpTransport, which binds the reject to the request id so the call
-          // rejects.)
-          this.onerror?.(new McpReVerificationError(outcome.reason));
-        }
-      }
-    } catch (err) {
-      this.onerror?.(err instanceof Error ? err : new Error(String(err)));
-    }
-  }
-}

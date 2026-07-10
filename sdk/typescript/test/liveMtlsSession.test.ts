@@ -2,7 +2,9 @@
  * Live full-transport MCP-RE over mTLS (mirrors Python `test_e2e_mtls_session.py`).
  *
  * Drives the real {@link McpReHttpTransport} the production {@link connectMtlsHttp} builds,
- * against the REAL `mcp-re-proxy` fronting the REAL `mcp-re-demo-fileserver`. Two tests:
+ * against the REAL `mcp-re-proxy` fronting an HTTP inner MCP backend (MCP-RE is
+ * HTTP-profile only; the inner is reached over `--inner-http-url` — here a tiny in-process
+ * `node:http` server, `startInnerBackend`). Two tests:
  *
  *  1. a `read_file` call round-trips (one signed mTLS POST, verified server-signed result);
  *  2. an ADR-047 `delete_files` continuation: the server elicits an InputRequiredResult and
@@ -13,18 +15,18 @@
  *
  * Driven at the transport level (not through an MCP `Client`) because the elicitation
  * arrives as an InputRequiredResult *result*, which a `Client` delivers but cannot itself
- * continue — the application (here, the test) supplies the answer leg, as the four-hop
- * driver does. `initialize` is skipped: the proxy + stateless fileserver dispatch
- * `tools/call` directly, as the conformance matrix proves.
+ * continue — the application (here, the test) supplies the answer leg. `initialize` is
+ * skipped: the proxy + stateless inner dispatch `tools/call` directly.
  *
- * Needs cargo + the built binaries (skips cleanly otherwise):
- *   cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver
+ * Needs cargo + the built binary (skips cleanly otherwise):
+ *   cargo build -p mcp-re-proxy
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Server } from "node:http";
 import {
   McpReHttpTransport,
   Signer,
@@ -33,12 +35,12 @@ import {
   connectMtlsHttp,
   type McpReConfig,
 } from "../dist/index.js";
+import { FILE_TEXT, startInnerBackend } from "./innerBackend.js";
 
 const ROOT = resolve(__dirname, "..", "..", "..");
 const PROXY = join(ROOT, "target", "debug", "mcp-re-proxy");
-const FILESERVER = join(ROOT, "target", "debug", "mcp-re-demo-fileserver");
 const HAVE_CARGO = spawnSync("cargo", ["--version"]).status === 0;
-const RUNNABLE = existsSync(PROXY) && existsSync(FILESERVER) && HAVE_CARGO;
+const RUNNABLE = existsSync(PROXY) && HAVE_CARGO;
 
 // Deterministic DemoFixtures defaults (only the TLS certs vary per run).
 const SIGNER_SEED = Buffer.alloc(32, 1);
@@ -54,11 +56,10 @@ const ON_BEHALF_OF = "did:example:user-1";
 // four-hop PEP verifies the signature over the binding but enforces no scope, so any
 // self-consistent binding is accepted (the same value the driver signs with).
 const AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
-const FILE_TEXT = "hello from the inner fileserver\n";
 
 let proc: ChildProcess | undefined;
+let inner: Server | undefined;
 let outDir = "";
-let demoDir = "";
 let port = 0;
 
 function config(): McpReConfig {
@@ -112,8 +113,9 @@ const req = (id: string, params: Record<string, unknown>): any => ({
 beforeAll(async () => {
   if (!RUNNABLE) return;
   outDir = mkdtempSync(join(tmpdir(), "mcp_re_ts_sess_fx_"));
-  demoDir = mkdtempSync(join(tmpdir(), "mcp_re_ts_sess_root_"));
-  writeFileSync(join(demoDir, "greeting.txt"), FILE_TEXT);
+
+  const backend = await startInnerBackend();
+  inner = backend.server;
 
   const emit = spawnSync(
     "cargo",
@@ -132,17 +134,17 @@ beforeAll(async () => {
       "--tls-cert", join(outDir, "server_cert.pem"), "--tls-key", join(outDir, "server_key.pem"),
       "--client-ca", join(outDir, "client_ca.pem"), "--trust", join(outDir, "trust.json"),
       "--max-client-cert-lifetime", "175200h", "--transport-binding", "none",
-      "--inner-working-dir", demoDir, "--inner-command", FILESERVER, "--demo-root", demoDir,
+      "--inner-http-url", backend.url,
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
 
   port = await new Promise<number>((resolvePort, rejectPort) => {
-    const timer = setTimeout(() => rejectPort(new Error("mcp-re-proxy did not report a listening port")), 30000);
+    const timer = setTimeout(() => rejectPort(new Error("mcp-re-proxy did not report a serving address")), 30000);
     let buf = "";
     proc!.stderr!.on("data", (d: Buffer) => {
       buf += d.toString();
-      const m = buf.match(/listening on 127\.0\.0\.1:(\d+)/);
+      const m = buf.match(/async fleet serving on 127\.0\.0\.1:(\d+)/);
       if (m) {
         clearTimeout(timer);
         resolvePort(parseInt(m[1], 10));
@@ -157,8 +159,8 @@ beforeAll(async () => {
 
 afterAll(() => {
   proc?.kill();
+  inner?.close();
   if (outDir) rmSync(outDir, { recursive: true, force: true });
-  if (demoDir) rmSync(demoDir, { recursive: true, force: true });
 });
 
 describe.skipIf(!RUNNABLE)("live full-transport MCP-RE over mTLS", () => {

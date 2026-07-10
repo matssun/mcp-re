@@ -3,10 +3,14 @@
 Architecture (issue #199, ADR-MCPS-044 §SDK wrap-or-fork rule; Python first)::
 
     application code
-      -> mcp.ClientSession           (plain MCP; unaware of MCP-RE)
-      -> McpReTransport  (THIS SDK)   (signs outbound bytes, verifies inbound bytes)
-      -> mcp_re_sdk._core (PyO3)       (the AUDITED mcp-re-client-core logic, in Rust)
-      -> remote MCP-RE server / proxy
+      -> mcp.ClientSession               (plain MCP; unaware of MCP-RE)
+      -> McpReHttpTransport  (THIS SDK)   (signs outbound bytes, verifies inbound bytes)
+      -> mcp_re_sdk._core (PyO3)           (the AUDITED mcp-re-client-core logic, in Rust)
+      -> mcp-re-proxy (HTTP profile)       (one signed mTLS POST per request)
+
+MCP-RE is HTTP-profile only: the transport is one MCP-RE-signed mTLS POST per
+``ClientSession`` request. A stdio-only MCP server is fronted by an EXTERNAL
+plain-MCP adapter (e.g. FastMCP) that speaks HTTP to ``mcp-re-proxy``.
 
 The spike verdict was **transport adapter**, not a transparent wrapper: the MCP
 Python SDK serializes JSON-RPC *inside* each transport, so the only place with
@@ -41,11 +45,8 @@ __all__ = [
     "AuthzSystemReferenceProvider",
     "StaticAuthorizationProvider",
     "McpReConfig",
-    "McpReTransport",
     "McpReHttpTransport",
     "McpReVerificationError",
-    "connect",
-    "connect_stdio",
     "connect_mtls_http",
     "make_mtls_post_sync",
     "decode_inbound",
@@ -90,7 +91,7 @@ AuthorizationBindingPolicy = _core.AuthorizationBindingPolicy
 
 # The adapter: imports `mcp` lazily (inside functions), so this is import-safe even
 # where `mcp` is not installed.
-from .transport import McpReConfig, McpReTransport, McpReVerificationError  # noqa: E402
+from .transport import McpReConfig, McpReVerificationError  # noqa: E402
 from .http_transport import McpReHttpTransport  # noqa: E402
 from .streamable import decode_inbound, sse_data_events, verify_inbound_messages  # noqa: E402
 from .authorization import (  # noqa: E402
@@ -101,9 +102,7 @@ from .authorization import (  # noqa: E402
     StaticAuthorizationProvider,
 )
 from .client import (  # noqa: E402
-    connect,
     connect_mtls_http,
-    connect_stdio,
     make_mtls_post_sync,
 )
 

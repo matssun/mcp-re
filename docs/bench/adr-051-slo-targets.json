@@ -2,10 +2,12 @@
   "schema": "mcp-re-slo-targets/v1",
   "adr": "ADR-MCPRE-051",
   "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
-  "issue": "MCPRE-110 (#317)",
-  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline, (2) PENDING production SLOs whose absolute numbers require the production hardware class + a dedicated load-generator host (blocked on the GKE fleet run), and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "issue": "MCPRE-110 (#317) + MCPRE-123",
+  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
   "baseline_ref": "docs/bench/adr-051-baseline-local.json",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+  "local_regression_gate": "scripts/adr051_slo_gate.py",
+  "production_slo_gate": "scripts/slo_gate.py",
 
   "local_regression": {
     "status": "active",
@@ -20,25 +22,40 @@
     },
     "per_core_scaling": {
       "gated": false,
-      "comment": "NOT gated locally: the 1->N curve is non-authoritative on a single box (co-located loadgen contends for cores). Recorded only."
+      "comment": "NOT gated locally: the 1->N curve is non-authoritative on a single box (co-located loadgen contends for cores). Recorded only; the authoritative curve lives in production_slo below."
     }
   },
 
   "production_slo": {
-    "status": "pending",
-    "blocked_on": "MCPRE-110 production half — production hardware class + dedicated load-generator host (GKE fleet run)",
+    "status": "declared",
+    "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve) as a K8s Job on a dedicated node; cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant). Enforced by scripts/slo_gate.py.",
     "kind": "absolute-per-hardware-profile",
-    "hardware_class": null,
+    "hardware_class": "e2-standard-8",
+    "hardware_note": "The DECLARED floor is the WEAKER of the two measured classes (e2-standard-8); a run on that class or better clears these targets (c3-standard-8, measured faster, also clears them). Floors ~= 0.64x measured median throughput; latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance.",
     "targets": {
-      "aggregate_throughput_rps_min": null,
-      "p50_added_us_max": null,
-      "p99_added_us_max": null,
-      "p999_added_us_max": null
+      "aggregate_throughput_rps_min": 250,
+      "p50_added_us_max": 250000,
+      "p99_added_us_max": 600000,
+      "p999_added_us_max": 900000
     },
     "per_core_scaling": {
       "gated": true,
-      "linear_tolerance_min": null,
-      "comment": "Per ADR-051 §7: per-core linear-scaling tolerance (1->N cores) becomes an absolute release-acceptance gate once measured on the production hardware class with a dedicated loadgen. Numbers are the operator/product declaration and are intentionally null here until that run exists."
+      "linear_tolerance_min": 0.60,
+      "cores_under_test": 8,
+      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin."
+    },
+    "measurements": {
+      "note": "Raw measured baselines (no fabrication). throughput = verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
+      "e2-standard-8": {
+        "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
+        "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },
+        "per_core_linear_factor": 0.718
+      },
+      "c3-standard-8": {
+        "one_core": { "throughput_rps": 90.9, "p50_us": 701624, "p99_us": 763536, "p999_us": 919626, "success": "2000/2000" },
+        "eight_core": { "throughput_rps": 481.6, "p50_us": 121740, "p99_us": 318690, "p999_us": 362141, "success": "2000/2000" },
+        "per_core_linear_factor": 0.662
+      }
     }
   },
 

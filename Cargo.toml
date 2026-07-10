@@ -13,26 +13,21 @@
 resolver = "2"
 members = [
     "mcp-re-core",        # Pure verification crate — no networking/async/fs (ADR-MCPS-011)
-    "mcp-re-conformance", # Black-box conformance runner (object + stdio + HTTP harnesses)
+    "mcp-re-conformance", # Black-box conformance runner (object + HTTP harnesses)
     "mcp-re-proxy",       # Server-side sidecar (async/HTTP-first PEP; ADR-MCPRE-051)
-    "mcp-re-stdio-bridge", # OUT-OF-TCB stdio<->HTTP adapter — fronts an unmodified sandboxed stdio MCP server behind HTTP so the PEP can protect it without the subprocess/sandbox surface entering its TCB (ADR-MCPRE-051 Phase B)
     "mcp-re-host",        # Client-side ambassador (request signing, response verification)
     "mcp-re-client-core", # Client-side shared seam for proxy + SDK (ADR-MCPS-044) — signed draft-02 requests, response binding
-    "mcp-re-client-proxy",# Local client-side MCP-RE proxy (first adoption bridge) — plain-MCP endpoint -> sign -> forward -> verify (ADR-MCPS-044)
-    "mcp-re-client-proxy-cli", # Binary front-end for mcp-re-client-proxy (ADR-MCPS-045 Phase 3) — plain-MCP stdio -> sign draft-02 -> mTLS to remote
+    "mcp-re-client-proxy",# Client-side MCP-RE proxy library (transport-agnostic seam) — plain-MCP -> sign -> forward -> verify (ADR-MCPS-044)
     "mcp-re-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
     "mcp-re-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
     "mcp-re-http-profile", # ADR-MCPRE-050 minimal proof path — RFC 9421 + RFC 9530 HTTP standards profile (pure: no networking/async/fs)
-    "mcp-re-demo-fileserver", # Phase 6.5 demo target — ordinary MCP-RE-unaware stdio server
-    "mcp-re-demo-server", # Phase 6.6B demo target — ordinary MCP-RE-unaware LONG-LIVED stdio server
-    "mcp-re-demo",        # Phase 6.5 demo harness — host-side HostSession demo client
-    "mcp-re-walkthrough", # ADR-MCPS-045 persona-ladder walkthrough — real-subprocess four-hop tiers (T0..T3)
+    "mcp-re-demo",        # mTLS/fixtures demo surface — host-side HostSession client + DemoFixtures (HTTP-profile only; stdio removed)
     "mcp-re-test-paths",  # Test-only: resolve binaries + data fixtures under Bazel runfiles OR Cargo
 ]
 
 [workspace.package]
 edition = "2021"
-version = "0.10.1"
+version = "0.11.0"
 license = "Apache-2.0"
 authors = ["Mats Sundvall"]
 repository = "https://github.com/matssun/mcp-re"
@@ -98,6 +93,10 @@ asn1-rs = "0.6"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
+# fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
+# ceiling) client cert. Same `time` version rcgen already resolves — no new pin.
+time = { version = "0.3", default-features = false, features = ["std"] }
 
 # Phase 7 external backends (ADR-MCPS-019). All used ONLY by mcp-re-proxy, all
 # OPTIONAL/feature- or target-gated so the DEFAULT (Mac dev) closure is unchanged

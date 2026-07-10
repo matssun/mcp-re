@@ -4,15 +4,12 @@
  * The adapter's security core is two sync functions: signOutbound (sign + register) and
  * verifyInbound (correlate + verify + strip). These are tested against the same golden
  * vectors as the bindings, proving the adapter writes byte-identical signed requests and
- * verifies responses exactly. Two async tests drive the McpReTransport pumps over an
- * in-memory byte channel (no live subprocess, no MCP SDK needed — the transport speaks
- * plain JSON-RPC objects).
+ * verifies responses exactly — the exact pipeline {@link McpReHttpTransport} drives over
+ * the mTLS wire.
  */
 import { describe, expect, it } from "vitest";
 import {
   CorrelationStore,
-  McpReTransport,
-  McpReVerificationError,
   Signer,
   SignerPolicy,
   TrustResolver,
@@ -21,7 +18,6 @@ import {
   type McpReConfig,
 } from "../dist/index.js";
 import { RESPONSE_VECTORS, SIGN_VECTOR, scenario } from "./fixtures.js";
-import { pushableStream } from "./helpers.js";
 
 const REQ = SIGN_VECTOR.inputs;
 const REQ_EXPECTED_WIRE = SIGN_VECTOR.expected_wire_bytes;
@@ -143,64 +139,3 @@ describe("sync security core", () => {
   });
 });
 
-describe("async pump wiring", () => {
-  it("the writer pump signs to the wire", async () => {
-    const sent: Buffer[] = [];
-    const byteSend = async (b: Buffer): Promise<void> => {
-      sent.push(b);
-    };
-    const lines = pushableStream();
-    const corr = new CorrelationStore();
-    const transport = new McpReTransport(byteSend, lines.iterable, config(), {
-      correlation: corr,
-      clock: () => NOW,
-      nonceFactory: () => REQ.nonce,
-    });
-    await transport.start();
-    await transport.send(request("req-1", "tools/call", { name: "echo", arguments: { text: "hello" } }));
-    lines.close();
-    await transport.close();
-    expect(sent.length).toBeGreaterThan(0);
-    expect(sent[0].subarray(0, sent[0].length - 1).toString("utf-8")).toBe(REQ_EXPECTED_WIRE);
-    expect(corr.outstanding).toBe(1);
-  });
-
-  it("the reader pump verifies and delivers", async () => {
-    const lines = pushableStream();
-    const corr = new CorrelationStore();
-    registerForValid(corr);
-    const transport = new McpReTransport(async () => {}, lines.iterable, config(), {
-      correlation: corr,
-      clock: () => NOW + 1,
-    });
-    const received = new Promise<any>((resolve) => {
-      transport.onmessage = resolve;
-    });
-    await transport.start();
-    lines.push(validResponse());
-    const msg = await received;
-    expect(String(msg.id)).toBe("req-1");
-    lines.close();
-    await transport.close();
-  });
-
-  it("the reader pump surfaces a rejection via onerror", async () => {
-    const lines = pushableStream();
-    const corr = new CorrelationStore();
-    registerForValid(corr);
-    const transport = new McpReTransport(async () => {}, lines.iterable, config(), {
-      correlation: corr,
-      clock: () => NOW + 1,
-    });
-    const errored = new Promise<Error>((resolve) => {
-      transport.onerror = resolve;
-    });
-    await transport.start();
-    lines.push(Buffer.from(scenario("tampered_signature").response_bytes));
-    const err = await errored;
-    expect(err).toBeInstanceOf(McpReVerificationError);
-    expect((err as McpReVerificationError).reason).toBe("mcp-re.response_sig_invalid");
-    lines.close();
-    await transport.close();
-  });
-});

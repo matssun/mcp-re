@@ -1,68 +1,16 @@
 /**
- * High-level entry points: build an MCP-RE-secured `Transport` for an MCP `Client`.
+ * High-level entry point: build an MCP-RE-secured `Transport` for an MCP `Client`.
  *
- * Unlike the Python SDK (whose `connect` yields a `ClientSession`), the MCP TypeScript
- * SDK's idiom is `await new Client(...).connect(transport)`. These helpers build the
- * secured transport the app connects — every request is signed and every response
- * verified, with application code otherwise unchanged from ordinary MCP.
- *
- * - {@link connectStdio} builds a byte channel from a subprocess (the common MCP stdio
- *   case): the subprocess must speak the MCP-RE wire (a server-side MCP-RE proxy/server).
- * - {@link connectMtlsHttp} builds the request/response transport whose every request
- *   is one MCP-RE-signed mTLS POST to the production `mcp-re-proxy`.
+ * The MCP TypeScript SDK idiom is `await new Client(...).connect(transport)`.
+ * {@link connectMtlsHttp} builds the secured transport the app connects — every request
+ * is signed and every response verified, with application code otherwise unchanged from
+ * ordinary MCP. MCP-RE is HTTP-profile only: a stdio-only MCP server is fronted by an
+ * EXTERNAL plain-MCP adapter (e.g. FastMCP) that speaks HTTP to `mcp-re-proxy`.
  */
 
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
-import { spawn } from "node:child_process";
-import type { Readable } from "node:stream";
-import { McpReConfig, McpReTransport, TransportHooks } from "./transport.js";
+import { McpReConfig, TransportHooks } from "./transport.js";
 import { McpReHttpTransport, type PostFn } from "./httpTransport.js";
-
-/** Split a byte `Readable` (stdout) into newline-delimited lines (MCP stdio framing). */
-async function* byteLines(stream: Readable): AsyncGenerator<Buffer> {
-  let buffer = Buffer.alloc(0);
-  for await (const chunk of stream) {
-    buffer = Buffer.concat([buffer, chunk as Buffer]);
-    let nl: number;
-    while ((nl = buffer.indexOf(0x0a)) !== -1) {
-      yield buffer.subarray(0, nl);
-      buffer = buffer.subarray(nl + 1);
-    }
-  }
-  if (buffer.length > 0) yield buffer;
-}
-
-/**
- * Spawn an MCP-RE endpoint subprocess and build a secured transport over its stdio.
- *
- * The subprocess must speak the MCP-RE wire (a server-side MCP-RE proxy/server). The
- * returned transport owns the child process: `transport.close()` terminates it. Hand it
- * to `await new Client(...).connect(transport)`.
- */
-export function connectStdio(
-  command: string,
-  args: string[],
-  config: McpReConfig,
-  opts: { env?: NodeJS.ProcessEnv; hooks?: TransportHooks } = {},
-): McpReTransport {
-  const child = spawn(command, args, {
-    stdio: ["pipe", "pipe", "inherit"],
-    // Merge over the parent environment so callers that set a few vars don't drop PATH
-    // and other required defaults (spawn REPLACES the whole env when `env` is given).
-    env: opts.env ? { ...process.env, ...opts.env } : undefined,
-  });
-  const byteSend = (data: Buffer): Promise<void> =>
-    new Promise((resolve, reject) => {
-      child.stdin.write(data, (err) => (err ? reject(err) : resolve()));
-    });
-  const transport = new McpReTransport(byteSend, byteLines(child.stdout), config, opts.hooks);
-  const close = transport.close.bind(transport);
-  transport.close = async (): Promise<void> => {
-    child.kill();
-    await close();
-  };
-  return transport;
-}
 
 /**
  * Build a transport whose every request is one MCP-RE-signed mTLS POST to the production

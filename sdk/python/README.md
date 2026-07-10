@@ -7,23 +7,24 @@ signed requests and verified responses, added without changing application code.
 > tested over the audited `mcp-re-client-core` via PyO3: request signing
 > (`sign_request`), custody/signer policy (`Signer` / `SignerPolicy`), response
 > verification (`verify_response` / `TrustResolver`), in-flight correlation
-> (`CorrelationStore`), and the **transport adapter** (`McpReTransport` / `connect`)
-> that signs/verifies at the byte boundary so `mcp.ClientSession` speaks plain MCP.
-> 91 tests pass, all parity against independent `mcp-re-client-core` oracle vectors —
-> including **three live cross-process e2es against real Rust binaries**:
-> 1. **stdio** — the adapter drives a real `tools/call` to the real server-side
->    proxy (`mcp-re-stdio-server --mode proxy` = `mcp_re_proxy::Proxy`).
-> 2. **mTLS/HTTP (raw request)** — the SDK signs a `read_file`, opens one mTLS
->    connection, and `POST`s it to the **real production `mcp-re-proxy`** fronting the
->    **real `mcp-re-demo-fileserver`**; the production-signed response is verified +
->    correlated back to a plain MCP result.
-> 3. **mTLS/HTTP (full `ClientSession`)** — a real `mcp.ClientSession` runs
+> (`CorrelationStore`), and the **transport adapter** (`McpReHttpTransport` /
+> `connect_mtls_http`) that signs/verifies at the byte boundary so `mcp.ClientSession`
+> speaks plain MCP. MCP-RE is **HTTP-profile only** — one signed mTLS POST per request
+> against the production `mcp-re-proxy`; a stdio-only MCP server is fronted by an
+> external plain-MCP adapter (e.g. FastMCP) that speaks HTTP to the proxy. All tests
+> pass, all parity against independent `mcp-re-client-core` oracle vectors — including
+> **two live cross-process e2es against the real Rust `mcp-re-proxy`**:
+> 1. **mTLS/HTTP (raw request)** — the SDK signs a `read_file`, opens one mTLS
+>    connection, and `POST`s it to the **real production `mcp-re-proxy`** fronting an
+>    **HTTP inner MCP backend** (`--inner-http-url`); the production-signed response is
+>    verified + correlated back to a plain MCP result.
+> 2. **mTLS/HTTP (full `ClientSession`)** — a real `mcp.ClientSession` runs
 >    `initialize()` then `call_tool("read_file")` over `connect_mtls_http`, mapping
->    ClientSession's stream model onto the proxy's one-POST-per-connection wire
->    (step ii). `initialize` round-trips as a signed request; client→server
->    notifications are dropped (no fire-and-forget channel); a rejected response is
->    delivered as a JSON-RPC error correlated to the request id so the awaiting call
->    raises rather than hangs. All three have a fail-closed live negative.
+>    ClientSession's stream model onto the proxy's one-POST-per-connection wire.
+>    `initialize` round-trips as a signed request; client→server notifications are
+>    dropped (no fire-and-forget channel); a rejected response is delivered as a
+>    JSON-RPC error correlated to the request id so the awaiting call raises rather
+>    than hangs. Both have a fail-closed live negative.
 >
 > **Multi-path inbound decode + server-initiated policy (done).** `streamable.py`
 > decodes all three streamable-HTTP inbound sites (direct JSON, POST-SSE,
@@ -68,9 +69,9 @@ signed requests and verified responses, added without changing application code.
 > upstream `mcp`.
 >
 > Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
-> The stdio e2e needs `cargo build -p mcp-re-conformance --bin mcp-re-stdio-server`; the
-> mTLS e2e needs `cargo build -p mcp-re-proxy -p mcp-re-demo-fileserver` + cargo (to mint
-> `DemoFixtures` material). All skip cleanly if absent.
+> The mTLS e2es need `cargo build -p mcp-re-proxy` + cargo (to mint `DemoFixtures`
+> material); the inner MCP server is an in-process HTTP backend (`tests/_inner_backend.py`),
+> so no separate server binary is required. All skip cleanly if absent.
 
 ## Why this exists, and why it's an *adapter*
 
@@ -88,10 +89,10 @@ implementation of the SDK's public `Transport` protocol.
 
 ```
 application code
-  -> mcp.ClientSession        plain MCP; unaware of MCP-RE
-  -> McpReTransport (this SDK)  signs outbound bytes / verifies inbound bytes
-  -> mcp_re_sdk._core (PyO3)     the AUDITED mcp-re-client-core logic, in Rust
-  -> remote MCP-RE server / proxy
+  -> mcp.ClientSession            plain MCP; unaware of MCP-RE
+  -> McpReHttpTransport (this SDK)  signs outbound bytes / verifies inbound bytes
+  -> mcp_re_sdk._core (PyO3)         the AUDITED mcp-re-client-core logic, in Rust
+  -> mcp-re-proxy (HTTP profile)     one signed mTLS POST per request
 ```
 
 ## Why PyO3, not pure Python
@@ -101,7 +102,7 @@ The signing/verification/enforcement logic lives **once**, in the audited Rust
 than reimplementing it in Python) guarantees the canonical signed preimage is
 byte-identical across SDK and proxy, by construction, and means a draft-spec
 change is edited in one place. The Python you actually touch — the transport
-adapter, `connect()`, policy, tests — stays plain Python. End users `pip install`
+adapter, `connect_mtls_http()`, policy, tests — stays plain Python. End users `pip install`
 a prebuilt `abi3` wheel and need no Rust toolchain.
 
 ## Layout
@@ -113,10 +114,12 @@ sdk/python/
   pyproject.toml         # maturin backend, mixed Rust/Python layout
   python/mcp_re_sdk/
     __init__.py          # public surface
-    transport.py         # McpReTransport — the pipeline mirroring proxy.rs::handle
-    client.py            # connect() helper over ClientSession
+    transport.py         # sign_outbound / verify_inbound — the pipeline mirroring proxy.rs::handle
+    http_transport.py    # McpReHttpTransport — one signed mTLS POST per request
+    client.py            # connect_mtls_http() helper over ClientSession
   tests/
-    test_parity_stdio.py # byte-parity gate vs the Rust proxy (#199)
+    test_parity.py       # byte-parity gate vs the Rust proxy (#199)
+    _inner_backend.py    # the in-process HTTP inner MCP backend the mTLS e2es front
 ```
 
 ## Develop

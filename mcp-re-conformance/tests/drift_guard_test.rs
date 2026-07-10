@@ -89,16 +89,12 @@ fn on_disk_test_targets() -> BTreeSet<String> {
         ("MCP_RE_BUILD_HOST", "//mcp-re-host"),
         ("MCP_RE_BUILD_POLICY", "//mcp-re-policy"),
         ("MCP_RE_BUILD_PROXY", "//mcp-re-proxy"),
-        ("MCP_RE_BUILD_STDIO_BRIDGE", "//mcp-re-stdio-bridge"),
-        // All 9 packages are scanned (MCPS-082, audit M-11/M-13): the manifest's
-        // single-source-of-truth claim covers EVERY //components/mcp-re/... rust_test
-        // target, not just these five. Omitting the demo/transport/fileserver
-        // packages previously let a dropped target (e.g. transport's
-        // dos_hardening_test) go unnoticed.
+        // Every remaining //components/mcp-re/... package with rust_test targets is
+        // scanned (MCPS-082, audit M-11/M-13): the manifest's single-source-of-truth
+        // claim covers EVERY such target. MCP-RE is HTTP-profile only — the stdio
+        // bridge and the stdio demo-server/fileserver packages were removed.
         ("MCP_RE_BUILD_DEMO", "//mcp-re-demo"),
-        ("MCP_RE_BUILD_DEMO_SERVER", "//mcp-re-demo-server"),
         ("MCP_RE_BUILD_TRANSPORT", "//mcp-re-transport"),
-        ("MCP_RE_BUILD_FILESERVER", "//mcp-re-demo-fileserver"),
     ] {
         let text = read(env_key);
         for name in test_names_in_build(&text) {
