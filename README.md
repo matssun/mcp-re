@@ -336,8 +336,8 @@ conformance, reference implementation, demos, and non-goals):
   [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md) (live GCP Cloud KMS).
 - **Releases:** [`CHANGELOG.md`](CHANGELOG.md).
 - **Architecture decisions:** [`docs/adr/`](docs/adr/) — start with
-  [ADR-MCPS-001](docs/adr/adr-mcps-001.md) (trust model) and
-  [ADR-MCPS-011](docs/adr/adr-mcps-011.md) (core firewall).
+  [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) (trust model) and
+  [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) (core firewall).
 - **Specification briefs:** [`docs/spec/`](docs/spec/) — the core spec, the
   [security boundary](docs/SECURITY_BOUNDARY.md), and the upstream-proposal
   brief intended for an eventual MCP SEP submission.

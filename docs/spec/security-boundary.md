@@ -17,14 +17,14 @@ Tracking issue: MCPS-039.
 The authorities for the claim boundary are:
 
 - [ADR-MCPS-017 — Single-Node Production Claim Ceiling and Deferred Enterprise
-  Capabilities](../adr/adr-mcps-017.md) — the
+  Capabilities](https://github.com/matssun/mcp-re/discussions/366) — the
   authority for the **allowed claim** vs the **forbidden claims** and the
   deferred-capability list.
 - [ADR-MCPS-016 — Inner-Server Isolation Boundary
-](../adr/adr-mcps-016.md) — the
+](https://github.com/matssun/mcp-re/discussions/365) — the
   **non-containment** boundary between the proxy and the inner MCP server.
 - [ADR-MCPS-018 — CI Reproducibility Posture and Conformance-Manifest Authority
-](../adr/adr-mcps-018.md) — the
+](https://github.com/matssun/mcp-re/discussions/367) — the
   reproducibility posture.
 
 Where this document and any older planning brief disagree, this document and the
@@ -43,7 +43,7 @@ That is the entire claim. Anything stated beyond this single-node ceiling is a
 bounded to a single node for exactly **one** reason: the durable replay
 protection MCP-RE ships is a **local, file-backed** cache, so replay safety holds
 only within a single proxy instance — see
-[ADR-MCPS-017](../adr/adr-mcps-017.md). Key
+[ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366). Key
 custody (file/env vs HSM/KMS) is a **separate, independent** hardening axis and
 is **not** a reason for the single-node ceiling — see "Two independent
 boundaries" below.
@@ -99,7 +99,7 @@ capability is present.
 ## 3. Inner-server non-containment boundary
 
 Authority: [ADR-MCPS-016
-](../adr/adr-mcps-016.md).
+](https://github.com/matssun/mcp-re/discussions/365).
 
 The proxy (`mcp-re-proxy`) controls the inner MCP server's **launch hygiene** and
 propagates verified context. It does **not** contain a malicious or compromised
@@ -142,24 +142,24 @@ This is the complete positive surface; nothing outside it should be implied.
   (and the response pipeline) defined in
   [mcp-re-core-spec.md §9](./mcp-re-core-spec.md). Ed25519-over-JCS signs the
   **complete JSON-RPC object**, not just an envelope
-  ([ADR-MCPS-004](../adr/adr-mcps-004.md),
-  [ADR-MCPS-003](../adr/adr-mcps-003.md)).
+  ([ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353),
+  [ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352)).
 - **Fail-closed message constraints.** Batches, security-relevant
   notifications, and unknown envelope fields are rejected; the pipeline fails
   closed at the first failing step
-  ([ADR-MCPS-009](../adr/adr-mcps-009.md)).
+  ([ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358)).
 - **Freshness + single-node durable replay protection.** A freshness window
   (`issued_at`/`expires_at` ± skew) plus a replay cache keyed by
   `(signer, audience, nonce)`, checked only **after** signature verification so
   invalid-signature traffic cannot burn nonces. Cache failure fails closed,
   distinct from a replay verdict
-  ([ADR-MCPS-006](../adr/adr-mcps-006.md)). The
+  ([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
   durable replay cache is **single-node** — multi-node replay protection is
   forbidden (Section 2).
 - **Delegated authorization** (Phase 5, reference signed-authorization profile).
   The proxy enforces the authorization profile **deny-before-dispatch** — an
   unauthorized request never reaches the inner server
-  ([ADR-MCPS-013](../adr/adr-mcps-013.md)).
+  ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)).
 - **Rust-native mTLS transport termination + transport binding + v1 revocation
   posture** (Phase 6 / 6.1). `mcp-re-proxy` terminates TLS itself
   (`RustlsDirectProvider`, rustls + ring), binds the verified transport peer to
@@ -167,11 +167,11 @@ This is the complete positive surface; nothing outside it should be implied.
   lifetime as its v1 revocation posture. This is **not** online revocation —
   full CRL/OCSP is forbidden (Section 2,
   #3839)
-  ([ADR-MCPS-014](../adr/adr-mcps-014.md)).
+  ([ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363)).
 - **Transport-free, key-custody-safe host layer (HostSession).** The host /
   ambassador signs requests and verifies responses without exposing any key
   accessor; the model never touches a private key
-  ([ADR-MCPS-015](../adr/adr-mcps-015.md)).
+  ([ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364)).
 - **Signing-key loading via a file/env `KeySource`.** Signing keys load from a
   file or (hard-guarded) environment `KeySource`; the proxy and host sign without
   exposing private-key material through public APIs. This is the delivered
@@ -199,7 +199,7 @@ another.
 ## 5. Reproducibility honesty
 
 Authority: [ADR-MCPS-018
-](../adr/adr-mcps-018.md).
+](https://github.com/matssun/mcp-re/discussions/367).
 
 - **CI-enforced on every relevant PR.** The Core conformance and transport tests
   run in CI on every PR that touches MCP-RE, building the self-contained module

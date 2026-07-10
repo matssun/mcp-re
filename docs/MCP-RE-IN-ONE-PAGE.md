@@ -168,8 +168,8 @@ for full setup and exit criteria.
   [v0.5 claim matrix](spec/v0.5-claim-matrix.md), and
   [proposal scope](spec/proposal-scope.md) (the wire-envelope freeze).
 - **Architecture decisions:** [`docs/adr/`](adr/) — start with
-  [ADR-MCPS-001](adr/adr-mcps-001.md) (trust model) and
-  [ADR-MCPS-011](adr/adr-mcps-011.md) (core firewall).
+  [ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350) (trust model) and
+  [ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360) (core firewall).
 - **Project status & non-claims:** [`docs/PROJECT_STATUS.md`](PROJECT_STATUS.md).
 - **Google KMS validation:**
   [`docs/security/google-validation-plan.md`](security/google-validation-plan.md).

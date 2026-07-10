@@ -82,7 +82,7 @@ why. The full ADR index lives in that spec.
 ### 3.1 Metadata-envelope approach
 
 MCP-RE rides inside the MCP `_meta` extension space under controlled keys
-([ADR-MCPS-002](../adr/adr-mcps-002.md)):
+([ADR-MCPS-002](https://github.com/matssun/mcp-re/discussions/351)):
 
 ```text
 se.syncom/mcp-re.request     # signed request envelope
@@ -98,8 +98,8 @@ The request envelope carries `signer`, `on_behalf_of`, `audience`,
 ### 3.2 Signing rule — Ed25519 over JCS, whole object
 
 The **complete JSON-RPC object** is signed, not just the envelope
-([ADR-MCPS-004](../adr/adr-mcps-004.md),
-[ADR-MCPS-003](../adr/adr-mcps-003.md)). The
+([ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353),
+[ADR-MCPS-003](https://github.com/matssun/mcp-re/discussions/352)). The
 preimage is the full object with `signature.value` removed (but `alg` and
 `key_id` retained), canonicalized with **RFC 8785 / JCS** to UTF-8 bytes, and
 signed **directly** with Ed25519 (no pre-hash). Canonicalization is implemented
@@ -112,7 +112,7 @@ of the transmitted bytes.
 
 Before any signature check, the message is validated against a restricted JSON
 value domain
-([ADR-MCPS-005](../adr/adr-mcps-005.md)):
+([ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354)):
 duplicate object keys are **rejected** (not "last wins"), only safe-range
 integers are allowed (big IDs / decimals / nanosecond timestamps must be carried
 as strings), and no Unicode normalization or parser repair is permitted. Any
@@ -122,7 +122,7 @@ violation fails closed with a distinct error, never silently coerced.
 
 A freshness window (`issued_at` / `expires_at` ± a configured clock skew) plus a
 replay cache keyed by `(signer, audience, nonce)`
-([ADR-MCPS-006](../adr/adr-mcps-006.md)). The
+([ADR-MCPS-006](https://github.com/matssun/mcp-re/discussions/355)). The
 replay check runs **only after** signature verification succeeds, so
 invalid-signature traffic cannot burn nonces, and cache failure fails closed,
 distinct from a replay verdict. The shipped durable cache is **single-node**
@@ -138,13 +138,13 @@ crypto, and the replay insert last
 the response signature and that its `request_hash` matches the locally verified
 request hash. Batches, security-relevant notifications, and unknown envelope
 fields are all rejected
-([ADR-MCPS-009](../adr/adr-mcps-009.md)).
+([ADR-MCPS-009](https://github.com/matssun/mcp-re/discussions/358)).
 
 ### 3.6 Trust resolution
 
 Key resolution is an injected, public `TrustResolver` trait
-([ADR-MCPS-007](../adr/adr-mcps-007.md),
-[ADR-MCPS-001](../adr/adr-mcps-001.md)). Rotation
+([ADR-MCPS-007](https://github.com/matssun/mcp-re/discussions/356),
+[ADR-MCPS-001](https://github.com/matssun/mcp-re/discussions/350)). Rotation
 is expressed as multiple `key_id`s per signer; revocation as removing/disabling a
 mapping. Resolver failure **never** falls back to allow; Core defines no built-in
 CRL / OCSP / transparency log.
@@ -154,7 +154,7 @@ CRL / OCSP / transparency log.
 Core **signs and preserves** an `authorization_hash` binding but does **not**
 interpret the authorization artifact — interpretation is delegated to a pluggable
 **AuthorizationProfile**
-([ADR-MCPS-013](../adr/adr-mcps-013.md)). The
+([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)). The
 **reference signed-authorization profile is delivered** and is enforced by the
 proxy **deny-before-dispatch** — an unauthorized request never reaches the inner
 server. A **Biscuit** profile is the locked next external profile; it is **not**
@@ -165,14 +165,14 @@ yet delivered.
 `mcp-re-proxy` terminates TLS itself (`RustlsDirectProvider`, rustls + ring), binds
 the verified transport peer to the object signer (**transport binding**), and
 enforces a maximum client-cert lifetime as its v1 revocation posture
-([ADR-MCPS-014](../adr/adr-mcps-014.md)). This is
+([ADR-MCPS-014](https://github.com/matssun/mcp-re/discussions/363)). This is
 **not** online revocation (see [Section 6](#6-honest-scope)).
 
 ### 3.9 Transport-free host signing layer
 
 A host / ambassador layer (`HostSession`) signs requests and verifies responses
 **without exposing any key accessor** — the model never touches a private key
-([ADR-MCPS-015](../adr/adr-mcps-015.md)).
+([ADR-MCPS-015](https://github.com/matssun/mcp-re/discussions/364)).
 
 The "how" references for implementers:
 
@@ -186,7 +186,7 @@ The "how" references for implementers:
 ## 4. Conformance-as-specification
 
 The **executable conformance vectors are the specification**
-([ADR-MCPS-011](../adr/adr-mcps-011.md)). They are
+([ADR-MCPS-011](https://github.com/matssun/mcp-re/discussions/360)). They are
 committed JSON fixtures generated against the frozen vocabulary using fixed
 (documented-seed) keypairs, so signatures are reproducible, and they are re-run
 transport-agnostically over stdio and Streamable HTTP — they are the Core **and**
@@ -197,7 +197,7 @@ security notification, unknown envelope field, and the JCS domain violations.
 
 The **authoritative enumeration and counts** live in a drift-guarded manifest,
 not in prose
-([ADR-MCPS-018](../adr/adr-mcps-018.md)):
+([ADR-MCPS-018](https://github.com/matssun/mcp-re/discussions/367)):
 
 - Manifest: `mcp-re-conformance/conformance_manifest.json`
 - Drift guard: `//mcp-re-conformance:drift_guard_test`
@@ -214,7 +214,7 @@ run it from a fresh clone.
 
 The extension identifier `se.syncom/mcp-re` is an **INCUBATION
 identifier**, not a claim of official MCP adoption or endorsement
-([ADR-MCPS-010](../adr/adr-mcps-010.md)). It is a
+([ADR-MCPS-010](https://github.com/matssun/mcp-re/discussions/359)). It is a
 controlled, explicitly **non-official** namespace chosen so MCP-RE can be developed
 and reviewed without squatting on an official identifier.
 
@@ -231,7 +231,7 @@ deliberate, versioned migration (a new envelope `version`), not a silent rename.
 
 The single sanctioned positive claim, per the
 [Security Boundary document](./security-boundary.md) and
-[ADR-MCPS-017](../adr/adr-mcps-017.md), is:
+[ADR-MCPS-017](https://github.com/matssun/mcp-re/discussions/366), is:
 
 > **"production-hardened for single-node Rust-native deployments."**
 
@@ -251,7 +251,7 @@ minimization, explicit working directory, stdout/stderr separation,
 lifecycle logging, best-effort `setrlimit`, verified-context propagation) but
 does **not contain** a malicious or compromised inner server at the kernel,
 filesystem, or network level
-([ADR-MCPS-016](../adr/adr-mcps-016.md)). Launch
+([ADR-MCPS-016](https://github.com/matssun/mcp-re/discussions/365)). Launch
 hygiene reduces accidental blast radius; it is not a containment guarantee.
 
 ### Named deferred follow-ups (NOT delivered)
@@ -291,12 +291,12 @@ project, roughly in priority order:
    story (new envelope `version`) acceptable?
 2. **The authorization-profile seam** — Core signs/preserves `authorization_hash`
    but never interprets it; is the AuthorizationProfile abstraction
-   ([ADR-MCPS-013](../adr/adr-mcps-013.md)) the
+   ([ADR-MCPS-013](https://github.com/matssun/mcp-re/discussions/362)) the
    right boundary, and is Biscuit the right next external profile?
 3. **The preimage-stability rule** — signing the **whole** JSON-RPC object over
    in-house JCS canonicalization
-   ([ADR-MCPS-004](../adr/adr-mcps-004.md),
-   [ADR-MCPS-005](../adr/adr-mcps-005.md)): are
+   ([ADR-MCPS-004](https://github.com/matssun/mcp-re/discussions/353),
+   [ADR-MCPS-005](https://github.com/matssun/mcp-re/discussions/354)): are
    the fail-closed value-domain restrictions (duplicate-key rejection,
    safe-integer-only, strings-for-big-values) acceptable for real MCP payloads?
 4. **The three-separate-checks model** — mTLS peer vs object signer vs

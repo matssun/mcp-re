@@ -12,7 +12,7 @@ how to use it, and the tests prove it.
 ## What the suite is
 
 The conformance corpus is the executable specification (ADR-MCPS-011,
-[view](adr/adr-mcps-011.md)). It is a set of
+[view](https://github.com/matssun/mcp-re/discussions/360)). It is a set of
 committed JSON vectors plus harnesses that replay them, transport-agnostically,
 as in-process objects and over Streamable HTTP — so a vector that
 passes proves object/HTTP parity (MCP-RE is HTTP-profile only).
@@ -25,11 +25,11 @@ The vectors fall into three categories:
   `mcp-re-core/tests/vectors/`.
 - **Phase-5 authorization** — the delegated-authorization profile
   (`PolicyEvaluator` + Reference Signed Authorization Profile, ADR-MCPS-013,
-  [view](adr/adr-mcps-013.md)). Fixtures live in
+  [view](https://github.com/matssun/mcp-re/discussions/362)). Fixtures live in
   `mcp-re-policy/tests/vectors/phase5_vectors.json`.
 - **Phase-6 transport** — mTLS, transport binding, durable replay, and the
   client-cert lifetime posture (ADR-MCPS-014,
-  [view](adr/adr-mcps-014.md)). These are exercised
+  [view](https://github.com/matssun/mcp-re/discussions/363)). These are exercised
   by the `mcp-re-proxy` test targets and by re-running the Core corpus over the
   HTTP harness.
 
@@ -108,7 +108,7 @@ alters the corpus.
 
 For what each layer is claimed to prove (and the single-node production ceiling),
 see the [Transport Hardening Guide](transport-hardening-guide.md) and
-ADR-MCPS-017 ([view](adr/adr-mcps-017.md)).
+ADR-MCPS-017 ([view](https://github.com/matssun/mcp-re/discussions/366)).
 
 ## v0.8.0 draft-02 conformance corpus pinning
 

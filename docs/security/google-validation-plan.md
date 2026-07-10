@@ -47,7 +47,7 @@ The premise that we "need a Google adapter" is **out of date** — we have one.
 | GCP live test harness (object signing) | `mcp-re-proxy/tests/gcp_kms_live_test.rs` | Shipped (needs real/emulated KMS) |
 | GCP live test harness (delegated TLS) | `mcp-re-proxy/tests/gcp_kms_delegated_tls_live_test.rs` | Shipped (needs real/emulated KMS) |
 | Reproduction harness (one command) | `docs/security/gcloud-kms-validation.sh` | Shipped |
-| Design rationale | `docs/adr/adr-mcps-028.md` | Proposed |
+| Design rationale | [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) | Proposed (§C GCP KMS accepted, v0.9) |
 
 `GcpKmsKeySource` already does the security-critical work: `getPublicKey`
 (asserting algorithm `EC_SIGN_ED25519`), `asymmetricSign` over **raw canonical
@@ -252,7 +252,7 @@ the request for sponsored SCC / SecOps access.
 
 ## References
 
-- `docs/adr/adr-mcps-028.md` — native Cloud-KMS response signers (AWS + GCP).
+- [ADR-MCPS-028](https://github.com/matssun/mcp-re/discussions/377) — native Cloud-KMS response signers (AWS + GCP).
 - `mcp-re-proxy/src/gcp_kms_keysource.rs` — the GCP adapter under test.
 - `mcp-re-core/src/error.rs` — frozen error taxonomy (the wire codes).
 - `mcp-re-core/src/audit.rs` — frozen audit-event vocabulary (ADR-MCPS-035).

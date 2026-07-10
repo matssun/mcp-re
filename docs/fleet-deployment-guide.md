@@ -7,7 +7,7 @@
 
 **Status:** NON-NORMATIVE reference, mirroring the
 [Mode-C GCP cookbook](mode-c-attested-ingress-gcp-cookbook.md). The design is
-[ADR-MCPS-049](adr/adr-mcps-049.md). Live-cluster validation is tracked
+[ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397). Live-cluster validation is tracked
 separately (MCPS-90, HITL); this guide + the Helm chart under
 [`deploy/helm/mcp-re-proxy`](../deploy/helm/mcp-re-proxy) are the reference, and the
 coherence properties are proven by the CI-gated e2e tests named below.

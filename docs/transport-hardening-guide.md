@@ -8,9 +8,9 @@ check does and does not prove.
 This guide explains **how to use** the transport-hardening features. The rules
 are in the [MCP-RE Core Specification](spec/mcp-re-core-spec.md);
 the rationale is in ADR-MCPS-014
-([view](adr/adr-mcps-014.md), Rust-native transport
+([view](https://github.com/matssun/mcp-re/discussions/363), Rust-native transport
 hardening) and ADR-MCPS-017
-([view](adr/adr-mcps-017.md), single-node
+([view](https://github.com/matssun/mcp-re/discussions/366), single-node
 production claim ceiling). The proofs are the `//mcp-re-proxy:*`
 test targets in the [conformance manifest](../mcp-re-conformance/conformance_manifest.json).
 For the full CLI flag reference, see the
@@ -161,7 +161,7 @@ claim.
 
 ## Production claim ceiling
 
-Per ADR-MCPS-017 ([view](adr/adr-mcps-017.md)),
+Per ADR-MCPS-017 ([view](https://github.com/matssun/mcp-re/discussions/366)),
 MCP-RE's production claim is bounded to a **single node**. Explicitly deferred
 future seams — not part of the v1 claim — include: distributed/durable replay
 backends (e.g. Redis), HSM/KMS-backed key sources, multi-node trust distribution,
