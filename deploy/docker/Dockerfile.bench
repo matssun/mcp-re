@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-051 §7 SLO baseline runner. Runs tls_load_harness_bench (which spawns
+# the REAL mcp-re-proxy async fleet at MCP_RE_LOADGEN_CORES cores against an
+# in-process echo backend over mTLS) on a DECLARED GKE machine class, and prints
+# the machine-readable report between markers so a K8s Job can surface it via logs.
+#
+#   docker build -f deploy/docker/Dockerfile.bench -t mcp-re-slo-bench:0.11.0 .
+#
+# Drive per run with env: MCP_RE_LOADGEN_HW_CLASS (the machine class label),
+# MCP_RE_LOADGEN_CORES (1 then N for the scaling curve). Envelope defaults
+# (concurrency 64, 2000 requests, cold) otherwise (docs/bench/adr-051-*).
+FROM rust:1.94.1-slim-bookworm AS bench
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential perl pkg-config libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY . .
+# Warm the target so the runtime `cargo test` runs the bench with no recompile.
+RUN cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench --no-run
+ENV MCP_RE_LOADGEN_OUT=/tmp/slo_report.json
+ENTRYPOINT ["bash","-lc","cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench -- --ignored --nocapture && echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]

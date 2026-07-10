@@ -54,6 +54,14 @@ revocation:
 # Client-certificate lifetime ceiling (short-lived-cert revocation posture).
 maxClientCertLifetimeSeconds: 3600
 
+# mTLS channel binding (ADR-MCPS-023). Empty = omit the flag, so the proxy uses
+# its own fail-safe default (`exact`: bind each signed request to the verified
+# client-cert identity). Set "none" ONLY for a reference deploy driven by an
+# HTTP-profile client that carries no channel-binding claim (the shipped
+# mcp_re_gke_client / SDK e2e). "lb-assertion"/"attested-ingress" additionally
+# require the ingress key/anchor inputs the proxy documents.
+transportBinding: ""
+
 # The proxy's server identity (response signing + expected audience).
 identity:
   audience: "did:example:server-1"
@@ -113,6 +121,12 @@ tls:
 # Graceful drain: the proxy stops accepting on SIGTERM and finishes the in-flight
 # request (MCPS-88). Give the kubelet headroom over the request deadline.
 drainGracePeriodSeconds: 30
+
+# preStop delay (seconds) before the proxy is sent SIGTERM on pod deletion. Keeps
+# the pod serving while an L4 LoadBalancer removes it from rotation, closing the
+# endpoint-propagation race that can drop a single new connection at the instant a
+# rolling update terminates a replica. Must be < drainGracePeriodSeconds. 0 = off.
+drainPreStopSeconds: 6
 
 resources: {}
 podAnnotations: {}

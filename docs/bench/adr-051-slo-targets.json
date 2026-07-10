@@ -6,28 +6,41 @@
   "envelope_version": 1,
   "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
   "gate": "scripts/slo_gate.py",
-  "status": "provisional",
-  "ships_in": "v0.11 ships these targets PROVISIONAL by design — the release is not gated on the capacity baseline. The measured capacity/scaling numbers land in a follow-up MINOR (status flips to 'declared' then). v0.11 correctness floors are enforced now.",
-  "status_note": "PROVISIONAL until a baseline run on the DECLARED hardware class fills the capacity/scaling numbers and an owner flips status to 'declared' (MCPRE-110). This is deliberately NOT a v0.11 blocker: v0.11 publishes the gate mechanism + enforced correctness floors + null (preliminary) capacity targets; the representative measured numbers arrive in a later minor. ADR-051 §7 is explicit that SLO numbers are measured, not asserted ('capacity claims without a pinned benchmark envelope are marketing, not engineering'), so the capacity/scaling targets below are null on purpose. The gate ENFORCES every non-null target and the correctness floors now; it SKIPS null targets with a warning. Nothing here is fabricated.",
-  "hardware_class": null,
-  "measured_on": null,
+  "status": "declared",
+  "ships_in": "Capacity/scaling numbers measured on declared GKE hardware (2026-07-10) and set here; status flipped provisional -> declared. Correctness floors were already enforced in v0.11.",
+  "status_note": "DECLARED: the capacity/scaling targets below are derived from a real baseline run on the declared hardware class (see measured_on + measurements). ADR-051 §7 requires SLO numbers be measured, not asserted — these are, on real GKE machines. The floor hardware is the WEAKER of the two classes measured (e2-standard-8), so a run on that class or better clears the floors (c3-standard-8, measured faster, also clears them). The gate ENFORCES every non-null target and the correctness floors; run it on the declared hardware (shared CI runners are not release-representative — CI runs slo_gate --selftest only).",
+  "hardware_class": "e2-standard-8",
+  "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve); cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant)",
   "correctness_floors": {
     "note": "Non-capacity invariants — enforced on every run regardless of status (they need no hardware baseline). A run that drops requests or fails closed spuriously fails the gate immediately.",
     "min_success_fraction": 0.999,
     "max_failure_fraction": 0.001
   },
   "capacity_targets": {
-    "note": "null until measured (MCPRE-110, HITL). Once a baseline run on the declared hardware records numbers, set these to the release floor/ceilings derived from that baseline and flip status to 'declared'.",
-    "throughput_floor_rps": null,
+    "note": "Derived from the DECLARED (weaker) hardware e2-standard-8 at 8 cores: throughput floor ~= 0.64x measured median (390 rps -> 250 floor); latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance. Both measured classes clear these.",
+    "throughput_floor_rps": 250.0,
     "added_latency_ceilings_us": {
-      "p50": null,
-      "p99": null,
-      "p999": null
+      "p50": 250000,
+      "p99": 600000,
+      "p999": 900000
     }
   },
   "scaling_targets": {
-    "note": "Per-core linear-scaling tolerance for the 1→N cores curve: achieved_N_core_throughput / (single_core_throughput * N) must be >= per_core_min_linear_factor. Requires a 1-core run and an N-core run on the same declared hardware (MCP_RE_LOADGEN_CORES=1 then =N). null until measured.",
-    "per_core_min_linear_factor": null,
-    "cores_under_test": null
+    "note": "Per-core linear-scaling tolerance for the 1->N cores curve: achieved_N_core_throughput / (single_core_throughput * N) must be >= per_core_min_linear_factor. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin.",
+    "per_core_min_linear_factor": 0.60,
+    "cores_under_test": 8
+  },
+  "measurements": {
+    "note": "Raw measured baselines (no fabrication). throughput in verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
+    "e2-standard-8": {
+      "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
+      "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },
+      "per_core_linear_factor": 0.718
+    },
+    "c3-standard-8": {
+      "one_core": { "throughput_rps": 90.9, "p50_us": 701624, "p99_us": 763536, "p999_us": 919626, "success": "2000/2000" },
+      "eight_core": { "throughput_rps": 481.6, "p50_us": 121740, "p99_us": 318690, "p999_us": 362141, "success": "2000/2000" },
+      "per_core_linear_factor": 0.662
+    }
   }
 }

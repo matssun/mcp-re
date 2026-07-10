@@ -12,19 +12,35 @@ release **SLO targets** and the gate that enforces them, per ADR-MCPRE-051 §7
 The machine-readable targets are [`adr-051-slo-targets.json`](adr-051-slo-targets.json);
 the gate is [`scripts/slo_gate.py`](../../scripts/slo_gate.py).
 
-## Status: PROVISIONAL (v0.11 ships this way by design)
+## Status: DECLARED (baseline measured on GKE, 2026-07-10)
 
 ADR-MCPRE-051 §7 is deliberate: *"the SLO numbers live with the harness and the
 release profile, not in this ADR,"* and *"capacity claims without a pinned
-benchmark envelope are marketing, not engineering."* Accordingly the capacity
-and scaling numbers here are **not yet filled** — they are `null` in the targets
-file — and are **not fabricated**.
+benchmark envelope are marketing, not engineering."* Accordingly the capacity and
+scaling numbers were **measured, not asserted** — on real GKE hardware, with the
+harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores under the
+pinned envelope (cold TLS1.3-mTLS, concurrency 64, 2000 requests/run).
 
-**v0.11 is not gated on the capacity baseline.** v0.11 ships the gate mechanism,
-the enforced correctness floors, and these *preliminary* (null) capacity targets.
-The representative measured numbers land in a **follow-up minor** (status flips
-`provisional` → `declared` there). The baseline run below is that minor's work,
-not a v0.11 blocker.
+**Measured baseline** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified responses/sec; added
+latency µs; 2000/2000 success on every run):
+
+| class | 1-core rps | 8-core rps | 8-core p50 / p99 / p999 | per-core linear factor |
+|---|---|---|---|---|
+| **e2-standard-8** (declared floor) | 67.9 | 390.2 | 148 / 369 / 508 ms | 0.718 |
+| **c3-standard-8** (faster ref) | 90.9 | 481.6 | 122 / 319 / 362 ms | 0.662 |
+
+The **declared floor hardware is the weaker class (e2-standard-8)**: the release
+floors/ceilings in the targets JSON are derived from it (throughput floor 250 rps,
+p50/p99/p999 ceilings 250/600/900 ms, per-core factor ≥ 0.60), so a run on that
+class *or better* clears them — and c3-standard-8 (measured faster) does too. Both
+classes pass `slo_gate` in `declared` mode (7 checks each). `status` is now
+`declared`; `hardware_class`/`measured_on`/`measurements` record the provenance.
+
+**v0.11 was never gated on the capacity baseline** (it shipped the mechanism +
+correctness floors); this baseline promotes the SLO to `declared` with real cloud
+numbers. CI still runs `slo_gate --selftest` only — shared runners are not
+release-representative, so the capacity/scaling enforcement runs on the declared
+hardware, as here.
 
 Two classes of target, treated differently by the gate:
 

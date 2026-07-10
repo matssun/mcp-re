@@ -1,0 +1,11 @@
+# Keep the Cloud Build upload small: never ship build output, VCS, or local envs.
+.git/
+target/
+**/target/
+node_modules/
+**/node_modules/
+.venv*/
+**/.venv*/
+sdk/**/dist/
+sdk/**/native/
+*.log

@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: Apache-2.0
+#
+# The ALLOWED inner-plane image for the MCP-RE fleet: a real FastMCP
+# Streamable-HTTP MCP backend (tools/fastmcp_inner_backend.py). MCP-RE is
+# HTTP-profile only — the proxy forwards each verified request to this backend
+# over `--inner-http-url`. This replaces the removed stdio-bridge sidecar.
+#
+#   docker build -f deploy/docker/Dockerfile.inner -t mcp-re-inner-fastmcp:0.11.0 .
+#
+# The port comes from config/ports.toml ([services.mcp_re_inner_backend].port);
+# override with MCP_RE_INNER_BACKEND_PORT. FASTMCP_JSON_RESPONSE=true makes the
+# transport return a plain application/json JSON-RPC body (the shape http_inner.rs
+# parses); --stateless matches the proxy's one-POST-per-request forwarding.
+FROM python:3.12-slim AS inner
+RUN pip install --no-cache-dir "fastmcp>=3.4,<4"
+WORKDIR /app
+COPY tools/fastmcp_inner_backend.py /app/fastmcp_inner_backend.py
+# The script resolves config/ports.toml one dir up from itself (here/../config);
+# with the script at /app that is /config/ports.toml.
+COPY config/ports.toml /config/ports.toml
+ENV FASTMCP_JSON_RESPONSE=true \
+    FASTMCP_STATELESS_HTTP=true \
+    MCP_RE_INNER_BACKEND_HOST=0.0.0.0
+# fastmcp_inner_backend.py binds config host by default; the K8s manifest sets
+# MCP_RE_INNER_BACKEND_PORT and we bind 0.0.0.0 so the Service can reach it.
+ENTRYPOINT ["python", "/app/fastmcp_inner_backend.py"]

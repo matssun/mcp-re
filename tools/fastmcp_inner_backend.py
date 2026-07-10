@@ -56,4 +56,7 @@ if __name__ == "__main__":
     with open(ports, "rb") as fh:
         svc = tomllib.load(fh)["services"]["mcp_re_inner_backend"]
     port = int(os.environ.get("MCP_RE_INNER_BACKEND_PORT", svc["port"]))
-    mcp.run(transport="http", host=svc["host"], port=port, stateless_http=True)
+    # Host defaults to the registry (127.0.0.1 for local runs); a containerized /
+    # in-cluster deploy sets MCP_RE_INNER_BACKEND_HOST=0.0.0.0 so a Service reaches it.
+    host = os.environ.get("MCP_RE_INNER_BACKEND_HOST", svc["host"])
+    mcp.run(transport="http", host=host, port=port, stateless_http=True)

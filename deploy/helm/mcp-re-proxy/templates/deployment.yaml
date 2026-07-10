@@ -96,6 +96,16 @@ spec:
             - "{{ .Values.tls.mountPath }}/client-ca.pem"
             - "--trust"
             - "{{ .Values.tls.mountPath }}/trust.json"
+            {{- if .Values.transportBinding }}
+            # mTLS channel binding (ADR-MCPS-023). `exact` (the proxy default and
+            # the fail-safe) binds each signed request to the verified client-cert
+            # identity. `none` decouples them — only for a reference deploy driven
+            # by an HTTP-profile client that carries no channel-binding claim (the
+            # shipped mcp_re_gke_client / SDK e2e). lb-assertion / attested-ingress
+            # need their own ingress key/anchor values.
+            - "--transport-binding"
+            - {{ .Values.transportBinding | quote }}
+            {{- end }}
             # Inner plane (ADR-MCPRE-051 §3): the PEP forwards to one or more
             # stateless Streamable-HTTP backends (repeated --inner-http-url ⇒
             # round-robin). MCP-RE is HTTP-profile only — a stdio-only server is
@@ -119,6 +129,18 @@ spec:
             tcpSocket:
               port: mcp-re
             periodSeconds: 10
+          {{- if gt (int .Values.drainPreStopSeconds) 0 }}
+          # Close the L4 LoadBalancer endpoint-propagation race: on pod deletion
+          # keep serving for a short window BEFORE the proxy receives SIGTERM, so
+          # the LB stops routing new connections to this pod before it drains. The
+          # proxy's own SIGTERM drain (finish in-flight, stop accepting) then runs
+          # within terminationGracePeriodSeconds. Without this, a new connection can
+          # reach a pod in the ~1s between SIGTERM and its removal from the LB.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "{{ .Values.drainPreStopSeconds }}"]
+          {{- end }}
           volumeMounts:
             - name: material
               mountPath: {{ .Values.tls.mountPath | quote }}

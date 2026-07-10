@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Cloud Build config: the ADR-051 §7 SLO baseline runner image (deploy/docker/
+# Dockerfile.bench). Built natively on amd64 and pushed to Artifact Registry, then
+# run as K8s Jobs by tools/slo/run_slo_job.sh. See the runbook.
+#
+#   gcloud builds submit --config deploy/cloudbuild/slo-bench.yaml .
+substitutions:
+  _AR: us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: [build, -f, deploy/docker/Dockerfile.bench, -t, "${_AR}/mcp-re-slo-bench:0.11.0", .]
+images:
+  - "${_AR}/mcp-re-slo-bench:0.11.0"
+options:
+  machineType: E2_HIGHCPU_8
+timeout: 2400s

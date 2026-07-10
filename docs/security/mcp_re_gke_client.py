@@ -101,6 +101,31 @@ def _classify(reason: "str | None") -> str:
     return f"rejected:{reason or 'unknown'}"
 
 
+def _body_reject_reason(body: bytes) -> "str | None":
+    """The proxy's own ``mcp-re.*`` reason from a fail-closed JSON-RPC error body.
+
+    The object-mode async fleet answers a rejected request with an UNSIGNED
+    JSON-RPC error (signed rejection is an RFC-9421 http-profile feature, not the
+    object/legacy path — ADR-MCPRE-050). So ``verify_response`` — which requires a
+    signed response envelope — reports its own ``mcp-re.missing_envelope`` and never
+    sees WHY the proxy rejected. The authoritative reason is in the error body at
+    ``error.data.mcp_re_error``. Reading it is for VERDICT CLASSIFICATION ONLY: the
+    request is already fail-closed (rejected), so this never turns a rejection into
+    an acceptance — it just lets the harness distinguish replay from revoked from a
+    generic rejection. Returns None if the body is not such an error."""
+    try:
+        err = json.loads(body).get("error")
+        if isinstance(err, dict):
+            data = err.get("data")
+            if isinstance(data, dict) and isinstance(data.get("mcp_re_error"), str):
+                return data["mcp_re_error"]
+            if isinstance(err.get("message"), str) and err["message"].startswith("mcp-re."):
+                return err["message"]
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="mcp_re_gke_client", add_help=True)
     p.add_argument("--remote-addr", required=True)          # host:port
@@ -229,7 +254,9 @@ def main(argv: "list[str] | None" = None) -> int:
             with open(args.save_cont, "w", encoding="utf-8") as fh:
                 json.dump([signed.request_hash, result.response_hash], fh)
     else:
-        verdict = _classify(result.reason)
+        # Prefer the proxy's own reason from the (unsigned, object-mode) error body
+        # over verify_response's generic missing-envelope; fall back to it otherwise.
+        verdict = _classify(_body_reject_reason(body) or result.reason)
         # Echo the proxy's fail-closed body so the harness can still inspect it.
         sys.stdout.write(body.decode("utf-8", "replace") + "\n")
 
