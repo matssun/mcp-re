@@ -13,16 +13,20 @@ pool-exhaustion backpressure (MCPRE-118), the authoritative atomic replay tier
 (MCPRE-117), and delegated-signing custody (companion [ADR-MCPRE-052](adr-mcpre-052.md),
 ratified) — root-in-HSM/KMS, short-TTL in-memory delegated keys, rotation overlap,
 audited lifecycle, fail-closed issuance. The load / replay-race / bounded-drain /
-SLO gates run as named required CI lanes (MCPRE-123), and the SLO target framework
-is declared in [`docs/bench/adr-051-slo-targets.md`](../bench/adr-051-slo-targets.md)
-(status `provisional`).
+SLO gates run as named required CI lanes (MCPRE-123), and the SLO targets are
+declared in [`docs/bench/adr-051-slo-targets.md`](../bench/adr-051-slo-targets.md)
+(the §7 `production_slo` block is now **declared** — see below).
 
-**One physical step remains before any release may CLAIM specific SLO numbers:** the
-representative baseline measurement on the declared hardware class (MCPRE-110, HITL),
-which fills the provisional capacity/scaling targets and flips the gate from
-correctness-only to full enforcement. This acceptance ratifies the *decision* and the
-*mechanism*; per §7 no release ships below its **measured** SLOs — acceptance is not a
-capacity claim.
+**Fully realized in v0.11.** The one physical step this acceptance left open — the
+representative baseline measurement on the declared hardware class (MCPRE-110, HITL) —
+is **done**: `tls_load_harness_bench` (spawning the real async proxy at N cores) was
+run on real GKE hardware (e2-standard-8 + c3-standard-8, 1 and 8 cores) in v0.11,
+filling `production_slo` (throughput floor, p50/p99/p999 added-latency ceilings, and
+the per-core linear-scaling factor) and flipping the gate from correctness-only to
+full enforcement (`scripts/slo_gate.py`; the local-regression companion is
+`scripts/adr051_slo_gate.py`). The floor hardware is the weaker measured class
+(e2-standard-8); both classes clear the gate. Per §7 no release ships below its
+**measured** SLOs — and v0.11's are measured, not asserted.
 
 ## Context
 
