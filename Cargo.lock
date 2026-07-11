@@ -857,6 +857,7 @@ name = "mcp-re-client-core"
 version = "0.11.0"
 dependencies = [
  "mcp-re-core",
+ "mcp-re-http-profile",
  "serde_json",
 ]
 
@@ -920,6 +921,7 @@ name = "mcp-re-host"
 version = "0.11.0"
 dependencies = [
  "getrandom 0.2.17",
+ "mcp-re-client-core",
  "mcp-re-core",
  "mcp-re-host",
  "serde_json",
@@ -965,7 +967,6 @@ dependencies = [
  "libc",
  "mcp-re-client-core",
  "mcp-re-core",
- "mcp-re-host",
  "mcp-re-http-profile",
  "mcp-re-policy",
  "mcp-re-test-paths",

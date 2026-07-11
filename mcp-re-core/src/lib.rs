@@ -52,6 +52,7 @@ pub use error::McpReError;
 pub use error::McpReResult;
 pub use hash::parse_hash_id;
 pub use hash::sha256_hash_id;
+pub use ids::EXTENSION_ID;
 pub use ids::SIG_ALG_ED25519;
 pub use replay::InMemoryReplayCache;
 pub use replay::ReplayCache;
