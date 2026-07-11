@@ -4,7 +4,7 @@
 multi-replica validation harness (`gke-multi-replica-validation.sh`).
 
 MCP-RE is HTTP-profile only. This replaces the removed `mcp-re-client-proxy-cli`:
-it reads ONE plain MCP JSON-RPC request on stdin, signs a draft-02 envelope with the
+it reads ONE plain MCP JSON-RPC request on stdin, signs an RFC 9421 + RFC 9530 request with the
 audited `mcp-re-client-core` logic (via the `mcp_re_sdk` PyO3 core), forwards it over
 verifying mTLS as one HTTP/1.1 POST to `--remote-addr host:port`, verifies the
 server-signed response, prints the plain MCP response JSON on stdout, and reports a
@@ -37,20 +37,8 @@ import socket
 import ssl
 import sys
 import time
-from datetime import datetime, timezone
 
 import mcp_re_sdk
-
-# A concrete, valid authorization-binding digest (SHA-256 of the empty artifact,
-# Base64URL-no-pad). The PEP verifies the signature over the preimage (which includes
-# the binding) but enforces no authorization scope, so any self-consistent binding is
-# accepted; this one is proven against the real proxy.
-_AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
-
-
-def _rfc3339(unix: int) -> str:
-    return datetime.fromtimestamp(unix, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
@@ -78,19 +66,6 @@ def _read_seed(spec: str) -> bytes:
     return seed
 
 
-def _canonical_audience(six_field: str) -> str:
-    """Reproduce ``AudienceTuple::to_audience_string`` from the 6-field ``--audience``
-    form (``scheme,host,port,tenant,route,realm``); a drift fails closed, never passes."""
-    parts = six_field.split(",")
-    if len(parts) != 6:
-        raise ValueError(f"--audience must have 6 comma fields, got {len(parts)}: {six_field!r}")
-    scheme, host, port, tenant, route, realm = parts
-    return (
-        f"mcp-re-audience:v1:scheme={scheme};host={host};port={port};"
-        f"tenant={tenant};route={route};realm={realm}"
-    )
-
-
 def _classify(reason: "str | None") -> str:
     """Map a fail-closed ``mcp-re.*`` reason to a coarse verdict token."""
     r = (reason or "").lower()
@@ -104,11 +79,10 @@ def _classify(reason: "str | None") -> str:
 def _body_reject_reason(body: bytes) -> "str | None":
     """The proxy's own ``mcp-re.*`` reason from a fail-closed JSON-RPC error body.
 
-    The object-mode async fleet answers a rejected request with an UNSIGNED
-    JSON-RPC error (signed rejection is an RFC-9421 http-profile feature, not the
-    object/legacy path — ADR-MCPRE-050). So ``verify_response`` — which requires a
-    signed response envelope — reports its own ``mcp-re.missing_envelope`` and never
-    sees WHY the proxy rejected. The authoritative reason is in the error body at
+    A fail-closed request may be answered with a signed RFC 9421 rejection, or —
+    for a pre-evidence transport/parse failure — an unsigned JSON-RPC error whose
+    reason ``verify_response`` cannot read. The authoritative reason is in the error
+    body at
     ``error.data.mcp_re_error``. Reading it is for VERDICT CLASSIFICATION ONLY: the
     request is already fail-closed (rejected), so this never turns a rejection into
     an acceptance — it just lets the harness distinguish replay from revoked from a
