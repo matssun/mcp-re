@@ -159,7 +159,6 @@ ed25519-dalek = { workspace = true }
 # the deterministic `FixedClock` / `SeededNonceSource` fixtures, which mcp-re-host
 # compiles only under its `test-fixtures` feature (audit #81); enable it here as a
 # DEV-dependency feature so it never reaches the production proxy closure.
-mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 # The draft-02 serving test signs a real draft-02 request via the client seam.
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.
