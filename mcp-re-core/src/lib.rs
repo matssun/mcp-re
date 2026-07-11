@@ -17,37 +17,30 @@
 //! into the full verification pipeline (`pipeline`): `verify_request` and
 //! `verify_response`.
 
+// PURGE 2026-07-11 (owner decision): the object/JCS engine is DELETED. RFC 9421 +
+// RFC 9530 (the `mcp-re-http-profile` crate) is the sole carrier and stands ONLY on
+// the profile-agnostic primitives below (replay tier, trust resolution, Ed25519
+// keys/verify, errors, base64, hashes, freshness, JSON-RPC wire, audit). The
+// deleted modules — `canonical` (RFC 8785 JCS), `pipeline` (object verifier),
+// `signing` (object `_meta` preimage), `envelope`, `constraints`, `mrt`, `unwrap`
+// — carried the object carrier and are gone; no `_meta` signature exists on any
+// wire.
 pub mod audit;
-pub mod canonical;
-pub mod constraints;
 pub mod crypto;
 pub mod encoding;
-pub mod envelope;
 pub mod error;
 pub mod hash;
+// `ids` retained ONLY for the profile-agnostic constants (the Ed25519 alg string,
+// extension id). The object `_meta` key constants it also holds are NOT re-exported
+// — nothing on the RFC 9421 path uses them; they are trimmed when the last object
+// consumer is gone.
 pub mod ids;
-pub mod mrt;
-pub mod pipeline;
 pub mod replay;
 pub mod resolver;
-pub mod signing;
 pub mod time;
-pub mod unwrap;
 pub mod wire;
 
-// Re-export the public surface at the crate root for ergonomic use.
-pub use canonical::canonicalize;
-pub use canonical::canonicalize_json_value;
-pub use canonical::canonicalize_value;
-pub use canonical::parse;
-pub use canonical::JcsValue;
-pub use constraints::extract_draft02_request_envelope;
-pub use constraints::extract_draft02_response_envelope;
-pub use constraints::extract_request_envelope;
-pub use constraints::extract_response_envelope;
-pub use constraints::reject_batch;
-pub use constraints::reject_notification;
-pub use constraints::KNOWN_CANONICALIZATION_SCHEMES;
+// Re-export the profile-agnostic public surface at the crate root.
 pub use crypto::ensure_ed25519_alg;
 pub use crypto::verify_ed25519;
 pub use crypto::verify_ed25519_with;
@@ -55,67 +48,22 @@ pub use crypto::SigningKey;
 pub use crypto::VerificationKey;
 pub use encoding::b64url_decode;
 pub use encoding::b64url_encode;
-pub use envelope::AuthorizationBinding;
-pub use envelope::Continuation;
-pub use envelope::Draft02RequestEnvelope;
-pub use envelope::Draft02ResponseEnvelope;
-pub use envelope::RequestEnvelope;
-pub use envelope::ResponseEnvelope;
-pub use envelope::SignatureBlock;
-pub use envelope::VerifiedContext;
 pub use error::McpReError;
 pub use error::McpReResult;
 pub use hash::parse_hash_id;
 pub use hash::sha256_hash_id;
-pub use ids::CANONICALIZATION_ID_INT53_V1;
-pub use ids::DRAFT_02_CANONICALIZATION_ALLOWLIST;
-pub use ids::EXTENSION_ID;
-pub use ids::REQUEST_META_KEY;
-pub use ids::RESPONSE_META_KEY;
-pub use ids::RESPONSE_WRAP_INNER_ERROR_KEY;
-pub use ids::RESPONSE_WRAP_VALUE_KEY;
 pub use ids::SIG_ALG_ED25519;
-pub use ids::VERIFIED_META_KEY;
-pub use ids::VERSION_DRAFT_01;
-pub use ids::VERSION_DRAFT_02;
-pub use mrt::build_mcp_mrt_continuation;
-pub use mrt::classify_result;
-pub use mrt::ResultClass;
-pub use pipeline::verify_request;
-pub use pipeline::verify_request_dispatch;
-pub use pipeline::verify_request_dispatch_preflight;
-pub use pipeline::verify_request_draft02;
-pub use pipeline::verify_request_draft02_preflight;
-pub use pipeline::verify_request_preflight;
-pub use pipeline::PreflightVerified;
-pub use pipeline::ReplayKey;
-pub use pipeline::verify_response;
-pub use pipeline::verify_response_draft02;
-pub use pipeline::ExpectedVersionPolicy;
-pub use pipeline::VerificationConfig;
-pub use pipeline::VerifiedAuthorization;
-pub use pipeline::VerifiedRequest;
-pub use pipeline::VerifiedResponse;
-pub use pipeline::VersionPolicyError;
 pub use replay::InMemoryReplayCache;
 pub use replay::ReplayCache;
 pub use replay::ReplayCacheError;
 pub use replay::ReplayDecision;
 pub use replay::ReplayDurabilityClass;
+pub use replay::ReplayKey;
 pub use resolver::InMemoryTrustResolver;
 pub use resolver::TrustResolver;
 pub use resolver::TrustResolverError;
-pub use signing::preimage_exclusion_paths;
-pub use signing::request_hash;
-pub use signing::request_signing_preimage;
-pub use signing::response_hash;
-pub use signing::response_signing_preimage;
-pub use signing::signing_preimage;
-pub use signing::EnvelopeLocation;
 pub use time::check_freshness;
 pub use time::parse_rfc3339_utc;
 pub use time::unix_to_rfc3339_utc;
-pub use unwrap::unwrap_verified_result;
-pub use unwrap::UnwrappedResult;
 pub use wire::json_rpc_error_object;
 pub use wire::MCP_RE_JSON_RPC_ERROR_CODE;

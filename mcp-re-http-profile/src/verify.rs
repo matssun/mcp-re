@@ -568,6 +568,30 @@ pub fn verify_response_full(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_bound_full(
+        response,
+        request,
+        &verified_request.evidence,
+        resolve_actor,
+        now,
+    )
+}
+
+/// Full-profile response verification bound to a request evidence HANDLE
+/// ([`RequestEvidence`]) rather than the whole [`VerifiedHttpRequestEvidence`].
+///
+/// This is the CLIENT-side entry point: the client that signed the request holds
+/// only the [`RequestEvidence`] handle (`SignedRequest::evidence`), not a
+/// server-style verified-request context. Semantics are otherwise identical to
+/// [`verify_response_full`] — the `;req` cryptographic floor plus the response
+/// evidence block's `profile` / `server_signer.keyid` / `request_evidence` checks.
+pub fn verify_response_bound_full(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    bound_request_evidence: &RequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // 1. Cryptographic floor incl. the ;req binding to `request`.
     let mut evidence = verify_response(response, request, resolve_actor, now)?;
 
@@ -584,17 +608,17 @@ pub fn verify_response_full(
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
-    // 4. Explicit request-evidence comparison: body handle == verified request
-    //    signature-base digest. This is the precise `request_binding_mismatch`
-    //    path (the ;req floor already rejects a cryptographic splice above).
-    let bound = &verified_request.evidence;
-    if block.request_evidence.digest_alg != bound.digest_alg
-        || block.request_evidence.digest_value != bound.digest_value
+    // 4. Explicit request-evidence comparison: body handle == the request
+    //    signature-base digest the caller holds. This is the precise
+    //    `request_binding_mismatch` path (the ;req floor already rejects a
+    //    cryptographic splice above).
+    if block.request_evidence.digest_alg != bound_request_evidence.digest_alg
+        || block.request_evidence.digest_value != bound_request_evidence.digest_value
     {
         return Err(HttpProfileError::ResponseBindingMismatch);
     }
 
-    evidence.bound_request_evidence = Some(bound.clone());
+    evidence.bound_request_evidence = Some(bound_request_evidence.clone());
     evidence.body_request_evidence = Some(RequestEvidence {
         digest_alg: block.request_evidence.digest_alg.clone(),
         digest_value: block.request_evidence.digest_value.clone(),

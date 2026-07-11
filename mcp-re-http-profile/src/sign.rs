@@ -185,6 +185,25 @@ pub fn sign_request_full(
     sign_request(request, key, key_id, created, expires, nonce)
 }
 
+/// Full-profile request signing through an EXTERNAL signer (Cloud KMS / HSM
+/// custody). Like [`sign_request_full`] except the private-key operation is
+/// delegated to `sign_base` (which receives the exact RFC 9421 signature base and
+/// MUST return the 64 raw Ed25519 signature bytes). The evidence block is composed
+/// FIRST so `content-digest` (a covered component) protects it, exactly as the
+/// local-key path does.
+pub fn sign_request_full_with_signer(
+    request: &mut HttpRequest,
+    block: &HttpRequestEvidenceBlock,
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
+    key_id: &str,
+    created: i64,
+    expires: i64,
+    nonce: &str,
+) -> Result<RequestEvidence, HttpProfileError> {
+    request.body = insert_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, block)?;
+    sign_request_with_signer(request, sign_base, key_id, created, expires, nonce)
+}
+
 /// Full-profile response signing (MCPRE-101): compose the response evidence
 /// block (`se.syncom/mcp-re.http.response`) carrying the `server_signer` identity
 /// and the `request_evidence` this response answers into the body `_meta`, then

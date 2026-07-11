@@ -95,6 +95,26 @@ pub enum ReplayDecision {
     Replay,
 }
 
+/// The replay key handed to the authoritative replay tier for the atomic
+/// insert-if-absent: the `(signer, audience, nonce)` logical identity fixed by the
+/// active profile, plus the parsed `expires_at`. Profile-agnostic — the RFC 9421
+/// HTTP profile projects its ratified five-tuple onto these three slots
+/// (`HttpReplayKey::to_core_replay_key`) and the async tier consumes THIS type, so
+/// the stored composite key is identical across the sync and async admission
+/// paths. `expires_at_unix` is the RAW parsed `expires_at`; the tier folds in the
+/// clock skew when it derives the store TTL (`retain_until = expires_at + skew`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayKey {
+    /// The verified request signer identity.
+    pub signer: String,
+    /// The verified request audience.
+    pub audience: String,
+    /// The request nonce.
+    pub nonce: String,
+    /// The parsed `expires_at` (Unix seconds), pre-skew-fold.
+    pub expires_at_unix: i64,
+}
+
 /// An operational failure of a [`ReplayCache`] (distinct from a replay verdict).
 ///
 /// Maps to [`McpReError::ReplayCacheUnavailable`] via
