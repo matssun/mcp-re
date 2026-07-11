@@ -86,6 +86,7 @@ pub use delegation::JWK_KTY_OKP;
 pub use delegation::KEY_USE_RESPONSE_SIGNING;
 pub use digest::content_digest_sha256;
 pub use dispatch::dispatch_request;
+pub use dispatch::prepare_http_dispatch;
 pub use dispatch::DispatchConfig;
 pub use dispatch::DispatchError;
 pub use dispatch::DispatchOutcome;
