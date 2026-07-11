@@ -18,14 +18,8 @@
 //! MCP-RE is HTTP-profile only — stdio is out of scope; a stdio-only host uses an
 //! external plain-MCP adapter (e.g. FastMCP) that speaks HTTP to MCP-RE.
 
-pub mod client;
 pub mod demo_fixtures;
-pub mod mtls_client;
 
-pub use client::DemoHostClient;
 pub use demo_fixtures::DemoFixtureFiles;
 pub use demo_fixtures::DemoFixtureSpec;
 pub use demo_fixtures::DemoFixtures;
-pub use mtls_client::MtlsClientRunner;
-pub use mtls_client::RoundTripOutcome;
-pub use mtls_client::RunnerError;
