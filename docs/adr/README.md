@@ -58,7 +58,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Implemented |
 | [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Implemented |
 | [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Implemented |
-| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Accepted |
+| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Implemented |
 | [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Implemented |
 | [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | ↩️ Superseded |
 | [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Implemented |
