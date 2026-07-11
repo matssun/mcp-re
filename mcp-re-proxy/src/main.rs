@@ -17,23 +17,29 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use mcp_re_policy::InMemoryRevocationSource;
-use mcp_re_policy::PolicyEvaluator;
-use mcp_re_policy::ReferenceProfile;
-use mcp_re_policy::REFERENCE_PROFILE_ID;
 use mcp_re_proxy::config_snapshot;
 use mcp_re_proxy::cli;
-use mcp_re_proxy::cli::AuthzKind;
 use mcp_re_proxy::cli::BindingKind;
 use mcp_re_proxy::cli::KeySourceKind;
 use mcp_re_proxy::cli::ReplayKind;
 use mcp_re_proxy::http_inner::HttpInnerPool;
+use mcp_re_proxy::HttpProfileProxy;
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::transport::TransportBindingPolicy;
+use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::ActorIdentity;
+use mcp_re_http_profile::AudienceTuple;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
+use std::collections::HashMap;
 use mcp_re_proxy::tls;
 use mcp_re_proxy::transport::ExactMatchBinding;
 use mcp_re_proxy::IdentityPolicy;
 use mcp_re_proxy::ReplayDurabilityTier;
 use mcp_re_proxy::IdentityStrategy;
-use mcp_re_proxy::Proxy;
 use mcp_re_proxy::RevocationTier;
 use mcp_re_proxy::ReverseProxyMtlsProvider;
 use mcp_re_proxy::ServerOptions;
@@ -300,20 +306,63 @@ fn run() -> Result<(), String> {
         );
     }
 
-    // Build the proxy (PEP). The MCPS-036 lifecycle sink receives the proxy-level
-    // events (inner_request_forwarded / inner_response_signed) on the async path.
-    let log_sink: Arc<dyn mcp_re_proxy::InnerLogSink + Send + Sync> =
-        Arc::new(mcp_re_proxy::StderrLogSink);
-    let mut proxy = Proxy::new(
-        key_source,
-        config.server_signer.clone(),
-        config.server_key_id.clone(),
-        resolver,
-        config.audience.clone(),
-        config.max_clock_skew,
-    )
-    .with_expected_version_policy(config.expected_version_policy)
-    .with_log_sink(Arc::clone(&log_sink));
+    // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
+    // supplies the ActorResolver: each trusted key_id resolves to a structured
+    // ResolvedActor — client keys for the Request slot, the server key for the
+    // Response slot (slot discipline, MCPRE-100). `_resolver`/`key_source` stay for
+    // the TLS path; the object response-signer seam is gone.
+    let _ = &resolver;
+    let trust_entries = cli::load_trust_entries(&trust_bytes)?;
+    let server_signing_key = cli::build_server_signing_key(&config)?;
+    let server_pub = server_signing_key.public_key();
+    let server_identity = ActorIdentity {
+        role: "server".to_string(),
+        trust_domain: config.trust_domain.clone(),
+        subject: config.server_signer.clone(),
+        keyid: config.server_key_id.clone(),
+    };
+    let mut client_map: HashMap<String, (String, VerificationKey)> = HashMap::new();
+    for (signer, key_id, key) in trust_entries {
+        if key_id != config.server_key_id {
+            client_map.insert(key_id, (signer, key));
+        }
+    }
+    let skid = config.server_key_id.clone();
+    let sident = server_identity.clone();
+    let td = config.trust_domain.clone();
+    let resolve_actor: mcp_re_proxy::ActorResolver =
+        Box::new(move |kid: &str, slot: SignerSlot| match slot {
+            SignerSlot::Response if kid == skid => Some(ResolvedActor {
+                identity: sident.clone(),
+                verification_key: server_pub.clone(),
+                slot,
+            }),
+            SignerSlot::Request => client_map.get(kid).map(|(signer, key)| ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".to_string(),
+                    trust_domain: td.clone(),
+                    subject: signer.clone(),
+                    keyid: kid.to_string(),
+                },
+                verification_key: key.clone(),
+                slot,
+            }),
+            _ => None,
+        });
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    // The authoritative async replay tier (§4) + deployment durability posture,
+    // selected below; default is the single-replica in-memory tier.
+    let mut replay_async =
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), config.max_clock_skew);
+    let mut dispatch_cfg = ProxyDispatchConfig {
+        fleet_strict: false,
+        tier: None,
+    };
+    let mut transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>> = None;
     // ADR-MCPRE-051 §4: select the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
     // runtime worker. Memory (default) is single-replica; Shared selects a durable
@@ -359,12 +408,14 @@ fn run() -> Result<(), String> {
                             &endpoint,
                         ),
                     );
-                    proxy = proxy.with_async_replay_tier(
-                        mcp_re_proxy::async_replay::AsyncReplayTier::new(
-                            store,
-                            config.max_clock_skew,
-                        ),
+                    replay_async = mcp_re_proxy::async_replay::AsyncReplayTier::new(
+                        store,
+                        config.max_clock_skew,
                     );
+                    dispatch_cfg = ProxyDispatchConfig {
+                        fleet_strict: true,
+                        tier: config.replay_durability_tier.clone(),
+                    };
                     replay_control_rt = None;
                 }
                 #[cfg(not(feature = "cpstore_etcd"))]
@@ -395,12 +446,14 @@ fn run() -> Result<(), String> {
                         rt.block_on(mcp_re_proxy::RedisAsyncAtomicReplayStore::connect(&url))
                             .map_err(|e| format!("connect redis async replay store: {e:?}"))?,
                     );
-                    proxy = proxy.with_async_replay_tier(
-                        mcp_re_proxy::async_replay::AsyncReplayTier::new(
-                            store,
-                            config.max_clock_skew,
-                        ),
+                    replay_async = mcp_re_proxy::async_replay::AsyncReplayTier::new(
+                        store,
+                        config.max_clock_skew,
                     );
+                    dispatch_cfg = ProxyDispatchConfig {
+                        fleet_strict: true,
+                        tier: config.replay_durability_tier.clone(),
+                    };
                     replay_control_rt = Some(rt);
                 }
                 #[cfg(not(feature = "redis_replay"))]
@@ -421,7 +474,7 @@ fn run() -> Result<(), String> {
     // `durability_class()` defaults (fail closed) to the single-process reference,
     // so an undeclared cache is rejected here too.
     if config.strict
-        && proxy.replay_durability_class()
+        && replay_async.durability_class()
             == mcp_re_core::ReplayDurabilityClass::SingleProcessReference
     {
         return Err(
@@ -433,120 +486,35 @@ fn run() -> Result<(), String> {
                 .into(),
         );
     }
-    if config.authz == AuthzKind::Reference {
-        let mut evaluator = PolicyEvaluator::new();
-        evaluator.register(Box::new(ReferenceProfile::new()));
-        // ADR-MCPS-013: surface the ACTIVE authorization profile and its non-production
-        // posture at startup so an operator can never silently treat the reference
-        // (conformance) profile as the production authority. Reaching here required the
-        // explicit `--allow-reference-authz` acknowledgement (parse-time guard) and is
-        // refused under --strict/--production.
-        eprintln!(
-            "mcp-re-proxy: authorization = ENABLED, active profile '{}' (ACKNOWLEDGED non-production \
-             via --allow-reference-authz). The reference profile is a real, signature-verifying, \
-             fully-bound profile but is a CONFORMANCE/reference implementation, NOT the long-term \
-             recommendation (ADR-MCPS-013; Biscuit is the intended production profile). It is \
-             refused under --strict/--production.",
-            REFERENCE_PROFILE_ID,
+    // Authorization policy enforcement is DEFERRED on the RFC 9421 serving path — the
+    // object authz evaluator was purged in the JCS cutover. A configured policy fails
+    // closed rather than silently not enforce.
+    if config.authz == cli::AuthzKind::Reference {
+        return Err(
+            "authorization policy enforcement is not yet wired on the RFC 9421 serving path \
+             (the object authz evaluator was purged in the JCS cutover); it must be rebuilt on \
+             the HTTP-profile request evidence before --allow-reference-authz can be enabled"
+                .to_string(),
         );
-        // ADR-MCPS-013 policy-layer revocation. `parse_args` has already failed
-        // closed unless a deny-list was supplied or --allow-empty-revocation was
-        // EXPLICITLY given, so reaching here with an empty list is an acknowledged
-        // posture — surfaced loudly at startup so it can never be a silent illusion.
-        let revoked = cli::load_revocation_list(&config.revocation_list_paths)?;
-        let revoked_count = revoked.len();
-        let mut revocation = InMemoryRevocationSource::new();
-        for id in revoked {
-            revocation.revoke(id);
-        }
-        if revoked_count == 0 {
-            eprintln!(
-                "mcp-re-proxy: WARNING: policy revocation deny-list is EMPTY \
-                 (--allow-empty-revocation) — no authorization grant can be revoked this run"
-            );
-        } else {
-            eprintln!(
-                "mcp-re-proxy: policy revocation enabled — {revoked_count} revoked grant id(s) \
-                 loaded (OFFLINE static list; restart to update)"
-            );
-        }
-        proxy = proxy.with_policy_enforcement(evaluator, Box::new(revocation));
     }
+    // Mode-A transport binding: bind the verified request actor to the mTLS peer.
     if config.binding == BindingKind::Exact {
-        proxy = proxy.with_transport_binding(Box::new(ExactMatchBinding::new()));
+        transport_binding = Some(Box::new(ExactMatchBinding::new()));
     }
-    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed, request-bound ingress assertion.
-    // The verified transport identity comes from a cryptographically-verified
-    // assertion bound to THIS request's hash (checked post-verification, inside the
-    // proxy), then binds to the request signer through the SAME ExactMatchBinding
-    // the direct-TLS path uses. `parse_args` already required at least one trusted
-    // `--ingress-lb-key`. Honestly downgraded — NOT end_to_end_mtls.
-    if config.binding == BindingKind::LbAssertion {
-        let lb_assertion = cli::build_lb_assertion_binding(&config)?
-            .ok_or("internal error: lb-assertion binding selected but no verifier built")?;
-        eprintln!(
-            "mcp-re-proxy: transport binding = LB-signed request-bound ingress assertion \
-             ({} trusted LB key(s), guarantee '{}', identity field {:?}, header '{}'). This is \
-             request-bound INGRESS assertion, NOT end-to-end client-node mTLS: the LB terminates \
-             the client's mTLS and re-asserts identity; the node verifies the LB signature + the \
-             request-hash binding, not the client's own key.",
-            config.ingress_lb_keys.len(),
-            mcp_re_proxy::LbAssertionBinding::GUARANTEE,
-            config.identity_source,
-            tls::MCP_INGRESS_ASSERTION_HEADER,
+    // Tier-3 LB assertion (Mode B) and Mode-C attested ingress bind the request hash
+    // under the OWNER-SIGNED security boundary; re-binding them to the RFC 9421
+    // request-evidence digest is pending owner authorization — fail closed rather than
+    // silently drop the channel binding.
+    if matches!(
+        config.binding,
+        BindingKind::LbAssertion | BindingKind::AttestedIngress
+    ) {
+        return Err(
+            "Tier-3 LB / Mode-C attested-ingress transport binding is not yet supported on the \
+             RFC 9421 serving path (owner-signed security-boundary rebinding pending); use \
+             --binding exact (end-to-end mTLS) for the RFC 9421 carrier"
+                .to_string(),
         );
-        proxy = proxy
-            .with_transport_binding(Box::new(ExactMatchBinding::new()))
-            .with_lb_assertion(lb_assertion);
-    }
-    // ADR-MCPS-023 §C (v0.10) Mode C: attested ingress. A controlled ingress
-    // attestor signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the
-    // node verifies over the pinned attestor→node channel; the verified delegated
-    // client identity binds to the request signer through the SAME ExactMatchBinding
-    // the direct-TLS path uses. `parse_args` already required the attestor keys, ≥1
-    // ingress identity, the audience, and the `--ingress-pinned-mtls` acknowledgement.
-    // Strict-ADMITTED and explicit — but attested delegation, NOT end_to_end_mtls.
-    if config.binding == BindingKind::AttestedIngress {
-        let attested = cli::build_attested_ingress_binding(&config)?
-            .ok_or("internal error: attested-ingress selected but no verifier built")?;
-        let audience = config.ingress_audience.as_deref().unwrap_or("<unset>");
-        eprintln!(
-            "mcp-re-proxy: transport binding = attested ingress (Mode C) \
-             ({} trusted attestor key(s), {} trusted ingress identity(ies), guarantee '{}', \
-             audience '{audience}', identity field {:?}, header '{}'). This is ATTESTED \
-             DELEGATION, NOT end-to-end client-node mTLS: the load balancer witnesses \
-             proof-of-possession and stays in the trusted computing base; the node verifies \
-             the attestor signature + the request-hash binding over the pinned attestor-node \
-             channel, not the client's own key.",
-            config.ingress_attestor_keys.len(),
-            config.ingress_identities.len(),
-            mcp_re_proxy::LbAssertionV2Binding::GUARANTEE,
-            config.identity_source,
-            tls::MCP_INGRESS_ASSERTION_HEADER,
-        );
-        // ADR-MCPS-023 §C2: record the THREE trust facts, never fewer, as an
-        // operator posture diagnostic (canonical audit field names; the structured
-        // per-request surface lands with MCPS-62). `delegated_client_identity` is
-        // asserted per request (its value rides the v2 assertion); the other two are
-        // configured facts. Emitting all three prevents a later auditor from
-        // mistaking Mode C for end-to-end mTLS or for a single-component attestor.
-        eprintln!(
-            "mcp-re.ingress.posture binding=attested_ingress \
-             delegated_client_identity=per_request_asserted \
-             ingress_internal_hop=lb_to_attestor_trusted_pop_stays_with_lb \
-             backend_channel_binding=pinned_mtls trusted_ingress_identities={}",
-            config.ingress_identities.len(),
-        );
-        // ADR-MCPS-023 §A1 revocation vocabulary: Mode C delivers dynamic mid-life
-        // revocation via the attestor's CRL (keyed on the client cert serial); the
-        // node treats the attestor's revocation_result as an opaque asserted fact.
-        eprintln!(
-            "mcp-re.revocation.posture revocation_mode=delegated_attestor_crl \
-             dynamic_revocation=true"
-        );
-        proxy = proxy
-            .with_transport_binding(Box::new(ExactMatchBinding::new()))
-            .with_attested_ingress(attested);
     }
 
     // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
@@ -801,6 +769,7 @@ fn run() -> Result<(), String> {
         max_client_cert_lifetime: config.max_client_cert_lifetime,
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
+        target_uri: config.target_uri.clone(),
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
@@ -811,7 +780,24 @@ fn run() -> Result<(), String> {
         .read_timeout
         .unwrap_or_else(|| Duration::from_secs(30));
     let pool = HttpInnerPool::from_url_strs(config.inner_http_urls.clone(), inner_timeout)?;
-    let proxy = proxy.with_async_inner(Box::new(pool));
+
+    // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner
+    // plane, the authoritative replay tier, and the optional Mode-A channel binding.
+    // Response-signature validity window: 300s.
+    let mut proxy = HttpProfileProxy::new(
+        resolve_actor,
+        expected_audience,
+        server_identity,
+        server_signing_key,
+        config.server_key_id.clone(),
+        replay_async,
+        dispatch_cfg,
+        Box::new(pool),
+        300,
+    );
+    if let Some(binding) = transport_binding {
+        proxy = proxy.with_transport_binding(binding);
+    }
 
     // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
     // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
@@ -840,7 +826,7 @@ fn run() -> Result<(), String> {
 /// selection. `_replay_control_rt` (if a durable redis tier is configured) holds
 /// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
 fn serve_fleet(
-    proxy: Proxy,
+    proxy: HttpProfileProxy,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: mcp_re_proxy::ServerOptions,
     config: &cli::Config,
@@ -878,21 +864,9 @@ fn serve_fleet(
     let make_handler = move |_core: usize| {
         let proxy = Arc::clone(&handler_proxy);
         Arc::new(
-            move |body: Vec<u8>,
-                  identity: Option<mcp_re_proxy::transport::TransportIdentity>,
-                  assertion: Option<String>|
-                  -> mcp_re_proxy::async_serve::HandlerResponseFuture {
+            move |req: ServedHttpRequest| -> mcp_re_proxy::async_serve::HandlerResponseFuture {
                 let proxy = Arc::clone(&proxy);
-                Box::pin(async move {
-                    proxy
-                        .handle_with_transport_async(
-                            &body,
-                            now_unix(),
-                            identity.as_ref(),
-                            assertion.as_deref(),
-                        )
-                        .await
-                })
+                Box::pin(async move { proxy.handle(req, now_unix()).await })
             },
         )
     };
