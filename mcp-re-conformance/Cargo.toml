@@ -32,6 +32,3 @@ mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 name = "mcp_re_conformance"
 path = "src/lib.rs"
 
-[[bin]]
-name = "mcp-re-conformance"
-path = "src/main.rs"
