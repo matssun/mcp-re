@@ -1,31 +1,34 @@
-//! The client-side signing ambassador (MCPS-014, ADR-MCPS-003 signing locus).
+// SPDX-License-Identifier: Apache-2.0
+//! The client-side signing ambassador (MCPS-014, ADR-MCPS-003 signing locus),
+//! rebuilt on the RFC 9421 carrier (ADR-MCPRE-050).
 //!
 //! [`HostSigner`] is the local key/actor context. It owns the agent's Ed25519
 //! signing key PRIVATELY: there is no accessor that returns the key or a raw
-//! signature, so model logic that holds a `HostSigner` can request a fully
-//! signed MCP-RE request but can never extract the key or forge a signature
-//! itself (ADR-MCPS-003: the model never holds keys).
+//! signature, so model logic that holds a `HostSigner` can request a fully signed
+//! MCP-RE request but can never extract the key or forge a signature itself
+//! (ADR-MCPS-003: the model never holds keys).
 //!
-//! The host injects the request envelope (carrying `on_behalf_of` and
-//! `authorization_hash`), computes the canonical signing preimage with
-//! `mcp-re-core`, signs it, and returns the wire bytes. Response verification is
-//! re-exported from `mcp-re-core` (see the crate root).
+//! Signing is delegated to `mcp-re-client-core` (the shared RFC 9421 evidence
+//! seam): the host composes the HTTP-profile request evidence block and signs the
+//! RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest. There is NO object/JCS
+//! `_meta` signature.
 
-use mcp_re_core::request_signing_preimage;
-use mcp_re_core::McpReError;
+use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::build_signed_tool_call;
+use mcp_re_client_core::ArtifactBinding;
+use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::RequestSigningInputs;
+use mcp_re_client_core::SignedRequest;
 use mcp_re_core::SigningKey;
-use mcp_re_core::REQUEST_META_KEY;
-use mcp_re_core::SIG_ALG_ED25519;
-use mcp_re_core::VERSION_DRAFT_01;
-use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
 
 /// A client-side signer holding the agent identity and its private signing key.
 ///
 /// The key is never exposed: only [`HostSigner::sign_request`] /
-/// [`HostSigner::sign_tool_call`] can use it, and they return finished wire
-/// bytes — not a key or a detached signature.
+/// [`HostSigner::sign_tool_call`] can use it, and they return a finished, signed
+/// [`SignedRequest`] — not a key or a detached signature.
 pub struct HostSigner {
     signing_key: SigningKey,
     signer: String,
@@ -59,95 +62,58 @@ impl HostSigner {
     // NOTE: there is deliberately NO accessor for `signing_key`. The private key
     // never leaves the host; model logic cannot read it or construct signatures.
 
-    /// Inject and sign the request envelope, returning the signed wire bytes.
+    /// Compose and sign an RFC 9421 request, returning the signed request.
     ///
-    /// `params` is the method's parameter object (e.g. `{"name","arguments"}`
-    /// for `tools/call`). Any caller-supplied `_meta` request envelope is
-    /// overwritten — the host is the sole author of the `*.request` block.
-    /// Taking a [`Map`] makes "params is a JSON object" a type guarantee, so no
-    /// runtime shape check is needed.
+    /// `params` is the method's parameter object. `target_uri`/`audience` are the
+    /// canonical `@target-uri` and the resolved audience tuple; `artifact_bindings`
+    /// are the (required, non-empty) authorization bindings; `nonce`/`created`/
+    /// `expires` are the RFC 9421 freshness parameters (Unix seconds).
     #[allow(clippy::too_many_arguments)]
     pub fn sign_request(
         &self,
         id: &Value,
         method: &str,
         params: Map<String, Value>,
-        on_behalf_of: &str,
-        audience: &str,
-        authorization_hash: &str,
+        target_uri: &str,
+        audience: AudienceTuple,
+        artifact_bindings: Vec<ArtifactBinding>,
         nonce: &str,
-        issued_at: &str,
-        expires_at: &str,
-    ) -> Result<Vec<u8>, McpReError> {
-        let envelope = json!({
-            "version": VERSION_DRAFT_01,
-            "signer": self.signer,
-            "on_behalf_of": on_behalf_of,
-            "audience": audience,
-            "authorization_hash": authorization_hash,
-            "nonce": nonce,
-            "issued_at": issued_at,
-            "expires_at": expires_at,
-            "signature": { "alg": SIG_ALG_ED25519, "key_id": self.key_id },
-        });
-
-        // Merge the envelope into params._meta, overwriting any caller copy.
-        let mut params = params;
-        let mut meta = params
-            .remove("_meta")
-            .and_then(|value| match value {
-                Value::Object(map) => Some(map),
-                _ => None,
-            })
-            .unwrap_or_default();
-        meta.insert(REQUEST_META_KEY.to_string(), envelope);
-        params.insert("_meta".to_string(), Value::Object(meta));
-
-        let mut request = json!({
-            "id": id.clone(),
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": Value::Object(params),
-        });
-
-        // Sign the canonical preimage (signature.value omitted), then graft the
-        // signature value into the envelope.
-        let preimage = request_signing_preimage(&request)?;
-        let signature = self.signing_key.sign(&preimage);
-        request["params"]["_meta"][REQUEST_META_KEY]["signature"]["value"] =
-            Value::String(signature);
-
-        serde_json::to_vec(&request).map_err(|_| McpReError::CanonicalizationFailed)
+        created: i64,
+        expires: i64,
+    ) -> Result<SignedRequest, HttpProfileError> {
+        let inputs = RequestSigningInputs::new(
+            self.key_id.clone(),
+            audience,
+            artifact_bindings,
+            nonce,
+            created,
+            expires,
+        );
+        build_signed_request(id, method, params, target_uri, &inputs, &self.signing_key)
     }
 
-    /// Convenience for the common `tools/call` case: builds
-    /// `{"name","arguments"}` params and signs them.
+    /// Convenience for the common `tools/call` case.
     #[allow(clippy::too_many_arguments)]
     pub fn sign_tool_call(
         &self,
         id: &Value,
         tool_name: &str,
         arguments: Value,
-        on_behalf_of: &str,
-        audience: &str,
-        authorization_hash: &str,
+        target_uri: &str,
+        audience: AudienceTuple,
+        artifact_bindings: Vec<ArtifactBinding>,
         nonce: &str,
-        issued_at: &str,
-        expires_at: &str,
-    ) -> Result<Vec<u8>, McpReError> {
-        let mut params = Map::new();
-        params.insert("name".to_string(), Value::String(tool_name.to_string()));
-        params.insert("arguments".to_string(), arguments);
-        self.sign_request(
-            id,
-            "tools/call",
-            params,
-            on_behalf_of,
+        created: i64,
+        expires: i64,
+    ) -> Result<SignedRequest, HttpProfileError> {
+        let inputs = RequestSigningInputs::new(
+            self.key_id.clone(),
             audience,
-            authorization_hash,
+            artifact_bindings,
             nonce,
-            issued_at,
-            expires_at,
-        )
+            created,
+            expires,
+        );
+        build_signed_tool_call(id, tool_name, arguments, target_uri, &inputs, &self.signing_key)
     }
 }
