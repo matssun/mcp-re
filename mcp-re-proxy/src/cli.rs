@@ -8,7 +8,6 @@
 
 use std::time::Duration;
 
-use mcp_re_core::ExpectedVersionPolicy;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::VerificationKey;
 use serde_json::Value;
@@ -130,13 +129,13 @@ pub struct Config {
     pub server_key_id: String,
     /// Symmetric clock skew (seconds).
     pub max_clock_skew: i64,
-    /// ADR-MCPS-039 (D1): expected-version posture enforced on inbound requests.
-    /// `--expected-version-policy draft-02-only` refuses draft-01 as a downgrade;
-    /// `draft-01-and-draft-02` (the default when the flag is omitted) admits both,
-    /// each strictly verified by its own profile. The default preserves
-    /// back-compatibility with deployed draft-01 front-ends; tighten it once
-    /// draft-01 is retired.
-    pub expected_version_policy: ExpectedVersionPolicy,
+    /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
+    /// (ADR-MCPRE-050); client and server sign it byte-for-byte.
+    pub target_uri: String,
+    /// The trust domain assigned to resolved actors (RFC 9421 ActorIdentity).
+    pub trust_domain: String,
+    /// Optional audience route/tenant discriminator.
+    pub route: Option<String>,
     /// Where key material is read from.
     pub key_source: KeySourceKind,
     /// Location (path or env var) of the Base64URL Ed25519 signing-key seed.
@@ -394,7 +393,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPS-039 (D1): default to the migration posture (admit both wire
     // profiles) so an omitted flag preserves back-compat with draft-01 clients;
     // `--expected-version-policy draft-02-only` tightens it.
-    let mut expected_version_policy = ExpectedVersionPolicy::Draft01AndDraft02;
+    let mut target_uri: Option<String> = None;
+    let mut trust_domain = "example.com".to_string();
+    let mut route: Option<String> = None;
     let mut key_source = KeySourceKind::File;
     let mut signing_key_seed = None;
     let mut tls_cert = None;
@@ -573,10 +574,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--max-clock-skew" => {
                 max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?
             }
-            "--expected-version-policy" => {
-                expected_version_policy = ExpectedVersionPolicy::from_config(Some(value.as_str()))
-                    .map_err(|e| format!("invalid --expected-version-policy: {e}"))?
-            }
+            "--target-uri" => target_uri = Some(value.clone()),
+            "--trust-domain" => trust_domain = value.clone(),
+            "--route" => route = Some(value.clone()),
             "--key-source" => {
                 key_source = match value.as_str() {
                     "file" => KeySourceKind::File,
@@ -1259,7 +1259,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
-        expected_version_policy,
+        target_uri: require(target_uri, "--target-uri")?,
+        trust_domain,
+        route,
         key_source,
         signing_key_seed: require(signing_key_seed, "--signing-key-seed")?,
         tls_cert: require(tls_cert, "--tls-cert")?,
@@ -2101,6 +2103,57 @@ pub fn build_cpstore_replay_cache(
 /// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
 /// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
 /// it carries both request-signer keys and authorization-issuer keys.
+/// Resolve the RAW server response-signing key for RFC 9421 `sign_response_full`.
+/// Available for the in-memory File/dev-Env key sources; non-exporting sources
+/// (KMS/PKCS#11) require the delegated response-signing seam (follow-up).
+pub fn build_server_signing_key(config: &Config) -> Result<mcp_re_core::SigningKey, String> {
+    match config.key_source {
+        KeySourceKind::File => crate::key_source::FileKeySource {
+            signing_key_seed_path: config.signing_key_seed.clone(),
+            tls_cert_path: config.tls_cert.clone(),
+            tls_key_path: config.tls_key.clone(),
+            client_ca_path: config.client_ca.clone(),
+        }
+        .signing_key()
+        .map_err(|e| e.to_string()),
+        #[cfg(feature = "dev_env_key_source")]
+        KeySourceKind::Env => crate::key_source::EnvKeySource {
+            signing_key_seed_var: config.signing_key_seed.clone(),
+            tls_cert_var: config.tls_cert.clone(),
+            tls_key_var: config.tls_key.clone(),
+            client_ca_var: config.client_ca.clone(),
+        }
+        .signing_key()
+        .map_err(|e| e.to_string()),
+        _ => Err("RFC 9421 response signing currently requires --key-source file (or dev env); \
+                  non-exporting KMS/PKCS#11 server signing is a delegated-seam follow-up"
+            .to_string()),
+    }
+}
+
+/// Parse the trust file into `(signer, key_id, verification_key)` entries so the
+/// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
+/// resolver (keyid → structured actor). Same fail-closed duplicate rejection as
+/// [`load_trust`].
+pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, VerificationKey)>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
+    let array = value.as_array().ok_or("trust file must be a JSON array")?;
+    let mut out = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in array {
+        let signer = entry["signer"].as_str().ok_or("trust entry missing signer")?;
+        let key_id = entry["key_id"].as_str().ok_or("trust entry missing key_id")?;
+        if !seen.insert(key_id.to_string()) {
+            return Err(format!("trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"));
+        }
+        let pk = entry["public_key"].as_str().ok_or("trust entry missing public_key")?;
+        let key = VerificationKey::from_b64url(pk)
+            .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
+        out.push((signer.to_string(), key_id.to_string(), key));
+    }
+    Ok(out)
+}
+
 pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
     let array = value.as_array().ok_or("trust file must be a JSON array")?;
