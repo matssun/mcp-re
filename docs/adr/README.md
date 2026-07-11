@@ -39,7 +39,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-021](https://github.com/matssun/mcp-re/discussions/370) | Shared Trust State — Bounded Trust-Propagation Window for Revocation and Rotation | ✅ Implemented |
 | [ADR-MCPS-022](https://github.com/matssun/mcp-re/discussions/371) | Signing Key Custody at Scale — Per-Node Keys, Explicit Anchor, Optional KMS | ✅ Implemented |
 | [ADR-MCPS-023](https://github.com/matssun/mcp-re/discussions/372) | Ingress and Reverse-Proxy mTLS — End-to-End Binding vs. Trusted-Ingress Re-Assertion | ✅ Implemented |
-| [ADR-MCPS-024](https://github.com/matssun/mcp-re/discussions/373) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) | ✅ Accepted |
+| [ADR-MCPS-024](https://github.com/matssun/mcp-re/discussions/373) | Replay Safety Under MCP Multi Round-Trip Requests (SEP-2322) | ✅ Implemented |
 | [ADR-MCPS-025](https://github.com/matssun/mcp-re/discussions/374) | Untrusted Transport Routing Headers — MCP-S Composition with SEP-2243 | ✅ Implemented |
 | [ADR-MCPS-026](https://github.com/matssun/mcp-re/discussions/375) | Signing Scope Versus Stateless Per-Request `_meta` (SEP-2575) | ✅ Implemented |
 | [ADR-MCPS-027](https://github.com/matssun/mcp-re/discussions/376) | Extension Identifier Reassignment to `se.syncom/mcps` | ✅ Implemented |
@@ -53,7 +53,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-036](https://github.com/matssun/mcp-re/discussions/384) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine | ✅ Implemented |
 | [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) | Draft-02 Canonical Number Domain — Integer-Only, With a Documented Float Limitation | ✅ Implemented |
 | [ADR-MCPS-038](https://github.com/matssun/mcp-re/discussions/386) | Draft-02 Envelope Identifiers and Canonical Preimage Field Set | ✅ Implemented |
-| [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Accepted |
+| [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Implemented |
 | [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Implemented |
 | [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Implemented |
 | [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Implemented |
