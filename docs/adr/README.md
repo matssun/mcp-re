@@ -53,7 +53,7 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-036](https://github.com/matssun/mcp-re/discussions/384) | Proposal-Readiness Is a Dual Gate — Mechanical CI + Owner HITL — Over One Evidence Spine | ✅ Implemented |
 | [ADR-MCPS-037](https://github.com/matssun/mcp-re/discussions/385) | Draft-02 Canonical Number Domain — Integer-Only, With a Documented Float Limitation | ✅ Implemented |
 | [ADR-MCPS-038](https://github.com/matssun/mcp-re/discussions/386) | Draft-02 Envelope Identifiers and Canonical Preimage Field Set | ✅ Implemented |
-| [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Accepted |
+| [ADR-MCPS-039](https://github.com/matssun/mcp-re/discussions/387) | Draft-02 Authorization-Evidence Binding | ✅ Implemented |
 | [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Implemented |
 | [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Implemented |
 | [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Implemented |
