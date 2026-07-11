@@ -474,3 +474,18 @@ nt_rust_test(
         "//mcp-re-http-profile:mcp_re_http_profile",
     ],
 )
+
+# ADR-MCPRE-050 §A witnesses: the RFC 9421 security-property proofs that map each §A
+# capability-claim-matrix row to a green test (the go-forward replacement for the
+# deleted object suite). One named test per §A capability.
+nt_rust_test(
+    name = "rfc9421_security_properties_test",
+    srcs = ["tests/rfc9421_security_properties_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+    ],
+)

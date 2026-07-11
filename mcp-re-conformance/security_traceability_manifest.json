@@ -197,10 +197,101 @@
       "source": "mcp-re-proxy/src/cli.rs",
       "test_fn": "strict_rejects_reverse_proxy_identity_header_ingress",
       "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The forwarded trusted-ingress identity header (Tier 2) is spoofable by any peer that can reach the socket; strict refuses it. Raw forwarded-identity headers remain forbidden under strict. GREEN-OFFLINE."
+    },
+    {
+      "property": "method-transparency: the verify verdict is independent of the JSON-RPC method",
+      "bazel_target": "//mcp-re-conformance:method_transparency_test",
+      "source": "mcp-re-conformance/tests/method_transparency_test.rs",
+      "test_fn": "accepted_verdict_is_identical_across_all_methods",
+      "notes": "ADR-MCPS-030/034 behavioral half; \u00a7A Tool safety"
+    },
+    {
+      "property": "no concrete MCP method-name literal in non-test Core source",
+      "bazel_target": "//mcp-re-conformance:method_name_drift_guard_test",
+      "source": "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
+      "test_fn": "no_banned_method_literal_in_non_test_core_src",
+      "notes": "ADR-MCPS-034 static half; \u00a7A Tool safety"
+    },
+    {
+      "property": "RFC 9421 request signature verified; a tampered request body is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "tampered_request_body_is_rejected",
+      "notes": "\u00a7A Message authenticity"
+    },
+    {
+      "property": "any mutation of the signed payload (body or JSON-RPC id) is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "mutated_payload_is_rejected",
+      "notes": "\u00a7A Integrity"
+    },
+    {
+      "property": "the request is bound to its declared audience; a wrong-audience request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "wrong_audience_is_rejected",
+      "notes": "\u00a7A Audience binding"
+    },
+    {
+      "property": "authorization binding: the client binds an authorization artifact into the RFC 9421 request evidence",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "authorization_artifact_binding_is_bound_and_verified",
+      "notes": "\u00a7A Delegation / authorization binding"
+    },
+    {
+      "property": "freshness: an expired request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "expired_request_is_rejected",
+      "notes": "\u00a7A Freshness"
+    },
+    {
+      "property": "replay: a second submission of the same nonce is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "replayed_request_is_rejected_by_the_replay_tier",
+      "notes": "\u00a7A Replay resistance"
+    },
+    {
+      "property": "trust resolution: a signer key not in the authorized set fails closed",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "untrusted_signer_key_is_rejected",
+      "notes": "\u00a7A Revocation / trust propagation"
+    },
+    {
+      "property": "transport binding: the verified request actor is the identity the transport binding checks the channel against",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "transport_identity_binds_to_the_request_actor",
+      "notes": "\u00a7A Ingress binding"
+    },
+    {
+      "property": "key admission: a keyid outside the admitted set is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "unauthorized_key_id_is_rejected",
+      "notes": "\u00a7A Key custody / blast radius"
+    },
+    {
+      "property": "response bound to its originating request; a response bound to the WRONG request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "response_bound_to_the_wrong_request_is_rejected",
+      "notes": "\u00a7A Response binding"
+    },
+    {
+      "property": "the request evidence block is client-authored and covered by content-digest; a caller-injected _meta not covered by the signature is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "caller_supplied_proxy_meta_is_not_the_signed_authority",
+      "notes": "\u00a7A Verified security context"
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 28
+    "entries": 41
   }
 }

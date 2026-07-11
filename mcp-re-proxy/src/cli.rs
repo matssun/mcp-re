@@ -1259,7 +1259,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
-        target_uri: require(target_uri, "--target-uri")?,
+        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). Optional at parse; an
+        // unset value serves nothing (the audience/target check fails closed on every
+        // request), so a deployment MUST set --target-uri to serve.
+        target_uri: target_uri.unwrap_or_default(),
         trust_domain,
         route,
         key_source,
