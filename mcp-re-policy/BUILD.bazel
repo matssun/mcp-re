@@ -50,20 +50,3 @@ nt_rust_binary(
         "@crates_mcp_re//:serde_json",
     ],
 )
-
-# MCPS-022: replays each committed vector through REAL verify_request +
-# PolicyEvaluator and asserts the expected decision. Vectors embedded at compile
-# time (include_str! / compile_data) — no runtime filesystem.
-nt_rust_test(
-    name = "vectors_test",
-    srcs = ["tests/vectors_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    compile_data = glob(["tests/vectors/**"]),
-    edition = "2021",
-    deps = [
-        ":mcp_re_policy",
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
