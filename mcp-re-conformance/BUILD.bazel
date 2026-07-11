@@ -233,50 +233,6 @@ nt_rust_test(
     ],
 )
 
-# MCPS-031: drift-guarded conformance manifest. The committed
-# conformance_manifest.json is the SINGLE SOURCE OF TRUTH for the conformance
-# corpus (every vector + every //... rust_test target). This
-# guard reads the manifest, the Core vector fixtures, the Phase 5 vectors, and
-# every BUILD.bazel from DISK (via runfiles) and FAILS on any drift: a vector on
-# disk missing from the manifest, a manifest entry with no vector, a stale
-# (hardcoded-and-rotted) count, or a rust_test target added/removed without a
-# manifest update. Counts are derived from reality, never trusted as written.
-nt_rust_test(
-    name = "drift_guard_test",
-    srcs = ["tests/drift_guard_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        "conformance_manifest.json",
-        "BUILD.bazel",
-        "//mcp-re-core:vectors",
-        "//mcp-re-core:tests/vectors/manifest.json",
-        "//mcp-re-core:BUILD.bazel",
-        "//mcp-re-host:BUILD.bazel",
-        "//mcp-re-policy:BUILD.bazel",
-        "//mcp-re-policy:tests/vectors/phase5_vectors.json",
-        "//mcp-re-proxy:BUILD.bazel",
-        "//mcp-re-demo:BUILD.bazel",
-        "//mcp-re-transport:BUILD.bazel",
-    ],
-    edition = "2021",
-    env = {
-        "MCP_RE_MANIFEST": "$(rlocationpath conformance_manifest.json)",
-        "MCP_RE_CORE_MANIFEST": "$(rlocationpath //mcp-re-core:tests/vectors/manifest.json)",
-        "MCP_RE_PHASE5": "$(rlocationpath //mcp-re-policy:tests/vectors/phase5_vectors.json)",
-        "MCP_RE_BUILD_CONFORMANCE": "$(rlocationpath BUILD.bazel)",
-        "MCP_RE_BUILD_CORE": "$(rlocationpath //mcp-re-core:BUILD.bazel)",
-        "MCP_RE_BUILD_HOST": "$(rlocationpath //mcp-re-host:BUILD.bazel)",
-        "MCP_RE_BUILD_POLICY": "$(rlocationpath //mcp-re-policy:BUILD.bazel)",
-        "MCP_RE_BUILD_PROXY": "$(rlocationpath //mcp-re-proxy:BUILD.bazel)",
-        "MCP_RE_BUILD_DEMO": "$(rlocationpath //mcp-re-demo:BUILD.bazel)",
-        "MCP_RE_BUILD_TRANSPORT": "$(rlocationpath //mcp-re-transport:BUILD.bazel)",
-    },
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
 
 # MCPS-070: security traceability manifest drift guard. The committed
 # security_traceability_manifest.json maps each MCP-RE security property

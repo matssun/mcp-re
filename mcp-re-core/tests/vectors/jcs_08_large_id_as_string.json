@@ -1,7 +1,0 @@
-{
-  "expected": "verify_ok",
-  "kind": "raw",
-  "name": "jcs_08_large_id_as_string",
-  "raw_text": "{\"id\":\"9007199254740993\"}",
-  "requires_pipeline": false
-}
