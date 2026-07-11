@@ -231,7 +231,10 @@ deliberately deferred (see note).
    remove migration, gated on its own tests, not to this design-control note. This
    note *authorizes* that migration; it does not perform it. Follow the existing
    `--transport-identity-source cn_legacy` precedent (deprecated value,
-   strict-rejected) when it is done.
+   strict-rejected) when it is done. **Scoped 2026-07-11 in
+   [`http-evidence-carrier-cutover.md`](http-evidence-carrier-cutover.md)** — the
+   sequenced plan that performs this migration and gates ADR-050/051/052 status on
+   it.
 
 ### CI vocabulary firewall — scope and policy
 
@@ -292,7 +295,8 @@ This note is complete when:
 7. CI rejects the forbidden two-profile framing in forward-design docs. ✅
 8. stdio is documented as adapter / proxy-to-proxy compatibility only. ✅ (D4)
 9. Runtime warnings / flags make legacy modes explicit. ⏸ deferred to the
-   isolate-then-remove migration (see change #9 above).
+   isolate-then-remove migration (see change #9 above) — now scoped in
+   [`http-evidence-carrier-cutover.md`](http-evidence-carrier-cutover.md).
 
 ## Related
 
