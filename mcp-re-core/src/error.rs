@@ -26,8 +26,8 @@ pub enum McpReError {
 
     /// The protected message violated the JCS-safe value domain (duplicate keys,
     /// unsafe integers, invalid UTF-8, non-integer numbers, ...).
-    #[error("mcp-re.canonicalization_failed")]
-    CanonicalizationFailed,
+    #[error("mcp-re.serialization_failed")]
+    SerializationFailed,
 
     /// The request fell outside its freshness window (stale or future-dated
     /// beyond the configured clock skew).
@@ -106,28 +106,8 @@ pub enum McpReError {
 
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
     // Granular for protocol/profile-confusion failures; low-level JSON
-    // value-domain failures stay coarse under `CanonicalizationFailed`. All nine
+    // value-domain failures stay coarse under `SerializationFailed`. All nine
     // are draft-02-scoped: draft-01 verification never emits them (ADR-MCPS-041).
-    /// Draft-02 envelope lacks the protected `canonicalization_id` member.
-    #[error("mcp-re.canonicalization_id_missing")]
-    CanonicalizationIdMissing,
-
-    /// `canonicalization_id` names no canonicalization scheme the verifier knows
-    /// (unrecognized token — an unknown-id probe).
-    #[error("mcp-re.canonicalization_id_unknown")]
-    CanonicalizationIdUnknown,
-
-    /// `canonicalization_id` is a recognized scheme but is not in the active
-    /// draft-02 profile allowlist (e.g. a future floats scheme presented under the
-    /// int53-only v0.6 profile) — a disallowed-future-scheme probe.
-    #[error("mcp-re.canonicalization_id_not_allowed")]
-    CanonicalizationIdNotAllowed,
-
-    /// The presented `canonicalization_id` does not match the value bound into the
-    /// signed evidence (request/response disagreement or a signed-wrong-scheme
-    /// presentation).
-    #[error("mcp-re.canonicalization_id_mismatch")]
-    CanonicalizationIdMismatch,
 
     /// Required draft-02 `authorization_binding` object absent. MINTED for
     /// draft-02 (ADR-MCPS-040): NOT a reuse of `authorization_hash_missing`, which
@@ -270,7 +250,7 @@ impl McpReError {
             McpReError::MissingEnvelope => "mcp-re.missing_envelope",
             McpReError::UnsupportedVersion => "mcp-re.unsupported_version",
             McpReError::InvalidSignature => "mcp-re.invalid_signature",
-            McpReError::CanonicalizationFailed => "mcp-re.canonicalization_failed",
+            McpReError::SerializationFailed => "mcp-re.serialization_failed",
             McpReError::ExpiredRequest => "mcp-re.expired_request",
             McpReError::ReplayDetected => "mcp-re.replay_detected",
             McpReError::InvalidAudience => "mcp-re.invalid_audience",
@@ -288,10 +268,6 @@ impl McpReError {
             McpReError::TrustResolverUnavailable => "mcp-re.trust_resolver_unavailable",
             McpReError::ReplayCacheUnavailable => "mcp-re.replay_cache_unavailable",
             // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
-            McpReError::CanonicalizationIdMissing => "mcp-re.canonicalization_id_missing",
-            McpReError::CanonicalizationIdUnknown => "mcp-re.canonicalization_id_unknown",
-            McpReError::CanonicalizationIdNotAllowed => "mcp-re.canonicalization_id_not_allowed",
-            McpReError::CanonicalizationIdMismatch => "mcp-re.canonicalization_id_mismatch",
             McpReError::AuthorizationBindingMissing => "mcp-re.authorization_binding_missing",
             McpReError::AuthorizationBindingTypeUnsupported => {
                 "mcp-re.authorization_binding_type_unsupported"
@@ -345,8 +321,8 @@ mod tests {
     #[test]
     fn renamed_and_kept_variants_render_exact_wire_strings() {
         check(
-            McpReError::CanonicalizationFailed,
-            "mcp-re.canonicalization_failed",
+            McpReError::SerializationFailed,
+            "mcp-re.serialization_failed",
         );
         check(
             McpReError::AuthorizationHashMissing,
@@ -447,23 +423,6 @@ mod tests {
 
     #[test]
     fn draft02_wire_strings() {
-        // ADR-MCPS-040 / decision F.1 — the nine new draft-02 fail-closed codes.
-        check(
-            McpReError::CanonicalizationIdMissing,
-            "mcp-re.canonicalization_id_missing",
-        );
-        check(
-            McpReError::CanonicalizationIdUnknown,
-            "mcp-re.canonicalization_id_unknown",
-        );
-        check(
-            McpReError::CanonicalizationIdNotAllowed,
-            "mcp-re.canonicalization_id_not_allowed",
-        );
-        check(
-            McpReError::CanonicalizationIdMismatch,
-            "mcp-re.canonicalization_id_mismatch",
-        );
         check(
             McpReError::AuthorizationBindingMissing,
             "mcp-re.authorization_binding_missing",

@@ -6,16 +6,11 @@
 //! - ADR-MCPS-011 / ADR-MCPS-012: no networking, async runtime, or filesystem
 //!   access. Callers inject `TrustResolver` and `ReplayCache` implementations.
 //!
-//! MCPS-003 lands the envelope data structures, the frozen string-constant
-//! vocabulary (`ids`), and the frozen error taxonomy (`error`). MCPS-004 lands
-//! JCS canonicalization (`canonical`). MCPS-005 lands the cryptographic
-//! primitives: Base64URL encoding (`encoding`), SHA-256 hash identifiers
-//! (`hash`), Ed25519 sign/verify (`crypto`), and signing-preimage / `request_hash`
-//! construction (`signing`). MCPS-006/007 add trust resolution (`resolver`),
-//! replay detection (`replay`), and freshness (`time`); MCPS-009 adds the
-//! fail-closed message constraints (`constraints`). MCPS-008 composes them all
-//! into the full verification pipeline (`pipeline`): `verify_request` and
-//! `verify_response`.
+//! Post-purge (ADR-MCPRE-050), this crate provides ONLY the profile-agnostic
+//! primitives the RFC 9421 carrier stands on: the frozen error taxonomy (`error`),
+//! Base64URL encoding (`encoding`), SHA-256 hash ids (`hash`), Ed25519 sign/verify
+//! (`crypto`), trust resolution (`resolver`), replay detection (`replay`), freshness
+//! (`time`), the JSON-RPC error wire (`wire`), and the audit taxonomy (`audit`).
 
 // PURGE 2026-07-11 (owner decision): the object/JCS engine is DELETED. RFC 9421 +
 // RFC 9530 (the `mcp-re-http-profile` crate) is the sole carrier and stands ONLY on

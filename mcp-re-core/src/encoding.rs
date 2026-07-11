@@ -5,7 +5,7 @@
 //! (`URL_SAFE_NO_PAD`) is fixed in one place and never duplicated.
 //!
 //! Decode-failure mapping: [`b64url_decode`] returns
-//! [`McpReError::CanonicalizationFailed`] as a neutral, structural decode error.
+//! [`McpReError::SerializationFailed`] as a neutral, structural decode error.
 //! Callers that decode security-critical values (signature bytes, hash digests)
 //! deliberately do NOT reuse this mapping — they decode and map failures to the
 //! domain-appropriate error themselves (e.g. signature decode →
@@ -23,13 +23,13 @@ pub fn b64url_encode(bytes: &[u8]) -> String {
 
 /// Decode a Base64URL-no-pad string into bytes.
 ///
-/// A malformed input maps to [`McpReError::CanonicalizationFailed`] (a neutral
+/// A malformed input maps to [`McpReError::SerializationFailed`] (a neutral
 /// structural failure). Security-critical callers should instead decode with
 /// their own mapping — see the module docs.
 pub fn b64url_decode(s: &str) -> Result<Vec<u8>, McpReError> {
     URL_SAFE_NO_PAD
         .decode(s)
-        .map_err(|_| McpReError::CanonicalizationFailed)
+        .map_err(|_| McpReError::SerializationFailed)
 }
 
 #[cfg(test)]
@@ -74,13 +74,13 @@ mod tests {
     #[test]
     fn decode_rejects_padding() {
         // The no-pad engine rejects an explicit '=' pad character.
-        assert_eq!(b64url_decode("aGk=").unwrap_err(), McpReError::CanonicalizationFailed);
+        assert_eq!(b64url_decode("aGk=").unwrap_err(), McpReError::SerializationFailed);
     }
 
     #[test]
     fn decode_rejects_non_alphabet() {
         // '*' is not in the URL-safe alphabet.
-        assert_eq!(b64url_decode("ab*c").unwrap_err(), McpReError::CanonicalizationFailed);
+        assert_eq!(b64url_decode("ab*c").unwrap_err(), McpReError::SerializationFailed);
     }
 
     #[test]

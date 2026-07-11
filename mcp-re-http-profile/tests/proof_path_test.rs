@@ -315,7 +315,7 @@ fn content_encoding_fails_closed() {
     req.headers.push(("Content-Encoding".into(), "gzip".into()));
     let err = verify_request(&req, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::ContentEncodingPresent);
-    assert_eq!(err.wire_code(), "mcp-re.canonicalization_failed");
+    assert_eq!(err.wire_code(), "mcp-re.serialization_failed");
 }
 
 #[test]
