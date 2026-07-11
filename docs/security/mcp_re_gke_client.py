@@ -136,7 +136,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--server-signer", required=True)
     p.add_argument("--server-key-id", required=True)
     p.add_argument("--server-pubkey", required=True)        # raw-32 b64url
-    p.add_argument("--audience", required=True)             # 6-field form
+    p.add_argument("--audience", required=True)             # RFC 9421 audience id
+    p.add_argument("--target-uri", required=True)           # canonical @target-uri
+    p.add_argument("--route")                               # optional audience route
+    p.add_argument("--trust-domain", default="example.com") # server actor trust domain
+    p.add_argument("--dpop-token", default="access-token-xyz")  # OAuth-DPoP credential
     p.add_argument("--tls-cert", required=True)             # client leaf
     p.add_argument("--tls-key", required=True)
     p.add_argument("--server-ca", required=True)
@@ -155,7 +159,8 @@ def _make_post(args: argparse.Namespace):
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=args.server_ca)
     ctx.load_cert_chain(args.tls_cert, args.tls_key)
 
-    def post(body: bytes) -> bytes:
+    def post(headers: "list[tuple[str, str]]", body: bytes):
+        """Send the RFC 9421 signed request; return (status, response_headers, body)."""
         raw = socket.create_connection((host, port), timeout=15)
         try:
             tls = ctx.wrap_socket(raw, server_hostname=args.server_name)
@@ -163,9 +168,10 @@ def _make_post(args: argparse.Namespace):
             raw.close()
             raise
         try:
+            hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
             head = (
                 f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"
-                f"Content-Type: application/json\r\n"
+                f"{hdr_lines}"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()
             tls.sendall(head + body)
@@ -177,17 +183,31 @@ def _make_post(args: argparse.Namespace):
                 chunks.append(chunk)
         finally:
             tls.close()
-        return b"".join(chunks).split(b"\r\n\r\n", 1)[1]
+        raw_resp = b"".join(chunks)
+        head_bytes, _, resp_body = raw_resp.partition(b"\r\n\r\n")
+        lines = head_bytes.split(b"\r\n")
+        status = int(lines[0].split(b" ")[1]) if len(lines[0].split(b" ")) > 1 else 0
+        resp_headers = []
+        for line in lines[1:]:
+            if b":" in line:
+                k, _, v = line.partition(b":")
+                resp_headers.append((k.decode().strip(), v.decode().strip()))
+        return status, resp_headers, resp_body
 
     return post
 
 
+#: The RFC 9421 response evidence block key the proxy authors in the body `_meta`.
+_RESPONSE_EVIDENCE_BLOCK_KEY = "se.syncom/mcp-re.http.response"
+
+
 def _strip_envelope(obj: dict) -> dict:
+    """Strip the proxy-owned RFC 9421 response evidence block, leaving plain MCP."""
     result = obj.get("result")
     if isinstance(result, dict):
         meta = result.get("_meta")
         if isinstance(meta, dict):
-            meta.pop(mcp_re_sdk.response_meta_key(), None)
+            meta.pop(_RESPONSE_EVIDENCE_BLOCK_KEY, None)
             if not meta:
                 result.pop("_meta", None)
     return obj
@@ -196,15 +216,8 @@ def _strip_envelope(obj: dict) -> dict:
 def main(argv: "list[str] | None" = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
-    signer = mcp_re_sdk.Signer.software(
-        _read_seed(args.signing_key_seed), signer_id=args.signer_id, key_id=args.key_id
-    )
-    policy = mcp_re_sdk.SignerPolicy(args.signer_id, environment="production", require_mcp_re=True)
-    resolver = mcp_re_sdk.TrustResolver()
-    resolver.insert_public_key(
-        args.server_signer, args.server_key_id, _b64url_at_file(args.server_pubkey)
-    )
-    audience = _canonical_audience(args.audience)
+    seed = _read_seed(args.signing_key_seed)
+    server_pub = _b64url_at_file(args.server_pubkey)
     post = _make_post(args)
 
     request = json.loads(sys.stdin.readline())
@@ -212,53 +225,57 @@ def main(argv: "list[str] | None" = None) -> int:
     method = request.get("method")
     params = request.get("params", {})
 
-    continuation_kwargs: dict = {}
-    if args.load_cont:
-        with open(args.load_cont, "r", encoding="utf-8") as fh:
-            prev_hash, irr_hash = json.load(fh)
-        continuation_kwargs = {
-            "continuation_previous_request_hash": prev_hash,
-            "continuation_input_required_response_hash": irr_hash,
-        }
-
     now = int(time.time())
-    signed = mcp_re_sdk.sign_request_with_signer(
+    # Sign the RFC 9421 + RFC 9530 request (zero object/JCS).
+    signed = mcp_re_sdk.sign_request(
+        seed,
+        args.key_id,
         json.dumps(rid),
         method,
         json.dumps(params),
-        on_behalf_of=args.on_behalf_of,
-        audience=audience,
-        binding_digest_alg="sha256",
-        binding_digest_value=_AUTHZ_DIGEST,
-        nonce=args.nonce or secrets.token_urlsafe(16),
-        issued_at=_rfc3339(now),
-        expires_at=_rfc3339(now + 300),
-        signer=signer,
-        policy=policy,
-        **continuation_kwargs,
+        args.target_uri,
+        args.audience,
+        args.route,
+        args.dpop_token,
+        args.nonce or secrets.token_urlsafe(16),
+        now,
+        now + 300,
     )
-    body = post(signed.wire_bytes)
-    result = mcp_re_sdk.verify_response(
-        body,
-        resolver=resolver,
-        expected_request_hash=signed.request_hash,
-        expected_server_signer=args.server_signer,
-        enforcement_mode="require_mcp_re",
-    )
+    status, resp_headers, resp_body = post(signed.headers, signed.body())
 
-    if result.accepted:
+    reason = ""
+    try:
+        # Verify the signed response bound to THIS request (RFC 9421 `;req` + block).
+        mcp_re_sdk.verify_response(
+            status,
+            resp_headers,
+            resp_body,
+            signed.method,
+            signed.target_uri,
+            signed.headers,
+            signed.body(),
+            signed.evidence_digest_alg,
+            signed.evidence_digest_value,
+            args.server_key_id,
+            server_pub,
+            "server",
+            args.trust_domain,
+            args.server_signer,
+            int(time.time()),
+        )
+        accepted = True
+    except ValueError as exc:
+        accepted = False
+        reason = str(exc)
+
+    if accepted:
         verdict = "accepted"
-        plain = _strip_envelope(json.loads(body))
+        plain = _strip_envelope(json.loads(resp_body))
         sys.stdout.write(json.dumps(plain, separators=(",", ":")) + "\n")
-        if args.save_cont and result.input_required:
-            with open(args.save_cont, "w", encoding="utf-8") as fh:
-                json.dump([signed.request_hash, result.response_hash], fh)
     else:
-        # Prefer the proxy's own reason from the (unsigned, object-mode) error body
-        # over verify_response's generic missing-envelope; fall back to it otherwise.
-        verdict = _classify(_body_reject_reason(body) or result.reason)
-        # Echo the proxy's fail-closed body so the harness can still inspect it.
-        sys.stdout.write(body.decode("utf-8", "replace") + "\n")
+        verdict = _classify(_body_reject_reason(resp_body) or reason)
+        # Echo the proxy's signed-rejection body so the harness can still inspect it.
+        sys.stdout.write(resp_body.decode("utf-8", "replace") + "\n")
 
     sys.stderr.write(f"verdict={verdict}\n")
     if args.expect and verdict != args.expect:

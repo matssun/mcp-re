@@ -37,6 +37,7 @@ pub use response::ResultClass;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
 // SDK depend on ONE evidence vocabulary through this seam.
+pub use mcp_re_http_profile::ActorIdentity;
 pub use mcp_re_http_profile::ArtifactBinding;
 pub use mcp_re_http_profile::ArtifactType;
 pub use mcp_re_http_profile::AudienceTuple;
@@ -46,6 +47,7 @@ pub use mcp_re_http_profile::HttpProfileError;
 pub use mcp_re_http_profile::HttpRequest;
 pub use mcp_re_http_profile::HttpResponse;
 pub use mcp_re_http_profile::RequestEvidence;
+pub use mcp_re_http_profile::PROFILE_TAG;
 pub use mcp_re_http_profile::ResolvedActor;
 pub use mcp_re_http_profile::SignerSlot;
 pub use mcp_re_http_profile::VerifiedHttpResponseEvidence;

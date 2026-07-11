@@ -288,6 +288,7 @@ name = "mcp-re-client-core"
 version = "0.11.0"
 dependencies = [
  "mcp-re-core",
+ "mcp-re-http-profile",
  "serde_json",
 ]
 
@@ -301,6 +302,17 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "mcp-re-http-profile"
+version = "0.11.0"
+dependencies = [
+ "base64",
+ "mcp-re-core",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

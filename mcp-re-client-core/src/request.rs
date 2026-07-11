@@ -58,6 +58,10 @@ pub struct RequestSigningInputs {
     /// Optional multi-round-trip continuation binding (ADR-MCPS-047). `None` for an
     /// ordinary first-round request. Set via [`RequestSigningInputs::with_continuation`].
     pub continuation: Option<HttpContinuation>,
+    /// Additional request headers to include (and cover) in the signed HTTP request
+    /// — e.g. `Authorization: Bearer <token>` whose bytes an OAuth-DPoP artifact
+    /// binding digests. Empty by default. Set via [`RequestSigningInputs::with_headers`].
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl RequestSigningInputs {
@@ -78,7 +82,15 @@ impl RequestSigningInputs {
             created,
             expires,
             continuation: None,
+            extra_headers: Vec::new(),
         }
+    }
+
+    /// Add request headers to include AND cover in the signature (e.g. an
+    /// `Authorization: Bearer` header an OAuth-DPoP artifact binding digests).
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.extra_headers = headers;
+        self
     }
 
     /// Bind this request to the verified `InputRequiredResult` it answers
@@ -200,10 +212,12 @@ pub(crate) fn build_signed_request_with(
     }))
     .map_err(|_| HttpProfileError::MalformedEvidence("request body serialization"))?;
 
+    let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
+    headers.extend(inputs.extra_headers.iter().cloned());
     let mut request = HttpRequest {
         method: "POST".to_owned(),
         target_uri: target_uri.to_owned(),
-        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        headers,
         body,
     };
     let block = inputs.evidence_block();
