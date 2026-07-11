@@ -18,9 +18,17 @@ lines are in [`docs/adr/`](adr/).
 
 The current implementation may claim:
 
-> MCP-RE is production-hardened for single-node Rust-native deployments.
+> MCP-RE is production-hardened for single-node Rust-native deployments, and — for a
+> deployment that declares the shared, quorum-durable replay tier and the four
+> deployment modes — for horizontally-scaled multi-node fleets within one trust
+> domain / one operator, at the security tier composed from those modes
+> (security-boundary §8, owner-signed 2026-06-15; proven live on a 2-node GKE
+> cluster, v0.11).
 
-This claim is bounded and should not be broadened without additional implementation, tests, and documentation.
+This claim is tiered: single-node is the unconditional floor; the multi-node
+extension holds only at the declared shared-tier profile (`--fleet` fails closed on a
+node-local cache). It should not be broadened — in particular to unconditional
+multi-node replay safety — without additional implementation, tests, and documentation.
 
 ## Demonstrated capabilities
 
