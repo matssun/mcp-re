@@ -54,7 +54,7 @@
     "core_vector_files": 21,
     "authorization_vector_cases": 13,
     "total_vectors": 34,
-    "bazel_test_targets": 67
+    "bazel_test_targets": 68
   },
   "bazel_test_targets": [
     "//mcp-re-conformance:acceptance_test",
@@ -104,6 +104,7 @@
     "//mcp-re-proxy:http_profile_dispatch_test",
     "//mcp-re-proxy:key_source_test",
     "//mcp-re-proxy:keyset_admission_test",
+    "//mcp-re-proxy:mrt_authorization_inheritance_test",
     "//mcp-re-proxy:mtls_transport_binding_test",
     "//mcp-re-proxy:ocsp_e2e_test",
     "//mcp-re-proxy:pkcs11_keysource_e2e_test",
