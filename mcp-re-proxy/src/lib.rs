@@ -70,7 +70,6 @@ pub mod log_sink;
 // (a private current-thread runtime per call). NOT a serving path — the
 // production data plane is the per-core async fleet. Used by this crate's tests
 // and by downstream crates' proxy test harnesses.
-pub mod test_support;
 // ADR-MCPS-028: provider-agnostic cloud-KMS response signer (the shared protocol
 // mapping behind the #3838 delegation seam). Dependency-free — the per-provider
 // network backends (AWS KMS / GCP Cloud KMS) are the feature-gated follow-ups.
@@ -93,7 +92,6 @@ pub mod pkcs11_keysource;
 // under the same non-default `pkcs11_keysource` feature.
 #[cfg(feature = "pkcs11_keysource")]
 pub mod pkcs11_native;
-pub mod proxy;
 // Issue #69 (epic #68 v0.4 Axis 1): the etcd-backed CP / LINEARIZABLE shared
 // replay backend that makes `--replay-durability-tier linearizable` declarable
 // with a real durable-linearizable store (ADR-MCPS-020). Compiled ONLY under the
@@ -120,6 +118,7 @@ pub mod replay_tier;
 // the dispatcher's core is_single_process_reference gate, keeping the tier type in
 // mcp-re-proxy (the pure profile crate gains no proxy dependency).
 pub mod http_profile_dispatch;
+pub mod http_profile_serve;
 // ADR-MCPS-021 Axis 2: the declared REVOCATION tier (Tier 1 bounded-cache / Tier 2
 // live / Tier 3 push) — semantic names, honest per-tier guarantee, tier-claim
 // ceiling. Pure type — in the default build. The Axis-2 analogue of replay_tier.
@@ -223,7 +222,8 @@ pub use ocsp::OcspError;
 // Issue #4034: the PKCS#11 key source (feature-gated).
 #[cfg(feature = "pkcs11_keysource")]
 pub use pkcs11_keysource::Pkcs11KeySource;
-pub use proxy::Proxy;
+pub use http_profile_serve::ActorResolver;
+pub use http_profile_serve::HttpProfileProxy;
 // Issue #4028: the Redis shared replay backend (feature-gated).
 #[cfg(feature = "cpstore_etcd")]
 pub use etcd_store::EtcdAtomicReplayStore;

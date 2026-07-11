@@ -201,6 +201,11 @@ pub struct ServerOptions {
     /// unchanged.
     #[cfg(feature = "online_ocsp")]
     pub ocsp_checker: Option<crate::ocsp::OcspChecker>,
+    /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
+    /// (ADR-MCPRE-050). Client and server MUST agree on it byte-for-byte; the
+    /// verifier checks it against the request evidence block's audience tuple. Empty
+    /// when unset (the audience/target check then fails closed).
+    pub target_uri: String,
 }
 
 impl Default for ServerOptions {
@@ -212,6 +217,7 @@ impl Default for ServerOptions {
             max_client_cert_lifetime: None,
             #[cfg(feature = "online_ocsp")]
             ocsp_checker: None,
+            target_uri: String::new(),
         }
     }
 }

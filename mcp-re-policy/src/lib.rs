@@ -19,12 +19,19 @@
 //! Firewall (ADR-MCPS-011/012): this crate depends only on `mcp-re-core` plus
 //! `serde`/`serde_json`. No networking, async runtime, or filesystem access.
 
+// PURGE 2026-07-11: the authorization EVALUATOR (`evaluator`), the
+// authorization-object PROFILE (`profile`), and the REFERENCE grant profile
+// (`reference`) consumed the deleted object model (`VerifiedRequest` /
+// `VerifiedAuthorization` / `AuthorizationBinding` / JCS `canonicalize`). They are
+// DEFERRED (files retained) and rebuilt on the RFC 9421 request evidence
+// (`VerifiedHttpRequestEvidence.request_block.artifact_bindings`) in a follow-up.
+// The profile-agnostic pieces below — the decision/error taxonomy, the
+// authorization-block wire types, revocation, and the JSON-RPC error surface —
+// stay. Policy enforcement is NOT wired into the RFC 9421 serving path yet (the
+// serving PEP fails closed if a policy is configured).
 pub mod block;
 pub mod decision;
 pub mod error;
-pub mod evaluator;
-pub mod profile;
-pub mod reference;
 pub mod revocation;
 pub mod wire;
 
@@ -34,14 +41,6 @@ pub use block::AUTHORIZATION_META_KEY;
 pub use decision::AuthorizationDecision;
 pub use error::PolicyError;
 pub use error::PolicyResult;
-pub use evaluator::PolicyEvaluator;
-pub use profile::AuthorizationProfile;
-pub use profile::AuthorizationReferenceResolver;
-pub use reference::mint_reference_grant;
-pub use reference::GrantedOperation;
-pub use reference::ReferenceGrantSpec;
-pub use reference::ReferenceProfile;
-pub use reference::REFERENCE_PROFILE_ID;
 pub use revocation::InMemoryRevocationSource;
 pub use revocation::RevocationSource;
 pub use revocation::RevocationStatus;
