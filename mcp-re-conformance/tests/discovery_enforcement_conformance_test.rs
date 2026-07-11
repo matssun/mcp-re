@@ -36,8 +36,7 @@ use mcp_re_core::SigningKey;
 use mcp_re_core::TrustResolver;
 use mcp_re_core::VerifiedResponse;
 use mcp_re_core::{
-    CANONICALIZATION_ID_INT53_V1, RESPONSE_META_KEY, SIG_ALG_ED25519, VERSION_DRAFT_01,
-    VERSION_DRAFT_02,
+    CANONICALIZATION_ID_INT53_V1, RESPONSE_META_KEY, SIG_ALG_ED25519, VERSION_DRAFT_02,
 };
 use serde_json::json;
 use serde_json::Value;

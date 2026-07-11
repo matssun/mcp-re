@@ -57,13 +57,13 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPS-040](https://github.com/matssun/mcp-re/discussions/388) | Draft-02 Fail-Closed Error Taxonomy | ✅ Implemented |
 | [ADR-MCPS-041](https://github.com/matssun/mcp-re/discussions/389) | Draft-01/Draft-02 Migration and Dual-Verifier Release Posture | ✅ Implemented |
 | [ADR-MCPS-042](https://github.com/matssun/mcp-re/discussions/390) | Draft-02 Conformance Corpus and Cross-Implementation Interop Oracle | ✅ Implemented |
-| [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Accepted |
-| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Accepted |
+| [ADR-MCPS-043](https://github.com/matssun/mcp-re/discussions/391) | MCP-S Discovery, Capability Advertisement, and Enforcement Policy | ✅ Implemented |
+| [ADR-MCPS-044](https://github.com/matssun/mcp-re/discussions/392) | Client-Side MCP-S Integration Model | ✅ Implemented |
 | [ADR-MCPS-045](https://github.com/matssun/mcp-re/discussions/393) | End-to-End Walkthrough — Tiered E2E Ladder and Client-Proxy Wire Interop | ✅ Implemented |
 | [ADR-MCPS-046](https://github.com/matssun/mcp-re/discussions/394) | Signed Rejection Receipts | ↩️ Superseded |
 | [ADR-MCPS-047](https://github.com/matssun/mcp-re/discussions/395) | Stateless Multi-Round-Trip Continuation Evidence | ✅ Implemented |
 | [ADR-MCPS-048](https://github.com/matssun/mcp-re/discussions/396) | Generated-First Build Graph — Cargo Manifests Are the Source of Truth, Bazel BUILD Files Are Generated and CI Staleness-Gated | ✅ Implemented |
-| [ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence | ✅ Accepted |
+| [ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397) | Horizontally-Scaled Fleet Deployment Posture — Lifting the Single-Node Ceiling Over Proven Coherence | ✅ Implemented |
 | [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Implemented |
 | [ADR-MCPRE-051](https://github.com/matssun/mcp-re/discussions/399) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody | ✅ Accepted |
 | [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Implemented |

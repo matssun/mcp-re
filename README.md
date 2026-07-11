@@ -83,9 +83,11 @@ Current status:
 
 Current implementation claim:
 
-> MCP-RE is production-hardened for single-node Rust-native deployments, with a
-> proven end-to-end client-integration path (client-side proxy + Python/TypeScript
-> SDKs) over the frozen `draft-02` runtime-evidence envelope.
+> MCP-RE is production-hardened for single-node Rust-native deployments — and, at the
+> declared shared-tier fleet profile, for horizontally-scaled multi-node deployments
+> within one trust domain / one operator (proven live on a 2-node GKE cluster, v0.11)
+> — with a proven end-to-end client-integration path (client-side proxy +
+> Python/TypeScript SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
 ### Recent releases (0.6 → 0.11)
 

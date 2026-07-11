@@ -18,9 +18,17 @@ lines are in [`docs/adr/`](adr/).
 
 The current implementation may claim:
 
-> MCP-RE is production-hardened for single-node Rust-native deployments.
+> MCP-RE is production-hardened for single-node Rust-native deployments, and — for a
+> deployment that declares the shared, quorum-durable replay tier and the four
+> deployment modes — for horizontally-scaled multi-node fleets within one trust
+> domain / one operator, at the security tier composed from those modes
+> (security-boundary §8, owner-signed 2026-06-15; proven live on a 2-node GKE
+> cluster, v0.11).
 
-This claim is bounded and should not be broadened without additional implementation, tests, and documentation.
+This claim is tiered: single-node is the unconditional floor; the multi-node
+extension holds only at the declared shared-tier profile (`--fleet` fails closed on a
+node-local cache). It should not be broadened — in particular to unconditional
+multi-node replay safety — without additional implementation, tests, and documentation.
 
 ## Demonstrated capabilities
 
@@ -99,6 +107,13 @@ node-local coherence gaps:
   declared envelope (ADR-MCPRE-051 §7).
 - **Kubernetes/Helm reference** + deployment guide (MCPS-87), with a fail-closed
   guardrail that refuses a `--fleet` deployment wired to a weak (node-local) tier.
+- **Live GKE validation (v0.11, MCPS-90)** — the fleet was stood up on a real
+  2-node GKE cluster (`mcp-re-fleet`, `us-central1-a`, isolated project): a
+  cross-replica replay-coherence proof (nonce admitted on replica A → rejected on B
+  via the shared tier) and a zero-drop rolling update over a real L4 LoadBalancer
+  (FastMCP inner), plus an ADR-MCPRE-051 §7 SLO baseline measured on declared cloud
+  hardware — **390 rps (e2-standard-8) / 482 rps (c3-standard-8) at 8 cores,
+  2000/2000 verified**. Runbook: [`docs/security/gke-slo-baseline-runbook.md`](security/gke-slo-baseline-runbook.md).
 
 ### Live Google Cloud KMS validation (v0.5.1)
 
@@ -137,11 +152,15 @@ MCP-RE does not currently claim:
 - OS-level sandboxing of wrapped servers, and signed tool-manifest enforcement
   (gated on the high-assurance cargo features — see the README deployment
   profiles);
-- a **fully retired single-node ceiling.** The v0.10.1 fleet posture
-  (ADR-MCPS-049) proves cross-replica replay and trust-revocation coherence, but
-  the dedicated proof that a multi-round-trip continuation survives a replica switch
-  (MCPS-82) and live multi-node (GKE) validation are still pending, so the
-  single-node non-claim is lifted only conditionally, not fully retired.
+- **unconditional (zero-configuration) multi-node replay safety.** The
+  horizontally-scaled claim (ADR-MCPS-049; security-boundary §8, owner-signed
+  2026-06-15) holds only for a deployment that declares the shared, quorum-durable
+  replay tier — `--fleet` fails closed on a node-local cache. Within that declared
+  tier the single-node ceiling is retired: both prior conditions are now
+  discharged — the MRT-survives-replica-switch proof (MCPS-82,
+  `fleet_mrt_replica_switch_e2e_test`) and live multi-node validation on a real
+  2-node GKE cluster (MCPS-90, v0.11). Zero-window revocation and cross-replica
+  inner-session replication remain non-claims.
 
 ## Proposal readiness
 

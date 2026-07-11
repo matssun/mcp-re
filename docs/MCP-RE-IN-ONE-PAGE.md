@@ -102,7 +102,11 @@ balancer with no security claim weakened (ADR-MCPS-049, v0.10.1): `--fleet` reje
 node-local replay caches so replicas share a cross-replica ReplayCache (Redis), a
 Redis-backed trust-epoch source propagates revocation across replicas, and graceful
 drain supports rolling deploys — replay and trust-revocation coherence are each
-proven by a cross-replica e2e. A Kubernetes/Helm reference ships with it.
+proven by a cross-replica e2e. A Kubernetes/Helm reference ships with it. The fleet
+was validated **live on a real 2-node GKE cluster** (v0.11): cross-replica replay
+coherence and a zero-drop rolling update over a real L4 LoadBalancer (FastMCP inner),
+with an ADR-MCPRE-051 §7 SLO baseline measured on declared cloud hardware — 390 rps
+(e2-standard-8) / 482 rps (c3-standard-8) at 8 cores, 2000/2000 verified.
 
 **Live Google Cloud KMS validation.** Against *real* Cloud KMS, not an emulator:
 
@@ -134,9 +138,12 @@ proven by a cross-replica e2e. A Kubernetes/Helm reference ships with it.
 - OS-level sandboxing of wrapped servers and signed tool-manifest enforcement —
   these are gated on the high-assurance cargo features and are **not** in the lean
   default build;
-- a fully retired single-node ceiling — the v0.10.1 fleet posture proves
-  cross-replica replay and trust-revocation coherence, but the multi-round-trip-
-  survives-replica-switch proof and live multi-node validation are still pending.
+- **unconditional (zero-configuration) multi-node replay safety** — the
+  horizontally-scaled claim holds only for a deployment that declares the shared,
+  quorum-durable replay tier; `--fleet` fails closed on a node-local cache. The
+  single-node ceiling is otherwise retired at the declared fleet tier: the MRT-
+  survives-replica-switch proof (MCPS-82) and live multi-node validation are both
+  delivered (live 2-node GKE run, v0.11).
 
 ## How do I run the demo?
 
