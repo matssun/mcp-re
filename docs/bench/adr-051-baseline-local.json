@@ -1,18 +1,21 @@
 {
-  "schema": "mcp-re-load-harness-baseline/v1",
+  "schema": "mcp-re-load-harness-baseline/v2",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
-  "envelope_version": 1,
+  "envelope_version": 2,
+  "carrier": "rfc9421+rfc9530",
   "classification": "provisional-local-regression-baseline",
   "authoritative_for": ["local-regression-detection"],
   "NOT_authoritative_for": [
     "production release SLOs (absolute throughput/latency thresholds)",
     "per-core linear-scaling acceptance"
   ],
-  "caveat": "Recorded on a single developer workstation with the load generator CO-LOCATED with the proxy on the same cores. At the concurrency this anchor uses the run is client-concurrency-bound (128 concurrent cold mTLS handshakes; client-side Ed25519/TLS crypto costs as much as server-side), so throughput is a stable REGRESSION anchor but is NOT a production capacity number, and the 1->N core sweep below is recorded-but-NON-AUTHORITATIVE: on one box the loadgen contends with the fleet for cores and flattens the curve. Authoritative absolute SLOs and the real scaling curve require a dedicated load-generator host driving the proxy on the production hardware class (MCPRE-110 production half; blocked on the GKE fleet run).",
+  "supersedes": "The v1 baseline (recorded 2026-07-09) measured the DELETED object/JCS serving carrier. This v2 baseline re-establishes the anchor on the RFC 9421 + RFC 9530 serving path (ADR-MCPRE-050 sole carrier), same box, same 128/8000/1-core anchor config. RFC 9421 header-signature + Content-Digest is CHEAPER than JCS canonicalization: throughput +27.7% (4591.9 -> 5866.4 rps), p50/p99/p999 added latency all ~20% lower. The old numbers are not comparable to the current wire and are retired.",
+  "caveat": "Recorded on a single developer workstation with the load generator CO-LOCATED with the proxy on the same cores. At the concurrency this anchor uses the run is client-concurrency-bound (128 concurrent cold mTLS handshakes; client-side Ed25519/TLS crypto costs as much as server-side), so throughput is a stable REGRESSION anchor but is NOT a production capacity number, and the 1->N core sweep below is recorded-but-NON-AUTHORITATIVE: on one box the loadgen contends with the fleet for cores and flattens the curve. Authoritative absolute SLOs and the real scaling curve require a dedicated load-generator host driving the proxy on the production hardware class (MCPRE-110 production half; the GKE fleet run, now at the canonical 128/8000 envelope).",
   "recorded": {
-    "date": "2026-07-09",
+    "date": "2026-07-12",
     "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
-    "build_profile": "release"
+    "build_profile": "release",
+    "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (signature in HTTP headers; no object/JCS _meta signature)"
   },
   "anchor": {
     "comment": "The regression anchor: the least loadgen-distorted, most reproducible point (single served core, moderate concurrency). Values are the MEDIAN of 3 reps; throughput held within +/-1% across reps. `adr051_slo_gate.py` compares a fresh run of THIS config against these numbers under the local_regression tolerances in adr-051-slo-targets.json.",
@@ -26,29 +29,30 @@
       "tls_mode": "TLS1.3-mTLS"
     },
     "results": {
-      "throughput_rps": 4591.9,
+      "throughput_rps": 5866.4,
       "added_latency_us": {
-        "p50": 27320,
-        "p99": 44452,
-        "p999": 49260,
-        "mean": 27732,
-        "min": 16194,
-        "max": 50141
+        "p50": 21450,
+        "p99": 35884,
+        "p999": 38189,
+        "mean": 21701,
+        "min": 9460,
+        "max": 39300
       },
       "reps": {
-        "throughput_rps": [4627.3, 4591.9, 4577.2],
-        "p99_us": [47094, 44452, 43055],
-        "p999_us": [54668, 49260, 47766]
+        "throughput_rps": [5866.4, 5825.5, 5903.5],
+        "p50_us": [21452, 21450, 21302],
+        "p99_us": [33617, 36553, 35884],
+        "p999_us": [35615, 38189, 39608]
       }
     }
   },
   "recorded_core_sweep_non_authoritative": {
-    "comment": "Recorded for the record only. Throughput is FLAT-to-negative as served cores rise because the co-located loadgen is the limiter, NOT because the per-core fleet fails to scale. Do NOT gate on this curve. cold mode, concurrency 128, 8000 requests each.",
+    "comment": "Recorded for the record only. Throughput is FLAT-to-noisy as served cores rise because the co-located loadgen is the limiter, NOT because the per-core fleet fails to scale (the 4-core dip is loadgen contention noise, not a serving regression). Do NOT gate on this curve. RFC 9421 carrier, cold mode, concurrency 128, 8000 requests each.",
     "points": [
-      { "declared_cores": 1, "throughput_rps": 4707, "p99_us": 48915, "p999_us": 57656 },
-      { "declared_cores": 2, "throughput_rps": 4660, "p99_us": 36000, "p999_us": 41300 },
-      { "declared_cores": 4, "throughput_rps": 4584, "p99_us": 42200, "p999_us": 47600 },
-      { "declared_cores": 8, "throughput_rps": 4415, "p99_us": 40900, "p999_us": 49000 }
+      { "declared_cores": 1, "throughput_rps": 5755.3, "p99_us": 33993, "p999_us": 34438 },
+      { "declared_cores": 2, "throughput_rps": 5787.9, "p99_us": 33040, "p999_us": 34825 },
+      { "declared_cores": 4, "throughput_rps": 4851.8, "p99_us": 54115, "p999_us": 59637 },
+      { "declared_cores": 8, "throughput_rps": 5746.0, "p99_us": 35129, "p999_us": 38038 }
     ]
   }
 }

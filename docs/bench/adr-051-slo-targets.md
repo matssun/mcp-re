@@ -2,6 +2,17 @@
 
 # ADR-MCPRE-051 §7 — SLO Target Declaration (MCPRE-110)
 
+> **⚠️ Production GKE numbers below are SUPERSEDED (object/JCS carrier, v1
+> envelope).** They were measured 2026-07-10 on the now-deleted object/JCS serving
+> path at the lighter v1 envelope (concurrency 64 / 2000 requests). The serving
+> path is now RFC 9421 + RFC 9530 (ADR-MCPRE-050), and the canonical **v2 envelope
+> is concurrency 128 / 8000 requests** — the SAME for local and GKE. The
+> **local-regression baseline has been re-established on RFC 9421** (see
+> [`adr-051-baseline-local.json`](adr-051-baseline-local.json): +27.7% throughput,
+> ~20% lower tail latency vs the old JCS numbers). The **production floors below are
+> pending re-measurement on GKE under the v2 envelope**; the tables are retained as
+> a historical record only. Run the local baseline green before the GKE re-run.
+
 Companion to the measurement envelope
 ([`adr-051-load-harness-envelope.md`](adr-051-load-harness-envelope.md) /
 [`adr-051-benchmark-envelope.json`](adr-051-benchmark-envelope.json)). The
@@ -27,11 +38,14 @@ ADR-MCPRE-051 §7 is deliberate: *"the SLO numbers live with the harness and the
 release profile, not in this ADR,"* and *"capacity claims without a pinned
 benchmark envelope are marketing, not engineering."* Accordingly the capacity and
 scaling numbers were **measured, not asserted** — on real GKE hardware, with the
-harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores under the
-pinned envelope (cold TLS1.3-mTLS, concurrency 64, 2000 requests/run).
+harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores. **The
+numbers below were taken under the SUPERSEDED v1 envelope (object/JCS carrier, cold
+TLS1.3-mTLS, concurrency 64, 2000 requests/run)** — retained as a historical record;
+the current canonical envelope is RFC 9421 at concurrency 128 / 8000 requests, and
+these production floors are pending re-measurement (see the banner above).
 
-**Measured baseline** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified responses/sec; added
-latency µs; 2000/2000 success on every run):
+**Measured baseline — SUPERSEDED** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified
+responses/sec; added latency µs; 2000/2000 success on every run):
 
 | class | 1-core rps | 8-core rps | 8-core p50 / p99 / p999 | per-core linear factor |
 |---|---|---|---|---|

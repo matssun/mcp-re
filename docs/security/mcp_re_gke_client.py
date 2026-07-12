@@ -44,14 +44,16 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _b64url_at_file(spec: str) -> bytes:
-    """b64url-decode a value that may be given inline or as ``@<path>`` (the CLI's
-    ``@file`` convention) — used for ``--server-pubkey``."""
+def _b64url_text_at_file(spec: str) -> str:
+    """Return a Base64URL value that may be given inline or as ``@<path>`` (the CLI's
+    ``@file`` convention) as the RAW b64url STRING — used for ``--server-pubkey``.
+    The SDK's ``verify_response`` takes the server key as a Base64URL string (it calls
+    ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
     raw = spec
     if spec.startswith("@"):
         with open(spec[1:], "r", encoding="utf-8") as fh:
             raw = fh.read().strip()
-    return _b64url_decode(raw)
+    return raw
 
 
 def _read_seed(spec: str) -> bytes:
@@ -81,20 +83,30 @@ def _body_reject_reason(body: bytes) -> "str | None":
 
     A fail-closed request may be answered with a signed RFC 9421 rejection, or —
     for a pre-evidence transport/parse failure — an unsigned JSON-RPC error whose
-    reason ``verify_response`` cannot read. The authoritative reason is in the error
-    body at
-    ``error.data.mcp_re_error``. Reading it is for VERDICT CLASSIFICATION ONLY: the
-    request is already fail-closed (rejected), so this never turns a rejection into
-    an acceptance — it just lets the harness distinguish replay from revoked from a
+    reason ``verify_response`` cannot read. The authoritative reason is the proxy's
+    signed rejection body, whose shape is
+    ``error.data.mcp_re_error = {"wire_code": "mcp-re.<reason>"}`` (an object); some
+    pre-evidence errors instead carry it as a bare string, and the human ``message``
+    embeds it too. Reading it is for VERDICT CLASSIFICATION ONLY: the request is
+    already fail-closed (rejected), so this never turns a rejection into an
+    acceptance — it just lets the harness distinguish replay from revoked from a
     generic rejection. Returns None if the body is not such an error."""
     try:
         err = json.loads(body).get("error")
         if isinstance(err, dict):
             data = err.get("data")
-            if isinstance(data, dict) and isinstance(data.get("mcp_re_error"), str):
-                return data["mcp_re_error"]
-            if isinstance(err.get("message"), str) and err["message"].startswith("mcp-re."):
-                return err["message"]
+            me = data.get("mcp_re_error") if isinstance(data, dict) else None
+            # The proxy's signed rejection carries the reason as an object.
+            if isinstance(me, dict) and isinstance(me.get("wire_code"), str):
+                return me["wire_code"]
+            # Some pre-evidence errors carry it as a bare string.
+            if isinstance(me, str):
+                return me
+            # Last resort: the embedded reason in the human-readable message
+            # (e.g. "mcp-re http-profile proxy rejected: mcp-re.replay_detected").
+            msg = err.get("message")
+            if isinstance(msg, str) and "mcp-re." in msg:
+                return msg
     except (ValueError, AttributeError):
         pass
     return None
@@ -191,7 +203,7 @@ def main(argv: "list[str] | None" = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
     seed = _read_seed(args.signing_key_seed)
-    server_pub = _b64url_at_file(args.server_pubkey)
+    server_pub = _b64url_text_at_file(args.server_pubkey)  # b64url STRING; SDK decodes it
     post = _make_post(args)
 
     request = json.loads(sys.stdin.readline())

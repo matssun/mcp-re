@@ -172,7 +172,11 @@ CLIENT_COMMON=(
   --server-signer    "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
   --server-key-id    "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
   --server-pubkey    "${MCP_RE_SERVER_PUBKEY:?set MCP_RE_SERVER_PUBKEY to a b64url key or @file}"
-  --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE as scheme,host,port,tenant,route,realm}"
+  --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
+  # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
+  # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.
+  --target-uri       "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
+  --trust-domain     "${MCP_RE_TRUST_DOMAIN:-example.com}"
   --tls-cert         "${MCP_RE_TLS_CERT:?set MCP_RE_TLS_CERT to the client cert PEM path}"
   --tls-key          "${MCP_RE_TLS_KEY:?set MCP_RE_TLS_KEY to the client key PEM path}"
   --server-ca        "${MCP_RE_SERVER_CA:?set MCP_RE_SERVER_CA to the server CA PEM path}"

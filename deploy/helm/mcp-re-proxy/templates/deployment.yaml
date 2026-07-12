@@ -56,6 +56,17 @@ spec:
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
             - "--audience"
             - {{ .Values.identity.audience | quote }}
+            # RFC 9421 audience tuple (ADR-MCPRE-050): the signed request's audience
+            # block must equal {audience, targetUri, route} AND targetUri must match
+            # the request @target-uri, or the proxy fails closed invalid_audience.
+            - "--target-uri"
+            - {{ .Values.identity.targetUri | quote }}
+            - "--trust-domain"
+            - {{ .Values.identity.trustDomain | quote }}
+            {{- if .Values.identity.route }}
+            - "--route"
+            - {{ .Values.identity.route | quote }}
+            {{- end }}
             - "--server-signer"
             - {{ .Values.identity.serverSigner | quote }}
             - "--server-key-id"

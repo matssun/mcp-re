@@ -58,12 +58,19 @@ spec:
           env:
             - { name: MCP_RE_LOADGEN_HW_CLASS, value: "$HW" }
             - { name: MCP_RE_LOADGEN_CORES, value: "$CORES" }
+            # Pin the CANONICAL v2 envelope (concurrency 128 / 8000 requests) so the
+            # GKE run is the SAME involved config as the local baseline — never the
+            # lighter v1 defaults. Overridable via CONCURRENCY / REQUESTS env below.
+            - { name: MCP_RE_LOADGEN_CONCURRENCY, value: "${CONCURRENCY:-128}" }
+            - { name: MCP_RE_LOADGEN_REQUESTS, value: "${REQUESTS:-8000}" }
           resources:
             requests: { cpu: "6", memory: "2Gi" }
 YAML
 
 echo "[$JOB] pool=$POOL hw=$HW cores=$CORES — waiting for completion..."
-kubectl -n "$NS" wait --for=condition=complete "job/$JOB" --timeout=360s 2>/dev/null \
+# 600s: the v2 canonical envelope runs 8000 requests/run (4x the old v1 2000), so a
+# 1-core run needs a wider completion window than the old lane.
+kubectl -n "$NS" wait --for=condition=complete "job/$JOB" --timeout=600s 2>/dev/null \
   || kubectl -n "$NS" wait --for=condition=failed "job/$JOB" --timeout=10s 2>/dev/null || true
 
 POD="$(kubectl -n "$NS" get pods -l job-name="$JOB" -o jsonpath='{.items[0].metadata.name}')"

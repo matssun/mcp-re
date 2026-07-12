@@ -27,8 +27,9 @@
   },
 
   "production_slo": {
-    "status": "declared",
-    "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve) as a K8s Job on a dedicated node; cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant). Enforced by scripts/slo_gate.py.",
+    "status": "SUPERSEDED-pending-remeasurement",
+    "superseded_note": "The measurements below were taken 2026-07-10 on the DELETED object/JCS carrier at the v1 envelope (concurrency 64, 2000 requests) — HALF the concurrency and a QUARTER of the requests of the local baseline anchor, so the two were never comparable. They do NOT describe the current RFC 9421 serving path and are retained only as a historical record. The production floors below are PENDING re-measurement on the GKE fleet under the v2 canonical envelope (RFC 9421 carrier, concurrency 128 / 8000 requests — the SAME envelope the local baseline uses). Do not treat these targets as active until that re-measurement lands. Run the local baseline first (docs/bench/adr-051-baseline-local.json, already on RFC 9421) before spending on GKE.",
+    "measured_on": "2026-07-10 (SUPERSEDED); GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve, object/JCS carrier) as a K8s Job on a dedicated node; cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay. Enforced by scripts/slo_gate.py.",
     "kind": "absolute-per-hardware-profile",
     "hardware_class": "e2-standard-8",
     "hardware_note": "The DECLARED floor is the WEAKER of the two measured classes (e2-standard-8); a run on that class or better clears these targets (c3-standard-8, measured faster, also clears them). Floors ~= 0.64x measured median throughput; latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance.",
@@ -45,7 +46,7 @@
       "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin."
     },
     "measurements": {
-      "note": "Raw measured baselines (no fabrication). throughput = verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
+      "note": "SUPERSEDED historical record — object/JCS carrier, v1 envelope (concurrency 64, 2000 requests), GKE 2026-07-10. Retained for provenance only; NOT the RFC 9421 numbers. Raw measured baselines (no fabrication). throughput = verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
       "e2-standard-8": {
         "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
         "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },

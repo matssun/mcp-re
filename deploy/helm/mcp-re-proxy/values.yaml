@@ -63,10 +63,19 @@ maxClientCertLifetimeSeconds: 3600
 transportBinding: ""
 
 # The proxy's server identity (response signing + expected audience).
+# RFC 9421 (ADR-MCPRE-050): the expected audience is the full tuple
+# {audience, targetUri, route}; the signed request's audience block must equal it
+# AND its targetUri must match the request @target-uri (mcp-re-http-profile verify).
+# targetUri/trustDomain/route MUST agree with what mcp_re_gke_client.py signs
+# (--target-uri / --trust-domain / --route). An empty route omits the flag (route
+# = None on both sides).
 identity:
   audience: "did:example:server-1"
   serverSigner: "did:example:server-1"
   serverKeyId: "server-key-1"
+  targetUri: "https://proxy.internal:8600/mcp"
+  trustDomain: "example.com"
+  route: ""
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
 # it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`.
