@@ -1,4 +1,4 @@
-load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -35,18 +35,3 @@ nt_rust_test(
     ],
 )
 
-# MCPS-022: generator for the Phase 5 conformance vectors. Uses mcp-re-host to mint
-# genuinely signed requests; emits the committed JSON to stdout. Run via:
-#   bazel run //mcp-re-policy:gen_phase5_vectors > \
-#     components/mcp-re/mcp-re-policy/tests/vectors/phase5_vectors.json
-nt_rust_binary(
-    name = "gen_phase5_vectors",
-    srcs = ["conformance/gen_vectors.rs"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_policy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
