@@ -212,7 +212,7 @@ def main(argv: "list[str] | None" = None) -> int:
     params = request.get("params", {})
 
     now = int(time.time())
-    # Sign the RFC 9421 + RFC 9530 request (zero object/JCS).
+    # Sign the RFC 9421 + RFC 9530 request.
     signed = mcp_re_sdk.sign_request(
         seed,
         args.key_id,

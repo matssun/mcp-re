@@ -6,11 +6,11 @@
 //! not argued. This harness spawns the real `mcp-re-proxy` binary and drives its
 //! listener over many concurrent rustls **mTLS** clients: accept → TLS/mTLS →
 //! RFC 9421 + RFC 9530 verify → inner → sign → respond. Every measured number
-//! includes the full PEP path. Unlike the deleted object/JCS harness, the request
-//! is signed with the audited `mcp-re-client-core` `build_signed_request` (the
-//! signature rides in the HTTP `Signature`/`Signature-Input`/`Content-Digest`
-//! headers, NOT a body `_meta` object), and the response is verified with
-//! `verify_signed_response` bound to the request — zero JCS anywhere.
+//! includes the full PEP path. The request is signed with the audited
+//! `mcp-re-client-core` `build_signed_request` (the signature rides in the HTTP
+//! `Signature`/`Signature-Input`/`Content-Digest` headers, not a JSON-RPC body
+//! `_meta` block), and the response is verified with `verify_signed_response` bound
+//! to the request.
 //!
 //! It reports aggregate throughput and p50/p99/p999 added latency, measures the
 //! cold-handshake and keep-alive connection modes SEPARATELY, and records the
