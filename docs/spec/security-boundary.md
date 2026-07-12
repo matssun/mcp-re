@@ -4,6 +4,16 @@
 
 **v0.5 proposal-readiness: SIGNED OFF by the owner — Mats Sundvall, 2026-06-23 (mechanical gate #156 green; no wire-envelope change, draft-01 frozen). See Section 10.**
 
+> **Profile status (ADR-MCPRE-050).** The object-signature guarantees described
+> below are those of the MCP-RE **native / object profile** (Ed25519-over-JCS,
+> `_meta` envelope), which is **DEPRECATED** — not a security mechanism, not an
+> alternative carrier, not a fallback. The one live security carrier is the
+> RFC 9421 + RFC 9530 HTTP profile (`mcp-re-http-profile`). The sign-off below
+> records the native-profile boundary as it stood; see
+> [../CURRENT_ARCHITECTURE.md](../CURRENT_ARCHITECTURE.md) and the
+> [Active Profile Boundary and Legacy Quarantine](../design/active-profile-and-legacy-quarantine.md)
+> note. Do not treat any JCS/object material here as current design.
+
 This document is the project's **honesty gate**. It states exactly what MCP-RE
 protects and — equally important — what it does **not** protect, so that a
 security reviewer cannot over-trust the system. It is a **merge/release gate**:

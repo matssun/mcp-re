@@ -13,12 +13,19 @@ not a semantic JCS detector (semantic intent lives in the deprecation banners an
 `docs/AGENT_INSTRUCTIONS.md`). It scans the forward-design doc surface and fails
 CI if any forbidden framing appears as a LIVE (non-repudiated) phrase.
 
-Scanned surface (forward-design docs that must be JCS-clean in substance):
+Scanned surface (forward-design + spec/guide docs that must not frame a live
+two-profile world):
   - docs/adr/adr-mcpre-*.md
   - docs/design/*.md
+  - docs/spec/*.md
+  - docs/*.md   (top-level guides: conformance, transport-hardening, architecture)
 
 Allowlisted (these docs must NAME the framings in order to forbid them):
   - docs/design/active-profile-and-legacy-quarantine.md
+
+Excluded (frozen pre-ADR-MCPRE-050 history — SUPPOSED to contain JCS/object
+material, never scanned as live design):
+  - docs/archive/**
 
 A line is a violation only if a forbidden framing appears on it AND no
 repudiation marker (deprecated, legacy, forbidden, "not", "never", rejected,
@@ -70,6 +77,8 @@ REPUDIATION_MARKERS = (
 SCAN_GLOBS = (
     "docs/adr/adr-mcpre-*.md",
     "docs/design/*.md",
+    "docs/spec/*.md",
+    "docs/*.md",
 )
 
 # Basenames exempt from the ban: they must name the framings to forbid them.
@@ -116,11 +125,15 @@ def scan_repo() -> int:
 
     violations: list[str] = []
     for path in files:
+        rel = os.path.relpath(path, REPO_ROOT)
+        # docs/archive/ is frozen pre-ADR-MCPRE-050 history — it is SUPPOSED to
+        # contain JCS/object material and must never be scanned as live design.
+        if rel.startswith("docs/archive/") or os.sep + "archive" + os.sep in path:
+            continue
         if os.path.basename(path) in ALLOWLIST_BASENAMES:
             continue
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
-        rel = os.path.relpath(path, REPO_ROOT)
         for line_no, framing in scan_text(text):
             violations.append(f"{rel}:{line_no}: forbidden framing {framing!r}")
 

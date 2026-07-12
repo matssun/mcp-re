@@ -487,12 +487,12 @@ fn run() -> Result<(), String> {
         );
     }
     // Authorization policy enforcement is DEFERRED on the RFC 9421 serving path — the
-    // object authz evaluator was purged in the JCS cutover. A configured policy fails
-    // closed rather than silently not enforce.
+    // authorization evaluator is not yet built on this carrier. A configured policy
+    // fails closed rather than silently not enforce.
     if config.authz == cli::AuthzKind::Reference {
         return Err(
             "authorization policy enforcement is not yet wired on the RFC 9421 serving path \
-             (the object authz evaluator was purged in the JCS cutover); it must be rebuilt on \
+             (the authorization evaluator is not yet built on this carrier); it must be rebuilt on \
              the HTTP-profile request evidence before --allow-reference-authz can be enabled"
                 .to_string(),
         );

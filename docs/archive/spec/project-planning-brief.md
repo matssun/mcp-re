@@ -8,6 +8,15 @@
 **Initial crate family:** `mcp-re-core`, `mcp-re-proxy`, `mcp-re-host`, `mcp-re-conformance`
 **Current objective:** Prepare the project for engineering planning, implementation scoping, and open-source discussion.
 
+> **Profile status (ADR-MCPRE-050).** This document describes the MCP-RE **native /
+> object profile** (JCS canonicalization, `_meta` envelope). That profile is
+> **DEPRECATED** — not a security mechanism, not an alternative carrier, not a
+> fallback. The one live security carrier is the RFC 9421 + RFC 9530 HTTP profile
+> (`mcp-re-http-profile`). This brief is retained as historical background; see
+> [../../CURRENT_ARCHITECTURE.md](../../CURRENT_ARCHITECTURE.md) and the
+> [Active Profile Boundary and Legacy Quarantine](../../design/active-profile-and-legacy-quarantine.md)
+> note. Do not treat any JCS/object material here as current design.
+
 ---
 
 ## 1. Executive Summary

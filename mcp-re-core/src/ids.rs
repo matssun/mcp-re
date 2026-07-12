@@ -2,10 +2,10 @@
 //! Frozen, profile-agnostic string constants for the MCP-RE security profile.
 //!
 //! Defined ONCE here and referenced everywhere — no string literals for these
-//! values may be scattered elsewhere. The object/JCS `_meta` key + draft-version +
-//! canonicalization-scheme constants were DELETED in the RFC 9421 cutover
-//! (ADR-MCPRE-050): the sole carrier is RFC 9421 HTTP Message Signatures + RFC 9530
-//! Content-Digest, which has no JSON canonicalization and no signed `_meta` block.
+//! values may be scattered elsewhere. These are the profile-agnostic constants the
+//! RFC 9421 carrier (ADR-MCPRE-050) stands on: the Ed25519 algorithm token, the
+//! extension id, and the SHA-256 digest token. The carrier signs HTTP messages
+//! (RFC 9421 + RFC 9530); no signature rides in a JSON-RPC `_meta` block.
 
 /// The incubation extension identifier (reassigned to the `se.syncom` root by
 /// ADR-MCPS-027). Controlled, explicitly NON-official; also the SEP-2133

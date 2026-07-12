@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Local RFC 9421 round-trip through the PRODUCTION serving PEP
-//! (`HttpProfileProxy`, ADR-MCPRE-050 sole carrier) — the object/JCS purge proof.
+//! (`HttpProfileProxy`, ADR-MCPRE-050 sole carrier) — proof the wire carries only
+//! RFC 9421 HTTP-signature evidence.
 //!
 //! A client signs an RFC 9421 + RFC 9530 request; the production `HttpProfileProxy`
 //! verifies it, admits it against the async §4 replay tier, forwards the stripped
 //! JSON-RPC to an in-process inner, and signs the reply as an RFC 9421 response. The
 //! client then verifies that response bound to its request. The test asserts the
-//! wire carries RFC 9421 HTTP signatures — NOT an object `_meta` signature and NOT a
-//! JCS `canonicalization_id` — i.e. there is zero object/JCS evidence on the wire.
+//! wire carries RFC 9421 HTTP signatures — and no JSON-RPC `_meta` signature and no
+//! legacy `canonicalization_id` field appear on the wire.
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
@@ -173,12 +174,12 @@ async fn rfc9421_round_trip_zero_object_evidence() {
         "response carries an RFC 9530 Content-Digest header"
     );
 
-    // NEGATIVE (the purge): the body carries NO object/JCS evidence — no draft-02
-    // `canonicalization_id` and no object `_meta.response` signature value.
+    // NEGATIVE: the body carries no legacy evidence — no `canonicalization_id` field
+    // and no `_meta.response` signature value.
     let body_text = String::from_utf8(response.body.clone()).expect("utf8 body");
     assert!(
         !body_text.contains("canonicalization_id"),
-        "no JCS canonicalization_id on the wire: {body_text}"
+        "no legacy canonicalization_id on the wire: {body_text}"
     );
     let body_json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
     assert!(

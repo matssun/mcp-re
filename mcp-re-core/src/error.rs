@@ -24,8 +24,9 @@ pub enum McpReError {
     #[error("mcp-re.invalid_signature")]
     InvalidSignature,
 
-    /// The protected message violated the JCS-safe value domain (duplicate keys,
-    /// unsafe integers, invalid UTF-8, non-integer numbers, ...).
+    /// The protected message could not be structurally decoded or serialized
+    /// (malformed base64, an unparseable hash id, or a value outside the safe
+    /// domain — duplicate keys, unsafe integers, invalid UTF-8, non-integer numbers).
     #[error("mcp-re.serialization_failed")]
     SerializationFailed,
 

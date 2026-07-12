@@ -19,12 +19,11 @@
 //! Firewall (ADR-MCPS-011/012): this crate depends only on `mcp-re-core` plus
 //! `serde`/`serde_json`. No networking, async runtime, or filesystem access.
 
-// PURGE 2026-07-11: the authorization EVALUATOR (`evaluator`), the
-// authorization-object PROFILE (`profile`), and the REFERENCE grant profile
-// (`reference`) consumed the deleted object model (`VerifiedRequest` /
-// `VerifiedAuthorization` / `AuthorizationBinding` / JCS `canonicalize`). They are
-// DEFERRED (files retained) and rebuilt on the RFC 9421 request evidence
-// (`VerifiedHttpRequestEvidence.request_block.artifact_bindings`) in a follow-up.
+// Deferred: the authorization EVALUATOR (`evaluator`), the authorization-object
+// PROFILE (`profile`), and the REFERENCE grant profile (`reference`) are not yet
+// built on the RFC 9421 carrier (files retained); they are rebuilt on the RFC 9421
+// request evidence (`VerifiedHttpRequestEvidence.request_block.artifact_bindings`)
+// in a follow-up.
 // The profile-agnostic pieces below — the decision/error taxonomy, the
 // authorization-block wire types, revocation, and the JSON-RPC error surface —
 // stay. Policy enforcement is NOT wired into the RFC 9421 serving path yet (the

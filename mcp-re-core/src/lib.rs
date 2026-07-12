@@ -6,20 +6,17 @@
 //! - ADR-MCPS-011 / ADR-MCPS-012: no networking, async runtime, or filesystem
 //!   access. Callers inject `TrustResolver` and `ReplayCache` implementations.
 //!
-//! Post-purge (ADR-MCPRE-050), this crate provides ONLY the profile-agnostic
+//! Under ADR-MCPRE-050, this crate provides ONLY the profile-agnostic
 //! primitives the RFC 9421 carrier stands on: the frozen error taxonomy (`error`),
 //! Base64URL encoding (`encoding`), SHA-256 hash ids (`hash`), Ed25519 sign/verify
 //! (`crypto`), trust resolution (`resolver`), replay detection (`replay`), freshness
 //! (`time`), the JSON-RPC error wire (`wire`), and the audit taxonomy (`audit`).
 
-// PURGE 2026-07-11 (owner decision): the object/JCS engine is DELETED. RFC 9421 +
-// RFC 9530 (the `mcp-re-http-profile` crate) is the sole carrier and stands ONLY on
-// the profile-agnostic primitives below (replay tier, trust resolution, Ed25519
-// keys/verify, errors, base64, hashes, freshness, JSON-RPC wire, audit). The
-// deleted modules — `canonical` (RFC 8785 JCS), `pipeline` (object verifier),
-// `signing` (object `_meta` preimage), `envelope`, `constraints`, `mrt`, `unwrap`
-// — carried the object carrier and are gone; no `_meta` signature exists on any
-// wire.
+// ADR-MCPRE-050: RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (the
+// `mcp-re-http-profile` crate) is the sole carrier. This crate holds ONLY the
+// profile-agnostic primitives it stands on — the replay tier, trust resolution,
+// Ed25519 keys/verify, errors, base64, hashes, freshness, JSON-RPC wire, and audit
+// taxonomy below. No signature rides in a JSON-RPC `_meta` block on any wire.
 pub mod audit;
 pub mod crypto;
 pub mod encoding;

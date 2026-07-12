@@ -7,9 +7,9 @@
 //! the JSON-RPC body `_meta` (protected by the covered `Content-Digest`) and signs
 //! the RFC 9421 HTTP Message Signature over the reconstructed `HttpRequest`.
 //!
-//! There is NO object/JCS `_meta` signature and NO canonicalization preimage — the
-//! signed evidence is `Signature`/`Signature-Input` (RFC 9421) + `Content-Digest`
-//! (RFC 9530) on the HTTP message. The returned [`SignedRequest`] exposes the
+//! The signed evidence is `Signature`/`Signature-Input` (RFC 9421) + `Content-Digest`
+//! (RFC 9530) on the HTTP message, not a JSON-RPC `_meta` block. The returned
+//! [`SignedRequest`] exposes the
 //! resulting [`RequestEvidence`] handle so the caller can bind the signed response
 //! (`response.request_evidence == request.evidence`).
 //!

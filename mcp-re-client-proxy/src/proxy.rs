@@ -6,7 +6,8 @@
 //! request as RFC 9421 + RFC 9530 via `mcp-re-client-core`, forwards it to the
 //! remote MCP-RE endpoint, verifies the signed response bound to that request, and
 //! returns PLAIN MCP. The local client never emits, parses, or negotiates any
-//! MCP-RE field. There is no object/JCS `_meta` signature on the wire.
+//! MCP-RE field; the signature rides in the RFC 9421 HTTP headers, not a JSON-RPC
+//! `_meta` block.
 //!
 //! ## PURGE 2026-07-11 — lean RFC 9421 pipeline
 //! The object-era enforcement-mode engine, in-flight correlation store, MRT

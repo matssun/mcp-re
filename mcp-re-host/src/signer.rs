@@ -10,8 +10,8 @@
 //!
 //! Signing is delegated to `mcp-re-client-core` (the shared RFC 9421 evidence
 //! seam): the host composes the HTTP-profile request evidence block and signs the
-//! RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest. There is NO object/JCS
-//! `_meta` signature.
+//! RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest; the signature rides in
+//! the HTTP headers, not a JSON-RPC `_meta` block.
 
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_tool_call;

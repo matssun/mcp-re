@@ -6,9 +6,9 @@
 //! the RFC 9421 + RFC 9530 carrier — message authenticity, integrity, audience
 //! binding, authorization binding, freshness, replay, trust resolution, key
 //! admission, transport binding, response binding, and verified-context authorship.
-//! There is NO object/JCS evidence anywhere: every property is proven through
-//! `verify_request_full` / `verify_response_bound_full` and the request evidence
-//! block.
+//! Every property is proven through `verify_request_full` /
+//! `verify_response_bound_full` and the RFC 9421 request evidence block on the HTTP
+//! message.
 
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;

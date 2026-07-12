@@ -4,17 +4,17 @@
 //!
 //! Client-side mirror of the proxy's `verify_request_full` / `sign_response_full`:
 //! it constructs a signed **RFC 9421 + RFC 9530** request ([`build_signed_request`])
-//! and verifies the bound signed response ([`verify_signed_response`]). There is NO
-//! object/JCS `_meta` signature and NO canonicalization preimage anywhere in this
-//! crate — the sole carrier is RFC 9421 HTTP Message Signatures + RFC 9530
-//! Content-Digest (ADR-MCPRE-050).
+//! and verifies the bound signed response ([`verify_signed_response`]). The sole
+//! carrier is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest
+//! (ADR-MCPRE-050) — the signature rides in the HTTP `Signature`/`Signature-Input`
+//! and `Content-Digest` headers, not a JSON-RPC `_meta` block.
 //!
 //! It depends only on `mcp-re-http-profile` (the carrier) and `mcp-re-core`'s
 //! profile-agnostic primitives; it pulls in NO networking/async/fs crate (those are
 //! the mode-specific layers above this seam).
 //!
-//! ## PURGE 2026-07-11 — object/JCS deleted, RFC 9421 rebuild in progress
-//! The object-era client policy modules — `authz` (binding providers), `signer`
+//! ## Deferred client policy modules (RFC 9421 rebuild in progress)
+//! These client policy modules — `authz` (binding providers), `signer`
 //! (custody policy), `correlation` (MRT store), `discovery`, `enforcement`,
 //! `audit`, `audience` — were built on the deleted draft-02 object model. They are
 //! **deferred** from the build (files retained) and rebuilt on RFC 9421 evidence in

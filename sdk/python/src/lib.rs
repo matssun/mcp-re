@@ -2,9 +2,9 @@
 //! PyO3 binding exposing the audited `mcp-re-client-core` RFC 9421 signing /
 //! verification seam to the MCP-RE Python SDK (ADR-MCPRE-050 sole carrier).
 //!
-//! The wire is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest. There is
-//! NO object/JCS `_meta` signature and NO canonicalization preimage — the SDK signs
-//! and verifies the HTTP evidence carrier only. The private key never leaves the
+//! The wire is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest — the SDK
+//! signs and verifies the HTTP evidence carrier only; the signature rides in the HTTP
+//! headers, not a JSON-RPC `_meta` block. The private key never leaves the
 //! process boundary the SDK is given (a raw seed here; a KMS/HSM seam is additive).
 
 use pyo3::prelude::*;

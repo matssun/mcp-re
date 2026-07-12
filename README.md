@@ -345,7 +345,7 @@ conformance, reference implementation, demos, and non-goals):
   brief intended for an eventual MCP SEP submission.
 - **Security:** [`docs/security/`](docs/security/) — multi-agent
   Claude Opus 4.8 audits (v0.1 and v0.2), the per-finding remediation log for
-  v0.2.0, and the cross-round [finding ledger](docs/security/finding-ledger.jsonl).
+  v0.2.0, and the cross-round [finding ledger](docs/archive/security/finding-ledger.jsonl).
   Vulnerability reporting: [`SECURITY.md`](SECURITY.md).
 - **Operator guides:** [`docs/sidecar-deployment-guide.md`](docs/sidecar-deployment-guide.md),
   [`docs/host-integration-guide.md`](docs/host-integration-guide.md),

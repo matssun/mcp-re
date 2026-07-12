@@ -11,8 +11,9 @@
 //! signature base (a spliced response fails), server-signer trust resolution through
 //! the injected actor resolver, and the response-block `request_evidence` binding.
 //!
-//! There is NO object/JCS `_meta` response signature and NO canonicalization
-//! preimage. Trust resolution stays behind the actor-resolver seam, so the proxy/SDK
+//! The response evidence is an RFC 9421 signature over the `;req`-bound base plus the
+//! RFC 9530 Content-Digest, not a JSON-RPC `_meta` block. Trust resolution stays
+//! behind the actor-resolver seam, so the proxy/SDK
 //! injects the live-trust / OCSP-backed resolver and this pure module never reaches
 //! the network.
 

@@ -853,7 +853,7 @@ bumps `VERSION`/`Cargo.toml` at this point in history.
 
 ### Added — security process
 
-- **Cross-round finding ledger** ([`docs/security/finding-ledger.jsonl`](docs/security/finding-ledger.jsonl)):
+- **Cross-round finding ledger** ([`docs/archive/security/finding-ledger.jsonl`](docs/archive/security/finding-ledger.jsonl)):
   durable per-finding disposition memory so a later audit round verifies only what
   is genuinely new and flags regressions loudly.
 
@@ -1057,7 +1057,7 @@ rounds. The full audit reports are committed under
   time: **HIGH**.
 - **Remediation in this release**: all 4 Critical, all 15 High, and 28 of 30
   Medium findings are **Addressed** with regression tests. The remaining 2
-  Mediums (M01/M02 in [`docs/security/remediation-v0.2.md`](docs/security/remediation-v0.2.md))
+  Mediums (M01/M02 in [`docs/archive/security/remediation-v0.2.md`](docs/archive/security/remediation-v0.2.md))
   are **Deferred to v0.3**; their fail-mode is fail-closed and does NOT admit
   unauthorized requests.
 
@@ -1107,7 +1107,7 @@ v0.1 is the internal pre-public baseline. It is NOT released as a public
 crate or source archive; this entry is recorded so the v0.2 changelog,
 audit, and remediation documents have an unambiguous predecessor to refer
 to. The v0.1 audit report at
-[`docs/security/audit-v0.1.md`](docs/security/audit-v0.1.md) captures the
+[`docs/archive/security/audit-v0.1.md`](docs/archive/security/audit-v0.1.md) captures the
 state of the codebase at this point.
 
 ### Highlights
@@ -1128,7 +1128,7 @@ state of the codebase at this point.
 - Residual-risk rating at audit time: **MODERATE**.
 - Four findings were partial carry-overs into the v0.2 hardening branch;
   all are closed in v0.2.0 per the
-  [v0.2 remediation log](docs/security/remediation-v0.2.md).
+  [v0.2 remediation log](docs/archive/security/remediation-v0.2.md).
 
 [0.3.1]: https://github.com/matssun/mcps/releases/tag/v0.3.1
 [0.3.0]: https://github.com/matssun/mcps/releases/tag/v0.3.0

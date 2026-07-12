@@ -2,8 +2,9 @@
 
 The SDK signs an outbound MCP request as an **RFC 9421 HTTP Message Signature +
 RFC 9530 Content-Digest** message and verifies the signed response bound to that
-request. There is NO object/JCS ``_meta`` signature and NO canonicalization
-preimage — the sole carrier is the HTTP evidence profile.
+request. The sole carrier is the RFC 9421 HTTP evidence profile — the signature
+rides in the HTTP ``Signature``/``Signature-Input``/``Content-Digest`` headers, not
+a JSON-RPC ``_meta`` block.
 
     application code
       -> mcp_re_sdk.sign_request(...)     -> RFC 9421 signed request (method, uri, headers, body)

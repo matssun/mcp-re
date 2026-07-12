@@ -5,8 +5,8 @@
 //! [`HttpProfileProxy`] is the server-side PEP the async fleet runs per request. It
 //! is the production promotion of the proven `examples/http_profile_proxy.rs`
 //! pipeline onto the per-core async data plane, verifying/signing the **RFC 9421 +
-//! RFC 9530 HTTP evidence carrier** — there is NO object/JCS `_meta` signature and
-//! NO canonicalization preimage on the served path.
+//! RFC 9530 HTTP evidence carrier** — the signature rides in the RFC 9421 HTTP
+//! headers, not a JSON-RPC `_meta` block, on the served path.
 //!
 //! Per request:
 //!   1. reconstruct the [`HttpRequest`] (method, `@target-uri`, headers, body);
@@ -48,8 +48,9 @@ pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> +
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
 ///
-/// Holds ONLY the RFC 9421 serving state — there is no object/JCS verifier, signer,
-/// or `_meta` envelope anywhere in it. `Send + Sync` (MCPRE-111): one instance is
+/// Holds ONLY the RFC 9421 serving state — the verifier, signer, and evidence all
+/// operate on the HTTP message, not a JSON-RPC `_meta` envelope. `Send + Sync`
+/// (MCPRE-111): one instance is
 /// shared across all per-core runtimes.
 pub struct HttpProfileProxy {
     /// Trust resolution for request (client) and response (server) signing slots.

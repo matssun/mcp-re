@@ -19,7 +19,7 @@ passes proves object/HTTP parity (MCP-RE is HTTP-profile only).
 
 The vectors fall into three categories:
 
-- **Core** — the frozen wire vocabulary, signing rule, JCS-safe value domain,
+- **Core** — the frozen wire vocabulary, signing rule, safe value domain,
   freshness/replay, trust resolution, message constraints, and the
   request/response verification pipelines. Fixtures live under
   `mcp-re-core/tests/vectors/`.

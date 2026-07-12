@@ -7,8 +7,8 @@
 //! [`verify_signed_response`]). The language model never holds private keys or
 //! constructs signatures.
 //!
-//! ## PURGE 2026-07-11 — object/JCS deleted, RFC 9421 rebuild in progress
-//! The object-era `session` (HostSession), `verified_result`, and `pending`
+//! ## Deferred host modules (RFC 9421 rebuild in progress)
+//! The `session` (HostSession), `verified_result`, and `pending`
 //! (request_hash correlation) modules were built on the deleted draft-01/object
 //! model. They are **deferred** (files retained) and rebuilt on RFC 9421 evidence in
 //! a follow-up; the signer + clock/nonce fixtures below are the working surface.

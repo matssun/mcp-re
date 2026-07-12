@@ -3,8 +3,8 @@
 //! exposing the audited `mcp-re-client-core` RFC 9421 signing / verification seam
 //! (ADR-MCPRE-050 sole carrier).
 //!
-//! The wire is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest. There is
-//! NO object/JCS `_meta` signature and NO canonicalization preimage.
+//! The wire is RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest; the
+//! signature rides in the HTTP headers, not a JSON-RPC `_meta` block.
 
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
