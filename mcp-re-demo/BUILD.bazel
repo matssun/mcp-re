@@ -1,48 +1,27 @@
-load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# MCP-RE mTLS/fixtures demo surface. A thin harness over the EXISTING mcp-re-host
-# HostSession — it signs MCP-RE requests (injected clock + RNG), correlates
-# request_hash by JSON-RPC id, and verifies the bound response against the STORED
-# hash; DemoFixtures mints the demo mTLS material with rcgen. MCP-RE is
-# HTTP-profile only — the stdio demo servers, bridge, and their e2e topology were
-# removed; a stdio-only host uses an external plain-MCP adapter (e.g. FastMCP).
+# MCP-RE mTLS/fixtures demo surface. `DemoFixtures` mints the demo mTLS material
+# with rcgen (the ONE source-of-truth material set) for the proxy/client round-trip
+# tests. MCP-RE is HTTP-profile only — the stdio demo servers, bridge, the runnable
+# client binaries, and their e2e topology were removed; a stdio-only host uses an
+# external plain-MCP adapter (e.g. FastMCP).
 nt_rust_library(
     name = "mcp_re_demo",
     srcs = [
-        "src/client.rs",
         "src/demo_fixtures.rs",
         "src/lib.rs",
-        "src/mtls_client.rs",
     ],
     crate_name = "mcp_re_demo",
     edition = "2021",
     deps = [
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "//mcp-re-transport:mcp_re_transport",
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:thiserror",
         "@crates_mcp_re//:time",
-    ],
-)
-
-# Demo client behaviour: signs with injected clock+RNG, verifies a bound response
-# against the stored hash, and fails closed on a wrong hash, an unknown response
-# id, and a duplicate in-flight request id.
-nt_rust_test(
-    name = "demo_client_test",
-    srcs = ["tests/demo_client_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_demo",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "@crates_mcp_re//:serde_json",
     ],
 )
 
@@ -64,48 +43,6 @@ nt_rust_test(
         "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPS-054 (MCP-RE-EPIC-P6.6, Child Issue 2): the runnable mTLS client orchestration.
-# Drives the EXPORTED mcp-re-transport verifying mTLS client + the EXISTING
-# mcp-re-host HostSession against a REAL mcp_re_proxy::serve_once server on a thread,
-# with certs minted in-process via rcgen. Proves the client path: HostSession
-# signs -> mTLS POST (server-auth in the handshake) -> HostSession verifies the
-# signed response against the STORED request hash. Untrusted server cert, wrong
-# response hash, and a corrupted response signature each fail closed.
-nt_rust_test(
-    name = "demo_mtls_client_test",
-    srcs = ["tests/demo_mtls_client_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_demo",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "//mcp-re-proxy:mcp_re_proxy",
-        "//mcp-re-transport:mcp_re_transport",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# The runnable mTLS demo client binary: the model supplies only the tool text; the
-# HostSigner owns the key and exposes no private-key accessor.
-nt_rust_binary(
-    name = "demo_mtls_client",
-    srcs = ["src/bin/demo_mtls_client.rs"],
-    crate_name = "demo_mtls_client",
-    edition = "2021",
-    deps = [
-        ":mcp_re_demo",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:serde_json",
     ],
 )

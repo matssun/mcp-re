@@ -55,10 +55,6 @@ _PROXY_LIB_SRCS = [
     # dispatch path). Split out of inner_launch so it stays in the PEP when the
     # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
     "src/log_sink.rs",
-    # Test / embedding helpers that drive the async serving path synchronously
-    # (a private current-thread runtime per call). Not a serving path.
-    "src/test_support.rs",
-    "src/proxy.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource.rs",
