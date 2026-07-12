@@ -200,8 +200,8 @@ jobs:
       # zero Fresh when the store is Unavailable (fail-closed). (#314)
       - name: Release gate — replay race
         run: >-
-          cargo test -p mcp-re-proxy --features async_serve,cpstore_etcd,redis_replay
-          --test replay_race_harness_test
+          cargo test -p mcp-re-proxy --features async_serve
+          --test async_replay_test
 
       # §6 — bounded graceful drain: in-flight requests complete, zero abandoned,
       # a stuck request cannot delay exit past the grace bound. (MCPRE-115)

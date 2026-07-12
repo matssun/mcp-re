@@ -398,6 +398,28 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# ADR-MCPRE-051 §6 bounded graceful drain: in-flight requests complete, zero
+# abandoned, and a stuck request cannot delay exit past the grace bound.
+nt_rust_test(
+    name = "async_drain_test",
+    srcs = ["tests/async_drain_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    # Each drain case stands up its own multi-thread runtime and holds several
+    # requests in flight; run the cases SERIALLY (not the Rust harness's default
+    # parallelism) so concurrent runtimes cannot starve each other under a loaded CI
+    # runner and make a drain's `entered == n` wait flake.
+    env = {"RUST_TEST_THREADS": "1"},
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # ADR-MCPRE-050 local round-trip: RFC 9421 client -> production HttpProfileProxy
 # (verify -> dispatch -> sign) -> verify, plus the cross-request replay rejection,
 # entirely in-process (in-memory async replay tier, no listener/Redis).
