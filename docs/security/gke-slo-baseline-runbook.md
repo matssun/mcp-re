@@ -103,16 +103,16 @@ sed "s#image: mcp-re-inner-fastmcp:0.11.0#image: $AR/mcp-re-inner-fastmcp:0.11.0
 # emit_mtls_fixtures + mcp_re_gke_client.py sign (audience did:example:server-1,
 # target-uri https://proxy.internal:8600/mcp, trust-domain example.com). Inner path
 # has NO trailing slash (FastMCP in-cluster 307-redirects /mcp/ -> /mcp).
-# transportBinding=none: the shipped gke client is an HTTP-profile client with no
-# channel-binding claim (its cert URI SAN is the signer, not the actor_id), so the
-# RFC 9421 signature + audience + replay + trust-epoch bind the request — exact
-# would fail closed on the SAN. Validated locally end-to-end (accepted + replay)
-# before this deploy via tools' deploy-config check.
+# Transport binding is ALWAYS `exact` — there is no `none` option (a decoupled
+# channel<->signer posture is refused). This requires the SLO load client to present
+# a client cert whose URI SAN is the RESOLVED actor_id (role:trust_domain:signer:
+# keyid), NOT the bare signer — the same leaf shape emit_mtls_fixtures /
+# mcp_re_gke_client.py mint for the multi-replica proof. Validate locally end-to-end
+# (accepted + replay) before this deploy via tools' deploy-config check.
 helm upgrade --install mcp-re-proxy deploy/helm/mcp-re-proxy -n mcp-re \
   --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.11.0 \
-  --set replicaCount=3 --set strict=true --set fleet=true \
+  --set replicaCount=3 --set fleet=true \
   --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp}' \
-  --set-string transportBinding=none \
   --set replay.redisUrl=redis://mcp-re-redis:6379 \
   --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
   --set drainPreStopSeconds=6 --wait --timeout 4m

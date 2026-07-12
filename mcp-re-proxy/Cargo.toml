@@ -147,6 +147,10 @@ async_serve = []
 [dev-dependencies]
 # In-process test cert generation for the mTLS round-trip tests.
 rcgen = { workspace = true }
+# Now-relative certificate validity windows for fixtures that must mint a client
+# leaf whose lifetime span is within the proxy's enforced ceiling
+# (`cli::MAX_CLIENT_CERT_LIFETIME`) yet is currently valid.
+time = { workspace = true }
 # The production client-side mTLS config (presents a client cert + verifies the
 # server) — used by the mTLS transport-binding channel-binding test to drive a
 # REAL rustls handshake whose negotiated peer leaf DER is the x5t#S256 material.

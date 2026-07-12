@@ -18,6 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY . .
 # Warm the target so the runtime `cargo test` runs the bench with no recompile.
-RUN cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench --no-run
+RUN cargo test -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench --no-run
 ENV MCP_RE_LOADGEN_OUT=/tmp/slo_report.json
 ENTRYPOINT ["bash","-lc","cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench -- --ignored --nocapture && echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]

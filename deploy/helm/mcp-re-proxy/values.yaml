@@ -23,10 +23,11 @@ image:
 # config/ports.toml, then update this line to match (the gate enforces it).
 bindPort: 8600
 
-# Security posture (ADR-MCPS-049 clause 1). BOTH are required for the fleet
-# strict-production guarantee: strict rejects insecure config; fleet rejects
-# node-local replay caches. Do not set fleet=true with a memory/file replay cache.
-strict: true
+# Deployment topology (ADR-MCPS-049 clause 1). The proxy ALWAYS runs the maximal-
+# security posture and refuses any unsafe config at startup — there is no security
+# toggle. `fleet` selects the horizontally-scaled topology, which additionally
+# rejects node-local replay caches. Do not set fleet=true with a memory/file replay
+# cache (the proxy refuses to start).
 fleet: true
 
 # Client→proxy Service routing. The inner plane is stateless Streamable-HTTP

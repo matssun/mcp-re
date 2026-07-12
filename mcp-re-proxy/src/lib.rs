@@ -144,6 +144,7 @@ pub mod async_serve;
 // core, each a current-thread tokio runtime with its own SO_REUSEPORT listener +
 // Linux CPU pinning, over one Proxy per core. THE production data plane.
 pub mod async_fleet;
+pub mod app;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete

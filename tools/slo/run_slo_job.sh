@@ -48,14 +48,35 @@ spec:
       restartPolicy: Never
       nodeSelector:
         cloud.google.com/gke-nodepool: $POOL
+      # The async per-core serving plane refuses node-local replay, so the bench needs
+      # a shared primary+2-replica Redis (WAIT 2 durability tier). Docker is unavailable
+      # in a Job pod, so provide it as native sidecars (initContainers restartPolicy:
+      # Always, GKE >=1.29) sharing the pod netns on localhost; the bench points at them
+      # via MCP_RE_LOADGEN_REDIS_URL. Sidecars are torn down when the bench container exits.
+      initContainers:
+        - name: redis-primary
+          image: redis:7-alpine
+          restartPolicy: Always
+          args: ["redis-server","--port","6379","--appendonly","yes"]
+        - name: redis-r1
+          image: redis:7-alpine
+          restartPolicy: Always
+          args: ["redis-server","--port","6380","--replicaof","127.0.0.1","6379","--appendonly","yes"]
+        - name: redis-r2
+          image: redis:7-alpine
+          restartPolicy: Always
+          args: ["redis-server","--port","6381","--replicaof","127.0.0.1","6379","--appendonly","yes"]
       containers:
         - name: bench
           image: $BENCH_IMG
           workingDir: /build
-          # The image ENTRYPOINT uses a login shell that drops cargo from PATH;
-          # override with an explicit PATH and emit the report between markers.
-          command: ["bash","-c","export PATH=/usr/local/cargo/bin:\$PATH && cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench -- --ignored --nocapture && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
+          # The image ENTRYPOINT uses a login shell that drops cargo from PATH; override
+          # with an explicit PATH. Wait for the two replicas to report online (so WAIT 2
+          # is satisfiable), then run ONLY tls_load_harness_bench (the file's other tests
+          # need Docker) built WITH redis_replay, and emit the report between markers.
+          command: ["bash","-c","export PATH=/usr/local/cargo/bin:\$PATH && sleep 8 && cargo test -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
           env:
+            - { name: MCP_RE_LOADGEN_REDIS_URL, value: "redis://127.0.0.1:6379" }
             - { name: MCP_RE_LOADGEN_HW_CLASS, value: "$HW" }
             - { name: MCP_RE_LOADGEN_CORES, value: "$CORES" }
             # Pin the CANONICAL v2 envelope (concurrency 128 / 8000 requests) so the
