@@ -10,6 +10,7 @@ nt_rust_library(
     crate_name = "mcp_re_host",
     edition = "2021",
     deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         # MCPS-033: OS CSPRNG for the production nonce source. Not networking/async.
         "@crates_mcp_re//:getrandom",

@@ -398,6 +398,67 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# ADR-MCPRE-050 local round-trip: RFC 9421 client -> production HttpProfileProxy
+# (verify -> dispatch -> sign) -> verify, plus the cross-request replay rejection,
+# entirely in-process (in-memory async replay tier, no listener/Redis).
+nt_rust_test(
+    name = "rfc9421_round_trip_test",
+    srcs = ["tests/rfc9421_round_trip_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
+# Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
+# test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
+# by cargo / the GKE runbook. Built against the redis_replay ext flavor.
+nt_rust_test(
+    name = "tls_load_harness_bench",
+    srcs = ["tests/tls_load_harness_bench.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    tags = ["manual"],
+    data = [
+        ":mcp_re_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+    },
+    env_inherit = [
+        "MCP_RE_LOADGEN_CONCURRENCY",
+        "MCP_RE_LOADGEN_REQUESTS",
+        "MCP_RE_LOADGEN_MODE",
+        "MCP_RE_LOADGEN_HW_CLASS",
+        "MCP_RE_LOADGEN_CORES",
+        "MCP_RE_LOADGEN_OUT",
+        "MCP_RE_LOADGEN_REDIS_URL",
+    ],
+    deps = [
+        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
+        ":mcp_re_proxy_ext",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # above is NEVER built with this feature; production and the production CLI link
 # only the env-LESS instance. This instance is built on every `bazel test //...`
 # (NOT `manual`) so it can never silently fail to compile.

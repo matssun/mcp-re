@@ -100,10 +100,11 @@ pub enum OcspKind {
     /// the offline `--client-crl` set.
     Off,
     /// Require an online OCSP check at connection time. A verified client leaf is
-    /// rejected on `Revoked` (always) and on `Unknown`/unreachable/timeout/parse
-    /// error UNLESS `--ocsp-soft-fail` is set. Honored ONLY in a build with the
-    /// `online_ocsp` feature; a default build parses it but FAILS CLOSED at
-    /// construction (mirrors the env-keysource / shared-replay gates).
+    /// rejected on `Revoked` (always) and, failing closed, on
+    /// `Unknown`/unreachable/timeout/parse error too (there is no soft-fail
+    /// relaxation). Honored ONLY in a build with the `online_ocsp` feature; a
+    /// default build parses it but FAILS CLOSED at construction (mirrors the
+    /// env-keysource / shared-replay gates).
     Require,
 }
 
@@ -2140,16 +2141,18 @@ pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
 /// build without the feature, so this is only reached with the backend present.
 ///
 /// The checker uses `ocsp_responder_url` as the AIA override (else the leaf's
-/// AIA OCSP URL) and `ocsp_soft_fail` as the fail-open posture (default
-/// hard-fail). Its HTTP fetch carries a mandatory timeout (fail closed on
-/// timeout) so it can never wedge the blocking serve loop.
+/// AIA OCSP URL) and ALWAYS fails closed on an indeterminate result (the
+/// `--ocsp-soft-fail` fail-open relaxation was removed). Its HTTP fetch carries a
+/// mandatory timeout (fail closed on timeout) so it can never wedge the blocking
+/// serve loop.
 #[cfg(feature = "online_ocsp")]
 pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
     match config.client_ocsp {
         OcspKind::Off => None,
+        // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
         OcspKind::Require => Some(crate::ocsp::OcspChecker::new(
             config.ocsp_responder_url.clone(),
-            config.ocsp_soft_fail,
+            false,
         )),
     }
 }

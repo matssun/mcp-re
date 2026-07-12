@@ -1231,6 +1231,17 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
 /// orchestration's fail-closed arms. `shutdown` is pre-flipped: if a case
 /// unexpectedly reached the serve loop it would drain at once, so a returned `Ok`
 /// still fails the `expect_err`.
+// The assertions here rely on the aws-kms/gcp-kms/pkcs11 key sources and the
+// linearizable (etcd) tier being ABSENT from the build (so they fail closed at
+// construction). Skip when any of those backends IS compiled in — with the feature
+// present the source builds (and fails later, for a different reason), so the
+// "not compiled" premise no longer holds.
+#[cfg(not(any(
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource",
+    feature = "pkcs11_keysource",
+    feature = "cpstore_etcd"
+)))]
 #[test]
 fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     let m = write_material();
