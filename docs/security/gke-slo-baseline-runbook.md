@@ -22,8 +22,8 @@ end; a rerun with images cached is ~15 min.
 > mcp-re-proxy --features async_serve --test tls_load_harness_bench
 > tls_load_harness_bench -- --ignored`, then `scripts/adr051_slo_gate.py`) and
 > confirm it is green before spending on GKE. The GKE production floors in
-> `adr-051-slo-targets.json` are **superseded/pending re-measurement** under this
-> v2 envelope.
+> `adr-051-slo-targets.json` are **DECLARED under this v2 envelope** (re-measured
+> 2026-07-13, v0.12); rerun this runbook to refresh them on a new major release.
 
 - Project: `project-b19bbb5e-9be8-4fcb-a2f` (`MCP-S tests`, isolated — **never** the
   security-apps cluster), zone `us-central1-a`.
@@ -96,7 +96,7 @@ kubectl -n mcp-re create secret generic mcp-re-proxy-material \
   --from-file=client-ca.pem=/tmp/gke_mat/client_ca.pem --from-file=trust.json=/tmp/gke_mat/trust.json \
   --from-file=signing-seed=/tmp/gke_mat/signing_seed --dry-run=client -o yaml | kubectl apply -n mcp-re -f -
 # FastMCP inner (AR image)
-sed "s#image: mcp-re-inner-fastmcp:0.11.0#image: $AR/mcp-re-inner-fastmcp:0.11.0#" \
+sed "s#image: mcp-re-inner-fastmcp:0.12.0#image: $AR/mcp-re-inner-fastmcp:0.12.0#" \
   deploy/k8s/inner-fastmcp.yaml | kubectl apply -n mcp-re -f -
 # Proxy fleet (RFC 9421 serving path, ADR-MCPRE-050). The identity tuple
 # {audience, targetUri, trustDomain} comes from the chart defaults, which MATCH what
@@ -110,7 +110,7 @@ sed "s#image: mcp-re-inner-fastmcp:0.11.0#image: $AR/mcp-re-inner-fastmcp:0.11.0
 # mcp_re_gke_client.py mint for the multi-replica proof. Validate locally end-to-end
 # (accepted + replay) before this deploy via tools' deploy-config check.
 helm upgrade --install mcp-re-proxy deploy/helm/mcp-re-proxy -n mcp-re \
-  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.11.0 \
+  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.12.0 \
   --set replicaCount=3 --set fleet=true \
   --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp}' \
   --set replay.redisUrl=redis://mcp-re-redis:6379 \
@@ -192,7 +192,7 @@ kubectl -n mcp-re delete svc mcp-re-proxy-lb --ignore-not-found   # release the 
 gcloud container clusters delete mcp-re-fleet --zone us-central1-a --quiet   # nodes + LB + workloads
 # Optional (zero AR storage; rebuild via step 1 on rerun):
 for i in mcp-re-proxy mcp-re-inner-fastmcp mcp-re-slo-bench; do
-  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:0.11.0" --delete-tags --quiet || true
+  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:0.12.0" --delete-tags --quiet || true
 done
 ```
 

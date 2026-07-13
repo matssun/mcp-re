@@ -59,8 +59,8 @@ REPLICAS="${REPLICAS:-3}"
 # chart's default bare `mcp-re-proxy` name is unpullable on GKE, so override to the
 # Artifact Registry path here.
 AR="${MCP_RE_AR:-${REGION}-docker.pkg.dev/${PROJECT_ID}/mcp-re}"
-PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.11.0}"
-INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.11.0}"
+PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.12.0}"
+INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.12.0}"
 # The TLS/trust material the fleet Secret is built from (emit_mtls_fixtures output).
 FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:?set MCP_RE_FIXTURES_DIR to an emit_mtls_fixtures output dir}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -118,7 +118,7 @@ kubectl -n "$NAMESPACE" create secret generic mcp-re-proxy-material \
 
 # --- 1c. Inner FastMCP backend (the ALLOWED Streamable-HTTP inner plane) ------
 log "Inner FastMCP backend ($INNER_IMAGE)"
-sed "s#image: mcp-re-inner-fastmcp:0.11.0#image: $INNER_IMAGE#" \
+sed "s#image: mcp-re-inner-fastmcp:0.12.0#image: $INNER_IMAGE#" \
   "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml" | kubectl -n "$NAMESPACE" apply -f -
 kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-inner-fastmcp --timeout=420s
 

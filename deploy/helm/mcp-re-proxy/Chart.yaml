@@ -10,7 +10,7 @@ type: application
 # Chart version is independent of the app; bump on chart changes.
 version: 0.1.0
 # The mcp-re-proxy release this reference targets.
-appVersion: "0.11.0"
+appVersion: "0.12.0"
 keywords:
   - mcp
   - mcp-s

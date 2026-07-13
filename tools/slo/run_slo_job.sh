@@ -26,7 +26,7 @@
 set -euo pipefail
 
 NS="${NS:-mcp-re}"
-BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:0.11.0}"
+BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:0.12.0}"
 
 POOL="${1:?usage: run_slo_job.sh <node-pool> <hw-class> <cores> <out.json>}"
 HW="${2:?hw-class label, e.g. e2-standard-8}"
