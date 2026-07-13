@@ -9,6 +9,7 @@ use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::ResolvedActor;
+use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::SignerSlot;
 use std::collections::HashMap;
 
@@ -26,7 +27,12 @@ pub enum ClientVerification {
     /// ADR-MCPRE-052 delegated-required: verify a delegated-signed response (a
     /// success OR a rejection receipt) carrying the inline delegation credential. No
     /// direct-root, unsigned, or object/`_meta` downgrade is accepted.
-    DelegatedRequired(DelegationPolicy),
+    ///
+    /// The [`RevocationSource`] is a REQUIRED field — a delegated-required route cannot
+    /// be constructed without one, so the verifier is never silently never-revoked
+    /// (ADR-MCPRE-052 §3 step 7). An operator that relies on short TTLs alone passes an
+    /// explicit empty `StaticRevocationList` — a visible choice, not a default.
+    DelegatedRequired(DelegationPolicy, Box<dyn RevocationSource>),
 }
 
 /// One configured route: the canonical `@target-uri`, the resolved audience tuple,

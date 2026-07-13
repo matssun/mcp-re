@@ -177,19 +177,18 @@ impl ClientProxy {
             // ADR-MCPRE-052 delegated-required: a delegated-signed success OR rejection
             // receipt carrying the inline credential. No direct-root / unsigned /
             // object downgrade is accepted (verify_delegated_response fails closed).
-            ClientVerification::DelegatedRequired(policy) => {
+            ClientVerification::DelegatedRequired(policy, revocation) => {
                 let expectation =
                     ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
-                // Client-side delegated/root-key revocation is not wired in this pass
-                // (the deployment relies on short delegated-key TTLs); a revocation
-                // source is a tracked follow-up. Never-revoked here.
-                let never_revoked = |_: &str| false;
+                // The route's REQUIRED revocation source (§3 step 7). Consulted with the
+                // credential's delegated_kid / issuer_kid / jti; an empty static list is
+                // the explicit TTL-only posture, never a silent default.
                 let verified = verify_delegated_response(
                     &response,
                     route.resolve_actor.as_ref(),
                     &expectation,
                     policy,
-                    &never_revoked,
+                    revocation.as_ref(),
                     params.now_unix,
                 )?;
                 match verified.outcome {

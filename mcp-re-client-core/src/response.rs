@@ -29,6 +29,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpResponseEvidence;
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// The MCP-RE round-trip classification of a verified response body
 /// (ADR-MCPS-047). Read ONLY from the signed, verified body — never from
@@ -145,6 +146,81 @@ pub fn classify_result(result: Option<&Value>) -> ResultClass {
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
 
+/// The client-side delegated-credential revocation seam (ADR-MCPRE-052 §3 step 7).
+///
+/// Consulted during delegated verification with EACH identifier the credential
+/// presents — its `delegated_kid`, its `issuer_kid` (root anchor), and its `jti`
+/// (per-credential id) — and reports whether ANY of them is revoked at the current
+/// trust epoch. Revocation is checked in ADDITION to freshness: short delegated-key
+/// TTLs bound the exposure window, and this seam narrows it to the moment of report.
+///
+/// This is deliberately a narrow, pure interface. The in-memory
+/// [`StaticRevocationList`] covers the GKE proof and small deployments; a networked
+/// source (a signed revocation feed, an OCSP-style responder with its own freshness
+/// proof) implements the same trait later WITHOUT touching the verifier. Implementations
+/// MUST be non-blocking — this is consulted on the response-verification path.
+pub trait RevocationSource: Send + Sync {
+    /// Report whether `identifier` (a `delegated_kid`, `issuer_kid`, or credential
+    /// `jti`) is revoked at the current epoch. A conservative source MAY return `true`
+    /// for an identifier it cannot resolve; an empty denylist reports `false` for all
+    /// (TTL-only reliance — see [`StaticRevocationList::new`]).
+    fn is_revoked(&self, identifier: &str) -> bool;
+}
+
+/// An in-memory static denylist of revoked identifiers — any mix of `delegated_kid`s,
+/// root `issuer_kid`s, and credential `jti`s (ADR-MCPRE-052 §3 step 7). This is the
+/// concrete seam a networked revocation feed replaces later; it is enough for the GKE
+/// proof (exercise both allow and deny) and for deployments that publish a small,
+/// operator-curated denylist.
+///
+/// An EMPTY list means "no identifier is revoked" — the explicit TTL-only posture. It
+/// is a deliberate operator choice (constructed via [`StaticRevocationList::new`]), not
+/// a silent default: a `DelegatedRequired` route cannot be built without SOME source.
+#[derive(Debug, Clone, Default)]
+pub struct StaticRevocationList {
+    revoked: HashSet<String>,
+}
+
+impl StaticRevocationList {
+    /// An empty denylist — nothing is revoked (explicit TTL-only reliance). The
+    /// operator chooses this deliberately; it is never the implicit default of a
+    /// delegated-required route.
+    pub fn new() -> Self {
+        StaticRevocationList {
+            revoked: HashSet::new(),
+        }
+    }
+
+    /// Build a denylist from an initial set of revoked identifiers (kids and/or jtis).
+    pub fn from_identifiers<I, S>(identifiers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        StaticRevocationList {
+            revoked: identifiers.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Add one revoked identifier (a `delegated_kid`, `issuer_kid`, or `jti`), builder
+    /// style.
+    pub fn revoke(mut self, identifier: impl Into<String>) -> Self {
+        self.revoked.insert(identifier.into());
+        self
+    }
+
+    /// Whether the denylist is empty (the TTL-only posture).
+    pub fn is_empty(&self) -> bool {
+        self.revoked.is_empty()
+    }
+}
+
+impl RevocationSource for StaticRevocationList {
+    fn is_revoked(&self, identifier: &str) -> bool {
+        self.revoked.contains(identifier)
+    }
+}
+
 /// The deployment policy the client applies when verifying a DELEGATED-key-signed
 /// response (ADR-MCPRE-052 §3) — the owned, client-side mirror of
 /// [`mcp_re_http_profile::DelegationExpectations`]. The trusted ROOT issuer is
@@ -221,15 +297,16 @@ pub struct VerifiedDelegatedResponse {
 /// preflight-unbound receipt — NEVER accepting an unbound receipt as a bound success.
 /// On total failure the (more specific) bound error is surfaced, fail-closed.
 ///
-/// `resolve_actor` is the client's trust seam; `is_revoked(kid)` reports delegated- or
-/// root-key revocation at the current epoch (pass a never-revoked predicate if the
+/// `resolve_actor` is the client's trust seam; `revocation` is the client-side
+/// [`RevocationSource`] consulted with the credential's `delegated_kid`, `issuer_kid`,
+/// and `jti` (an empty [`StaticRevocationList`] is the explicit TTL-only posture — the
 /// deployment relies on short delegated-key TTLs alone).
 pub fn verify_delegated_response(
     response: &HttpResponse,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     expectation: &ResponseExpectation,
     policy: &DelegationPolicy,
-    is_revoked: &dyn Fn(&str) -> bool,
+    revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
     let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
@@ -240,6 +317,10 @@ pub fn verify_delegated_response(
         accepted_epochs: &epochs,
         max_clock_skew: policy.max_clock_skew,
     };
+    // Adapt the revocation seam to the http-profile verifier's closure form. The
+    // verifier consults it with each identifier the credential carries.
+    let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
+    let is_revoked = &is_revoked;
 
     // A SUCCESS must be request-bound. The server only ever signs success responses
     // with the `;req` binding, and a stripped-`;req` "success" changes the signature
@@ -443,7 +524,7 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies delegated success");
@@ -482,7 +563,7 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies bound rejection");
@@ -522,7 +603,7 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .expect("client verifies preflight rejection unbound");
@@ -567,7 +648,7 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .unwrap_err();
@@ -595,7 +676,7 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .is_err());
@@ -632,9 +713,185 @@ mod delegated_tests {
             &resolver(),
             &expectation(&signed),
             &policy(),
-            &|_| false,
+            &StaticRevocationList::new(),
             NOW,
         )
         .is_err());
+    }
+
+    // ---- revocation seam (ADR-MCPRE-052 §3 step 7, MCPRE-122) ----------------
+
+    /// A signed 200 whose delegated key is on the client's denylist fails closed with
+    /// `DelegationRevoked` — even though the signature and credential are otherwise
+    /// valid and fresh.
+    #[test]
+    fn revoked_delegated_kid_rejects_success() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("server delegated-signs the success response");
+        let kid = custody.active_snapshot().unwrap().delegated_kid;
+        let revoked = StaticRevocationList::new().revoke(kid);
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
+    /// Revoking the ROOT issuer kid rejects every credential it anchors.
+    #[test]
+    fn revoked_issuer_kid_rejects_success() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("sign");
+        let revoked = StaticRevocationList::new().revoke(ROOT_KID);
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
+    /// A non-empty denylist that does NOT name this credential still verifies — the
+    /// seam is real (it says no), not a blanket deny.
+    #[test]
+    fn non_revoked_credential_verifies_with_nonempty_list() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("sign");
+        let revoked = StaticRevocationList::from_identifiers([
+            "some-other/delegated/9".to_string(),
+            "unrelated-root".to_string(),
+        ]);
+        assert!(!revoked.is_empty());
+        let out = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            NOW,
+        )
+        .expect("verifies — this credential is not on the denylist");
+        assert_eq!(out.outcome, DelegatedOutcome::Success);
+    }
+
+    /// A rejection RECEIPT signed with a revoked delegated key is itself rejected —
+    /// revocation fails closed on the return leg too (a revoked key cannot even deliver
+    /// a trustworthy denial).
+    #[test]
+    fn revoked_delegated_key_rejection_receipt_is_rejected() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason {
+            wire_code: "mcp-re.replay_detected",
+            message: "replayed".into(),
+        };
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            409,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds bound delegated rejection");
+        let revoked = StaticRevocationList::new().revoke(snap.delegated_kid.clone());
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
+    /// After rotation, a response signed by the NEW delegated key verifies even while
+    /// the OLD key is revoked — revocation of a retired key does not break serving.
+    #[test]
+    fn rotation_to_new_delegated_key_succeeds_when_old_revoked() {
+        // A request whose freshness window brackets the post-rotation serve instant.
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            Vec::new(),
+            "nonce-rot",
+            CREATED,
+            NOW + 600,
+        );
+        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
+        let signed =
+            build_signed_request(&json!(1), "tools/call", params, TARGET, &inputs, &client_key())
+                .expect("client signs request");
+
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue key/1");
+        let kid1 = custody.active_snapshot().unwrap().delegated_kid;
+
+        // Advance past exp - overlap (300 - 60 = 240) so sign_response rotates to key/2.
+        let rot = NOW + 250;
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(rot, &mut resp, signed.request(), signed.evidence())
+            .expect("server signs with the rotated key");
+        let kid2 = custody.active_snapshot().unwrap().delegated_kid;
+        assert_ne!(kid2, kid1, "rotation must mint a new delegated kid");
+
+        // Old key revoked; the new (active) key is not.
+        let revoked = StaticRevocationList::new().revoke(kid1);
+        let out = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            rot,
+        )
+        .expect("response on the rotated key verifies while the old key is revoked");
+        assert_eq!(out.outcome, DelegatedOutcome::Success);
     }
 }

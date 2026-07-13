@@ -45,6 +45,8 @@ use mcp_re_proxy::HttpProfileProxy;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::RevocationSource;
+use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_proxy::transport::RemoteTransport;
 use mcp_re_client_proxy::transport::TransportError;
 use mcp_re_client_proxy::CallParams;
@@ -259,6 +261,14 @@ fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
 }
 
 fn client_proxy(server: HttpProfileProxy) -> ClientProxy {
+    // Default posture: an explicit empty denylist (TTL-only reliance).
+    client_proxy_with_revocation(server, Box::new(StaticRevocationList::new()))
+}
+
+fn client_proxy_with_revocation(
+    server: HttpProfileProxy,
+    revocation: Box<dyn RevocationSource>,
+) -> ClientProxy {
     let route = Route {
         route_id: "r1".into(),
         target_uri: TARGET.into(),
@@ -272,7 +282,7 @@ fn client_proxy(server: HttpProfileProxy) -> ClientProxy {
         extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
         expected_server_keyid: None,
         resolve_actor: client_resolver(),
-        verification: ClientVerification::DelegatedRequired(delegation_policy()),
+        verification: ClientVerification::DelegatedRequired(delegation_policy(), revocation),
     };
     let registry = RouteRegistry::new().register(route);
     ClientProxy::new(
@@ -356,4 +366,36 @@ fn direct_root_server_is_refused_by_delegated_required_client() {
         Some("mcp-re.delegation_credential_missing"),
         "the missing inline credential is the fail-closed reason"
     );
+}
+
+#[test]
+fn revoked_server_delegated_key_is_refused_by_client() {
+    // The server's first delegated key is `<issuer_kid>/delegated/1`. The client's
+    // revocation source names it, so an otherwise-valid delegated success fails closed
+    // — proving the revocation seam is live, not a hardcoded never-revoked.
+    let revoked = StaticRevocationList::new().revoke(format!("{ROOT_KID}/delegated/1"));
+    let proxy = client_proxy_with_revocation(build_server(), Box::new(revoked));
+    let err = proxy
+        .handle("r1", &plain_request(), &params("nonce-e2e-revoked"))
+        .expect_err("delegated-required client refuses a revoked delegated key");
+    assert_eq!(
+        err.wire_code(),
+        Some("mcp-re.delegation_revoked"),
+        "the revoked delegated key is the fail-closed reason"
+    );
+}
+
+#[test]
+fn non_revoked_client_still_round_trips() {
+    // A non-empty denylist that does NOT name the server's key still succeeds — the
+    // seam answers, it does not blanket-deny.
+    let revoked = StaticRevocationList::new()
+        .revoke("some-other/delegated/9")
+        .revoke("unrelated-root");
+    let proxy = client_proxy_with_revocation(build_server(), Box::new(revoked));
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-e2e-allow"))
+        .expect("a non-matching denylist does not block a valid delegated response");
+    assert_eq!(out.kind, ResponseKind::Success);
+    assert_eq!(out.plain_response["result"]["ok"], json!(true));
 }

@@ -37,6 +37,8 @@ pub use response::DelegatedOutcome;
 pub use response::DelegationPolicy;
 pub use response::ResponseExpectation;
 pub use response::ResultClass;
+pub use response::RevocationSource;
+pub use response::StaticRevocationList;
 pub use response::VerifiedDelegatedResponse;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
