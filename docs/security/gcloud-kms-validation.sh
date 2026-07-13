@@ -156,7 +156,18 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_http_profile_live_test -- --ignored --nocapture --test-threads=1
 
+# 5. ADR-MCPRE-052 delegated-signing custody lane (MCPRE-122): Cloud KMS is the
+#    root ISSUER that signs only a short-lived compact-JWS delegation credential at
+#    issuance/rotation; an in-memory Ed25519 delegated key signs the per-request
+#    RFC 9421 responses. Proves ZERO remote KMS ops on the per-request path (N
+#    response signs ⇒ exactly one KMS asymmetricSign), a verifiable attestation
+#    chain back to the KMS root, rotation overlap with no verification gap, and a
+#    fail-closed body tamper.
+cargo test -p mcp-re-proxy --features gcp_kms_keysource \
+  --test gcp_kms_delegated_signing_live_test -- --ignored --nocapture --test-threads=1
+
 echo
 echo "OK — live GCP KMS validation passed (object signing + delegated TLS +"
-echo "draft-02 envelope round-trip + HTTP standards profile RFC 9421 round-trip,"
-echo "with negatives). The private keys never left Cloud KMS."
+echo "draft-02 envelope round-trip + HTTP standards profile RFC 9421 round-trip +"
+echo "ADR-052 delegated-signing custody (zero per-request KMS ops), with negatives)."
+echo "The private keys never left Cloud KMS."

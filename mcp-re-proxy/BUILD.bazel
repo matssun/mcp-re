@@ -10,7 +10,8 @@ package(default_visibility = ["//visibility:public"])
 # and runs ONLY in the manual live-infra lane (`cargo test --features … --
 # --ignored` against real AWS/GCP KMS):
 #   tests/aws_kms_live_test.rs, tests/gcp_kms_live_test.rs,
-#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs
+#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
+#   tests/gcp_kms_delegated_signing_live_test.rs
 # NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
 # Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
 # will always PROPOSE a target for each in `-mode diff`. This is a documented
