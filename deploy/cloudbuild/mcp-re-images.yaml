@@ -11,13 +11,13 @@ substitutions:
 steps:
   - name: gcr.io/cloud-builders/docker
     id: proxy
-    args: [build, -f, deploy/docker/Dockerfile, --target, proxy, -t, "${_AR}/mcp-re-proxy:0.11.0", .]
+    args: [build, -f, deploy/docker/Dockerfile, --target, proxy, -t, "${_AR}/mcp-re-proxy:0.12.0", .]
   - name: gcr.io/cloud-builders/docker
     id: inner
-    args: [build, -f, deploy/docker/Dockerfile.inner, -t, "${_AR}/mcp-re-inner-fastmcp:0.11.0", .]
+    args: [build, -f, deploy/docker/Dockerfile.inner, -t, "${_AR}/mcp-re-inner-fastmcp:0.12.0", .]
 images:
-  - "${_AR}/mcp-re-proxy:0.11.0"
-  - "${_AR}/mcp-re-inner-fastmcp:0.11.0"
+  - "${_AR}/mcp-re-proxy:0.12.0"
+  - "${_AR}/mcp-re-inner-fastmcp:0.12.0"
 options:
   machineType: E2_HIGHCPU_8
 timeout: 2400s
