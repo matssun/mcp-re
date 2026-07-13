@@ -25,11 +25,16 @@ use serde_json::Value;
 
 use mcp_re_core::SigningKey;
 
+use crate::block::ActorIdentity;
 use crate::block::ResolvedActor;
 use crate::block::SignerSlot;
+use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
+use crate::evidence::RequestEvidence;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
+use crate::sign::sign_delegated_response_full;
+use crate::sign::sign_delegated_response_unbound;
 use crate::sign::sign_response;
 use crate::sign::sign_response_unbound;
 use crate::verify::verify_response;
@@ -106,6 +111,96 @@ pub fn build_signed_rejection(
         Some(req) => sign_response(&mut response, req, key, key_id, created, expires)?,
         None => sign_response_unbound(&mut response, key, key_id, created, expires)?,
     }
+    Ok(response)
+}
+
+/// Build a **request-bound delegated** rejection (ADR-MCPRE-052 required mode,
+/// MCPRE-122): the rejection is signed by the active DELEGATED key, carries the
+/// inline delegation credential, and is bound via `;req` to `request` — used when
+/// the request verified far enough to trust its hash but failed a later gate
+/// (replay / revocation / policy / transport binding). It verifies through the
+/// delegated chain (`verify_delegated_response_full`), never as a directly
+/// root-signed response.
+#[allow(clippy::too_many_arguments)]
+pub fn build_delegated_rejection(
+    request: &HttpRequest,
+    request_evidence: &RequestEvidence,
+    reason: &RejectionReason,
+    status: u16,
+    server_signer: &ActorIdentity,
+    server_delegation: &str,
+    delegated_key: &SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<HttpResponse, HttpProfileError> {
+    let mut response = HttpResponse {
+        status,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: rejection_body(request_id(request), reason),
+    };
+    sign_delegated_response_full(
+        &mut response,
+        request,
+        request_evidence,
+        server_signer,
+        server_delegation,
+        delegated_key,
+        delegated_kid,
+        created,
+        expires,
+    )?;
+    Ok(response)
+}
+
+/// Build a **preflight (unbound) delegated** rejection (ADR-MCPRE-052 required
+/// mode, MCPRE-122): the request was malformed, invalidly signed, of the wrong
+/// audience, or otherwise unverifiable, so no trustworthy request hash exists. The
+/// rejection is still signed by the active DELEGATED key and carries the inline
+/// credential — its signer chain is fully verifiable
+/// (`verify_delegated_response_unbound`) — but it is response-only signed and does
+/// NOT pretend to be bound to a valid request. When `received` is present its bytes
+/// are recorded as a diagnostic digest (never a binding) and its id is echoed.
+#[allow(clippy::too_many_arguments)]
+pub fn build_delegated_rejection_preflight(
+    received: Option<&HttpRequest>,
+    reason: &RejectionReason,
+    status: u16,
+    server_signer: &ActorIdentity,
+    server_delegation: &str,
+    delegated_key: &SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<HttpResponse, HttpProfileError> {
+    let id = received.map(request_id).unwrap_or(Value::Null);
+    // Diagnostic ONLY: a digest of the received bytes so an operator can correlate,
+    // explicitly not a trusted request binding (the response is signed unbound).
+    let diagnostic = match received {
+        Some(req) => RequestEvidence {
+            digest_alg: "sha-256-received".into(),
+            digest_value: content_digest_sha256(&req.body),
+        },
+        None => RequestEvidence {
+            digest_alg: "none".into(),
+            digest_value: String::new(),
+        },
+    };
+    let mut response = HttpResponse {
+        status,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: rejection_body(id, reason),
+    };
+    sign_delegated_response_unbound(
+        &mut response,
+        server_signer,
+        server_delegation,
+        &diagnostic,
+        delegated_key,
+        delegated_kid,
+        created,
+        expires,
+    )?;
     Ok(response)
 }
 

@@ -765,6 +765,109 @@ pub fn verify_delegated_response_full(
     })
 }
 
+/// Verify a delegated-key-signed response with NO request binding (ADR-MCPRE-052;
+/// the preflight-unbound rejection case, MCPRE-122). The credential chain to the
+/// root (§3 steps 1–7) and the response signature under `cnf.jwk` (§3 step 8) are
+/// verified exactly as in [`verify_delegated_response_full`], but the signature
+/// covers only the response components — there is no `;req` binding and no
+/// request-evidence comparison, because no trustworthy request context exists.
+///
+/// The block's `request_evidence` (a digest of the received bytes, if any) is
+/// diagnostic and is NOT treated as a binding here. Delegation remains REQUIRED: a
+/// response with no inline credential — including a directly root-signed one — is
+/// rejected `delegation_credential_missing`.
+pub fn verify_delegated_response_unbound(
+    response: &HttpResponse,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    // Content-digest floor.
+    reject_content_encoding(&response.headers)?;
+    let digest_header = required_header(&response.headers, "content-digest")
+        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // Response-only signature parse: required response components, and NO `;req`.
+    let input_header = required_header(&response.headers, "signature-input")
+        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
+    require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
+    if parsed.components.iter().any(|c| c.req) {
+        return Err(HttpProfileError::MalformedEvidence(
+            "req component without request context",
+        ));
+    }
+    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+
+    // Response evidence block (protected by content-digest).
+    let block: HttpResponseEvidenceBlock = extract_meta_block(
+        &response.body,
+        RESPONSE_EVIDENCE_BLOCK_KEY,
+        "response evidence block",
+    )?;
+    block.validate(PROFILE_TAG)?;
+
+    // Step 1 (required mode): no inline credential — including a directly
+    // root-signed one — is rejected.
+    let credential = block
+        .server_delegation
+        .as_deref()
+        .ok_or(HttpProfileError::DelegationCredentialMissing)?;
+
+    // Steps 2–7: verify the credential chain to the root, scoped to the block's
+    // declared server signer (a lifted credential fails the scope check).
+    let expected_server_signer = block.server_signer.actor_id();
+    let params = DelegationVerifyParams {
+        now,
+        max_clock_skew: expect.max_clock_skew,
+        verifier_audiences: expect.verifier_audiences,
+        expected_profile: PROFILE_TAG,
+        expected_audience_hash: expect.expected_audience_hash,
+        expected_server_signer: &expected_server_signer,
+        accepted_epochs: expect.accepted_epochs,
+    };
+    let verified = verify_delegation_credential(
+        credential,
+        &params,
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |kid| is_revoked(kid),
+    )?;
+
+    // Step 8: the response keyid is the delegated key, the block names it, and the
+    // response-only signature verifies under cnf.jwk.
+    if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
+        return Err(HttpProfileError::DelegationKeyMismatch);
+    }
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::ResponseOnly(response),
+    )?;
+    let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
+    verify_ed25519_with(
+        &base,
+        &sig,
+        &verified.delegated_key,
+        McpReError::ResponseSigInvalid,
+    )
+    .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
+
+    let server_signer = block.server_signer.clone();
+    Ok(VerifiedHttpResponseEvidence {
+        resolved_server_actor: ResolvedActor {
+            identity: server_signer.clone(),
+            verification_key: verified.delegated_key,
+            slot: SignerSlot::Response,
+        },
+        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        bound_request_evidence: None,
+        body_request_evidence: None,
+        server_signer: Some(server_signer),
+    })
+}
+
 /// Verify a signed MCP-RE/HTTP response with NO request context (MCPRE-96): a
 /// rejection emitted before a request could be parsed. Covers only the response
 /// components; any `;req` component is malformed here (there is no request to

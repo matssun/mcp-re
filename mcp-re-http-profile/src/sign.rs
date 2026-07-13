@@ -274,6 +274,39 @@ pub fn sign_delegated_response_full(
     )
 }
 
+/// Full-profile response signing for the DELEGATED-key path with NO request
+/// binding (ADR-MCPRE-052; the preflight-unbound rejection case, MCPRE-122). Like
+/// [`sign_delegated_response_unbound`] a directly-root-signed sibling of
+/// [`sign_response_unbound`]: the response evidence block carries the inline
+/// `server_delegation` credential and the response is signed by the DELEGATED key,
+/// but the signature covers only the response components (`@status`,
+/// `content-digest`, `content-type`) — no `;req`. `request_evidence_diagnostic` is
+/// recorded in the block for diagnostics ONLY; an unbound response is verified
+/// response-only and this handle is never treated as a trusted request binding.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_delegated_response_unbound(
+    response: &mut HttpResponse,
+    server_signer: &ActorIdentity,
+    server_delegation: &str,
+    request_evidence_diagnostic: &RequestEvidence,
+    delegated_key: &SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: server_signer.clone(),
+        server_delegation: Some(server_delegation.to_owned()),
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence_diagnostic.digest_alg.clone(),
+            digest_value: request_evidence_diagnostic.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response_unbound(response, delegated_key, delegated_kid, created, expires)
+}
+
 /// Sign `response` in place, binding it to the verified originating request
 /// via the `;req` components (v0.11 grill C.1). Label `mcp-re-response`, same
 /// profile tag (E-1/E-2 — rejections reuse this path).

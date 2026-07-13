@@ -53,6 +53,10 @@ pub mod cli;
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.
 pub mod delegated_response_signer;
+// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing —
+// a shared, atomically-swappable delegated-key snapshot the fleet signs off, and
+// the cold-path rotor that keeps it fresh (root issuer off the request path).
+pub mod delegated_server_signer;
 // ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that
 // forwards the handshake transcript to a non-exporting device/KMS so the TLS
 // server key never leaves it. Generic mechanism (always compiled); the per-backend
@@ -187,6 +191,8 @@ pub use aws_kms_keysource::AwsKmsConfig;
 #[cfg(feature = "aws_kms_keysource")]
 pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
+pub use delegated_server_signer::DelegatedRotor;
+pub use delegated_server_signer::DelegatedServerSigner;
 // ADR-MCPS-028 §G: delegated TLS signing (generic mechanism).
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::DelegatedEd25519SigningKey;

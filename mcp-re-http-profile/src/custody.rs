@@ -24,6 +24,8 @@
 //! - **Audited lifecycle**: every issue / rotate / retire is a
 //!   `mcp-re.delegated_key.*` event (the frozen ADR-052 §7 vocabulary).
 
+use std::sync::Arc;
+
 use mcp_re_core::audit::event_type;
 use mcp_re_core::SigningKey;
 
@@ -93,14 +95,38 @@ pub struct CustodyConfig {
     pub overlap: i64,
 }
 
-/// The currently-active delegated key and its credential.
+/// The currently-active delegated key and its credential. `key` is an `Arc`
+/// because a delegated `SigningKey` is deliberately not `Clone`, and the hot-path
+/// signer needs a shared handle to sign off ([`DelegatedSigningCustody::active_snapshot`]).
 struct ActiveKey {
-    key: SigningKey,
+    key: Arc<SigningKey>,
     delegated_kid: String,
     server_signer: ActorIdentity,
     credential: String,
     nbf: i64,
     exp: i64,
+}
+
+/// An owned, cheaply-cloned snapshot of the current delegated key + its root-signed
+/// credential (ADR-MCPRE-052 §4). A hot-path response signer publishes this and
+/// signs per request off it — the root is never touched on that path; issuance and
+/// rotation stay inside the custody state machine. `key` is shared (`Arc`) because
+/// the delegated `SigningKey` is intentionally non-`Clone`.
+#[derive(Clone)]
+pub struct ActiveDelegatedKey {
+    /// The in-memory delegated Ed25519 signing key (shared, never the root).
+    pub key: Arc<SigningKey>,
+    /// The delegated key id — the RFC 9421 `keyid` the response signs under, and
+    /// the block's `server_signer.keyid`.
+    pub delegated_kid: String,
+    /// The server-signer identity naming this delegated key.
+    pub server_signer: ActorIdentity,
+    /// The inline root-signed delegation credential (compact JWS).
+    pub credential: String,
+    /// Credential not-before / expiry (`exp` is the fail-closed bound: a signer
+    /// MUST stop signing off this snapshot once `now >= exp`).
+    pub nbf: i64,
+    pub exp: i64,
 }
 
 /// The delegated-signing custody state machine.
@@ -189,7 +215,7 @@ where
                         at: now,
                     });
                     self.active = Some(ActiveKey {
-                        key,
+                        key: Arc::new(key),
                         delegated_kid: kid,
                         server_signer: signer,
                         credential,
@@ -242,12 +268,26 @@ where
             request_evidence,
             &a.server_signer,
             &a.credential,
-            &a.key,
+            a.key.as_ref(),
             &a.delegated_kid,
             now,
             now + self.cfg.ttl,
         )
         .map_err(CustodyError::Sign)
+    }
+
+    /// An owned snapshot of the current delegated key + credential (`None` before
+    /// first issuance or after fail-closed retirement). A hot-path signer publishes
+    /// this and signs off it without touching the root (ADR-MCPRE-052 §4).
+    pub fn active_snapshot(&self) -> Option<ActiveDelegatedKey> {
+        self.active.as_ref().map(|a| ActiveDelegatedKey {
+            key: Arc::clone(&a.key),
+            delegated_kid: a.delegated_kid.clone(),
+            server_signer: a.server_signer.clone(),
+            credential: a.credential.clone(),
+            nbf: a.nbf,
+            exp: a.exp,
+        })
     }
 
     /// Build the (delegated_kid, server_signer, header, claims) for a fresh key.

@@ -439,6 +439,24 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
+# HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
+# fail-closed + direct-root-rejected).
+nt_rust_test(
+    name = "delegated_serving_test",
+    srcs = ["tests/delegated_serving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
