@@ -776,6 +776,42 @@ mod delegated_tests {
         assert_eq!(err, HttpProfileError::DelegationRevoked);
     }
 
+    /// Revoking the credential's `jti` (not a kid) also fails closed — the client
+    /// entry point forwards the jti to the revocation seam, not only the delegated
+    /// and issuer kids. The jti is minted inside custody; we read it back from the
+    /// key-lifecycle audit to revoke the exact value on the wire.
+    #[test]
+    fn revoked_by_jti_rejects_success() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("server delegated-signs the success response");
+        let jti = custody
+            .audit()
+            .last()
+            .expect("an issued key-lifecycle event carrying the credential jti")
+            .jti
+            .clone();
+        assert!(!jti.is_empty(), "the credential carries a jti to revoke by");
+        let revoked = StaticRevocationList::new().revoke(jti);
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &revoked,
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
     /// A non-empty denylist that does NOT name this credential still verifies — the
     /// seam is real (it says no), not a blanket deny.
     #[test]

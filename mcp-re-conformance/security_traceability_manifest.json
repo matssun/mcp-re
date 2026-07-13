@@ -288,10 +288,101 @@
       "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
       "test_fn": "caller_supplied_proxy_meta_is_not_the_signed_authority",
       "notes": "\u00a7A Verified security context"
+    },
+    {
+      "property": "delegated-required serving: a delegated-signed SUCCESS response verifies via the credential\u2192root attestation chain and the root issuer is touched only at issuance (never per request)",
+      "bazel_target": "//mcp-re-proxy:delegated_serving_test",
+      "source": "mcp-re-proxy/tests/delegated_serving_test.rs",
+      "test_fn": "delegated_success_response_verifies_and_root_touched_once",
+      "notes": "ADR-MCPRE-052 \u00a74/\u00a75 hot path (MCPRE-122). root_invocations()==1 across 5 served responses \u2014 the KMS/root stays off the request path."
+    },
+    {
+      "property": "delegated-required serving: a request-BOUND rejection receipt is delegated-signed and verifies via the bound delegated path (mcp-re.replay_detected)",
+      "bazel_target": "//mcp-re-proxy:delegated_serving_test",
+      "source": "mcp-re-proxy/tests/delegated_serving_test.rs",
+      "test_fn": "delegated_bound_rejection_verifies",
+      "notes": "ADR-MCPRE-052 \u00a74. A verified request's later replay is refused with a request-bound, delegated-signed receipt."
+    },
+    {
+      "property": "delegated-required serving: a PREFLIGHT (unbound) rejection is delegated-signed and honestly classified unbound \u2014 not falsely request-bound",
+      "bazel_target": "//mcp-re-proxy:delegated_serving_test",
+      "source": "mcp-re-proxy/tests/delegated_serving_test.rs",
+      "test_fn": "delegated_preflight_rejection_verifies_unbound",
+      "notes": "ADR-MCPRE-052 \u00a74. A never-verified request yields an unbound delegated rejection; the bound path must NOT accept it as request-bound."
+    },
+    {
+      "property": "delegated-required serving: no active delegated key FAILS CLOSED \u2014 503 + frozen mcp-re.delegated_signing_unavailable + unsigned (no direct-root sign, no unsigned 200)",
+      "bazel_target": "//mcp-re-proxy:delegated_serving_test",
+      "source": "mcp-re-proxy/tests/delegated_serving_test.rs",
+      "test_fn": "missing_delegated_key_fails_closed",
+      "notes": "ADR-MCPRE-052 \u00a76 availability floor. The serving-side no-key fault maps to the frozen delegated_signing_unavailable token and is emitted UNSIGNED."
+    },
+    {
+      "property": "delegated-required serving: a DIRECT-root (pre-052) response is rejected mcp-re.delegation_credential_missing \u2014 no downgrade fallback",
+      "bazel_target": "//mcp-re-proxy:delegated_serving_test",
+      "source": "mcp-re-proxy/tests/delegated_serving_test.rs",
+      "test_fn": "direct_root_response_rejected_in_delegated_required_mode",
+      "notes": "ADR-MCPRE-052 \u00a73. A root-signed response carrying no inline credential is refused by a delegated-required verifier."
+    },
+    {
+      "property": "delegated-required production wiring: real config serves & verifies, ROTATES K1\u2192K2 (successor verifies; root touched only at rotation), and FAILS CLOSED past successor expiry \u2014 no stale-key extension, no direct-root fallback",
+      "bazel_target": "//mcp-re-proxy:delegated_production_wiring_test",
+      "source": "mcp-re-proxy/tests/delegated_production_wiring_test.rs",
+      "test_fn": "delegated_required_wiring_serves_verifies_and_rotates",
+      "notes": "ADR-MCPRE-052 \u00a74/\u00a76 through the real build_delegated_signing + HttpProfileProxy::new_delegated. Rotation success + fail-closed in one production-wired omnibus."
+    },
+    {
+      "property": "delegated-required E2E: a plain MCP client \u2192 client-proxy \u2192 server-proxy \u2192 backend round-trips to a client-verified delegated success and back to plain MCP",
+      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
+      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
+      "test_fn": "plain_client_round_trips_through_delegated_required_server",
+      "notes": "ADR-MCPRE-052 two-proxy altitude. Real ClientProxy (DelegatedRequired) \u2194 real HttpProfileProxy, no MCP-RE fields leaking to the plain client."
+    },
+    {
+      "property": "delegated-required E2E: a replay yields a request-bound delegated rejection the client verifies and classifies mcp-re.replay_detected (fail closed, no result)",
+      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
+      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
+      "test_fn": "replayed_request_yields_a_verified_delegated_rejection",
+      "notes": "ADR-MCPRE-052. The return-leg rejection is verified request-bound end to end and converted to a plain JSON-RPC error."
+    },
+    {
+      "property": "delegated-required E2E: the client REFUSES a direct-root server response (mcp-re.delegation_credential_missing) \u2014 no downgrade",
+      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
+      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
+      "test_fn": "direct_root_server_is_refused_by_delegated_required_client",
+      "notes": "ADR-MCPRE-052 \u00a73 downgrade resistance at the two-proxy altitude."
+    },
+    {
+      "property": "delegated-required E2E: the client REFUSES a delegated success signed by a REVOKED delegated key (mcp-re.delegation_revoked) \u2014 the revocation seam is live end to end",
+      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
+      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
+      "test_fn": "revoked_server_delegated_key_is_refused_by_client",
+      "notes": "ADR-MCPRE-052 \u00a77. The client StaticRevocationList names the server's delegated_kid; an otherwise-valid success fails closed."
+    },
+    {
+      "property": "delegated-required E2E: a non-empty revocation source that does NOT name the server key still round-trips \u2014 the seam answers, it does not blanket-deny",
+      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
+      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
+      "test_fn": "non_revoked_client_still_round_trips",
+      "notes": "ADR-MCPRE-052 \u00a77. Proves the revocation predicate is a real allow/deny decision, not fail-everything."
+    },
+    {
+      "property": "delegated credential-verification matrix: the frozen d01\u2013d22 corpus verifies black-box through the one production entry point to its exact expected mcp-re.* verdict",
+      "bazel_target": "//mcp-re-conformance:delegation_vectors_test",
+      "source": "mcp-re-conformance/tests/delegation_vectors_test.rs",
+      "test_fn": "frozen_delegation_corpus_verifies",
+      "notes": "ADR-MCPRE-052 \u00a79 executable spec. Every credential-verification failure mode (expired/nbf, key_use, profile, audience, trust-epoch, revoked, key-mismatch, issuer-untrusted, stripped/lifted credential, body/signature tamper) is a frozen KAT."
+    },
+    {
+      "property": "delegated credential-verification matrix: the corpus is \u226522 vectors and every frozen delegation wire token appears at least once (taxonomy coverage)",
+      "bazel_target": "//mcp-re-conformance:delegation_vectors_test",
+      "source": "mcp-re-conformance/tests/delegation_vectors_test.rs",
+      "test_fn": "corpus_covers_the_full_taxonomy",
+      "notes": "ADR-MCPRE-052 \u00a79. Guards the frozen delegation token SET against silent narrowing; Display/wire_code stability is additionally asserted by mcp-re-core delegation_wire_strings."
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 41
+    "entries": 54
   }
 }

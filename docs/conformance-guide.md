@@ -32,6 +32,12 @@ The vectors fall into three categories:
   [view](https://github.com/matssun/mcp-re/discussions/363)). These are exercised
   by the `mcp-re-proxy` test targets and by re-running the Core corpus over the
   HTTP harness.
+- **Delegated signing** — the ADR-MCPRE-052 delegated-required profile (frozen
+  `d01`–`d22` credential-verification corpus plus the serving / rotation /
+  fail-closed / two-proxy proofs). Its acceptance gate — each required behavior
+  mapped to the exact test that proves it, drift-guarded via the security
+  traceability manifest — is the
+  [Delegated-Required Validation Matrix](spec/delegated-required-validation-matrix.md).
 
 ### Counts live in the manifest, not here
 

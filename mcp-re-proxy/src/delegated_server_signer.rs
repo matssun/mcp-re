@@ -333,6 +333,61 @@ mod tests {
     }
 
     #[test]
+    fn issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry() {
+        // The transient-root-outage case: K1 issues, then every successor issuance
+        // FAILS. While K1 is still valid the rotor keeps serving it (rotate stays Ok,
+        // no retire) and retries the successor; once K1 reaches its own exp the hot
+        // path fails closed — no stale-key extension, no direct-root fallback
+        // (ADR-MCPRE-052 §6). This is the rotation-thread contract, proven at the
+        // rotor altitude without a clock or thread.
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut attempts = 0u32;
+        let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+            attempts += 1;
+            if attempts == 1 {
+                Some(issue_delegation_credential(&root, h, c))
+            } else {
+                None // the root issuer is unavailable for the successor
+            }
+        };
+        let mut n = 100u8;
+        let factory = move || {
+            n = n.wrapping_add(1);
+            SigningKey::from_seed_bytes(&[n; 32])
+        };
+        let signer = Arc::new(DelegatedServerSigner::new());
+        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
+        let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+
+        // K1 issues and serves.
+        rotor.rotate(NOW).expect("K1 issues");
+        let k1 = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
+        assert_eq!(k1, format!("{ROOT_KID}/delegated/1"));
+
+        // Inside the overlap window the successor cannot be minted. The rotor keeps K1
+        // (rotate stays Ok) instead of retiring — serving does not gap while K1 is
+        // still valid, even though a successor issuance was just attempted and failed.
+        let in_overlap = NOW + T - O; // exp - overlap
+        rotor
+            .rotate(in_overlap)
+            .expect("K1 kept despite failed successor issuance");
+        assert_eq!(
+            signer.current(in_overlap).expect("K1 still serves").delegated_kid,
+            k1,
+            "still the same key — no stale successor minted, no signing gap"
+        );
+        assert!(signer.current(NOW + T - 1).is_some(), "…right up to just before exp");
+
+        // At K1's own exp the hot path fails closed even though K1 was never retired.
+        assert!(signer.current(NOW + T).is_none(), "fails closed at K1 exp");
+
+        // Past exp with issuance still down, the rotor retires and surfaces the
+        // fail-closed error — the hot path stays closed (no direct-root fallback).
+        assert_eq!(rotor.rotate(NOW + T + 1), Err(CustodyError::FailClosedIssuance));
+        assert!(signer.current(NOW + T + 1).is_none());
+    }
+
+    #[test]
     fn seconds_to_expiry_tracks_the_published_key() {
         let (mut rotor, signer) = rotor();
         assert_eq!(signer.seconds_to_expiry(NOW), None, "no key ⇒ no ttl");

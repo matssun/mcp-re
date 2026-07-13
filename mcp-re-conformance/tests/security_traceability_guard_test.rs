@@ -213,6 +213,14 @@ fn source_env_for(source: &str) -> &'static str {
             "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES"
         }
         "mcp-re-proxy/tests/keyset_admission_test.rs" => "MCP_RE_SRC_KEYSET_ADMISSION",
+        // MCPRE-122 (ADR-MCPRE-052): the delegated-required validation matrix — the
+        // serving contract, the production wiring (serve/verify/rotate/fail-closed),
+        // the two-proxy client↔server round trip, and the frozen credential-
+        // verification corpus. See docs/spec/delegated-required-validation-matrix.md.
+        "mcp-re-proxy/tests/delegated_serving_test.rs" => "MCP_RE_SRC_DELEGATED_SERVING",
+        "mcp-re-proxy/tests/delegated_production_wiring_test.rs" => "MCP_RE_SRC_DELEGATED_PROD_WIRING",
+        "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs" => "MCP_RE_SRC_DELEGATED_E2E",
+        "mcp-re-conformance/tests/delegation_vectors_test.rs" => "MCP_RE_SRC_DELEGATION_VECTORS",
         // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
         // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
         // `tests/*.rs`). The generic provider-agnostic signer seam runs under the
