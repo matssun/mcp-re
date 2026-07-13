@@ -22,8 +22,8 @@ end; a rerun with images cached is ~15 min.
 > mcp-re-proxy --features async_serve --test tls_load_harness_bench
 > tls_load_harness_bench -- --ignored`, then `scripts/adr051_slo_gate.py`) and
 > confirm it is green before spending on GKE. The GKE production floors in
-> `adr-051-slo-targets.json` are **superseded/pending re-measurement** under this
-> v2 envelope.
+> `adr-051-slo-targets.json` are **DECLARED under this v2 envelope** (re-measured
+> 2026-07-13, v0.12); rerun this runbook to refresh them on a new major release.
 
 - Project: `project-b19bbb5e-9be8-4fcb-a2f` (`MCP-S tests`, isolated — **never** the
   security-apps cluster), zone `us-central1-a`.

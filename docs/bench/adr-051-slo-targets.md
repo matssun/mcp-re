@@ -2,16 +2,14 @@
 
 # ADR-MCPRE-051 §7 — SLO Target Declaration (MCPRE-110)
 
-> **⚠️ Production GKE numbers below are SUPERSEDED (object/JCS carrier, v1
-> envelope).** They were measured 2026-07-10 on the now-deleted object/JCS serving
-> path at the lighter v1 envelope (concurrency 64 / 2000 requests). The serving
-> path is now RFC 9421 + RFC 9530 (ADR-MCPRE-050), and the canonical **v2 envelope
-> is concurrency 128 / 8000 requests** — the SAME for local and GKE. The
-> **local-regression baseline has been re-established on RFC 9421** (see
-> [`adr-051-baseline-local.json`](adr-051-baseline-local.json): +27.7% throughput,
-> ~20% lower tail latency vs the old JCS numbers). The **production floors below are
-> pending re-measurement on GKE under the v2 envelope**; the tables are retained as
-> a historical record only. Run the local baseline green before the GKE re-run.
+> **✅ Production GKE floors are DECLARED under the v2 envelope (re-measured
+> 2026-07-13, v0.12).** The earlier 2026-07-10 numbers (object/JCS carrier, lighter
+> v1 envelope — concurrency 64 / 2000 requests) were **superseded and have now been
+> re-measured** on the current RFC 9421 + RFC 9530 serving path (ADR-MCPRE-050) under
+> the canonical **v2 envelope (concurrency 128 / 8000 requests)** — the SAME for local
+> and GKE. The local-regression baseline is also on RFC 9421 (see
+> [`adr-051-baseline-local.json`](adr-051-baseline-local.json)). Run the local baseline
+> green before any GKE re-run.
 
 Companion to the measurement envelope
 ([`adr-051-load-harness-envelope.md`](adr-051-load-harness-envelope.md) /
@@ -32,38 +30,38 @@ split into three blocks with **two complementary gates**:
 - **`absolute_gates`** (active) — always-on correctness gates (replay-race,
   bounded-drain) enforced by their own tests.
 
-## Status: production_slo DECLARED (baseline measured on GKE, 2026-07-10)
+## Status: production_slo DECLARED (baseline re-measured on GKE, 2026-07-13, v2 envelope)
 
 ADR-MCPRE-051 §7 is deliberate: *"the SLO numbers live with the harness and the
 release profile, not in this ADR,"* and *"capacity claims without a pinned
 benchmark envelope are marketing, not engineering."* Accordingly the capacity and
 scaling numbers were **measured, not asserted** — on real GKE hardware, with the
-harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores. **The
-numbers below were taken under the SUPERSEDED v1 envelope (object/JCS carrier, cold
-TLS1.3-mTLS, concurrency 64, 2000 requests/run)** — retained as a historical record;
-the current canonical envelope is RFC 9421 at concurrency 128 / 8000 requests, and
-these production floors are pending re-measurement (see the banner above).
+harness spawning the actual `mcp-re-proxy` async fleet at 1 and 8 cores under the
+**v2 canonical envelope (RFC 9421 + RFC 9530, cold TLS1.3-mTLS, concurrency 128,
+8000 requests/run)**.
 
-**Measured baseline — SUPERSEDED** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified
-responses/sec; added latency µs; 2000/2000 success on every run):
+**Measured baseline — v2, 2026-07-13** (`MCP_RE_LOADGEN_CORES` 1 → 8; verified
+responses/sec; added latency µs; 8000/8000 success on every run):
 
 | class | 1-core rps | 8-core rps | 8-core p50 / p99 / p999 | per-core linear factor |
 |---|---|---|---|---|
-| **e2-standard-8** (declared floor) | 67.9 | 390.2 | 148 / 369 / 508 ms | 0.718 |
-| **c3-standard-8** (faster ref) | 90.9 | 481.6 | 122 / 319 / 362 ms | 0.662 |
+| **e2-standard-8** (declared floor) | 71.5 | 402.1 | 237 / 1383 / 1789 ms | 0.703 |
+| **c3-standard-8** (faster ref) | 93.0 | 499.4 | 212 / 966 / 1233 ms | 0.671 |
 
 The **declared floor hardware is the weaker class (e2-standard-8)**: the release
 floors/ceilings in the targets JSON are derived from it (throughput floor 250 rps,
-p50/p99/p999 ceilings 250/600/900 ms, per-core factor ≥ 0.60), so a run on that
+p50/p99/p999 ceilings 360 / 2100 / 2350 ms, per-core factor ≥ 0.60), so a run on that
 class *or better* clears them — and c3-standard-8 (measured faster) does too. Both
-classes pass `slo_gate` in `declared` mode (7 checks each). `status` is now
-`declared`; `hardware_class`/`measured_on`/`measurements` record the provenance.
+classes pass `slo_gate` in `declared` mode. The tail ceilings are wider than the
+superseded v1 (64/2000) figures because the v2 envelope doubles concurrency and 4×'s
+the request count — these are **cold-connection envelope** numbers (keepalive_reuse=0)
+for regression detection on declared hardware, not steady-state user latency. `status`
+is `declared`; `hardware_class`/`measured_on`/`measurements` record the provenance.
 
-**v0.11 was never gated on the capacity baseline** (it shipped the mechanism +
-correctness floors); this baseline promotes the SLO to `declared` with real cloud
-numbers. CI still runs `slo_gate --selftest` only — shared runners are not
-release-representative, so the capacity/scaling enforcement runs on the declared
-hardware, as here.
+**v0.11 shipped the mechanism + correctness floors and first declared the SLO on the
+v1 envelope; v0.12 re-declares it on the v2 envelope** with fresh GKE numbers. CI
+runs `slo_gate --selftest` only — shared runners are not release-representative, so
+the capacity/scaling enforcement runs on the declared hardware, as here.
 
 Two classes of target, treated differently by the gate:
 
@@ -81,10 +79,11 @@ This lets the gate be wired and green in CI today (correctness enforced, capacit
 skipped) and tighten to full enforcement with a single edit once real numbers
 exist — no code change.
 
-## The follow-up-minor step — baseline run on declared hardware
+## Re-baselining on declared hardware (the rerun procedure)
 
-This is deferred out of v0.11. To move `status` from `provisional` to `declared`
-in a later minor release:
+This procedure was executed for the v0.11 (v1 envelope) and v0.12 (v2 envelope)
+declarations. Re-run it to refresh `production_slo` on a new major release or after a
+performance pass (full steps + teardown: [`gke-slo-baseline-runbook.md`](../security/gke-slo-baseline-runbook.md)):
 
 1. On the declared hardware class, run the load harness at 1 core and at N cores,
    capturing machine reports:
