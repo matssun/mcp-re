@@ -862,6 +862,7 @@ dependencies = [
  "hyper-util",
  "libc",
  "mcp-re-client-core",
+ "mcp-re-client-proxy",
  "mcp-re-core",
  "mcp-re-http-profile",
  "mcp-re-policy",

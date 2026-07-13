@@ -30,10 +30,14 @@ pub use request::RequestSigningInputs;
 pub use request::SignedRequest;
 pub use response::classify_result;
 pub use response::verify_and_classify_response;
+pub use response::verify_delegated_response;
 pub use response::verify_signed_response;
 pub use response::ClassifiedResponse;
+pub use response::DelegatedOutcome;
+pub use response::DelegationPolicy;
 pub use response::ResponseExpectation;
 pub use response::ResultClass;
+pub use response::VerifiedDelegatedResponse;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
 // SDK depend on ONE evidence vocabulary through this seam.

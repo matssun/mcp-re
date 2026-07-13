@@ -15,7 +15,9 @@
 //! (rebuilt on RFC 9421 later); this is the signing/verification adapter core.
 
 use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::verify_signed_response;
+use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_core::SigningKey;
@@ -23,6 +25,7 @@ use serde_json::json;
 use serde_json::Map;
 use serde_json::Value;
 
+use crate::route::ClientVerification;
 use crate::route::RouteRegistry;
 use crate::transport::ProxyError;
 use crate::transport::RemoteTransport;
@@ -41,11 +44,34 @@ pub struct CallParams {
     pub now_unix: i64,
 }
 
-/// The proxy's response to the local client: plain MCP.
+/// The proxy's response to the local client: plain MCP, plus the verified kind so
+/// the embedding layer can distinguish a genuine success from a provably-denied
+/// request (a verified rejection receipt) without re-parsing.
 #[derive(Debug, Clone)]
 pub struct ProxyResponse {
-    /// The plain MCP JSON-RPC response to return to the local client.
+    /// The plain MCP JSON-RPC response to return to the local client — a `result`
+    /// on success, or a JSON-RPC `error` when the server provably rejected.
     pub plain_response: Value,
+    /// Whether the verified response was a success or a delegated rejection receipt.
+    pub kind: ResponseKind,
+}
+
+/// The verified outcome the proxy hands its embedding layer. A verified REJECTION is
+/// NOT a proxy failure — the server provably denied the request; the proxy converts
+/// the signed receipt to a plain JSON-RPC error and reports the classification. An
+/// UNVERIFIABLE response (unsigned / direct-root in delegated mode / bad signature)
+/// is a `ProxyError` instead — the channel is compromised or misconfigured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResponseKind {
+    /// A verified success response.
+    Success,
+    /// A verified delegated rejection receipt, converted to plain JSON-RPC error.
+    /// `wire_code` is the server's frozen `mcp-re.*` reason; `bound` distinguishes a
+    /// request-bound receipt from a preflight-unbound one.
+    VerifiedRejection {
+        wire_code: Option<String>,
+        bound: bool,
+    },
 }
 
 /// The local client-side MCP-RE proxy. Holds the static route registry, the client
@@ -108,7 +134,8 @@ impl ClientProxy {
             &params.nonce,
             params.created,
             params.expires,
-        );
+        )
+        .with_headers(route.extra_headers.clone());
         let signed = build_signed_request(
             &id,
             &method,
@@ -124,27 +151,83 @@ impl ClientProxy {
             .round_trip(signed.request())
             .map_err(ProxyError::Transport)?;
 
-        // Verify the signed response bound to THIS request (RFC 9421 `;req` +
-        // response evidence block). Fail closed on any failure.
-        let mut expectation =
-            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
-        if let Some(keyid) = &route.expected_server_keyid {
-            expectation = expectation.with_expected_server_signer(keyid.clone());
+        // Verify the signed response bound to THIS request under the route's required
+        // profile (configured profile = required profile). Fail closed on any failure;
+        // no cross-profile fallback.
+        match &route.verification {
+            // Pre-052: a directly-root-signed, request-bound response.
+            ClientVerification::DirectRoot => {
+                let mut expectation =
+                    ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+                if let Some(keyid) = &route.expected_server_keyid {
+                    expectation = expectation.with_expected_server_signer(keyid.clone());
+                }
+                verify_signed_response(
+                    &response,
+                    route.resolve_actor.as_ref(),
+                    &expectation,
+                    params.now_unix,
+                )?;
+                let plain = plain_response_from_verified(&response.body)?;
+                Ok(ProxyResponse {
+                    plain_response: plain,
+                    kind: ResponseKind::Success,
+                })
+            }
+            // ADR-MCPRE-052 delegated-required: a delegated-signed success OR rejection
+            // receipt carrying the inline credential. No direct-root / unsigned /
+            // object downgrade is accepted (verify_delegated_response fails closed).
+            ClientVerification::DelegatedRequired(policy) => {
+                let expectation =
+                    ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+                // Client-side delegated/root-key revocation is not wired in this pass
+                // (the deployment relies on short delegated-key TTLs); a revocation
+                // source is a tracked follow-up. Never-revoked here.
+                let never_revoked = |_: &str| false;
+                let verified = verify_delegated_response(
+                    &response,
+                    route.resolve_actor.as_ref(),
+                    &expectation,
+                    policy,
+                    &never_revoked,
+                    params.now_unix,
+                )?;
+                match verified.outcome {
+                    DelegatedOutcome::Success => {
+                        let plain = plain_response_from_verified(&response.body)?;
+                        Ok(ProxyResponse {
+                            plain_response: plain,
+                            kind: ResponseKind::Success,
+                        })
+                    }
+                    // A VERIFIED rejection receipt: the request was provably denied.
+                    // Convert the signed receipt to a plain JSON-RPC error for the
+                    // local client and report the classification (fail closed — this
+                    // is never returned as a success result).
+                    DelegatedOutcome::Rejection { bound, wire_code } => Ok(ProxyResponse {
+                        plain_response: plain_error_from_rejection(&id),
+                        kind: ResponseKind::VerifiedRejection { wire_code, bound },
+                    }),
+                }
+            }
         }
-        verify_signed_response(
-            &response,
-            route.resolve_actor.as_ref(),
-            &expectation,
-            params.now_unix,
-        )?;
-
-        // Return the (now trusted) response body as plain MCP, with the proxy-owned
-        // `_meta` evidence block stripped.
-        let plain = plain_response_from_verified(&response.body)?;
-        Ok(ProxyResponse {
-            plain_response: plain,
-        })
     }
+}
+
+/// Convert a VERIFIED delegated rejection receipt to a PLAIN JSON-RPC error for the
+/// local client (transparency: the client sees ordinary JSON-RPC, not an MCP-RE
+/// field — the `mcp-re.*` classification is surfaced to the embedding layer via
+/// [`ResponseKind::VerifiedRejection`], not to the client). The proxy has already
+/// verified the receipt's signature, so this is a provable denial, not a guess.
+fn plain_error_from_rejection(id: &Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": mcp_re_core::MCP_RE_JSON_RPC_ERROR_CODE,
+            "message": "request rejected by the MCP-RE server",
+        },
+    })
 }
 
 /// Rebuild a PLAIN MCP response from a verified signed response: strip the

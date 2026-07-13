@@ -121,6 +121,7 @@ pub use sign::sign_delegated_response_unbound;
 pub use sign::sign_response;
 pub use sign::sign_response_full;
 pub use sign::sign_response_with_signer;
+pub use verify::verify_delegated_response_bound_full;
 pub use verify::verify_delegated_response_full;
 pub use verify::verify_delegated_response_unbound;
 pub use verify::verify_request;

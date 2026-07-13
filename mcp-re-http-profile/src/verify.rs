@@ -656,11 +656,48 @@ pub struct DelegationExpectations<'a> {
 ///
 /// `resolve_actor(issuer_kid, Response)` must resolve the credential's root
 /// `issuer_kid`; `is_revoked(kid)` reports revocation at the current epoch.
+///
+/// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
+/// `verify_request_full`; only its `evidence` handle is used. A client that signed
+/// the request holds only that [`RequestEvidence`] handle — it uses
+/// [`verify_delegated_response_bound_full`] directly (the delegated analogue of
+/// [`verify_response_bound_full`]).
 #[allow(clippy::too_many_arguments)]
 pub fn verify_delegated_response_full(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_delegated_response_bound_full(
+        response,
+        request,
+        &verified_request.evidence,
+        resolve_actor,
+        expect,
+        is_revoked,
+        now,
+    )
+}
+
+/// Delegated-response verification bound to a request evidence HANDLE
+/// ([`RequestEvidence`]) rather than the whole [`VerifiedHttpRequestEvidence`] — the
+/// CLIENT-side entry point (the delegated analogue of [`verify_response_bound_full`]).
+///
+/// Semantics are identical to [`verify_delegated_response_full`]: delegation is
+/// REQUIRED (a response with no inline credential — including a directly root-signed
+/// one — is rejected `delegation_credential_missing`), the credential chain to the
+/// root is verified, and the `;req`-bound response signature is verified under
+/// `cnf.jwk`. The only difference is that the request-evidence binding is compared
+/// against the passed `bound_request_evidence` handle the client kept from signing.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_delegated_response_bound_full(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    bound_request_evidence: &RequestEvidence,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
@@ -738,7 +775,7 @@ pub fn verify_delegated_response_full(
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
-    let bound = &verified_request.evidence;
+    let bound = bound_request_evidence;
     if block.request_evidence.digest_alg != bound.digest_alg
         || block.request_evidence.digest_value != bound.digest_value
     {

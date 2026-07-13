@@ -165,6 +165,10 @@ ed25519-dalek = { workspace = true }
 # DEV-dependency feature so it never reaches the production proxy closure.
 # The draft-02 serving test signs a real draft-02 request via the client seam.
 mcp-re-client-core = { path = "../mcp-re-client-core" }
+# MCPRE-122 client↔server e2e: the delegated_client_server_e2e test drives the REAL
+# client-side ClientProxy against the real server-side HttpProfileProxy in delegated-
+# required mode. A dev-dep — the client proxy is never in the server proxy's closure.
+mcp-re-client-proxy = { path = "../mcp-re-client-proxy" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.
 mcp-re-test-paths = { path = "../mcp-re-test-paths" }
 # NOTE: mcp-re-http-profile moved to [dependencies] (MCPRE-104 #308) — the proxy
