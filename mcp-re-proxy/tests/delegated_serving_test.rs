@@ -24,6 +24,7 @@ use std::sync::Arc;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_delegated_response_full;
 use mcp_re_http_profile::verify_delegated_response_unbound;
 use mcp_re_http_profile::verify_request_full;
@@ -57,7 +58,6 @@ use mcp_re_proxy::HttpProfileProxy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const ROOT_SEED: [u8; 32] = [33u8; 32];
-const SERVER_SEED: [u8; 32] = [22u8; 32];
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
@@ -65,7 +65,6 @@ const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const ACCESS_TOKEN: &str = "access-token-xyz";
 const CLIENT_KEY_ID: &str = "client-key-1";
 const ROOT_KID: &str = "root-kid";
-const SERVER_KEY_ID: &str = "server-key-1";
 const VERIFIER_AUD: &str = "verifier-1";
 const AUD_SCOPE: &str = "aud-scope-1";
 const EPOCH: &str = "epoch-1";
@@ -157,47 +156,42 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
     })
 }
 
-/// A delegated-mode proxy sharing `signer` with a rotor the caller drives.
+/// The serving proxy (delegated-signing — the only mode) sharing `signer` with a
+/// rotor the caller drives.
 fn delegated_proxy(signer: Arc<DelegatedServerSigner>) -> HttpProfileProxy {
-    HttpProfileProxy::new(
+    HttpProfileProxy::new_delegated(
         actor_resolver(),
         audience(),
-        // These Direct fields are unused once we switch to the delegated signer.
-        ActorIdentity {
-            role: "server".into(),
-            trust_domain: "example.com".into(),
-            subject: "did:example:server".into(),
-            keyid: SERVER_KEY_ID.into(),
-        },
-        SigningKey::from_seed_bytes(&SERVER_SEED),
-        SERVER_KEY_ID,
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
         ProxyDispatchConfig { fleet_strict: false, tier: None },
         canned_inner(),
         300,
+        signer,
     )
-    .with_delegated_signer(signer)
 }
 
-/// A directly-root-signed (pre-052) proxy — for the direct-root negative.
-fn direct_proxy() -> HttpProfileProxy {
-    HttpProfileProxy::new(
-        actor_resolver(),
-        audience(),
-        // Sign directly under the ROOT key/kid so the client's resolver can resolve it.
-        ActorIdentity {
-            role: "server".into(),
-            trust_domain: "example.com".into(),
-            subject: "did:example:server".into(),
-            keyid: ROOT_KID.into(),
-        },
-        root_key(),
-        ROOT_KID,
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
-        canned_inner(),
-        300,
-    )
+/// TEST-ONLY FIXTURE: produce a pre-052 direct-root response — the root key signs the
+/// RFC 9421 response DIRECTLY (full response evidence block, NO delegation credential),
+/// exactly as a pre-052 server did. Used ONLY to prove delegated-signing rejects it;
+/// there is no such serving mode in production.
+fn sign_legacy_direct_root_response_for_negative_test(
+    req: &HttpRequest,
+    request_evidence: &RequestEvidence,
+) -> HttpResponse {
+    let mut resp = HttpResponse {
+        status: 200,
+        headers: vec![("content-type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec(),
+    };
+    let identity = ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: ROOT_KID.into(),
+    };
+    sign_response_full(&mut resp, req, request_evidence, &identity, &root_key(), ROOT_KID, NOW, NOW + 300)
+        .expect("root directly signs a pre-052 RFC 9421 response");
+    resp
 }
 
 fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
@@ -435,16 +429,14 @@ async fn missing_delegated_key_fails_closed() {
 
 // --- required mode: a direct-root response is rejected ----------------------
 
-#[tokio::test]
-async fn direct_root_response_rejected_in_delegated_required_mode() {
-    // A pre-052 Direct proxy serves a directly-root-signed response.
-    let proxy = direct_proxy();
-    let (req, _ev, verified_req) = signed_request("nonce-directroot-1");
-    let served = proxy.handle(served_of(&req), NOW).await;
-    assert_eq!(served.status, 200);
-    let resp = http_response(served);
+#[test]
+fn direct_root_response_rejected_in_delegated_required_mode() {
+    // A pre-052 server directly root-signs the response (no delegation credential) —
+    // built from the test-only fixture, since no direct-root serving mode exists.
+    let (req, ev, verified_req) = signed_request("nonce-directroot-1");
+    let resp = sign_legacy_direct_root_response_for_negative_test(&req, &ev);
 
-    // A delegated-required verifier rejects it: no inline credential.
+    // A delegated-signing verifier rejects it: no inline credential.
     let r = resolver();
     let err = verify_delegated_response_full(
         &resp,

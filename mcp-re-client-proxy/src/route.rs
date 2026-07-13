@@ -17,21 +17,20 @@ use std::collections::HashMap;
 /// actor for RFC 9421 response verification.
 pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync>;
 
-/// How the proxy verifies the server's response for a route — it MUST match the
-/// server's `--response-signing-mode`. The client enforces the same strictness as
-/// the server: the configured profile IS the required profile; an unexpected carrier
-/// fails closed (ADR-MCPRE-052, MCPRE-122).
+/// How the proxy verifies the server's response for a route. Delegated-signing is the
+/// ONLY response mode (ADR-MCPRE-052, MCPRE-122): the client enforces the same
+/// strictness as the server — a delegated-signed response is required, and any
+/// direct-root, unsigned, or object/`_meta` carrier fails closed. There is no
+/// direct-root client verification mode.
 pub enum ClientVerification {
-    /// The pre-052 posture: verify a directly-root-signed, request-bound response.
-    DirectRoot,
-    /// ADR-MCPRE-052 delegated-required: verify a delegated-signed response (a
-    /// success OR a rejection receipt) carrying the inline delegation credential. No
-    /// direct-root, unsigned, or object/`_meta` downgrade is accepted.
+    /// Verify a delegated-signed response (a success OR a rejection receipt) carrying
+    /// the inline delegation credential. No direct-root, unsigned, or object/`_meta`
+    /// downgrade is accepted.
     ///
-    /// The [`RevocationSource`] is a REQUIRED field — a delegated-required route cannot
-    /// be constructed without one, so the verifier is never silently never-revoked
-    /// (ADR-MCPRE-052 §3 step 7). An operator that relies on short TTLs alone passes an
-    /// explicit empty `StaticRevocationList` — a visible choice, not a default.
+    /// The [`RevocationSource`] is a REQUIRED field — a route cannot be constructed
+    /// without one, so the verifier is never silently never-revoked (ADR-MCPRE-052 §3
+    /// step 7). An operator that relies on short TTLs alone passes an explicit empty
+    /// `StaticRevocationList` — a visible choice, not a default.
     DelegatedRequired(DelegationPolicy, Box<dyn RevocationSource>),
 }
 
@@ -52,17 +51,15 @@ pub struct Route {
     /// `Authorization: Bearer <token>` header whose bytes an OAuth-DPoP artifact
     /// binding digests. Empty when no binding needs a request header.
     pub extra_headers: Vec<(String, String)>,
-    /// The expected server signer keyid (pinned; the verified response must match).
-    /// Consulted in `DirectRoot` verification; in `DelegatedRequired` the trust
+    /// The expected server signer keyid (pinned). Under delegated-signing the trust
     /// pinning is the ROOT `issuer_kid` the resolver resolves (the delegated key is
-    /// authorized by the credential, not enrolled).
+    /// authorized by the credential, not enrolled); this field is retained for route
+    /// bookkeeping.
     pub expected_server_keyid: Option<String>,
-    /// The trust seam resolving the response signer for verification. In
-    /// `DelegatedRequired` this resolves the credential's ROOT `issuer_kid` for the
-    /// `Response` slot.
+    /// The trust seam resolving the response signer for verification. Resolves the
+    /// credential's ROOT `issuer_kid` for the `Response` slot.
     pub resolve_actor: RouteActorResolver,
-    /// How the server's response is verified for this route (must match the server's
-    /// `--response-signing-mode`).
+    /// How the server's response is verified for this route (delegated-signing).
     pub verification: ClientVerification,
 }
 

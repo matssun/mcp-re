@@ -9,7 +9,7 @@
 //!
 //!   * **Serving** — drives the PRODUCTION wiring `build_delegated_signing(config,
 //!     kms_root)` + `HttpProfileProxy::new_delegated` — the exact path `app::run`
-//!     takes in `--response-signing-mode delegated-required` — and serves real
+//!     takes for delegated-signing (the only response mode) — and serves real
 //!     requests through the PEP. The KMS root is wrapped in a counting
 //!     `ResponseSigner` so the load-bearing property is asserted at the SERVING
 //!     altitude: N served responses invoke Cloud KMS ZERO extra times (one op per
@@ -241,7 +241,6 @@ fn delegated_config() -> mcp_re_proxy::cli::Config {
         "--route", "a",
         "--replay-cache", "file",
         "--replay-path", "/tmp/mcp-re-gcp-delegated-required-replay",
-        "--response-signing-mode", "delegated-required",
         "--delegated-trust-epoch", EPOCH,
     ]
     .iter()

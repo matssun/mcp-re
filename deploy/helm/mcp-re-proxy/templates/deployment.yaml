@@ -72,6 +72,12 @@ spec:
             - {{ .Values.identity.serverSigner | quote }}
             - "--server-key-id"
             - {{ .Values.identity.serverKeyId | quote }}
+            # ADR-MCPRE-052: delegated-signing is the ONLY response mode. The root key
+            # (KMS/file) is the credential ISSUER off the request path; an in-memory
+            # delegated key signs each response. The trust epoch is required and must be
+            # coordinated with the verifiers' accepted-epoch set (§7).
+            - "--delegated-trust-epoch"
+            - {{ .Values.identity.delegatedTrustEpoch | quote }}
             {{- if eq .Values.keySource "gcpKms" }}
             # Cloud KMS custody: the signing key never enters the pod. On GKE the
             # token comes from the Workload-Identity metadata server (useMetadata).

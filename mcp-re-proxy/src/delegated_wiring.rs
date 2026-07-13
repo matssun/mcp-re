@@ -180,7 +180,6 @@ mod tests {
             // path is not opened at parse (this builder reads config fields only).
             "--replay-cache", "file",
             "--replay-path", "/tmp/mcp-re-delegated-wiring-test-replay",
-            "--response-signing-mode", "delegated-required",
             "--delegated-trust-epoch", "epoch-1",
         ]
         .iter()

@@ -18,20 +18,17 @@
 //!      admission, awaited (fail-closed on replay / store outage);
 //!   5. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
 //!      the stateless Streamable-HTTP inner backend via the async inner pool;
-//!   6. `sign_response_full` — sign the reply, bound to THIS request.
-//! Any fail-closed step emits a `build_signed_rejection` receipt instead.
+//!   6. `sign_delegated_response_full` — sign the reply with the active delegated
+//!      key + inline credential, bound to THIS request (ADR-MCPRE-052).
+//! Any fail-closed step emits a delegated-signed rejection receipt instead.
 
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
-use mcp_re_core::SigningKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
-use mcp_re_http_profile::build_signed_rejection;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_request_full;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
@@ -48,22 +45,6 @@ use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::transport::TransportBindingPolicy;
-
-/// How the server signs responses and rejection receipts.
-///
-/// `Direct` is the pre-052 behavior — a directly-held server key. `Delegated`
-/// (ADR-MCPRE-052 required mode) signs every response AND every rejection with the
-/// active short-TTL delegated key, carrying the inline delegation credential; the
-/// root is never on the request path. A directly root-signed response is never
-/// emitted in `Delegated` mode.
-enum ServerResponseSigner {
-    Direct {
-        identity: ActorIdentity,
-        key: SigningKey,
-        key_id: String,
-    },
-    Delegated(Arc<DelegatedServerSigner>),
-}
 
 /// The trust seam: resolve a presented keyid FOR a signing slot to a structured
 /// actor (identity + verification key). A key not trusted for `slot` resolves to
@@ -82,9 +63,11 @@ pub struct HttpProfileProxy {
     /// The verifier's expected audience tuple (audience id + `@target-uri` + route);
     /// `target_uri` must equal the request `@target-uri` (enforced in verify).
     expected_audience: AudienceTuple,
-    /// How responses/rejections are signed: a directly-held server key, or the
-    /// delegated-key custody path (ADR-MCPRE-052), selected at construction.
-    signer: ServerResponseSigner,
+    /// The ADR-MCPRE-052 delegated-signing custody — the ONLY response-signing mode.
+    /// Every response and rejection is signed by the active short-TTL delegated key +
+    /// inline credential; the root is never on the request path, and the proxy fails
+    /// closed when no valid delegated key is available. There is no direct-root mode.
+    signer: Arc<DelegatedServerSigner>,
     /// The authoritative async replay tier (ADR-MCPRE-051 §4).
     replay_async: crate::async_replay::AsyncReplayTier,
     /// Deployment replay-durability posture (fleet-strict + declared tier).
@@ -99,44 +82,13 @@ pub struct HttpProfileProxy {
 }
 
 impl HttpProfileProxy {
-    /// Construct a serving PEP. `resolve_actor` is the trust seam; `expected_audience`
-    /// the verifier audience; `server_identity`/`server_key`/`server_key_id` the
-    /// response-signing custody; `dispatch_cfg`/`inner_async` the replay/inner planes.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        resolve_actor: ActorResolver,
-        expected_audience: AudienceTuple,
-        server_identity: ActorIdentity,
-        server_key: SigningKey,
-        server_key_id: impl Into<String>,
-        replay_async: crate::async_replay::AsyncReplayTier,
-        dispatch_cfg: ProxyDispatchConfig,
-        inner_async: Box<dyn AsyncInnerServer>,
-        sig_ttl_secs: i64,
-    ) -> Self {
-        HttpProfileProxy {
-            resolve_actor,
-            expected_audience,
-            signer: ServerResponseSigner::Direct {
-                identity: server_identity,
-                key: server_key,
-                key_id: server_key_id.into(),
-            },
-            replay_async,
-            dispatch_cfg,
-            inner_async,
-            transport_binding: None,
-            sig_ttl_secs,
-        }
-    }
-
-    /// Construct a serving PEP already in ADR-MCPRE-052 delegated-signing mode — the
-    /// production constructor for `--response-signing-mode delegated-required`. Unlike
-    /// [`new`](Self::new) + [`with_delegated_signer`](Self::with_delegated_signer),
-    /// this takes no directly-held server key at all: there is no root key on the
-    /// serving struct, only the shared [`DelegatedServerSigner`] whose snapshot the
-    /// cold-path rotor keeps fresh. Every response and rejection is signed by the
-    /// active delegated key + inline credential, failing closed when none is valid.
+    /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
+    /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
+    /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. There
+    /// is no directly-held server key on the serving struct — only the shared
+    /// [`DelegatedServerSigner`] whose snapshot the cold-path rotor keeps fresh. Every
+    /// response and rejection is signed by the active delegated key + inline
+    /// credential, failing closed when none is valid.
     #[allow(clippy::too_many_arguments)]
     pub fn new_delegated(
         resolve_actor: ActorResolver,
@@ -150,23 +102,13 @@ impl HttpProfileProxy {
         HttpProfileProxy {
             resolve_actor,
             expected_audience,
-            signer: ServerResponseSigner::Delegated(delegated_signer),
+            signer: delegated_signer,
             replay_async,
             dispatch_cfg,
             inner_async,
             transport_binding: None,
             sig_ttl_secs,
         }
-    }
-
-    /// Switch this proxy to ADR-MCPRE-052 delegated-signing mode: responses and
-    /// rejections are signed by the shared [`DelegatedServerSigner`]'s active
-    /// short-TTL delegated key (with the inline credential), never the root. The
-    /// rotor that keeps the signer's snapshot fresh is driven separately, off the
-    /// request path. Replaces the `Direct` signer installed by [`new`](Self::new).
-    pub fn with_delegated_signer(mut self, signer: Arc<DelegatedServerSigner>) -> Self {
-        self.signer = ServerResponseSigner::Delegated(signer);
-        self
     }
 
     /// Bind the verified request actor to the mTLS peer identity (Mode A, ADR-MCPS-014).
@@ -250,57 +192,39 @@ impl HttpProfileProxy {
             body: inner_bytes,
         };
         let expires = now + self.sig_ttl_secs;
-        match &self.signer {
-            ServerResponseSigner::Direct { identity, key, key_id } => {
-                match sign_response_full(
-                    &mut response,
-                    &http_req,
-                    &verified.evidence,
-                    identity,
-                    key,
-                    key_id,
-                    now,
-                    expires,
-                ) {
-                    Ok(()) => served(response),
-                    Err(e) => self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence)),
-                }
-            }
-            ServerResponseSigner::Delegated(d) => match d.current(now) {
-                Some(a) => match sign_delegated_response_full(
-                    &mut response,
-                    &http_req,
-                    &verified.evidence,
-                    &a.server_signer,
-                    &a.credential,
-                    a.key.as_ref(),
-                    &a.delegated_kid,
-                    now,
-                    expires,
-                ) {
-                    Ok(()) => served(response),
-                    Err(e) => self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence)),
-                },
-                // Fail-closed issuance past expiry (ADR-MCPRE-052 §6): no valid
-                // delegated key, so no signed response can be produced. The frozen
-                // signer-side availability token (never a client verification verdict).
-                None => self.rejection(
-                    &http_req,
-                    McpReError::DelegatedSigningUnavailable.wire_code(),
-                    503,
-                    now,
-                    Some(&verified.evidence),
-                ),
+        match self.signer.current(now) {
+            Some(a) => match sign_delegated_response_full(
+                &mut response,
+                &http_req,
+                &verified.evidence,
+                &a.server_signer,
+                &a.credential,
+                a.key.as_ref(),
+                &a.delegated_kid,
+                now,
+                expires,
+            ) {
+                Ok(()) => served(response),
+                Err(e) => self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence)),
             },
+            // Fail-closed issuance past expiry (ADR-MCPRE-052 §6): no valid delegated
+            // key, so no signed response can be produced. The frozen signer-side
+            // availability token (never a client verification verdict).
+            None => self.rejection(
+                &http_req,
+                McpReError::DelegatedSigningUnavailable.wire_code(),
+                503,
+                now,
+                Some(&verified.evidence),
+            ),
         }
     }
 
     /// Build a signed rejection receipt bound to `request` (or preflight-unbound),
     /// with the injected `now` for the signature window (fail-closed freshness).
     ///
-    /// `Direct` signs with the held server key. `Delegated` (ADR-MCPRE-052 required
-    /// mode) signs the rejection with the active delegated key and the inline
-    /// credential — request-bound when `bound` is `Some` (the request verified),
+    /// Signs the rejection with the active delegated key and the inline credential
+    /// (ADR-MCPRE-052) — request-bound when `bound` is `Some` (the request verified),
     /// preflight-unbound when `None` (the request never earned a trustworthy hash).
     /// Never root-signed. If no valid delegated key exists, a last-resort UNSIGNED
     /// error is emitted rather than a bogus signature.
@@ -317,48 +241,36 @@ impl HttpProfileProxy {
             message: format!("mcp-re http-profile proxy rejected: {wire_code}"),
         };
         let expires = now + self.sig_ttl_secs;
-        let resp = match &self.signer {
-            ServerResponseSigner::Direct { key, key_id, .. } => build_signed_rejection(
-                Some(request),
-                &reason,
-                status,
-                key,
-                key_id,
-                now,
-                expires,
-            )
-            .unwrap_or_else(|_| unsigned_error(status, wire_code)),
-            ServerResponseSigner::Delegated(d) => match d.current(now) {
-                Some(a) => {
-                    let built = match bound {
-                        Some(ev) => build_delegated_rejection(
-                            request,
-                            ev,
-                            &reason,
-                            status,
-                            &a.server_signer,
-                            &a.credential,
-                            a.key.as_ref(),
-                            &a.delegated_kid,
-                            now,
-                            expires,
-                        ),
-                        None => build_delegated_rejection_preflight(
-                            Some(request),
-                            &reason,
-                            status,
-                            &a.server_signer,
-                            &a.credential,
-                            a.key.as_ref(),
-                            &a.delegated_kid,
-                            now,
-                            expires,
-                        ),
-                    };
-                    built.unwrap_or_else(|_| unsigned_error(status, wire_code))
-                }
-                None => unsigned_error(status, wire_code),
-            },
+        let resp = match self.signer.current(now) {
+            Some(a) => {
+                let built = match bound {
+                    Some(ev) => build_delegated_rejection(
+                        request,
+                        ev,
+                        &reason,
+                        status,
+                        &a.server_signer,
+                        &a.credential,
+                        a.key.as_ref(),
+                        &a.delegated_kid,
+                        now,
+                        expires,
+                    ),
+                    None => build_delegated_rejection_preflight(
+                        Some(request),
+                        &reason,
+                        status,
+                        &a.server_signer,
+                        &a.credential,
+                        a.key.as_ref(),
+                        &a.delegated_kid,
+                        now,
+                        expires,
+                    ),
+                };
+                built.unwrap_or_else(|_| unsigned_error(status, wire_code))
+            }
+            None => unsigned_error(status, wire_code),
         };
         served(resp)
     }

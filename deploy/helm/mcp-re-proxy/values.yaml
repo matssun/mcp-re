@@ -77,6 +77,10 @@ identity:
   targetUri: "https://proxy.internal:8600/mcp"
   trustDomain: "example.com"
   route: ""
+  # ADR-MCPRE-052: delegated-signing is the ONLY response mode. The trust epoch
+  # minted into every delegation credential (required; MUST be coordinated with the
+  # verifiers' accepted-epoch set — §7). Advance it to invalidate an epoch of keys.
+  delegatedTrustEpoch: "epoch-1"
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
 # it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`.

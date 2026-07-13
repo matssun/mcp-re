@@ -16,7 +16,6 @@
 
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::verify_signed_response;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
@@ -155,28 +154,10 @@ impl ClientProxy {
         // profile (configured profile = required profile). Fail closed on any failure;
         // no cross-profile fallback.
         match &route.verification {
-            // Pre-052: a directly-root-signed, request-bound response.
-            ClientVerification::DirectRoot => {
-                let mut expectation =
-                    ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
-                if let Some(keyid) = &route.expected_server_keyid {
-                    expectation = expectation.with_expected_server_signer(keyid.clone());
-                }
-                verify_signed_response(
-                    &response,
-                    route.resolve_actor.as_ref(),
-                    &expectation,
-                    params.now_unix,
-                )?;
-                let plain = plain_response_from_verified(&response.body)?;
-                Ok(ProxyResponse {
-                    plain_response: plain,
-                    kind: ResponseKind::Success,
-                })
-            }
-            // ADR-MCPRE-052 delegated-required: a delegated-signed success OR rejection
-            // receipt carrying the inline credential. No direct-root / unsigned /
-            // object downgrade is accepted (verify_delegated_response fails closed).
+            // ADR-MCPRE-052 delegated-signing (the only mode): a delegated-signed
+            // success OR rejection receipt carrying the inline credential. No
+            // direct-root / unsigned / object downgrade is accepted
+            // (verify_delegated_response fails closed).
             ClientVerification::DelegatedRequired(policy, revocation) => {
                 let expectation =
                     ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());

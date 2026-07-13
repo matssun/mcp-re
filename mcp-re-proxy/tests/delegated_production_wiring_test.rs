@@ -4,7 +4,7 @@
 //! The sibling `delegated_serving_test` proves the serving CONTRACT with a hand-built
 //! rotor. This lane proves the PRODUCTION WIRING: it drives the real
 //! `build_delegated_signing(config, root)` from a real, parser-produced [`Config`] in
-//! `--response-signing-mode delegated-required`, exactly as the serving binary does —
+//! delegated-signing (the only response mode), exactly as the serving binary does —
 //! only the socket/TLS layer (covered by the fleet tests) is left out. The root issuer
 //! here is a fake/in-memory `SigningKey` (the KMS-as-root swap is proven through the
 //! same seam by `gcp_kms_delegated_signing_live_test`), so the test is hermetic.
@@ -99,7 +99,6 @@ fn delegated_config() -> mcp_re_proxy::cli::Config {
         "--route", "a",
         "--replay-cache", "file",
         "--replay-path", "/tmp/mcp-re-delegated-prod-test-replay",
-        "--response-signing-mode", "delegated-required",
         "--delegated-trust-epoch", EPOCH,
     ]
     .iter()

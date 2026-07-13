@@ -346,13 +346,6 @@
       "notes": "ADR-MCPRE-052. The return-leg rejection is verified request-bound end to end and converted to a plain JSON-RPC error."
     },
     {
-      "property": "delegated-required E2E: the client REFUSES a direct-root server response (mcp-re.delegation_credential_missing) \u2014 no downgrade",
-      "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
-      "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
-      "test_fn": "direct_root_server_is_refused_by_delegated_required_client",
-      "notes": "ADR-MCPRE-052 \u00a73 downgrade resistance at the two-proxy altitude."
-    },
-    {
       "property": "delegated-required E2E: the client REFUSES a delegated success signed by a REVOKED delegated key (mcp-re.delegation_revoked) \u2014 the revocation seam is live end to end",
       "bazel_target": "//mcp-re-proxy:delegated_client_server_e2e_test",
       "source": "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs",
@@ -383,6 +376,6 @@
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 54
+    "entries": 53
   }
 }

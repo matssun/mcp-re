@@ -101,7 +101,6 @@ fn server_config() -> mcp_re_proxy::cli::Config {
         "--route", "a",
         "--replay-cache", "file",
         "--replay-path", "/tmp/mcp-re-client-server-e2e-replay",
-        "--response-signing-mode", "delegated-required",
         "--delegated-trust-epoch", EPOCH,
     ]
     .iter()
@@ -166,27 +165,6 @@ fn build_server() -> HttpProfileProxy {
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
-    )
-}
-
-/// A pre-052 DIRECT-root server (the wrong profile) — for the downgrade negative.
-fn build_direct_root_server() -> HttpProfileProxy {
-    let server_identity = ActorIdentity {
-        role: "server".into(),
-        trust_domain: "example.com".into(),
-        subject: "did:example:server".into(),
-        keyid: ROOT_KID.into(),
-    };
-    HttpProfileProxy::new(
-        server_resolver(),
-        audience(),
-        server_identity,
-        root_key(),
-        ROOT_KID,
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
-        canned_inner(),
-        300,
     )
 }
 
@@ -353,20 +331,10 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     assert!(second.plain_response.get("result").is_none());
 }
 
-#[test]
-fn direct_root_server_is_refused_by_delegated_required_client() {
-    // The server signs a directly-root-signed (pre-052) response; the delegated-
-    // required client must refuse it (no direct-root downgrade) and fail closed.
-    let proxy = client_proxy(build_direct_root_server());
-    let err = proxy
-        .handle("r1", &plain_request(), &params("nonce-e2e-direct"))
-        .expect_err("delegated-required client refuses a direct-root response");
-    assert_eq!(
-        err.wire_code(),
-        Some("mcp-re.delegation_credential_missing"),
-        "the missing inline credential is the fail-closed reason"
-    );
-}
+// Downgrade resistance (a delegated-required verifier refusing a pre-052 direct-root
+// response) is proven at the serving, client-core, http-profile, and conformance (d10)
+// altitudes. It is not re-driven through the two-proxy round trip here because a
+// direct-root SERVER no longer exists as a serving mode by design.
 
 #[test]
 fn revoked_server_delegated_key_is_refused_by_client() {

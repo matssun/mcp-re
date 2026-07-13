@@ -4,6 +4,14 @@
 locally end-to-end — the gate that must be green **before** a GKE run is treated as
 an honest production validation (MCPRE-122).
 
+**Delegated-signing is the ONLY response-signing mode.** Direct-root response signing
+has been removed from the runtime surface (no CLI flag, no config path, no serving
+construction, no deploy manifest). Every "direct-root … rejected" cell below is a
+*negative* proof built from a deliberately-named pre-052 fixture — it does **not**
+imply a direct-root serving mode exists. See the governing note in
+`ResponseSigningMode`'s removal (there is no such enum) and the CLI: `--response-signing-mode`
+no longer exists.
+
 This is an **acceptance gate**, not an ADR. ADR-MCPRE-052 records the *decision*
 (the delegated-signing design: a root/KMS issuer that mints short-lived delegated
 Ed25519 keys off the request path; each RFC 9421 response signed by the in-memory
@@ -54,7 +62,7 @@ additionally guarded at the integration altitude by a `MANIFEST` row (noted inli
 | A2 | Request-**bound** rejection receipt is delegated-signed and verifies bound (`replay_detected`) | `delegated_bound_rejection_verifies` | serve | MANIFEST |
 | A3 | **Preflight/unbound** rejection is delegated-signed and classified unbound, never falsely request-bound | `delegated_preflight_rejection_verifies_unbound` | serve | MANIFEST |
 | A4 | **No active key** → fails closed: 503 + frozen `delegated_signing_unavailable` + **unsigned** (no direct-root sign, no unsigned 200) | `missing_delegated_key_fails_closed` | serve | MANIFEST |
-| A5 | **Direct-root** (pre-052) response rejected `delegation_credential_missing` — no downgrade | `direct_root_response_rejected_in_delegated_required_mode` | serve | MANIFEST |
+| A5 | **Direct-root** (pre-052) response rejected `delegation_credential_missing` — no downgrade (built from a named pre-052 fixture; there is no direct-root serving mode) | `direct_root_response_rejected_in_delegated_required_mode` | verify | MANIFEST |
 
 ## B. Server-side rotation & fail-closed lifecycle
 
@@ -110,7 +118,7 @@ the per-gate unit tests in `mcp-re-http-profile/src/delegation.rs`.
 |---|---|---|---|---|
 | E1 | Happy path round-trips to a client-verified delegated success and back to plain MCP | `plain_client_round_trips_through_delegated_required_server` | two-proxy | MANIFEST |
 | E2 | Replay → request-bound delegated rejection, client classifies `replay_detected`, fails closed | `replayed_request_yields_a_verified_delegated_rejection` | two-proxy | MANIFEST |
-| E3 | Direct-root downgrade refused (`delegation_credential_missing`) | `direct_root_server_is_refused_by_delegated_required_client` | two-proxy | MANIFEST |
+| E3 | Direct-root downgrade refused (`delegation_credential_missing`) | serving `direct_root_response_rejected_in_delegated_required_mode` (A5); client-core `direct_root_success_is_rejected_no_credential`; corpus `d10` (C4) — not re-driven two-proxy (a direct-root SERVER no longer exists) | serve / client / corpus | MANIFEST + CORPUS |
 | E4 | Revoked server key refused (`delegation_revoked`) — live revocation seam | `revoked_server_delegated_key_is_refused_by_client` | two-proxy | MANIFEST |
 | E5 | Non-revoked denylist still round-trips (not blanket-deny) | `non_revoked_client_still_round_trips` | two-proxy | MANIFEST |
 | E6 | Rotation K1→K2 end to end | `delegated_required_wiring_serves_verifies_and_rotates` (B1) | wiring | MANIFEST |

@@ -58,8 +58,8 @@ pub mod delegated_response_signer;
 // the cold-path rotor that keeps it fresh (root issuer off the request path).
 pub mod delegated_server_signer;
 // ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — build the delegated signer +
-// cold-path rotor from a parsed Config + a ROOT issuer (KMS/HSM/file ResponseSigner),
-// for `--response-signing-mode delegated-required`.
+// cold-path rotor from a parsed Config + a ROOT issuer (KMS/HSM/file ResponseSigner).
+// Delegated-signing is the only response-signing mode.
 pub mod delegated_wiring;
 // ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that
 // forwards the handshake transcript to a non-exporting device/KMS so the TLS
@@ -200,7 +200,6 @@ pub use delegated_server_signer::DelegatedServerSigner;
 pub use delegated_wiring::build_delegated_signing;
 pub use delegated_wiring::DelegatedSigningWiring;
 pub use delegated_wiring::ProdDelegatedRotor;
-pub use cli::ResponseSigningMode;
 // ADR-MCPS-028 §G: delegated TLS signing (generic mechanism).
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::DelegatedEd25519SigningKey;
