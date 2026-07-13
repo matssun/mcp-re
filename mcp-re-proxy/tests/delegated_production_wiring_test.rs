@@ -340,8 +340,8 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     let body: serde_json::Value = serde_json::from_slice(&served.body).expect("json");
     assert_eq!(
         body.pointer("/error/message").and_then(|m| m.as_str()),
-        Some("mcp-re.delegated_signing_unavailable"),
-        "fail-closed emits the unavailable code, unsigned"
+        Some(mcp_re_core::McpReError::DelegatedSigningUnavailable.wire_code()),
+        "fail-closed emits the frozen unavailable token, unsigned"
     );
     assert!(
         !served.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),

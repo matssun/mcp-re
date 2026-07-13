@@ -135,6 +135,7 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::DelegationTrustEpochStale => "Delegation trust epoch stale",
         McpReError::DelegationKeyMismatch => "Delegation key mismatch",
         McpReError::DelegationRevoked => "Delegation revoked",
+        McpReError::DelegatedSigningUnavailable => "Delegated signing unavailable",
     }
 }
 

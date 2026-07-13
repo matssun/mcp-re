@@ -23,6 +23,7 @@
 
 use std::sync::Arc;
 
+use mcp_re_core::McpReError;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
@@ -47,13 +48,6 @@ use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::transport::TransportBindingPolicy;
-
-/// The fail-closed wire code emitted (in a last-resort UNSIGNED error) when the
-/// server is in delegated-signing mode but has no valid delegated key to sign
-/// with — fail-closed issuance past the current key's expiry (ADR-MCPRE-052 §6).
-/// Registration of this signer-side availability token is tracked with the
-/// production-wiring follow-up.
-const DELEGATED_SIGNING_UNAVAILABLE: &str = "mcp-re.delegated_signing_unavailable";
 
 /// How the server signs responses and rejection receipts.
 ///
@@ -288,10 +282,11 @@ impl HttpProfileProxy {
                     Err(e) => self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence)),
                 },
                 // Fail-closed issuance past expiry (ADR-MCPRE-052 §6): no valid
-                // delegated key, so no signed response can be produced.
+                // delegated key, so no signed response can be produced. The frozen
+                // signer-side availability token (never a client verification verdict).
                 None => self.rejection(
                     &http_req,
-                    DELEGATED_SIGNING_UNAVAILABLE,
+                    McpReError::DelegatedSigningUnavailable.wire_code(),
                     503,
                     now,
                     Some(&verified.evidence),

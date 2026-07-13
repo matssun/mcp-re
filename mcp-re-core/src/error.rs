@@ -236,10 +236,20 @@ pub enum McpReError {
     #[error("mcp-re.delegation_key_mismatch")]
     DelegationKeyMismatch,
 
-    /// `delegated_kid` or `issuer_kid` is revoked at the current trust epoch.
-    /// ADR-MCPRE-052 §3 step 7.
+    /// The credential's `delegated_kid`, `issuer_kid`, or `jti` is revoked at the
+    /// current trust epoch. ADR-MCPRE-052 §3 step 7.
     #[error("mcp-re.delegation_revoked")]
     DelegationRevoked,
+
+    /// SERVER-SIDE availability fault (ADR-MCPRE-052 §6): the server is in
+    /// delegated-required signing mode but has no active valid delegated key to sign
+    /// with — startup issuance failed, or rotation could not re-issue before the
+    /// current key expired, so the server fails closed rather than emit an unsigned or
+    /// root-signed response. This is emitted by the signer, NOT a client verification
+    /// verdict: a client's own credential faults keep their specific
+    /// `delegation_*` tokens above.
+    #[error("mcp-re.delegated_signing_unavailable")]
+    DelegatedSigningUnavailable,
 }
 
 impl McpReError {
@@ -299,6 +309,7 @@ impl McpReError {
             McpReError::DelegationTrustEpochStale => "mcp-re.delegation_trust_epoch_stale",
             McpReError::DelegationKeyMismatch => "mcp-re.delegation_key_mismatch",
             McpReError::DelegationRevoked => "mcp-re.delegation_revoked",
+            McpReError::DelegatedSigningUnavailable => "mcp-re.delegated_signing_unavailable",
         }
     }
 }
@@ -420,6 +431,10 @@ mod tests {
             "mcp-re.delegation_key_mismatch",
         );
         check(McpReError::DelegationRevoked, "mcp-re.delegation_revoked");
+        check(
+            McpReError::DelegatedSigningUnavailable,
+            "mcp-re.delegated_signing_unavailable",
+        );
     }
 
     #[test]

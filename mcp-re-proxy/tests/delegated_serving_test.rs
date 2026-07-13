@@ -417,10 +417,12 @@ async fn missing_delegated_key_fails_closed() {
     // it emits the last-resort UNSIGNED error (code in `error.message`), never a
     // bogus or direct-root signature.
     let body: serde_json::Value = serde_json::from_slice(&served.body).expect("json");
+    // Assert against the FROZEN taxonomy token, not a magic string — the server-side
+    // availability fault must render the registered `mcp-re.delegated_signing_unavailable`.
     assert_eq!(
         body.pointer("/error/message").and_then(|m| m.as_str()),
-        Some("mcp-re.delegated_signing_unavailable"),
-        "fail-closed emits the delegated-signing-unavailable code, unsigned"
+        Some(mcp_re_core::McpReError::DelegatedSigningUnavailable.wire_code()),
+        "fail-closed emits the frozen delegated-signing-unavailable code, unsigned"
     );
     assert!(
         !served
