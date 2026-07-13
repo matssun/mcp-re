@@ -87,6 +87,7 @@ start_replica() {  # start_replica <bind-port> <logfile>
   ./target/debug/mcp-re-proxy \
     --bind "127.0.0.1:$1" \
     --audience did:example:server-1 --server-signer did:example:server-1 --server-key-id server-key-1 \
+    --delegated-trust-epoch epoch-1 \
     --key-source file --signing-key-seed "$FIX/signing_seed" \
     --tls-cert "$FIX/server_cert.pem" --tls-key "$FIX/server_key.pem" \
     --client-ca "$FIX/client_ca.pem" --trust "$FIX/trust.json" \
@@ -111,6 +112,7 @@ COMMON=(
   --server-name proxy.internal --signer-id did:example:agent-1 --key-id key-1
   --signing-key-seed "@$FIX/client_signing_seed"
   --server-signer did:example:server-1 --server-key-id server-key-1 --server-pubkey "@$FIX/server_pubkey"
+  --trust-epoch epoch-1
   --audience did:example:server-1 --target-uri "$TARGET" --trust-domain example.com
   --tls-cert "$FIX/client_cert_short.pem" --tls-key "$FIX/client_key_short.pem" --server-ca "$FIX/server_ca.pem"
 )

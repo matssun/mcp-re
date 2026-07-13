@@ -212,9 +212,14 @@ CLIENT_COMMON=(
   --signer-id        "${MCP_RE_SIGNER_ID:?set MCP_RE_SIGNER_ID}"
   --key-id           "${MCP_RE_KEY_ID:?set MCP_RE_KEY_ID}"
   --signing-key-seed "${MCP_RE_SIGNING_KEY_SEED:?set MCP_RE_SIGNING_KEY_SEED to a b64url seed or @file}"
+  # ADR-MCPRE-052 delegated-required: the server-* trio is the ROOT ISSUER anchor the
+  # delegation credential chains to (NOT a per-response key). --trust-epoch is the
+  # accepted trust-epoch set and MUST equal the proxy's --delegated-trust-epoch (§7),
+  # or every response fails closed on a stale-epoch credential.
   --server-signer    "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
   --server-key-id    "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
   --server-pubkey    "${MCP_RE_SERVER_PUBKEY:?set MCP_RE_SERVER_PUBKEY to a b64url key or @file}"
+  --trust-epoch      "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch}"
   --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
   # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
   # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.

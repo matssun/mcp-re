@@ -129,6 +129,7 @@ export MCP_RE_SERVER_NAME=proxy.internal MCP_RE_AUDIENCE=did:example:server-1 \
   MCP_RE_SIGNING_KEY_SEED=@/tmp/gke_mat/client_signing_seed \
   MCP_RE_SERVER_SIGNER=did:example:server-1 MCP_RE_SERVER_KEY_ID=server-key-1 \
   MCP_RE_SERVER_PUBKEY=@/tmp/gke_mat/server_pubkey \
+  MCP_RE_TRUST_EPOCH=epoch-1 \
   MCP_RE_TLS_CERT=/tmp/gke_mat/client_cert_short.pem MCP_RE_TLS_KEY=/tmp/gke_mat/client_key_short.pem \
   MCP_RE_SERVER_CA=/tmp/gke_mat/server_ca.pem
 ```

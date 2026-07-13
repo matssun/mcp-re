@@ -96,8 +96,10 @@ inner:
 # Signing-key custody (ADR-MCPS-028). `fileSeed` mounts a raw Ed25519 seed from
 # the material Secret (dev / on-prem). `gcpKms` keeps the signing key in GCP
 # Cloud KMS and, on GKE, authenticates via Workload Identity (useMetadata) so no
-# key material ever lands in the pod. The image MUST be built with the
-# `gcp_kms_keysource` feature for `gcpKms`.
+# key material ever lands in the pod — this is the ADR-MCPRE-052 delegated-credential
+# ISSUER root (off the request path). The default image (deploy/docker/Dockerfile)
+# is built with the `gcp_kms_keysource` feature, so it serves both modes; the KMS
+# signer stays inert until `gcpKms` selects `--key-source gcp-kms`.
 keySource: fileSeed # fileSeed | gcpKms
 
 # GCP Cloud KMS custody (used only when keySource == gcpKms).
