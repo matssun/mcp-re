@@ -39,6 +39,7 @@ nt_rust_test(
     deps = [
         ":mcp_re_conformance",
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
     ],
 )

@@ -82,6 +82,10 @@ _PROXY_LIB_SRCS = [
     # (ReplayDurabilityTier gate layered above the dispatcher's core single-process
     # gate; tier type stays in the proxy).
     "src/http_profile_dispatch.rs",
+    # ADR-MCPRE-050 production RFC 9421 serving handler + the App runner that wires
+    # the fleet (serving path / replay tier / transport binding), extracted from main.
+    "src/http_profile_serve.rs",
+    "src/app.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     "src/revocation_tier.rs",
