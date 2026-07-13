@@ -967,54 +967,103 @@ fn spawn_delegated_rotation_task(
     overlap: i64,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    std::thread::spawn(move || loop {
-        if shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-        // Wake at `exp - overlap` so a successor is minted while the predecessor is
-        // still valid. With no current key (startup edge / post-retirement), rotate
-        // immediately.
-        let wake_at = match signer.current(now_unix()) {
-            Some(a) => (a.exp - overlap).max(now_unix()),
-            None => now_unix(),
-        };
-        // Nap in small increments until the wake instant, observing shutdown.
-        while now_unix() < wake_at {
+    use crate::delegated_server_signer::rotation_backoff;
+    std::thread::spawn(move || {
+        // Failures since the last success drive the backoff schedule; 0 in steady state.
+        let mut consecutive_failures: u32 = 0;
+        loop {
             if shutdown.load(Ordering::SeqCst) {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-        match rotor.rotate(now_unix()) {
-            Ok(()) => {
-                if let Some(ev) = rotor.audit().last() {
-                    eprintln!(
-                        "mcp-re-proxy: delegated key {} (kid {}, exp {})",
-                        ev.event_type, ev.delegated_kid, ev.exp
-                    );
-                }
-            }
-            Err(_) => {
-                eprintln!(
-                    "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
-                     unavailable). Serving continues only until the current delegated key expires, \
-                     then FAILS CLOSED (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root \
-                     fallback. Retrying shortly."
-                );
-                // Brief backoff so a persistent root outage does not hot-spin; the hot
-                // path keeps signing off the current key until its exp.
-                for _ in 0..20 {
+            // In steady state, sleep until the overlap window opens (`exp - overlap`) so
+            // a successor is minted while the predecessor is still valid. While retrying
+            // after a failure we skip this wait and go straight to the backoff-then-retry
+            // below. With no current key (startup edge / post-retirement) rotate at once.
+            if consecutive_failures == 0 {
+                let wake_at = match signer.current(now_unix()) {
+                    Some(a) => (a.exp - overlap).max(now_unix()),
+                    None => now_unix(),
+                };
+                while now_unix() < wake_at {
                     if shutdown.load(Ordering::SeqCst) {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            match rotor.rotate(now_unix()) {
+                Ok(()) => {
+                    consecutive_failures = 0;
+                    signer.metrics().record_success(now_unix());
+                    if let Some(ev) = rotor.audit().last() {
+                        let ttl = signer.seconds_to_expiry(now_unix()).unwrap_or(0);
+                        eprintln!(
+                            "mcp-re-proxy: delegated key {} (kid {}, exp {}); time-to-expiry {}s; \
+                             rotations_ok {}",
+                            ev.event_type,
+                            ev.delegated_kid,
+                            ev.exp,
+                            ttl,
+                            signer.metrics().rotations_ok(),
+                        );
+                    }
+                }
+                Err(_) => {
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    // Bounded jittered exponential backoff, capped by the current key's
+                    // remaining validity (retry inside the overlap window) and a 30s
+                    // ceiling once expired. OS CSPRNG jitter decorrelates a fleet.
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
+                         unavailable); consecutive_failures {}, time-to-expiry {}s. Serving \
+                         continues only until the current delegated key expires, then FAILS CLOSED \
+                         (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root fallback. \
+                         Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    // Interruptible backoff so a persistent root outage does not hot-spin;
+                    // the hot path keeps signing off the current key until its exp.
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                }
+            }
         }
     });
+}
+
+/// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
+/// (so a rolling deploy is not delayed by a long backoff nap). `false` if the full
+/// duration elapsed.
+fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) -> bool {
+    let step = Duration::from_millis(50);
+    let mut slept = Duration::ZERO;
+    while slept < dur {
+        if shutdown.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(step);
+        slept += step;
+    }
+    false
+}
+
+/// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
+/// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
+/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
+fn rotation_jitter() -> u64 {
+    let mut b = [0u8; 8];
+    match getrandom::getrandom(&mut b) {
+        Ok(()) => u64::from_le_bytes(b),
+        Err(_) => 0,
+    }
 }
 
 /// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
