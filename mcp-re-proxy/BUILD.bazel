@@ -55,10 +55,6 @@ _PROXY_LIB_SRCS = [
     # dispatch path). Split out of inner_launch so it stays in the PEP when the
     # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
     "src/log_sink.rs",
-    # Test / embedding helpers that drive the async serving path synchronously
-    # (a private current-thread runtime per call). Not a serving path.
-    "src/test_support.rs",
-    "src/proxy.rs",
     # Issue #4034: PKCS#11/HSM-backed KeySource (behind #[cfg(feature =
     # "pkcs11_keysource")]; cfg'd out of the default build).
     "src/pkcs11_keysource.rs",
@@ -86,6 +82,10 @@ _PROXY_LIB_SRCS = [
     # (ReplayDurabilityTier gate layered above the dispatcher's core single-process
     # gate; tier type stays in the proxy).
     "src/http_profile_dispatch.rs",
+    # ADR-MCPRE-050 production RFC 9421 serving handler + the App runner that wires
+    # the fleet (serving path / replay tier / transport binding), extracted from main.
+    "src/http_profile_serve.rs",
+    "src/app.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     "src/revocation_tier.rs",
@@ -313,25 +313,6 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-
-# Verify-before-dispatch + verified-context propagation. The host signs the
-# requests (real client/server pairing); the inner server records whether it was
-# reached so the fail-closed guarantee is observable.
-nt_rust_test(
-    name = "proxy_test",
-    srcs = ["tests/proxy_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "//mcp-re-policy:mcp_re_policy",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # MCPRE-104 (#308): the proxy replay-tier adapter around the HTTP-profile
 # dispatcher, driven end-to-end (sub-minimum tier refused, wait-quorum/linearizable
 # admitted, verify→dispatch→sign→verify e2e, core single-process gate beneath).
@@ -347,44 +328,6 @@ nt_rust_test(
         "//mcp-re-http-profile:mcp_re_http_profile",
     ],
 )
-
-# ADR-MCPS-039 (D1): the expected-version posture is wired into the sidecar. The
-# default admits a host-signed draft-01 request end-to-end; a Draft02Only proxy
-# refuses the same request as mcp-re.downgrade_forbidden before dispatch.
-nt_rust_test(
-    name = "proxy_version_policy_test",
-    srcs = ["tests/proxy_version_policy_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# ADR-MCPS-045 (Phase 3b.5): the sidecar SERVES draft-02 end to end. A draft-02
-# request (signed by the client-core seam) forwards with a draft-02 verified
-# context (authorization_binding, no authorization_hash placeholder) and the
-# signed response carries the protected version + canonicalization_id and binds
-# to the request hash; the draft-01 (host-signed) serving path is unchanged.
-nt_rust_test(
-    name = "proxy_draft02_serving_test",
-    srcs = ["tests/proxy_draft02_serving_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # MCPS-027: KeySource (File + Env) — signing key + TLS cert/key + client-CA.
 nt_rust_test(
     name = "key_source_test",
@@ -416,28 +359,6 @@ nt_rust_library(
     edition = "2021",
     deps = _PROXY_LIB_DEPS,
 )
-
-# MCPRE-112 (ADR-MCPRE-051 §1): async serving-path PARITY suite — reproduces the
-# blocking loop's mTLS fail-closed behaviors + identity extraction on the async
-# transport, plus keep-alive + concurrency. Drives `async_serve::serve` on a tokio
-# runtime in a background thread and hammers it with blocking rustls mTLS clients.
-# Built + run on every `bazel test //...` so the opt-in path can never rot.
-nt_rust_test(
-    name = "async_serve_parity_test",
-    srcs = ["tests/async_serve_parity_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = ["async_serve"],
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy_async",  # keep
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-
 # ADR-MCPRE-051 §3 (Phase 3): the async HTTP inner-plane transport suite — proves
 # HttpInnerPool delivers a verified JSON-RPC request to a stateless HTTP backend
 # (an in-process hyper server, no external infra) and returns its JSON response
@@ -459,31 +380,26 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
-
-# MCPRE-114 (ADR-MCPRE-051 §1, Phase 2): per-core ADMISSION-control suite — proves
-# the async path enforces a per-core in-flight ceiling with fail-closed 503
-# backpressure (never unbounded queuing) + the fleet-global→per-core derivation.
-# Drives serve() on a multi-thread runtime to force concurrent in-flight requests.
+# MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): async replay tier SEAM suite — proves the
+# per-core L1 fast-rejects known replays without ever manufacturing a Fresh
+# (L1-never-Fresh), L1 eviction is safe, an L2 outage fails closed + recovers, and
+# cross-core many-tiers-over-one-L2 admit EXACTLY ONE Fresh under concurrency. On the
+# in-memory reference backend; async Redis/etcd live cross-replica is the infra lane.
 nt_rust_test(
-    name = "async_admission_test",
-    srcs = ["tests/async_admission_test.rs"],
+    name = "async_replay_test",
+    srcs = ["tests/async_replay_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
     edition = "2021",
     deps = [
         ":mcp_re_proxy_async",  # keep
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
+        "//mcp-re-core:mcp_re_core",
         "@crates_mcp_re//:tokio",
     ],
 )
-
-# MCPRE-115 (ADR-MCPRE-051 §6, Phase 2): bounded graceful DRAIN suite — proves an
-# in-flight request drains cleanly (zero abandoned) on shutdown within the grace
-# window, idle + saturated drains return within bound, and a stuck request cannot
-# delay exit past the grace (bounded exit). Drives serve() on a multi-thread runtime.
+# ADR-MCPRE-051 §6 bounded graceful drain: in-flight requests complete, zero
+# abandoned, and a stuck request cannot delay exit past the grace bound.
 nt_rust_test(
     name = "async_drain_test",
     srcs = ["tests/async_drain_test.rs"],
@@ -504,15 +420,12 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
-
-# MCPRE-117 (ADR-MCPRE-051 §4, Phase 2): async replay tier SEAM suite — proves the
-# per-core L1 fast-rejects known replays without ever manufacturing a Fresh
-# (L1-never-Fresh), L1 eviction is safe, an L2 outage fails closed + recovers, and
-# cross-core many-tiers-over-one-L2 admit EXACTLY ONE Fresh under concurrency. On the
-# in-memory reference backend; async Redis/etcd live cross-replica is the infra lane.
+# ADR-MCPRE-050 local round-trip: RFC 9421 client -> production HttpProfileProxy
+# (verify -> dispatch -> sign) -> verify, plus the cross-request replay rejection,
+# entirely in-process (in-memory async replay tier, no listener/Redis).
 nt_rust_test(
-    name = "async_replay_test",
-    srcs = ["tests/async_replay_test.rs"],
+    name = "rfc9421_round_trip_test",
+    srcs = ["tests/rfc9421_round_trip_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = ["async_serve"],
@@ -520,31 +433,54 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
-
-# MCPRE-113 (ADR-MCPRE-051 §1, Phase 2): per-core serving FLEET suite — proves N
-# independent per-core tokio runtimes, each with its own SO_REUSEPORT listener, serve
-# the full mTLS pipeline correctly with a configurable core count and a clean
-# shutdown. Built + run on every `bazel test //...`; near-linear throughput scaling is
-# the load-harness/SLO lane (MCPRE-110/123), not this deterministic suite.
+# ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
+# Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
+# test sandbox cannot provide — so it is excluded from `bazel test //...` and driven
+# by cargo / the GKE runbook. Built against the redis_replay ext flavor.
 nt_rust_test(
-    name = "async_fleet_test",
-    srcs = ["tests/async_fleet_test.rs"],
+    name = "tls_load_harness_bench",
+    srcs = ["tests/tls_load_harness_bench.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
-    crate_features = ["async_serve"],
+    crate_features = _PROXY_EXT_FEATURES,
+    tags = ["manual"],
+    data = [
+        ":mcp_re_proxy_cli",
+    ],
     edition = "2021",
+    env = {
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+    },
+    env_inherit = [
+        "MCP_RE_LOADGEN_CONCURRENCY",
+        "MCP_RE_LOADGEN_REQUESTS",
+        "MCP_RE_LOADGEN_MODE",
+        "MCP_RE_LOADGEN_HW_CLASS",
+        "MCP_RE_LOADGEN_CORES",
+        "MCP_RE_LOADGEN_OUT",
+        "MCP_RE_LOADGEN_REDIS_URL",
+    ],
     deps = [
-        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
+        ":mcp_re_proxy_ext",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "@crates_mcp_re//:bytes",
+        "@crates_mcp_re//:http-body-util",
+        "@crates_mcp_re//:hyper",
+        "@crates_mcp_re//:hyper-util",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
-
 # above is NEVER built with this feature; production and the production CLI link
 # only the env-LESS instance. This instance is built on every `bazel test //...`
 # (NOT `manual`) so it can never silently fail to compile.
@@ -576,59 +512,6 @@ nt_rust_test(
         "@crates_mcp_re//:zeroize",
     ],
 )
-
-# MCPS-026: transport binding wired into the proxy serving path — bound/mismatch/
-# absent identity, and opt-in (no-binding) parity.
-nt_rust_test(
-    name = "proxy_transport_test",
-    srcs = ["tests/proxy_transport_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# Issue #71 (ADR-MCPS-023 Tier 3): LB-signed, request-bound ingress assertion wired
-# into the proxy serving path. Serve-level acceptance over the SAME
-# Proxy::handle_with_transport entry point the production loop calls — a valid
-# request-bound assertion reaches the inner; a cross-request / tampered / unknown-key
-# / stale / missing-header assertion is rejected BEFORE dispatch; and a tampered
-# object signature still fails first (object verify before transport binding).
-nt_rust_test(
-    name = "proxy_lb_assertion_test",
-    srcs = ["tests/proxy_lb_assertion_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# ADR-MCPS-022: per-node key custody — authorized key-set admission verified
-# through Core verify_response (per-node accept, unknown/revoked reject, shared
-# mode, algorithm boundary, 021+022 composition).
-nt_rust_test(
-    name = "keyset_admission_test",
-    srcs = ["tests/keyset_admission_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # ADR-MCPRE-050 mTLS transport binding: the RFC 9421 signer bound to the presented
 # TLS client cert (RFC 8705 x5t#S256), proven over a REAL mutual-TLS handshake —
 # the production server config + the mcp-re-transport client presenting a cert; the
@@ -670,102 +553,6 @@ nt_rust_test(
         "@crates_mcp_re//:serde_json",
     ],
 )
-
-# MCPS-023: opt-in policy enforcement — deny-before-dispatch (fail closed),
-# allow-flows-through, and opt-in (no-evaluator) parity.
-nt_rust_test(
-    name = "proxy_policy_test",
-    srcs = ["tests/proxy_policy_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "//mcp-re-policy:mcp_re_policy",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# ADR-MCPS-024 conformance, vector "No authorization inheritance" (SEP-2322): the
-# one ADR-024 vector that lives at the proxy/PEP layer (Phase 5, ADR-013) rather
-# than in Core verify_request. Drives the real serving path with policy
-# enforcement — revoking authorization between legs fails the continuation closed,
-# and requestState confers no inherited authorization. Same harness/deps as
-# proxy_policy_test.
-nt_rust_test(
-    name = "mrt_authorization_inheritance_test",
-    srcs = ["tests/mrt_authorization_inheritance_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "//mcp-re-policy:mcp_re_policy",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPS-080 (audit §11 G-7): NEGATIVE secret-in-logs test. Drives a known
-# sentinel secret (signing seed, authorization artifact, request argument)
-# through every proxy error / denial / log path and asserts the sentinel never
-# appears in captured proxy logs/stderr, the returned JSON-RPC error object, or
-# (for seed/artifact) the bytes forwarded to the inner server.
-nt_rust_test(
-    name = "secret_in_logs_test",
-    srcs = ["tests/secret_in_logs_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        "//mcp-re-policy:mcp_re_policy",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# Phase 6.1: full-stack CI smoke test for the mcp_re_proxy_cli EXECUTABLE — spawns
-# the real CLI process + a real inner echo subprocess, drives real mTLS with real
-# client certs, and asserts the security matrix end to end: verified-context
-# injection + signed response, plus rejection of no-cert / untrusted-cert /
-# tampered-signature / wrong-binding. Both binaries delivered via runfiles.
-nt_rust_test(
-    name = "full_stack_test",
-    srcs = ["tests/full_stack_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        ":mcp_re_proxy_cli",
-    ],
-    edition = "2021",
-    env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
-    },
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        # ADR-MCPRE-051 §3: the inner MCP server is reached over HTTP; the test
-        # stands up an in-process hyper echo backend (was the stdio echo_inner
-        # subprocess) that the async-fleet proxy forwards verified requests to.
-        "@crates_mcp_re//:bytes",
-        "@crates_mcp_re//:http-body-util",
-        "@crates_mcp_re//:hyper",
-        "@crates_mcp_re//:hyper-util",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-
 # ===========================================================================
 # Phase 7 external backends (#4028 Redis, #4030 OCSP, #4034 PKCS#11, #4039
 # Linux sandbox). A SINGLE library flavor builds all three Mac-buildable
@@ -836,143 +623,6 @@ nt_rust_test(
         "@crates_mcp_re//:redis",
     ],
 )
-
-# MCPS-80/81 (ADR-MCPS-049 W1, proof a): fleet replay coherence — two serving
-# Proxy replicas over one shared Redis; skip-when-absent like redis_replay_e2e.
-nt_rust_test(
-    name = "fleet_replay_e2e_test",
-    srcs = ["tests/fleet_replay_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPRE-108 (ADR-MCPRE-051 §7): concurrent-TLS-client load harness driving the
-# REAL listener (spawns the mcp-re-proxy CLI + echo inner, hammers it with many
-# concurrent rustls mTLS clients). The full benchmark is #[ignore] (the ADR §7
-# manual/dispatch lane, scaled by MCP_RE_LOADGEN_* env); an always-on smoke test
-# self-verifies the harness at tiny scale on every battery run. Same data/env
-# wiring as full_stack_test.
-nt_rust_test(
-    name = "tls_load_harness_bench",
-    srcs = ["tests/tls_load_harness_bench.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    data = [
-        ":mcp_re_proxy_cli",
-    ],
-    edition = "2021",
-    env = {
-        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
-    },
-    env_inherit = [
-        "MCP_RE_LOADGEN_CONCURRENCY",
-        "MCP_RE_LOADGEN_REQUESTS",
-        "MCP_RE_LOADGEN_MODE",
-        "MCP_RE_LOADGEN_HW_CLASS",
-        "MCP_RE_LOADGEN_CORES",
-        "MCP_RE_LOADGEN_OUT",
-    ],
-    deps = [
-        "//mcp-re-test-paths:mcp_re_test_paths",  # #220 (ADR-048): source imports this crate
-        ":mcp_re_proxy",
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host",
-        # ADR-MCPRE-051 §3: the inner MCP server is reached over HTTP; the harness
-        # stands up an in-process hyper echo backend (was the stdio echo_inner
-        # subprocess) that the async-fleet proxy forwards verified requests to.
-        "@crates_mcp_re//:bytes",
-        "@crates_mcp_re//:http-body-util",
-        "@crates_mcp_re//:hyper",
-        "@crates_mcp_re//:hyper-util",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:rustls",
-        "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
-        "@crates_mcp_re//:tokio",
-    ],
-)
-
-# MCPRE-109 (ADR-MCPRE-051 §4): replay race harness — the authoritative replay
-# tier admits EXACTLY ONE Fresh under N-way concurrency (cross-core + cross-
-# replica), and ZERO Fresh when the store is unavailable (fail closed). The
-# in-memory reference tier is raced on every `bazel test //...` (no live infra);
-# the Redis/etcd lanes race the same harness on the live store when their feature
-# is compiled and endpoint env var is set (skip-when-absent; hard-fail under
-# MCP_RE_REQUIRE_LIVE_INFRA). Built against the ext crate so the feature-gated
-# Redis/etcd store exports are present.
-nt_rust_test(
-    name = "replay_race_harness_test",
-    srcs = ["tests/replay_race_harness_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        "MCP_RE_TEST_ETCD_URL",
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-    ],
-)
-
-# MCPS-82 (#273, ADR-MCPS-049 W1, proof c): an MRT continuation survives a mid-
-# continuation replica switch — two INDEPENDENT serving Proxy replicas, leg 1 to A
-# and the signed continuation leg to a fresh B. Replica-independence needs no shared
-# store (the continuation rides the signed preimage), so this runs on every
-# `bazel test //...` with no live infra — unlike the Redis-gated replay/revocation
-# proofs. Signs via the real mcp-re-client-core draft-02 seam.
-nt_rust_test(
-    name = "fleet_mrt_replica_switch_e2e_test",
-    srcs = ["tests/fleet_mrt_replica_switch_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",
-        "//mcp-re-client-core:mcp_re_client_core",
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
-# MCPS-89 (ADR-MCPS-049 W3): fleet PEP throughput/added-latency benchmark harness
-# (#[ignore], run explicitly). Same feature/skip gating as the fleet replay test.
-nt_rust_test(
-    name = "fleet_throughput_bench",
-    srcs = ["tests/fleet_throughput_bench.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-        "MCP_RE_BENCH_REQUESTS",
-        "MCP_RE_BENCH_REPLICAS",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # MCPS-84 (ADR-MCPS-049 W2): live Redis trust-epoch source — an INCR on another
 # connection surfaces as FlushAll.
 nt_rust_test(
@@ -991,29 +641,6 @@ nt_rust_test(
         "@crates_mcp_re//:redis",
     ],
 )
-
-# MCPS-86 (ADR-MCPS-049 W1, proof b): fleet trust-revocation coherence — a
-# revocation takes effect on a sibling replica when the trust epoch advances.
-nt_rust_test(
-    name = "fleet_trust_epoch_e2e_test",
-    srcs = ["tests/fleet_trust_epoch_e2e_test.rs"],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    crate_features = _PROXY_EXT_FEATURES,
-    edition = "2021",
-    env_inherit = [
-        "MCP_RE_TEST_REDIS_URL",
-        "MCP_RE_REQUIRE_LIVE_INFRA",
-    ],
-    deps = [
-        ":mcp_re_proxy_ext",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "//mcp-re-host:mcp_re_host_test_fixtures",  # keep
-        "@crates_mcp_re//:redis",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
-
 # #69 (epic #68 v0.4 Axis 1): cross-node replay rejection + bounded lease TTL over
 # a SHARED etcd (the CP / LINEARIZABLE backend). Self-skips (prints + passes)
 # unless MCP_RE_TEST_ETCD_URL is set, so it is green without a live etcd yet proves

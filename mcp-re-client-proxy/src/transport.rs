@@ -1,20 +1,22 @@
-//! Remote-leg transport abstraction + proxy error type (MCPS-49, #196).
+// SPDX-License-Identifier: Apache-2.0
+//! Remote-leg transport abstraction + proxy error type (MCPS-49, #196), on the
+//! RFC 9421 carrier (ADR-MCPRE-050).
 //!
-//! The proxy forwards the SIGNED request to the remote MCP-RE server/proxy over
-//! some transport (stdio, HTTP, in-process). The library abstracts that behind
-//! [`RemoteTransport`] so the security pipeline is testable without real I/O; the
-//! mode-specific binary supplies a concrete transport.
+//! The proxy forwards the SIGNED RFC 9421 request (method + `@target-uri` + headers
+//! + body) to the remote MCP-RE server over some transport (HTTP, in-process) and
+//! gets the signed [`HttpResponse`] back. The transport is abstracted so the
+//! security pipeline is testable without real I/O.
 
-use mcp_re_client_core::CorrelationError;
-use mcp_re_core::McpReError;
+use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::HttpRequest;
+use mcp_re_client_core::HttpResponse;
 
-/// The remote leg: send signed request bytes, get the (possibly signed) response
-/// bytes back. A transport-level failure (connection refused, timeout) is reported
-/// as `Err` and treated by the proxy as ABSENCE of evidence (pre-evidence transport
-/// failure), never as bad evidence.
+/// The remote leg: send the signed RFC 9421 request, get the (signed) response
+/// back. A transport-level failure (connection refused, timeout) is `Err` and is
+/// treated by the proxy as a transport failure, never as bad evidence.
 pub trait RemoteTransport {
     /// Round-trip the signed request to the remote endpoint.
-    fn round_trip(&self, request_bytes: &[u8]) -> Result<Vec<u8>, TransportError>;
+    fn round_trip(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError>;
 }
 
 /// A transport-level failure on the remote leg (NOT an MCP-RE verdict).
@@ -40,16 +42,14 @@ pub enum ProxyError {
     UnknownRoute(String),
     /// The local plain-MCP request was malformed (missing method/id).
     MalformedRequest,
-    /// The remote leg failed at the transport level before any evidence.
+    /// The remote leg failed at the transport level.
     Transport(TransportError),
-    /// A fail-closed MCP-RE security/protocol verdict; carries the frozen wire error.
-    FailedClosed(McpReError),
+    /// A fail-closed RFC 9421 security/protocol verdict; carries the frozen wire code.
+    FailedClosed(HttpProfileError),
 }
 
 impl ProxyError {
-    /// The frozen `mcp-re.*` wire reason for a fail-closed verdict, if this error is a
-    /// security/protocol verdict (`None` for local config / transport failures,
-    /// which are not wire reasons).
+    /// The frozen `mcp-re.*` wire reason for a fail-closed verdict, if any.
     pub fn wire_code(&self) -> Option<&'static str> {
         match self {
             ProxyError::FailedClosed(error) => Some(error.wire_code()),
@@ -58,14 +58,8 @@ impl ProxyError {
     }
 }
 
-impl From<McpReError> for ProxyError {
-    fn from(error: McpReError) -> Self {
+impl From<HttpProfileError> for ProxyError {
+    fn from(error: HttpProfileError) -> Self {
         ProxyError::FailedClosed(error)
-    }
-}
-
-impl From<CorrelationError> for ProxyError {
-    fn from(error: CorrelationError) -> Self {
-        ProxyError::FailedClosed(error.to_mcp_re_error())
     }
 }

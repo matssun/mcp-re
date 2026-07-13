@@ -37,7 +37,8 @@ PROJECT_ID=<PROJECT_ID> ./docs/security/gke-multi-replica-validation.sh --teardo
 
 The script is idempotent (create-or-reuse cluster/release), contains no secrets,
 and models the same shape as `gcloud-kms-validation.sh`. It deploys the Helm
-reference (`deploy/helm/mcp-re-proxy`) with `strict=true fleet=true` over a shared
+reference (`deploy/helm/mcp-re-proxy`) with `fleet=true` (the proxy always runs the
+maximal-security posture — there is no strict toggle) over a shared
 Redis replay + trust-epoch tier — the fleet guardrail refuses to start on a
 node-local cache, so a green rollout already proves the shared tier is wired.
 

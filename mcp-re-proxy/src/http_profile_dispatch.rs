@@ -31,13 +31,17 @@
 //! `mcp-re-proxy`; `mcp-re-http-profile` gains no dependency on the proxy.
 
 use mcp_re_core::ReplayCache;
+use mcp_re_core::ReplayDecision;
+use mcp_re_core::ReplayDurabilityClass;
 use mcp_re_http_profile::dispatch_request;
+use mcp_re_http_profile::prepare_http_dispatch;
 use mcp_re_http_profile::DispatchConfig;
 use mcp_re_http_profile::DispatchError;
 use mcp_re_http_profile::DispatchOutcome;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 
+use crate::async_replay::AsyncReplayTier;
 use crate::replay_tier::ReplayDurabilityTier;
 
 /// Proxy-side dispatch policy: the profile fleet-strict posture PLUS the deployment
@@ -120,4 +124,62 @@ pub fn dispatch_request_with_tier_gate(
         },
     )
     .map_err(ProxyDispatchError::Dispatch)
+}
+
+/// Drive a verified full-profile request through the replay-tier gate and then the
+/// AUTHORITATIVE ASYNC replay tier (ADR-MCPRE-051 §4) — the production serving
+/// path's admission. The async analogue of [`dispatch_request_with_tier_gate`]:
+/// identical fail-closed ordering and identical key construction (both call
+/// [`prepare_http_dispatch`]), differing ONLY in that the one side-effecting step
+/// AWAITS the async tier's atomic insert-if-absent instead of a sync cache.
+///
+/// Ordering (fail closed): the deployment [`ReplayDurabilityTier`] strict gate and
+/// the store's single-process-reference refusal FIRST (both refuse before any
+/// side effect), then the non-side-effecting key construction + continuation
+/// binding, then the awaited atomic admission LAST. `verified` MUST come from
+/// [`mcp_re_http_profile::verify_request_full`].
+pub async fn dispatch_request_with_async_tier(
+    verified: &VerifiedHttpRequestEvidence,
+    tier: &AsyncReplayTier,
+    continuation_ctx: Option<RetainedContinuation<'_>>,
+    config: &ProxyDispatchConfig,
+) -> Result<DispatchOutcome, ProxyDispatchError> {
+    // 1a. Deployment tier gate (proxy) — only meaningful under fleet-strict.
+    if config.fleet_strict {
+        match &config.tier {
+            Some(tier) if tier.meets_strict_production_minimum() => {}
+            Some(tier) => return Err(ProxyDispatchError::SubMinimumReplayTier(tier.clone())),
+            None => return Err(ProxyDispatchError::NoDeclaredReplayTier),
+        }
+        // 1b. Defense in depth: the DECLARED tier may be strong, but if the wired
+        //     async store self-reports the single-process reference class it cannot
+        //     prevent cross-node replays — refuse on the same frozen token, exactly
+        //     as the sync core gate does beneath `dispatch_request`.
+        if tier.durability_class() == ReplayDurabilityClass::SingleProcessReference {
+            return Err(ProxyDispatchError::Dispatch(DispatchError::NonSharedReplayTier));
+        }
+    }
+
+    // 2–3. Native key construction + continuation binding (shared, non-side-effecting).
+    //      The borrowed `continuation_ctx` is consumed here, BEFORE the await.
+    let (replay_key, continuation_verified) =
+        prepare_http_dispatch(verified, continuation_ctx).map_err(ProxyDispatchError::Dispatch)?;
+
+    // 4. Awaited atomic admission LAST — the only side-effecting step. A store
+    //    failure fails closed (`replay_cache_unavailable`), never an admit.
+    let decision = tier
+        .check_and_insert(&replay_key.to_core_replay_key(verified.expires))
+        .await
+        .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
+    match decision {
+        ReplayDecision::Fresh => {}
+        ReplayDecision::Replay => {
+            return Err(ProxyDispatchError::Dispatch(DispatchError::ReplayDetected))
+        }
+    }
+
+    Ok(DispatchOutcome {
+        replay_key,
+        continuation_verified,
+    })
 }

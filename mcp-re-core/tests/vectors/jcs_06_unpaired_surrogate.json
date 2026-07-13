@@ -1,7 +1,0 @@
-{
-  "expected": "mcp-re.canonicalization_failed",
-  "kind": "raw",
-  "name": "jcs_06_unpaired_surrogate",
-  "raw_text": "{\"v\":\"\\uD800\"}",
-  "requires_pipeline": false
-}

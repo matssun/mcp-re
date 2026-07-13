@@ -1,33 +1,36 @@
-//! Route registry + per-route policy (MCPS-49, #196; ADR-MCPS-044 §Security
-//! adapter scope).
+// SPDX-License-Identifier: Apache-2.0
+//! Route registry + per-route RFC 9421 evidence policy (MCPS-49, #196).
 //!
 //! Route resolution is STATIC — a route is looked up by a configured route id, not
-//! inferred from the request's intent. This keeps the proxy a security adapter, not
-//! an orchestrator: "static route resolution IN, intent routing OUT".
+//! inferred from the request's intent. The proxy is a security adapter, not an
+//! orchestrator: "static route resolution IN, intent routing OUT".
 
-use mcp_re_client_core::AuthorizationBindingPolicy;
-use mcp_re_client_core::AuthorizationBindingProvider;
-use mcp_re_client_core::EnforcementMode;
-use mcp_re_client_core::SignerAudienceBinding;
+use mcp_re_client_core::ArtifactBinding;
+use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::ResolvedActor;
+use mcp_re_client_core::SignerSlot;
 use std::collections::HashMap;
 
-/// One configured route: the enforcement posture, whether legacy fallback is
-/// explicitly permitted, the resolved signer→audience binding, and the
-/// authorization-binding policy + provider used to bind each request.
+/// The per-route trust seam: resolve the response signer keyid to a structured
+/// actor for RFC 9421 response verification.
+pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync>;
+
+/// One configured route: the canonical `@target-uri`, the resolved audience tuple,
+/// the (required, non-empty) authorization artifact bindings, the expected server
+/// signer keyid, and the trust resolver used to verify the response.
 pub struct Route {
     /// The static route id (the registry key).
     pub route_id: String,
-    /// Strict (`require_mcp_re`) or migration (`allow_legacy_explicit`).
-    pub enforcement_mode: EnforcementMode,
-    /// Whether THIS route is explicitly legacy-allowlisted (only consulted under
-    /// `allow_legacy_explicit`).
-    pub legacy_allowed: bool,
-    /// The expected `(server_signer, audience)` for this route (MCPS-43).
-    pub signer_audience: SignerAudienceBinding,
-    /// The permitted authorization-binding types for this route (MCPS-45).
-    pub authz_policy: AuthorizationBindingPolicy,
-    /// The provider producing the per-request authorization binding (MCPS-45).
-    pub authz_provider: Box<dyn AuthorizationBindingProvider>,
+    /// The canonical RFC 9421 `@target-uri` for this route.
+    pub target_uri: String,
+    /// The resolved audience tuple (audience id + target uri + route).
+    pub audience: AudienceTuple,
+    /// The authorization artifact bindings bound into each signed request.
+    pub artifact_bindings: Vec<ArtifactBinding>,
+    /// The expected server signer keyid (pinned; the verified response must match).
+    pub expected_server_keyid: Option<String>,
+    /// The trust seam resolving the response signer for verification.
+    pub resolve_actor: RouteActorResolver,
 }
 
 /// A static registry of routes keyed by route id. Populated from explicit config;

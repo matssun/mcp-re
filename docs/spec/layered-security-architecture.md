@@ -164,7 +164,7 @@ Both feed layer 5. Neither replaces the other.
 
 **Open questions:**
 
-- What is the canonical preimage shape for signing? (JCS-based, as in MCP-RE? Something else?)
+- What is the canonical preimage shape for signing? (The MCP-RE HTTP profile uses the RFC 9421 signature base — a signed HTTP message, not a canonicalized JSON object. Something else?)
 - How is the verified-context block carried — in the JSON-RPC `_meta` block, in a transport header, both?
 - Should drift evidence be carried in the same wire format as per-call evidence, or as a separate channel?
 

@@ -24,15 +24,15 @@ than the one that admitted the first nonce, and a revocation applied at one node
 must reach the others. MCP-RE closes both with **shared state**, and the proxy
 **fails closed** if you ask for a fleet without it.
 
-The two posture flags are orthogonal (ADR-MCPS-049 clause 1):
+Security and topology are separate concerns (ADR-MCPS-049 clause 1):
 
-- `--strict` — the security posture (reject insecure config, not warn).
+- **Security posture** — ALWAYS maximal. The proxy has no strict/production toggle;
+  it refuses any unsafe configuration at startup, unconditionally.
 - `--fleet` — the deployment topology (reject node-local replay caches).
 
-The production fleet guarantee is **`--strict --fleet`**. Under it the proxy
-**refuses to start** unless the replay cache is a shared tier at
-`REDIS_WAIT_QUORUM` or stronger (a `memory` or `file` cache is node-local and
-cannot see a peer's nonces).
+Under `--fleet` the proxy **refuses to start** unless the replay cache is a shared
+tier at `REDIS_WAIT_QUORUM` or stronger (a `memory` or `file` cache is node-local
+and cannot see a peer's nonces).
 
 ## Prerequisites
 
@@ -63,10 +63,10 @@ MCP-RE — front it with an EXTERNAL plain-MCP adapter (e.g. FastMCP's stdio↔H
 proxy) that exposes HTTP, run that adapter as your own sidecar/deployment, and
 point `inner.httpUrls` at it.
 
-The chart renders `--strict --fleet` by default and includes a **fail-closed
-guardrail**: `helm template`/`install` errors out if `fleet=true` is paired with
-a non-shared or sub-quorum replay tier, so an unsafe fleet manifest cannot be
-produced.
+The chart renders `--fleet` by default (the maximal-security posture is always on,
+with no flag) and includes a **fail-closed guardrail**: `helm template`/`install`
+errors out if `fleet=true` is paired with a non-shared or sub-quorum replay tier,
+so an unsafe fleet manifest cannot be produced.
 
 ## Cloud KMS custody on GKE (Workload Identity)
 

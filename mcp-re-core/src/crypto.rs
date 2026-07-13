@@ -1,9 +1,10 @@
 //! Ed25519 signing and verification primitives (MCP_RE_SPEC §3 / ADR-004).
 //!
-//! The MCP-RE signing rule is: canonicalize the protected JSON-RPC object (with
-//! `signature.value` removed) to RFC 8785 bytes, then sign/verify those bytes
-//! DIRECTLY with Ed25519 — NO pre-hash (Ed25519ph is forbidden). All signature
-//! values are Base64URL-no-pad.
+//! These are the profile-agnostic Ed25519 operations the RFC 9421 carrier builds
+//! on (ADR-MCPRE-050): the signer/verifier sign or check the exact signature-base
+//! bytes DIRECTLY with Ed25519 — NO pre-hash (Ed25519ph is forbidden). All
+//! signature values are Base64URL-no-pad. This module knows nothing about how the
+//! bytes are produced (the RFC 9421 signature base lives in `mcp-re-http-profile`).
 //!
 //! # Error mapping (deliberate)
 //! - A resolved-but-malformed verification key (bad length / not a valid point)

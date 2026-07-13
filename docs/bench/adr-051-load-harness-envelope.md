@@ -31,12 +31,12 @@ emits its measured report as JSON when `MCP_RE_LOADGEN_OUT` is set.
 | **Core count** | operator-declared (`MCP_RE_LOADGEN_CORES`), default = detected | the proxy serves on the per-core async fleet (SO_REUSEPORT, one worker per core); the harness passes the declared count through `--cores` so the workers actually served equal the reported count and the 1→N scaling curve is reproducible (run at cores=1 then =N) |
 | **Payload sizes** | one `tools/call` (`echo`, small JSON body) | the inner echo server returns the argument; representative small-request class. Larger-payload classes are a future envelope revision |
 | **TLS mode** | TLS 1.3, **mTLS** (client cert required) | rustls `ring` provider defaults; client presents a trusted URI-SAN leaf, server verified via `AcceptAny` on the client side (the SERVER identity is not under test here) |
-| **Cipher / signature suite** | rustls 1.3 default suites; **Ed25519** request + response object signatures | the request is a signed draft-02 object; the response is Ed25519-signed and bound to `request_hash` |
+| **Cipher / signature suite** | rustls 1.3 default suites; **RFC 9421** HTTP Message Signatures (**Ed25519**) + **RFC 9530** Content-Digest | the request is signed with the audited `mcp-re-client-core` — the signature rides in the `Signature`/`Signature-Input`/`Content-Digest` HTTP headers (no object/JCS `_meta` signature); the response is Ed25519-signed and bound to the request via `;req` |
 | **Keep-alive vs cold-handshake mix** | selectable (`MCP_RE_LOADGEN_MODE = cold \| keepalive`) | measured **separately**. The per-core fleet serves HTTP/1.1 keep-alive / H2 (ADR-051 §1); the harness reports the **realised-reuse fraction** so `keepalive` runs are attributable to actual connection reuse rather than assumed |
 | **Replay backend** | in-memory reference (`--replay-cache memory`) | the baseline single-node path; the shared Redis/etcd tiers add a network hop measured under their own envelope |
 | **Inner-backend latency** | echo inner, ~0 added latency | isolates the PEP (accept → TLS → verify → sign → respond) cost from inner-server cost; a latency-injecting inner is a future envelope dimension |
-| **Concurrency** | `MCP_RE_LOADGEN_CONCURRENCY` (default 64) | number of concurrent client threads; the harness drives ≥ hundreds of concurrent mTLS connections when configured to |
-| **Total requests** | `MCP_RE_LOADGEN_REQUESTS` (default 2000) | each request carries a UNIQUE nonce (so replay never fires); success = a verified signed response, not an error object |
+| **Concurrency** | `MCP_RE_LOADGEN_CONCURRENCY` (default 128) | number of concurrent client threads; the canonical v2 envelope drives 128 concurrent cold mTLS connections — the SAME for local and GKE |
+| **Total requests** | `MCP_RE_LOADGEN_REQUESTS` (default 8000) | each request carries a UNIQUE nonce (so replay never fires); success = a verified signed response, not an error object |
 
 ## What the harness reports
 

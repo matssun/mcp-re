@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-proxy"
-version = "0.11.0"
+version = "0.12.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -147,6 +147,10 @@ async_serve = []
 [dev-dependencies]
 # In-process test cert generation for the mTLS round-trip tests.
 rcgen = { workspace = true }
+# Now-relative certificate validity windows for fixtures that must mint a client
+# leaf whose lifetime span is within the proxy's enforced ceiling
+# (`cli::MAX_CLIENT_CERT_LIFETIME`) yet is currently valid.
+time = { workspace = true }
 # The production client-side mTLS config (presents a client cert + verifies the
 # server) — used by the mTLS transport-binding channel-binding test to drive a
 # REAL rustls handshake whose negotiated peer leaf DER is the x5t#S256 material.
@@ -159,7 +163,6 @@ ed25519-dalek = { workspace = true }
 # the deterministic `FixedClock` / `SeededNonceSource` fixtures, which mcp-re-host
 # compiles only under its `test-fixtures` feature (audit #81); enable it here as a
 # DEV-dependency feature so it never reaches the production proxy closure.
-mcp-re-host = { path = "../mcp-re-host", features = ["test-fixtures"] }
 # The draft-02 serving test signs a real draft-02 request via the client seam.
 mcp-re-client-core = { path = "../mcp-re-client-core" }
 # Resolve child-process binary paths under Bazel runfiles OR plain cargo.

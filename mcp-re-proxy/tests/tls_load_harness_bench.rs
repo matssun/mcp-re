@@ -1,36 +1,52 @@
 //! MCPRE-108 (ADR-MCPRE-051 §7) — concurrent-TLS-client load harness driving the
-//! REAL listener.
+//! REAL listener over the **RFC 9421** serving path (ADR-MCPRE-050 sole carrier).
 //!
 //! ADR-MCPRE-051 §7 makes a load harness a *prerequisite deliverable*: every
 //! architectural throughput claim must be MEASURED against the real serving path,
-//! not argued. Unlike `fleet_throughput_bench` — which calls `Proxy::handle`
-//! directly on one thread and structurally cannot see TLS/handshake/accept cost —
-//! this harness spawns the real `mcp-re-proxy` binary and drives its listener over
-//! many concurrent rustls **mTLS** clients: accept → TLS/mTLS → verify → inner →
-//! sign → respond. Every measured number therefore includes the full PEP path.
+//! not argued. This harness spawns the real `mcp-re-proxy` binary and drives its
+//! listener over many concurrent rustls **mTLS** clients: accept → TLS/mTLS →
+//! RFC 9421 + RFC 9530 verify → inner → sign → respond. Every measured number
+//! includes the full PEP path. The request is signed with the audited
+//! `mcp-re-client-core` `build_signed_request` (the signature rides in the HTTP
+//! `Signature`/`Signature-Input`/`Content-Digest` headers, not a JSON-RPC body
+//! `_meta` block), and the response is verified with `verify_signed_response` bound
+//! to the request.
 //!
 //! It reports aggregate throughput and p50/p99/p999 added latency, measures the
 //! cold-handshake and keep-alive connection modes SEPARATELY, and records the
-//! declared benchmark envelope (hardware class, core count, payload, TLS/signature
-//! suite, connection mode, replay backend, inner latency) alongside the numbers —
-//! the envelope is pinned in `docs/bench/adr-051-load-harness-envelope.md` +
+//! declared benchmark envelope (hardware class, core count, payload, TLS suite,
+//! connection mode, replay backend, inner latency) alongside the numbers — the
+//! envelope is pinned in `docs/bench/adr-051-load-harness-envelope.md` +
 //! `adr-051-benchmark-envelope.json`. It drives the per-core async fleet
 //! (`--cores` pins the worker count) and produces the baseline + per-core scaling
 //! input to the SLO declaration (MCPRE-110).
 //!
+//! This is an INTEGRATION test: the proxy always runs the maximal-security posture
+//! and the per-core async serving plane refuses node-local replay (memory + file),
+//! so the harness stands up a real shared replay store. The whole file is compiled
+//! ONLY under the `redis_replay` feature, and each entry point brings up a Redis
+//! wait-quorum fleet (primary + 2 replicas) in Docker, drives the bench against it,
+//! and tears the containers down (a `RedisFleet` RAII guard). Run it in the
+//! integration lane:
+//!
+//! ```text
+//! cargo test -p mcp-re-proxy --features redis_replay --test tls_load_harness_bench
+//! ```
+//!
 //! Two entry points:
-//!   * [`load_harness_smoke`] — ALWAYS runs in the battery at tiny scale, so the
-//!     harness itself is self-verifying and stays green: it drives the real
-//!     listener end-to-end, confirms a genuinely signed+bound response, and checks
-//!     the metrics compute. It is NOT an SLO gate.
-//!   * [`tls_load_harness_bench`] — `#[ignore]` (the ADR-051 §7 "manual/dispatch
-//!     lane, not a per-PR gate"): the full run, scaled by `MCP_RE_LOADGEN_*` env,
-//!     printing the report and (optionally) writing machine-readable JSON.
+//!   * [`load_harness_smoke`] — the self-verifying tiny-scale run: it drives the real
+//!     listener end-to-end, confirms a genuinely RFC 9421-signed response bound to
+//!     the request, and checks the metrics compute. It is NOT an SLO gate.
+//!   * [`tls_load_harness_bench`] — the full ADR-051 §7 run, scaled by
+//!     `MCP_RE_LOADGEN_*` env, printing the report and (optionally) writing
+//!     machine-readable JSON. It runs in the integration lane (this file is
+//!     `redis_replay`-gated); the cost-bearing live counterpart is the GKE runbook.
 //!
 //! NOTE on keep-alive: the current wire is one-request-per-connection
 //! (`Connection: close`, ADR-051 Context §3), so `keepalive` mode reports a
 //! realised-reuse fraction ≈ 0 on the current proxy — the mode is instrumented now
 //! and becomes meaningful with the Phase-2 keep-alive/H2 data plane.
+#![cfg(feature = "redis_replay")]
 
 use std::convert::Infallible;
 use std::io::Read;
@@ -40,6 +56,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -60,22 +77,34 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
 
+use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::verify_signed_response;
+use mcp_re_client_core::ActorIdentity;
+use mcp_re_client_core::ArtifactBinding;
+use mcp_re_client_core::ArtifactType;
+use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::HttpResponse;
+use mcp_re_client_core::RequestSigningInputs;
+use mcp_re_client_core::ResolvedActor;
+use mcp_re_client_core::ResponseExpectation;
+use mcp_re_client_core::SignedRequest;
+use mcp_re_client_core::SignerSlot;
 use mcp_re_core::b64url_encode;
-use mcp_re_core::request_hash;
-use mcp_re_core::unix_to_rfc3339_utc;
-use mcp_re_core::verify_response;
-use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::SigningKey;
-use mcp_re_host::HostSigner;
+use mcp_re_core::VerificationKey;
+use mcp_re_proxy::cli::MAX_CLIENT_CERT_LIFETIME;
 
 use rcgen::BasicConstraints;
 use rcgen::CertificateParams;
+use rcgen::CertificateRevocationListParams;
 use rcgen::DnType;
 use rcgen::ExtendedKeyUsagePurpose;
 use rcgen::IsCa;
+use rcgen::KeyIdMethod;
 use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::SanType;
+use rcgen::SerialNumber;
 
 use rustls::client::danger::HandshakeSignatureValid;
 use rustls::client::danger::ServerCertVerified;
@@ -93,15 +122,26 @@ use rustls_pki_types::ServerName;
 use rustls_pki_types::UnixTime;
 
 use serde_json::json;
+use serde_json::Map;
 use serde_json::Value;
 
 const SERVER: &str = "did:example:server-1";
 const SERVER_KEY_ID: &str = "server-key-1";
 const AUDIENCE: &str = "did:example:server-1";
-const SIGNER_A: &str = "spiffe://example.org/agent-1"; // == client-cert URI SAN
+const TRUST_DOMAIN: &str = "example.org";
+// A DID request-signer (subject) with colons: the real-world shape (and the GKE
+// proof's identity). Its colons force `%3A` escaping in the resolved actor_id, so
+// this harness now covers the escaped-actor-id `ExactMatchBinding` path — the case a
+// colon-free subject silently skipped.
+const SUBJECT_A: &str = "did:example:agent-1"; // the request signer (subject) in trust.json
 const SIGNER_A_KEY_ID: &str = "key-a";
-const ON_BEHALF_OF: &str = "did:example:user-1";
-const AUTH_HASH: &str = "sha256:RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o";
+const TARGET_URI: &str = "https://localhost/";
+const DPOP_TOKEN: &str = "loadgen-dpop-token";
+/// The RFC 9421 Mode-A `ExactMatchBinding` compares the mTLS client cert URI SAN to
+/// the resolved actor_id `role:trust_domain:subject:keyid`, each component `%`/`:`
+/// escaped. The DID subject's colons escape to `%3A`; the client leaf below carries
+/// EXACTLY this escaped URI SAN.
+const CLIENT_ACTOR_ID: &str = "client:example.org:did%3Aexample%3Aagent-1:key-a";
 
 fn server_seed() -> [u8; 32] {
     [2u8; 32]
@@ -150,6 +190,41 @@ fn make_leaf(
     (cert, key)
 }
 
+/// Mint a CLIENT leaf whose validity SPAN is within the proxy's enforced ceiling
+/// (`MAX_CLIENT_CERT_LIFETIME`) AND is currently valid, so the proxy's cert-lifetime
+/// guard accepts it. The span is derived from the SAME constant the proxy enforces
+/// (one source of truth) — no fixture hardcodes a lifetime to dodge the guard.
+/// Valid from ~1min ago to (ceiling − 2min) ahead: span = ceiling − 60s < ceiling.
+fn make_client_leaf(ca: &Ca, sans: Vec<SanType>) -> (rcgen::Certificate, KeyPair) {
+    let key = KeyPair::generate().expect("leaf key");
+    let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
+    params.subject_alt_names = sans;
+    let now = time::OffsetDateTime::now_utc();
+    let ceiling = time::Duration::seconds(MAX_CLIENT_CERT_LIFETIME.as_secs() as i64);
+    params.not_before = now - time::Duration::seconds(60);
+    params.not_after = now + ceiling - time::Duration::seconds(120);
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    (cert, key)
+}
+
+/// Write an EMPTY, far-future CRL signed by `ca` to `path` (DER). Empty = revokes
+/// nothing (the client stays valid), far-future `nextUpdate` = not stale (the proxy
+/// refuses to start on a stale CRL). Used to drive the `--client-crl` + hot-reload
+/// path in-process.
+fn write_empty_crl(ca: &Ca, path: &std::path::Path) {
+    let params = CertificateRevocationListParams {
+        this_update: rcgen::date_time_ymd(2024, 1, 1),
+        next_update: rcgen::date_time_ymd(2999, 1, 1),
+        crl_number: SerialNumber::from(1u64),
+        issuing_distribution_point: None,
+        revoked_certs: Vec::new(),
+        key_identifier_method: KeyIdMethod::Sha256,
+    };
+    let crl = params.signed_by(&ca.cert, &ca.key).expect("crl signed");
+    std::fs::write(path, crl.der()).expect("write crl");
+}
+
 fn uri(value: &str) -> SanType {
     SanType::URI(value.try_into().expect("ia5 uri"))
 }
@@ -190,9 +265,20 @@ fn write_material() -> Material {
     std::fs::write(&server_cert_path, server_leaf.pem()).unwrap();
     std::fs::write(&server_key_path, server_leaf_key.serialize_pem()).unwrap();
     std::fs::write(&client_ca_path, client_ca.cert.pem()).unwrap();
+    // The proxy refuses to start on a group/world-accessible sensitive key file, so
+    // the fixture must restrict the signing-key seed and the TLS server key to 0600
+    // (owner-only) — the same posture a production deployment uses.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for p in [&seed_path, &server_key_path] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
 
+    // The RFC 9421 trust file maps the request-signer keyid → (signer, public_key).
     let trust = json!([
-        { "signer": SIGNER_A, "key_id": SIGNER_A_KEY_ID, "public_key": signer_a_key().public_key().to_b64url() },
+        { "signer": SUBJECT_A, "key_id": SIGNER_A_KEY_ID, "public_key": signer_a_key().public_key().to_b64url() },
     ]);
     std::fs::write(&trust_path, serde_json::to_vec(&trust).unwrap()).unwrap();
 
@@ -229,11 +315,11 @@ fn locate(env_key: &str) -> PathBuf {
 // --- in-process HTTP echo inner backend (ADR-MCPRE-051 §3) --------------------
 //
 // The proxy serves on the async fleet and forwards each verified request over HTTP
-// to a stateless inner backend (no more stdio echo subprocess). This is the HTTP
-// analogue of the old `echo_inner` fixture: it reads the POSTed JSON-RPC request
-// and answers with a JSON-RPC result echoing `params._meta` and the method, so a
-// success ("no error") still corresponds to a genuinely signed inner result.
-// Mirrors the in-process hyper backend in `http_inner_test.rs`.
+// to a stateless inner backend. It reads the POSTed JSON-RPC request and answers
+// with a JSON-RPC result echoing the method, so a success ("no error") still
+// corresponds to a genuinely signed inner result. The proxy strips the top-level
+// `_meta` request-evidence block before forwarding (RFC 9421 serving path), so the
+// inner sees clean MCP. Mirrors the in-process hyper backend in `http_inner_test.rs`.
 async fn echo_inner_service(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let body = req
         .into_body()
@@ -243,17 +329,12 @@ async fn echo_inner_service(req: Request<Incoming>) -> Result<Response<Full<Byte
         .unwrap_or_default();
     let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let id = value.get("id").cloned().unwrap_or(Value::Null);
-    let meta = value
-        .get("params")
-        .and_then(|params| params.get("_meta"))
-        .cloned()
-        .unwrap_or(Value::Null);
     let method = value.get("method").cloned().unwrap_or(Value::Null);
 
     let response = json!({
         "jsonrpc": "2.0",
         "id": id,
-        "result": { "echoed_meta": meta, "echoed_method": method },
+        "result": { "echoed_method": method, "ok": true },
     });
     let bytes = serde_json::to_vec(&response).unwrap_or_default();
     Ok(Response::builder()
@@ -309,14 +390,136 @@ impl Drop for ProxyProcess {
     }
 }
 
-fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize) -> ProxyProcess {
+// --- Redis wait-quorum fleet (integration infra, brought up + torn down here) ----
+
+/// Run `docker` with `args`, returning its captured output. Fails the test with a
+/// clear message if the `docker` CLI is unavailable — this is an integration test
+/// and Docker is part of its milieu.
+fn docker(args: &[&str]) -> std::process::Output {
+    Command::new("docker").args(args).output().unwrap_or_else(|e| {
+        panic!(
+            "docker is required to run the load-harness integration test (bringing up the \
+             Redis wait-quorum replay fleet), but invoking `docker {}` failed: {e}",
+            args.join(" ")
+        )
+    })
+}
+
+/// A Redis primary + 2 replicas on a private Docker network, published on an
+/// ephemeral host port. The `redis-wait-quorum:2:*` durability tier the proxy
+/// requires needs 2 replica acks, so a single node cannot satisfy it — this mirrors
+/// `tools/http_profile_multireplica_proof.sh`. Every container is removed and the
+/// network torn down on `Drop`, so a panicking test leaks nothing.
+struct RedisFleet {
+    net: String,
+    containers: Vec<String>,
+    /// Host port publishing the primary's 6379.
+    host_port: u16,
+}
+
+impl RedisFleet {
+    fn start() -> RedisFleet {
+        // Unique per FLEET, not per process: cargo runs the tests in this binary
+        // concurrently (same PID), so a process-id-only name would collide between
+        // `load_harness_smoke` and `tls_load_harness_bench`. A per-instance sequence
+        // makes every fleet's network + container names distinct.
+        static SEQ: AtomicUsize = AtomicUsize::new(0);
+        let id = format!("{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+        let net = format!("mcp-re-loadgen-net-{id}");
+        let primary = format!("mcp-re-loadgen-redis-primary-{id}");
+        let r1 = format!("mcp-re-loadgen-redis-r1-{id}");
+        let r2 = format!("mcp-re-loadgen-redis-r2-{id}");
+        // Clean any stale artifacts from a previous aborted run (idempotent).
+        for c in [&primary, &r1, &r2] {
+            let _ = docker(&["rm", "-f", c]);
+        }
+        let _ = docker(&["network", "rm", &net]);
+
+        let created = docker(&["network", "create", &net]);
+        assert!(
+            created.status.success(),
+            "docker network create failed (is the Docker daemon running?): {}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+
+        // Disk persistence is REQUIRED: the replay store's whole purpose is to
+        // remember admitted nonces, and default disk-based replication only completes
+        // when the primary persists (otherwise replicas stall and WAIT returns 0).
+        let persist = ["--appendonly", "yes", "--appendfsync", "everysec", "--save", "60 1000 300 10"];
+
+        let mut primary_args: Vec<&str> =
+            vec!["run", "-d", "--name", &primary, "--network", &net, "-p", "0:6379",
+                 "redis:7-alpine", "redis-server"];
+        primary_args.extend(persist);
+        let out = docker(&primary_args);
+        assert!(out.status.success(), "run redis primary: {}", String::from_utf8_lossy(&out.stderr));
+
+        for r in [&r1, &r2] {
+            let mut a: Vec<&str> = vec!["run", "-d", "--name", r, "--network", &net,
+                                        "redis:7-alpine", "redis-server", "--replicaof", &primary, "6379"];
+            a.extend(persist);
+            let out = docker(&a);
+            assert!(out.status.success(), "run redis replica {r}: {}", String::from_utf8_lossy(&out.stderr));
+        }
+
+        // Resolve the ephemeral host port publishing the primary's 6379.
+        let port_out = docker(&["port", &primary, "6379/tcp"]);
+        let mapping = String::from_utf8_lossy(&port_out.stdout);
+        let host_port = mapping
+            .lines()
+            .next()
+            .and_then(|l| l.rsplit(':').next())
+            .and_then(|p| p.trim().parse::<u16>().ok())
+            .unwrap_or_else(|| panic!("could not parse published redis port from `docker port`: {mapping:?}"));
+
+        let fleet = RedisFleet { net, containers: vec![primary.clone(), r1, r2], host_port };
+
+        // Wait until BOTH replicas report state=online, so the `WAIT 2` in the
+        // durability tier gets 2 acks rather than timing out on every request.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let info = docker(&["exec", &primary, "redis-cli", "info", "replication"]);
+            let online = String::from_utf8_lossy(&info.stdout).matches("state=online").count();
+            if online >= 2 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "redis replicas did not come online within budget");
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        fleet
+    }
+
+    fn url(&self) -> String {
+        format!("redis://127.0.0.1:{}", self.host_port)
+    }
+}
+
+impl Drop for RedisFleet {
+    fn drop(&mut self) {
+        for c in &self.containers {
+            let _ = docker(&["rm", "-f", c]);
+        }
+        let _ = docker(&["network", "rm", &self.net]);
+    }
+}
+
+fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_url: &str) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
 
     // ADR-MCPRE-051 §1/§7: PIN the per-core worker count so `declared_cores` in the
-    // report is the count actually served (not a label divorced from the auto-sized
-    // fleet), and so the 1→N linear-scaling curve is reproducible — run the bench at
-    // MCP_RE_LOADGEN_CORES=1 then =N. `0` is passed through as auto (one per core).
+    // report is the count actually served, and so the 1→N linear-scaling curve is
+    // reproducible — run the bench at MCP_RE_LOADGEN_CORES=1 then =N. `0` = auto.
     let cores_str = cores.to_string();
+
+    // The proxy always runs the maximal-security posture, so the bench config must be
+    // production-valid. The cert-lifetime arg is the SAME constant the proxy enforces
+    // (`cli::MAX_CLIENT_CERT_LIFETIME`), and the client leaf `build_client_config`
+    // mints has a span within it — no hand-picked magic number. The per-core async
+    // serving plane refuses node-local replay (memory + file), so the ONLY valid
+    // replay backend is a shared store; this bench is `#[ignore]` infra-lane and, when
+    // run, needs a Redis reachable at MCP_RE_LOADGEN_REDIS_URL and a CLI built with
+    // `--features redis_replay`.
+    let cert_lifetime = MAX_CLIENT_CERT_LIFETIME.as_secs().to_string();
 
     // Bind an EPHEMERAL port and read the resolved address back from the CLI's own
     // `async fleet serving on <addr>` stderr line — race-free (the fleet owns the
@@ -333,12 +536,22 @@ fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize) -> Proxy
             "--tls-key", &material.server_key_path.to_string_lossy(),
             "--client-ca", &material.client_ca_path.to_string_lossy(),
             "--trust", &material.trust_path.to_string_lossy(),
+            // RFC 9421 serving path: the audience `@target-uri` both sides sign over,
+            // and the trust domain the resolved client/server actor_id is built under.
+            "--target-uri", TARGET_URI,
+            "--trust-domain", TRUST_DOMAIN,
             "--transport-binding", "exact",
             "--transport-identity-source", "uri_san",
-            "--max-client-cert-lifetime", "175200h",
+            // The enforced ceiling itself — the client leaf's span is minted within it.
+            "--max-client-cert-lifetime", &cert_lifetime,
+            // Shared replay: the per-core async plane refuses node-local caches. The
+            // fleet has 2 replicas, so `WAIT 2` is satisfiable.
+            "--replay-cache", "shared",
+            "--replay-redis-url", redis_url,
+            "--replay-durability-tier", "redis-wait-quorum:2:2000",
             "--cores", &cores_str,
-            // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the
-            // stateless in-process HTTP echo backend (was `--inner-command <echo>`).
+            // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the stateless
+            // in-process HTTP echo backend.
             "--inner-http-url", inner_http_url,
         ])
         .stdin(Stdio::null())
@@ -444,11 +657,18 @@ impl ServerCertVerifier for AcceptAnyServer {
     }
 }
 
-/// Build the client mTLS config ONCE (the trusted URI-SAN leaf) and share it via
-/// `Arc` across every connection, so the measured latency is the handshake +
-/// request cost, not repeated config/cert construction.
+/// Build the client mTLS config ONCE (the trusted URI-SAN leaf carrying the RFC 9421
+/// actor_id) and share it via `Arc` across every connection, so the measured latency
+/// is the handshake + request cost, not repeated config/cert construction.
 fn build_client_config(ca: &Ca) -> Arc<ClientConfig> {
-    let (leaf, key) = make_leaf(ca, vec![uri(SIGNER_A)], None, true);
+    let (leaf, key) = make_client_leaf(ca, vec![uri(CLIENT_ACTOR_ID)]);
+    client_config_from(&leaf, &key)
+}
+
+/// A client mTLS config presenting `leaf`+`key` — shared by the short-lived
+/// (accepted) leaf and, in the in-process serve test, a long-lived leaf that the
+/// proxy's cert-lifetime ceiling must reject.
+fn client_config_from(leaf: &rcgen::Certificate, key: &KeyPair) -> Arc<ClientConfig> {
     let chain = vec![leaf.der().clone()];
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
 
@@ -463,14 +683,22 @@ fn build_client_config(ca: &Ca) -> Arc<ClientConfig> {
     Arc::new(config)
 }
 
+/// One HTTP reply off the wire: status line + parsed headers + body.
+struct HttpReply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    keeps_alive: bool,
+}
+
 /// Read one HTTP/1.1 response off `stream`: consume the header block up to
-/// `\r\n\r\n`, parse `Content-Length`, then read exactly that many body bytes.
-/// Returns `(body, server_keeps_alive)` where `server_keeps_alive` is false when
-/// the response carried `Connection: close` (the current proxy always does).
-fn read_http_response(stream: &mut impl Read) -> std::io::Result<(Vec<u8>, bool)> {
+/// `\r\n\r\n`, parse the status line + headers (original case, needed for RFC 9421
+/// response-signature verification) + `Content-Length`, then read exactly that many
+/// body bytes. `keeps_alive` is false when the response carried `Connection: close`
+/// (the current proxy always does).
+fn read_http_response(stream: &mut impl Read) -> std::io::Result<HttpReply> {
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
-    // Read until the end of the header block.
     let header_end = loop {
         let n = stream.read(&mut byte)?;
         if n == 0 {
@@ -484,43 +712,74 @@ fn read_http_response(stream: &mut impl Read) -> std::io::Result<(Vec<u8>, bool)
             break buf.len();
         }
     };
-    let header_text = String::from_utf8_lossy(&buf[..header_end]).to_ascii_lowercase();
-    let content_length = header_text
-        .lines()
-        .find_map(|line| line.strip_prefix("content-length:"))
-        .and_then(|v| v.trim().parse::<usize>().ok())
+    let header_text = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let mut lines = header_text.lines();
+    let status_line = lines.next().unwrap_or_default();
+    // "HTTP/1.1 <code> <reason>"
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse::<u16>().ok())
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "no HTTP status in response")
+        })?;
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    let content_length = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
         .ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "no Content-Length in response")
         })?;
-    let keeps_alive = !header_text.contains("connection: close");
+    let keeps_alive = !headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("connection") && v.eq_ignore_ascii_case("close"));
 
     let mut body = vec![0u8; content_length];
     stream.read_exact(&mut body)?;
-    Ok((body, keeps_alive))
+    Ok(HttpReply { status, headers, body, keeps_alive })
 }
 
-/// Open a fresh mTLS connection, send one signed request, and read the response
-/// body (cold-handshake path). Returns the response body bytes.
+/// Serialize the request line + signed headers + transport headers for a POST.
+fn http_post_head(signed_headers: &[(String, String)], keep_alive: bool, body_len: usize) -> String {
+    let mut head = String::from("POST / HTTP/1.1\r\nHost: localhost\r\n");
+    for (k, v) in signed_headers {
+        // Content-Length / Connection are transport-owned below; the signed set
+        // never carries them, but guard against accidental duplication.
+        if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    let conn = if keep_alive { "keep-alive" } else { "close" };
+    head.push_str(&format!("Content-Length: {body_len}\r\nConnection: {conn}\r\n\r\n"));
+    head
+}
+
+/// Open a fresh mTLS connection, send one RFC 9421-signed request (signature in
+/// headers), and read the response (cold-handshake path).
 fn cold_round_trip(
     addr: SocketAddr,
     config: Arc<ClientConfig>,
-    body: &[u8],
-) -> std::io::Result<Vec<u8>> {
+    signed: &SignedRequest,
+) -> std::io::Result<HttpReply> {
     let tcp = TcpStream::connect(addr)?;
     let server_name = ServerName::try_from("localhost").expect("server name");
     let conn = ClientConnection::new(config, server_name)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let mut stream = StreamOwned::new(conn, tcp);
 
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(request.as_bytes())?;
-    stream.write_all(body)?;
+    let req = signed.request();
+    let head = http_post_head(&req.headers, false, req.body.len());
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(&req.body)?;
     stream.flush()?;
-    let (resp, _keeps_alive) = read_http_response(&mut stream)?;
-    Ok(resp)
+    read_http_response(&mut stream)
 }
 
 // --- signed requests (real clock) ---------------------------------------------
@@ -532,37 +791,58 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// Sign a `tools/call` as `SIGNER_A`, timestamped at the real clock (the CLI runs
-/// on its own uninjected system clock) and carrying a UNIQUE `nonce` so replay
-/// never fires across the load run.
-fn signed_request(nonce: &str) -> Vec<u8> {
+/// Sign a `tools/call`-shaped `echo` request as the request signer, timestamped at
+/// the real clock and carrying a UNIQUE `nonce` so replay never fires across the
+/// load run. RFC 9421 + RFC 9530 via the audited `mcp-re-client-core` — the
+/// signature rides in the returned request's HTTP headers, not a body object.
+fn signed_request(nonce: &str) -> SignedRequest {
     let now = now_unix();
-    let issued_at = unix_to_rfc3339_utc(now);
-    let expires_at = unix_to_rfc3339_utc(now + 300);
-    HostSigner::new(signer_a_key(), SIGNER_A, SIGNER_A_KEY_ID)
-        .sign_tool_call(
-            &Value::String("req-1".to_string()),
-            "echo",
-            json!({ "text": "hello" }),
-            ON_BEHALF_OF,
-            AUDIENCE,
-            AUTH_HASH,
-            nonce,
-            &issued_at,
-            &expires_at,
-        )
-        .expect("host signs")
+    let audience = AudienceTuple {
+        audience_id: AUDIENCE.to_string(),
+        target_uri: TARGET_URI.to_string(),
+        route: None,
+    };
+    let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, DPOP_TOKEN.as_bytes());
+    let inputs = RequestSigningInputs::new(SIGNER_A_KEY_ID, audience, vec![binding], nonce, now, now + 300)
+        .with_headers(vec![("Authorization".to_string(), format!("Bearer {DPOP_TOKEN}"))]);
+    let mut params = Map::new();
+    params.insert("text".to_string(), Value::String("hello".to_string()));
+    build_signed_request(
+        &Value::String("req-1".to_string()),
+        "echo",
+        params,
+        TARGET_URI,
+        &inputs,
+        &signer_a_key(),
+    )
+    .expect("client signs RFC 9421 request")
 }
 
-fn server_resolver() -> InMemoryTrustResolver {
-    let mut r = InMemoryTrustResolver::new();
-    r.insert(SERVER, SERVER_KEY_ID, SigningKey::from_seed_bytes(&server_seed()).public_key());
-    r
+/// The server actor resolver for verifying the signed response (Response slot).
+fn server_resolve(kid: &str, slot: SignerSlot) -> Option<ResolvedActor> {
+    if slot == SignerSlot::Response && kid == SERVER_KEY_ID {
+        Some(ResolvedActor {
+            identity: ActorIdentity {
+                role: "server".to_string(),
+                trust_domain: TRUST_DOMAIN.to_string(),
+                subject: SERVER.to_string(),
+                keyid: SERVER_KEY_ID.to_string(),
+            },
+            verification_key: server_verification_key(),
+            slot,
+        })
+    } else {
+        None
+    }
 }
 
-/// A response is a SUCCESS iff it parses as a JSON object with no `error` — the
-/// proxy fails closed with a JSON-RPC error object, so "no error" means the inner
-/// result was signed and returned.
+fn server_verification_key() -> VerificationKey {
+    SigningKey::from_seed_bytes(&server_seed()).public_key()
+}
+
+/// A response is a SUCCESS iff it parses as a JSON object with no `error` and a
+/// `result` — the proxy fails closed with a JSON-RPC error object, so "no error +
+/// result" means the inner result was signed and returned.
 fn is_success(body: &[u8]) -> bool {
     serde_json::from_slice::<Value>(body)
         .map(|v| v.get("error").is_none() && v.get("result").is_some())
@@ -596,7 +876,9 @@ struct LoadConfig {
 
 impl LoadConfig {
     /// The full-bench config, scaled from `MCP_RE_LOADGEN_*` env with the envelope
-    /// defaults (concurrency 64, 2000 requests, cold).
+    /// defaults. The canonical envelope is the INVOLVED config (concurrency 128,
+    /// 8000 requests, cold) — the SAME for local and GKE, so the two are directly
+    /// comparable (MCPRE-110; the earlier 64/2000 GKE run was under-configured).
     fn from_env() -> Self {
         let env_usize = |k: &str, default: usize| {
             std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default)
@@ -606,8 +888,8 @@ impl LoadConfig {
             _ => Mode::Cold,
         };
         LoadConfig {
-            concurrency: env_usize("MCP_RE_LOADGEN_CONCURRENCY", 64),
-            requests: env_usize("MCP_RE_LOADGEN_REQUESTS", 2000),
+            concurrency: env_usize("MCP_RE_LOADGEN_CONCURRENCY", 128),
+            requests: env_usize("MCP_RE_LOADGEN_REQUESTS", 8000),
             mode,
             hw_class: std::env::var("MCP_RE_LOADGEN_HW_CLASS")
                 .unwrap_or_else(|_| "unspecified".to_string()),
@@ -666,31 +948,27 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
             let total = cfg.requests;
             std::thread::spawn(move || {
                 let mut local: Vec<u128> = Vec::new();
-                // Keep-alive mode threads a single live stream across requests and
-                // reconnects when the server closes it (the current proxy always
-                // sends Connection: close, so this reconnects every request — the
-                // realised-reuse fraction the report exposes).
                 let mut kept: Option<StreamOwned<ClientConnection, TcpStream>> = None;
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     if i >= total {
                         break;
                     }
-                    let body = signed_request(&format!("loadgen-nonce-{i}"));
+                    let signed = signed_request(&format!("loadgen-nonce-{i}"));
                     let t0 = Instant::now();
                     let outcome = match mode {
-                        Mode::Cold => cold_round_trip(addr, Arc::clone(&config), &body),
+                        Mode::Cold => cold_round_trip(addr, Arc::clone(&config), &signed),
                         Mode::KeepAlive => keepalive_round_trip(
                             addr,
                             Arc::clone(&config),
-                            &body,
+                            &signed,
                             &mut kept,
                             &reconnects,
                         ),
                     };
                     let dt = t0.elapsed();
                     match outcome {
-                        Ok(resp) if is_success(&resp) => local.push(dt.as_micros()),
+                        Ok(reply) if is_success(&reply.body) => local.push(dt.as_micros()),
                         _ => {
                             failures.fetch_add(1, Ordering::Relaxed);
                         }
@@ -749,42 +1027,34 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
 fn keepalive_round_trip(
     addr: SocketAddr,
     config: Arc<ClientConfig>,
-    body: &[u8],
+    signed: &SignedRequest,
     kept: &mut Option<StreamOwned<ClientConnection, TcpStream>>,
     reconnects: &AtomicUsize,
-) -> std::io::Result<Vec<u8>> {
+) -> std::io::Result<HttpReply> {
     if kept.is_none() {
         let tcp = TcpStream::connect(addr)?;
         let server_name = ServerName::try_from("localhost").expect("server name");
         let conn = ClientConnection::new(config, server_name)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         *kept = Some(StreamOwned::new(conn, tcp));
-    } else {
-        // Reusing a live stream is the point of keep-alive; count only genuine
-        // reconnects (the else-branch above) — but the current proxy forces a
-        // reconnect every request, so `is_none()` is true each time and this
-        // branch is effectively unreached on the current wire.
     }
     let stream = kept.as_mut().expect("stream present");
 
-    let request = format!(
-        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(request.as_bytes())?;
-    stream.write_all(body)?;
+    let req = signed.request();
+    let head = http_post_head(&req.headers, true, req.body.len());
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(&req.body)?;
     stream.flush()?;
-    let (resp, keeps_alive) = read_http_response(stream)?;
-    if !keeps_alive {
-        // Server closed: the NEXT request will reconnect — record it.
+    let reply = read_http_response(stream)?;
+    if !reply.keeps_alive {
         *kept = None;
         reconnects.fetch_add(1, Ordering::Relaxed);
     }
-    Ok(resp)
+    Ok(reply)
 }
 
 fn print_report(cfg: &LoadConfig, report: &Report) {
-    println!("=== ADR-MCPRE-051 §7 load-harness report (envelope v1) ===");
+    println!("=== ADR-MCPRE-051 §7 load-harness report (RFC 9421 carrier, envelope v2) ===");
     println!("hardware_class     : {}", cfg.hw_class);
     println!(
         "declared_cores     : {} (per-core async fleet, SO_REUSEPORT; pinned via --cores, {})",
@@ -817,9 +1087,10 @@ fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
         return;
     };
     let doc = json!({
-        "schema": "mcp-re-load-harness-report/v1",
-        "envelope_version": 1,
+        "schema": "mcp-re-load-harness-report/v2",
+        "envelope_version": 2,
         "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
+        "carrier": "rfc9421+rfc9530",
         "config": {
             "hardware_class": cfg.hw_class,
             "declared_cores": cfg.cores,
@@ -848,30 +1119,41 @@ fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
 
 // --- entry points -------------------------------------------------------------
 
-/// Always-on self-verification: drive the REAL listener at tiny scale, confirm a
-/// genuinely signed+bound response, and check the metrics compute. Keeps the
-/// harness green in the per-PR battery without being an SLO gate.
+/// Self-verification: drive the REAL listener at tiny scale, confirm a genuinely
+/// RFC 9421-signed response bound to the request, and check the metrics compute.
+/// Brings up a Redis wait-quorum fleet (torn down on return) — the proxy's per-core
+/// async plane refuses node-local replay, so a shared store is mandatory.
 #[test]
 fn load_harness_smoke() {
+    let redis = RedisFleet::start();
     let material = write_material();
     let backend = spawn_http_echo_backend();
-    // Smoke pins a single worker (matches cfg.cores below) so declared == served.
-    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), 1);
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), 1, &redis.url());
     let config = build_client_config(&material.client_ca);
 
     // 1. One explicit VERIFIED round-trip proves the success criterion (`no error`)
-    //    corresponds to a real Ed25519-signed response bound to the request hash —
-    //    i.e. the harness is measuring genuine serving, not error responses.
+    //    corresponds to a real RFC 9421-signed response bound to THIS request — i.e.
+    //    the harness measures genuine serving, not error responses.
     {
-        let request = signed_request("smoke-verified");
-        let expected_hash =
-            request_hash(&serde_json::from_slice::<Value>(&request).unwrap()).unwrap();
-        let body = cold_round_trip(proxy.addr, Arc::clone(&config), &request)
+        let signed = signed_request("smoke-verified");
+        let reply = cold_round_trip(proxy.addr, Arc::clone(&config), &signed)
             .expect("valid mTLS round trip");
-        assert!(is_success(&body), "smoke request must succeed: {:?}", String::from_utf8_lossy(&body));
-        let verified = verify_response(&body, &server_resolver(), &expected_hash)
-            .expect("signed response verifies and binds to the request hash");
-        assert_eq!(verified.server_signer(), SERVER);
+        assert!(
+            is_success(&reply.body),
+            "smoke request must succeed: {:?}",
+            String::from_utf8_lossy(&reply.body)
+        );
+        let response = HttpResponse {
+            status: reply.status,
+            headers: reply.headers.clone(),
+            body: reply.body.clone(),
+        };
+        let expectation =
+            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
+                .with_expected_server_signer(SERVER_KEY_ID);
+        let verified = verify_signed_response(&response, &server_resolve, &expectation, now_unix())
+            .expect("signed response verifies and binds to the request");
+        assert_eq!(verified.resolved_server_actor.identity.keyid, SERVER_KEY_ID);
     }
 
     // 2. Tiny concurrent load: every request must succeed and the metrics populate.
@@ -891,33 +1173,315 @@ fn load_harness_smoke() {
     assert!(report.p999_us >= report.p50_us, "percentiles must be monotonic");
 }
 
+/// `app::run` builds + starts + cleanly drains across the revocation-tier and
+/// topology variants (each wires a different resolver + startup diagnostic). Uses a
+/// PRE-FLIPPED shutdown so the fleet binds, connects the shared tier, then drains at
+/// once — covering the per-tier orchestration + serve/drain without driving traffic.
+#[test]
+fn app_run_starts_and_drains_across_revocation_tiers() {
+    let redis = RedisFleet::start();
+    let m = write_material();
+    let backend = spawn_http_echo_backend();
+    let inner_url = format!("http://{backend}/mcp");
+    let seed = m.seed_path.to_string_lossy().into_owned();
+    let scert = m.server_cert_path.to_string_lossy().into_owned();
+    let skey = m.server_key_path.to_string_lossy().into_owned();
+    let cca = m.client_ca_path.to_string_lossy().into_owned();
+    let trust = m.trust_path.to_string_lossy().into_owned();
+    let cert_lifetime = MAX_CLIENT_CERT_LIFETIME.as_secs().to_string();
+    let ru = redis.url();
+
+    let run_ok = |extra: &[&str]| {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("free port")
+            .local_addr()
+            .expect("addr")
+            .port();
+        let bind = format!("127.0.0.1:{port}");
+        let mut v: Vec<String> = [
+            "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
+            "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+            "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
+            "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
+            "--max-client-cert-lifetime", &cert_lifetime,
+            "--replay-cache", "shared", "--replay-redis-url", &ru,
+            "--replay-durability-tier", "redis-wait-quorum:2:2000",
+            "--cores", "1", "--inner-http-url", &inner_url,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        v.extend(extra.iter().map(|s| s.to_string()));
+        let config = mcp_re_proxy::cli::parse_args(&v).expect("parse");
+        let sd = Arc::new(AtomicBool::new(true)); // pre-flipped: bind + immediate drain
+        std::thread::spawn(move || mcp_re_proxy::app::run(config, sd))
+            .join()
+            .expect("thread")
+            .expect("serve + clean drain");
+    };
+
+    run_ok(&["--fleet", "--revocation-tier", "live"]);
+    run_ok(&["--fleet", "--revocation-tier", "bounded-cache:90"]);
+    run_ok(&["--revocation-tier", "push:60"]); // push, single-node, no trust-epoch
+}
+
+/// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
+/// replay-tier branches that never execute on the happy path. Each returns Err early
+/// (no listener, no Redis), so this is a fast in-process test that covers the
+/// orchestration's fail-closed arms. `shutdown` is pre-flipped: if a case
+/// unexpectedly reached the serve loop it would drain at once, so a returned `Ok`
+/// still fails the `expect_err`.
+// The assertions here rely on the aws-kms/gcp-kms/pkcs11 key sources and the
+// linearizable (etcd) tier being ABSENT from the build (so they fail closed at
+// construction). Skip when any of those backends IS compiled in — with the feature
+// present the source builds (and fails later, for a different reason), so the
+// "not compiled" premise no longer holds.
+#[cfg(not(any(
+    feature = "aws_kms_keysource",
+    feature = "gcp_kms_keysource",
+    feature = "pkcs11_keysource",
+    feature = "cpstore_etcd"
+)))]
+#[test]
+fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
+    let m = write_material();
+    let seed = m.seed_path.to_string_lossy().into_owned();
+    let scert = m.server_cert_path.to_string_lossy().into_owned();
+    let skey = m.server_key_path.to_string_lossy().into_owned();
+    let cca = m.client_ca_path.to_string_lossy().into_owned();
+    let trust = m.trust_path.to_string_lossy().into_owned();
+
+    let mk = |case: &[&str]| -> Vec<String> {
+        let mut v: Vec<String> = [
+            "--bind", "127.0.0.1:0", "--audience", AUDIENCE, "--server-signer", SERVER,
+            "--server-key-id", SERVER_KEY_ID, "--signing-key-seed", seed.as_str(),
+            "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
+            "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
+            "--inner-http-url", "http://127.0.0.1:9/mcp",
+            "--replay-cache", "shared", "--replay-redis-url", "redis://127.0.0.1:1",
+            "--replay-durability-tier", "redis-wait-quorum:2:2000",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        v.extend(case.iter().map(|s| s.to_string()));
+        v
+    };
+    let app_err = |argv: Vec<String>| -> String {
+        let config = mcp_re_proxy::cli::parse_args(&argv).expect("args parse");
+        let sd = Arc::new(AtomicBool::new(true));
+        mcp_re_proxy::app::run(config, sd).expect_err("config must be refused before serving")
+    };
+
+    // Cloud/HSM key sources that are not compiled into this build fail closed.
+    assert!(app_err(mk(&["--key-source", "aws-kms", "--aws-kms-region", "r", "--aws-kms-key-id", "k"]))
+        .contains("aws_kms"));
+    assert!(app_err(mk(&[
+        "--key-source", "gcp-kms", "--gcp-kms-key-version",
+        "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+    ]))
+    .contains("gcp_kms"));
+    assert!(app_err(mk(&[
+        "--key-source", "pkcs11", "--pkcs11-module", "/x.so", "--pkcs11-pin", "1",
+        "--pkcs11-token-label", "t", "--pkcs11-key-label", "k",
+    ]))
+    .to_lowercase()
+    .contains("pkcs11"));
+    // A node-local file replay cache is refused on the per-core async serving plane.
+    assert!(app_err(mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"]))
+        .contains("file"));
+    // The linearizable (CP) tier needs a cpstore_etcd build.
+    assert!(app_err(mk(&[
+        "--replay-durability-tier", "linearizable", "--cpstore-etcd-endpoint", "http://127.0.0.1:2379",
+    ]))
+    .contains("cpstore_etcd"));
+}
+
+/// The DEPLOYED serving path, driven IN-PROCESS (so coverage sees it): calls the
+/// library `app::run` — the exact orchestration `main` runs on GKE — with fixtures +
+/// a shared Redis tier, then exercises the two identity/cert scenarios that the GKE
+/// proof turns on:
+///   * a SHORT-lived client leaf (within the cert-lifetime ceiling) is ACCEPTED, and
+///   * a LONG-lived client leaf (over the ceiling) is REJECTED with the pre-handler
+///     cert-lifetime verdict (`transport_binding_failed`) — the exact class of
+///     mistake that failed the first GKE run.
+/// This is the regression that would have caught it locally, for free.
+#[test]
+fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
+    let redis = RedisFleet::start();
+    let material = write_material();
+    let backend = spawn_http_echo_backend();
+
+    // A pre-chosen free port so the client knows where to connect (app::run blocks
+    // and does not surface its bound address).
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("free port")
+        .local_addr()
+        .expect("addr")
+        .port();
+    let bind = format!("127.0.0.1:{port}");
+    let inner_url = format!("http://{backend}/mcp");
+    let seed = material.seed_path.to_string_lossy().into_owned();
+    let scert = material.server_cert_path.to_string_lossy().into_owned();
+    let skey = material.server_key_path.to_string_lossy().into_owned();
+    let cca = material.client_ca_path.to_string_lossy().into_owned();
+    let trust = material.trust_path.to_string_lossy().into_owned();
+    let cert_lifetime = MAX_CLIENT_CERT_LIFETIME.as_secs().to_string();
+    let redis_url = redis.url();
+    // An empty (non-revoking), far-future CRL + hot-reload, so the CRL load, posture
+    // diagnostic, and the in-process reload task are all exercised on the serve path.
+    let crl_path = tmp("client.crl");
+    write_empty_crl(&material.client_ca, &crl_path);
+    let crl = crl_path.to_string_lossy().into_owned();
+    let argv: Vec<String> = [
+        "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
+        "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+        "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
+        "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
+        "--transport-binding", "exact", "--transport-identity-source", "uri_san",
+        "--max-client-cert-lifetime", &cert_lifetime,
+        // --fleet exercises the horizontally-scaled posture (cross-replica revocation-
+        // lag diagnostics); the shared wait-quorum tier satisfies its guardrail.
+        "--fleet",
+        "--replay-cache", "shared", "--replay-redis-url", &redis_url,
+        "--replay-durability-tier", "redis-wait-quorum:2:2000",
+        // Exercise the PUSH revocation tier + the networked trust-epoch source on the
+        // same Redis fleet, so the trust-epoch wiring is covered on the serving path.
+        "--revocation-tier", "push:60", "--trust-epoch-redis-url", &redis_url,
+        "--trust-epoch-key", "mcp-re:trust:epoch",
+        // Offline client-cert CRL + in-process hot-reload (rebuilds the verifier).
+        "--client-crl", &crl, "--client-crl-reload-secs", "1",
+        "--cores", "1", "--inner-http-url", &inner_url,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+
+    let config = mcp_re_proxy::cli::parse_args(&argv).expect("parse config");
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let sd = Arc::clone(&shutdown);
+    let handle = std::thread::spawn(move || {
+        let _ = mcp_re_proxy::app::run(config, sd);
+    });
+
+    let addr: SocketAddr = bind.parse().expect("bind addr");
+    let mut up = false;
+    for _ in 0..200 {
+        if TcpStream::connect(addr).is_ok() {
+            up = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(up, "app::run did not bind {addr}");
+
+    // 1. Short-lived (compliant) client leaf → ACCEPTED end to end.
+    let ok = cold_round_trip(
+        addr,
+        build_client_config(&material.client_ca),
+        &signed_request("inproc-ok"),
+    )
+    .expect("round trip (short cert)");
+    assert!(
+        is_success(&ok.body),
+        "a short-lived client cert must be ACCEPTED: {}",
+        String::from_utf8_lossy(&ok.body)
+    );
+
+    // 2. Long-lived client leaf (over the ceiling) → REJECTED at the cert-lifetime
+    //    gate. Chains to the same CA (handshake succeeds), so it is the LIFETIME, not
+    //    the chain, that rejects it — exactly the GKE failure.
+    let (long_leaf, long_key) =
+        make_leaf(&material.client_ca, vec![uri(CLIENT_ACTOR_ID)], None, true);
+    let rej = cold_round_trip(
+        addr,
+        client_config_from(&long_leaf, &long_key),
+        &signed_request("inproc-long"),
+    )
+    .expect("round trip (long cert)");
+    assert!(
+        !is_success(&rej.body),
+        "a long-lived client cert must be REJECTED: {}",
+        String::from_utf8_lossy(&rej.body)
+    );
+    assert!(
+        String::from_utf8_lossy(&rej.body).contains("transport_binding_failed"),
+        "the over-ceiling cert must fail closed with the cert-lifetime verdict: {}",
+        String::from_utf8_lossy(&rej.body)
+    );
+
+    // Let one CRL hot-reload cycle fire (--client-crl-reload-secs 1) so the reload
+    // task's rebuild path is exercised, then a final request still succeeds.
+    std::thread::sleep(Duration::from_millis(1300));
+    let after_reload = cold_round_trip(
+        addr,
+        build_client_config(&material.client_ca),
+        &signed_request("inproc-after-reload"),
+    )
+    .expect("round trip (after CRL reload)");
+    assert!(
+        is_success(&after_reload.body),
+        "serving must continue after a CRL hot-reload: {}",
+        String::from_utf8_lossy(&after_reload.body)
+    );
+
+    // Keep-alive-mode client path: two requests over the connection-reuse helper
+    // (distinct from the cold path). The current wire is Connection: close, so the
+    // helper reconnects each time — exercising its reconnect accounting either way.
+    let mut kept = None;
+    let reconnects = AtomicUsize::new(0);
+    for i in 0..2 {
+        let r = keepalive_round_trip(
+            addr,
+            build_client_config(&material.client_ca),
+            &signed_request(&format!("inproc-ka-{i}")),
+            &mut kept,
+            &reconnects,
+        )
+        .expect("keep-alive round trip");
+        assert!(
+            is_success(&r.body),
+            "keep-alive request must be accepted: {}",
+            String::from_utf8_lossy(&r.body)
+        );
+    }
+
+    shutdown.store(true, Ordering::SeqCst);
+    let _ = handle.join();
+}
+
 /// The full ADR-051 §7 load run — the manual/dispatch lane (`#[ignore]`), scaled
 /// by `MCP_RE_LOADGEN_*`. Not a per-PR gate; run explicitly to produce the
 /// baseline/SLO numbers (MCPRE-110):
 ///
 /// ```text
-/// bazel test //mcp-re-proxy:tls_load_harness_bench --test_arg=--ignored \
-///   --test_env=MCP_RE_LOADGEN_CONCURRENCY=256 --test_env=MCP_RE_LOADGEN_REQUESTS=20000 \
-///   --test_env=MCP_RE_LOADGEN_HW_CLASS=... --test_env=MCP_RE_LOADGEN_OUT=/tmp/report.json \
-///   --test_output=all
+/// cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench \
+///   -- --ignored --nocapture
+///   # env: MCP_RE_LOADGEN_CONCURRENCY / _REQUESTS / _CORES / _HW_CLASS / _OUT
 /// ```
+// ADR-051 §7 load benchmark. It is NOT `#[ignore]`: the whole file is already gated
+// to the `redis_replay` INTEGRATION lane (it stands up a Redis fleet), so it never
+// runs in the default unit battery. Scaled by `MCP_RE_LOADGEN_*` env; prints the
+// report and (optionally) writes machine-readable JSON. The COST-bearing live
+// counterpart is the GKE runbook, which stays manual (gcloud auth + PROJECT_ID).
 #[test]
-#[ignore = "ADR-051 §7 load benchmark — manual/dispatch lane, not a per-PR gate"]
 fn tls_load_harness_bench() {
     let cfg = LoadConfig::from_env();
+    // In a containerized runner (K8s Job) the Docker daemon is unavailable, so allow
+    // pointing the bench at an already-running primary+2-replica Redis via
+    // MCP_RE_LOADGEN_REDIS_URL; otherwise bring up the Docker-backed fleet as before.
+    let external_redis = std::env::var("MCP_RE_LOADGEN_REDIS_URL").ok().filter(|s| !s.is_empty());
+    let _fleet = if external_redis.is_none() { Some(RedisFleet::start()) } else { None };
+    let redis_url = external_redis.unwrap_or_else(|| _fleet.as_ref().unwrap().url());
     let material = write_material();
     let backend = spawn_http_echo_backend();
-    // Pin the served worker count to cfg.cores (MCP_RE_LOADGEN_CORES) so the report
-    // is honest and the 1→N scaling curve is reproducible (run at cores=1 then =N).
-    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), cfg.cores);
+    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), cfg.cores, &redis_url);
     let config = build_client_config(&material.client_ca);
 
     let report = run_load(proxy.addr, config, &cfg);
     print_report(&cfg, &report);
     maybe_write_json(&cfg, &report);
 
-    // Even in the manual lane, a run that could not drive the listener at all is a
-    // harness failure, not a benchmark result.
     assert!(report.successes > 0, "load run produced zero successful requests");
     assert_eq!(
         report.successes + report.failures,

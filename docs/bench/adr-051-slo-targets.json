@@ -1,14 +1,13 @@
 {
   "schema": "mcp-re-slo-targets/v1",
   "adr": "ADR-MCPRE-051",
-  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
+  "section": "\u00a77 proof obligation \u2014 benchmark-first, SLO-gated releases",
   "issue": "MCPRE-110 (#317) + MCPRE-123",
-  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "description": "The declared release-gate thresholds for ADR-051 \u00a77. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
   "baseline_ref": "docs/bench/adr-051-baseline-local.json",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
   "local_regression_gate": "scripts/adr051_slo_gate.py",
   "production_slo_gate": "scripts/slo_gate.py",
-
   "local_regression": {
     "status": "active",
     "kind": "relative-to-committed-baseline",
@@ -16,8 +15,8 @@
     "tolerances": {
       "throughput_rps_min_fraction": 0.85,
       "p50_added_us_max_fraction": 1.25,
-      "p99_added_us_max_fraction": 1.30,
-      "p999_added_us_max_fraction": 1.50,
+      "p99_added_us_max_fraction": 1.3,
+      "p999_added_us_max_fraction": 1.5,
       "comment": "A fresh anchor run must sustain >= 85% of baseline throughput and stay within the stated multiples of baseline added-latency percentiles. Bands are wider on the tail (p999) than the median because the tail is noisier on a co-located box; tighten them once a dedicated loadgen removes that noise."
     },
     "per_core_scaling": {
@@ -25,55 +24,82 @@
       "comment": "NOT gated locally: the 1->N curve is non-authoritative on a single box (co-located loadgen contends for cores). Recorded only; the authoritative curve lives in production_slo below."
     }
   },
-
   "production_slo": {
     "status": "declared",
-    "measured_on": "2026-07-10; GKE us-central1-a cluster mcp-re-fleet; tls_load_harness_bench (async_serve) as a K8s Job on a dedicated node; cold TLS1.3-mTLS, concurrency 64, 2000 requests/run; MCP_RE_LOADGEN_CORES 1 then 8; in-process echo inner, in-memory replay (envelope-conformant). Enforced by scripts/slo_gate.py.",
+    "measured_on": "2026-07-12; GKE us-central1-a cluster mcp-re-fleet (project MCP-S tests), branch adr-024-mrt-authz-inheritance-test serving path (RFC 9421 + RFC 9530 carrier); tls_load_harness_bench built with --features async_serve,redis_replay, run as a K8s Job with an in-pod primary+2-replica Redis native-sidecar (durability tier redis-wait-quorum:2:2000); cold TLS1.3-mTLS, concurrency 128, 8000 requests/run (v2 canonical envelope); MCP_RE_LOADGEN_CORES 1 then 8; in-process HTTP echo inner. Enforced by scripts/slo_gate.py.",
     "kind": "absolute-per-hardware-profile",
     "hardware_class": "e2-standard-8",
-    "hardware_note": "The DECLARED floor is the WEAKER of the two measured classes (e2-standard-8); a run on that class or better clears these targets (c3-standard-8, measured faster, also clears them). Floors ~= 0.64x measured median throughput; latency ceilings ~= 1.5-1.8x measured tail, with margin for run-to-run variance.",
+    "hardware_note": "The DECLARED floor is the WEAKER of the two measured classes (e2-standard-8, 402.1 rps 8-core); a run on that class or better clears these targets (c3-standard-8, 499.4 rps, also clears). Throughput floor ~=0.62x the weaker measured 8-core median; latency ceilings ~=1.3-1.5x the weaker measured tail, with margin for run-to-run variance; per-core floor below the weaker measured factor.",
     "targets": {
       "aggregate_throughput_rps_min": 250,
-      "p50_added_us_max": 250000,
-      "p99_added_us_max": 600000,
-      "p999_added_us_max": 900000
+      "p50_added_us_max": 360000,
+      "p99_added_us_max": 2100000,
+      "p999_added_us_max": 2350000
     },
     "per_core_scaling": {
       "gated": true,
-      "linear_tolerance_min": 0.60,
+      "linear_tolerance_min": 0.6,
       "cores_under_test": 8,
-      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Floor set below the WEAKER measured factor (c3 0.662, e2 0.718) with margin."
+      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Weaker measured factor e2 0.703 (c3 0.671); floor 0.6 with margin."
     },
     "measurements": {
-      "note": "Raw measured baselines (no fabrication). throughput = verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
+      "note": "v2 canonical envelope (RFC 9421 carrier, concurrency 128 / 8000 requests), GKE 2026-07-12. Raw measured baselines (no fabrication). throughput=verified responses/sec; latency in microseconds; scaling = tput_8 / (tput_1 * 8).",
       "e2-standard-8": {
-        "one_core": { "throughput_rps": 67.9, "p50_us": 937306, "p99_us": 1076055, "p999_us": 1347700, "success": "2000/2000" },
-        "eight_core": { "throughput_rps": 390.2, "p50_us": 148240, "p99_us": 369439, "p999_us": 508037, "success": "2000/2000" },
-        "per_core_linear_factor": 0.718
+        "one_core": {
+          "throughput_rps": 71.5,
+          "p50_us": 1787483,
+          "p99_us": 2048244,
+          "p999_us": 2203389,
+          "success": "8000/8000"
+        },
+        "eight_core": {
+          "throughput_rps": 402.1,
+          "p50_us": 236999,
+          "p99_us": 1382870,
+          "p999_us": 1789475,
+          "success": "8000/8000"
+        },
+        "per_core_linear_factor": 0.703
       },
       "c3-standard-8": {
-        "one_core": { "throughput_rps": 90.9, "p50_us": 701624, "p99_us": 763536, "p999_us": 919626, "success": "2000/2000" },
-        "eight_core": { "throughput_rps": 481.6, "p50_us": 121740, "p99_us": 318690, "p999_us": 362141, "success": "2000/2000" },
-        "per_core_linear_factor": 0.662
+        "one_core": {
+          "throughput_rps": 93.0,
+          "p50_us": 1376072,
+          "p99_us": 1610731,
+          "p999_us": 1800623,
+          "success": "8000/8000"
+        },
+        "eight_core": {
+          "throughput_rps": 499.4,
+          "p50_us": 211604,
+          "p99_us": 966309,
+          "p999_us": 1232536,
+          "success": "8000/8000"
+        },
+        "per_core_linear_factor": 0.671
       }
-    }
+    },
+    "envelope_note": "v2 canonical envelope: RFC 9421 carrier, concurrency 128 / 8000 requests, cold TLS1.3-mTLS (keepalive_reuse=0). These are cold-connection ENVELOPE figures for regression detection on declared hardware, not user-facing steady-state latency (production reuses connections). Tails are fatter than the superseded v1 (64/2000) run because concurrency doubled and requests 4x'd."
   },
-
   "absolute_gates": {
     "status": "active",
-    "kind": "hardware-independent correctness gates — always required, every release",
+    "kind": "hardware-independent correctness gates \u2014 always required, every release",
     "gates": [
       {
         "name": "replay-race",
         "requirement": "N concurrent submissions of the same signed request across cores and across replicas yield EXACTLY ONE Fresh and N-1 Replay.",
-        "enforced_by": ["//mcp-re-proxy:replay_race_harness_test"],
-        "adr_ref": "ADR-MCPRE-051 §4"
+        "enforced_by": [
+          "//mcp-re-proxy:replay_race_harness_test"
+        ],
+        "adr_ref": "ADR-MCPRE-051 \u00a74"
       },
       {
         "name": "bounded-drain",
         "requirement": "Graceful drain joins all in-flight requests within the bounded grace window; zero abandoned requests.",
-        "enforced_by": ["//mcp-re-proxy:async_drain_test"],
-        "adr_ref": "ADR-MCPRE-051 §6"
+        "enforced_by": [
+          "//mcp-re-proxy:async_drain_test"
+        ],
+        "adr_ref": "ADR-MCPRE-051 \u00a76"
       }
     ]
   }

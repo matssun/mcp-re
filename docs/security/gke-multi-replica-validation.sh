@@ -44,12 +44,25 @@
 # Exit 0 == all four proofs pass.
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-REPLACE_WITH_PROJECT_ID}"
+# PROJECT_ID targets EVERY gcloud call explicitly (never the ambient active
+# config), so this harness can only ever act on the project the operator names.
+# Defaults to the active gcloud project; must resolve to a real id.
+PROJECT_ID="${PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
+[[ -n "$PROJECT_ID" && "$PROJECT_ID" != "REPLACE_WITH_PROJECT_ID" ]] \
+  || { printf 'set PROJECT_ID (no active gcloud project resolved)\n' >&2; exit 1; }
 CLUSTER="${CLUSTER:-mcp-re-fleet}"
 REGION="${REGION:-us-central1}"
 NAMESPACE="${NAMESPACE:-mcp-re}"
 RELEASE="${RELEASE:-mcp-re-proxy}"
 REPLICAS="${REPLICAS:-3}"
+# Container images (built + pushed by deploy/cloudbuild/mcp-re-images.yaml). The
+# chart's default bare `mcp-re-proxy` name is unpullable on GKE, so override to the
+# Artifact Registry path here.
+AR="${MCP_RE_AR:-${REGION}-docker.pkg.dev/${PROJECT_ID}/mcp-re}"
+PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.11.0}"
+INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.11.0}"
+# The TLS/trust material the fleet Secret is built from (emit_mtls_fixtures output).
+FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:?set MCP_RE_FIXTURES_DIR to an emit_mtls_fixtures output dir}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
 PORTS_TOML="$REPO_ROOT/config/ports.toml"
@@ -79,17 +92,35 @@ LOCAL_PORT_B="${MCP_RE_VALIDATION_FWD_B_PORT:-$(port_of mcp_re_validation_fwd_b)
 if [[ "${1:-}" == "--teardown" ]]; then
   log "Teardown"
   helm -n "$NAMESPACE" uninstall "$RELEASE" || true
-  gcloud container clusters delete "$CLUSTER" --region "$REGION" --quiet || true
+  gcloud container clusters delete "$CLUSTER" --project "$PROJECT_ID" --region "$REGION" --quiet || true
   exit 0
 fi
 
 # --- 1. Cluster (idempotent create-or-reuse) ---------------------------------
 log "Cluster $CLUSTER ($REGION) in $PROJECT_ID"
-if ! gcloud container clusters describe "$CLUSTER" --region "$REGION" >/dev/null 2>&1; then
-  gcloud container clusters create-auto "$CLUSTER" --region "$REGION"
+if ! gcloud container clusters describe "$CLUSTER" --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
+  gcloud container clusters create-auto "$CLUSTER" --project "$PROJECT_ID" --region "$REGION"
 fi
-gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+gcloud container clusters get-credentials "$CLUSTER" --project "$PROJECT_ID" --region "$REGION"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+# --- 1b. Fleet TLS/trust Secret (mounted by the chart at tls.mountPath) -------
+# Built from the emit_mtls_fixtures output; key names match the chart's
+# --signing-key-seed / --tls-cert / --tls-key / --client-ca / --trust mounts.
+log "TLS/trust Secret (mcp-re-proxy-material) from $FIXTURES_DIR"
+kubectl -n "$NAMESPACE" create secret generic mcp-re-proxy-material \
+  --from-file=signing-seed="$FIXTURES_DIR/signing_seed" \
+  --from-file=tls.crt="$FIXTURES_DIR/server_cert.pem" \
+  --from-file=tls.key="$FIXTURES_DIR/server_key.pem" \
+  --from-file=client-ca.pem="$FIXTURES_DIR/client_ca.pem" \
+  --from-file=trust.json="$FIXTURES_DIR/trust.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# --- 1c. Inner FastMCP backend (the ALLOWED Streamable-HTTP inner plane) ------
+log "Inner FastMCP backend ($INNER_IMAGE)"
+sed "s#image: mcp-re-inner-fastmcp:0.11.0#image: $INNER_IMAGE#" \
+  "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml" | kubectl -n "$NAMESPACE" apply -f -
+kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-inner-fastmcp --timeout=420s
 
 # --- 2. Shared Redis tier (replay + trust epoch) -----------------------------
 log "Shared Redis tier"
@@ -116,22 +147,31 @@ spec:
   selector: { app: mcp-re-redis }
   ports: [{ port: 6379, targetPort: 6379 }]
 YAML
-kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis --timeout=120s
+kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis --timeout=300s
 
 # --- 3. Deploy the fleet (strict + fleet + shared tiers) ---------------------
 # The chart REFUSES to start a --fleet deployment on a node-local replay cache
 # (ADR-MCPS-049 guardrail), so a green rollout already proves the shared tier is
 # wired. TLS/trust material must be provided as the `mcp-re-tls` Secret.
-log "Deploy fleet ($REPLICAS replicas), strict + fleet"
+log "Deploy fleet ($REPLICAS replicas) — always-maximal-security posture; fleet topology"
+INNER_URL="http://mcp-re-inner-fastmcp:$(port_of mcp_re_inner_backend)/mcp/"
 helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set replicaCount="$REPLICAS" \
-  --set strict=true --set fleet=true \
+  --set fleet=true \
   --set bindPort="$BIND_PORT" \
+  --set image.repository="${PROXY_IMAGE%:*}" \
+  --set image.tag="${PROXY_IMAGE##*:}" \
+  --set-string "inner.httpUrls={$INNER_URL}" \
   --set replay.redisUrl="redis://mcp-re-redis:6379" \
   --set trust.trustEpochRedisUrl="redis://mcp-re-redis:6379" \
-  --wait --timeout 5m
-kubectl -n "$NAMESPACE" rollout status deploy/"$RELEASE" --timeout=180s
-[[ "$(kubectl -n "$NAMESPACE" get deploy "$RELEASE" -o jsonpath='{.status.readyReplicas}')" -ge 2 ]] \
+  --wait --timeout 8m
+# The chart's deployment name is its fullname (<release>-<chart>), NOT the bare
+# release, so resolve it by the stable app label rather than assuming $RELEASE.
+DEPLOY="$(kubectl -n "$NAMESPACE" get deploy -l app.kubernetes.io/name=mcp-re-proxy \
+  -o jsonpath='{.items[0].metadata.name}')"
+[[ -n "$DEPLOY" ]] || fail "could not resolve the proxy deployment name"
+kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=420s
+[[ "$(kubectl -n "$NAMESPACE" get deploy "$DEPLOY" -o jsonpath='{.status.readyReplicas}')" -ge 2 ]] \
   || fail "fewer than 2 ready replicas — not a fleet"
 
 # Address two DISTINCT replicas by port-forwarding two specific pods, so a proof
@@ -158,8 +198,11 @@ REPLICA_B="127.0.0.1:${LOCAL_PORT_B}"
 CLIENT_SCRIPT="$REPO_ROOT/docs/security/mcp_re_gke_client.py"
 CLIENT="${MCP_RE_CLIENT:-python3 $CLIENT_SCRIPT}"
 [[ -f "$CLIENT_SCRIPT" ]] || fail "proof client missing: $CLIENT_SCRIPT"
-python3 -c 'import mcp_re_sdk' 2>/dev/null \
-  || fail "mcp-re-sdk not importable — run: pip install $REPO_ROOT/sdk/python"
+# Probe with the SAME interpreter the client runs under (the first word of
+# $CLIENT), so a venv-installed SDK is found even when the system python3 has none.
+CLIENT_PY="${CLIENT%% *}"
+"$CLIENT_PY" -c 'import mcp_re_sdk' 2>/dev/null \
+  || fail "mcp-re-sdk not importable by $CLIENT_PY — run: $CLIENT_PY -m pip install $REPO_ROOT/sdk/python"
 
 # Client identity + the fleet's TLS/trust material — the SAME material as the
 # `mcp-re-tls` Secret. Supplied via env (no secrets, no host/port literals here).
@@ -172,7 +215,11 @@ CLIENT_COMMON=(
   --server-signer    "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
   --server-key-id    "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
   --server-pubkey    "${MCP_RE_SERVER_PUBKEY:?set MCP_RE_SERVER_PUBKEY to a b64url key or @file}"
-  --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE as scheme,host,port,tenant,route,realm}"
+  --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
+  # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
+  # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.
+  --target-uri       "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
+  --trust-domain     "${MCP_RE_TRUST_DOMAIN:-example.com}"
   --tls-cert         "${MCP_RE_TLS_CERT:?set MCP_RE_TLS_CERT to the client cert PEM path}"
   --tls-key          "${MCP_RE_TLS_KEY:?set MCP_RE_TLS_KEY to the client key PEM path}"
   --server-ca        "${MCP_RE_SERVER_CA:?set MCP_RE_SERVER_CA to the server CA PEM path}"
@@ -239,8 +286,8 @@ log "Proof 4 — zero-drop rolling update with drain"
     printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
       >/dev/null 2>&1 || echo DROP
   done ) > /tmp/mcps90.load 2>&1 & LOAD=$!
-kubectl -n "$NAMESPACE" set env deploy/"$RELEASE" ROLLOUT_NONCE="$(date +%s)"
-kubectl -n "$NAMESPACE" rollout status deploy/"$RELEASE" --timeout=300s
+kubectl -n "$NAMESPACE" set env deploy/"$DEPLOY" ROLLOUT_NONCE="$(date +%s)"
+kubectl -n "$NAMESPACE" rollout status deploy/"$DEPLOY" --timeout=300s
 wait $LOAD || true
 ! grep -q DROP /tmp/mcps90.load || fail "rolling update dropped in-flight requests"
 echo "  OK: rolling update completed with zero dropped in-flight requests."

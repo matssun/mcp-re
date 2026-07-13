@@ -3,34 +3,6 @@
   "description": "MCPS-070 (MCP-RE-EPIC-P6.6C). The checked-in, machine-checkable map from each MCP-RE security property (P6.6A + P6.6B) to the Bazel test target AND the named test function that PROVES it. Docs reference this manifest ('see the manifest') instead of stale literal counts. Guarded by //mcp-re-conformance:security_traceability_guard_test (MCPS-070): every entry's bazel_target must be declared by a real BUILD.bazel rule and every test_fn must appear in the referenced test source on disk. A renamed or removed target/fn makes that guard FAIL. Each entry's source is read from DISK at test time via runfiles (the same $(rlocationpath) scheme as the conformance drift_guard); nothing is trusted as written.",
   "entries": [
     {
-      "property": "core conformance vectors: tampered body/id + replay/expiry/audience/envelope (object == http parity)",
-      "bazel_target": "//mcp-re-conformance:object_suite_test",
-      "source": "mcp-re-conformance/tests/object_suite_test.rs",
-      "test_fn": "object_runner_every_case_actual_equals_expected",
-      "notes": "The committed mcp-re-core vectors (tampered_id.json, v2_tampered_argument.json, replay_request.json, expired_request.json, wrong_audience_request.json, missing_envelope_request.json) are replayed in-process. Cross-transport parity is in http_harness_test (object == http; MCP-RE is HTTP-profile only). The vector corpus itself is drift-guarded by conformance_manifest.json + drift_guard_test."
-    },
-    {
-      "property": "HostSession sign produces a request the verifier accepts (round trip)",
-      "bazel_target": "//mcp-re-host:host_session_test",
-      "source": "mcp-re-host/tests/host_session_test.rs",
-      "test_fn": "signed_request_is_accepted_by_the_verifier",
-      "notes": "HostSession sign/verify foundation: the session signs with the injected clock + RNG and the verifier accepts."
-    },
-    {
-      "property": "HostSession verifies a response against the STORED request hash, not a caller-supplied value",
-      "bazel_target": "//mcp-re-host:host_session_test",
-      "source": "mcp-re-host/tests/host_session_test.rs",
-      "test_fn": "verify_response_uses_stored_hash_not_a_caller_value",
-      "notes": "HostSession sign/verify: response correlation uses the hash the session itself stored at sign time; a caller cannot inject the binding hash."
-    },
-    {
-      "property": "HostSession rejects a response bound to the wrong request hash",
-      "bazel_target": "//mcp-re-host:host_session_test",
-      "source": "mcp-re-host/tests/host_session_test.rs",
-      "test_fn": "verify_response_rejects_wrong_binding",
-      "notes": "HostSession sign/verify: a response whose bound hash does not match the stored request hash is rejected."
-    },
-    {
       "property": "mTLS client/server happy path: trusted server + client round-trip succeeds",
       "bazel_target": "//mcp-re-transport:mtls_client_test",
       "source": "mcp-re-transport/tests/mtls_client_test.rs",
@@ -73,13 +45,6 @@
       "notes": "Defense-in-depth for the four server-auth cases: an empty server trust anchor set does not silently accept any server \u2014 it fails closed."
     },
     {
-      "property": "caller-supplied .verified is stripped and replaced even when it is part of the signed payload (in-process)",
-      "bazel_target": "//mcp-re-proxy:proxy_test",
-      "source": "mcp-re-proxy/tests/proxy_test.rs",
-      "test_fn": "caller_supplied_verified_context_is_stripped_even_when_signed",
-      "notes": "In-process unit witness of the strip/replace property: a signed-in .verified block is still stripped before forwarding."
-    },
-    {
       "property": "env key source loads + signs (MCPS-076): dev-feature build reads the seed and signs correctly WITHOUT mutating the process environment (issue #25)",
       "bazel_target": "//mcp-re-proxy:dev_env_key_source_test",
       "source": "mcp-re-proxy/tests/dev_env_key_source_test.rs",
@@ -94,27 +59,6 @@
       "notes": "Defense-in-depth for the env-keysource path: error messages from the key source never echo the secret seed."
     },
     {
-      "property": "authorization binding: Core binds on_behalf_of and authorization_hash into the signed object, surfaced to the AuthorizationProfile (Core binds; profile interprets)",
-      "bazel_target": "//mcp-re-host:host_session_test",
-      "source": "mcp-re-host/tests/host_session_test.rs",
-      "test_fn": "signed_request_is_accepted_by_the_verifier",
-      "notes": "\u00a7A Delegation / authorization binding (ADR-MCPS-013). The signed request carries on_behalf_of + authorization_hash inside the signing scope; the verifier accepts and the verified object surfaces verified.on_behalf_of == ON_BEHALF_OF and verified.authorization_hash == AUTH_HASH for the configured AuthorizationProfile to interpret. Core BINDS; it never validates artifact contents, provides RBAC, or emits a mismatch (coverage Partial). Same fn as the round-trip foundation entry; this entry names the authorization-binding property \u00a7A maps."
-    },
-    {
-      "property": "trust-cache / revocation-tier: a bounded trust cache admits an active key and denies an unknown key (fails closed)",
-      "bazel_target": "//mcp-re-proxy:keyset_admission_test",
-      "source": "mcp-re-proxy/tests/keyset_admission_test.rs",
-      "test_fn": "composes_with_bounded_trust_cache_admits_active_and_denies_unknown",
-      "notes": "\u00a7A Revocation / trust propagation \u2192 \u00a7B Axis 2 (ADR-MCPS-021). A BoundedTrustCache wrapping the ADR-022 authorized-key-set resolver admits an active node key and fails closed on an unknown key. The bounded-window tier surfaces its own honest guarantee (never zero-window). \u00a7B Axis 2's live/push tiers are additionally exercised by the proxy_unit_test revocation_tier/live_trust/push_trust vectors re-derived by drift_guard."
-    },
-    {
-      "property": "keyset-admission: per-node keys accepted, unknown/revoked rejected, shared-remote-signer mode (Axis 3 blast radius)",
-      "bazel_target": "//mcp-re-proxy:keyset_admission_test",
-      "source": "mcp-re-proxy/tests/keyset_admission_test.rs",
-      "test_fn": "per_node_keyset_node_a_and_node_b_accepted",
-      "notes": "\u00a7A Key custody / blast radius \u2192 \u00a7B Axis 3 (ADR-MCPS-022) AND \u00a7A Signer identity. Per-node Ed25519 keys are each an explicit member of the authorized key set (node-a and node-b accepted); the sibling cases per_node_keyset_unknown_key_rejected / per_node_keyset_revoked_key_rejected fail closed, and shared_remote_signer_only_shared_key_accepted covers the single-pinned-identity mode. One compromised node revokes only that node's key \u2014 never a smaller blast radius than per-node."
-    },
-    {
       "property": "audit-evidence vocabulary drift (ADR-MCPS-035): every emitted rejection reason is a member of the frozen McpReError::wire_code() taxonomy and the success-event set is exactly the two-item allowlist",
       "bazel_target": "//mcp-re-conformance:audit_vocabulary_guard_test",
       "source": "mcp-re-conformance/tests/audit_vocabulary_guard_test.rs",
@@ -127,118 +71,6 @@
       "source": "mcp-re-conformance/tests/forbidden_claim_guard_test.rs",
       "test_fn": "no_forbidden_phrase_is_an_asserted_claim",
       "notes": "ADR-MCPS-036 gate item (d) / issue #155. The forbidden-wording list (co-located with \u00a7A's Forbidden-claim column) does not appear as a live claim in security-boundary / v0.5-claim-matrix / threat-coverage / composability / proposal-scope, read from disk via runfiles. A phrase inside a Forbidden-claim table cell or a negated sentence is legitimately naming the non-goal and is allowed."
-    },
-    {
-      "property": "method-transparency (ADR-MCPS-030): the Core verdict is independent of the JSON-RPC method \u2014 identical verdict across tools/list, tools/call, resources/list, prompts/list, and a fabricated x/nonexistent/custom, for an accepted AND a rejected envelope",
-      "bazel_target": "//mcp-re-conformance:method_transparency_test",
-      "source": "mcp-re-conformance/tests/method_transparency_test.rs",
-      "test_fn": "accepted_verdict_is_identical_across_all_methods",
-      "notes": "ADR-MCPS-034 behavioral equivalence proof (extends ADR-MCPS-030). Each method is re-signed (method is in signing scope, ADR-MCPS-026), so the proof is verdict PARITY across honestly-signed envelopes \u2014 a strictly stronger claim than mere acceptance of known methods. The rejected family (rejected_verdict_is_identical_across_all_methods) holds one defect (expired window) constant while only the method varies, proving the method neither rescues nor worsens the verdict; accepted_and_rejected_verdicts_are_distinct keeps the parity non-vacuous."
-    },
-    {
-      "property": "method-transparency is durable (ADR-MCPS-030): no non-test mcp-re-core/src code references a concrete MCP method-name literal (tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get, sampling/createMessage, completion/complete)",
-      "bazel_target": "//mcp-re-conformance:method_name_drift_guard_test",
-      "source": "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
-      "test_fn": "no_banned_method_literal_in_non_test_core_src",
-      "notes": "ADR-MCPS-034 static drift guard (extends ADR-MCPS-030). Scans every *.rs in mcp-re-core/src (delivered via runfiles, dir re-read so new files are covered), excluding the trailing #[cfg(test)] region of each file, and FAILS if any banned method-name literal appears in production Core. The bare \"method\" field is deliberately NOT banned (bare_method_word_is_not_banned) \u2014 Core must still sign/canonicalize the full object; guard_inputs_are_non_empty_and_exclusion_is_load_bearing proves the test-region exclusion is exercised so the guard cannot silently false-pass."
-    },
-    {
-      "property": "discovery/enforcement: advertised + valid signed exchange accepted under require_mcp_re",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v01_advertised_and_valid_accepted_under_require_mcp_re",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: absence of MCP-RE evidence rejected under require_mcp_re",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v02_absent_under_require_mcp_re_rejected",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: absence accepted + audited under allow_legacy_explicit with an allowlisted route",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v03_absent_under_explicit_legacy_accepted_and_audited",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: unsigned response rejected (no envelope) under require_mcp_re",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v04_unsigned_response_rejected",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: invalid/unexpected server_signer rejected",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v05_invalid_server_signer_rejected",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: unsupported/mismatched version is bad evidence (fail closed, never fallback)",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v06_unsupported_version_rejected_is_bad_evidence",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: unsupported/mismatched canonicalization_id is bad evidence (fail closed)",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v07_unsupported_canonicalization_id_rejected_is_bad_evidence",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: advert vs verified-message mismatch does not downgrade (advert is log-only)",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v08_advert_vs_message_mismatch_does_not_downgrade",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: stripped discovery advert does not downgrade or weaken policy",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v09_stripped_discovery_does_not_downgrade",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: tampered discovery advert does not weaken policy",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v10_tampered_discovery_does_not_weaken_policy",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: unknown key in the signed envelope region fails closed (bad evidence, not absence)",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v11_unknown_key_in_signed_region_fails_closed",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: observability-only change (trace context) does not change the decision",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v12_observability_change_does_not_change_decision",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: legacy explicitly allowed succeeds and is marked legacy_explicit in audit",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v13_legacy_explicitly_allowed_succeeds_and_marked",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
-    },
-    {
-      "property": "discovery/enforcement: response request_hash mismatch rejected (response-to-request binding)",
-      "bazel_target": "//mcp-re-conformance:discovery_enforcement_conformance_test",
-      "source": "mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs",
-      "test_fn": "v14_request_hash_mismatch_rejected",
-      "notes": "MCPS-50 (#197) ADR-MCPS-043 \u00a7Compliance discovery/enforcement acceptance vector, exercised over the real mcp-re-client-core decision surface."
     },
     {
       "property": "cloud-KMS seam: a KMS-produced Ed25519 response signature verifies under the mcp-re-core verifier (provider-agnostic delegation)",
@@ -346,41 +178,6 @@
       "notes": "MCPS-72 (#252) / MCPS-56. ADR-MCPS-028 \u00a7G delegated TLS handshake signing fronting the AWS KMS key: the TLS-layer signature verifies under the same reported SPKI, so the device/KMS never exports the private key yet still terminates the handshake."
     },
     {
-      "property": "Mode C attested ingress: v2 assertion carrying revocation_result=revoked is rejected node-side before dispatch",
-      "bazel_target": "//mcp-re-proxy:proxy_lb_assertion_test",
-      "source": "mcp-re-proxy/tests/proxy_lb_assertion_test.rs",
-      "test_fn": "mode_c_revoked_is_rejected_before_dispatch",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). The node treats the attestor's revocation_result as an opaque asserted fact and admits only Good (bind-not-interpret, \u00a7C3); a revoked verdict fails closed with mcp-re.transport_binding_failed and the inner is never reached. GREEN-OFFLINE (no live GCP)."
-    },
-    {
-      "property": "Mode C attested ingress: v2 assertion carrying a stale CRL-freshness verdict is rejected node-side before dispatch",
-      "bazel_target": "//mcp-re-proxy:proxy_lb_assertion_test",
-      "source": "mcp-re-proxy/tests/proxy_lb_assertion_test.rs",
-      "test_fn": "mode_c_stale_crl_freshness_is_rejected_before_dispatch",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A stale attestor CRL surfaces as an explicit StaleCrl verdict; the node fails closed WITHOUT itself performing any CRL-freshness computation (\u00a7C3). GREEN-OFFLINE."
-    },
-    {
-      "property": "Mode C attested ingress: a v2 assertion with a bad attestor signature is rejected node-side before dispatch",
-      "bazel_target": "//mcp-re-proxy:proxy_lb_assertion_test",
-      "source": "mcp-re-proxy/tests/proxy_lb_assertion_test.rs",
-      "test_fn": "mode_c_bad_signature_is_rejected_before_dispatch",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A v2 assertion signed by an untrusted attestor key (under a trusted key id) fails the Ed25519 check over the length-prefixed v2 preimage; fail closed. GREEN-OFFLINE."
-    },
-    {
-      "property": "Mode C attested ingress: a v2 assertion bound to a cross-request request_hash is rejected node-side before dispatch",
-      "bazel_target": "//mcp-re-proxy:proxy_lb_assertion_test",
-      "source": "mcp-re-proxy/tests/proxy_lb_assertion_test.rs",
-      "test_fn": "mode_c_cross_request_hash_is_rejected_before_dispatch",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10). A validly-signed assertion bound to a DIFFERENT request's hash fails the request-binding check against the in-hand hash; no independent nonce is needed (\u00a7C1). GREEN-OFFLINE."
-    },
-    {
-      "property": "Mode C attested ingress: the forwarded draft-02 request preimage is byte-identical to Mode A (C-only facts ride the assertion, not the request)",
-      "bazel_target": "//mcp-re-proxy:proxy_lb_assertion_test",
-      "source": "mcp-re-proxy/tests/proxy_lb_assertion_test.rs",
-      "test_fn": "mode_c_forwarded_request_is_byte_identical_to_mode_a",
-      "notes": "MCPS-62. ADR-MCPS-023 \u00a7Conformance (v0.10) preimage invariance. The request the inner receives under Mode C is byte-identical to the one it receives under Mode A for the same signed request \u2014 proving the epic invariant of zero draft-02 preimage change. GREEN-OFFLINE."
-    },
-    {
       "property": "Mode C attested ingress refuses to start without the explicit pinned-mTLS acknowledgement (fail closed)",
       "bazel_target": "//mcp-re-proxy:proxy_unit_test",
       "source": "mcp-re-proxy/src/cli.rs",
@@ -402,50 +199,99 @@
       "notes": "MCPS-62. ADR-MCPS-023 \u00a7B1. The forwarded trusted-ingress identity header (Tier 2) is spoofable by any peer that can reach the socket; strict refuses it. Raw forwarded-identity headers remain forbidden under strict. GREEN-OFFLINE."
     },
     {
-      "property": "request object signature verified; tampered request body rejected over HTTP",
-      "bazel_target": "//mcp-re-conformance:http_harness_test",
-      "source": "mcp-re-conformance/tests/http_harness_test.rs",
-      "test_fn": "tampered_request_over_http_is_rejected",
-      "notes": "Over-the-wire message authenticity (HTTP-profile only, replacing the retired stdio demo-e2e A1). A mutated signed body breaks the request-object signature; the HTTP harness rejects it with mcp-re.invalid_signature. object==http parity is drift-guarded by object_suite_test + http_and_object_agree_for_all_shared_request_vectors."
+      "property": "method-transparency: the verify verdict is independent of the JSON-RPC method",
+      "bazel_target": "//mcp-re-conformance:method_transparency_test",
+      "source": "mcp-re-conformance/tests/method_transparency_test.rs",
+      "test_fn": "accepted_verdict_is_identical_across_all_methods",
+      "notes": "ADR-MCPS-030/034 behavioral half; \u00a7A Tool safety"
     },
     {
-      "property": "valid transport identity does NOT rescue an invalid request signature (transport != authn of the object)",
-      "bazel_target": "//mcp-re-proxy:proxy_transport_test",
-      "source": "mcp-re-proxy/tests/proxy_transport_test.rs",
-      "test_fn": "valid_identity_does_not_rescue_a_tampered_signature",
-      "notes": "A fully valid bound transport identity never rescues a tampered request object: the object signature is verified independently and fails closed before dispatch."
+      "property": "no concrete MCP method-name literal in non-test Core source",
+      "bazel_target": "//mcp-re-conformance:method_name_drift_guard_test",
+      "source": "mcp-re-conformance/tests/method_name_drift_guard_test.rs",
+      "test_fn": "no_banned_method_literal_in_non_test_core_src",
+      "notes": "ADR-MCPS-034 static half; \u00a7A Tool safety"
     },
     {
-      "property": "freshness: expired request rejected over HTTP",
-      "bazel_target": "//mcp-re-conformance:http_harness_test",
-      "source": "mcp-re-conformance/tests/http_harness_test.rs",
-      "test_fn": "expired_request_over_http_is_rejected",
-      "notes": "Over-the-wire freshness (HTTP-profile only, replacing the retired stdio demo-e2e A4). A request whose signed expiry is in the past is rejected with mcp-re.expired_request."
+      "property": "RFC 9421 request signature verified; a tampered request body is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "tampered_request_body_is_rejected",
+      "notes": "\u00a7A Message authenticity"
     },
     {
-      "property": "freshness + replay rejected over HTTP on a second submission (replay across submissions)",
-      "bazel_target": "//mcp-re-conformance:http_harness_test",
-      "source": "mcp-re-conformance/tests/http_harness_test.rs",
-      "test_fn": "replayed_request_over_http_is_rejected_on_second_submission",
-      "notes": "Over-the-wire replay resistance (HTTP-profile only, replacing the retired stdio demo-e2e A3). The first signed request is accepted; the identical bytes replayed are rejected with mcp-re.replay_detected. Cross-node/durable replay strength is deployment-dependent (redis_replay_e2e_test / fleet_replay_e2e_test, \u00a7B Axis 1)."
+      "property": "any mutation of the signed payload (body or JSON-RPC id) is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "mutated_payload_is_rejected",
+      "notes": "\u00a7A Integrity"
     },
     {
-      "property": "transport-binding EXACT: the verified transport identity must equal the request signer (mismatch denied before dispatch)",
-      "bazel_target": "//mcp-re-proxy:proxy_transport_test",
-      "source": "mcp-re-proxy/tests/proxy_transport_test.rs",
-      "test_fn": "mismatched_identity_is_denied_before_dispatch",
-      "notes": "Ingress binding EXACT (replacing the retired stdio demo_transport T3): a verified transport identity that does not equal the request signer is denied with mcp-re.transport_binding_failed before the inner is reached. The x5t#S256 channel binding of the RFC 9421 signer to the presented cert is additionally proven by //mcp-re-proxy:mtls_transport_binding_test."
+      "property": "the request is bound to its declared audience; a wrong-audience request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "wrong_audience_is_rejected",
+      "notes": "\u00a7A Audience binding"
     },
     {
-      "property": "response bound to its originating request hash; a response bound to the WRONG request is rejected over HTTP",
-      "bazel_target": "//mcp-re-conformance:http_harness_test",
-      "source": "mcp-re-conformance/tests/http_harness_test.rs",
-      "test_fn": "signed_response_bound_to_wrong_request_is_rejected_over_http",
-      "notes": "Over-the-wire response binding (HTTP-profile only, replacing the retired stdio demo-e2e A9/A10). A signed response verified against the wrong request hash fails with mcp-re.response_hash_mismatch; the HostSession stored-hash correlation is unit-proven by host_session_test."
+      "property": "authorization binding: the client binds an authorization artifact into the RFC 9421 request evidence",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "authorization_artifact_binding_is_bound_and_verified",
+      "notes": "\u00a7A Delegation / authorization binding"
+    },
+    {
+      "property": "freshness: an expired request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "expired_request_is_rejected",
+      "notes": "\u00a7A Freshness"
+    },
+    {
+      "property": "replay: a second submission of the same nonce is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "replayed_request_is_rejected_by_the_replay_tier",
+      "notes": "\u00a7A Replay resistance"
+    },
+    {
+      "property": "trust resolution: a signer key not in the authorized set fails closed",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "untrusted_signer_key_is_rejected",
+      "notes": "\u00a7A Revocation / trust propagation"
+    },
+    {
+      "property": "transport binding: the verified request actor is the identity the transport binding checks the channel against",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "transport_identity_binds_to_the_request_actor",
+      "notes": "\u00a7A Ingress binding"
+    },
+    {
+      "property": "key admission: a keyid outside the admitted set is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "unauthorized_key_id_is_rejected",
+      "notes": "\u00a7A Key custody / blast radius"
+    },
+    {
+      "property": "response bound to its originating request; a response bound to the WRONG request is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "response_bound_to_the_wrong_request_is_rejected",
+      "notes": "\u00a7A Response binding"
+    },
+    {
+      "property": "the request evidence block is client-authored and covered by content-digest; a caller-injected _meta not covered by the signature is rejected",
+      "bazel_target": "//mcp-re-conformance:rfc9421_security_properties_test",
+      "source": "mcp-re-conformance/tests/rfc9421_security_properties_test.rs",
+      "test_fn": "caller_supplied_proxy_meta_is_not_the_signed_authority",
+      "notes": "\u00a7A Verified security context"
     }
   ],
   "counts": {
     "comment": "Recorded count. The guard re-derives this from the entries array length and FAILS on mismatch.",
-    "entries": 63
+    "entries": 41
   }
 }

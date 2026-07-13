@@ -2,6 +2,19 @@
 
 Canonical glossary for the MCP-RE monorepo. One sentence per term. Distinct concepts get distinct names; overloaded words are flagged below.
 
+> **Status (ADR-MCPRE-050 — governing).** MCP-RE is **HTTP-profile only**. The sole
+> carrier is **RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest** (profile
+> id/tag `mcp-re-http-v1`, signature labels `mcp-re` / `mcp-re-response`). The
+> **Native / object profile** — the `draft-01`/`draft-02` `_meta` envelope, JCS
+> canonicalization, and the `canonicalization_id` selector — is **DELETED**: not a
+> carrier, not a fallback, not a live design option. Its record is frozen under
+> [`docs/archive/`](docs/archive/ARCHIVE.md) and recoverable at git tag
+> `pre-adr-mcpre-050-jcs`. Some terms below were written before this cutover and still
+> say "native profile", "draft-01/02", "JCS", or "canonicalization_id" — **read every
+> such mention as historical, superseded by this status.** The release/roadmap numbers
+> below (0.3–0.5, v0.6–v0.8) likewise predate the current 0.11 line and are historical
+> planning context, not current state.
+
 ## Language
 
 - **MCP-RE** — A transport-agnostic message-security profile for MCP providing authenticity, integrity, freshness, replay resistance, audience binding, authorization binding, response binding, and verified security context.
@@ -10,7 +23,7 @@ Canonical glossary for the MCP-RE monorepo. One sentence per term. Distinct conc
   - `0.3.1` = current released baseline.
   - `0.4` = in-flight security hardening release.
   - `0.5` = proposal-readiness / NSA-alignment release (docs, conformance, claim hardening; no wire change).
-- **Wire / envelope version** — The on-the-wire envelope schema version, currently `draft-01`; frozen unless a dedicated ADR justifies a field change.
+- **Wire carrier** — The over-the-wire evidence carrier is the RFC 9421 HTTP profile (`mcp-re-http-v1`); there is no separate JSON envelope-schema version. (The historical `draft-01`/`draft-02` `_meta` envelope was deleted with the native profile — ADR-MCPRE-050.)
 - **Method-transparent** — MCP-RE Core treats every MCP message as an opaque signed payload; no Core code path requires `tools/list` / `tools/call` or any method semantics for an enforcement decision.
 - **MTCI** — MCP Tool Catalog Integrity Profile; a *separate* future MCP extension for signed tool descriptors, explicitly outside MCP-RE Core (ADR-MCPS-030).
 
@@ -23,7 +36,7 @@ _Avoid_: "MCP-RE version" without qualifying release vs. wire; using "0.5" to im
 - **Method-transparency proof** — CI-enforced (not just documented) via two artifacts mapped to ADR-MCPS-030: a behavioral equivalence test (verdict independent of JSON-RPC `method`) and a static drift guard banning concrete MCP method-name literals (`tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`, `sampling/createMessage`, `completion/complete`) in non-test `mcp-re-core/src`.
 - **Method-aware logic** — Any future method-semantics enforcement lives outside `mcp-re-core` (MTCI / `mcp-re-policy` profile / `mcp-re-proxy` adapter / host layer), introduced with its own ADR; never inside Core.
 
-_Avoid_: a second/third security-boundary doc; a flat claim list parallel to the tiered matrix; banning the bare `"method"` field (Core must still sign/canonicalize the full object).
+_Avoid_: a second/third security-boundary doc; a flat claim list parallel to the tiered matrix; banning the bare `"method"` field (the signed evidence still covers the whole message).
 
 - **Capability-claim matrix (§A)** — Reviewer-facing per-capability allowed/forbidden wording; every capability is either *unconditional* or *"deployment-dependent; see §B"* (no third category). Lives in `v0.5-claim-matrix.md` §A above the tiered §B.
 - **Deployment-tier matrix (§B)** — The four-axis tiered composition (replay durability / trust propagation / key custody / ingress binding); composed claim is the AND of declared tiers, bounded by the weakest.
@@ -55,11 +68,11 @@ _Avoid_: "small field addition" / "just one metadata field" / "NSA alignment fie
 - **Discovery release track** — v0.6 finishes draft-02 server/runtime behavior (verify draft-02, build verified context, sign draft-02 response); **stateless-primary discovery + client enforcement policy is v0.7**; client-side proxy / SDK integration model is v0.7 or v0.8. Discovery is NOT in the v0.6 server-completion gate.
 
 - **Signer→audience binding** — `TrustResolver` resolves an expected `(server_signer, audience)` pair from local policy + verified transport *before* discovery is consulted; `audience` is a concrete tuple `{scheme, host, port, tenant_id, route_id, realm}` with tenant/route discriminators mandatory where one signer serves many audiences. Signed response must echo request audience + `request_hash`; hostname alone is insufficient for shared-SaaS/wildcard signers. Discovery may describe but never choose/widen/rewrite audience.
-- **Fallback failure taxonomy (`allow_legacy_explicit`)** — Bright line: **absence of MCP-RE evidence MAY fall back** (transport/connection failure before evidence; plain-MCP/unsigned response; explicit "unsupported" with no signed evidence) and only when route/audience is explicitly legacy-allowlisted. **Bad/inconsistent/downgrade-shaped evidence MUST fail closed**: invalid request/response signature, unexpected `server_signer`, missing/mismatched `authorization_binding`, replay/freshness failure, `request_hash` mismatch, **unsupported or mismatched version, unsupported or mismatched `canonicalization_id`**. Unsigned "I only support vX" hints are not trusted evidence and never trigger silent fallback.
+- **Fallback failure taxonomy (`allow_legacy_explicit`)** — Bright line: **absence of MCP-RE evidence MAY fall back** (transport/connection failure before evidence; plain-MCP/unsigned response; explicit "unsupported" with no signed evidence) and only when route/audience is explicitly legacy-allowlisted. **Bad/inconsistent/downgrade-shaped evidence MUST fail closed**: invalid request/response signature, unexpected `server_signer`, missing/mismatched `authorization_binding`, replay/freshness failure, `request_hash` mismatch, **an unsupported or mismatched profile id/tag (`mcp-re-http-v1`)**. Unsigned "I only support vX" hints are not trusted evidence and never trigger silent fallback.
 - **Advert is authoritative-never** — Discovery adverts need no security freshness; MAY be cached (conservative TTL, evict on connection/policy change), always non-authoritative. Capability-mismatch rule: the verified signed exchange is authoritative; advert mismatch is a *log* event unless the *exchange itself* is weaker than policy (→ fail closed) or self-contradictory (→ protocol error). Exchange stronger than advertised → accept if locally supported.
 - **Two normative client modes** — `opportunistic_mcp_re` is **cut** from the normative matrix; production has only `require_mcp_re` and `allow_legacy_explicit`. Opportunistic survives only as a non-normative dev/test diagnostic *probe* that records support but never changes a trust decision or production routing.
 
-_Avoid_: treating any discovery advert (initialize capabilities or unsigned `_meta`) as proof of MCP-RE protection; calling the `capabilities.experimental` advertisement the *canonical* discovery surface; putting discovery work inside the v0.6 gate; treating version/canonicalization mismatch as neutral "MCP-RE unavailable" fallback.
+_Avoid_: treating any discovery advert (initialize capabilities or unsigned `_meta`) as proof of MCP-RE protection; calling the `capabilities.experimental` advertisement the *canonical* discovery surface; putting discovery work inside the v0.6 gate; treating a profile-id/tag mismatch as neutral "MCP-RE unavailable" fallback.
 
 ### Client-side integration (Client Integration Model ADR, next free number 044)
 
@@ -78,18 +91,18 @@ _Avoid_: putting `mcp-re-client-core` logic in `mcp-re-core`; a parallel client 
 ### Standards-alignment pivot (v0.11 grill, signed off 2026-07-06)
 
 - **MCP-RE evidence model** — The transport-agnostic security properties (authenticity, integrity, freshness, replay resistance, audience/authorization/response binding, verified security context), independent of carrier; the umbrella term.
-- **MCP-RE native profile** — The draft-02 `_meta` envelope carrier, usable on any transport; publicly "conformance-gated migration bridge and native transport profile", **never "experimental"**.
-- **MCP-RE HTTP standards profile** — The RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest carrier (plus DPoP/mTLS/RAR artifact bindings) for HTTP transports; the SEP-facing target; profile id/tag `mcp-re-http-v1`, signature labels `mcp-re` / `mcp-re-response` (rejections reuse the response label).
+- **MCP-RE native profile (DELETED — ADR-MCPRE-050)** — The former `draft-01`/`draft-02` `_meta` envelope + JCS carrier. Removed as a carrier, fallback, and design option; kept only as history in [`docs/archive/`](docs/archive/ARCHIVE.md) / git tag `pre-adr-mcpre-050-jcs`. Do not treat it as live.
+- **MCP-RE HTTP profile (the sole carrier)** — The RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest carrier (plus DPoP/mTLS/RAR artifact bindings); profile id/tag `mcp-re-http-v1`, signature labels `mcp-re` / `mcp-re-response` (rejections reuse the response label).
 - **No new MCP-RE HTTP headers** — HTTP-profile header surface is standard fields only (Content-Type, Content-Digest, Signature-Input, Signature, plus authorization/dpop when present); all MCP evidence travels in body `_meta` blocks (`se.syncom/mcp-re.http.request` / `.http.response`) covered by the signed Content-Digest.
-- **Request evidence handle (`request_evidence`)** — Per-profile digest committing to the request evidence preimage (native: JCS preimage; HTTP: RFC 9421 signature base), split form `{digest_alg, digest_value}`; the HTTP-profile successor of `request_hash`.
-- **Artifact binding (`artifact_bindings[]`)** — Generalization of authorization binding: bind-not-interpret over external decision artifacts (authorization tokens via DPoP `ath`/mTLS `x5t#S256`, RAR details, PDP/DTR decisions, classifier results, human approvals); `artifact_type` (what kind) and `binding_type` (how bound) are separate axes; next-wire-version vocabulary — draft-02 keeps the frozen v0.6 names.
-- **Parity gate** — The machine-checked HTTP-profile vector corpus (positive + negative, incl. cross-profile downgrade both directions) that must be green before any draft-02 wire element may be deprecated; deprecation itself is a separate later ADR.
-- **Signed rejection (HTTP-first)** — The HTTP standards profile is the first signed-rejection implementation and rejection signing is REQUIRED conformance behavior; ADR-MCPS-046's native envelope is re-scoped native-only (trigger: first non-HTTP conforming consumer requiring trusted rejection reasons). `wire_code` lives only in `error.data.mcp_re_error`; `error.message` stays human-readable.
+- **Request evidence handle (`request_evidence`)** — Digest committing to the request evidence preimage (the RFC 9421 signature base), split form `{digest_alg, digest_value}`; the successor of `request_hash`.
+- **Artifact binding (`artifact_bindings[]`)** — Generalization of authorization binding: bind-not-interpret over external decision artifacts (authorization tokens via DPoP `ath`/mTLS `x5t#S256`, RAR details, PDP/DTR decisions, classifier results, human approvals); `artifact_type` (what kind) and `binding_type` (how bound) are separate axes.
+- **HTTP conformance corpus** — The machine-checked HTTP-profile vector corpus (positive + negative, incl. downgrade/tamper/splice negatives) that gates changes to the HTTP profile.
+- **Signed rejection** — Rejection signing is REQUIRED conformance behavior on the HTTP profile: a rejection is a signed response reusing the `mcp-re-response` label. `wire_code` lives only in `error.data.mcp_re_error`; `error.message` stays human-readable.
 
-_Avoid_: "experimental profile" for draft-02; the wrong spelling `mcps-jcs-int53-json-v1` (code authority: `mcp-re-jcs-int53-json-v1`); conflating `server_signer` (TrustResolver identity) with `keyid` (key selector); per-direction RFC 9421 tag values; new `mcp-re-*` HTTP header fields; prefix-form digests on new fields (split `digest_alg`/`digest_value` is the convention).
+_Avoid_: conflating `server_signer` (TrustResolver identity) with `keyid` (key selector); per-direction RFC 9421 tag values; new `mcp-re-*` HTTP header fields; prefix-form digests on new fields (split `digest_alg`/`digest_value` is the convention).
 
 ## Flagged ambiguities
 
 - **`documents/mcp-re/security-boundary.md`** (canonical doc §7) — stale path reference; rename to `docs/spec/security-boundary.md`. Fix in 0.5.
 - **`v0.3-claim-matrix.md` contains v0.4+ content** — filename lies about contents (epic #68/#69/#70/#71 v0.4 results live there). Fix in 0.5 by folding into `v0.5-claim-matrix.md` §B and stubbing the v0.3 file.
-- **`mcp-re-v0.11-seed.md` needs corrections** (v0.11 grill findings): canonicalization id spelling (`mcps-` → `mcp-re-jcs-int53-json-v1`); "signed rejection semantics" listed among proven properties (ADR-046 is design-only — must say designed-not-implemented); mapping line `server_signer -> HTTP Signature keyid` conflates two distinct fields.
+- **`mcp-re-v0.11-seed.md`** — archived to [`docs/archive/grilling-seed/`](docs/archive/grilling-seed/mcp-re-v0.11-seed.md) as frozen history (ADR-MCPRE-050). Its canonicalization-id note is moot (JCS deleted); the `server_signer` vs `keyid` distinction it flagged is captured in the glossary above.

@@ -143,9 +143,44 @@ pub fn dispatch_request(
         return Err(DispatchError::NonSharedReplayTier);
     }
 
-    // 2. Replay-key construction. The full profile carries audience_hash; its
-    //    absence means minimal-path evidence reached the dispatcher — fail closed
-    //    rather than form a degenerate key.
+    // 2–3. Replay-key construction + MRTR continuation binding (non-side-effecting).
+    let (replay_key, continuation_verified) = prepare_http_dispatch(verified, continuation_ctx)?;
+
+    // 4. Replay admission LAST — the only side-effecting step.
+    match replay_key.check_and_insert(replay, verified.expires)? {
+        ReplayDecision::Fresh => {}
+        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
+    }
+
+    Ok(DispatchOutcome {
+        replay_key,
+        continuation_verified,
+    })
+}
+
+/// Dispatch steps 2–3 — everything EXCEPT the one side-effecting replay admission
+/// (step 4): build the five-tuple [`HttpReplayKey`] from the verified evidence and
+/// verify any MRTR continuation against the caller-retained bases.
+///
+/// Split out so BOTH serving paths share this identical, security-critical key
+/// construction + continuation binding and differ ONLY in which tier performs the
+/// side-effecting admission: the sync [`dispatch_request`] admits against a
+/// `&dyn ReplayCache`; the async data plane (ADR-MCPRE-051 §4) AWAITS its
+/// authoritative async tier with
+/// [`HttpReplayKey::to_core_replay_key`](crate::HttpReplayKey::to_core_replay_key).
+/// The fleet-strict single-process refusal (step 1) is the caller's — the sync
+/// path checks `is_single_process_reference`, the async path relies on the proxy's
+/// deployment tier gate plus the async store's durability class.
+///
+/// Ordering is preserved: key construction, then continuation binding; the caller
+/// performs admission strictly LAST, so a spliced or unbindable continuation never
+/// burns a legitimate nonce.
+pub fn prepare_http_dispatch(
+    verified: &VerifiedHttpRequestEvidence,
+    continuation_ctx: Option<RetainedContinuation<'_>>,
+) -> Result<(HttpReplayKey, bool), DispatchError> {
+    // The full profile carries audience_hash; its absence means minimal-path
+    // evidence reached the dispatcher — fail closed rather than form a degenerate key.
     let audience_hash = verified
         .audience_hash
         .clone()
@@ -160,7 +195,7 @@ pub fn dispatch_request(
         nonce: verified.nonce.clone(),
     };
 
-    // 3. MRTR continuation binding (if the block carries one).
+    // MRTR continuation binding (if the block carries one).
     let continuation = verified
         .request_block
         .as_ref()
@@ -187,14 +222,5 @@ pub fn dispatch_request(
         (None, _) => false,
     };
 
-    // 4. Replay admission LAST — the only side-effecting step.
-    match replay_key.check_and_insert(replay, verified.expires)? {
-        ReplayDecision::Fresh => {}
-        ReplayDecision::Replay => return Err(DispatchError::ReplayDetected),
-    }
-
-    Ok(DispatchOutcome {
-        replay_key,
-        continuation_verified,
-    })
+    Ok((replay_key, continuation_verified))
 }

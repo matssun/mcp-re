@@ -24,10 +24,10 @@ verifications, each answering a different question:
 | Check | Mechanism | What it proves |
 | --- | --- | --- |
 | **mTLS** | rustls client-cert verification | the **transport peer** — which channel the request arrived on |
-| **Object signature** | Ed25519-over-JCS (`mcp-re-core`) | the **JSON-RPC signer** — who produced this exact object |
+| **Message signature** | RFC 9421 HTTP Message Signature + RFC 9530 Content-Digest (`mcp-re-http-profile`) | the **request signer** — who produced this exact message |
 | **Authorization** | Phase-5 `PolicyEvaluator` | **may-act** — whether the actor is permitted to do this |
 
-These are orthogonal. mTLS does not prove who signed the object; a valid object
+These are orthogonal. mTLS does not prove who signed the message; a valid message
 signature does not prove which channel it came over; neither proves the actor is
 authorized. **Transport binding** (below) is what ties the first two together by
 asserting the signer and the transport peer are consistent. Do not treat any one

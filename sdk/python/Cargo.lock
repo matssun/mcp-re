@@ -172,15 +172,16 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "mcp-re-core",
+ "mcp-re-http-profile",
  "serde_json",
 ]
 
 [[package]]
 name = "mcp-re-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -188,6 +189,17 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "mcp-re-http-profile"
+version = "0.12.0"
+dependencies = [
+ "base64",
+ "mcp-re-core",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

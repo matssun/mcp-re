@@ -172,7 +172,7 @@ async fn handle(
         .collect();
     let body = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes().to_vec(),
-        Err(_) => return Ok(to_hyper(rejection(None, "mcp-re.canonicalization_failed", 400))),
+        Err(_) => return Ok(to_hyper(rejection(None, "mcp-re.serialization_failed", 400))),
     };
 
     // The canonical @target-uri both sides sign over (deployment-configured).

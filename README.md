@@ -89,7 +89,7 @@ Current implementation claim:
 > — with a proven end-to-end client-integration path (client-side proxy +
 > Python/TypeScript SDKs) over the frozen `draft-02` runtime-evidence envelope.
 
-### Recent releases (0.6 → 0.11)
+### Recent releases (0.6 → 0.12)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -133,6 +133,13 @@ in [`docs/adr/`](docs/adr/). In brief:
   L4 LoadBalancer, fronting FastMCP), with live GCP-KMS custody lanes and an
   **ADR-051 §7 SLO baseline measured on real GKE hardware** (e2/c3-standard-8) — the
   targets flip from provisional to **declared**, gate-enforced.
+- **0.12** consolidates the proxy **serving path**: the RFC 9421 `HttpProfileProxy`
+  wiring moves into a dedicated `App` runner (`mcp-re-proxy/src/app.rs`), slimming
+  `main.rs`/`cli.rs`. Online **OCSP is now always fail-closed** (the `--ocsp-soft-fail`
+  relaxation is gone). The **ADR-051 §7 SLO baseline is re-measured on GKE** under the
+  v2 canonical envelope (RFC 9421, concurrency 128 / 8000 requests) and re-declared
+  (e2-standard-8 402 rps / c3-standard-8 499 rps at 8 cores); the SLO Job runner grows
+  an in-pod primary+2-replica Redis. SDK downloader smoke tests are restored.
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
@@ -345,7 +352,7 @@ conformance, reference implementation, demos, and non-goals):
   brief intended for an eventual MCP SEP submission.
 - **Security:** [`docs/security/`](docs/security/) — multi-agent
   Claude Opus 4.8 audits (v0.1 and v0.2), the per-finding remediation log for
-  v0.2.0, and the cross-round [finding ledger](docs/security/finding-ledger.jsonl).
+  v0.2.0, and the cross-round [finding ledger](docs/archive/security/finding-ledger.jsonl).
   Vulnerability reporting: [`SECURITY.md`](SECURITY.md).
 - **Operator guides:** [`docs/sidecar-deployment-guide.md`](docs/sidecar-deployment-guide.md),
   [`docs/host-integration-guide.md`](docs/host-integration-guide.md),

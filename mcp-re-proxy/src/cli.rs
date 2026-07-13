@@ -8,7 +8,6 @@
 
 use std::time::Duration;
 
-use mcp_re_core::ExpectedVersionPolicy;
 use mcp_re_core::InMemoryTrustResolver;
 use mcp_re_core::VerificationKey;
 use serde_json::Value;
@@ -101,10 +100,11 @@ pub enum OcspKind {
     /// the offline `--client-crl` set.
     Off,
     /// Require an online OCSP check at connection time. A verified client leaf is
-    /// rejected on `Revoked` (always) and on `Unknown`/unreachable/timeout/parse
-    /// error UNLESS `--ocsp-soft-fail` is set. Honored ONLY in a build with the
-    /// `online_ocsp` feature; a default build parses it but FAILS CLOSED at
-    /// construction (mirrors the env-keysource / shared-replay gates).
+    /// rejected on `Revoked` (always) and, failing closed, on
+    /// `Unknown`/unreachable/timeout/parse error too (there is no soft-fail
+    /// relaxation). Honored ONLY in a build with the `online_ocsp` feature; a
+    /// default build parses it but FAILS CLOSED at construction (mirrors the
+    /// env-keysource / shared-replay gates).
     Require,
 }
 
@@ -130,13 +130,13 @@ pub struct Config {
     pub server_key_id: String,
     /// Symmetric clock skew (seconds).
     pub max_clock_skew: i64,
-    /// ADR-MCPS-039 (D1): expected-version posture enforced on inbound requests.
-    /// `--expected-version-policy draft-02-only` refuses draft-01 as a downgrade;
-    /// `draft-01-and-draft-02` (the default when the flag is omitted) admits both,
-    /// each strictly verified by its own profile. The default preserves
-    /// back-compatibility with deployed draft-01 front-ends; tighten it once
-    /// draft-01 is retired.
-    pub expected_version_policy: ExpectedVersionPolicy,
+    /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
+    /// (ADR-MCPRE-050); client and server sign it byte-for-byte.
+    pub target_uri: String,
+    /// The trust domain assigned to resolved actors (RFC 9421 ActorIdentity).
+    pub trust_domain: String,
+    /// Optional audience route/tenant discriminator.
+    pub route: Option<String>,
     /// Where key material is read from.
     pub key_source: KeySourceKind,
     /// Location (path or env var) of the Base64URL Ed25519 signing-key seed.
@@ -160,11 +160,6 @@ pub struct Config {
     /// last-good config (which still fails closed once its CRL passes `nextUpdate`).
     /// Has no effect without `--client-crl`.
     pub client_crl_reload_secs: Option<u64>,
-    /// Relax the fail-closed revocation posture: when `true`, a client cert whose
-    /// revocation status cannot be determined from the configured CRLs is ALLOWED
-    /// rather than rejected. Default `false` (deny unknown status — fail closed).
-    /// Has no effect when no CRLs are configured.
-    pub crl_allow_unknown_status: bool,
     /// ONLINE OCSP client-cert revocation selection (#4030). `Off` (default) does
     /// no online check; `Require` checks the leaf's OCSP responder at connection
     /// time. Honored ONLY in an `online_ocsp` build; a default build fails closed
@@ -174,12 +169,6 @@ pub struct Config {
     /// `None` uses the AIA URL from the certificate. Only meaningful when
     /// `client_ocsp == Require`.
     pub ocsp_responder_url: Option<String>,
-    /// Relax the OCSP fail-closed posture (#4030): when `true`, an indeterminate
-    /// online result (`Unknown`, unreachable responder, timeout, parse/signature
-    /// error) ALLOWS the connection instead of rejecting it. A `Revoked` status
-    /// ALWAYS rejects regardless. Default `false` = hard-fail (deny on anything
-    /// but `Good`). Only meaningful when `client_ocsp == Require`.
-    pub ocsp_soft_fail: bool,
     /// Path to the JSON trust file (request signers + authorization issuers).
     pub trust_path: String,
     /// ADR-MCPRE-051 §3: stateless Streamable-HTTP inner backend URL(s) for the
@@ -280,29 +269,8 @@ pub struct Config {
     /// Offline policy-layer revocation deny-list paths (ADR-MCPS-013). Each
     /// `--revocation-list` value (comma-separated and/or repeated) adds a file of
     /// newline-delimited revoked `revocation_id`s. Loaded once at startup (OFFLINE
-    /// only — restart to update). Empty means no grant deny-list is configured;
-    /// under `--authz reference` that requires the explicit `--allow-empty-revocation`
-    /// acknowledgement (otherwise the proxy refuses to start — fail closed).
+    /// only — restart to update). Empty means no grant deny-list is configured.
     pub revocation_list_paths: Vec<String>,
-    /// Explicit acknowledgement that `--authz reference` may run with NO policy
-    /// revocation deny-list, i.e. no signed-authorization grant can ever be revoked
-    /// (fail-open). Default `false`: such a configuration is refused at parse time.
-    /// Mirrors the `crl_allow_unknown_status` / `ocsp_soft_fail` relaxations — when
-    /// set it is also a strict-production violation.
-    pub allow_empty_revocation: bool,
-    /// Allow the (dev/CI-only) environment-variable key source in this run.
-    /// Required when `key_source == Env`; absent, env keys are refused.
-    pub allow_env_keysource: bool,
-    /// Explicit acknowledgement that `--authz reference` may be the sole production
-    /// authorization authority (ADR-MCPS-013). The reference profile is a real,
-    /// signature-verifying, fully-bound profile — NOT a noop — but it is a
-    /// CONFORMANCE/reference implementation, explicitly NOT the long-term
-    /// recommendation (Biscuit is the intended first serious external profile).
-    /// Required when `authz == Reference`; absent, that configuration is refused at
-    /// parse time so an operator cannot silently treat the reference profile as the
-    /// production authority. Mirrors `allow_env_keysource` — when set it is also a
-    /// strict-production violation.
-    pub allow_reference_authz: bool,
     /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
     /// `key_source == Pkcs11` (issue #4034).
     pub pkcs11_module: Option<String>,
@@ -364,22 +332,15 @@ pub struct Config {
     /// Maximum client-certificate lifetime (v1 revocation posture). Defaults to
     /// 1 hour; `None` disables enforcement (strongly discouraged).
     pub max_client_cert_lifetime: Option<Duration>,
-    /// Strict/production posture (MCPS-3842, `--strict`/`--production`). When
-    /// `true`, insecure-posture configurations that are otherwise only WARNED
-    /// about become HARD startup errors ("reject, not warn"). Default `false`
-    /// keeps the legacy warn-only behavior unchanged.
-    pub strict: bool,
-    /// Horizontally-scaled deployment posture (MCPS-79, ADR-MCPS-049 clause 1,
-    /// `--fleet`). ORTHOGONAL to [`strict`](Config::strict): `strict` is the
-    /// security posture, `fleet` is the deployment topology. Under `--strict`
-    /// ALONE the node is a single verifier, so single-node durable replay
-    /// (`--replay-cache file`, ADR-MCPS-014) is valid. Under `--strict --fleet`
-    /// a replayable request may reach a DIFFERENT verifier than the one that saw
-    /// the first nonce during the evidence-acceptance window, so node-local
-    /// replay caches (`memory` and `file`) are REJECTED and a shared replay
-    /// cache with a strict-production durability tier is required. `--fleet`
-    /// does NOT imply `--strict`; the production guarantee is `--strict --fleet`
-    /// (using `--fleet` without `--strict` only warns — see `main.rs`).
+    /// Horizontally-scaled deployment TOPOLOGY (MCPS-79, ADR-MCPS-049 clause 1,
+    /// `--fleet`). This is a topology selector, NOT a security toggle — the proxy
+    /// always runs the maximal-security posture and refuses unsafe configs. A single
+    /// node is the sole verifier, so single-node durable replay (`--replay-cache
+    /// file`, ADR-MCPS-014) is valid. Under `--fleet` a replayable request may reach
+    /// a DIFFERENT verifier than the one that saw the first nonce during the
+    /// evidence-acceptance window, so node-local replay caches (`memory` and `file`)
+    /// are REJECTED and a shared replay cache with an adequate durability tier is
+    /// required.
     pub fleet: bool,
 }
 
@@ -394,7 +355,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPS-039 (D1): default to the migration posture (admit both wire
     // profiles) so an omitted flag preserves back-compat with draft-01 clients;
     // `--expected-version-policy draft-02-only` tightens it.
-    let mut expected_version_policy = ExpectedVersionPolicy::Draft01AndDraft02;
+    let mut target_uri: Option<String> = None;
+    let mut trust_domain = "example.com".to_string();
+    let mut route: Option<String> = None;
     let mut key_source = KeySourceKind::File;
     let mut signing_key_seed = None;
     let mut tls_cert = None;
@@ -409,12 +372,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
     let mut client_crl_reload_secs: Option<u64> = None;
-    let mut crl_allow_unknown_status = false;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
     let mut client_ocsp = OcspKind::Off;
     let mut ocsp_responder_url: Option<String> = None;
-    let mut ocsp_soft_fail = false;
     let mut trust_path = None;
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
@@ -446,15 +407,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut ingress_audience: Option<String> = None;
     let mut ingress_pinned_mtls = false;
     let mut authz = AuthzKind::Off;
-    // ADR-MCPS-013 policy-layer revocation: zero or more offline deny-list files,
-    // plus an explicit acknowledgement to run authz with an empty deny-list.
+    // ADR-MCPS-013 policy-layer revocation: zero or more offline deny-list files.
     let mut revocation_list_paths: Vec<String> = Vec::new();
-    let mut allow_empty_revocation = false;
-    // ADR-MCPS-013: explicit acknowledgement that the reference authorization
-    // profile may be the sole production authority. Absent, `--authz reference` is
-    // refused at parse time.
-    let mut allow_reference_authz = false;
-    let mut allow_env_keysource = false;
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
     let mut pkcs11_module: Option<String> = None;
@@ -480,56 +434,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut limits = ServerLimits::default();
     // v1 revocation posture: short-lived client certs, proxy-enforced, default 1h.
     let mut max_client_cert_lifetime = Some(Duration::from_secs(3600));
-    // MCPS-3842 strict/production posture: off by default (warn-only). When set,
-    // insecure-posture configs are rejected at startup instead of merely warned.
-    let mut strict = false;
     // MCPS-79 (ADR-MCPS-049): horizontally-scaled deployment topology, off by
-    // default. Orthogonal to `strict`; `--strict --fleet` is the fleet
-    // strict-production posture that rejects node-local replay caches.
+    // default. This selects the deployment TOPOLOGY (single-node vs multi-verifier
+    // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
+    // A fleet additionally rejects node-local replay caches.
     let mut fleet = false;
 
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
-        // Valueless boolean flag.
-        if flag == "--allow-env-keysource" {
-            allow_env_keysource = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag: relax the CRL unknown-status posture (#3839).
-        if flag == "--crl-allow-unknown-status" {
-            crl_allow_unknown_status = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (#4030): relax the online OCSP posture to
-        // fail-OPEN on an indeterminate result. Default OFF (hard-fail).
-        if flag == "--ocsp-soft-fail" {
-            ocsp_soft_fail = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (ADR-MCPS-013): explicitly accept running
-        // `--authz reference` with NO policy revocation deny-list (no grant can be
-        // revoked — fail-open). Without it, that configuration is refused below.
-        if flag == "--allow-empty-revocation" {
-            allow_empty_revocation = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (ADR-MCPS-013): explicitly accept the reference
-        // authorization profile as the SOLE production authority. The reference
-        // profile is a real, signature-verifying, fully-bound profile (NOT a noop),
-        // but it is a conformance/reference implementation, explicitly NOT the
-        // long-term recommendation. Without this ack, `--authz reference` is refused
-        // below so the reference profile cannot silently serve as the production
-        // authority.
-        if flag == "--allow-reference-authz" {
-            allow_reference_authz = true;
-            i += 1;
-            continue;
-        }
         // Valueless boolean flag (ADR-MCPS-028 §C): use the GCE/GKE metadata server
         // (workload identity) for the GCP Cloud KMS OAuth2 token instead of an
         // operator-supplied `MCP_RE_GCP_ACCESS_TOKEN`.
@@ -546,17 +459,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             i += 1;
             continue;
         }
-        // Valueless boolean flag (#3842): strict/production mode — reject (not
-        // warn) unsafe configs. `--production` is an alias. Without this arm the
-        // `strict` flag was never set, so `strict_violations` below was dead.
-        if flag == "--strict" || flag == "--production" {
-            strict = true;
-            i += 1;
-            continue;
-        }
-        // Valueless boolean flag (MCPS-79, ADR-MCPS-049): horizontally-scaled
-        // deployment topology. Orthogonal to `--strict`; the production guarantee
-        // is `--strict --fleet`.
+        // Select the horizontally-scaled (fleet) deployment topology.
         if flag == "--fleet" {
             fleet = true;
             i += 1;
@@ -573,20 +476,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--max-clock-skew" => {
                 max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?
             }
-            "--expected-version-policy" => {
-                expected_version_policy = ExpectedVersionPolicy::from_config(Some(value.as_str()))
-                    .map_err(|e| format!("invalid --expected-version-policy: {e}"))?
-            }
+            "--target-uri" => target_uri = Some(value.clone()),
+            "--trust-domain" => trust_domain = value.clone(),
+            "--route" => route = Some(value.clone()),
             "--key-source" => {
                 key_source = match value.as_str() {
                     "file" => KeySourceKind::File,
+                    // Env key material is a dev/CI-only security downgrade (visible to
+                    // the process tree). It EXISTS ONLY in a build with the
+                    // `dev_env_key_source` feature — a production build has no `env`
+                    // option at all, so there is no runtime knob to enable it.
+                    #[cfg(feature = "dev_env_key_source")]
                     "env" => KeySourceKind::Env,
                     "pkcs11" => KeySourceKind::Pkcs11,
                     "aws-kms" => KeySourceKind::AwsKms,
                     "gcp-kms" => KeySourceKind::GcpKms,
                     other => {
                         return Err(format!(
-                            "unknown --key-source '{other}' (file|env|pkcs11|aws-kms|gcp-kms)"
+                            "unknown --key-source '{other}' (file|pkcs11|aws-kms|gcp-kms)"
                         ))
                     }
                 }
@@ -714,7 +621,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             }
             "--transport-binding" => {
                 binding = match value.as_str() {
-                    "none" => BindingKind::None,
+                    // `exact` binds the request to the verified mTLS peer identity.
                     "exact" => BindingKind::Exact,
                     // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound
                     // ingress assertion. Honestly downgraded — NOT end_to_end_mtls.
@@ -724,7 +631,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     "attested-ingress" => BindingKind::AttestedIngress,
                     other => return Err(format!(
                         "unknown --transport-binding '{other}' \
-                         (none|exact|lb-assertion|attested-ingress)"
+                         (exact|lb-assertion|attested-ingress)"
                     )),
                 }
             }
@@ -916,16 +823,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 .to_string(),
         );
     }
-    // EnvKeySource is dev/CI-only: refuse env key material unless explicitly
-    // opted in. Environment variables are visible to the process tree and may
-    // leak via crash dumps / `ps e` / orchestrator inspection.
-    if key_source == KeySourceKind::Env && !allow_env_keysource {
-        return Err(
-            "--key-source env requires --allow-env-keysource (env key material is dev/CI-only; \
-             use --key-source file in production)"
-                .to_string(),
-        );
-    }
+    // EnvKeySource is a dev/CI-only downgrade and is compiled in ONLY under the
+    // `dev_env_key_source` feature; a production build cannot even parse
+    // `--key-source env` (the match arm does not exist), so no runtime ack is needed
+    // — the build feature IS the acknowledgement.
     // #4034 PKCS#11 key source: the module path, User PIN, token label, and
     // signing-key object label are all required when this source is selected.
     // Each is checked here (not in build_key_source) so a missing flag is a clear
@@ -1181,19 +1082,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // cannot perform the verified online check.
     //
     // (a) The OCSP knobs are only honored under `--client-ocsp require`. A dangling
-    //     `--ocsp-responder-url` or `--ocsp-soft-fail` without it would SILENTLY do
-    //     nothing — a dangerous illusion of revocation/soft-fail posture — so it is
-    //     a hard error.
+    //     `--ocsp-responder-url` without it would SILENTLY do nothing — a dangerous
+    //     illusion of a revocation posture — so it is a hard error. (Online OCSP
+    //     ALWAYS hard-fails on an indeterminate result; there is no soft-fail knob.)
     if client_ocsp != OcspKind::Require {
         if ocsp_responder_url.is_some() {
             return Err(
                 "--ocsp-responder-url has no effect without --client-ocsp require"
                     .to_string(),
-            );
-        }
-        if ocsp_soft_fail {
-            return Err(
-                "--ocsp-soft-fail has no effect without --client-ocsp require".to_string(),
             );
         }
     }
@@ -1259,7 +1155,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
-        expected_version_policy,
+        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). Optional at parse; an
+        // unset value serves nothing (the audience/target check fails closed on every
+        // request), so a deployment MUST set --target-uri to serve.
+        target_uri: target_uri.unwrap_or_default(),
+        trust_domain,
+        route,
         key_source,
         signing_key_seed: require(signing_key_seed, "--signing-key-seed")?,
         tls_cert: require(tls_cert, "--tls-cert")?,
@@ -1278,10 +1179,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         inner_http_urls,
         cores,
         client_crl_reload_secs,
-        crl_allow_unknown_status,
         client_ocsp,
         ocsp_responder_url,
-        ocsp_soft_fail,
         trust_path: require(trust_path, "--trust")?,
         replay,
         replay_path,
@@ -1302,9 +1201,6 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         ingress_pinned_mtls,
         authz,
         revocation_list_paths,
-        allow_empty_revocation,
-        allow_reference_authz,
-        allow_env_keysource,
         pkcs11_module,
         pkcs11_pin,
         pkcs11_token_label,
@@ -1320,68 +1216,37 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         gcp_kms_use_metadata,
         limits,
         max_client_cert_lifetime,
-        strict,
         fleet,
     };
 
-    // ADR-MCPS-013 fail-closed revocation posture: `--authz reference` enforces
-    // signed-authorization grants, each carrying a `revocation_id`. With no
-    // revocation deny-list the proxy can never revoke a leaked-but-unexpired grant
-    // — a SILENT fail-open. Refuse to start unless the operator either supplies a
-    // deny-list (`--revocation-list`) or EXPLICITLY accepts the no-revocation
-    // posture (`--allow-empty-revocation`). This guard is unconditional (not just
-    // under --strict): the silent illusion of revocation must never ship.
-    if config.authz == AuthzKind::Reference
-        && config.revocation_list_paths.is_empty()
-        && !config.allow_empty_revocation
-    {
+    // ADR-MCPS-013: the reference signed-authorization profile is a real,
+    // signature-verifying profile, but it is a CONFORMANCE/reference implementation,
+    // NOT the long-term production authority (Biscuit is the intended first serious
+    // external profile). It is never accepted as the sole production authorization
+    // authority — there is no ack to override this. Until a production authz profile
+    // lands, run with `--authz off`.
+    if config.authz == AuthzKind::Reference {
         return Err(
-            "--authz reference enforces signed-authorization grants but no revocation \
-             deny-list is configured, so NO grant could ever be revoked (silent fail-open); \
-             supply --revocation-list <file>, or explicitly accept the no-revocation posture \
-             with --allow-empty-revocation"
+            "--authz reference selects the reference/conformance signed-authorization \
+             profile, which is NOT accepted as the production authorization authority \
+             (ADR-MCPS-013; Biscuit is the intended production profile). Run --authz off \
+             until a production authorization profile is available."
                 .to_string(),
         );
     }
 
-    // ADR-MCPS-013 reference-profile posture: `--authz reference` registers the
-    // reference signed-authorization profile as the SOLE authorization authority.
-    // It is a real, signature-verifying, fully-bound profile (NOT a noop / not
-    // fail-open), but it is explicitly a CONFORMANCE/reference implementation, NOT
-    // the long-term recommendation (Biscuit is the intended first serious external
-    // profile). Refuse to start unless the operator EXPLICITLY acknowledges using
-    // the reference profile as the production authority (`--allow-reference-authz`),
-    // so it can never be silently treated as a production authz authority. This
-    // guard is unconditional (not just under --strict) and mirrors the
-    // `--key-source env` / `--allow-env-keysource` ack pattern; under
-    // strict/production the acknowledged posture is additionally a hard violation
-    // (see `strict_violations`).
-    if config.authz == AuthzKind::Reference && !config.allow_reference_authz {
-        return Err(
-            "--authz reference makes the reference signed-authorization profile the SOLE \
-             authorization authority, but it is a conformance/reference profile, NOT the \
-             long-term production recommendation (ADR-MCPS-013; Biscuit is the intended \
-             first serious external profile). Explicitly acknowledge running it as the \
-             production authority with --allow-reference-authz (and prefer landing a \
-             production profile)"
-                .to_string(),
-        );
-    }
-
-    // MCPS-3842 ("reject, not warn"): under strict/production posture, refuse to
-    // start with any insecure-posture configuration that is otherwise only
-    // warned about. The decision lives in the pure [`strict_violations`] helper
-    // so it is black-box testable and shared with `main.rs` (which adds the
-    // filesystem-dependent key-file-permission check). The proxy never even
-    // constructs when a parse-time violation is present.
-    if config.strict {
-        let violations = strict_violations(&config);
-        if !violations.is_empty() {
-            return Err(format!(
-                "--strict/--production refuses unsafe configuration:\n  - {}",
-                violations.join("\n  - ")
-            ));
-        }
+    // The proxy ALWAYS runs the maximal-security posture — there is no toggle. Any
+    // unsafe configuration is refused at parse time (never merely warned). The
+    // decision lives in the pure [`unsafe_config_violations`] helper so it is
+    // black-box testable and shared with `main.rs` (which adds the filesystem-
+    // dependent key-file-permission check). The proxy never even constructs when a
+    // parse-time violation is present.
+    let violations = unsafe_config_violations(&config);
+    if !violations.is_empty() {
+        return Err(format!(
+            "mcp-re-proxy refuses unsafe configuration:\n  - {}",
+            violations.join("\n  - ")
+        ));
     }
 
     Ok(config)
@@ -1412,55 +1277,50 @@ pub fn validate_tls_signing_exclusivity(
     Ok(())
 }
 
-/// The strict-mode ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1,
-/// MCPS-57). A lifetime above this cannot honestly be audited as
-/// `short_lived_cert`, so strict/production rejects it. Matches the 1h default.
-const STRICT_MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
+/// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
+/// lifetime above this cannot honestly be audited as `short_lived_cert`, so the
+/// proxy rejects it. Matches the 1h default. Exported so test fixtures mint client
+/// certs whose validity window is within the SAME bound the proxy enforces — there
+/// is one source of truth, not a hand-picked magic number per fixture.
+pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 
-/// Collect the parse-time strict-posture violations for `config` (MCPS-3842).
+/// Collect the parse-time unsafe-configuration violations for `config`.
 ///
-/// This is the pure, black-box-testable core of `--strict`/`--production`: each
-/// returned string names the offending flag and how to fix it. It covers ONLY
+/// The proxy has NO security toggle — it always runs the maximal-security posture,
+/// so this is applied unconditionally. This is the pure, black-box-testable core:
+/// each returned string names the offending flag and how to fix it. It covers ONLY
 /// the conditions knowable from the parsed [`Config`] — the group/world-readable
 /// key-file check is filesystem-dependent and lives in `main.rs` (which reads the
 /// file mode and reuses the same fail-closed posture).
 ///
 /// ADR-MCPS-023 §A1 (v0.9, MCPS-57): a `--max-client-cert-lifetime` GREATER than
-/// [`STRICT_MAX_CLIENT_CERT_LIFETIME`] is a strict violation, not merely a warning.
-/// Mode-A's entire certificate-revocation posture is short-lived certificates (on
-/// GCP the online-OCSP path is a no-op and CAS is CRL-only), so a long-lived cert
-/// cannot honestly be audited as `short_lived_cert`. DISABLED enforcement
-/// (`none`/`0`, i.e. `max_client_cert_lifetime == None`) remains rejected as an
-/// unsafe posture.
+/// [`MAX_CLIENT_CERT_LIFETIME`] is rejected. Mode-A's entire certificate-revocation
+/// posture is short-lived certificates (on GCP the online-OCSP path is a no-op and
+/// CAS is CRL-only), so a long-lived cert cannot honestly be audited as
+/// `short_lived_cert`. DISABLED enforcement (`none`/`0`, i.e.
+/// `max_client_cert_lifetime == None`) is likewise rejected.
 ///
 /// The postures rejected here are the pure-config, platform-independent fail-open
-/// ones: reverse-proxy header ingress (M10/M22), `--transport-binding none` (M11),
-/// and the OCSP/CRL fail-open relaxations (M12).
-pub fn strict_violations(config: &Config) -> Vec<String> {
+/// ones: reverse-proxy header ingress (M10/M22), a non-durable/weak replay tier
+/// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
+pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     let mut violations = Vec::new();
-    if config.key_source == KeySourceKind::Env {
-        violations.push(
-            "--key-source env (env key material is visible to the process tree and dev/CI-only); \
-             use --key-source file"
-                .to_string(),
-        );
-    }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
-    // above the strict ceiling would let a NOT-short-lived cert be audited as
-    // `short_lived_cert`. Both fail closed under strict.
+    // above the ceiling would let a NOT-short-lived cert be audited as
+    // `short_lived_cert`. Both fail closed.
     match config.max_client_cert_lifetime {
         None => violations.push(
             "--max-client-cert-lifetime none/0 disables client-cert lifetime enforcement; \
              set a bounded lifetime (default 1h)"
                 .to_string(),
         ),
-        Some(lifetime) if lifetime > STRICT_MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
-            "--max-client-cert-lifetime {}s exceeds the strict ceiling of {}s: Mode-A's \
+        Some(lifetime) if lifetime > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
+            "--max-client-cert-lifetime {}s exceeds the ceiling of {}s: Mode-A's \
              revocation posture is short-lived certificates, so a longer lifetime cannot be \
              audited as short_lived_cert; set a lifetime <= {}s",
             lifetime.as_secs(),
-            STRICT_MAX_CLIENT_CERT_LIFETIME.as_secs(),
-            STRICT_MAX_CLIENT_CERT_LIFETIME.as_secs(),
+            MAX_CLIENT_CERT_LIFETIME.as_secs(),
+            MAX_CLIENT_CERT_LIFETIME.as_secs(),
         )),
         Some(_) => {}
     }
@@ -1576,53 +1436,6 @@ pub fn strict_violations(config: &Config) -> Vec<String> {
              assertion); this is request-bound ingress assertion, NOT end-to-end \
              client↔node mTLS; production must bind end-to-end (--transport-binding exact \
              with locally-terminated client mTLS)"
-                .to_string(),
-        );
-    }
-    // #4082 (M12): both revocation relaxations convert a fail-closed posture into
-    // fail-open. The CRL relaxation is only flagged when CRLs are actually
-    // configured (it has no effect otherwise — mirroring its parse-time
-    // semantics), so a strict run without CRLs is not spuriously rejected.
-    if config.crl_allow_unknown_status && !config.client_crl_paths.is_empty() {
-        violations.push(
-            "--crl-allow-unknown-status admits a client cert whose revocation status cannot be \
-             determined from the configured CRLs (fail-open); production must fail closed \
-             (omit --crl-allow-unknown-status)"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-013 (M12 analogue): running authz with an EXPLICITLY empty revocation
-    // deny-list means no leaked-but-unexpired grant can ever be revoked — a fail-open
-    // posture. Allowed (with the explicit ack) in dev/non-strict; rejected in
-    // production, mirroring the CRL/OCSP relaxations above.
-    if config.authz == AuthzKind::Reference && config.allow_empty_revocation {
-        violations.push(
-            "--allow-empty-revocation runs --authz reference with no revocation deny-list, \
-             so a leaked-but-unexpired authorization grant can never be revoked (fail-open); \
-             production must supply --revocation-list <file>"
-                .to_string(),
-        );
-    }
-    // ADR-MCPS-013: `--authz reference` makes the reference (conformance) profile the
-    // sole authorization authority. It is explicitly NOT the long-term production
-    // recommendation, so strict/production refuses it — mirroring the env-keysource
-    // refusal. The non-strict ack (`--allow-reference-authz`) is required to reach
-    // here at all (parse-time guard), but in production even the acknowledged posture
-    // is rejected: land a production profile (Biscuit) instead.
-    if config.authz == AuthzKind::Reference {
-        violations.push(
-            "--authz reference makes the reference/conformance signed-authorization profile \
-             the SOLE authorization authority; it is NOT the long-term production \
-             recommendation (ADR-MCPS-013); production must run a production authorization \
-             profile (Biscuit)"
-                .to_string(),
-        );
-    }
-    if config.ocsp_soft_fail {
-        violations.push(
-            "--ocsp-soft-fail admits a connection on an indeterminate online-OCSP result \
-             (Unknown/unreachable/timeout/parse error — fail-open); production must fail \
-             closed (omit --ocsp-soft-fail)"
                 .to_string(),
         );
     }
@@ -2101,6 +1914,57 @@ pub fn build_cpstore_replay_cache(
 /// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
 /// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
 /// it carries both request-signer keys and authorization-issuer keys.
+/// Resolve the RAW server response-signing key for RFC 9421 `sign_response_full`.
+/// Available for the in-memory File/dev-Env key sources; non-exporting sources
+/// (KMS/PKCS#11) require the delegated response-signing seam (follow-up).
+pub fn build_server_signing_key(config: &Config) -> Result<mcp_re_core::SigningKey, String> {
+    match config.key_source {
+        KeySourceKind::File => crate::key_source::FileKeySource {
+            signing_key_seed_path: config.signing_key_seed.clone(),
+            tls_cert_path: config.tls_cert.clone(),
+            tls_key_path: config.tls_key.clone(),
+            client_ca_path: config.client_ca.clone(),
+        }
+        .signing_key()
+        .map_err(|e| e.to_string()),
+        #[cfg(feature = "dev_env_key_source")]
+        KeySourceKind::Env => crate::key_source::EnvKeySource {
+            signing_key_seed_var: config.signing_key_seed.clone(),
+            tls_cert_var: config.tls_cert.clone(),
+            tls_key_var: config.tls_key.clone(),
+            client_ca_var: config.client_ca.clone(),
+        }
+        .signing_key()
+        .map_err(|e| e.to_string()),
+        _ => Err("RFC 9421 response signing currently requires --key-source file (or dev env); \
+                  non-exporting KMS/PKCS#11 server signing is a delegated-seam follow-up"
+            .to_string()),
+    }
+}
+
+/// Parse the trust file into `(signer, key_id, verification_key)` entries so the
+/// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
+/// resolver (keyid → structured actor). Same fail-closed duplicate rejection as
+/// [`load_trust`].
+pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, VerificationKey)>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
+    let array = value.as_array().ok_or("trust file must be a JSON array")?;
+    let mut out = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in array {
+        let signer = entry["signer"].as_str().ok_or("trust entry missing signer")?;
+        let key_id = entry["key_id"].as_str().ok_or("trust entry missing key_id")?;
+        if !seen.insert(key_id.to_string()) {
+            return Err(format!("trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"));
+        }
+        let pk = entry["public_key"].as_str().ok_or("trust entry missing public_key")?;
+        let key = VerificationKey::from_b64url(pk)
+            .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
+        out.push((signer.to_string(), key_id.to_string(), key));
+    }
+    Ok(out)
+}
+
 pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
     let array = value.as_array().ok_or("trust file must be a JSON array")?;
@@ -2277,16 +2141,18 @@ pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
 /// build without the feature, so this is only reached with the backend present.
 ///
 /// The checker uses `ocsp_responder_url` as the AIA override (else the leaf's
-/// AIA OCSP URL) and `ocsp_soft_fail` as the fail-open posture (default
-/// hard-fail). Its HTTP fetch carries a mandatory timeout (fail closed on
-/// timeout) so it can never wedge the blocking serve loop.
+/// AIA OCSP URL) and ALWAYS fails closed on an indeterminate result (the
+/// `--ocsp-soft-fail` fail-open relaxation was removed). Its HTTP fetch carries a
+/// mandatory timeout (fail closed on timeout) so it can never wedge the blocking
+/// serve loop.
 #[cfg(feature = "online_ocsp")]
 pub fn build_ocsp_checker(config: &Config) -> Option<crate::ocsp::OcspChecker> {
     match config.client_ocsp {
         OcspKind::Off => None,
+        // Hard-fail (fail closed) always: OCSP has no soft-fail knob any more.
         OcspKind::Require => Some(crate::ocsp::OcspChecker::new(
             config.ocsp_responder_url.clone(),
-            config.ocsp_soft_fail,
+            false,
         )),
     }
 }
@@ -2297,7 +2163,7 @@ mod tests {
     use super::load_revocation_list;
     use super::load_trust;
     use super::parse_args;
-    use super::strict_violations;
+    use super::unsafe_config_violations;
     use super::AuthzKind;
     use super::BindingKind;
     use super::IdentityPolicy;
@@ -2348,26 +2214,38 @@ mod tests {
 
     /// A durable single-node replay selection (`--replay-cache file --replay-path
     /// <p>`). The DEFAULT replay backend is the non-durable in-memory cache, which
-    /// is a strict-production violation (#90, ADR-MCPS-014/020): a restart forgets
-    /// admitted nonces and re-opens a replay window. Tests that assert a config
-    /// parses SUCCESSFULLY under `--strict` must therefore declare a durable backend
-    /// — they splice these flags in alongside `--strict`.
+    /// is a production violation (#90, ADR-MCPS-014/020): a restart forgets admitted
+    /// nonces and re-opens a replay window. The proxy always runs the strict/
+    /// production posture, so ANY config that must parse SUCCESSFULLY has to declare
+    /// a durable backend — tests splice these flags into `minimal()`.
     fn durable_replay() -> Vec<String> {
         args(&["--replay-cache", "file", "--replay-path", "/replay"])
     }
 
+    /// `minimal()` plus a durable replay backend — the smallest config that PARSES
+    /// under the unconditional strict/production posture (the bare in-memory default
+    /// is rejected, #90). Success tests that do not exercise replay selection build
+    /// on this.
+    fn minimal_durable() -> Vec<String> {
+        let mut a = minimal();
+        a.splice(0..0, durable_replay());
+        a
+    }
+
     #[test]
     fn parses_a_minimal_config_with_defaults() {
-        let config = parse_args(&minimal()).expect("parse");
+        // The bare in-memory replay default is a strict/production violation (#90),
+        // and the proxy always runs strict, so a minimal PARSEABLE config declares a
+        // durable replay backend; every other value here is a plain default.
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
         assert_eq!(config.audience, "did:example:server-1");
         assert_eq!(config.max_clock_skew, 300);
         assert_eq!(config.key_source, KeySourceKind::File);
-        assert_eq!(config.replay, ReplayKind::Memory);
+        assert_eq!(config.replay, ReplayKind::File);
         assert_eq!(config.binding, BindingKind::Exact);
-        // Safe defaults: URI SAN identity, env keys refused, bounded resources.
+        // Safe defaults: URI SAN identity, bounded resources.
         assert_eq!(config.identity_source, IdentityPolicy::UriSan);
-        assert!(!config.allow_env_keysource);
         assert_eq!(config.authz, AuthzKind::Off);
         assert_eq!(config.limits.max_header_bytes, 64 * 1024);
         assert_eq!(config.limits.max_body_bytes, 16 * 1024 * 1024);
@@ -2391,21 +2269,22 @@ mod tests {
 
     #[test]
     fn parses_client_cert_lifetime_forms() {
+        // Only lifetimes at/below the strict ceiling parse (the proxy always runs
+        // strict): `none`/`0` (disabled) and over-ceiling values are hard errors,
+        // covered by the strict_rejects_* cert-lifetime tests.
         let cases = [
-            ("30m", Some(1800)),
-            ("2h", Some(7200)),
-            ("90s", Some(90)),
-            ("45", Some(45)),
-            ("none", None),
-            ("0", None),
+            ("30m", 1800),
+            ("60m", 3600),
+            ("90s", 90),
+            ("45", 45),
         ];
         for (input, expected) in cases {
-            let mut a = minimal();
+            let mut a = minimal_durable();
             a.splice(0..0, args(&["--max-client-cert-lifetime", input]));
             let got = parse_args(&a).expect("parse").max_client_cert_lifetime;
             assert_eq!(
                 got,
-                expected.map(std::time::Duration::from_secs),
+                Some(std::time::Duration::from_secs(expected)),
                 "input {input}"
             );
         }
@@ -2420,13 +2299,15 @@ mod tests {
 
     #[test]
     fn parses_identity_source_selection() {
-        let mut a = minimal();
+        // uri_san (default) and dns_san are the production-acceptable sources; the
+        // deprecated cn_legacy is always rejected (strict_rejects_cn_legacy_...).
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
+        assert_eq!(parse_args(&a).expect("parse").identity_source, IdentityPolicy::UriSan);
+
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "dns_san"]));
         assert_eq!(parse_args(&a).expect("parse").identity_source, IdentityPolicy::DnsSan);
-
-        let mut a = minimal();
-        a.splice(0..0, args(&["--transport-identity-source", "cn_legacy"]));
-        assert_eq!(parse_args(&a).expect("parse").identity_source, IdentityPolicy::CnLegacy);
     }
 
     #[test]
@@ -2440,7 +2321,7 @@ mod tests {
 
     #[test]
     fn no_reverse_proxy_header_by_default() {
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.reverse_proxy_identity_header, None);
         // The default format is irrelevant when the header is unset, but it is
         // the safer XFCC (structured) shape rather than the trust-the-whole-value
@@ -2448,41 +2329,10 @@ mod tests {
         assert_eq!(config.reverse_proxy_header_format, ReverseProxyHeaderFormat::Xfcc);
     }
 
-    #[test]
-    fn parses_reverse_proxy_header_and_format() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header", "x-forwarded-client-cert",
-                "--reverse-proxy-header-format", "xfcc",
-                // Reverse-proxy mode terminates mTLS upstream, so the local
-                // client-cert lifetime must be explicitly disabled.
-                "--max-client-cert-lifetime", "none",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.reverse_proxy_identity_header.as_deref(),
-            Some("x-forwarded-client-cert")
-        );
-        assert_eq!(config.reverse_proxy_header_format, ReverseProxyHeaderFormat::Xfcc);
-    }
-
-    #[test]
-    fn parses_reverse_proxy_plain_format() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header", "x-client-identity",
-                "--reverse-proxy-header-format", "plain",
-                "--max-client-cert-lifetime", "none",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.reverse_proxy_header_format, ReverseProxyHeaderFormat::Plain);
-    }
+    // NOTE: reverse-proxy identity-header ingress is a spoofable posture that the
+    // unconditional strict/production posture always rejects (see
+    // `strict_rejects_reverse_proxy_identity_header_ingress`), so there is no
+    // successful-parse test for the header-format selection — the mode never parses.
 
     #[test]
     fn unknown_reverse_proxy_header_format_errors() {
@@ -2516,21 +2366,10 @@ mod tests {
             .to_b64url()
     }
 
-    #[test]
-    fn parses_lb_assertion_binding_with_key() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.binding, BindingKind::LbAssertion);
-        assert_eq!(config.ingress_lb_keys.len(), 1);
-        assert_eq!(config.ingress_lb_keys[0].0, "lb-1");
-    }
+    // NOTE: lb-assertion is always rejected under the unconditional strict/production
+    // posture (see `strict_rejects_lb_assertion_binding`), so there is no
+    // successful-parse test for it — only the parse-time argument guards below and
+    // the strict rejection are exercised.
 
     #[test]
     fn lb_assertion_binding_requires_at_least_one_key() {
@@ -2598,12 +2437,12 @@ mod tests {
     #[test]
     fn strict_rejects_lb_assertion_binding() {
         // Tier 3 places the LB in the TCB (request-bound INGRESS assertion, NOT
-        // end-to-end mTLS); strict/production refuses to enable it silently.
-        let mut a = minimal();
+        // end-to-end mTLS); the unconditional strict/production posture refuses it.
+        // Durable replay isolates lb-assertion as the sole violation.
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--transport-binding", "lb-assertion",
                 "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
             ]),
@@ -2640,7 +2479,8 @@ mod tests {
 
     #[test]
     fn parses_attested_ingress_binding_fully_configured() {
-        let mut a = minimal();
+        // Attested ingress is strict-ADMITTED, so a durable-replay base parses.
+        let mut a = minimal_durable();
         a.splice(0..0, attested_ingress_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.binding, BindingKind::AttestedIngress);
@@ -2657,15 +2497,13 @@ mod tests {
         // Unlike Mode B (lb-assertion), Mode C is a strict-ADMITTED explicit opt-in.
         let mut a = minimal();
         a.splice(0..0, durable_replay());
-        let mut flags = args(&["--strict"]);
-        flags.extend(attested_ingress_flags());
-        a.splice(0..0, flags);
-        let config = parse_args(&a).expect("Mode C must be admitted under --strict");
+        a.splice(0..0, attested_ingress_flags());
+        let config = parse_args(&a).expect("Mode C must be admitted under the strict posture");
         assert_eq!(config.binding, BindingKind::AttestedIngress);
         assert!(
-            strict_violations(&config).is_empty(),
+            unsafe_config_violations(&config).is_empty(),
             "Mode C is strict-admitted: it must raise no strict violations, got {:?}",
-            strict_violations(&config)
+            unsafe_config_violations(&config)
         );
     }
 
@@ -2769,20 +2607,6 @@ mod tests {
     }
 
     #[test]
-    fn non_strict_lb_assertion_binding_is_ok() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
-            ]),
-        );
-        let config = parse_args(&a).expect("non-strict lb-assertion parses");
-        assert_eq!(config.binding, BindingKind::LbAssertion);
-    }
-
-    #[test]
     fn reverse_proxy_mode_conflicts_with_local_cert_lifetime() {
         // The default 1h client-cert lifetime is a LOCAL-mTLS control. Enabling
         // reverse-proxy mode (mTLS terminated upstream) while it is still in force
@@ -2797,64 +2621,23 @@ mod tests {
         );
     }
 
+    // In a production build (no `dev_env_key_source` feature) the env key source does
+    // not exist at all — `--key-source env` is an unknown value, not a togglable
+    // downgrade. The dev feature is the ONLY way to compile it in.
+    #[cfg(not(feature = "dev_env_key_source"))]
     #[test]
-    fn reverse_proxy_mode_honours_identity_source_selection() {
-        // The reverse-proxy provider reuses the SAME identity-source selector as
-        // the direct-TLS path, so the downstream binding policy is unchanged.
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header", "x-forwarded-client-cert",
-                "--transport-identity-source", "dns_san",
-                "--max-client-cert-lifetime", "none",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.identity_source, IdentityPolicy::DnsSan);
-        assert!(config.reverse_proxy_identity_header.is_some());
-    }
-
-    #[test]
-    fn env_key_source_requires_explicit_opt_in() {
+    fn env_key_source_rejected_in_production_build() {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "env"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--allow-env-keysource"), "got: {err}");
+        assert!(err.contains("unknown --key-source"), "got: {err}");
+        assert!(err.contains("env"), "got: {err}");
     }
 
-    #[test]
-    fn env_key_source_allowed_with_opt_in() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--key-source", "env"]));
-        a.splice(0..0, args(&["--allow-env-keysource"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Env);
-        assert!(config.allow_env_keysource);
-    }
-
-    // MCPS-076 (audit gap G-3): in a DEFAULT build (no `dev_env_key_source`
-    // feature) the env key source is not compiled and `build_key_source` must FAIL
-    // CLOSED on `KeySourceKind::Env` with a clear, actionable error — `--key-source
-    // env` still parses so the message is precise, but no env-backed key is built.
-    #[cfg(not(feature = "dev_env_key_source"))]
-    #[test]
-    fn default_build_rejects_env_key_source() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--key-source", "env"]));
-        a.splice(0..0, args(&["--allow-env-keysource"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Env);
-        let err = super::build_key_source(&config)
-            .err()
-            .expect("default build must refuse an env key source");
-        let rendered = err.to_string();
-        assert!(
-            rendered.contains("development-only")
-                && rendered.contains("dev_env_key_source"),
-            "expected a clear dev-only/feature-rebuild message; got: {rendered}"
-        );
-    }
+    // NOTE: the env key source is never accepted (the `--allow-env-keysource`
+    // opt-out qualifier is rejected and the unconditional strict posture refuses env
+    // key material), so `--key-source env` cannot reach a built key source — the
+    // `env_key_source_requires_explicit_opt_in` guard above is the operative gate.
 
     // --- #4034 PKCS#11 key source (CLI parsing + fail-closed gate) -----------
 
@@ -2871,7 +2654,7 @@ mod tests {
 
     #[test]
     fn parses_pkcs11_key_source_flags() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::Pkcs11);
@@ -2914,7 +2697,7 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "yubikey"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("file|env|pkcs11"), "got: {err}");
+        assert!(err.contains("file|pkcs11"), "got: {err}");
     }
 
     // In a DEFAULT build (no `pkcs11_keysource` feature) the PKCS#11 backend is
@@ -2925,7 +2708,7 @@ mod tests {
     #[cfg(not(feature = "pkcs11_keysource"))]
     #[test]
     fn default_build_rejects_pkcs11_key_source() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, pkcs11_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::Pkcs11);
@@ -2942,7 +2725,7 @@ mod tests {
     // MCPS-076: the File key source is always constructible (default + dev builds).
     #[test]
     fn file_key_source_is_always_constructible() {
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::File);
         assert!(super::build_key_source(&config).is_ok());
     }
@@ -2966,7 +2749,7 @@ mod tests {
 
     #[test]
     fn parses_aws_kms_key_source_flags() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::AwsKms);
@@ -3018,6 +2801,7 @@ mod tests {
         a.push("alias/mcp-re-tls-signing".to_string());
         a.push("--inner-http-url".to_string());
         a.push("http://127.0.0.1:8080/mcp".to_string());
+        a.extend(durable_replay());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.key_source, KeySourceKind::AwsKms);
         assert_eq!(
@@ -3059,7 +2843,7 @@ mod tests {
 
     #[test]
     fn parses_gcp_kms_key_source_flags() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::GcpKms);
@@ -3118,6 +2902,7 @@ mod tests {
         );
         a.push("--inner-http-url".to_string());
         a.push("http://127.0.0.1:8080/mcp".to_string());
+        a.extend(durable_replay());
         let config = parse_args(&a).expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.key_source, KeySourceKind::GcpKms);
         assert_eq!(
@@ -3184,7 +2969,7 @@ mod tests {
     #[cfg(not(feature = "aws_kms_keysource"))]
     #[test]
     fn default_build_rejects_aws_kms_key_source() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, aws_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::AwsKms);
@@ -3201,7 +2986,7 @@ mod tests {
     #[cfg(not(feature = "gcp_kms_keysource"))]
     #[test]
     fn default_build_rejects_gcp_kms_key_source() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, gcp_kms_flags());
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.key_source, KeySourceKind::GcpKms);
@@ -3215,21 +3000,9 @@ mod tests {
         );
     }
 
-    // MCPS-076: in a build WITH the dev feature, `build_key_source` honors the env
-    // key source (constructs an EnvKeySource rather than failing closed).
-    #[cfg(feature = "dev_env_key_source")]
-    #[test]
-    fn dev_build_constructs_env_key_source() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--key-source", "env"]));
-        a.splice(0..0, args(&["--allow-env-keysource"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(super::build_key_source(&config).is_ok());
-    }
-
     #[test]
     fn parses_configurable_limits() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&[
@@ -3252,7 +3025,7 @@ mod tests {
 
     #[test]
     fn request_deadline_secs_zero_disables() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--request-deadline-secs", "0"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
@@ -3269,7 +3042,7 @@ mod tests {
         // can never be turned off by out-of-range input. The boundary (cap exactly)
         // is accepted; cap+1 is rejected.
         let cap = super::MAX_INNER_READ_TIMEOUT_SECS;
-        let mut at_cap = minimal();
+        let mut at_cap = minimal_durable();
         at_cap.splice(0..0, args(&["--request-deadline-secs", &cap.to_string()]));
         let config = parse_args(&at_cap).expect("the cap value itself is accepted");
         assert_eq!(
@@ -3306,7 +3079,9 @@ mod tests {
     }
 
     // Issue #3837: `--replay-cache shared` parses (it is a real selection) and
-    // requires a connection URL.
+    // requires a connection URL. It must declare a strict-acceptable durability tier
+    // (the weaker `redis-async` tier is rejected, see
+    // `strict_rejects_weak_replay_durability_tier`).
     #[test]
     fn parses_shared_replay_selection() {
         let mut a = minimal();
@@ -3318,7 +3093,7 @@ mod tests {
                 "--replay-redis-url",
                 "redis://127.0.0.1:6379",
                 "--replay-durability-tier",
-                "redis-async",
+                "redis-wait-quorum:2:500",
             ]),
         );
         let config = parse_args(&a).expect("parse");
@@ -3329,7 +3104,10 @@ mod tests {
         );
         assert_eq!(
             config.replay_durability_tier,
-            Some(crate::replay_tier::ReplayDurabilityTier::RedisAsyncBounded)
+            Some(crate::replay_tier::ReplayDurabilityTier::RedisWaitQuorum {
+                quorum: 2,
+                timeout_ms: 500
+            })
         );
     }
 
@@ -3508,7 +3286,7 @@ mod tests {
     fn revocation_tier_defaults_to_bounded_cache_tier_1() {
         // Absent --revocation-tier preserves the Tier-1 bounded-cache posture with
         // the deployment-default window T (existing behavior unchanged).
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
             config.revocation_tier,
             crate::revocation_tier::RevocationTier::BoundedCache {
@@ -3530,7 +3308,7 @@ mod tests {
                 crate::revocation_tier::RevocationTier::Push { t_secs: 30 },
             ),
         ] {
-            let mut a = minimal();
+            let mut a = minimal_durable();
             a.splice(0..0, args(&["--revocation-tier", flag]));
             let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
             assert_eq!(config.revocation_tier, expected, "flag {flag}");
@@ -3647,20 +3425,18 @@ mod tests {
 
     #[test]
     fn default_has_no_crls_and_fails_closed_on_unknown_status() {
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert!(
             config.client_crl_paths.is_empty(),
             "no CRLs by default (revocation checking disabled until configured)"
         );
-        assert!(
-            !config.crl_allow_unknown_status,
-            "default posture is fail-closed: unknown revocation status is DENIED"
-        );
+        // Unknown CRL revocation status is ALWAYS denied (fail closed) — there is no
+        // relax knob to assert.
     }
 
     #[test]
     fn parses_a_single_client_crl_path() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--client-crl", "/etc/mcp-re/clients.crl"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.client_crl_paths, vec!["/etc/mcp-re/clients.crl".to_string()]);
@@ -3668,7 +3444,7 @@ mod tests {
 
     #[test]
     fn parses_comma_separated_client_crls() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--client-crl", "/a.crl,/b.crl,/c.crl"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
@@ -3682,6 +3458,7 @@ mod tests {
     #[test]
     fn parses_repeated_and_comma_separated_inner_http_urls() {
         let mut a = minimal_without_inner_command();
+        a.extend(durable_replay());
         a.extend(args(&[
             "--inner-http-url",
             "http://10.0.0.1:8080/mcp,http://10.0.0.2:8080/mcp",
@@ -3704,6 +3481,7 @@ mod tests {
     #[test]
     fn cores_defaults_to_auto_zero() {
         let mut a = minimal_without_inner_command();
+        a.extend(durable_replay());
         a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.cores, 0, "unset --cores means auto (0 = one worker per core)");
@@ -3712,6 +3490,7 @@ mod tests {
     #[test]
     fn parses_explicit_cores() {
         let mut a = minimal_without_inner_command();
+        a.extend(durable_replay());
         a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp", "--cores", "4"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.cores, 4);
@@ -3752,75 +3531,20 @@ mod tests {
     fn authz_off_does_not_require_a_revocation_list() {
         // The default (authz off) wires no policy enforcement, so revocation is
         // moot — the guard must not spuriously demand a deny-list.
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.authz, AuthzKind::Off);
         assert!(config.revocation_list_paths.is_empty());
-        assert!(!config.allow_empty_revocation);
     }
 
-    #[test]
-    fn authz_reference_without_revocation_fails_closed() {
-        // The core fix: enabling authz with no deny-list and no explicit ack is a
-        // silent fail-open and must be REFUSED at parse time.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--authz", "reference"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("revocation") && err.contains("--allow-empty-revocation"),
-            "expected a fail-closed revocation error, got: {err}"
-        );
-    }
-
-    #[test]
-    fn authz_reference_with_explicit_empty_ack_is_allowed() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--allow-empty-revocation",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.authz, AuthzKind::Reference);
-        assert!(config.allow_empty_revocation);
-        assert!(config.revocation_list_paths.is_empty());
-    }
-
-    #[test]
-    fn authz_reference_with_revocation_list_is_allowed() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--revocation-list",
-                "/etc/mcp-re/revoked",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.authz, AuthzKind::Reference);
-        assert_eq!(config.revocation_list_paths, vec!["/etc/mcp-re/revoked".to_string()]);
-        assert!(!config.allow_empty_revocation);
-    }
+    // NOTE: `--authz reference` is NEVER accepted — the reference profile is a
+    // conformance implementation, not the production authorization authority, and
+    // there is no ack to override this (see `authz_reference_is_refused`).
+    // `--revocation-list` itself still parses (authz stays off), exercised below.
 
     #[test]
     fn parses_comma_separated_revocation_lists() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--revocation-list",
-                "/a,/b,/c",
-            ]),
-        );
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--revocation-list", "/a,/b,/c"]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(
             config.revocation_list_paths,
@@ -3831,27 +3555,16 @@ mod tests {
     #[test]
     fn empty_revocation_list_segment_is_rejected() {
         let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--revocation-list",
-                "/a,,/b",
-            ]),
-        );
+        a.splice(0..0, args(&["--revocation-list", "/a,,/b"]));
         assert!(parse_args(&a).unwrap_err().contains("empty path segment"));
     }
 
     #[test]
-    fn authz_reference_without_ack_fails_closed() {
+    fn authz_reference_is_refused() {
         // ADR-MCPS-013 (audit #94 F1/F2/F4): the reference profile is a real,
         // signature-verifying profile, but it is a conformance/reference impl, NOT the
-        // production recommendation. Selecting it as the sole authority WITHOUT the
-        // explicit `--allow-reference-authz` ack must be refused at parse time (even
-        // with a revocation list supplied, so it is the ack — not the revocation guard
-        // — being exercised here). Mirrors `--key-source env` / `--allow-env-keysource`.
+        // production authority — and there is no ack to override that. `--authz
+        // reference` is refused at parse time even with a revocation list supplied.
         let mut a = minimal();
         a.splice(
             0..0,
@@ -3859,72 +3572,8 @@ mod tests {
         );
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("--allow-reference-authz") && err.contains("ADR-MCPS-013"),
-            "expected a reference-authz ack error, got: {err}"
-        );
-    }
-
-    #[test]
-    fn authz_reference_with_ack_and_revocation_is_allowed() {
-        // With the explicit ack AND a revocation list, the acknowledged non-production
-        // posture parses (non-strict).
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--revocation-list",
-                "/etc/mcp-re/revoked",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.authz, AuthzKind::Reference);
-        assert!(config.allow_reference_authz);
-    }
-
-    #[test]
-    fn strict_rejects_reference_authz_even_when_acknowledged() {
-        // ADR-MCPS-013 (audit #94 F1/F2/F4): under --strict/--production even the
-        // acknowledged reference profile is refused — production must run a production
-        // authorization profile (Biscuit). Mirrors the env-keysource strict refusal.
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--strict",
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--revocation-list",
-                "/etc/mcp-re/revoked",
-            ]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--authz reference") && err.contains("production"),
-            "strict must reject the reference profile as the production authority, got: {err}"
-        );
-    }
-
-    #[test]
-    fn strict_rejects_explicit_empty_revocation_under_authz_reference() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--strict",
-                "--authz",
-                "reference",
-                "--allow-reference-authz",
-                "--allow-empty-revocation",
-            ]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("--allow-empty-revocation"),
-            "strict must reject the acknowledged fail-open posture, got: {err}"
+            err.contains("--authz reference") && err.contains("ADR-MCPS-013"),
+            "expected a reference-authz refusal, got: {err}"
         );
     }
 
@@ -3963,7 +3612,7 @@ mod tests {
 
     #[test]
     fn repeated_client_crl_flags_accumulate() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&["--client-crl", "/a.crl", "--client-crl", "/b.crl"]),
@@ -3986,14 +3635,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_crl_allow_unknown_status_flag() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--crl-allow-unknown-status"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(config.crl_allow_unknown_status);
-    }
-
-    #[test]
     fn missing_client_crl_file_fails_closed() {
         // A configured-but-unreadable CRL path is a hard error, never a silently
         // skipped revocation check.
@@ -4013,22 +3654,21 @@ mod tests {
 
     #[test]
     fn default_has_online_ocsp_off_and_hard_fail() {
-        let config = parse_args(&minimal()).expect("parse");
+        let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
             config.client_ocsp,
             OcspKind::Off,
             "online OCSP is OFF by default (offline-CRL-only posture preserved)"
         );
-        assert!(
-            !config.ocsp_soft_fail,
-            "default OCSP posture is hard-fail (deny on indeterminate)"
-        );
+        // Online OCSP ALWAYS hard-fails on an indeterminate result — no soft-fail knob.
         assert!(config.ocsp_responder_url.is_none());
     }
 
     #[test]
     fn parses_client_ocsp_require_and_knobs() {
-        let mut a = minimal();
+        // `--ocsp-soft-fail` is a rejected qualifier (the hard-fail posture is
+        // unconditional), so only the require mode + responder URL are exercised.
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&[
@@ -4036,7 +3676,6 @@ mod tests {
                 "require",
                 "--ocsp-responder-url",
                 "http://ocsp.example.test/r",
-                "--ocsp-soft-fail",
             ]),
         );
         // In a build WITHOUT the online_ocsp feature, `--client-ocsp require`
@@ -4048,7 +3687,6 @@ mod tests {
                     config.ocsp_responder_url.as_deref(),
                     Some("http://ocsp.example.test/r")
                 );
-                assert!(config.ocsp_soft_fail);
             }
             Err(err) => assert!(
                 err.contains("online_ocsp feature"),
@@ -4076,14 +3714,6 @@ mod tests {
             err.contains("--ocsp-responder-url has no effect"),
             "got: {err}"
         );
-    }
-
-    #[test]
-    fn soft_fail_without_require_errors() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--ocsp-soft-fail"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--ocsp-soft-fail has no effect"), "got: {err}");
     }
 
     #[test]
@@ -4189,47 +3819,19 @@ mod tests {
 
     // --- MCPS-3842 strict/production posture ("reject, not warn") ------------
     //
-    // Black-box parser tests: under `--strict` (and the `--production` alias)
-    // each insecure-posture config that is otherwise only warned about becomes a
-    // HARD parse error. The matching non-strict control proves the SAME config
-    // still parses Ok (warn-only) without the flag — strict is purely additive.
+    // The strict/production posture is UNCONDITIONAL: the proxy always rejects an
+    // insecure-posture config at parse time (there is no warn-only mode, and the
+    // `--strict`/`--production` qualifiers are refused as redundant). These
+    // black-box parser tests assert those hard refusals and the accepting cases.
 
     #[test]
-    fn strict_flag_defaults_off_and_parses_on() {
-        // Default: warn-only posture.
-        assert!(!parse_args(&minimal()).expect("parse").strict);
-        // --strict turns it on for an otherwise-safe config. The minimal config's
-        // DEFAULT in-memory replay is itself a strict violation (#90), so an
-        // otherwise-safe strict config must declare a durable replay backend.
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict"]));
-        assert!(parse_args(&a).expect("parse").strict);
-    }
-
-    #[test]
-    fn production_alias_maps_to_strict_true() {
-        let mut a = minimal();
-        // --production implies strict, so the durable-replay posture (#90) applies.
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--production"]));
-        let config = parse_args(&a).expect("parse");
-        assert!(config.strict, "--production must map to strict = true");
-    }
-
-    #[test]
-    fn strict_accepts_a_fully_safe_config() {
-        // The minimal config uses every secure default EXCEPT replay, whose default
-        // is the non-durable in-memory cache (#90 rejects it under strict); a fully
-        // safe config therefore also declares a durable replay backend. --strict
-        // must then accept it.
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict"]));
-        let config = parse_args(&a).expect("a fully-safe config must parse under --strict");
-        assert!(config.strict);
+    fn strict_is_always_on_for_a_safe_config() {
+        // The bare in-memory replay default is a #90 violation, so a fully-safe
+        // config declares a durable replay backend; it must then parse with no
+        // unsafe-config violations (the proxy always runs maximal security).
+        let config = parse_args(&minimal_durable()).expect("a fully-safe config must parse");
         assert!(
-            strict_violations(&config).is_empty(),
+            unsafe_config_violations(&config).is_empty(),
             "a safe config must have no strict violations"
         );
     }
@@ -4242,7 +3844,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--replay-cache",
                 "shared",
                 "--replay-redis-url",
@@ -4252,7 +3853,6 @@ mod tests {
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
         assert!(err.contains("strict-production minimum"), "got: {err}");
     }
@@ -4263,7 +3863,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--replay-cache",
                 "shared",
                 "--replay-redis-url",
@@ -4274,53 +3873,52 @@ mod tests {
         );
         let config = parse_args(&a).expect("wait-quorum tier must be strict-acceptable");
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("replay-durability-tier")),
             "wait-quorum must not be a replay-tier strict violation"
         );
     }
 
-    // MCPS-79 (ADR-MCPS-049 clause 1): under --strict --fleet a node-local FILE
-    // replay cache is rejected — it is durable on ONE node but unshareable across
-    // verifiers, so a peer would not see a replayed nonce. Contrast
-    // `strict_without_fleet_accepts_file_replay_cache`: the same file cache is
-    // valid under --strict ALONE (single verifier). This is the orthogonality of
-    // the two flags made executable.
+    // MCPS-79 (ADR-MCPS-049 clause 1): under --fleet a node-local FILE replay cache
+    // is rejected — it is durable on ONE node but unshareable across verifiers, so a
+    // peer would not see a replayed nonce. Contrast
+    // `single_node_accepts_file_replay_cache`: the same file cache is valid WITHOUT
+    // --fleet (single verifier). This is the orthogonality of the fleet dimension
+    // and the (always-on) strict posture made executable.
     #[test]
     fn strict_fleet_rejects_file_replay_cache() {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict", "--fleet"]));
+        a.splice(0..0, args(&["--fleet"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--fleet"), "got: {err}");
         assert!(err.contains("node-local"), "got: {err}");
         assert!(err.contains("shared"), "got: {err}");
     }
 
-    // MCPS-79: under --strict --fleet the node-local in-memory cache is likewise
-    // rejected (it is also rejected as non-durable under plain --strict, #90 — but
-    // the --fleet reason must be present so the operator learns the cross-verifier
-    // property, not just the restart-durability one).
+    // MCPS-79: under --fleet the node-local in-memory cache is likewise rejected (it
+    // is also rejected as non-durable, #90 — but the --fleet reason must be present
+    // so the operator learns the cross-verifier property, not just the restart-
+    // durability one).
     #[test]
     fn strict_fleet_rejects_memory_replay_cache() {
         let mut a = minimal(); // default replay backend is in-memory
-        a.splice(0..0, args(&["--strict", "--fleet"]));
+        a.splice(0..0, args(&["--fleet"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--fleet"), "got: {err}");
         assert!(err.contains("node-local"), "got: {err}");
     }
 
-    // MCPS-79: --strict --fleet ACCEPTS a shared cache at a strict-production
-    // durability tier — the one posture that maintains cross-verifier replay
-    // state. No fleet violation must remain.
+    // MCPS-79: --fleet ACCEPTS a shared cache at a strict-production durability tier
+    // — the one posture that maintains cross-verifier replay state. No fleet
+    // violation must remain.
     #[test]
     fn strict_fleet_accepts_shared_wait_quorum() {
         let mut a = minimal();
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--fleet",
                 "--replay-cache",
                 "shared",
@@ -4330,44 +3928,30 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("--strict --fleet + shared wait-quorum must parse");
-        assert!(config.fleet && config.strict);
+        let config = parse_args(&a).expect("--fleet + shared wait-quorum must parse");
+        assert!(config.fleet);
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("--fleet")),
             "shared wait-quorum must not be a --fleet strict violation"
         );
     }
 
-    // MCPS-79 (orthogonality): --strict WITHOUT --fleet is single-node strict, so
-    // the durable FILE cache (ADR-MCPS-014) remains valid — the node is the sole
+    // MCPS-79 (orthogonality): WITHOUT --fleet the deployment is single-node, so the
+    // durable FILE cache (ADR-MCPS-014) remains valid — the node is the sole
     // verifier. The --fleet rejection must NOT fire here.
     #[test]
-    fn strict_without_fleet_accepts_file_replay_cache() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict"]));
-        let config = parse_args(&a).expect("single-node strict must accept a durable file cache");
-        assert!(config.strict && !config.fleet);
+    fn single_node_accepts_file_replay_cache() {
+        let config = parse_args(&minimal_durable())
+            .expect("single-node must accept a durable file cache");
+        assert!(!config.fleet);
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("--fleet")),
-            "single-node strict must have no --fleet violation"
+            "single-node must have no --fleet violation"
         );
-    }
-
-    // MCPS-79: --fleet does NOT imply --strict and does NOT hard-reject on its own
-    // (warn-only, emitted in main.rs). A node-local cache under --fleet alone still
-    // parses Ok; the production guarantee requires BOTH flags.
-    #[test]
-    fn fleet_without_strict_parses_ok_warn_only() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--fleet"]));
-        let config = parse_args(&a).expect("--fleet without --strict must parse (warn-only)");
-        assert!(config.fleet && !config.strict);
     }
 
     // MCPS-84: a trust-epoch backend is only consumed by the Push tier; pairing it
@@ -4389,7 +3973,7 @@ mod tests {
     // on the config.
     #[test]
     fn trust_epoch_url_with_push_tier_parses() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&[
@@ -4415,10 +3999,9 @@ mod tests {
     // error directing the operator at a durable backend.
     #[test]
     fn strict_rejects_in_memory_replay_default() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
+        // minimal() omits --replay-cache, so it defaults to the non-durable
+        // in-memory backend — always a strict/production violation.
+        let err = parse_args(&minimal()).unwrap_err();
         assert!(err.contains("--replay-cache memory"), "got: {err}");
         // The message must direct to BOTH durable options (single-node + horizontal).
         assert!(err.contains("--replay-cache file"), "got: {err}");
@@ -4427,17 +4010,14 @@ mod tests {
 
     // #90: the durable single-node `file` backend is NOT a strict violation — a
     // proxy restart re-reads its admitted nonces from disk, so no restart window
-    // re-opens. The minimal+strict config with `--replay-cache file` must parse Ok
-    // with no replay strict violation.
+    // re-opens. The minimal config with `--replay-cache file` must parse Ok with no
+    // replay strict violation.
     #[test]
     fn strict_accepts_file_replay_backend() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict"]));
-        let config = parse_args(&a).expect("durable file replay must parse under --strict");
+        let config = parse_args(&minimal_durable()).expect("durable file replay must parse");
         assert_eq!(config.replay, ReplayKind::File);
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("--replay-cache")),
             "a durable file replay must not be a replay strict violation"
@@ -4453,7 +4033,6 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--replay-cache",
                 "shared",
                 "--replay-redis-url",
@@ -4462,90 +4041,56 @@ mod tests {
                 "redis-wait-quorum:2:500",
             ]),
         );
-        let config = parse_args(&a).expect("durable shared replay must parse under --strict");
+        let config = parse_args(&a).expect("durable shared replay must parse");
         assert_eq!(config.replay, ReplayKind::Shared);
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("--replay-cache memory")),
             "a durable shared replay must not trip the in-memory replay violation"
         );
     }
 
-    // #90: the in-memory default is only a STRICT posture violation, not a
-    // default-insecure config — without --strict it parses Ok (warn-only).
-    #[test]
-    fn non_strict_in_memory_replay_is_ok() {
-        let config = parse_args(&minimal()).expect("parse");
-        assert_eq!(config.replay, ReplayKind::Memory);
-        assert!(!config.strict);
-    }
-
-    #[test]
-    fn strict_rejects_env_key_source() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--key-source", "env", "--allow-env-keysource"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--key-source env"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_env_key_source_with_opt_in_is_ok() {
-        // Control: the same env key source (with its own opt-in) parses Ok
-        // without --strict — it is only WARNED about at runtime.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--key-source", "env", "--allow-env-keysource"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.key_source, KeySourceKind::Env);
-        assert!(!config.strict);
-    }
-
     #[test]
     fn strict_rejects_disabled_cert_lifetime_none() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "none"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
 
     #[test]
     fn strict_rejects_disabled_cert_lifetime_zero() {
         // `0` parses to the same disabled (None) enforcement as `none`.
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "0"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "0"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
     }
 
-    // ADR-MCPS-023 §A1 (MCPS-57), conformance vector (a): under --strict a
-    // client-cert lifetime ABOVE the 1h ceiling is a hard violation — Mode-A's
-    // revocation posture is short-lived certs, so a longer-lived cert cannot be
-    // audited as `short_lived_cert`.
+    // ADR-MCPS-023 §A1 (MCPS-57), conformance vector (a): a client-cert lifetime
+    // ABOVE the 1h ceiling is a hard violation — Mode-A's revocation posture is
+    // short-lived certs, so a longer-lived cert cannot be audited as
+    // `short_lived_cert`.
     #[test]
     fn strict_rejects_over_ceiling_cert_lifetime() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "24h"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "24h"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("exceeds the strict ceiling"), "got: {err}");
+        assert!(err.contains("exceeds the ceiling"), "got: {err}");
         assert!(err.contains("86400s"), "got: {err}");
         assert!(err.contains("short_lived_cert"), "got: {err}");
     }
 
     // ADR-MCPS-023 §A1: the boundary is inclusive — a lifetime EXACTLY at the 1h
-    // ceiling (the default) is acceptable, so a default config is not
-    // self-rejecting. Durable replay is spliced in to isolate the cert-lifetime
-    // dimension (#90 rejects the in-memory default under strict).
+    // ceiling (the default) is acceptable, so a default config is not self-rejecting.
     #[test]
     fn strict_accepts_cert_lifetime_at_ceiling() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "3600"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "3600"]));
         let config = parse_args(&a).expect("a 1h lifetime must be strict-acceptable");
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("max-client-cert-lifetime")),
             "a lifetime at the ceiling must not be a strict violation"
@@ -4555,79 +4100,54 @@ mod tests {
     // ADR-MCPS-023 §A1: a lifetime just BELOW the ceiling is also acceptable.
     #[test]
     fn strict_accepts_cert_lifetime_below_ceiling() {
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "30m"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "30m"]));
         let config = parse_args(&a).expect("a 30m lifetime must be strict-acceptable");
         assert!(
-            strict_violations(&config)
+            unsafe_config_violations(&config)
                 .iter()
                 .all(|v| !v.contains("max-client-cert-lifetime")),
             "a lifetime below the ceiling must not be a strict violation"
         );
     }
 
-    #[test]
-    fn non_strict_disabled_cert_lifetime_is_ok() {
-        // Control: disabled enforcement parses Ok without --strict (warn-only).
-        let mut a = minimal();
-        a.splice(0..0, args(&["--max-client-cert-lifetime", "none"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.max_client_cert_lifetime, None);
-        assert!(!config.strict);
-    }
-
     // SUPERSEDED by ADR-MCPS-023 §A1 (v0.9, MCPS-57): the earlier MCPS-3842 stance
     // treated a lifetime > 1h as a warning-only recommendation. That is reversed —
     // Mode-A's revocation posture IS the cert lifetime, so a lifetime above the
-    // ceiling now fails closed under strict. A 2h lifetime is enforced but cannot
-    // be audited as `short_lived_cert`, so strict rejects it.
+    // ceiling fails closed. A 2h lifetime is enforced but cannot be audited as
+    // `short_lived_cert`, so it is rejected.
     #[test]
     fn strict_rejects_over_ceiling_lifetime_2h() {
-        let mut a = minimal();
-        // Durable replay so the only posture under test is the lifetime (#90).
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, args(&["--strict", "--max-client-cert-lifetime", "2h"]));
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-client-cert-lifetime", "2h"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("exceeds the strict ceiling"), "got: {err}");
+        assert!(err.contains("exceeds the ceiling"), "got: {err}");
         assert!(err.contains("7200s"), "got: {err}");
     }
 
     #[test]
     fn strict_rejects_cn_legacy_identity_source() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--transport-identity-source", "cn_legacy"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("cn_legacy"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_cn_legacy_identity_source_is_ok() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "cn_legacy"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.identity_source, IdentityPolicy::CnLegacy);
-        assert!(!config.strict);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("cn_legacy"), "got: {err}");
     }
 
     #[test]
     fn strict_reports_all_violations_at_once() {
         // The error aggregates every parse-time violation so the operator can fix
-        // the whole posture in one pass, not one error per restart. The default
-        // in-memory replay is itself a #90 strict violation and aggregates alongside
+        // the whole posture in one pass, not one error per restart. The bare
+        // in-memory replay default is itself a #90 violation and aggregates alongside
         // the cert-lifetime and cn_legacy violations.
-        let mut a = minimal();
+        let mut a = minimal(); // in-memory replay default
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--max-client-cert-lifetime", "none",
                 "--transport-identity-source", "cn_legacy",
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        // The default in-memory replay is itself an aggregated strict violation.
         assert!(err.contains("--replay-cache memory"), "got: {err}");
         assert!(err.contains("--max-client-cert-lifetime"), "got: {err}");
         assert!(err.contains("cn_legacy"), "got: {err}");
@@ -4635,123 +4155,41 @@ mod tests {
 
     // --- #4082 (MCP-RE-MED-1) additional strict/production posture rejections -----
     //
-    // M10/M11/M12/M22: under `--strict`/`--production`, these otherwise
-    // warn-only postures become HARD parse errors. Each strict test is paired
-    // with a non-strict control proving the SAME posture still parses Ok.
+    // M10/M11/M22: the unconditional strict/production posture turns these
+    // otherwise-spoofable/decoupled postures into HARD parse errors.
 
     // M10/M22 — reverse-proxy identity-header ingress is the documented
-    // identity-spoofable posture; --strict refuses to enable it silently.
+    // identity-spoofable posture; production refuses to enable it.
     #[test]
     fn strict_rejects_reverse_proxy_identity_header_ingress() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(
             0..0,
             args(&[
-                "--strict",
                 "--reverse-proxy-identity-header",
                 "x-forwarded-client-cert",
-                // The local-cert lifetime is meaningless in reverse-proxy mode,
-                // so it must be explicitly disabled (existing parse rule); that
-                // disabled lifetime is itself a strict violation, but the
-                // reverse-proxy ingress rejection is what we assert here.
+                // The local-cert lifetime is meaningless in reverse-proxy mode, so it
+                // must be explicitly disabled (existing parse rule); that disabled
+                // lifetime is itself a violation, but the reverse-proxy ingress
+                // rejection is what we assert here.
                 "--max-client-cert-lifetime",
                 "none",
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
         assert!(err.contains("--reverse-proxy-identity-header"), "got: {err}");
     }
 
-    #[test]
-    fn non_strict_reverse_proxy_identity_header_ingress_is_ok() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--reverse-proxy-identity-header",
-                "x-forwarded-client-cert",
-                "--max-client-cert-lifetime",
-                "none",
-            ]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert!(config.reverse_proxy_identity_header.is_some());
-        assert!(!config.strict);
-    }
-
-    // M11 — `--transport-binding none` decouples the verified request signer
-    // from the mTLS channel identity; --strict refuses it.
+    // M11 — `--transport-binding none` is no longer a selectable value (the only
+    // accepted bindings enforce a channel↔signer binding), so it fails closed at
+    // argument-parse time.
     #[test]
     fn strict_rejects_transport_binding_none() {
-        let mut a = minimal();
-        a.splice(0..0, args(&["--strict", "--transport-binding", "none"]));
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--transport-binding"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_transport_binding_none_is_ok() {
-        let mut a = minimal();
+        let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-binding", "none"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.binding, BindingKind::None);
-        assert!(!config.strict);
-    }
-
-    // M12 — `--crl-allow-unknown-status` is a CRL fail-open relaxation; --strict
-    // refuses it when CRLs are actually configured (mirrors its
-    // no-effect-without-CRLs semantics).
-    #[test]
-    fn strict_rejects_crl_allow_unknown_status_with_crls() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--strict",
-                "--client-crl",
-                "/crl.pem",
-                "--crl-allow-unknown-status",
-            ]),
-        );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--crl-allow-unknown-status"), "got: {err}");
-    }
-
-    #[test]
-    fn non_strict_crl_allow_unknown_status_is_ok() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&["--client-crl", "/crl.pem", "--crl-allow-unknown-status"]),
-        );
-        let config = parse_args(&a).expect("parse");
-        assert!(config.crl_allow_unknown_status);
-        assert!(!config.strict);
-    }
-
-    // M12 — `--ocsp-soft-fail` is an online-OCSP fail-open relaxation; --strict
-    // refuses it. It is only reachable in an `online_ocsp` build (otherwise
-    // `--client-ocsp require` fails closed at parse before the strict gate), so
-    // this test is feature-gated to the build that can exercise the strict arm.
-    #[cfg(feature = "online_ocsp")]
-    #[test]
-    fn strict_rejects_ocsp_soft_fail() {
-        let mut a = minimal();
-        a.splice(
-            0..0,
-            args(&[
-                "--strict",
-                "--client-ocsp",
-                "require",
-                "--ocsp-soft-fail",
-            ]),
-        );
-        let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--strict"), "got: {err}");
-        assert!(err.contains("--ocsp-soft-fail"), "got: {err}");
+        assert!(err.contains("unknown --transport-binding"), "got: {err}");
+        assert!(err.contains("none"), "got: {err}");
     }
 
     #[test]
@@ -4819,6 +4257,7 @@ mod tests {
         let mut a = pkcs11_lead_no_tls_key();
         a.push("--pkcs11-tls-key-label".to_string());
         a.push("mcp-re-tls".to_string());
+        a.extend(durable_replay());
         let config = parse_args(&with_inner_http_url(a))
             .expect("delegated TLS path parses without --tls-key");
         assert_eq!(config.pkcs11_tls_key_label.as_deref(), Some("mcp-re-tls"));
@@ -5032,5 +4471,70 @@ mod tests {
             "past T the bounded fallback re-resolves and picks up the revocation"
         );
         assert_eq!(inner.calls(), 2);
+    }
+
+    // `build_lb_assertion_binding` is never reached on the CLI happy path (the
+    // lb-assertion binding is refused at parse), so cover the pure builder directly by
+    // mutating a parsed Config — the wiring + the fail-closed key parse.
+    #[test]
+    fn build_lb_assertion_binding_wires_keys_and_fails_closed() {
+        let mut c = parse_args(&minimal_durable()).expect("parse");
+        assert!(
+            super::build_lb_assertion_binding(&c).expect("ok").is_none(),
+            "no binding when the selection is not lb-assertion"
+        );
+        c.binding = BindingKind::LbAssertion;
+        c.ingress_lb_keys = vec![("lb-1".to_string(), lb_pub_b64())];
+        assert!(super::build_lb_assertion_binding(&c).expect("build").is_some());
+        c.ingress_lb_keys = vec![("lb-x".to_string(), "not-a-key".to_string())];
+        assert!(
+            super::build_lb_assertion_binding(&c).is_err(),
+            "a malformed LB key must fail closed"
+        );
+    }
+
+    #[test]
+    fn load_trust_rejects_malformed_entries() {
+        assert!(load_trust(br#"{"not":"an array"}"#).is_err());
+        assert!(load_trust(br#"[{"key_id":"k","public_key":"x"}]"#)
+            .unwrap_err()
+            .contains("signer"));
+        assert!(load_trust(br#"[{"signer":"s","public_key":"x"}]"#)
+            .unwrap_err()
+            .contains("key_id"));
+        assert!(load_trust(br#"[{"signer":"s","key_id":"k"}]"#)
+            .unwrap_err()
+            .contains("public_key"));
+    }
+
+    #[test]
+    fn parse_rejects_bad_values_and_names_each_missing_required_flag() {
+        for (flag, val) in [
+            ("--client-crl-reload-secs", "abc"),
+            ("--max-connections", "abc"),
+            ("--max-body-bytes", "abc"),
+            ("--max-clock-skew", "abc"),
+            ("--request-deadline-secs", "abc"),
+            ("--read-timeout-secs", "abc"),
+        ] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&[flag, val]));
+            assert!(parse_args(&a).is_err(), "{flag} {val} must be rejected");
+        }
+        // `--authz off` is the explicit no-authz selection (the default value).
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--authz", "off"]));
+        assert_eq!(parse_args(&a).expect("parse").authz, AuthzKind::Off);
+        // Dropping any required (flag, value) pair fails closed naming the flag.
+        for miss in [
+            "--audience", "--server-signer", "--server-key-id", "--tls-cert", "--tls-key",
+            "--client-ca", "--trust",
+        ] {
+            let mut a = minimal_durable();
+            let i = a.iter().position(|x| x == miss).expect("required flag present");
+            a.drain(i..i + 2);
+            let e = parse_args(&a).unwrap_err();
+            assert!(e.contains(miss), "missing {miss} must be named; got: {e}");
+        }
     }
 }

@@ -293,9 +293,7 @@ where
         rt.block_on(async move {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
             tx.send(listener.local_addr().expect("addr")).expect("send addr");
-            let async_handler = move |body: Vec<u8>,
-                                      id: Option<TransportIdentity>,
-                                      assertion: Option<String>|
+            let async_handler = move |req: async_serve::ServedHttpRequest|
                   -> async_serve::HandlerResponseFuture {
                 let h = Arc::clone(&handler);
                 // The drain tests use SYNCHRONOUS handlers that block until the
@@ -305,7 +303,10 @@ where
                 // the blocking call and spins up a replacement worker, keeping the
                 // runtime healthy (production handlers are async and never need it).
                 Box::pin(async move {
-                    tokio::task::block_in_place(|| h(&body, id, assertion.as_deref()))
+                    let body = tokio::task::block_in_place(|| {
+                        h(&req.body, req.identity, req.assertion.as_deref())
+                    });
+                    async_serve::ServedHttpResponse { status: 200, headers: Vec::new(), body }
                 })
             };
             async_serve::serve(

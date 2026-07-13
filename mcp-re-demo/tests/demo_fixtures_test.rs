@@ -84,8 +84,9 @@ fn matching_client_identity_round_trips_and_equals_signer() {
     let identity = identity.expect("a verified client identity");
     assert_eq!(
         identity.value,
-        fx.signer(),
-        "the positive client URI-SAN identity must EQUAL the request signer"
+        fx.actor_id(),
+        "the positive client URI-SAN identity must EQUAL the resolved RFC 9421 actor id \
+         (role:trust_domain:signer:keyid), which the proxy's `exact` binding compares"
     );
 }
 

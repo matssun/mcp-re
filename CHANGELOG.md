@@ -14,6 +14,35 @@ or wire-format compatibility while the design lines from
 
 _Nothing yet._
 
+## [0.12.0] — 2026-07-13
+
+**Serving-path consolidation + a re-measured GKE SLO baseline.** v0.12 finishes the
+RFC 9421 cutover on the proxy serving path and re-baselines the ADR-MCPRE-051 §7 SLO
+on real GKE hardware under the v2 canonical envelope.
+
+### Changed
+- **Proxy serving refactor.** The serving / replay-tier / transport-binding wiring
+  moves out of `main.rs` and `cli.rs` into a dedicated `App` runner
+  (`mcp-re-proxy/src/app.rs`); `main.rs` and `cli.rs` become thin argument-parse +
+  delegation. The production listener runs the RFC 9421 `HttpProfileProxy` path.
+- **OCSP is always fail-closed.** The `--ocsp-soft-fail` (fail-open) relaxation was
+  removed; an online-OCSP `require` build now rejects on any
+  indeterminate/unreachable/timeout result. Hardening — the secure default and the
+  only remaining posture.
+- Pruned now-unused workspace dependencies (`Cargo.lock`, `MODULE.bazel.lock`).
+
+### Added
+- **ADR-MCPRE-051 §7 SLO baseline — re-measured on GKE under the v2 envelope and
+  DECLARED.** RFC 9421 carrier, cold TLS1.3-mTLS, concurrency 128 / 8000 requests:
+  e2-standard-8 71.5→402.1 rps (per-core 0.703); c3-standard-8 93.0→499.4 rps
+  (0.671). `production_slo` in `docs/bench/adr-051-slo-targets.json` flips
+  `pending`→`declared`; `scripts/slo_gate.py` accepts report schema v1 or v2.
+- Containerised SLO runner: `tls_load_harness_bench` honours
+  `MCP_RE_LOADGEN_REDIS_URL`; `tools/slo/run_slo_job.sh` provisions a
+  primary+2-replica Redis as native sidecars.
+- SDK downloader smoke tests restored (`sdk/python/tests`, `sdk/typescript/test`):
+  wheel/napi import + an RFC 9421 signing round-trip against the built artifact.
+
 ## [0.11.0] — 2026-07-10
 
 **The HTTP-profile release.** v0.11 makes the RFC 9421 + RFC 9530 HTTP standards
@@ -853,7 +882,7 @@ bumps `VERSION`/`Cargo.toml` at this point in history.
 
 ### Added — security process
 
-- **Cross-round finding ledger** ([`docs/security/finding-ledger.jsonl`](docs/security/finding-ledger.jsonl)):
+- **Cross-round finding ledger** ([`docs/archive/security/finding-ledger.jsonl`](docs/archive/security/finding-ledger.jsonl)):
   durable per-finding disposition memory so a later audit round verifies only what
   is genuinely new and flags regressions loudly.
 
@@ -1057,7 +1086,7 @@ rounds. The full audit reports are committed under
   time: **HIGH**.
 - **Remediation in this release**: all 4 Critical, all 15 High, and 28 of 30
   Medium findings are **Addressed** with regression tests. The remaining 2
-  Mediums (M01/M02 in [`docs/security/remediation-v0.2.md`](docs/security/remediation-v0.2.md))
+  Mediums (M01/M02 in [`docs/archive/security/remediation-v0.2.md`](docs/archive/security/remediation-v0.2.md))
   are **Deferred to v0.3**; their fail-mode is fail-closed and does NOT admit
   unauthorized requests.
 
@@ -1107,7 +1136,7 @@ v0.1 is the internal pre-public baseline. It is NOT released as a public
 crate or source archive; this entry is recorded so the v0.2 changelog,
 audit, and remediation documents have an unambiguous predecessor to refer
 to. The v0.1 audit report at
-[`docs/security/audit-v0.1.md`](docs/security/audit-v0.1.md) captures the
+[`docs/archive/security/audit-v0.1.md`](docs/archive/security/audit-v0.1.md) captures the
 state of the codebase at this point.
 
 ### Highlights
@@ -1128,7 +1157,7 @@ state of the codebase at this point.
 - Residual-risk rating at audit time: **MODERATE**.
 - Four findings were partial carry-overs into the v0.2 hardening branch;
   all are closed in v0.2.0 per the
-  [v0.2 remediation log](docs/security/remediation-v0.2.md).
+  [v0.2 remediation log](docs/archive/security/remediation-v0.2.md).
 
 [0.3.1]: https://github.com/matssun/mcps/releases/tag/v0.3.1
 [0.3.0]: https://github.com/matssun/mcps/releases/tag/v0.3.0

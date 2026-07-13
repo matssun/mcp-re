@@ -4,7 +4,7 @@
 multi-replica validation harness (`gke-multi-replica-validation.sh`).
 
 MCP-RE is HTTP-profile only. This replaces the removed `mcp-re-client-proxy-cli`:
-it reads ONE plain MCP JSON-RPC request on stdin, signs a draft-02 envelope with the
+it reads ONE plain MCP JSON-RPC request on stdin, signs an RFC 9421 + RFC 9530 request with the
 audited `mcp-re-client-core` logic (via the `mcp_re_sdk` PyO3 core), forwards it over
 verifying mTLS as one HTTP/1.1 POST to `--remote-addr host:port`, verifies the
 server-signed response, prints the plain MCP response JSON on stdout, and reports a
@@ -37,33 +37,23 @@ import socket
 import ssl
 import sys
 import time
-from datetime import datetime, timezone
 
 import mcp_re_sdk
-
-# A concrete, valid authorization-binding digest (SHA-256 of the empty artifact,
-# Base64URL-no-pad). The PEP verifies the signature over the preimage (which includes
-# the binding) but enforces no authorization scope, so any self-consistent binding is
-# accepted; this one is proven against the real proxy.
-_AUTHZ_DIGEST = "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
-
-
-def _rfc3339(unix: int) -> str:
-    return datetime.fromtimestamp(unix, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _b64url_at_file(spec: str) -> bytes:
-    """b64url-decode a value that may be given inline or as ``@<path>`` (the CLI's
-    ``@file`` convention) — used for ``--server-pubkey``."""
+def _b64url_text_at_file(spec: str) -> str:
+    """Return a Base64URL value that may be given inline or as ``@<path>`` (the CLI's
+    ``@file`` convention) as the RAW b64url STRING — used for ``--server-pubkey``.
+    The SDK's ``verify_response`` takes the server key as a Base64URL string (it calls
+    ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
     raw = spec
     if spec.startswith("@"):
         with open(spec[1:], "r", encoding="utf-8") as fh:
             raw = fh.read().strip()
-    return _b64url_decode(raw)
+    return raw
 
 
 def _read_seed(spec: str) -> bytes:
@@ -76,19 +66,6 @@ def _read_seed(spec: str) -> bytes:
     if len(seed) != 32:
         raise ValueError(f"signing key seed must be 32 bytes, got {len(seed)}")
     return seed
-
-
-def _canonical_audience(six_field: str) -> str:
-    """Reproduce ``AudienceTuple::to_audience_string`` from the 6-field ``--audience``
-    form (``scheme,host,port,tenant,route,realm``); a drift fails closed, never passes."""
-    parts = six_field.split(",")
-    if len(parts) != 6:
-        raise ValueError(f"--audience must have 6 comma fields, got {len(parts)}: {six_field!r}")
-    scheme, host, port, tenant, route, realm = parts
-    return (
-        f"mcp-re-audience:v1:scheme={scheme};host={host};port={port};"
-        f"tenant={tenant};route={route};realm={realm}"
-    )
 
 
 def _classify(reason: "str | None") -> str:
@@ -104,23 +81,32 @@ def _classify(reason: "str | None") -> str:
 def _body_reject_reason(body: bytes) -> "str | None":
     """The proxy's own ``mcp-re.*`` reason from a fail-closed JSON-RPC error body.
 
-    The object-mode async fleet answers a rejected request with an UNSIGNED
-    JSON-RPC error (signed rejection is an RFC-9421 http-profile feature, not the
-    object/legacy path — ADR-MCPRE-050). So ``verify_response`` — which requires a
-    signed response envelope — reports its own ``mcp-re.missing_envelope`` and never
-    sees WHY the proxy rejected. The authoritative reason is in the error body at
-    ``error.data.mcp_re_error``. Reading it is for VERDICT CLASSIFICATION ONLY: the
-    request is already fail-closed (rejected), so this never turns a rejection into
-    an acceptance — it just lets the harness distinguish replay from revoked from a
+    A fail-closed request may be answered with a signed RFC 9421 rejection, or —
+    for a pre-evidence transport/parse failure — an unsigned JSON-RPC error whose
+    reason ``verify_response`` cannot read. The authoritative reason is the proxy's
+    signed rejection body, whose shape is
+    ``error.data.mcp_re_error = {"wire_code": "mcp-re.<reason>"}`` (an object); some
+    pre-evidence errors instead carry it as a bare string, and the human ``message``
+    embeds it too. Reading it is for VERDICT CLASSIFICATION ONLY: the request is
+    already fail-closed (rejected), so this never turns a rejection into an
+    acceptance — it just lets the harness distinguish replay from revoked from a
     generic rejection. Returns None if the body is not such an error."""
     try:
         err = json.loads(body).get("error")
         if isinstance(err, dict):
             data = err.get("data")
-            if isinstance(data, dict) and isinstance(data.get("mcp_re_error"), str):
-                return data["mcp_re_error"]
-            if isinstance(err.get("message"), str) and err["message"].startswith("mcp-re."):
-                return err["message"]
+            me = data.get("mcp_re_error") if isinstance(data, dict) else None
+            # The proxy's signed rejection carries the reason as an object.
+            if isinstance(me, dict) and isinstance(me.get("wire_code"), str):
+                return me["wire_code"]
+            # Some pre-evidence errors carry it as a bare string.
+            if isinstance(me, str):
+                return me
+            # Last resort: the embedded reason in the human-readable message
+            # (e.g. "mcp-re http-profile proxy rejected: mcp-re.replay_detected").
+            msg = err.get("message")
+            if isinstance(msg, str) and "mcp-re." in msg:
+                return msg
     except (ValueError, AttributeError):
         pass
     return None
@@ -136,7 +122,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--server-signer", required=True)
     p.add_argument("--server-key-id", required=True)
     p.add_argument("--server-pubkey", required=True)        # raw-32 b64url
-    p.add_argument("--audience", required=True)             # 6-field form
+    p.add_argument("--audience", required=True)             # RFC 9421 audience id
+    p.add_argument("--target-uri", required=True)           # canonical @target-uri
+    p.add_argument("--route")                               # optional audience route
+    p.add_argument("--trust-domain", default="example.com") # server actor trust domain
+    p.add_argument("--dpop-token", default="access-token-xyz")  # OAuth-DPoP credential
     p.add_argument("--tls-cert", required=True)             # client leaf
     p.add_argument("--tls-key", required=True)
     p.add_argument("--server-ca", required=True)
@@ -155,7 +145,8 @@ def _make_post(args: argparse.Namespace):
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=args.server_ca)
     ctx.load_cert_chain(args.tls_cert, args.tls_key)
 
-    def post(body: bytes) -> bytes:
+    def post(headers: "list[tuple[str, str]]", body: bytes):
+        """Send the RFC 9421 signed request; return (status, response_headers, body)."""
         raw = socket.create_connection((host, port), timeout=15)
         try:
             tls = ctx.wrap_socket(raw, server_hostname=args.server_name)
@@ -163,9 +154,10 @@ def _make_post(args: argparse.Namespace):
             raw.close()
             raise
         try:
+            hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
             head = (
                 f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"
-                f"Content-Type: application/json\r\n"
+                f"{hdr_lines}"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()
             tls.sendall(head + body)
@@ -177,17 +169,31 @@ def _make_post(args: argparse.Namespace):
                 chunks.append(chunk)
         finally:
             tls.close()
-        return b"".join(chunks).split(b"\r\n\r\n", 1)[1]
+        raw_resp = b"".join(chunks)
+        head_bytes, _, resp_body = raw_resp.partition(b"\r\n\r\n")
+        lines = head_bytes.split(b"\r\n")
+        status = int(lines[0].split(b" ")[1]) if len(lines[0].split(b" ")) > 1 else 0
+        resp_headers = []
+        for line in lines[1:]:
+            if b":" in line:
+                k, _, v = line.partition(b":")
+                resp_headers.append((k.decode().strip(), v.decode().strip()))
+        return status, resp_headers, resp_body
 
     return post
 
 
+#: The RFC 9421 response evidence block key the proxy authors in the body `_meta`.
+_RESPONSE_EVIDENCE_BLOCK_KEY = "se.syncom/mcp-re.http.response"
+
+
 def _strip_envelope(obj: dict) -> dict:
+    """Strip the proxy-owned RFC 9421 response evidence block, leaving plain MCP."""
     result = obj.get("result")
     if isinstance(result, dict):
         meta = result.get("_meta")
         if isinstance(meta, dict):
-            meta.pop(mcp_re_sdk.response_meta_key(), None)
+            meta.pop(_RESPONSE_EVIDENCE_BLOCK_KEY, None)
             if not meta:
                 result.pop("_meta", None)
     return obj
@@ -196,15 +202,8 @@ def _strip_envelope(obj: dict) -> dict:
 def main(argv: "list[str] | None" = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
 
-    signer = mcp_re_sdk.Signer.software(
-        _read_seed(args.signing_key_seed), signer_id=args.signer_id, key_id=args.key_id
-    )
-    policy = mcp_re_sdk.SignerPolicy(args.signer_id, environment="production", require_mcp_re=True)
-    resolver = mcp_re_sdk.TrustResolver()
-    resolver.insert_public_key(
-        args.server_signer, args.server_key_id, _b64url_at_file(args.server_pubkey)
-    )
-    audience = _canonical_audience(args.audience)
+    seed = _read_seed(args.signing_key_seed)
+    server_pub = _b64url_text_at_file(args.server_pubkey)  # b64url STRING; SDK decodes it
     post = _make_post(args)
 
     request = json.loads(sys.stdin.readline())
@@ -212,53 +211,57 @@ def main(argv: "list[str] | None" = None) -> int:
     method = request.get("method")
     params = request.get("params", {})
 
-    continuation_kwargs: dict = {}
-    if args.load_cont:
-        with open(args.load_cont, "r", encoding="utf-8") as fh:
-            prev_hash, irr_hash = json.load(fh)
-        continuation_kwargs = {
-            "continuation_previous_request_hash": prev_hash,
-            "continuation_input_required_response_hash": irr_hash,
-        }
-
     now = int(time.time())
-    signed = mcp_re_sdk.sign_request_with_signer(
+    # Sign the RFC 9421 + RFC 9530 request.
+    signed = mcp_re_sdk.sign_request(
+        seed,
+        args.key_id,
         json.dumps(rid),
         method,
         json.dumps(params),
-        on_behalf_of=args.on_behalf_of,
-        audience=audience,
-        binding_digest_alg="sha256",
-        binding_digest_value=_AUTHZ_DIGEST,
-        nonce=args.nonce or secrets.token_urlsafe(16),
-        issued_at=_rfc3339(now),
-        expires_at=_rfc3339(now + 300),
-        signer=signer,
-        policy=policy,
-        **continuation_kwargs,
+        args.target_uri,
+        args.audience,
+        args.route,
+        args.dpop_token,
+        args.nonce or secrets.token_urlsafe(16),
+        now,
+        now + 300,
     )
-    body = post(signed.wire_bytes)
-    result = mcp_re_sdk.verify_response(
-        body,
-        resolver=resolver,
-        expected_request_hash=signed.request_hash,
-        expected_server_signer=args.server_signer,
-        enforcement_mode="require_mcp_re",
-    )
+    status, resp_headers, resp_body = post(signed.headers, signed.body())
 
-    if result.accepted:
+    reason = ""
+    try:
+        # Verify the signed response bound to THIS request (RFC 9421 `;req` + block).
+        mcp_re_sdk.verify_response(
+            status,
+            resp_headers,
+            resp_body,
+            signed.method,
+            signed.target_uri,
+            signed.headers,
+            signed.body(),
+            signed.evidence_digest_alg,
+            signed.evidence_digest_value,
+            args.server_key_id,
+            server_pub,
+            "server",
+            args.trust_domain,
+            args.server_signer,
+            int(time.time()),
+        )
+        accepted = True
+    except ValueError as exc:
+        accepted = False
+        reason = str(exc)
+
+    if accepted:
         verdict = "accepted"
-        plain = _strip_envelope(json.loads(body))
+        plain = _strip_envelope(json.loads(resp_body))
         sys.stdout.write(json.dumps(plain, separators=(",", ":")) + "\n")
-        if args.save_cont and result.input_required:
-            with open(args.save_cont, "w", encoding="utf-8") as fh:
-                json.dump([signed.request_hash, result.response_hash], fh)
     else:
-        # Prefer the proxy's own reason from the (unsigned, object-mode) error body
-        # over verify_response's generic missing-envelope; fall back to it otherwise.
-        verdict = _classify(_body_reject_reason(body) or result.reason)
-        # Echo the proxy's fail-closed body so the harness can still inspect it.
-        sys.stdout.write(body.decode("utf-8", "replace") + "\n")
+        verdict = _classify(_body_reject_reason(resp_body) or reason)
+        # Echo the proxy's signed-rejection body so the harness can still inspect it.
+        sys.stdout.write(resp_body.decode("utf-8", "replace") + "\n")
 
     sys.stderr.write(f"verdict={verdict}\n")
     if args.expect and verdict != args.expect:

@@ -1,18 +1,19 @@
 [package]
 name = "mcp-re-client-core"
-version = "0.11.0"
+version = "0.12.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "MCP-RE client-side core — the shared seam (consumed by the client proxy and SDK) that constructs signed draft-02 requests and binds responses. Pure: no networking/async/fs."
 
 [dependencies]
-# MCPS-40 (ADR-MCPS-044 §mcp-re-client-core seam): the client core is the shared
-# evidence-construction / verification seam below the proxy and SDK. It reuses
-# mcp-re-core's pure primitives (JCS canonicalization, request_hash, Ed25519) and
-# the frozen draft-02 envelope/error vocabulary; it MUST NOT pull in any
-# networking/async/fs crate (those are the mode-specific layers above this seam).
+# ADR-MCPRE-050 cutover: the client core is the shared RFC 9421 evidence-construction
+# / verification seam below the proxy and SDK. It builds on mcp-re-http-profile (the
+# RFC 9421 + RFC 9530 carrier) and mcp-re-core's profile-agnostic primitives (keys,
+# replay, trust resolver, errors); it MUST NOT pull in any networking/async/fs crate
+# (those are the mode-specific layers above this seam).
 mcp-re-core = { path = "../mcp-re-core" }
+mcp-re-http-profile = { path = "../mcp-re-http-profile" }
 serde_json = { workspace = true }
 
 [features]

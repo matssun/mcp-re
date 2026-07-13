@@ -17,8 +17,8 @@ pub const REQUEST_LABEL: &str = "mcp-re";
 pub const RESPONSE_LABEL: &str = "mcp-re-response";
 
 /// The only signature algorithm of the profile, expressed per the RFC 9421
-/// HTTP Signature Algorithms registry (lowercase — the native profile's
-/// `Ed25519` token is a different, JCS-envelope identifier).
+/// HTTP Signature Algorithms registry (lowercase `ed25519`, distinct from the
+/// mixed-case `Ed25519` algorithm token used in `mcp-re-core`).
 pub const ALG_ED25519: &str = "ed25519";
 
 /// Digest algorithm token in the split evidence form (matches the draft-02

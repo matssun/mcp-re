@@ -32,9 +32,10 @@ spec:
           args:
             - "--bind"
             - "0.0.0.0:{{ .Values.bindPort }}"
-            {{- if .Values.strict }}
-            - "--strict"
-            {{- end }}
+            # There is NO security toggle: the proxy always runs the maximal-security
+            # posture and refuses any unsafe config at startup. `--fleet` selects the
+            # horizontally-scaled TOPOLOGY (it does not relax security) and additionally
+            # rejects node-local replay caches.
             {{- if .Values.fleet }}
             - "--fleet"
             {{- end }}
@@ -56,6 +57,17 @@ spec:
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
             - "--audience"
             - {{ .Values.identity.audience | quote }}
+            # RFC 9421 audience tuple (ADR-MCPRE-050): the signed request's audience
+            # block must equal {audience, targetUri, route} AND targetUri must match
+            # the request @target-uri, or the proxy fails closed invalid_audience.
+            - "--target-uri"
+            - {{ .Values.identity.targetUri | quote }}
+            - "--trust-domain"
+            - {{ .Values.identity.trustDomain | quote }}
+            {{- if .Values.identity.route }}
+            - "--route"
+            - {{ .Values.identity.route | quote }}
+            {{- end }}
             - "--server-signer"
             - {{ .Values.identity.serverSigner | quote }}
             - "--server-key-id"
@@ -153,8 +165,9 @@ spec:
         - name: material
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
-            # --strict refuses a group/world-readable key file (signing-seed,
-            # tls.key). Secret volumes default to 0644; mount owner-read-only.
+            # The proxy refuses to start on a group/world-readable key file
+            # (signing-seed, tls.key). Secret volumes default to 0644; mount
+            # owner-read-only.
             defaultMode: 0400
       {{- with .Values.nodeSelector }}
       nodeSelector:

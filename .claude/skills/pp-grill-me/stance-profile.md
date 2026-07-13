@@ -291,7 +291,7 @@ S13/S14/S15/S16 with cross-workspace source notes. Format:
   while still escalating wire-vocabulary/security-posture decisions under Trigger 4/S10.
 - [2026-07-06] (origin: pending confirmation) MCP-RE v0.11 standards-alignment grill.
   Three learning-log candidates recorded at wholesale sign-off, NOT yet confirmed as standing —
-  see `docs/grilling-seed/mcp-re-v0.11-grill-decisions.md` §Learning-log candidates
+  see `docs/archive/grilling-seed/mcp-re-v0.11-grill-decisions.md` §Learning-log candidates
   (Codex conservative on scope-sizing again; Codex minted parallel header wire surface where
   body-carried signed evidence was established; pin shared vocabulary before parallel AFK fan-out).
   Confirm or discard each with Mats before promoting to stances.

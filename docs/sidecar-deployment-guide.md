@@ -112,10 +112,9 @@ authorization-issuer keys. A bad key fails startup closed.
 
 | Flag | Meaning |
 | --- | --- |
-| `--transport-binding exact` (default) | Request `signer` must equal the verified mTLS identity. |
-| `--transport-binding none` | No binding (the mTLS identity is ignored). |
-| `--transport-identity-source uri_san` (default) / `dns_san` / `cn_legacy` | Which client-cert field is the authoritative identity. `cn_legacy` is deprecated and warns. |
-| `--max-client-cert-lifetime 1h` (default) | The v1 revocation posture. Accepts `1h`/`30m`/`3600`/`none`; `none` or `0` disables (warned). |
+| `--transport-binding exact` (default) | Request `signer` must equal the verified mTLS identity. (Binding is mandatory — there is no `none` option; a decoupled channel↔signer posture is refused.) |
+| `--transport-identity-source uri_san` (default) / `dns_san` | Which client-cert field is the authoritative identity. (`cn_legacy` is refused.) |
+| `--max-client-cert-lifetime 1h` (default) | The v1 revocation posture. Accepts `1h`/`30m`/`3600` up to the 1h ceiling; `none`/`0` (disabled) and any value over the ceiling are refused. |
 
 ### Replay cache (`durable_replay.rs`)
 

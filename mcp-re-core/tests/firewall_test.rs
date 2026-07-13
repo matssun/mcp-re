@@ -3,7 +3,7 @@
 //! "Compliance and Enforcement").
 //!
 //! `mcp-re-core` is the embeddable security core: pure, synchronous, per-request
-//! Ed25519 + JCS canonicalization + freshness, with **no networking, no async
+//! Ed25519 signature verification + freshness, with **no networking, no async
 //! runtime, and no filesystem access**. ADR-MCPRE-051 admits the async stack
 //! (`tokio`/`hyper`/`tokio-rustls`) into the *proxy serving path* ONLY, and keeps
 //! this core clean — "the firewall test is updated: `mcp-re-core` MUST remain pure

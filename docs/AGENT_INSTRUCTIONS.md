@@ -30,6 +30,11 @@ option. It is not.
 7. "Some MCP context does not fit in headers" is **not** a reason for JCS. Put
    structured context in the JSON **body**; bind it with Content-Digest + RFC
    9421 (ADR-MCPRE-052 §2 is the worked example).
+8. **Ignore [`docs/archive/`](archive/ARCHIVE.md).** Everything there is frozen
+   pre-ADR-MCPRE-050 history — the Native JCS / object profile, its security audits,
+   and old grill seeds. Do **not** cite it as current, treat its audits as covering
+   today's code, or copy design from it. The full JCS-era snapshot is also
+   recoverable from the git tag `pre-adr-mcpre-050-jcs`.
 
 If a task seems to require Native JCS for *new* work, stop — it does not. Re-read
 the design note; if you still believe it does, raise it with the maintainer

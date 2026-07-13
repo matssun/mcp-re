@@ -27,7 +27,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-version = "0.11.0"
+version = "0.12.0"
 license = "Apache-2.0"
 authors = ["Mats Sundvall"]
 repository = "https://github.com/matssun/mcp-re"
@@ -58,11 +58,6 @@ hex = "0.4"
 # those temporaries drop. A pure crate (no networking/async) — used only by
 # mcp-re-proxy's `key_source`; mcp-re-core relies on the dalek `zeroize` FEATURE only.
 zeroize = "1"
-# MCPS-075 (audit gap G-1): property-based testing of the JCS canonicalizer.
-# Dev-only — used solely by mcp-re-core's `canonicalizer_proptest` integration test
-# to fuzz the idempotence / dual-path / collision-resistance / order-independence
-# invariants. mcp-re-core's production deps stay the pure crypto subset.
-proptest = "1"
 # MCPS-033 (ADR-MCPS-015): OS CSPRNG for the host session's production nonce
 # source. Used ONLY by mcp-re-host (the injected NonceSource trait keeps tests
 # deterministic). A thin OS-entropy wrapper — NO networking/async runtime, so

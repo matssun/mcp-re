@@ -1,7 +1,8 @@
 MCP-RE proxy fleet "{{ .Release.Name }}" installed: {{ .Values.replicaCount }} replica(s).
 
 Posture:
-  strict / fleet     : {{ .Values.strict }} / {{ .Values.fleet }}
+  security           : always maximal (no toggle — unsafe config refused at startup)
+  fleet topology     : {{ .Values.fleet }}
   inner plane        : HTTP backends: {{ join ", " .Values.inner.httpUrls }}
   service affinity   : {{ .Values.service.sessionAffinity }}{{ if eq .Values.service.sessionAffinity "None" }} (round-robin){{ else }} (sticky — session-stateful inner backend){{ end }}
   replay tier        : shared, {{ .Values.replay.durabilityTier }}

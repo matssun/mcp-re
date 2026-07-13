@@ -52,7 +52,6 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         // Same-crate bins
         "MCP_RE_PROXY_CLI" => find_bin(&workspace_root, "mcp-re-proxy"),
         // Conformance + traceability manifests
-        "MCP_RE_MANIFEST" => workspace_root.join("mcp-re-conformance/conformance_manifest.json"),
         "MCP_RE_SECURITY_MANIFEST" => {
             workspace_root.join("mcp-re-conformance/security_traceability_manifest.json")
         }
@@ -130,6 +129,11 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         }
         "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD" => {
             workspace_root.join("mcp-re-conformance/tests/forbidden_claim_guard_test.rs")
+        }
+        // ADR-MCPRE-050 §A witnesses: the RFC 9421 security-property proofs that map
+        // each §A capability claim to a green test (replaces the deleted object suite).
+        "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES" => {
+            workspace_root.join("mcp-re-conformance/tests/rfc9421_security_properties_test.rs")
         }
         "MCP_RE_CLAIM_MATRIX" => workspace_root.join("docs/spec/v0.5-claim-matrix.md"),
         // ADR-MCPS-036: proposal-facing docs scanned by the forbidden-claim guard.

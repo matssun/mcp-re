@@ -119,7 +119,7 @@ impl HttpProfileError {
             // distinguishes tampering from omission.
             HttpProfileError::MalformedEvidence(_) => "mcp-re.malformed_envelope",
             // Content-model / value-domain violation of the protected message.
-            HttpProfileError::ContentEncodingPresent => "mcp-re.canonicalization_failed",
+            HttpProfileError::ContentEncodingPresent => "mcp-re.serialization_failed",
             // The content commitment itself is wrong — precise digest code
             // (MCPRE-92), no longer folded onto invalid_signature.
             HttpProfileError::ContentDigestMismatch => "mcp-re.digest_mismatch",
@@ -169,7 +169,7 @@ mod tests {
         let frozen: Vec<&str> = vec![
             McpReError::MissingEnvelope.wire_code(),
             McpReError::MalformedEnvelope.wire_code(),
-            McpReError::CanonicalizationFailed.wire_code(),
+            McpReError::SerializationFailed.wire_code(),
             McpReError::InvalidSignature.wire_code(),
             McpReError::DigestMismatch.wire_code(),
             McpReError::UnsupportedVersion.wire_code(),

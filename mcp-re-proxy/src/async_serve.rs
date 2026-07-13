@@ -71,28 +71,66 @@ use crate::transport::TransportIdentity;
 /// WITHOUT blocking the per-core runtime worker. (A sync `-> Vec<u8>` seam would
 /// have forced the replay store I/O to block the worker — an async transport
 /// wrapped around a synchronous core; this type makes that impossible.)
-pub type HandlerResponseFuture = Pin<Box<dyn Future<Output = Vec<u8>> + Send>>;
+pub type HandlerResponseFuture = Pin<Box<dyn Future<Output = ServedHttpResponse> + Send>>;
 
-/// The per-request async handler: verified request bytes + resolved transport
-/// identity + the raw Tier-3 ingress-assertion header (when the strategy is
-/// LB-assertion), in; a future of signed response bytes, out. Arguments are OWNED
-/// because the returned future is `'static` (it is awaited on a spawned connection
-/// task and cannot borrow request-scoped data). A `Proxy` satisfies it by
-/// returning `Box::pin(async move { proxy.handle_with_transport_async(..).await })`
-/// — `Proxy` is `Send + Sync` (MCPRE-111), so one `Proxy` per core serves every
+/// The HTTP request view handed to a serving handler — the RFC 9421 / RFC 9530
+/// evidence carrier (ADR-MCPRE-050) needs the full HTTP request, not just the body:
+/// the `@method`, the canonical `@target-uri` both sides sign over, and the entire
+/// header block (so `Signature`, `Signature-Input`, and `Content-Digest` are
+/// covered), plus the resolved transport identity and the optional Tier-3 ingress
+/// assertion. Fields are OWNED because the handler's returned future is `'static`
+/// (awaited on a spawned connection task, cannot borrow request-scoped data).
+pub struct ServedHttpRequest {
+    /// The HTTP method (RFC 9421 `@method`).
+    pub method: String,
+    /// The canonical `@target-uri` both client and server sign over
+    /// (deployment-configured via [`ServerOptions`]); an empty string when the
+    /// deployment did not configure one (the verifier then fails closed).
+    pub target_uri: String,
+    /// The full request header block (name, value) — carries the RFC 9421
+    /// `Signature`/`Signature-Input` and RFC 9530 `Content-Digest`.
+    pub headers: Vec<(String, String)>,
+    /// The raw request body bytes.
+    pub body: Vec<u8>,
+    /// The resolved transport identity (mTLS peer / trusted upstream header).
+    pub identity: Option<TransportIdentity>,
+    /// The raw Tier-3 ingress-assertion header, when the strategy is LB-assertion.
+    pub assertion: Option<String>,
+}
+
+/// The signed HTTP response a handler returns: the status, the header block
+/// (carrying the RFC 9421 `Signature`/`Signature-Input` and RFC 9530
+/// `Content-Digest` the handler emitted), and the body bytes.
+pub struct ServedHttpResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl ServedHttpResponse {
+    /// A JSON body reply with the given status and `content-type: application/json`
+    /// — for pre-handler transport rejections that carry no RFC 9421 evidence.
+    pub fn json(status: u16, body: Vec<u8>) -> Self {
+        ServedHttpResponse {
+            status,
+            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+            body,
+        }
+    }
+}
+
+/// The per-request async handler: the full HTTP request view in ([`ServedHttpRequest`]),
+/// a future of the signed HTTP response out ([`ServedHttpResponse`], carrying the
+/// RFC 9421 response headers). A `Proxy` satisfies it by returning
+/// `Box::pin(async move { proxy.handle_http_profile_async(req, ..).await })` —
+/// `Proxy` is `Send + Sync` (MCPRE-111), so one `Proxy` per core serves every
 /// connection on that core.
 pub trait AsyncRequestHandler:
-    Fn(Vec<u8>, Option<TransportIdentity>, Option<String>) -> HandlerResponseFuture
-    + Send
-    + Sync
-    + 'static
+    Fn(ServedHttpRequest) -> HandlerResponseFuture + Send + Sync + 'static
 {
 }
 impl<F> AsyncRequestHandler for F where
-    F: Fn(Vec<u8>, Option<TransportIdentity>, Option<String>) -> HandlerResponseFuture
-        + Send
-        + Sync
-        + 'static
+    F: Fn(ServedHttpRequest) -> HandlerResponseFuture + Send + Sync + 'static
 {
 }
 
@@ -314,6 +352,16 @@ async fn handle_request<H: AsyncRequestHandler>(
             .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or(""))),
     );
 
+    // Capture the RFC 9421 request view BEFORE the body is consumed: the `@method`
+    // and the full header block (carrying `Signature`/`Signature-Input`/`Content-Digest`)
+    // the handler needs to verify the HTTP evidence carrier (ADR-MCPRE-050).
+    let method = req.method().as_str().to_owned();
+    let header_pairs: Vec<(String, String)> = req
+        .headers()
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap_or("").to_owned()))
+        .collect();
+
     // Read the body, capped at `max_body_bytes` and bounded by the aggregate read
     // deadline (slow-loris on a trickled body). Either bound tripping fails closed:
     // the inner server is never reached.
@@ -339,24 +387,44 @@ async fn handle_request<H: AsyncRequestHandler>(
     // is never reached on a rejection. The two rejection checks are sync CPU
     // (leaf-cert lifetime + header hygiene); only the admitted handler is AWAITED,
     // and it is the handler that awaits the async replay tier.
-    let response_bytes = match connection_rejection_for_leaf(leaf, &options, &body_bytes)
+    let served = match connection_rejection_for_leaf(leaf, &options, &body_bytes)
         .or_else(|| routing_header_rejection(&headers, &body_bytes))
     {
-        Some(error) => error,
-        None => handler(body_bytes.to_vec(), identity, assertion.map(str::to_string)).await,
+        // A pre-handler transport rejection carries a JSON error body, no RFC 9421
+        // evidence; frame it as a 403 JSON reply.
+        Some(error) => ServedHttpResponse::json(403, error),
+        None => {
+            let served_req = ServedHttpRequest {
+                method,
+                target_uri: options.target_uri.clone(),
+                headers: header_pairs,
+                body: body_bytes.to_vec(),
+                identity,
+                assertion: assertion.map(str::to_string),
+            };
+            handler(served_req).await
+        }
     };
 
-    Ok(json_response(response_bytes))
+    Ok(served_to_hyper(served))
 }
 
-/// A JSON response carrying `body` (Content-Length framed by `Full`; hyper handles
-/// keep-alive/H2 framing).
-fn json_response(body: Vec<u8>) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(200)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(body)))
-        .expect("static response builds")
+/// Translate the handler's [`ServedHttpResponse`] (status + headers + body) into a
+/// hyper response, PRESERVING every signed header (RFC 9421 `Signature`/
+/// `Signature-Input`, RFC 9530 `Content-Digest`, `Content-Type`).
+fn served_to_hyper(resp: ServedHttpResponse) -> Response<Full<Bytes>> {
+    let mut builder = Response::builder().status(resp.status);
+    for (k, v) in &resp.headers {
+        builder = builder.header(k, v);
+    }
+    builder
+        .body(Full::new(Bytes::from(resp.body)))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::new()))
+                .expect("static response builds")
+        })
 }
 
 /// Fail-closed reply when the body exceeds `max_body_bytes` or the read deadline

@@ -209,6 +209,9 @@ fn source_env_for(source: &str) -> &'static str {
             "MCP_RE_SRC_AUDIT_VOCABULARY_GUARD"
         }
         "mcp-re-conformance/tests/forbidden_claim_guard_test.rs" => "MCP_RE_SRC_FORBIDDEN_CLAIM_GUARD",
+        "mcp-re-conformance/tests/rfc9421_security_properties_test.rs" => {
+            "MCP_RE_SRC_RFC9421_SECURITY_PROPERTIES"
+        }
         "mcp-re-proxy/tests/keyset_admission_test.rs" => "MCP_RE_SRC_KEYSET_ADMISSION",
         // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
         // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
@@ -486,16 +489,13 @@ fn drift_detector_rejects_renamed_target_and_fn() {
         "a renamed target must NOT be found among declared targets (drift would be caught)"
     );
     // A fn absent from a source is reported missing.
-    let host_session = read("MCP_RE_SRC_HOST_SESSION");
+    let src = read("MCP_RE_SRC_METHOD_TRANSPARENCY");
     assert!(
-        declares_fn(&host_session, "signed_request_is_accepted_by_the_verifier"),
+        declares_fn(&src, "accepted_verdict_is_identical_across_all_methods"),
         "control: the real fn is found"
     );
     assert!(
-        !declares_fn(
-            &host_session,
-            "signed_request_is_accepted_by_the_verifier_RENAMED"
-        ),
+        !declares_fn(&src, "accepted_verdict_is_identical_across_all_methods_RENAMED"),
         "a renamed fn must NOT be found in the source (drift would be caught)"
     );
 }

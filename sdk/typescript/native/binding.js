@@ -587,16 +587,7 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
-module.exports.AuthorizationBinding = nativeBinding.AuthorizationBinding
-module.exports.AuthorizationBindingPolicy = nativeBinding.AuthorizationBindingPolicy
-module.exports.CorrelationStore = nativeBinding.CorrelationStore
-module.exports.Signer = nativeBinding.Signer
-module.exports.SignerPolicy = nativeBinding.SignerPolicy
-module.exports.SigningDevice = nativeBinding.SigningDevice
-module.exports.TrustResolver = nativeBinding.TrustResolver
-module.exports.canonicalizationId = nativeBinding.canonicalizationId
 module.exports.coreVersion = nativeBinding.coreVersion
-module.exports.responseMetaKey = nativeBinding.responseMetaKey
+module.exports.profileTag = nativeBinding.profileTag
 module.exports.signRequest = nativeBinding.signRequest
-module.exports.signRequestWithSigner = nativeBinding.signRequestWithSigner
 module.exports.verifyResponse = nativeBinding.verifyResponse

@@ -32,6 +32,10 @@ import sys
 from pathlib import Path
 
 REPORT_SCHEMA = "mcp-re-load-harness-report/v1"
+# The load harness bumped its report schema to v2 (RFC 9421 v2 canonical envelope);
+# the report body shape (results.throughput_rps / added_latency_us / failures,
+# config.declared_cores) is unchanged, so the gate accepts either.
+ACCEPTED_REPORT_SCHEMAS = ("mcp-re-load-harness-report/v1", "mcp-re-load-harness-report/v2")
 TARGETS_SCHEMA = "mcp-re-slo-targets/v1"
 
 
@@ -113,11 +117,12 @@ def check_scaling(baseline: dict, scaled: dict, targets: dict, gate: Gate) -> No
         )
 
 
-def _load(path: str, schema: str) -> dict:
+def _load(path: str, schema) -> dict:
     doc = json.loads(Path(path).read_text())
     got = doc.get("schema")
-    if got != schema:
-        raise SystemExit(f"error: {path} has schema {got!r}, expected {schema!r}")
+    allowed = {schema} if isinstance(schema, str) else set(schema)
+    if got not in allowed:
+        raise SystemExit(f"error: {path} has schema {got!r}, expected one of {sorted(allowed)!r}")
     return doc
 
 
@@ -142,13 +147,13 @@ def run(args: argparse.Namespace) -> int:
         if not (args.baseline and args.scaled):
             raise SystemExit("error: --baseline and --scaled must be given together")
         check_scaling(
-            _load(args.baseline, REPORT_SCHEMA),
-            _load(args.scaled, REPORT_SCHEMA),
+            _load(args.baseline, ACCEPTED_REPORT_SCHEMAS),
+            _load(args.scaled, ACCEPTED_REPORT_SCHEMAS),
             targets,
             gate,
         )
     if args.report:
-        check_report(_load(args.report, REPORT_SCHEMA), targets, gate)
+        check_report(_load(args.report, ACCEPTED_REPORT_SCHEMAS), targets, gate)
     if not (args.report or args.baseline):
         raise SystemExit("error: give --report and/or --baseline/--scaled (or --selftest)")
     return _report_gate(gate, targets)

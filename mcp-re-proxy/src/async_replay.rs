@@ -123,13 +123,12 @@ impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
 
 /// The async replay TIER the proxy's async serving path awaits (ADR-MCPRE-051
 /// §4): the async analogue of [`crate::shared_replay::SharedReplayCache`]. Given a
-/// `mcp_re_core::ReplayKey` from `verify_request_dispatch_preflight`, it composes
-/// the collision-safe composite key and folds the clock skew IDENTICALLY to the
-/// sync path (via the shared [`composite_replay_key`] / [`skew_folded_retain_until`]
-/// helpers), then AWAITS the authoritative [`AsyncAtomicReplayStore`] insert. The
-/// store round-trip is the ONLY awaited I/O on the request path; the returned
-/// [`ReplayDecision`] is fed straight into
-/// [`mcp_re_core::PreflightVerified::finalize`].
+/// `mcp_re_core::ReplayKey` (projected from the RFC 9421 five-tuple via
+/// `HttpReplayKey::to_core_replay_key`), it composes the collision-safe composite
+/// key and folds the clock skew IDENTICALLY to the sync path (via the shared
+/// [`composite_replay_key`] / [`skew_folded_retain_until`] helpers), then AWAITS the
+/// authoritative [`AsyncAtomicReplayStore`] insert. The store round-trip is the ONLY
+/// awaited I/O on the request path.
 ///
 /// Fail-closed: any store failure surfaces as [`ReplayCacheError::Unavailable`]
 /// ⇒ `mcp-re.replay_cache_unavailable`, never a silent allow (ADR-MCPS-020).
@@ -287,5 +286,50 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
         // The L1 is a per-core optimization with no durability of its own — the tier
         // is exactly as durable as its authoritative L2.
         self.l2.durability_class()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().expect("rt").block_on(f)
+    }
+
+    #[test]
+    fn in_memory_store_is_fresh_then_replay_and_single_process() {
+        let store = InMemoryAsyncAtomicReplayStore::new();
+        block(async {
+            assert_eq!(
+                store.atomic_insert_if_absent("nonce-1", 100, 0).await.unwrap(),
+                ReplayDecision::Fresh
+            );
+            assert_eq!(
+                store.atomic_insert_if_absent("nonce-1", 100, 0).await.unwrap(),
+                ReplayDecision::Replay
+            );
+        });
+        assert_eq!(
+            store.durability_class(),
+            ReplayDurabilityClass::SingleProcessReference
+        );
+    }
+
+    #[test]
+    fn l1_fast_reject_never_fresh_and_evicts_fifo() {
+        // Capacity 2 so a third distinct key forces FIFO eviction of the oldest.
+        let l1 = L1FastRejectStore::with_capacity(InMemoryAsyncAtomicReplayStore::new(), 2);
+        block(async {
+            // First sight is authoritative Fresh (from L2); the repeat is an L1 hit.
+            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Fresh);
+            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Replay);
+            // Fill past capacity: 'a' is evicted from L1, but L2 still remembers it,
+            // so a re-check is Replay (never a false Fresh — the load-bearing invariant).
+            assert_eq!(l1.atomic_insert_if_absent("b", 100, 0).await.unwrap(), ReplayDecision::Fresh);
+            assert_eq!(l1.atomic_insert_if_absent("c", 100, 0).await.unwrap(), ReplayDecision::Fresh);
+            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Replay);
+        });
+        assert_eq!(l1.durability_class(), ReplayDurabilityClass::SingleProcessReference);
     }
 }

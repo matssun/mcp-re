@@ -29,17 +29,17 @@ pub fn sha256_hash_id(bytes: &[u8]) -> String {
 /// raw 32-byte digest.
 ///
 /// A missing/wrong prefix, an undecodable body, or a wrong digest length all map
-/// to [`McpReError::CanonicalizationFailed`] (a structural / domain failure — the
+/// to [`McpReError::SerializationFailed`] (a structural / domain failure — the
 /// value is malformed, independent of any signature outcome). Used by response
 /// binding (MCPS-008) to compare against a locally computed request hash.
 pub fn parse_hash_id(s: &str) -> Result<[u8; SHA256_LEN], McpReError> {
     let body = s
         .strip_prefix(SHA256_PREFIX)
-        .ok_or(McpReError::CanonicalizationFailed)?;
+        .ok_or(McpReError::SerializationFailed)?;
     let bytes = b64url_decode(body)?;
     let array: [u8; SHA256_LEN] = bytes
         .try_into()
-        .map_err(|_| McpReError::CanonicalizationFailed)?;
+        .map_err(|_| McpReError::SerializationFailed)?;
     Ok(array)
 }
 
@@ -86,7 +86,7 @@ mod tests {
         // A bare base64url body without the "sha256:" prefix.
         assert_eq!(
             parse_hash_id("RBNvo1WzZ4oRRq0W9-hknpT7T8If534DEMBg9hyq_4o").unwrap_err(),
-            McpReError::CanonicalizationFailed
+            McpReError::SerializationFailed
         );
     }
 
@@ -95,7 +95,7 @@ mod tests {
         // "sha256:" + base64url of 3 bytes -> not 32 bytes.
         assert_eq!(
             parse_hash_id("sha256:AAAA").unwrap_err(),
-            McpReError::CanonicalizationFailed
+            McpReError::SerializationFailed
         );
     }
 
@@ -103,7 +103,7 @@ mod tests {
     fn parse_rejects_bad_base64() {
         assert_eq!(
             parse_hash_id("sha256:!!!!").unwrap_err(),
-            McpReError::CanonicalizationFailed
+            McpReError::SerializationFailed
         );
     }
 }

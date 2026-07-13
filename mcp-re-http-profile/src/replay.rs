@@ -77,6 +77,28 @@ impl HttpReplayKey {
             expires_at_unix,
         )
     }
+
+    /// Project this five-tuple onto the core [`mcp_re_core::ReplayKey`] the
+    /// AUTHORITATIVE async replay tier (ADR-MCPRE-051 §4) consumes.
+    ///
+    /// The async tier (`AsyncReplayTier::check_and_insert`) derives its store key
+    /// from `(signer, audience, nonce)` via the same `composite_replay_key`
+    /// serialization the sync [`ReplayCache`] uses, so feeding it the injective
+    /// composite slots ([`signer_slot`](Self::signer_slot) /
+    /// [`audience_slot`](Self::audience_slot)) yields a store key BYTE-IDENTICAL to
+    /// the sync path — the HTTP-profile serving path awaits the same authoritative
+    /// tier the object path did, with the profile id + signature label folded into
+    /// the signer slot so evidence from a different profile/role can never satisfy
+    /// another's replay check. `expires_at_unix` is the RFC 9421 `expires`
+    /// parameter (the tier folds its own clock skew onto it).
+    pub fn to_core_replay_key(&self, expires_at_unix: i64) -> mcp_re_core::ReplayKey {
+        mcp_re_core::ReplayKey {
+            signer: self.signer_slot(),
+            audience: self.audience_slot().to_owned(),
+            nonce: self.nonce.clone(),
+            expires_at_unix,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +160,23 @@ mod tests {
                 "{name}: a request differing only in {name} must be admitted"
             );
         }
+    }
+
+    /// The core `ReplayKey` projection carries the SAME three injective slots the
+    /// sync `ReplayCache` path uses, so the authoritative async tier stores a
+    /// byte-identical composite key — the HTTP profile natively reuses the standard
+    /// §4 replay tier, no separate keyspace.
+    #[test]
+    fn core_replay_key_carries_the_same_injective_slots() {
+        let k = key();
+        let core = k.to_core_replay_key(EXPIRES);
+        assert_eq!(
+            core.signer,
+            "mcp-re-http-v1\u{1f}mcp-re\u{1f}host:example.com:did%3Aexample%3Ahost:client-key-1"
+        );
+        assert_eq!(core.audience, "AAAABBBBCCCC");
+        assert_eq!(core.nonce, "nonce-1");
+        assert_eq!(core.expires_at_unix, EXPIRES);
     }
 
     /// The injective mapping cannot be forged across slot boundaries: shifting a
