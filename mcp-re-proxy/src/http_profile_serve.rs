@@ -136,6 +136,35 @@ impl HttpProfileProxy {
         }
     }
 
+    /// Construct a serving PEP already in ADR-MCPRE-052 delegated-signing mode — the
+    /// production constructor for `--response-signing-mode delegated-required`. Unlike
+    /// [`new`](Self::new) + [`with_delegated_signer`](Self::with_delegated_signer),
+    /// this takes no directly-held server key at all: there is no root key on the
+    /// serving struct, only the shared [`DelegatedServerSigner`] whose snapshot the
+    /// cold-path rotor keeps fresh. Every response and rejection is signed by the
+    /// active delegated key + inline credential, failing closed when none is valid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_delegated(
+        resolve_actor: ActorResolver,
+        expected_audience: AudienceTuple,
+        replay_async: crate::async_replay::AsyncReplayTier,
+        dispatch_cfg: ProxyDispatchConfig,
+        inner_async: Box<dyn AsyncInnerServer>,
+        sig_ttl_secs: i64,
+        delegated_signer: Arc<DelegatedServerSigner>,
+    ) -> Self {
+        HttpProfileProxy {
+            resolve_actor,
+            expected_audience,
+            signer: ServerResponseSigner::Delegated(delegated_signer),
+            replay_async,
+            dispatch_cfg,
+            inner_async,
+            transport_binding: None,
+            sig_ttl_secs,
+        }
+    }
+
     /// Switch this proxy to ADR-MCPRE-052 delegated-signing mode: responses and
     /// rejections are signed by the shared [`DelegatedServerSigner`]'s active
     /// short-TTL delegated key (with the inline credential), never the root. The

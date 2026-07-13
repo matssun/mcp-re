@@ -457,6 +457,25 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — drives the real
+# build_delegated_signing(Config, root) from a parser-produced delegated-required
+# config, through new_delegated serving, proving success/replay/expiry-fail-closed/
+# rotation with an in-memory root (the KMS-root swap is the cargo-only live lane).
+nt_rust_test(
+    name = "delegated_production_wiring_test",
+    srcs = ["tests/delegated_production_wiring_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven

@@ -22,6 +22,7 @@ use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::transport::TransportBindingPolicy;
 use crate::async_serve::ServedHttpRequest;
+use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
@@ -242,28 +243,58 @@ pub fn run(
     // the TLS path; the object response-signer seam is gone.
     let _ = &resolver;
     let trust_entries = cli::load_trust_entries(&trust_bytes)?;
-    let server_signing_key = cli::build_server_signing_key(&config)?;
-    let server_pub = server_signing_key.public_key();
+    // Response-slot signing custody depends on the response-signing mode (ADR-MCPRE-052,
+    // MCPRE-122):
+    //   DirectRoot        — the held server key signs responses; the resolver resolves
+    //                       it (by `server_key_id`) for the Response slot.
+    //   DelegatedRequired — the ROOT key is the credential ISSUER only; the resolver
+    //                       resolves the ROOT public key (by its issuer kid) for the
+    //                       Response slot, and NO directly-held server key exists. The
+    //                       delegated key is never enrolled (authorized by the
+    //                       credential alone). `build_server_signing_key` is not called
+    //                       (it rejects non-exporting KMS sources), so KMS-rooted
+    //                       delegated signing works on the async serving path.
+    let (response_kid, response_pub, server_signing_key_opt): (
+        String,
+        VerificationKey,
+        Option<SigningKey>,
+    ) = match config.response_signing_mode {
+        cli::ResponseSigningMode::DirectRoot => {
+            let key = cli::build_server_signing_key(&config)?;
+            let pk = key.public_key();
+            (config.server_key_id.clone(), pk, Some(key))
+        }
+        cli::ResponseSigningMode::DelegatedRequired => {
+            let issuer_kid = config
+                .delegated_issuer_kid
+                .clone()
+                .unwrap_or_else(|| config.server_key_id.clone());
+            // The root public key comes from the SAME key source used as the issuer
+            // below (a borrow here; the source is moved into the issuer at proxy build).
+            let root_pub = key_source.response_public_key().map_err(|e| e.to_string())?;
+            (issuer_kid, root_pub, None)
+        }
+    };
     let server_identity = ActorIdentity {
         role: "server".to_string(),
         trust_domain: config.trust_domain.clone(),
         subject: config.server_signer.clone(),
-        keyid: config.server_key_id.clone(),
+        keyid: response_kid.clone(),
     };
     let mut client_map: HashMap<String, (String, VerificationKey)> = HashMap::new();
     for (signer, key_id, key) in trust_entries {
-        if key_id != config.server_key_id {
+        if key_id != response_kid {
             client_map.insert(key_id, (signer, key));
         }
     }
-    let skid = config.server_key_id.clone();
+    let skid = response_kid.clone();
     let sident = server_identity.clone();
     let td = config.trust_domain.clone();
     let resolve_actor: crate::ActorResolver =
         Box::new(move |kid: &str, slot: SignerSlot| match slot {
             SignerSlot::Response if kid == skid => Some(ResolvedActor {
                 identity: sident.clone(),
-                verification_key: server_pub.clone(),
+                verification_key: response_pub.clone(),
                 slot,
             }),
             SignerSlot::Request => client_map.get(kid).map(|(signer, key)| ResolvedActor {
@@ -705,18 +736,66 @@ pub fn run(
 
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner
     // plane, the authoritative replay tier, and the optional Mode-A channel binding.
-    // Response-signature validity window: 300s.
-    let mut proxy = HttpProfileProxy::new(
-        resolve_actor,
-        expected_audience,
-        server_identity,
-        server_signing_key,
-        config.server_key_id.clone(),
-        replay_async,
-        dispatch_cfg,
-        Box::new(pool),
-        300,
-    );
+    // Response-signature validity window: 300s. The signing custody depends on the
+    // mode: DirectRoot uses the held server key; DelegatedRequired (ADR-MCPRE-052)
+    // builds the delegated signer + cold-path rotor from the ROOT key source and
+    // fails closed at startup if the root cannot issue the first delegated key.
+    let mut proxy = match server_signing_key_opt {
+        Some(server_signing_key) => HttpProfileProxy::new(
+            resolve_actor,
+            expected_audience,
+            server_identity,
+            server_signing_key,
+            response_kid.clone(),
+            replay_async,
+            dispatch_cfg,
+            Box::new(pool),
+            300,
+        ),
+        None => {
+            // Build the delegated signer + rotor from the ROOT key source (the KMS/
+            // HSM/file root is the credential ISSUER, invoked at issuance/rotation
+            // only — never on the request path). `key_source` is moved in here; it was
+            // only borrowed above (TLS materials, root public key).
+            let crate::delegated_wiring::DelegatedSigningWiring {
+                signer,
+                mut rotor,
+                overlap,
+            } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
+            // Initial issuance MUST succeed before serving: delegated-required never
+            // serves without an active delegated key (fail closed, ADR-MCPRE-052 §6).
+            rotor.rotate(startup_now_unix).map_err(|e| {
+                format!(
+                    "delegated-required mode: initial delegated key issuance FAILED at startup \
+                     ({e:?}); the root issuer must be available before serving (fail closed, \
+                     ADR-MCPRE-052 §6)"
+                )
+            })?;
+            eprintln!(
+                "mcp-re-proxy: response signing = DELEGATED-REQUIRED (ADR-MCPRE-052): the root \
+                 issuer is off the request path; delegated key TTL {}s / overlap {overlap}s; \
+                 issuer kid {response_kid:?}. Initial delegated key issued.",
+                config.delegated_ttl_secs,
+            );
+            // Cold-path rotation thread: rotate within the overlap window before each
+            // key's exp so the KMS/root stays off the per-core serving runtimes.
+            spawn_delegated_rotation_task(
+                rotor,
+                Arc::clone(&signer),
+                overlap,
+                Arc::clone(&shutdown),
+            );
+            HttpProfileProxy::new_delegated(
+                resolve_actor,
+                expected_audience,
+                replay_async,
+                dispatch_cfg,
+                Box::new(pool),
+                300,
+                signer,
+            )
+        }
+    };
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
     }
@@ -867,6 +946,71 @@ fn spawn_crl_reload_task(
                     eprintln!(
                         "mcp-re-proxy: client CRL reload FAILED, keeping last-good config: {reason}"
                     );
+                }
+            }
+        }
+    });
+}
+
+/// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
+/// rotation thread. A single owner drives the rotor OFF the per-core serving runtimes,
+/// so the root issuer's blocking KMS/HSM calls never touch the request path. It wakes
+/// within the rotation-overlap window before the current key's `exp`, mints a
+/// successor, and republishes the hot-path snapshot; the fleet keeps signing off the
+/// current key until then (no gap). If issuance fails while the current key is still
+/// valid, serving continues until that key expires and THEN fails closed
+/// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
+/// thread observes `shutdown` between naps so it exits promptly on a rolling deploy.
+fn spawn_delegated_rotation_task(
+    mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
+    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    overlap: i64,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+) {
+    std::thread::spawn(move || loop {
+        if shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        // Wake at `exp - overlap` so a successor is minted while the predecessor is
+        // still valid. With no current key (startup edge / post-retirement), rotate
+        // immediately.
+        let wake_at = match signer.current(now_unix()) {
+            Some(a) => (a.exp - overlap).max(now_unix()),
+            None => now_unix(),
+        };
+        // Nap in small increments until the wake instant, observing shutdown.
+        while now_unix() < wake_at {
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            return;
+        }
+        match rotor.rotate(now_unix()) {
+            Ok(()) => {
+                if let Some(ev) = rotor.audit().last() {
+                    eprintln!(
+                        "mcp-re-proxy: delegated key {} (kid {}, exp {})",
+                        ev.event_type, ev.delegated_kid, ev.exp
+                    );
+                }
+            }
+            Err(_) => {
+                eprintln!(
+                    "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
+                     unavailable). Serving continues only until the current delegated key expires, \
+                     then FAILS CLOSED (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root \
+                     fallback. Retrying shortly."
+                );
+                // Brief backoff so a persistent root outage does not hot-spin; the hot
+                // path keeps signing off the current key until its exp.
+                for _ in 0..20 {
+                    if shutdown.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
