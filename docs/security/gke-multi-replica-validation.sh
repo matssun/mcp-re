@@ -62,7 +62,9 @@ AR="${MCP_RE_AR:-${REGION}-docker.pkg.dev/${PROJECT_ID}/mcp-re}"
 PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.12.0}"
 INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.12.0}"
 # The TLS/trust material the fleet Secret is built from (emit_mtls_fixtures output).
-FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:?set MCP_RE_FIXTURES_DIR to an emit_mtls_fixtures output dir}"
+# Required only for the DEPLOY path (enforced at the Secret step below); --teardown
+# must run without it, so don't fail-fast here.
+FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
 PORTS_TOML="$REPO_ROOT/config/ports.toml"
@@ -107,6 +109,7 @@ kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -
 # --- 1b. Fleet TLS/trust Secret (mounted by the chart at tls.mountPath) -------
 # Built from the emit_mtls_fixtures output; key names match the chart's
 # --signing-key-seed / --tls-cert / --tls-key / --client-ca / --trust mounts.
+[[ -n "$FIXTURES_DIR" ]] || fail "set MCP_RE_FIXTURES_DIR to an emit_mtls_fixtures output dir"
 log "TLS/trust Secret (mcp-re-proxy-material) from $FIXTURES_DIR"
 kubectl -n "$NAMESPACE" create secret generic mcp-re-proxy-material \
   --from-file=signing-seed="$FIXTURES_DIR/signing_seed" \

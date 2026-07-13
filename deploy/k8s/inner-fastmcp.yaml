@@ -37,15 +37,23 @@ spec:
           ports:
             - name: http
               containerPort: 8620
+          # FastMCP's Python import + Uvicorn startup can take 30-60s on a cold
+          # Autopilot node (node provisioning + first boot). Give the LIVENESS probe
+          # a 60s initialDelay + headroom so it never SIGKILLs the container mid-boot
+          # (that crashloops the pod until the node happens to warm up); readiness
+          # keeps polling through the boot window without failing the rollout.
           readinessProbe:
             tcpSocket:
               port: 8620
-            initialDelaySeconds: 2
+            initialDelaySeconds: 5
             periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             tcpSocket:
               port: 8620
+            initialDelaySeconds: 60
             periodSeconds: 10
+            failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service
