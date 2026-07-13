@@ -150,19 +150,49 @@ without the transport scaffolding. Where a cell's deepest proof is an in-crate u
 test (`CI`), the corresponding **integration cell is `MANIFEST`-guarded** and noted
 inline, so no matrix cell depends on an unpinned test alone.
 
+## G. Live Cloud KMS root (local, before GKE)
+
+The rows above use an in-memory root so they stay hermetic. These lanes run the
+SAME delegated-required paths with a **real Cloud KMS** key as the credential-
+issuing root — the honest local proof that the production serving path and the
+authority flip work on a non-exporting cloud root, before any GKE run. They are
+cargo-only, feature-gated (`gcp_kms_keysource`), with a hermetic offline-seed twin
+that runs in CI and an `#[ignore]` live twin. Runner:
+[`docs/security/gcp-kms-delegated-required.sh`](../security/gcp-kms-delegated-required.sh)
+(no secrets; set `PROJECT_ID`, authenticate `gcloud`, run).
+
+| # | Required behavior | Proof (`test_fn`) | Enforced |
+|---|---|---|---|
+| G1 | Production serving wiring on a real KMS root: `build_delegated_signing(config, kms_root)` + `new_delegated` serves & verifies | `gcp_kms_delegated_required_serving_{offline_local_seed,live}` | CI + LIVE |
+| G2 | Zero per-request KMS ops at the SERVING altitude — N served responses invoke Cloud KMS only at issuance/rotation (counted via a wrapping `ResponseSigner`) | `gcp_kms_delegated_required_serving_*` | CI + LIVE |
+| G3 | Rotation to a KMS-issued successor serves & verifies (one extra KMS op) | `gcp_kms_delegated_required_serving_*` | CI + LIVE |
+| G4 | Client revocation seam on a KMS-rooted credential — deny (revoked kid → `delegation_revoked`) and allow (non-matching denylist round-trips) | `gcp_kms_delegated_required_serving_*` | CI + LIVE |
+| G5 | Authority flip: a pre-052 direct-root response (KMS signs directly, no delegation evidence block) is REJECTED under delegated-required — no downgrade | `gcp_kms_authority_flip_{offline_local_seed,live}` | CI + LIVE |
+| G6 | Authority flip: the delegated (post-052) authority is accepted; the KMS issues the credential | `gcp_kms_authority_flip_*` | CI + LIVE |
+| G7 | Trust-epoch flip on a KMS-rooted credential — old epoch rejected after the accepted set advances (`delegation_trust_epoch_stale`); bounded-rollout `{new, old}` accepted | `gcp_kms_authority_flip_*` | CI + LIVE |
+| G8 | Key-authority rotation + revocation flip — KMS issues a successor; revoking the predecessor kid fails its responses closed while the successor's verify | `gcp_kms_authority_flip_*` | CI + LIVE |
+
+`CI` = the hermetic offline-seed twin runs on every push (feature-gated job).
+`LIVE` = the `#[ignore]` twin, verified against the real Cloud KMS via the runner.
+These lanes have no Bazel target, so they are not in the traceability manifest;
+they are cited here and guarded by the offline twin in CI.
+
 ## This is the gate before GKE
 
-Every row above is green locally today (`bazel test //...` green; the three guards
-pass). That is the precondition for treating a GKE run as an honest production
-validation — not a first proof. A GKE validation of delegated-required mode adds
-only the dimensions this matrix **cannot** exercise in-process:
+Every row above — including the live Cloud KMS lanes (§G) — is green locally today
+(`bazel test //...` green; the three guards pass; the KMS lanes pass offline in CI
+and against the real Cloud KMS via the runner). That is the precondition for
+treating a GKE run as an honest production validation — not a first proof. Because
+§G already proves the delegated-required serving path and the authority flip on a
+**real Cloud KMS root**, a GKE validation adds only the dimensions this matrix
+**cannot** exercise on one host:
 
-- a real **Cloud KMS root** as the credential issuer (the KMS-as-root seam is proven
-  by `gcp_kms_delegated_signing_live_test`, but not yet across a fleet);
-- a real **multi-replica fleet** with per-core rotors and a shared trust anchor;
+- a real **multi-replica fleet** with per-core rotors sharing one KMS-rooted trust
+  anchor (here it is a single in-process rotor);
 - **rolling-update overlap** timing under live traffic (K1 draining while K2 serves);
 - **network transport** (mTLS) rather than in-process objects;
 - the **SLO baseline** remaining acceptable with per-response delegated signing.
 
 GKE proves those live-infra properties. It does **not** re-prove the protocol
-correctness above — that is this matrix's job, and it is done locally.
+correctness or the KMS-root/authority-flip behavior above — that is this matrix's
+job, and it is done locally.

@@ -80,6 +80,7 @@ ALLOW_HITL_LIVE = {
     "gcp_kms_delegated_tls_live_test",
     "gcp_kms_http_profile_live_test",
     "gcp_kms_delegated_signing_live_test",
+    "gcp_kms_delegated_required_live_test",
     "t4_enterprise_kms_custody",
     "t4_python_kms_custody",
 }
