@@ -1,6 +1,6 @@
 # Why MCP Needs Runtime Evidence: The Security Layer Between AI Agents and Real-World Tools
 
-By Mats Sundvall · July 13, 2026 · [github.com/matssun/mcp-re](https://github.com/matssun/mcp-re)
+By Mats Sundvall · July 14, 2026 · [github.com/matssun/mcp-re](https://github.com/matssun/mcp-re)
 
 AI systems are moving from answering questions to taking action.
 
@@ -215,7 +215,23 @@ The job of that boundary is not simply to parse messages. It must perform securi
 
 That is why implementation architecture matters.
 
-The current implementation has been battle-tested on GKE with concurrent access validation, cross-replica behavior, rolling-update behavior, Cloud KMS custody, and SLO baseline measurements across 8-16 concurrent processes.
+The current implementation is battle-tested on a live Google Kubernetes Engine fleet, not just in a local demo. On real GKE hardware, MCP-RE has proven:
+
+- **cross-replica replay coherence** — a nonce accepted by one replica is rejected as a replay by a sibling, because the freshness state lives in a shared tier, not in one process;
+- **cross-replica trust revocation** — advancing the shared trust epoch invalidates a previously valid credential across every replica at once;
+- **multi-round-trip continuation across a replica switch** — a stateful interaction opened on one replica is honoured on another;
+- **delegated authority rooted in Cloud KMS via Workload Identity** — the enterprise custody model, described below, running with the root key reached only through the platform's own identity, never as key material inside the pod.
+
+And it is measured, not asserted. The ADR-MCPRE-051 SLO baseline was re-run on that fleet under a deliberately hostile envelope — cold TLS 1.3 mutual-TLS, 128-way concurrency, 8,000 requests per run, every request accounted for:
+
+| replica hardware | 8-core verified throughput | per-core scaling |
+| --- | --- | --- |
+| e2-standard-8 | ~396 responses/sec | ~0.70 of linear |
+| c3-standard-8 | ~493 responses/sec | ~0.67 of linear |
+
+These are cold-connection *envelope* figures for regression detection, not steady-state production capacity — production reuses connections and goes faster. But they are measured on real cloud hardware, under load, with the full evidence path active on every request.
+
+Running on real infrastructure is not ceremony. The first live Workload-Identity run surfaced a defect that no local or kind test could reach: the proxy requested its Cloud KMS access token from a subtly wrong metadata-server path, which only fails inside a real GKE pod. A local emulation would have hidden it. The same principle the evidence layer applies to tool calls — verify against reality, do not assume the happy path — is the principle by which the layer itself is validated.
 
 That matters because evidence cannot only be correct in a unit test.
 
@@ -263,20 +279,24 @@ Revocation propagates through the same trust-epoch channel the rest of the syste
 
 And the load-bearing property is verifiable, not just asserted: the per-request path performs zero remote KMS operations.
 
-That is proven in the test suite and exercised against live Google Cloud KMS, where signing a whole batch of responses calls the KMS exactly once, at issuance, and never again on the hot path.
+That is proven in the test suite and exercised against live Google Cloud KMS — including on a live GKE fleet where the root key is reached only through **Workload Identity**, the platform's own service-identity mechanism, so no private key material ever enters the pod and no static credential is deployed. Signing a whole batch of responses calls the KMS exactly once, at issuance, and never again on the hot path.
+
+This is the custody model enterprises already expect: the identity root lives in the cloud KMS under existing key-management controls, the workload authenticates with platform identity rather than a copied secret, and the delegation credential — a standards-based JOSE/JWS token — carries the whole chain inline so a verifier needs no out-of-band lookup. Delegated authority, KMS-rooted, with the root kept off the hot path, is the design point, and it runs on real cloud infrastructure.
 
 ## What v0.12 represents
 
-MCP-RE v0.12 is best understood as the standards-alignment release.
+MCP-RE v0.12 is best understood as the standards-alignment release, and v0.12.1 is where it was proven on real cloud infrastructure.
 
 It draws a clearer boundary around what runtime evidence for MCP should be:
 
 - standards-aligned HTTP evidence;
 - request and response binding;
-- replay coherence;
-- delegated signing custody;
-- HTTP-focused production operation;
+- replay coherence, held across replicas;
+- delegated signing custody, rooted in Cloud KMS via Workload Identity;
+- HTTP-focused production operation, validated on a live GKE fleet;
 - removal of transport confusion from the core security story.
+
+This is the combination that makes it a candidate for enterprise use rather than a demo: delegated authority under existing key-management controls, evidence that stays coherent when the system is scaled across replicas, and a measured SLO baseline on real hardware. One property is still being hardened on live infrastructure — zero-drop behaviour through a cloud load balancer during a rolling update, where the current build still lets a small fraction of in-flight requests slip during pod handover — and it is tracked openly rather than claimed. Runtime evidence should be held to the same standard it asks of everyone else: verifiable, including where it is not yet perfect.
 
 The important part is not one feature in isolation.
 
