@@ -223,8 +223,19 @@ def main(argv: "list[str] | None" = None) -> int:
     method = request.get("method")
     params = request.get("params", {})
 
+    # ADR-MCPS-047 answer leg: with --load-cont, bind this request to the
+    # InputRequiredResult it answers. The saved file holds the two evidence-handle
+    # digests recorded on the OPEN leg (the previous-request handle and the input-
+    # required-response handle); the opaque `requestState` is carried in this request's
+    # own `params.requestState` (the harness places it there), so the proxy forwards it
+    # to the inner AND the continuation digest binds the exact same bytes.
+    cont = None
+    if args.load_cont:
+        with open(args.load_cont, "r", encoding="utf-8") as fh:
+            cont = json.load(fh)
+
     now = int(time.time())
-    # Sign the RFC 9421 + RFC 9530 request.
+    # Sign the RFC 9421 + RFC 9530 request (with the MRTR continuation on the answer leg).
     signed = mcp_re_sdk.sign_request(
         seed,
         args.key_id,
@@ -238,6 +249,11 @@ def main(argv: "list[str] | None" = None) -> int:
         args.nonce or secrets.token_urlsafe(16),
         now,
         now + 300,
+        cont["prev_alg"] if cont else None,
+        cont["prev_value"] if cont else None,
+        cont["irr_alg"] if cont else None,
+        cont["irr_value"] if cont else None,
+        (str(params.get("requestState")) if (cont and params.get("requestState") is not None) else None),
     )
     status, resp_headers, resp_body = post(signed.headers, signed.body())
 
@@ -284,6 +300,26 @@ def main(argv: "list[str] | None" = None) -> int:
         # forged / pre-evidence transport error) — fail closed.
         accepted = False
         reason = str(exc)
+        result = None
+
+    # ADR-MCPS-047 open leg: with --save-cont, after a VERIFIED InputRequiredResult,
+    # record the two evidence-handle digests the answer leg will bind to — the
+    # previous-request handle (this OPEN-leg request's evidence) and the input-required-
+    # response handle (the verified response's evidence). Both come from the audited
+    # core; the raw signature bases are never retained. Only when the verified reply
+    # actually carried a `requestState` (i.e. it IS an InputRequiredResult).
+    if args.save_cont and accepted and getattr(result, "request_state", None):
+        with open(args.save_cont, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "prev_alg": signed.evidence_digest_alg,
+                    "prev_value": signed.evidence_digest_value,
+                    "irr_alg": result.resp_evidence_digest_alg,
+                    "irr_value": result.resp_evidence_digest_value,
+                    "request_state": result.request_state,
+                },
+                fh,
+            )
 
     if accepted:
         verdict = "accepted"

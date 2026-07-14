@@ -17,10 +17,12 @@ use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::HttpContinuation;
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestEvidence;
+use mcp_re_client_core::RequestEvidenceDigest;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
@@ -94,6 +96,12 @@ impl PySignedRequest {
 /// covered `Authorization: Bearer` header. `created`/`expires` are Unix seconds.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    seed, key_id, id_json, method, params_json, target_uri, audience_id, route,
+    dpop_token, nonce, created, expires,
+    cont_prev_alg=None, cont_prev_value=None, cont_irr_alg=None, cont_irr_value=None,
+    cont_request_state=None,
+))]
 fn sign_request(
     seed: &[u8],
     key_id: &str,
@@ -107,6 +115,16 @@ fn sign_request(
     nonce: &str,
     created: i64,
     expires: i64,
+    // ADR-MCPS-047 MRTR answer leg: bind this request to the `InputRequiredResult` it
+    // answers. All five are `Some` together (or all `None` for an ordinary request):
+    // the previous-request evidence digest (this client's OPEN-leg sign handle), the
+    // input-required-response evidence digest (the OPEN-leg verify handle), and the
+    // opaque `requestState`. The continuation rides inside the signed evidence block.
+    cont_prev_alg: Option<String>,
+    cont_prev_value: Option<String>,
+    cont_irr_alg: Option<String>,
+    cont_irr_value: Option<String>,
+    cont_request_state: Option<String>,
 ) -> PyResult<PySignedRequest> {
     let key = seed_to_key(seed)?;
     let id = parse_json(id_json, "id")?;
@@ -120,8 +138,32 @@ fn sign_request(
         route,
     };
     let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, dpop_token.as_bytes());
-    let inputs = RequestSigningInputs::new(key_id, audience, vec![binding], nonce, created, expires)
+    let mut inputs = RequestSigningInputs::new(key_id, audience, vec![binding], nonce, created, expires)
         .with_headers(vec![("Authorization".to_owned(), format!("Bearer {dpop_token}"))]);
+    // MRTR answer leg: fold the continuation into the signed evidence block. Built
+    // from the two evidence-handle digests the client already holds (its OPEN-leg
+    // sign handle and the verified response handle) plus the opaque requestState —
+    // no raw signature bases retained (ADR-MCPS-047).
+    if let (Some(pa), Some(pv), Some(ia), Some(iv), Some(state)) = (
+        cont_prev_alg,
+        cont_prev_value,
+        cont_irr_alg,
+        cont_irr_value,
+        cont_request_state,
+    ) {
+        let continuation = HttpContinuation::from_handles(
+            RequestEvidenceDigest {
+                digest_alg: pa,
+                digest_value: pv,
+            },
+            RequestEvidenceDigest {
+                digest_alg: ia,
+                digest_value: iv,
+            },
+            state.as_bytes(),
+        );
+        inputs = inputs.with_continuation(continuation);
+    }
     let signed = build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
     let req = signed.request();
     Ok(PySignedRequest {
@@ -155,6 +197,20 @@ struct PyVerifyResult {
     wire_code: Option<String>,
     #[pyo3(get)]
     bound: bool,
+    /// The verified response's evidence-handle digest algorithm — the
+    /// `input_required_response_evidence` handle an MRTR answer leg binds to
+    /// (ADR-MCPS-047). Read from the VERIFIED response only.
+    #[pyo3(get)]
+    resp_evidence_digest_alg: String,
+    /// The verified response's evidence-handle digest value (base64url, no pad).
+    #[pyo3(get)]
+    resp_evidence_digest_value: String,
+    /// `result.requestState` (a string) from the verified response body IFF it is an
+    /// `InputRequiredResult` (`result.resultType == "input_required"`); else `None`.
+    /// The opaque MRTR state the answer leg re-presents. Read only after the response
+    /// verified as genuine evidence.
+    #[pyo3(get)]
+    request_state: Option<String>,
 }
 
 /// Verify a delegated-required RFC 9421 response bound to the request the client
@@ -246,12 +302,30 @@ fn verify_response(
             ("rejection".to_owned(), wire_code, bound)
         }
     };
+    // The response evidence handle (D_irr): the answer leg binds to it. Read from the
+    // VERIFIED response evidence, never from unverified bytes.
+    let resp_digest = verified.verified.response_signature_base_digest.clone();
+    // `result.requestState` only if this is an InputRequiredResult — a terminal reply
+    // has none. Read after verification: content-digest covered the body.
+    let request_state = serde_json::from_slice::<Value>(resp_body)
+        .ok()
+        .as_ref()
+        .and_then(|v| v.get("result"))
+        .filter(|r| {
+            r.get("resultType").and_then(|t| t.as_str()) == Some("input_required")
+        })
+        .and_then(|r| r.get("requestState"))
+        .and_then(|s| s.as_str())
+        .map(str::to_owned);
     Ok(PyVerifyResult {
         ok: true,
         server_keyid: verified.verified.resolved_server_actor.identity.keyid,
         outcome,
         wire_code,
         bound,
+        resp_evidence_digest_alg: resp_digest.digest_alg,
+        resp_evidence_digest_value: resp_digest.digest_value,
+        request_state,
     })
 }
 

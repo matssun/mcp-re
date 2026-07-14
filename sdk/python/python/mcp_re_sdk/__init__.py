@@ -17,7 +17,7 @@ exposed through the ``_core`` PyO3 extension (built by maturin).
 
 from . import _core  # native extension (mcp_re_sdk._core)
 
-__version__ = "0.12.0"
+__version__ = "0.12.1"
 __all__ = [
     "core_version",
     "profile_tag",

@@ -221,6 +221,15 @@ fn source_env_for(source: &str) -> &'static str {
         "mcp-re-proxy/tests/delegated_production_wiring_test.rs" => "MCP_RE_SRC_DELEGATED_PROD_WIRING",
         "mcp-re-proxy/tests/delegated_client_server_e2e_test.rs" => "MCP_RE_SRC_DELEGATED_E2E",
         "mcp-re-conformance/tests/delegation_vectors_test.rs" => "MCP_RE_SRC_DELEGATION_VECTORS",
+        // ADR-MCPRE-052 trust-anchor (master/root key) lifecycle — rotation overlap,
+        // cutover, issuer revocation, and root issuance failure (§H of the matrix).
+        "mcp-re-proxy/tests/root_key_lifecycle_test.rs" => "MCP_RE_SRC_ROOT_KEY_LIFECYCLE",
+        // ADR-MCPRE-052 §I: signed trust-anchor-manifest root rotation with an
+        // auto-provisioned root (the hermetic twin of the live KMS lane).
+        "mcp-re-proxy/tests/root_authority_manifest_test.rs" => "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST",
+        // ADR-MCPS-047: stateless cross-replica MRT continuation — open-on-A/answer-on-B
+        // + fail-closed splice/one-shot binding.
+        "mcp-re-proxy/tests/mrt_continuation_serving_test.rs" => "MCP_RE_SRC_MRT_CONTINUATION",
         // MCPS-72 (#252): the KMS-lifecycle offline negatives are in-crate
         // `#[cfg(test)]` unit tests, so their `source` is a `src/*.rs` file (not a
         // `tests/*.rs`). The generic provider-agnostic signer seam runs under the

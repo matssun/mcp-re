@@ -185,9 +185,64 @@ that runs in CI and an `#[ignore]` live twin. Runner:
 These lanes have no Bazel target, so they are not in the traceability manifest;
 they are cited here and guarded by the offline twin in CI.
 
+## H. Trust-anchor (master/root key) lifecycle
+
+The rows above exercise the **delegated** key — the short-TTL key on the hot path.
+These rows exercise the **root/master** key itself: rotating the trust anchor the whole
+fleet chains to, revoking a root, and surviving a root that can no longer issue. This
+is NOT delegated-key rotation. The verifier-side mechanism is
+[`TrustedIssuerSet`](../../mcp-re-client-core/src/response.rs) (current /
+retired-with-`valid_until` / revoked / unknown-reject); the server-side property is the
+rotor's fail-closed-on-issuance-failure contract. All hermetic (two in-memory roots
+through the same seam a KMS root plugs into), so they run on every push.
+
+| # | Required behavior | Proof (`test_fn`) | Altitude | Enforced |
+|---|---|---|---|---|
+| H1 | Root rotation — during an overlap window BOTH the outgoing (retired, in-window) and incoming (current) root are accepted | `during_overlap_both_roots_are_accepted` | verifier | MANIFEST |
+| H2 | Root rotation — after the overlap `valid_until` closes, the retired root is rejected (`delegation_issuer_untrusted`) even before the credential's own exp, and only the new root is accepted | `after_overlap_old_root_rejected_new_root_accepted` | verifier | MANIFEST |
+| H3 | Retirement window is inclusive at `valid_until` then closes | `retirement_window_boundary_is_inclusive_then_closes` | verifier | CI |
+| H4 | Unknown issuer (not in current/retired) is rejected | `unknown_issuer_is_rejected` | verifier | MANIFEST |
+| H5 | An empty trust-anchor set trusts no root (a delegated-required verifier never silently trusts one) | `empty_trust_anchor_set_trusts_no_root` | verifier | CI |
+| H6 | Root revocation — revoking an `issuer_kid` invalidates EVERY descendant delegated credential immediately (`delegation_revoked`), before its exp, without chasing each delegated key | `revoked_issuer_invalidates_all_descendants_before_exp` | verifier | MANIFEST |
+| H7 | Root revocation isolation — revoking one root leaves other trusted roots fully accepted | `revoking_one_root_does_not_disturb_the_other` | verifier | MANIFEST |
+| H8 | Root issuance failure — an unavailable KMS root serves only until the current delegated key expires, then fails closed; never extends the key, never falls back to direct-root | `root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed` | rotor | MANIFEST |
+
+`MANIFEST` = pinned in `security_traceability_manifest.json` (guard fails on rename/removal); `CI` = runs under the same green test file (`//mcp-re-proxy:root_key_lifecycle_test`).
+
+**Live cross-KMS root rotation is a GKE-phase lane, not a local one.** Proving H1/H2/H6
+against *real* Cloud KMS requires TWO roots, i.e. a **separate disposable** KMS
+key/version — never the shared test root in `work/test-gcp-cloud.sh`, and never by
+disabling it. That live lane (`#[ignore]`, gated on a disposable second-key env var)
+is deferred to the GKE phase alongside the fleet/rolling-update dimensions; the
+hermetic §H rows are the pre-GKE gate.
+
+## I. Root-authority rotation via signed manifest (automated, no HITL)
+
+§H proves the verifier's trust-anchor decisions. These rows prove the DISTRIBUTION +
+AUTOMATION layer: a signed, versioned trust-anchor manifest carries a root rotation, and
+roots are AUTO-PROVISIONED (no human creates a key). Design + provisioning fence:
+[`docs/spec/root-authority-rotation.md`](./root-authority-rotation.md).
+
+| # | Required behavior | Proof (`test_fn`) | Altitude | Enforced |
+|---|---|---|---|---|
+| I1 | Signed manifest loads current/retiring/revoked into the trust anchors; a rotation A→A+B overlap→B and A-revoked verifies/rejects per manifest; rollback to the pre-revocation version refused | `root_rotation_via_signed_manifest_with_auto_provisioned_roots` | verifier | MANIFEST |
+| I2 | Manifest signed by a non-pinned key / bad signature is rejected | `untrusted_signer_is_rejected` · `tampered_manifest_fails_the_signature` | verifier | CI |
+| I3 | Expired manifest fails closed | `expired_manifest_fails_closed` | verifier | CI |
+| I4 | Rollback to a lower manifest version is rejected | `rolled_back_manifest_version_is_rejected` | verifier | CI |
+| I5 | Wrong-profile manifest rejected | `wrong_profile_is_rejected` | verifier | CI |
+| I6 | A root is AUTO-PROVISIONED (Root B minted on the fly) — no human-in-the-loop key creation | `root_rotation_via_signed_manifest_with_auto_provisioned_roots` (in-memory) · `gcp_kms_root_rotation_live` (live KMS) | provider | MANIFEST + LIVE |
+| I7 | LIVE: the identical rotation runs against TWO real, DISPOSABLE Cloud KMS roots, self-provisioned and cleaned up; the shared root is never touched | `gcp_kms_root_rotation_live` | live | LIVE |
+
+`MANIFEST` = pinned in the traceability manifest; `CI` = the manifest unit tests
+(`mcp-re-client-core/src/trust_manifest.rs`) run on every push; `LIVE` = the
+`#[ignore]` lane run via [`docs/security/gcp-kms-root-rotation.sh`](../security/gcp-kms-root-rotation.sh)
+against real Cloud KMS with two disposable key versions (doc-cited, gazelle-allowlisted;
+no Bazel target). I7 was executed green against real Cloud KMS.
+
 ## This is the gate before GKE
 
-Every row above — including the live Cloud KMS lanes (§G) — is green locally today
+Every row above — including the live Cloud KMS lanes (§G), the trust-anchor
+lifecycle (§H), and signed-manifest root rotation (§I) — is green locally today
 (`bazel test //...` green; the three guards pass; the KMS lanes pass offline in CI
 and against the real Cloud KMS via the runner). That is the precondition for
 treating a GKE run as an honest production validation — not a first proof. Because
@@ -199,7 +254,10 @@ treating a GKE run as an honest production validation — not a first proof. Bec
   anchor (here it is a single in-process rotor);
 - **rolling-update overlap** timing under live traffic (K1 draining while K2 serves);
 - **network transport** (mTLS) rather than in-process objects;
-- the **SLO baseline** remaining acceptable with per-response delegated signing.
+- the **SLO baseline** remaining acceptable with per-response delegated signing;
+- **live cross-KMS root rotation** (§H, H1/H2/H6) across a *separate disposable* KMS
+  key — the trust-anchor overlap and revocation proven hermetically here, re-run
+  against two real cloud roots (never the shared test root).
 
 GKE proves those live-infra properties. It does **not** re-prove the protocol
 correctness or the KMS-root/authority-flip behavior above — that is this matrix's

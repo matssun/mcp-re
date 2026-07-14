@@ -253,7 +253,7 @@ pub fn sign_delegated_response_full(
     delegated_kid: &str,
     created: i64,
     expires: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<Vec<u8>, HttpProfileError> {
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
@@ -264,10 +264,14 @@ pub fn sign_delegated_response_full(
         },
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response(
+    // Sign directly through the signer seam (not `sign_response`) so the exact
+    // response signature-base is returned to the caller: the delegated serving path
+    // records it as the input-required-response base an MRTR continuation binds to
+    // (ADR-MCPS-047).
+    sign_response_with_signer(
         response,
         request,
-        delegated_key,
+        |base| local_sig(delegated_key, base),
         delegated_kid,
         created,
         expires,
@@ -326,6 +330,7 @@ pub fn sign_response(
         created,
         expires,
     )
+    .map(|_base| ())
 }
 
 /// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),
@@ -339,7 +344,7 @@ pub fn sign_response_with_signer(
     key_id: &str,
     created: i64,
     expires: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<Vec<u8>, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
     set_header(
         &mut response.headers,
@@ -376,7 +381,11 @@ pub fn sign_response_with_signer(
         &params,
         &base,
         sign_base,
-    )
+    )?;
+    // Return the exact response signature-base bytes so the delegated serving path
+    // can record the input-required-response base an MRTR continuation binds to
+    // (ADR-MCPS-047). Not secret — derived from the public message.
+    Ok(base)
 }
 
 /// Sign `response` in place with NO request binding — for a rejection emitted

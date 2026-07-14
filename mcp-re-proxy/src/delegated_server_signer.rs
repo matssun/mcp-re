@@ -241,6 +241,35 @@ where
         }
     }
 
+    /// The trust epoch currently minted into new credentials.
+    pub fn trust_epoch(&self) -> &str {
+        self.custody.trust_epoch()
+    }
+
+    /// Advance the minted trust epoch and immediately re-issue under it, publishing the
+    /// fresh snapshot for the hot path (ADR-MCPRE-052 §7). Called by the rotation owner
+    /// when the shared trust-epoch counter advances: verifiers pinned to the prior
+    /// accepted-epoch set then reject the new credential (`delegation_trust_epoch_stale`),
+    /// which is cross-replica because every replica reads the same shared counter. On a
+    /// fail-closed issuance the snapshot is retired so the hot path fails closed.
+    pub fn advance_trust_epoch(&mut self, epoch: String, now: i64) -> Result<(), CustodyError> {
+        self.custody.set_trust_epoch(epoch);
+        match self.custody.reissue(now) {
+            Ok(()) => {
+                let snapshot = self
+                    .custody
+                    .active_snapshot()
+                    .expect("reissue guarantees an active key");
+                self.signer.publish(snapshot);
+                Ok(())
+            }
+            Err(e) => {
+                self.signer.retire();
+                Err(e)
+            }
+        }
+    }
+
     /// The audited key-lifecycle events so far (issue / rotate / retire).
     pub fn audit(&self) -> &[KeyLifecycleEvent] {
         self.custody.audit()
@@ -309,6 +338,25 @@ mod tests {
         let snap = signer.current(NOW).expect("a key is published");
         assert_eq!(snap.delegated_kid, format!("{ROOT_KID}/delegated/1"));
         assert_eq!(rotor.root_invocations(), 1);
+    }
+
+    #[test]
+    fn advance_trust_epoch_republishes_a_fresh_key_under_the_new_epoch() {
+        // ADR-MCPRE-052 §7: a shared-counter bump advances the minted epoch and
+        // re-issues OFF-SCHEDULE (well inside the current key's life), so verifiers
+        // pinned to the prior epoch reject the new credential across the fleet.
+        let (mut rotor, signer) = rotor();
+        rotor.rotate(NOW).expect("initial issue");
+        let first_kid = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
+        assert_eq!(rotor.trust_epoch(), "epoch-1");
+
+        rotor
+            .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
+            .expect("re-issue under the advanced epoch");
+        assert_eq!(rotor.trust_epoch(), "epoch-1#2");
+        let snap = signer.current(NOW + 5).expect("a key is published");
+        assert_ne!(snap.delegated_kid, first_kid, "a fresh key under the new epoch");
+        assert_eq!(rotor.root_invocations(), 2, "root re-issued exactly once more");
     }
 
     #[test]

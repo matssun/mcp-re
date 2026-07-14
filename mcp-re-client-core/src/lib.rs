@@ -22,6 +22,7 @@
 
 pub mod request;
 pub mod response;
+pub mod trust_manifest;
 
 pub use request::build_signed_request;
 pub use request::build_signed_request_with_signer;
@@ -39,6 +40,15 @@ pub use response::ResponseExpectation;
 pub use response::ResultClass;
 pub use response::RevocationSource;
 pub use response::StaticRevocationList;
+pub use response::TrustedIssuerSet;
+pub use trust_manifest::load_signed_manifest;
+pub use trust_manifest::sign_manifest;
+pub use trust_manifest::LoadedTrustAnchors;
+pub use trust_manifest::ManifestIssuer;
+pub use trust_manifest::RetiringIssuer;
+pub use trust_manifest::SignedTrustAnchorManifest;
+pub use trust_manifest::TrustAnchorManifest;
+pub use trust_manifest::TrustManifestError;
 pub use response::VerifiedDelegatedResponse;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
@@ -49,6 +59,7 @@ pub use mcp_re_http_profile::ArtifactType;
 pub use mcp_re_http_profile::AudienceTuple;
 pub use mcp_re_http_profile::BindingType;
 pub use mcp_re_http_profile::HttpContinuation;
+pub use mcp_re_http_profile::RequestEvidenceDigest;
 pub use mcp_re_http_profile::HttpProfileError;
 pub use mcp_re_http_profile::HttpRequest;
 pub use mcp_re_http_profile::HttpResponse;

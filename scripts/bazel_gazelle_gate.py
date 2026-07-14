@@ -81,6 +81,9 @@ ALLOW_HITL_LIVE = {
     "gcp_kms_http_profile_live_test",
     "gcp_kms_delegated_signing_live_test",
     "gcp_kms_delegated_required_live_test",
+    # ADR-MCPRE-052 §I: live Cloud KMS trust-anchor rotation across two DISPOSABLE
+    # KMS key versions (self-provisioned by docs/security/gcp-kms-root-rotation.sh).
+    "gcp_kms_root_rotation_live_test",
     "t4_enterprise_kms_custody",
     "t4_python_kms_custody",
 }

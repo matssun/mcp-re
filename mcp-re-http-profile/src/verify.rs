@@ -67,6 +67,11 @@ pub struct VerifiedHttpRequestEvidence {
     pub resolved_actor: ResolvedActor,
     /// The request signature-base handle (`SHA-256` over the reconstructed base).
     pub evidence: RequestEvidence,
+    /// The exact RFC 9421 request signature-base bytes the signature was verified
+    /// over. Retained so the MRTR continuation correlation store (ADR-MCPS-047)
+    /// can record the previous-request base the answer leg binds to; `evidence` is
+    /// its digest. Not secret — derived from the public message.
+    pub request_signature_base: Vec<u8>,
     /// The verified `Content-Digest` header value covered by the signature.
     pub content_digest: String,
     pub created: i64,
@@ -418,6 +423,7 @@ pub fn verify_request(
         signature_label: REQUEST_LABEL.to_owned(),
         resolved_actor,
         evidence: RequestEvidence::from_signature_base(&base),
+        request_signature_base: base,
         content_digest,
         created,
         expires,

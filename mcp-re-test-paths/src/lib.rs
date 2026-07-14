@@ -105,6 +105,27 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCP_RE_SRC_KEYSET_ADMISSION" => {
             workspace_root.join("mcp-re-proxy/tests/keyset_admission_test.rs")
         }
+        "MCP_RE_SRC_DELEGATED_SERVING" => {
+            workspace_root.join("mcp-re-proxy/tests/delegated_serving_test.rs")
+        }
+        "MCP_RE_SRC_DELEGATED_PROD_WIRING" => {
+            workspace_root.join("mcp-re-proxy/tests/delegated_production_wiring_test.rs")
+        }
+        "MCP_RE_SRC_DELEGATED_E2E" => {
+            workspace_root.join("mcp-re-proxy/tests/delegated_client_server_e2e_test.rs")
+        }
+        "MCP_RE_SRC_DELEGATION_VECTORS" => {
+            workspace_root.join("mcp-re-conformance/tests/delegation_vectors_test.rs")
+        }
+        "MCP_RE_SRC_ROOT_KEY_LIFECYCLE" => {
+            workspace_root.join("mcp-re-proxy/tests/root_key_lifecycle_test.rs")
+        }
+        "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST" => {
+            workspace_root.join("mcp-re-proxy/tests/root_authority_manifest_test.rs")
+        }
+        "MCP_RE_SRC_MRT_CONTINUATION" => {
+            workspace_root.join("mcp-re-proxy/tests/mrt_continuation_serving_test.rs")
+        }
         // MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): serve-level attested-ingress
         // conformance vectors, plus the in-crate cli.rs Mode-C guards / Mode-B
         // strict-rejection (read as src/*.rs, like the KMS negatives above).

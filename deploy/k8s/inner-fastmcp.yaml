@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: fastmcp
-          image: mcp-re-inner-fastmcp:0.12.0
+          image: mcp-re-inner-fastmcp:0.12.1
           imagePullPolicy: IfNotPresent
           env:
             - name: MCP_RE_INNER_BACKEND_HOST

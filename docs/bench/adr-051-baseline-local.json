@@ -4,21 +4,24 @@
   "envelope_version": 2,
   "carrier": "rfc9421+rfc9530",
   "classification": "provisional-local-regression-baseline",
-  "authoritative_for": ["local-regression-detection"],
+  "authoritative_for": [
+    "local-regression-detection"
+  ],
   "NOT_authoritative_for": [
     "production release SLOs (absolute throughput/latency thresholds)",
     "per-core linear-scaling acceptance"
   ],
-  "supersedes": "The v1 baseline (recorded 2026-07-09) measured the DELETED object/JCS serving carrier. This v2 baseline re-establishes the anchor on the RFC 9421 + RFC 9530 serving path (ADR-MCPRE-050 sole carrier), same box, same 128/8000/1-core anchor config. RFC 9421 header-signature + Content-Digest is CHEAPER than JCS canonicalization: throughput +27.7% (4591.9 -> 5866.4 rps), p50/p99/p999 added latency all ~20% lower. The old numbers are not comparable to the current wire and are retired.",
+  "supersedes": "v3 anchor (2026-07-14): re-established on the DELEGATED-REQUIRED-ONLY serving path (21f722c, 2026-07-13 \u2014 direct-root response signing deleted; the proxy now ALWAYS issues a delegated-credential-backed response signature per request). The prior v2 anchor (5866.4 rps, recorded 2026-07-12) measured the pre-cutover sign_response_full path and is retired: always-delegated-signing costs ~16% throughput (5866.4 -> 4906.9) and ~18% p50 added latency (21450 -> 25334us) on this box, the expected cost of the mandated architecture, not a regression. (The v2 note itself retired the v1 object/JCS carrier baseline.) Same box, same 128/8000/1-core config; the serving path is what changed.",
   "caveat": "Recorded on a single developer workstation with the load generator CO-LOCATED with the proxy on the same cores. At the concurrency this anchor uses the run is client-concurrency-bound (128 concurrent cold mTLS handshakes; client-side Ed25519/TLS crypto costs as much as server-side), so throughput is a stable REGRESSION anchor but is NOT a production capacity number, and the 1->N core sweep below is recorded-but-NON-AUTHORITATIVE: on one box the loadgen contends with the fleet for cores and flattens the curve. Authoritative absolute SLOs and the real scaling curve require a dedicated load-generator host driving the proxy on the production hardware class (MCPRE-110 production half; the GKE fleet run, now at the canonical 128/8000 envelope).",
   "recorded": {
-    "date": "2026-07-12",
+    "date": "2026-07-14",
     "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
     "build_profile": "release",
+    "serving_mode": "delegated-required-only (ADR-MCPRE-052; delegated-credential-backed response signature per request)",
     "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (signature in HTTP headers; no object/JCS _meta signature)"
   },
   "anchor": {
-    "comment": "The regression anchor: the least loadgen-distorted, most reproducible point (single served core, moderate concurrency). Values are the MEDIAN of 3 reps; throughput held within +/-1% across reps. `adr051_slo_gate.py` compares a fresh run of THIS config against these numbers under the local_regression tolerances in adr-051-slo-targets.json.",
+    "comment": "The regression anchor on the delegated-required serving path: single served core, moderate concurrency (least loadgen-distorted, most reproducible). Values are the MEDIAN of 6 reps on a developer workstation with co-located loadgen (throughput spread 4827.7-5103.5, ~+/-3%; the box is not perfectly quiet, hence 6 reps and slightly wider local_regression tolerances than a dedicated-loadgen run would need). adr051_slo_gate.py compares a fresh run of THIS config against these numbers.",
     "config": {
       "hardware_class": "apple-m4-pro-14c-dev",
       "declared_cores": 1,
@@ -29,30 +32,78 @@
       "tls_mode": "TLS1.3-mTLS"
     },
     "results": {
-      "throughput_rps": 5866.4,
+      "throughput_rps": 4906.9,
       "added_latency_us": {
-        "p50": 21450,
-        "p99": 35884,
-        "p999": 38189,
-        "mean": 21701,
-        "min": 9460,
-        "max": 39300
+        "p50": 25334,
+        "p99": 37587,
+        "p999": 43455,
+        "mean": 25948,
+        "min": 7574,
+        "max": 61459
       },
       "reps": {
-        "throughput_rps": [5866.4, 5825.5, 5903.5],
-        "p50_us": [21452, 21450, 21302],
-        "p99_us": [33617, 36553, 35884],
-        "p999_us": [35615, 38189, 39608]
+        "throughput_rps": [
+          4827.7,
+          4867.0,
+          4895.7,
+          4918.2,
+          5035.6,
+          5103.5
+        ],
+        "p50_us": [
+          24623,
+          25046,
+          25073,
+          25595,
+          25856,
+          25896
+        ],
+        "p99_us": [
+          34160,
+          35178,
+          35823,
+          39352,
+          40670,
+          41692
+        ],
+        "p999_us": [
+          37972,
+          38673,
+          40999,
+          45911,
+          47128,
+          58148
+        ]
       }
     }
   },
   "recorded_core_sweep_non_authoritative": {
-    "comment": "Recorded for the record only. Throughput is FLAT-to-noisy as served cores rise because the co-located loadgen is the limiter, NOT because the per-core fleet fails to scale (the 4-core dip is loadgen contention noise, not a serving regression). Do NOT gate on this curve. RFC 9421 carrier, cold mode, concurrency 128, 8000 requests each.",
+    "comment": "PRE-CUTOVER, retained for the record only (measured on the old sign_response_full path, 2026-07-12) and NON-AUTHORITATIVE: throughput is flat-to-noisy as served cores rise because the co-located loadgen is the limiter, not per-core scaling. Do NOT gate on this curve; the authoritative 1->N curve is the GKE fleet run.",
     "points": [
-      { "declared_cores": 1, "throughput_rps": 5755.3, "p99_us": 33993, "p999_us": 34438 },
-      { "declared_cores": 2, "throughput_rps": 5787.9, "p99_us": 33040, "p999_us": 34825 },
-      { "declared_cores": 4, "throughput_rps": 4851.8, "p99_us": 54115, "p999_us": 59637 },
-      { "declared_cores": 8, "throughput_rps": 5746.0, "p99_us": 35129, "p999_us": 38038 }
+      {
+        "declared_cores": 1,
+        "throughput_rps": 5755.3,
+        "p99_us": 33993,
+        "p999_us": 34438
+      },
+      {
+        "declared_cores": 2,
+        "throughput_rps": 5787.9,
+        "p99_us": 33040,
+        "p999_us": 34825
+      },
+      {
+        "declared_cores": 4,
+        "throughput_rps": 4851.8,
+        "p99_us": 54115,
+        "p999_us": 59637
+      },
+      {
+        "declared_cores": 8,
+        "throughput_rps": 5746.0,
+        "p99_us": 35129,
+        "p999_us": 38038
+      }
     ]
   }
 }

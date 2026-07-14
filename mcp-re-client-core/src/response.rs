@@ -29,6 +29,7 @@ use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpResponseEvidence;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// The MCP-RE round-trip classification of a verified response body
@@ -216,6 +217,119 @@ impl StaticRevocationList {
 }
 
 impl RevocationSource for StaticRevocationList {
+    fn is_revoked(&self, identifier: &str) -> bool {
+        self.revoked.contains(identifier)
+    }
+}
+
+/// The client-side TRUST-ANCHOR lifecycle (ADR-MCPRE-052 root rotation + revocation)
+/// — which ROOT issuers the verifier trusts to anchor a delegation credential, and
+/// for how long. This is the MASTER-key analogue of [`StaticRevocationList`] (which
+/// governs individual short-lived DELEGATED keys): this governs the ISSUER itself.
+///
+/// Trust-anchor rotation is NOT delegated-key rotation. A delegated key rotates every
+/// few minutes under ONE root (the hot path); a root rotation swaps the anchor the
+/// whole fleet chains to — a rare, high-stakes ceremony that needs a controlled
+/// OVERLAP so credentials issued under the outgoing root keep verifying until a
+/// cutover deadline, then stop. That overlap deadline is the mechanism a single
+/// `issuer_kid -> key` map cannot express.
+///
+/// Four states per `issuer_kid`, evaluated at `now`:
+///   * CURRENT — a live root; its credentials verify (subject to the usual scope /
+///     freshness / epoch gates).
+///   * RETIRED — a superseded root inside its overlap window; its credentials verify
+///     ONLY while `now <= valid_until`, then resolve to untrusted
+///     (`delegation_issuer_untrusted`). This is trust-anchor rotation.
+///   * REVOKED — a compromised / withdrawn root; the ONE decisive action that
+///     invalidates ALL its descendant delegated credentials at once
+///     (`delegation_revoked`), even before their own `exp` and WITHOUT chasing each
+///     delegated key. (Consulted via the [`RevocationSource`] impl below.)
+///   * UNKNOWN — any other issuer; rejected `delegation_issuer_untrusted`.
+///
+/// The verifier core (`verify_delegation_credential`) is unchanged: this set feeds
+/// its two existing seams — the `resolve_root` actor resolver (current + in-window
+/// retired) and the `is_revoked` revocation source (revoked issuers). Because the
+/// resolver is rebuilt per verification with the caller's injected `now`
+/// ([`TrustedIssuerSet::response_resolver`]), the overlap window is enforced without
+/// the pure verifier ever reading a clock.
+#[derive(Debug, Clone, Default)]
+pub struct TrustedIssuerSet {
+    /// Live roots: `issuer_kid` -> the resolved ROOT actor (identity + pubkey).
+    current: HashMap<String, ResolvedActor>,
+    /// Superseded-but-overlapping roots: `issuer_kid` -> (actor, `valid_until` unix).
+    retired: HashMap<String, (ResolvedActor, i64)>,
+    /// Withdrawn / compromised roots (by `issuer_kid`).
+    revoked: HashSet<String>,
+}
+
+impl TrustedIssuerSet {
+    /// An empty set — trusts no root (every issuer is UNKNOWN → rejected). Roots are
+    /// added deliberately; a delegated-required verifier cannot silently trust one.
+    pub fn new() -> Self {
+        TrustedIssuerSet::default()
+    }
+
+    /// Add a CURRENT (live) root, keyed by the actor's `keyid` (= the credential
+    /// `issuer_kid`). The actor MUST be for the `Response` slot (it anchors the
+    /// server/response signer).
+    pub fn with_current(mut self, root: ResolvedActor) -> Self {
+        self.current.insert(root.identity.keyid.clone(), root);
+        self
+    }
+
+    /// Add a RETIRED root that remains trusted only through `valid_until` (unix
+    /// seconds) — the overlap deadline. After it, credentials under this root resolve
+    /// to untrusted.
+    pub fn with_retired(mut self, root: ResolvedActor, valid_until: i64) -> Self {
+        self.retired
+            .insert(root.identity.keyid.clone(), (root, valid_until));
+        self
+    }
+
+    /// Mark an `issuer_kid` REVOKED — one decisive action invalidating every
+    /// descendant delegated credential immediately (`delegation_revoked`).
+    pub fn revoke(mut self, issuer_kid: impl Into<String>) -> Self {
+        self.revoked.insert(issuer_kid.into());
+        self
+    }
+
+    /// Resolve an `issuer_kid` to its trusted ROOT actor AT `now`: a current root, or
+    /// a retired root still inside its overlap window (`now <= valid_until`). A
+    /// retired root past its window, or an unknown issuer, resolves to `None`
+    /// (→ `delegation_issuer_untrusted`).
+    ///
+    /// A revoked-but-still-current/retired root DOES resolve here on purpose: the
+    /// credential's signature is then checked and the [`RevocationSource`] impl
+    /// rejects it as `delegation_revoked` (the honest reason), rather than masking a
+    /// revocation as an untrusted-issuer error.
+    pub fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
+        if let Some(actor) = self.current.get(issuer_kid) {
+            return Some(actor.clone());
+        }
+        if let Some((actor, valid_until)) = self.retired.get(issuer_kid) {
+            if now <= *valid_until {
+                return Some(actor.clone());
+            }
+        }
+        None
+    }
+
+    /// A `resolve_actor` closure for [`verify_delegated_response`] that anchors the
+    /// RESPONSE slot in this set at `now`. The Request slot is never resolved on the
+    /// response-verification path, so it returns `None`. Rebuild it per verification
+    /// with the current `now` so the overlap window is honoured.
+    pub fn response_resolver(
+        &self,
+        now: i64,
+    ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
+        move |kid: &str, slot: SignerSlot| match slot {
+            SignerSlot::Response => self.resolve_root(kid, now),
+            _ => None,
+        }
+    }
+}
+
+impl RevocationSource for TrustedIssuerSet {
     fn is_revoked(&self, identifier: &str) -> bool {
         self.revoked.contains(identifier)
     }

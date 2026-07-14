@@ -530,6 +530,9 @@ fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_ur
             "--audience", AUDIENCE,
             "--server-signer", SERVER,
             "--server-key-id", SERVER_KEY_ID,
+            // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7):
+            // the trust epoch minted into every delegation credential is mandatory.
+            "--delegated-trust-epoch", "epoch-1",
             "--key-source", "file",
             "--signing-key-seed", &material.seed_path.to_string_lossy(),
             "--tls-cert", &material.server_cert_path.to_string_lossy(),
@@ -1455,9 +1458,12 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
 /// baseline/SLO numbers (MCPRE-110):
 ///
 /// ```text
-/// cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench \
-///   -- --ignored --nocapture
+/// cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
+///   --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
 ///   # env: MCP_RE_LOADGEN_CONCURRENCY / _REQUESTS / _CORES / _HW_CLASS / _OUT
+///   # NOTE: this fn is NOT #[ignore] (see below) — do NOT pass `--ignored`, which
+///   # would select only ignored tests and run nothing. It needs `redis_replay`
+///   # (the bench uses the shared Redis tier, via Docker or MCP_RE_LOADGEN_REDIS_URL).
 /// ```
 // ADR-051 §7 load benchmark. It is NOT `#[ignore]`: the whole file is already gated
 // to the `redis_replay` INTEGRATION lane (it stands up a Redis fleet), so it never

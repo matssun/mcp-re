@@ -173,6 +173,13 @@ pub mod http_inner;
 // Behind the redis backend flag; the data plane awaits it without blocking a worker.
 #[cfg(feature = "redis_replay")]
 pub mod async_redis_store;
+// ADR-MCPS-047: the MRTR continuation correlation store — the fleet-shared tier that
+// carries a multi-round-trip continuation across a replica switch. The trait +
+// in-memory (single-process) impl are always compiled; the Redis (cross-replica)
+// backend is `redis_replay`-gated like the async replay store above.
+pub mod continuation_store;
+#[cfg(feature = "redis_replay")]
+pub mod redis_continuation_store;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.

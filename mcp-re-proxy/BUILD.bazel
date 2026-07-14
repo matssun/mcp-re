@@ -124,6 +124,12 @@ _PROXY_LIB_SRCS = [
     # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
+    # always compiled; the Redis backend is redis_replay-gated inside the module.
+    "src/continuation_store.rs",
+    # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
+    # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
+    "src/redis_continuation_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -474,6 +480,69 @@ nt_rust_test(
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPS-047: the stateless cross-replica MRTR continuation serving contract — open
+# on replica A (records the retained bases in the shared store), answer on replica B
+# (recovers them, binds the continuation, terminal reply), plus the fail-closed
+# negatives (no store entry / one-shot / tampered requestState). The live analogue is
+# Proof 3 of docs/security/gke-multi-replica-validation.sh.
+nt_rust_test(
+    name = "mrt_continuation_serving_test",
+    srcs = ["tests/mrt_continuation_serving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-052 trust-anchor (MASTER/root key) lifecycle — the complement to the
+# delegated-KEY lifecycle. Root rotation (overlap {A,B} then cutover to {B}), root
+# revocation (issuer_kid revoked ⇒ all descendants rejected before exp), and root
+# issuance failure (unavailable KMS root ⇒ serve until the delegated key expires then
+# fail closed, no extend, no direct-root). Verifier side via TrustedIssuerSet; server
+# side via the public rotor. See docs/spec/delegated-required-validation-matrix.md §H.
+nt_rust_test(
+    name = "root_key_lifecycle_test",
+    srcs = ["tests/root_key_lifecycle_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+# ADR-MCPRE-052 §I: root rotation through a SIGNED trust-anchor manifest, with roots
+# AUTO-PROVISIONED by a TestRootAuthorityProvider (no human creates a key). The
+# hermetic (in-memory) twin of the live Cloud KMS lane; both call
+# common::run_rotation_scenario. See docs/spec/root-authority-rotation.md.
+nt_rust_test(
+    name = "root_authority_manifest_test",
+    srcs = [
+        "tests/root_authority_manifest_test.rs",
+        "tests/common/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
     ],
 )
 # MCPRE-122 client↔server e2e: the REAL client-side ClientProxy round-trips through an

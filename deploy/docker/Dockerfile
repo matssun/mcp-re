@@ -6,7 +6,7 @@
 # server is fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes
 # HTTP; MCP-RE ships no stdio bridge.
 #
-#   docker build -f deploy/docker/Dockerfile --target proxy -t mcp-re-proxy:0.12.0 .
+#   docker build -f deploy/docker/Dockerfile --target proxy -t mcp-re-proxy:0.12.1 .
 #
 # Local validation: this loads into a kind cluster (`kind load docker-image …`) —
 # native arch, no cross-compile. For GKE: build the SAME target for linux/amd64
