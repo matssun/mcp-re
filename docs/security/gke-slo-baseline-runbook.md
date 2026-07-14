@@ -63,9 +63,20 @@ warms `target/` so the Job runs with no recompile.
 
 ## 2. Cluster + shared Redis
 
+> **One cluster shape, scripted.** `docs/security/gke-multi-replica-validation.sh`
+> (PROVIDER=gke) now creates EXACTLY this cluster — Standard, **zonal**, `e2-standard-2
+> ×2`, **`--workload-pool`** for Cloud-KMS-via-Workload-Identity — so the four proofs
+> and the §4 SLO phase share one capacity-correct cluster that fits the 16-vCPU cap.
+> (An earlier harness used Autopilot + a regional placement and blew the cap —
+> FailedScheduling.) The manual commands below are what that script runs; prefer the
+> script. For a **KMS-rooted** fleet, run `docs/security/gke-kms-wi-setup.sh` once
+> first (GSA + `cloudkms.signerVerifier` on the key + WI binding — additive, no key
+> mutation) and export `MCP_RE_GCP_KMS_GSA`.
+
 ```sh
 gcloud container clusters create mcp-re-fleet --zone us-central1-a \
-  --num-nodes 2 --machine-type e2-standard-2 --disk-size 30 --no-enable-basic-auth
+  --num-nodes 2 --machine-type e2-standard-2 --disk-size 30 --no-enable-basic-auth \
+  --workload-pool project-b19bbb5e-9be8-4fcb-a2f.svc.id.goog
 gcloud container clusters get-credentials mcp-re-fleet --zone us-central1-a
 kubectl create namespace mcp-re
 # Redis (shared replay + trust-epoch tier) — see gke-multi-replica-validation.sh for the manifest
@@ -96,7 +107,7 @@ kubectl -n mcp-re create secret generic mcp-re-proxy-material \
   --from-file=client-ca.pem=/tmp/gke_mat/client_ca.pem --from-file=trust.json=/tmp/gke_mat/trust.json \
   --from-file=signing-seed=/tmp/gke_mat/signing_seed --dry-run=client -o yaml | kubectl apply -n mcp-re -f -
 # FastMCP inner (AR image)
-sed "s#image: mcp-re-inner-fastmcp:0.12.0#image: $AR/mcp-re-inner-fastmcp:0.12.0#" \
+sed "s#image: mcp-re-inner-fastmcp:0.12.1#image: $AR/mcp-re-inner-fastmcp:0.12.1#" \
   deploy/k8s/inner-fastmcp.yaml | kubectl apply -n mcp-re -f -
 # Proxy fleet (RFC 9421 serving path, ADR-MCPRE-050). The identity tuple
 # {audience, targetUri, trustDomain} comes from the chart defaults, which MATCH what
@@ -110,7 +121,7 @@ sed "s#image: mcp-re-inner-fastmcp:0.12.0#image: $AR/mcp-re-inner-fastmcp:0.12.0
 # mcp_re_gke_client.py mint for the multi-replica proof. Validate locally end-to-end
 # (accepted + replay) before this deploy via tools' deploy-config check.
 helm upgrade --install mcp-re-proxy deploy/helm/mcp-re-proxy -n mcp-re \
-  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.12.0 \
+  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.12.1 \
   --set replicaCount=3 --set fleet=true \
   --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp}' \
   --set replay.redisUrl=redis://mcp-re-redis:6379 \
@@ -129,6 +140,7 @@ export MCP_RE_SERVER_NAME=proxy.internal MCP_RE_AUDIENCE=did:example:server-1 \
   MCP_RE_SIGNING_KEY_SEED=@/tmp/gke_mat/client_signing_seed \
   MCP_RE_SERVER_SIGNER=did:example:server-1 MCP_RE_SERVER_KEY_ID=server-key-1 \
   MCP_RE_SERVER_PUBKEY=@/tmp/gke_mat/server_pubkey \
+  MCP_RE_TRUST_EPOCH=epoch-1 \
   MCP_RE_TLS_CERT=/tmp/gke_mat/client_cert_short.pem MCP_RE_TLS_KEY=/tmp/gke_mat/client_key_short.pem \
   MCP_RE_SERVER_CA=/tmp/gke_mat/server_ca.pem
 ```
@@ -192,7 +204,7 @@ kubectl -n mcp-re delete svc mcp-re-proxy-lb --ignore-not-found   # release the 
 gcloud container clusters delete mcp-re-fleet --zone us-central1-a --quiet   # nodes + LB + workloads
 # Optional (zero AR storage; rebuild via step 1 on rerun):
 for i in mcp-re-proxy mcp-re-inner-fastmcp mcp-re-slo-bench; do
-  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:0.12.0" --delete-tags --quiet || true
+  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:0.12.1" --delete-tags --quiet || true
 done
 ```
 

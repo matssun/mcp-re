@@ -242,28 +242,38 @@ pub fn run(
     // the TLS path; the object response-signer seam is gone.
     let _ = &resolver;
     let trust_entries = cli::load_trust_entries(&trust_bytes)?;
-    let server_signing_key = cli::build_server_signing_key(&config)?;
-    let server_pub = server_signing_key.public_key();
+    // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
+    // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
+    // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
+    // directly-held server key exists. The delegated key is never enrolled (authorized
+    // by the credential alone). The root key source is only borrowed here (for its
+    // public key); it is moved into the issuer at proxy build, so KMS-rooted delegated
+    // signing works on the async serving path.
+    let response_kid = config
+        .delegated_issuer_kid
+        .clone()
+        .unwrap_or_else(|| config.server_key_id.clone());
+    let response_pub = key_source.response_public_key().map_err(|e| e.to_string())?;
     let server_identity = ActorIdentity {
         role: "server".to_string(),
         trust_domain: config.trust_domain.clone(),
         subject: config.server_signer.clone(),
-        keyid: config.server_key_id.clone(),
+        keyid: response_kid.clone(),
     };
     let mut client_map: HashMap<String, (String, VerificationKey)> = HashMap::new();
     for (signer, key_id, key) in trust_entries {
-        if key_id != config.server_key_id {
+        if key_id != response_kid {
             client_map.insert(key_id, (signer, key));
         }
     }
-    let skid = config.server_key_id.clone();
+    let skid = response_kid.clone();
     let sident = server_identity.clone();
     let td = config.trust_domain.clone();
     let resolve_actor: crate::ActorResolver =
         Box::new(move |kid: &str, slot: SignerSlot| match slot {
             SignerSlot::Response if kid == skid => Some(ResolvedActor {
                 identity: sident.clone(),
-                verification_key: server_pub.clone(),
+                verification_key: response_pub.clone(),
                 slot,
             }),
             SignerSlot::Request => client_map.get(kid).map(|(signer, key)| ResolvedActor {
@@ -285,8 +295,18 @@ pub fn run(
     };
     // The authoritative async replay tier (§4) + deployment durability posture,
     // selected below; default is the single-replica in-memory tier.
+    // `mut` is load-bearing only under the durable-store features, whose match arms
+    // reassign these below; without those features the bindings are never rewritten.
+    #[cfg_attr(
+        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
+        allow(unused_mut)
+    )]
     let mut replay_async =
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), config.max_clock_skew);
+    #[cfg_attr(
+        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
+        allow(unused_mut)
+    )]
     let mut dispatch_cfg = ProxyDispatchConfig {
         fleet_strict: false,
         tier: None,
@@ -705,20 +725,81 @@ pub fn run(
 
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner
     // plane, the authoritative replay tier, and the optional Mode-A channel binding.
-    // Response-signature validity window: 300s.
-    let mut proxy = HttpProfileProxy::new(
-        resolve_actor,
-        expected_audience,
-        server_identity,
-        server_signing_key,
-        config.server_key_id.clone(),
-        replay_async,
-        dispatch_cfg,
-        Box::new(pool),
-        300,
-    );
+    // Response-signature validity window: 300s. Delegated-signing is the only mode
+    // (ADR-MCPRE-052): build the delegated signer + cold-path rotor from the ROOT key
+    // source and fail closed at startup if the root cannot issue the first delegated
+    // key. The KMS/HSM/file root is the credential ISSUER, invoked at issuance/rotation
+    // only — never on the request path. `key_source` is moved in here; it was only
+    // borrowed above (TLS materials, root public key).
+    let mut proxy = {
+        let crate::delegated_wiring::DelegatedSigningWiring {
+            signer,
+            mut rotor,
+            overlap,
+        } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
+        // Initial issuance MUST succeed before serving: the proxy never serves without
+        // an active delegated key (fail closed, ADR-MCPRE-052 §6).
+        rotor.rotate(startup_now_unix).map_err(|e| {
+            format!(
+                "delegated-signing: initial delegated key issuance FAILED at startup ({e:?}); \
+                 the root issuer must be available before serving (fail closed, ADR-MCPRE-052 §6)"
+            )
+        })?;
+        eprintln!(
+            "mcp-re-proxy: response signing = DELEGATED (ADR-MCPRE-052): the root issuer is off \
+             the request path; delegated key TTL {}s / overlap {overlap}s; issuer kid \
+             {response_kid:?}. Initial delegated key issued.",
+            config.delegated_ttl_secs,
+        );
+        // Cold-path rotation thread: rotate within the overlap window before each
+        // key's exp so the KMS/root stays off the per-core serving runtimes. It also
+        // watches the shared trust-epoch counter and re-issues under a new epoch on an
+        // advance, so an operator `INCR` revokes the outstanding delegated keys across
+        // the fleet (ADR-MCPRE-052 §7).
+        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
+        spawn_delegated_rotation_task(
+            rotor,
+            Arc::clone(&signer),
+            overlap,
+            epoch_watch,
+            Arc::clone(&shutdown),
+        );
+        HttpProfileProxy::new_delegated(
+            resolve_actor,
+            expected_audience,
+            replay_async,
+            dispatch_cfg,
+            Box::new(pool),
+            300,
+            signer,
+        )
+    };
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
+    }
+
+    // ADR-MCPS-047: wire the MRTR continuation correlation store on the SAME shared
+    // Redis the fleet uses for replay coherence, so a multi-round-trip continuation
+    // opened on one replica is honoured on any other. Connected on the replay control
+    // runtime (held alive for the whole serve). Present only when a shared redis URL
+    // AND that runtime exist; single-store / in-memory replay deployments run without
+    // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
+    #[cfg(feature = "redis_replay")]
+    if let (Some(url), Some(rt)) = (
+        config.replay_redis_url.as_ref(),
+        replay_control_rt.as_ref(),
+    ) {
+        let store = rt
+            .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
+            .map_err(|e| format!("connect redis continuation store: {e}"))?;
+        eprintln!(
+            "mcp-re-proxy: MRTR continuation store = shared (async Redis backend, TTL {}s)",
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
+        );
+        proxy = proxy.with_continuation_store(
+            Arc::new(store),
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
+        );
     }
 
     // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
@@ -873,6 +954,176 @@ fn spawn_crl_reload_task(
     });
 }
 
+/// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
+/// rotation thread. A single owner drives the rotor OFF the per-core serving runtimes,
+/// so the root issuer's blocking KMS/HSM calls never touch the request path. It wakes
+/// within the rotation-overlap window before the current key's `exp`, mints a
+/// successor, and republishes the hot-path snapshot; the fleet keeps signing off the
+/// current key until then (no gap). If issuance fails while the current key is still
+/// valid, serving continues until that key expires and THEN fails closed
+/// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
+/// thread observes `shutdown` between naps so it exits promptly on a rolling deploy.
+fn spawn_delegated_rotation_task(
+    mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
+    signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    overlap: i64,
+    epoch_watch: Option<DelegatedEpochWatch>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+) {
+    use crate::delegated_server_signer::rotation_backoff;
+    std::thread::spawn(move || {
+        // Failures since the last success drive the backoff schedule; 0 in steady state.
+        let mut consecutive_failures: u32 = 0;
+        // The epoch this node is currently minting under (starts at the configured
+        // baseline label from the startup issuance). An advance of the shared counter
+        // moves it; verifiers pinned to the old label then reject across replicas.
+        let mut last_label = rotor.trust_epoch().to_string();
+        loop {
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            // In steady state, sleep until the overlap window opens (`exp - overlap`) so
+            // a successor is minted while the predecessor is still valid. While retrying
+            // after a failure we skip this wait and go straight to the backoff-then-retry
+            // below. With no current key (startup edge / post-retirement) rotate at once.
+            // The wait ALSO breaks early when the shared trust epoch advances, so
+            // cross-replica revocation is bounded by the ~500ms epoch poll, not a full TTL.
+            if consecutive_failures == 0 {
+                let wake_at = match signer.current(now_unix()) {
+                    Some(a) => (a.exp - overlap).max(now_unix()),
+                    None => now_unix(),
+                };
+                let mut ticks = 0u32;
+                while now_unix() < wake_at {
+                    if shutdown.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    // Poll the shared trust epoch ~every 500ms (10 * 50ms).
+                    if ticks % 10 == 0 {
+                        if let Some(watch) = epoch_watch.as_ref() {
+                            if matches!(watch.current_label(), Some(l) if l != last_label) {
+                                break;
+                            }
+                        }
+                    }
+                    ticks += 1;
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            // Trust-epoch advance takes priority over the scheduled rotation: swap to
+            // the new epoch NOW so verifiers pinned to the prior accepted-epoch set
+            // reject on the next request (cross-replica, since every replica reads the
+            // same counter). ADR-MCPRE-052 §7.
+            if let Some(watch) = epoch_watch.as_ref() {
+                if let Some(label) = watch.current_label() {
+                    if label != last_label {
+                        match rotor.advance_trust_epoch(label.clone(), now_unix()) {
+                            Ok(()) => {
+                                consecutive_failures = 0;
+                                last_label = label;
+                                signer.metrics().record_success(now_unix());
+                                eprintln!(
+                                    "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated \
+                                     keys re-issued under the new epoch; the prior epoch is now \
+                                     rejected (delegation_trust_epoch_stale) across the fleet."
+                                );
+                                continue;
+                            }
+                            Err(_) => {
+                                consecutive_failures = signer.metrics().record_failure();
+                                let ttl = signer.seconds_to_expiry(now_unix());
+                                let backoff =
+                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                                eprintln!(
+                                    "mcp-re-proxy: WARNING: re-issue on trust-epoch advance FAILED \
+                                     (root issuer unavailable); consecutive_failures {}. Retrying in {}ms.",
+                                    consecutive_failures,
+                                    backoff.as_millis(),
+                                );
+                                if interruptible_sleep(backoff, &shutdown) {
+                                    return;
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            match rotor.rotate(now_unix()) {
+                Ok(()) => {
+                    consecutive_failures = 0;
+                    signer.metrics().record_success(now_unix());
+                    if let Some(ev) = rotor.audit().last() {
+                        let ttl = signer.seconds_to_expiry(now_unix()).unwrap_or(0);
+                        eprintln!(
+                            "mcp-re-proxy: delegated key {} (kid {}, exp {}); time-to-expiry {}s; \
+                             rotations_ok {}",
+                            ev.event_type,
+                            ev.delegated_kid,
+                            ev.exp,
+                            ttl,
+                            signer.metrics().rotations_ok(),
+                        );
+                    }
+                }
+                Err(_) => {
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    // Bounded jittered exponential backoff, capped by the current key's
+                    // remaining validity (retry inside the overlap window) and a 30s
+                    // ceiling once expired. OS CSPRNG jitter decorrelates a fleet.
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: delegated key issuance FAILED (root issuer \
+                         unavailable); consecutive_failures {}, time-to-expiry {}s. Serving \
+                         continues only until the current delegated key expires, then FAILS CLOSED \
+                         (ADR-MCPRE-052 §6) — no stale-key extension, no direct-root fallback. \
+                         Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    // Interruptible backoff so a persistent root outage does not hot-spin;
+                    // the hot path keeps signing off the current key until its exp.
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
+/// (so a rolling deploy is not delayed by a long backoff nap). `false` if the full
+/// duration elapsed.
+fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) -> bool {
+    let step = Duration::from_millis(50);
+    let mut slept = Duration::ZERO;
+    while slept < dur {
+        if shutdown.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(step);
+        slept += step;
+    }
+    false
+}
+
+/// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically
+/// unlikely) CSPRNG failure, fall back to 0 (no jitter) rather than panicking the
+/// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
+fn rotation_jitter() -> u64 {
+    let mut b = [0u8; 8];
+    match getrandom::getrandom(&mut b) {
+        Ok(()) => u64::from_le_bytes(b),
+        Err(_) => 0,
+    }
+}
+
 /// MCPS-84 (ADR-MCPS-049 W2): build the networked trust-epoch invalidation channel
 /// for the ADR-021 Push tier when `--trust-epoch-redis-url` is configured. Under
 /// the `redis_replay` feature this connects the Redis trust-epoch source; without
@@ -911,4 +1162,71 @@ fn build_trust_epoch_channel(
         );
     }
     Ok(None)
+}
+
+/// The shared trust-epoch counter, watched by the delegated-rotation owner so an
+/// operator's `INCR <trust-epoch-key>` invalidates the outstanding epoch of delegated
+/// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
+/// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
+/// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
+/// transient blip). The minted label is baseline-relative: while the live counter
+/// equals the value seen at startup the node mints the configured `--delegated-trust-epoch`
+/// (so verifiers pinned to it accept); once it advances, the node mints a DISTINCT
+/// label (`<base>#<counter>`) that those verifiers reject as a stale epoch.
+struct DelegatedEpochWatch {
+    reader: Box<dyn crate::trust_epoch::EpochReader>,
+    baseline: i64,
+    base_label: String,
+}
+
+impl DelegatedEpochWatch {
+    /// The trust-epoch label for the current shared counter, or `None` on a read
+    /// error (the caller then leaves the minted epoch unchanged — fail safe: a Redis
+    /// blip must never spuriously revoke a healthy fleet).
+    fn current_label(&self) -> Option<String> {
+        match self.reader.read_epoch() {
+            Ok(c) if c == self.baseline => Some(self.base_label.clone()),
+            Ok(c) => Some(format!("{}#{}", self.base_label, c)),
+            Err(_) => None,
+        }
+    }
+}
+
+/// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
+/// `None` when no source is configured (no cross-replica revocation signal — the
+/// epoch is then whatever `--delegated-trust-epoch` fixed it to, the honest bounded
+/// behavior). `base_label` is the configured `--delegated-trust-epoch`.
+#[cfg(feature = "redis_replay")]
+fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Option<DelegatedEpochWatch> {
+    let url = config.trust_epoch_redis_url.as_ref()?;
+    let key = config
+        .trust_epoch_key
+        .as_deref()
+        .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
+    use crate::trust_epoch::EpochReader as _;
+    match crate::trust_epoch::RedisEpochReader::connect(url, key) {
+        Ok(reader) => {
+            // The value at startup is this node's baseline; an unset key reads as 0.
+            let baseline = reader.read_epoch().unwrap_or(0);
+            eprintln!(
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE (redis, key {key:?}, baseline \
+                 {baseline}); an epoch advance re-issues delegated keys under a stale label so \
+                 verifiers pinned to the prior epoch reject across replicas."
+            );
+            Some(DelegatedEpochWatch {
+                reader: Box::new(reader),
+                baseline,
+                base_label,
+            })
+        }
+        Err(e) => {
+            eprintln!("mcp-re-proxy: NOTE: delegated trust-epoch watch unavailable ({}); cross-replica delegated revocation is inert until it recovers.", e.0);
+            None
+        }
+    }
+}
+
+#[cfg(not(feature = "redis_replay"))]
+fn build_delegated_epoch_watch(_config: &cli::Config, _base_label: String) -> Option<DelegatedEpochWatch> {
+    None
 }

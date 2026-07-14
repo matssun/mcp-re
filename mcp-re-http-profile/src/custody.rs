@@ -24,6 +24,8 @@
 //! - **Audited lifecycle**: every issue / rotate / retire is a
 //!   `mcp-re.delegated_key.*` event (the frozen ADR-052 §7 vocabulary).
 
+use std::sync::Arc;
+
 use mcp_re_core::audit::event_type;
 use mcp_re_core::SigningKey;
 
@@ -93,14 +95,38 @@ pub struct CustodyConfig {
     pub overlap: i64,
 }
 
-/// The currently-active delegated key and its credential.
+/// The currently-active delegated key and its credential. `key` is an `Arc`
+/// because a delegated `SigningKey` is deliberately not `Clone`, and the hot-path
+/// signer needs a shared handle to sign off ([`DelegatedSigningCustody::active_snapshot`]).
 struct ActiveKey {
-    key: SigningKey,
+    key: Arc<SigningKey>,
     delegated_kid: String,
     server_signer: ActorIdentity,
     credential: String,
     nbf: i64,
     exp: i64,
+}
+
+/// An owned, cheaply-cloned snapshot of the current delegated key + its root-signed
+/// credential (ADR-MCPRE-052 §4). A hot-path response signer publishes this and
+/// signs per request off it — the root is never touched on that path; issuance and
+/// rotation stay inside the custody state machine. `key` is shared (`Arc`) because
+/// the delegated `SigningKey` is intentionally non-`Clone`.
+#[derive(Clone)]
+pub struct ActiveDelegatedKey {
+    /// The in-memory delegated Ed25519 signing key (shared, never the root).
+    pub key: Arc<SigningKey>,
+    /// The delegated key id — the RFC 9421 `keyid` the response signs under, and
+    /// the block's `server_signer.keyid`.
+    pub delegated_kid: String,
+    /// The server-signer identity naming this delegated key.
+    pub server_signer: ActorIdentity,
+    /// The inline root-signed delegation credential (compact JWS).
+    pub credential: String,
+    /// Credential not-before / expiry (`exp` is the fail-closed bound: a signer
+    /// MUST stop signing off this snapshot once `now >= exp`).
+    pub nbf: i64,
+    pub exp: i64,
 }
 
 /// The delegated-signing custody state machine.
@@ -153,6 +179,31 @@ where
         self.active.as_ref().map(|a| a.delegated_kid.as_str())
     }
 
+    /// The trust epoch currently minted into new credentials.
+    pub fn trust_epoch(&self) -> &str {
+        &self.cfg.trust_epoch
+    }
+
+    /// Update the trust epoch minted into SUBSEQUENT credentials (ADR-MCPRE-052 §7:
+    /// advancing the shared trust epoch invalidates the outstanding epoch of delegated
+    /// keys across the fleet). This does NOT re-issue on its own — the caller pairs it
+    /// with [`reissue`](Self::reissue) so the fleet swaps to the new epoch at once.
+    pub fn set_trust_epoch(&mut self, epoch: String) {
+        self.cfg.trust_epoch = epoch;
+    }
+
+    /// Force an immediate issuance under the CURRENT config, regardless of the
+    /// rotation-overlap window — the epoch-advance path (a sibling bumped the shared
+    /// trust epoch), so the node swaps to the new epoch within the bounded poll window
+    /// rather than waiting for the next scheduled rotation. The prior key is dropped
+    /// first: it was minted under the now-superseded epoch and MUST NOT keep serving.
+    /// Fails closed exactly like [`ensure_active`](Self::ensure_active) if the root
+    /// cannot issue.
+    pub fn reissue(&mut self, now: i64) -> Result<(), CustodyError> {
+        self.active = None;
+        self.ensure_active(now)
+    }
+
     /// Ensure a usable delegated key exists at `now`, issuing or rotating as
     /// needed. Fail-closed if the root cannot issue and the current key has
     /// expired (ADR-MCPRE-052 §6).
@@ -189,7 +240,7 @@ where
                         at: now,
                     });
                     self.active = Some(ActiveKey {
-                        key,
+                        key: Arc::new(key),
                         delegated_kid: kid,
                         server_signer: signer,
                         credential,
@@ -242,12 +293,27 @@ where
             request_evidence,
             &a.server_signer,
             &a.credential,
-            &a.key,
+            a.key.as_ref(),
             &a.delegated_kid,
             now,
             now + self.cfg.ttl,
         )
+        .map(|_base| ())
         .map_err(CustodyError::Sign)
+    }
+
+    /// An owned snapshot of the current delegated key + credential (`None` before
+    /// first issuance or after fail-closed retirement). A hot-path signer publishes
+    /// this and signs off it without touching the root (ADR-MCPRE-052 §4).
+    pub fn active_snapshot(&self) -> Option<ActiveDelegatedKey> {
+        self.active.as_ref().map(|a| ActiveDelegatedKey {
+            key: Arc::clone(&a.key),
+            delegated_kid: a.delegated_kid.clone(),
+            server_signer: a.server_signer.clone(),
+            credential: a.credential.clone(),
+            nbf: a.nbf,
+            exp: a.exp,
+        })
     }
 
     /// Build the (delegated_kid, server_signer, header, claims) for a fresh key.
@@ -368,6 +434,32 @@ mod tests {
             kinds,
             vec!["mcp-re.delegated_key.issued", "mcp-re.delegated_key.rotated"]
         );
+    }
+
+    /// Trust-epoch advance (ADR-MCPRE-052 §7): setting a new epoch and re-issuing
+    /// mints a FRESH delegated key under the NEW epoch, off-schedule (not waiting for
+    /// the overlap window). This is what lets a shared-counter bump revoke the
+    /// outstanding epoch across the fleet — verifiers pinned to the old epoch then
+    /// reject the new credential as `delegation_trust_epoch_stale`.
+    #[test]
+    fn reissue_under_advanced_trust_epoch_mints_a_fresh_key() {
+        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        let base_epoch = c.trust_epoch().to_string();
+        let first_kid = c.active_kid().unwrap().to_string();
+        assert_eq!(c.root_invocations(), 1);
+
+        // Operator bumped the shared trust epoch: advance + re-issue WELL INSIDE the
+        // current key's life (no scheduled rotation would fire here).
+        c.set_trust_epoch(format!("{base_epoch}#1"));
+        c.reissue(1_010).expect("reissue under the new epoch");
+
+        assert_eq!(c.trust_epoch(), format!("{base_epoch}#1"));
+        let second_kid = c.active_kid().unwrap().to_string();
+        assert_ne!(first_kid, second_kid, "a fresh delegated key was minted");
+        assert_eq!(c.root_invocations(), 2, "the root re-issued exactly once more");
+        // The prior key was dropped, not kept alongside — the old epoch stops serving.
+        assert!(c.active_snapshot().is_some());
     }
 
     /// Continuity: stepping the clock across several key lifetimes always yields a

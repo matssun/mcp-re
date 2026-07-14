@@ -10,7 +10,8 @@ package(default_visibility = ["//visibility:public"])
 # and runs ONLY in the manual live-infra lane (`cargo test --features … --
 # --ignored` against real AWS/GCP KMS):
 #   tests/aws_kms_live_test.rs, tests/gcp_kms_live_test.rs,
-#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs
+#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
+#   tests/gcp_kms_delegated_signing_live_test.rs
 # NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
 # Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
 # will always PROPOSE a target for each in `-mode diff`. This is a documented
@@ -42,6 +43,12 @@ _PROXY_LIB_SRCS = [
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
+    # ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing — the
+    # atomically-swappable delegated-key snapshot + cold-path rotor. Always compiled.
+    "src/delegated_server_signer.rs",
+    # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — builds the delegated signer
+    # + cold-path rotor from a parsed Config + a ROOT issuer. Always compiled.
+    "src/delegated_wiring.rs",
     # ADR-MCPS-028 §G: delegated TLS handshake signing (rustls SigningKey fronting a
     # non-exporting device/KMS). Generic mechanism, always compiled.
     "src/delegated_tls.rs",
@@ -123,6 +130,12 @@ _PROXY_LIB_SRCS = [
     # cfg'd out of the default build; the ext flavor + the cargo redis lane link it,
     # and main.rs selects it for `--replay-cache shared` (non-linearizable tier).
     "src/async_redis_store.rs",
+    # ADR-MCPS-047: the MRTR continuation correlation store — trait + in-memory impl
+    # always compiled; the Redis backend is redis_replay-gated inside the module.
+    "src/continuation_store.rs",
+    # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
+    # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
+    "src/redis_continuation_store.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -167,6 +180,12 @@ _PROXY_LIB_DEPS = [
     "@crates_mcp_re//:x509-parser",
     # MCPS-076 (audit gap G-3): scrub raw-seed temporaries in key_source.
     "@crates_mcp_re//:zeroize",
+    # ADR-MCPS-047: continuation_store.rs derives the shared-store key via SHA-256 —
+    # always compiled by every flavor, so sha2 lives in LIB (not EXT).
+    "@crates_mcp_re//:sha2",
+    # MCPRE-122 (ADR-MCPRE-052): app.rs jitters the delegated-key rotation backoff with
+    # the OS CSPRNG — always compiled, so getrandom lives in LIB (not EXT).
+    "@crates_mcp_re//:getrandom",
 ] + _PROXY_ASYNC_CRATES
 
 # Issue #4028/#4030/#4034: deps for the all-external-backends library flavor.
@@ -192,9 +211,9 @@ _PROXY_EXT_CRATES = [
     # NOTE: der + x509-cert moved to _PROXY_LIB_DEPS — the base crate's static-CRL
     # freshness gate (MCPS-58, tls.rs) now uses them, so ext inherits them via LIB.
     "@crates_mcp_re//:spki",
-    "@crates_mcp_re//:sha2",
-    # #4063 (MCPS-088): OS CSPRNG for the per-request OCSP nonce.
-    "@crates_mcp_re//:getrandom",
+    # NOTE: sha2 + getrandom moved to _PROXY_LIB_DEPS — the base lib now uses them
+    # unconditionally (continuation_store.rs SHA-256 key derivation; app.rs rotation
+    # jitter), so ext inherits them via LIB (avoids a duplicate-dep error).
     # #4063 (MCPS-088): asn1-rs BitString for the responder-signature verify path
     # (part of the online_ocsp module; linked by every ext flavor).
     "@crates_mcp_re//:asn1-rs",
@@ -432,6 +451,127 @@ nt_rust_test(
     edition = "2021",
     deps = [
         ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
+# HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
+# fail-closed + direct-root-rejected).
+nt_rust_test(
+    name = "delegated_serving_test",
+    srcs = ["tests/delegated_serving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — drives the real
+# build_delegated_signing(Config, root) from a parser-produced delegated-required
+# config, through new_delegated serving, proving success/replay/expiry-fail-closed/
+# rotation with an in-memory root (the KMS-root swap is the cargo-only live lane).
+nt_rust_test(
+    name = "delegated_production_wiring_test",
+    srcs = ["tests/delegated_production_wiring_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPS-047: the stateless cross-replica MRTR continuation serving contract — open
+# on replica A (records the retained bases in the shared store), answer on replica B
+# (recovers them, binds the continuation, terminal reply), plus the fail-closed
+# negatives (no store entry / one-shot / tampered requestState). The live analogue is
+# Proof 3 of docs/security/gke-multi-replica-validation.sh.
+nt_rust_test(
+    name = "mrt_continuation_serving_test",
+    srcs = ["tests/mrt_continuation_serving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-052 trust-anchor (MASTER/root key) lifecycle — the complement to the
+# delegated-KEY lifecycle. Root rotation (overlap {A,B} then cutover to {B}), root
+# revocation (issuer_kid revoked ⇒ all descendants rejected before exp), and root
+# issuance failure (unavailable KMS root ⇒ serve until the delegated key expires then
+# fail closed, no extend, no direct-root). Verifier side via TrustedIssuerSet; server
+# side via the public rotor. See docs/spec/delegated-required-validation-matrix.md §H.
+nt_rust_test(
+    name = "root_key_lifecycle_test",
+    srcs = ["tests/root_key_lifecycle_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+# ADR-MCPRE-052 §I: root rotation through a SIGNED trust-anchor manifest, with roots
+# AUTO-PROVISIONED by a TestRootAuthorityProvider (no human creates a key). The
+# hermetic (in-memory) twin of the live Cloud KMS lane; both call
+# common::run_rotation_scenario. See docs/spec/root-authority-rotation.md.
+nt_rust_test(
+    name = "root_authority_manifest_test",
+    srcs = [
+        "tests/root_authority_manifest_test.rs",
+        "tests/common/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+# MCPRE-122 client↔server e2e: the REAL client-side ClientProxy round-trips through an
+# in-process transport to the REAL server-side HttpProfileProxy in delegated-required
+# mode (success / replay-bound-rejection / direct-root-downgrade-refused). client-proxy
+# is a dev-only dep — never in the server proxy's production closure.
+nt_rust_test(
+    name = "delegated_client_server_e2e_test",
+    srcs = ["tests/delegated_client_server_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",

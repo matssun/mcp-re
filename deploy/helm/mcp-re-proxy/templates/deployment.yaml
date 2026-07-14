@@ -29,6 +29,20 @@ spec:
         - name: mcp-re-proxy
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if and (eq .Values.keySource "gcpKms") (not .Values.gcpKms.useMetadata) .Values.gcpKms.accessTokenSecretName }}
+          # Operator-supplied Cloud KMS token path (useMetadata=false): the pod has
+          # no Workload-Identity metadata server (e.g. a local kind cluster running
+          # the IDENTICAL image + chart as GKE), so the KMS access token is injected
+          # from a Secret as MCP_RE_GCP_ACCESS_TOKEN. On GKE leave useMetadata=true and
+          # this block is omitted — the only substrate-forced difference between the
+          # local and GKE runs of the SAME validation harness.
+          env:
+            - name: MCP_RE_GCP_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gcpKms.accessTokenSecretName | quote }}
+                  key: access-token
+          {{- end }}
           args:
             - "--bind"
             - "0.0.0.0:{{ .Values.bindPort }}"
@@ -72,6 +86,12 @@ spec:
             - {{ .Values.identity.serverSigner | quote }}
             - "--server-key-id"
             - {{ .Values.identity.serverKeyId | quote }}
+            # ADR-MCPRE-052: delegated-signing is the ONLY response mode. The root key
+            # (KMS/file) is the credential ISSUER off the request path; an in-memory
+            # delegated key signs each response. The trust epoch is required and must be
+            # coordinated with the verifiers' accepted-epoch set (§7).
+            - "--delegated-trust-epoch"
+            - {{ .Values.identity.delegatedTrustEpoch | quote }}
             {{- if eq .Values.keySource "gcpKms" }}
             # Cloud KMS custody: the signing key never enters the pod. On GKE the
             # token comes from the Workload-Identity metadata server (useMetadata).
@@ -95,9 +115,12 @@ spec:
             {{- else }}
             - "--key-source"
             - "file"
+            {{- end }}
+            # The CLI REQUIRES --signing-key-seed even in a KMS key-source (where it is
+            # accepted but UNUSED — the response key lives in KMS). So always mount +
+            # pass it; the Secret always provides signing-seed.
             - "--signing-key-seed"
             - "{{ .Values.tls.mountPath }}/signing-seed"
-            {{- end }}
             - "--tls-cert"
             - "{{ .Values.tls.mountPath }}/tls.crt"
             {{- if not (and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion) }}

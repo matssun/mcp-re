@@ -326,6 +326,28 @@ impl HttpContinuation {
         }
     }
 
+    /// Build the continuation from digest HANDLES the caller already holds — the
+    /// previous client request's evidence digest (`RequestEvidence` over its
+    /// signature base) and the verified `InputRequiredResult` response's evidence
+    /// digest — plus the opaque `requestState` bytes (hashed here). This is the
+    /// answer-leg client's path (ADR-MCPS-047): after verifying an
+    /// `InputRequiredResult` it already has both evidence digests (its own sent-
+    /// request handle and the response's `response_signature_base_digest`) and never
+    /// needs to retain the raw signature bases. Wire-identical to a continuation
+    /// built via [`HttpContinuation::build`] over the same bases.
+    pub fn from_handles(
+        previous_request_evidence: RequestEvidenceDigest,
+        input_required_response_evidence: RequestEvidenceDigest,
+        request_state: &[u8],
+    ) -> Self {
+        HttpContinuation {
+            continuation_type: CONTINUATION_TYPE_MCP_MRT.to_owned(),
+            previous_request_evidence,
+            input_required_response_evidence,
+            request_state_digest: RequestEvidenceDigest::over(request_state),
+        }
+    }
+
     /// Verify the continuation against the exact bytes the client re-presents.
     /// A wrong type is malformed; any handle that does not commit to its input
     /// is a continuation-binding failure (a splice across the continuation

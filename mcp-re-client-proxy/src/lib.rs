@@ -18,6 +18,8 @@ pub mod transport;
 pub use proxy::CallParams;
 pub use proxy::ClientProxy;
 pub use proxy::ProxyResponse;
+pub use proxy::ResponseKind;
+pub use route::ClientVerification;
 pub use route::Route;
 pub use route::RouteRegistry;
 pub use transport::ProxyError;

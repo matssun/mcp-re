@@ -9,8 +9,8 @@
 //! includes the full PEP path. The request is signed with the audited
 //! `mcp-re-client-core` `build_signed_request` (the signature rides in the HTTP
 //! `Signature`/`Signature-Input`/`Content-Digest` headers, not a JSON-RPC body
-//! `_meta` block), and the response is verified with `verify_signed_response` bound
-//! to the request.
+//! `_meta` block), and the response is verified with `verify_delegated_response`
+//! (ADR-MCPRE-052 delegated-required) bound to the request.
 //!
 //! It reports aggregate throughput and p50/p99/p999 added latency, measures the
 //! cold-handshake and keep-alive connection modes SEPARATELY, and records the
@@ -78,17 +78,20 @@ use hyper_util::rt::TokioIo;
 use hyper_util::server::conn::auto;
 
 use mcp_re_client_core::build_signed_request;
-use mcp_re_client_core::verify_signed_response;
+use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::DelegatedOutcome;
+use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_client_core::SignerSlot;
+use mcp_re_client_core::StaticRevocationList;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 use mcp_re_core::VerificationKey;
@@ -530,6 +533,9 @@ fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_ur
             "--audience", AUDIENCE,
             "--server-signer", SERVER,
             "--server-key-id", SERVER_KEY_ID,
+            // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7):
+            // the trust epoch minted into every delegation credential is mandatory.
+            "--delegated-trust-epoch", "epoch-1",
             "--key-source", "file",
             "--signing-key-seed", &material.seed_path.to_string_lossy(),
             "--tls-cert", &material.server_cert_path.to_string_lossy(),
@@ -1148,12 +1154,33 @@ fn load_harness_smoke() {
             headers: reply.headers.clone(),
             body: reply.body.clone(),
         };
+        // Delegated-required is the only response-signing mode (ADR-MCPRE-052 §7): the
+        // proxy signs with a short-lived DELEGATED key that chains to the root
+        // (`SERVER_KEY_ID`) via an inline credential. `server_resolve` anchors that root
+        // on the Response slot; the delegated verifier follows the credential to it.
         let expectation =
-            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
-                .with_expected_server_signer(SERVER_KEY_ID);
-        let verified = verify_signed_response(&response, &server_resolve, &expectation, now_unix())
-            .expect("signed response verifies and binds to the request");
-        assert_eq!(verified.resolved_server_actor.identity.keyid, SERVER_KEY_ID);
+            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+        let policy = DelegationPolicy::new(
+            vec![AUDIENCE.to_string()],
+            AUDIENCE,
+            vec!["epoch-1".to_string()],
+            60,
+        );
+        let verified = verify_delegated_response(
+            &response,
+            &server_resolve,
+            &expectation,
+            &policy,
+            &StaticRevocationList::new(),
+            now_unix(),
+        )
+        .expect("delegated signed response verifies and binds to the request");
+        assert_eq!(verified.outcome, DelegatedOutcome::Success);
+        assert_eq!(
+            verified.verified.server_signer.as_ref().expect("delegated signer").keyid,
+            format!("{SERVER_KEY_ID}/delegated/1"),
+            "signed by the delegated key chaining to the root, not the root directly",
+        );
     }
 
     // 2. Tiny concurrent load: every request must succeed and the metrics populate.
@@ -1201,6 +1228,8 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
         let mut v: Vec<String> = [
             "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
             "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+            // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7).
+            "--delegated-trust-epoch", "epoch-1",
             "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
             "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
             "--max-client-cert-lifetime", &cert_lifetime,
@@ -1336,6 +1365,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let argv: Vec<String> = [
         "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
         "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+        // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7).
+        "--delegated-trust-epoch", "epoch-1",
         "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
         "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
         "--transport-binding", "exact", "--transport-identity-source", "uri_san",
@@ -1455,9 +1486,12 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
 /// baseline/SLO numbers (MCPRE-110):
 ///
 /// ```text
-/// cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench \
-///   -- --ignored --nocapture
+/// cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
+///   --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
 ///   # env: MCP_RE_LOADGEN_CONCURRENCY / _REQUESTS / _CORES / _HW_CLASS / _OUT
+///   # NOTE: this fn is NOT #[ignore] (see below) — do NOT pass `--ignored`, which
+///   # would select only ignored tests and run nothing. It needs `redis_replay`
+///   # (the bench uses the shared Redis tier, via Docker or MCP_RE_LOADGEN_REDIS_URL).
 /// ```
 // ADR-051 §7 load benchmark. It is NOT `#[ignore]`: the whole file is already gated
 // to the `redis_replay` INTEGRATION lane (it stands up a Redis fleet), so it never

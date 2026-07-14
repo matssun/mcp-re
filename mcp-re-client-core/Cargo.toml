@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-client-core"
-version = "0.12.0"
+version = "0.12.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -14,6 +14,10 @@ description = "MCP-RE client-side core — the shared seam (consumed by the clie
 # (those are the mode-specific layers above this seam).
 mcp-re-core = { path = "../mcp-re-core" }
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+# ADR-MCPRE-052 root-authority manifest (trust_manifest.rs): the signed trust-anchor
+# document is a (de)serialized JSON artifact. serde/derive only — no networking/async/fs
+# (http-profile already pulls serde for its evidence types).
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [features]

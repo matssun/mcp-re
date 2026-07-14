@@ -10,7 +10,7 @@ replicaCount: 3
 image:
   repository: mcp-re-proxy
   # Pin to a digest in production; a tag is shown here for readability.
-  tag: "0.12.0"
+  tag: "0.12.1"
   pullPolicy: IfNotPresent
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
@@ -77,6 +77,10 @@ identity:
   targetUri: "https://proxy.internal:8600/mcp"
   trustDomain: "example.com"
   route: ""
+  # ADR-MCPRE-052: delegated-signing is the ONLY response mode. The trust epoch
+  # minted into every delegation credential (required; MUST be coordinated with the
+  # verifiers' accepted-epoch set — §7). Advance it to invalidate an epoch of keys.
+  delegatedTrustEpoch: "epoch-1"
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
 # it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`.
@@ -92,8 +96,10 @@ inner:
 # Signing-key custody (ADR-MCPS-028). `fileSeed` mounts a raw Ed25519 seed from
 # the material Secret (dev / on-prem). `gcpKms` keeps the signing key in GCP
 # Cloud KMS and, on GKE, authenticates via Workload Identity (useMetadata) so no
-# key material ever lands in the pod. The image MUST be built with the
-# `gcp_kms_keysource` feature for `gcpKms`.
+# key material ever lands in the pod — this is the ADR-MCPRE-052 delegated-credential
+# ISSUER root (off the request path). The default image (deploy/docker/Dockerfile)
+# is built with the `gcp_kms_keysource` feature, so it serves both modes; the KMS
+# signer stays inert until `gcpKms` selects `--key-source gcp-kms`.
 keySource: fileSeed # fileSeed | gcpKms
 
 # GCP Cloud KMS custody (used only when keySource == gcpKms).
@@ -109,6 +115,10 @@ gcpKms:
   # Optional SECOND, DISTINCT KMS key for delegated TLS (the TLS server private
   # key stays in KMS; the chart then omits --tls-key, which the proxy requires).
   tlsKeyVersion: ""
+  # Name of a Secret with an `access-token` key, injected as MCP_RE_GCP_ACCESS_TOKEN
+  # when useMetadata=false (no Workload-Identity metadata server — e.g. a local kind
+  # cluster running the same image + chart as GKE). Empty on GKE (useMetadata=true).
+  accessTokenSecretName: ""
 
 # Pod ServiceAccount. On GKE, annotate it to bind a Google Service Account via
 # Workload Identity so the gcpKms credential path needs no key file:
@@ -122,8 +132,9 @@ serviceAccount:
   annotations: {}
 
 # TLS + trust material, mounted from a Secret. The Secret MUST provide these keys:
-#   tls.crt, tls.key, client-ca.pem, trust.json — plus signing-seed unless
-#   keySource is gcpKms, and minus tls.key when gcpKms.tlsKeyVersion is set.
+#   tls.crt, tls.key, client-ca.pem, trust.json, signing-seed — minus tls.key when
+#   gcpKms.tlsKeyVersion is set. signing-seed is required even under keySource=gcpKms
+#   (the CLI mandates --signing-key-seed; in KMS mode it is accepted but UNUSED).
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"

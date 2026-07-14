@@ -285,16 +285,17 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "mcp-re-core",
  "mcp-re-http-profile",
+ "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "mcp-re-core"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -306,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-http-profile"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "base64",
  "mcp-re-core",

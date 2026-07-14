@@ -25,7 +25,11 @@ pip install ./sdk/python   # provides `mcp_re_sdk`; script runs docs/security/mc
 #    the mcp-re-tls Secret). These are the ONLY per-run inputs besides PROJECT_ID:
 export MCP_RE_SERVER_NAME=…      MCP_RE_SIGNER_ID=…   MCP_RE_KEY_ID=…
 export MCP_RE_SIGNING_KEY_SEED=… MCP_RE_SERVER_SIGNER=… MCP_RE_SERVER_KEY_ID=…
-export MCP_RE_SERVER_PUBKEY=…    MCP_RE_AUDIENCE=scheme,host,port,tenant,route,realm
+# MCP_RE_SERVER_* is the ROOT ISSUER anchor (ADR-MCPRE-052); the delegation credential
+# in every response chains to it. MCP_RE_TRUST_EPOCH MUST equal the proxy's
+# --delegated-trust-epoch (identity.delegatedTrustEpoch), or verification fails closed.
+export MCP_RE_SERVER_PUBKEY=…    MCP_RE_TRUST_EPOCH=epoch-1
+export MCP_RE_AUDIENCE=scheme,host,port,tenant,route,realm
 export MCP_RE_TLS_CERT=…         MCP_RE_TLS_KEY=…     MCP_RE_SERVER_CA=…
 # Proof 3 (MRT) needs an inner tool that elicits input; set MCP_RE_MRT_TOOL to it,
 # or MCP_RE_SKIP_MRT=1 to skip that proof if the inner has none.

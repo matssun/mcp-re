@@ -253,7 +253,7 @@ pub fn sign_delegated_response_full(
     delegated_kid: &str,
     created: i64,
     expires: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<Vec<u8>, HttpProfileError> {
     let block = HttpResponseEvidenceBlock {
         profile: PROFILE_TAG.to_owned(),
         server_signer: server_signer.clone(),
@@ -264,14 +264,51 @@ pub fn sign_delegated_response_full(
         },
     };
     response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
-    sign_response(
+    // Sign directly through the signer seam (not `sign_response`) so the exact
+    // response signature-base is returned to the caller: the delegated serving path
+    // records it as the input-required-response base an MRTR continuation binds to
+    // (ADR-MCPS-047).
+    sign_response_with_signer(
         response,
         request,
-        delegated_key,
+        |base| local_sig(delegated_key, base),
         delegated_kid,
         created,
         expires,
     )
+}
+
+/// Full-profile response signing for the DELEGATED-key path with NO request
+/// binding (ADR-MCPRE-052; the preflight-unbound rejection case, MCPRE-122). Like
+/// [`sign_delegated_response_unbound`] a directly-root-signed sibling of
+/// [`sign_response_unbound`]: the response evidence block carries the inline
+/// `server_delegation` credential and the response is signed by the DELEGATED key,
+/// but the signature covers only the response components (`@status`,
+/// `content-digest`, `content-type`) — no `;req`. `request_evidence_diagnostic` is
+/// recorded in the block for diagnostics ONLY; an unbound response is verified
+/// response-only and this handle is never treated as a trusted request binding.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_delegated_response_unbound(
+    response: &mut HttpResponse,
+    server_signer: &ActorIdentity,
+    server_delegation: &str,
+    request_evidence_diagnostic: &RequestEvidence,
+    delegated_key: &SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<(), HttpProfileError> {
+    let block = HttpResponseEvidenceBlock {
+        profile: PROFILE_TAG.to_owned(),
+        server_signer: server_signer.clone(),
+        server_delegation: Some(server_delegation.to_owned()),
+        request_evidence: RequestEvidenceDigest {
+            digest_alg: request_evidence_diagnostic.digest_alg.clone(),
+            digest_value: request_evidence_diagnostic.digest_value.clone(),
+        },
+    };
+    response.body = insert_meta_block(&response.body, RESPONSE_EVIDENCE_BLOCK_KEY, &block)?;
+    sign_response_unbound(response, delegated_key, delegated_kid, created, expires)
 }
 
 /// Sign `response` in place, binding it to the verified originating request
@@ -293,6 +330,7 @@ pub fn sign_response(
         created,
         expires,
     )
+    .map(|_base| ())
 }
 
 /// Sign `response` in place with an EXTERNAL signer (Cloud KMS / HSM custody),
@@ -306,7 +344,7 @@ pub fn sign_response_with_signer(
     key_id: &str,
     created: i64,
     expires: i64,
-) -> Result<(), HttpProfileError> {
+) -> Result<Vec<u8>, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
     set_header(
         &mut response.headers,
@@ -343,7 +381,11 @@ pub fn sign_response_with_signer(
         &params,
         &base,
         sign_base,
-    )
+    )?;
+    // Return the exact response signature-base bytes so the delegated serving path
+    // can record the input-required-response base an MRTR continuation binds to
+    // (ADR-MCPS-047). Not secret — derived from the public message.
+    Ok(base)
 }
 
 /// Sign `response` in place with NO request binding — for a rejection emitted

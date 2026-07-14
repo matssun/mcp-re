@@ -163,6 +163,14 @@ nt_rust_test(
         "//mcp-re-proxy:BUILD.bazel",
         "//mcp-re-proxy:tests/key_source_test.rs",
         "//mcp-re-proxy:tests/dev_env_key_source_test.rs",
+        # MCPRE-122 (ADR-MCPRE-052): the delegated-required validation matrix sources.
+        "//mcp-re-proxy:tests/delegated_serving_test.rs",
+        "//mcp-re-proxy:tests/delegated_production_wiring_test.rs",
+        "//mcp-re-proxy:tests/delegated_client_server_e2e_test.rs",
+        "//mcp-re-proxy:tests/root_key_lifecycle_test.rs",
+        "//mcp-re-proxy:tests/root_authority_manifest_test.rs",
+        "//mcp-re-proxy:tests/mrt_continuation_serving_test.rs",
+        "tests/delegation_vectors_test.rs",
         # MCPS-62 (ADR-MCPS-023 §C, v0.10 Mode C): serve-level attested-ingress
         # conformance vectors + the in-crate cli.rs Mode-C guards / Mode-B rejection.
         "//mcp-re-proxy:src/cli.rs",
@@ -197,6 +205,13 @@ nt_rust_test(
         "MCP_RE_SRC_AWS_KMS_KEYSOURCE": "$(rlocationpath //mcp-re-proxy:src/aws_kms_keysource.rs)",
         "MCP_RE_SRC_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/key_source_test.rs)",
         "MCP_RE_SRC_DEV_ENV_KEY_SOURCE": "$(rlocationpath //mcp-re-proxy:tests/dev_env_key_source_test.rs)",
+        "MCP_RE_SRC_DELEGATED_SERVING": "$(rlocationpath //mcp-re-proxy:tests/delegated_serving_test.rs)",
+        "MCP_RE_SRC_DELEGATED_PROD_WIRING": "$(rlocationpath //mcp-re-proxy:tests/delegated_production_wiring_test.rs)",
+        "MCP_RE_SRC_DELEGATED_E2E": "$(rlocationpath //mcp-re-proxy:tests/delegated_client_server_e2e_test.rs)",
+        "MCP_RE_SRC_ROOT_KEY_LIFECYCLE": "$(rlocationpath //mcp-re-proxy:tests/root_key_lifecycle_test.rs)",
+        "MCP_RE_SRC_ROOT_AUTHORITY_MANIFEST": "$(rlocationpath //mcp-re-proxy:tests/root_authority_manifest_test.rs)",
+        "MCP_RE_SRC_MRT_CONTINUATION": "$(rlocationpath //mcp-re-proxy:tests/mrt_continuation_serving_test.rs)",
+        "MCP_RE_SRC_DELEGATION_VECTORS": "$(rlocationpath tests/delegation_vectors_test.rs)",
         "MCP_RE_SRC_MTLS_CLIENT": "$(rlocationpath //mcp-re-transport:tests/mtls_client_test.rs)",
     },
     deps = [

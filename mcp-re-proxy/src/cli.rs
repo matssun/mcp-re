@@ -342,6 +342,24 @@ pub struct Config {
     /// are REJECTED and a shared replay cache with an adequate durability tier is
     /// required.
     pub fleet: bool,
+    /// Delegated-key TTL `T` in seconds (ADR-MCPRE-052 §4). The rotor mints a
+    /// successor within the overlap window before each key's `exp`. Default 300s.
+    pub delegated_ttl_secs: i64,
+    /// Delegated-key rotation-overlap window `O` in seconds (0 < O < T). The successor
+    /// is minted at `exp − O` so signing never gaps. Default 60s.
+    pub delegated_overlap_secs: i64,
+    /// The trust epoch minted into every delegation credential (ADR-MCPRE-052 §7 hard
+    /// gate). REQUIRED (a verifier admits only credentials whose epoch is in its
+    /// accepted set), and load-bearing — it must be coordinated with verifiers, so
+    /// there is no silent default.
+    pub delegated_trust_epoch: Option<String>,
+    /// The root issuer key id the delegation credential chains to (its `issuer_kid`,
+    /// resolved by verifiers for the Response slot). Defaults to `--server-key-id`.
+    pub delegated_issuer_kid: Option<String>,
+    /// The service/audience-scope hash the delegated key is scoped to
+    /// (`mcp_re_audience_hash`). Defaults to `--audience`; must match the verifier's
+    /// expected audience hash.
+    pub delegated_audience_hash: Option<String>,
 }
 
 /// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
@@ -439,6 +457,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // fleet); it does NOT relax security — the proxy always refuses an unsafe config.
     // A fleet additionally rejects node-local replay caches.
     let mut fleet = false;
+    // ADR-MCPRE-052 (MCPRE-122): delegated-signing is the ONLY response-signing mode.
+    // The delegated-custody knobs are tracked as Options so their defaults are applied
+    // at validation (trust-epoch is required; there is no direct-root mode to select).
+    let mut delegated_ttl_secs: Option<i64> = None;
+    let mut delegated_overlap_secs: Option<i64> = None;
+    let mut delegated_trust_epoch: Option<String> = None;
+    let mut delegated_issuer_kid: Option<String> = None;
+    let mut delegated_audience_hash: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -765,6 +791,46 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 // per core). An explicit count makes the 1→N linear-scaling
                 // benchmark reproducible and can cap workers below the core count.
                 cores = value.parse().map_err(|_| "invalid --cores (expected a non-negative integer; 0 = auto)".to_string())?;
+            }
+            // ADR-MCPRE-052 §4 delegated-key TTL `T` (seconds).
+            "--delegated-ttl-secs" => {
+                delegated_ttl_secs = Some(
+                    value
+                        .parse()
+                        .map_err(|_| "invalid --delegated-ttl-secs (expected a positive integer)".to_string())?,
+                );
+            }
+            // ADR-MCPRE-052 §4 rotation-overlap window `O` (seconds; 0 < O < T).
+            "--delegated-overlap-secs" => {
+                delegated_overlap_secs = Some(
+                    value
+                        .parse()
+                        .map_err(|_| "invalid --delegated-overlap-secs (expected a positive integer)".to_string())?,
+                );
+            }
+            // ADR-MCPRE-052 §7 trust epoch minted into every credential (the hard
+            // gate). Required under delegated-required; coordinated with verifiers.
+            "--delegated-trust-epoch" => {
+                if value.trim().is_empty() {
+                    return Err("--delegated-trust-epoch requires a non-empty epoch".to_string());
+                }
+                delegated_trust_epoch = Some(value.clone());
+            }
+            // ADR-MCPRE-052: the root issuer key id the credential chains to. Defaults
+            // to --server-key-id.
+            "--delegated-issuer-kid" => {
+                if value.trim().is_empty() {
+                    return Err("--delegated-issuer-kid requires a non-empty key id".to_string());
+                }
+                delegated_issuer_kid = Some(value.clone());
+            }
+            // ADR-MCPRE-052: the audience-scope hash the delegated key is scoped to.
+            // Defaults to --audience.
+            "--delegated-audience-hash" => {
+                if value.trim().is_empty() {
+                    return Err("--delegated-audience-hash requires a non-empty value".to_string());
+                }
+                delegated_audience_hash = Some(value.clone());
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -1149,6 +1215,36 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         );
     }
 
+    // ADR-MCPRE-052 (MCPRE-122): delegated-signing is the ONLY response-signing mode.
+    // Fail CLOSED at the CLI trust boundary — the trust epoch is required and the
+    // rotation window must be sane, for every deployment.
+    let (delegated_ttl_secs_final, delegated_overlap_secs_final) = {
+        // (a) The trust epoch is the ADR-MCPRE-052 §7 hard gate; a verifier admits
+        //     only credentials whose epoch is in its accepted set, so it MUST be
+        //     supplied explicitly (no silent default that verifiers would reject).
+        if delegated_trust_epoch.is_none() {
+            return Err(
+                "--delegated-trust-epoch <epoch> is required (the trust epoch minted into every \
+                 delegation credential; it must be coordinated with verifiers — ADR-MCPRE-052 §7)"
+                    .to_string(),
+            );
+        }
+        // (b) TTL and overlap must satisfy 0 < overlap < ttl so the rotor mints a
+        //     successor before the predecessor expires (no signing gap).
+        let ttl = delegated_ttl_secs.unwrap_or(300);
+        let overlap = delegated_overlap_secs.unwrap_or(60);
+        if ttl <= 0 {
+            return Err("--delegated-ttl-secs must be greater than 0".to_string());
+        }
+        if overlap <= 0 || overlap >= ttl {
+            return Err(format!(
+                "--delegated-overlap-secs must satisfy 0 < overlap < ttl (got overlap={overlap}, \
+                 ttl={ttl})"
+            ));
+        }
+        (ttl, overlap)
+    };
+
     let config = Config {
         bind: require(bind, "--bind")?,
         audience: require(audience, "--audience")?,
@@ -1217,6 +1313,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         limits,
         max_client_cert_lifetime,
         fleet,
+        delegated_ttl_secs: delegated_ttl_secs_final,
+        delegated_overlap_secs: delegated_overlap_secs_final,
+        delegated_trust_epoch,
+        delegated_issuer_kid,
+        delegated_audience_hash,
     };
 
     // ADR-MCPS-013: the reference signed-authorization profile is a real,
@@ -1914,33 +2015,6 @@ pub fn build_cpstore_replay_cache(
 /// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
 /// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
 /// it carries both request-signer keys and authorization-issuer keys.
-/// Resolve the RAW server response-signing key for RFC 9421 `sign_response_full`.
-/// Available for the in-memory File/dev-Env key sources; non-exporting sources
-/// (KMS/PKCS#11) require the delegated response-signing seam (follow-up).
-pub fn build_server_signing_key(config: &Config) -> Result<mcp_re_core::SigningKey, String> {
-    match config.key_source {
-        KeySourceKind::File => crate::key_source::FileKeySource {
-            signing_key_seed_path: config.signing_key_seed.clone(),
-            tls_cert_path: config.tls_cert.clone(),
-            tls_key_path: config.tls_key.clone(),
-            client_ca_path: config.client_ca.clone(),
-        }
-        .signing_key()
-        .map_err(|e| e.to_string()),
-        #[cfg(feature = "dev_env_key_source")]
-        KeySourceKind::Env => crate::key_source::EnvKeySource {
-            signing_key_seed_var: config.signing_key_seed.clone(),
-            tls_cert_var: config.tls_cert.clone(),
-            tls_key_var: config.tls_key.clone(),
-            client_ca_var: config.client_ca.clone(),
-        }
-        .signing_key()
-        .map_err(|e| e.to_string()),
-        _ => Err("RFC 9421 response signing currently requires --key-source file (or dev env); \
-                  non-exporting KMS/PKCS#11 server signing is a delegated-seam follow-up"
-            .to_string()),
-    }
-}
 
 /// Parse the trust file into `(signer, key_id, verification_key)` entries so the
 /// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
@@ -2192,6 +2266,9 @@ mod tests {
             "--client-ca", "/ca",
             "--trust", "/trust.json",
             "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            // Delegated-signing is the only response mode; the trust epoch is required
+            // for every config (ADR-MCPRE-052 §7).
+            "--delegated-trust-epoch", "epoch-min",
         ])
     }
 
@@ -2209,6 +2286,7 @@ mod tests {
             "--tls-key", "/key",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--delegated-trust-epoch", "epoch-min",
         ])
     }
 
@@ -2230,6 +2308,52 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
+
+    #[test]
+    fn delegated_signing_parses_with_defaults() {
+        // `minimal()` already supplies the required --delegated-trust-epoch.
+        let config = parse_args(&minimal_durable()).expect("parse delegated-signing");
+        assert_eq!(config.delegated_trust_epoch.as_deref(), Some("epoch-min"));
+        // Defaults: T=300, O=60; issuer kid / audience hash default at build time.
+        assert_eq!(config.delegated_ttl_secs, 300);
+        assert_eq!(config.delegated_overlap_secs, 60);
+        assert_eq!(config.delegated_issuer_kid, None);
+        assert_eq!(config.delegated_audience_hash, None);
+    }
+
+    #[test]
+    fn missing_trust_epoch_is_rejected() {
+        // A config WITHOUT the required trust epoch (built by hand, since `minimal()`
+        // now includes it) fails closed — the epoch is mandatory for every deployment.
+        let a = args(&[
+            "--replay-cache", "file", "--replay-path", "/replay",
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--signing-key-seed", "/seed",
+            "--tls-cert", "/cert",
+            "--tls-key", "/key",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+        ]);
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--delegated-trust-epoch"), "got: {err}");
+    }
+
+    #[test]
+    fn delegated_overlap_not_less_than_ttl_is_rejected() {
+        let mut a = minimal_durable();
+        a.extend(args(&[
+            "--delegated-ttl-secs", "100",
+            "--delegated-overlap-secs", "100",
+        ]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("0 < overlap < ttl"), "got: {err}");
     }
 
     #[test]
@@ -2791,6 +2915,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--delegated-trust-epoch", "epoch-min",
         ])
     }
 
@@ -2887,6 +3012,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--delegated-trust-epoch", "epoch-min",
         ])
     }
 
@@ -4240,6 +4366,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--delegated-trust-epoch", "epoch-min",
         ])
     }
 

@@ -176,8 +176,9 @@ pub struct DelegationVerifyParams<'a> {
 /// - `resolve_root(issuer_kid) -> Some(root_key)` resolves the credential's
 ///   `issuer_kid` to a trusted **root** anchor (the existing trust resolver /
 ///   by-`key_id` trust map); `None` ⇒ untrusted issuer.
-/// - `is_revoked(kid) -> bool` reports whether a `delegated_kid` or `issuer_kid`
-///   is revoked at the current trust epoch.
+/// - `is_revoked(id) -> bool` reports whether the credential's `delegated_kid`,
+///   `issuer_kid`, or `jti` is revoked at the current trust epoch (consulted with
+///   each in turn).
 ///
 /// Trust flows ONLY through the credential to the root: a delegated key is never
 /// enrolled out of band, so a first-seen `delegated_kid` verifies from the
@@ -258,7 +259,12 @@ pub fn verify_delegation_credential(
     }
 
     // --- revocation (step 7) -------------------------------------------------
-    if is_revoked(&claims.delegated_kid) || is_revoked(&claims.issuer_kid) {
+    // Consult the revocation seam with every identifier the credential carries: the
+    // delegated key, its root anchor, and the per-credential jti. Any hit fails closed.
+    if is_revoked(&claims.delegated_kid)
+        || is_revoked(&claims.issuer_kid)
+        || is_revoked(&claims.jti)
+    {
         return Err(HttpProfileError::DelegationRevoked);
     }
 
@@ -602,6 +608,22 @@ mod tests {
             &p,
             resolver(r.public_key()),
             |kid: &str| kid == DELEGATED_KID,
+        )
+        .unwrap_err();
+        assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
+    #[test]
+    fn revoked_by_jti_is_revoked() {
+        // Revocation keyed on the per-credential jti (not a kid) also fails closed.
+        let (r, d) = (root(), delegated());
+        let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
+        let p = params(&[AUD], &[EPOCH]);
+        let err = verify_delegation_credential(
+            &jws,
+            &p,
+            resolver(r.public_key()),
+            |id: &str| id == "evt-1",
         )
         .unwrap_err();
         assert_eq!(err, HttpProfileError::DelegationRevoked);

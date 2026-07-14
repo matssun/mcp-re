@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: Apache-2.0
+#
+# In-cluster load generator for the zero-drop rolling-update proof (Proof 4 of
+# docs/security/gke-multi-replica-validation.sh). It runs the HTTP-profile signed-
+# request client (docs/security/mcp_re_gke_client.py) IN the cluster against the proxy
+# SERVICE ClusterIP, so every request traverses kube-proxy — which removes a draining
+# pod from the Service endpoints (preStop delay) and reroutes new connections to live
+# pods. That L4 connection-rerouting is exactly what a host-side `kubectl port-forward`
+# (a direct tunnel to ONE pinned pod) cannot exercise: when the rollout deletes the
+# pinned pod, the tunnel dies and every subsequent request fails regardless of drain.
+#
+#   docker build -f deploy/docker/Dockerfile.loadgen --target loadgen -t mcp-re-loadgen:0.12.0 .
+#
+# The client needs only the compiled mcp_re_sdk core + the stdlib; the KMS root pubkey
+# and client fixtures are mounted at runtime from a Secret (never baked in).
+
+FROM rust:1.94.1-slim-bookworm AS wheel
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential perl pkg-config libssl-dev ca-certificates \
+        python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir --break-system-packages "maturin>=1.5,<2.0"
+WORKDIR /build
+COPY . .
+# Build the native SDK wheel for the image (native arch — the kind node matches the
+# build host, so no cross-compile).
+RUN cd sdk/python && maturin build --release --out /wheels
+
+FROM python:3.12-slim AS loadgen
+COPY --from=wheel /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+COPY docs/security/mcp_re_gke_client.py /app/mcp_re_gke_client.py
+WORKDIR /app
+# The harness `kubectl exec`s the request loop; keep the pod alive.
+ENTRYPOINT ["sleep", "infinity"]

@@ -520,8 +520,8 @@ mod tests {
     fn cross_instance_insert_via_a_is_replay_via_b() {
         let store = InMemoryAtomicReplayStore::new();
         // Clone shares the SAME underlying map (Arc<Mutex<..>>).
-        let mut node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
-        let mut node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
 
         assert_eq!(
             node_a.check_and_insert(SIGNER, AUD, NONCE, EXPIRES),

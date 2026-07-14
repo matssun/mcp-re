@@ -7,8 +7,9 @@ MCP-RE is HTTP-profile only. This replaces the removed `mcp-re-client-proxy-cli`
 it reads ONE plain MCP JSON-RPC request on stdin, signs an RFC 9421 + RFC 9530 request with the
 audited `mcp-re-client-core` logic (via the `mcp_re_sdk` PyO3 core), forwards it over
 verifying mTLS as one HTTP/1.1 POST to `--remote-addr host:port`, verifies the
-server-signed response, prints the plain MCP response JSON on stdout, and reports a
-verdict token on stderr:
+delegated-required server response (ADR-MCPRE-052: the inline credential must chain
+to the trusted root issuer and be scoped to `--audience` at one of `--trust-epoch`),
+prints the plain MCP response JSON on stdout, and reports a verdict token on stderr:
 
     verdict=accepted        the response verified (a signed result came back)
     verdict=replay          the proxy rejected it as a replay
@@ -46,9 +47,9 @@ def _b64url_decode(value: str) -> bytes:
 
 def _b64url_text_at_file(spec: str) -> str:
     """Return a Base64URL value that may be given inline or as ``@<path>`` (the CLI's
-    ``@file`` convention) as the RAW b64url STRING — used for ``--server-pubkey``.
-    The SDK's ``verify_response`` takes the server key as a Base64URL string (it calls
-    ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
+    ``@file`` convention) as the RAW b64url STRING — used for ``--server-pubkey`` (the
+    root ISSUER key). The SDK's ``verify_response`` takes it as a Base64URL string (it
+    calls ``VerificationKey::from_b64url`` itself), so the client must NOT pre-decode it."""
     raw = spec
     if spec.startswith("@"):
         with open(spec[1:], "r", encoding="utf-8") as fh:
@@ -119,13 +120,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--signer-id", required=True)
     p.add_argument("--key-id", required=True)
     p.add_argument("--signing-key-seed", required=True)     # <b64url> | @<path>
-    p.add_argument("--server-signer", required=True)
-    p.add_argument("--server-key-id", required=True)
-    p.add_argument("--server-pubkey", required=True)        # raw-32 b64url
+    # ADR-MCPRE-052 delegated-required: the server-* trio is the ROOT ISSUER anchor
+    # (the delegation credential chains to it), NOT a per-response key. The response
+    # is signed by an in-memory delegated key the credential authorizes.
+    p.add_argument("--server-signer", required=True)        # root issuer subject
+    p.add_argument("--server-key-id", required=True)        # root issuer kid
+    p.add_argument("--server-pubkey", required=True)        # root issuer pubkey, raw-32 b64url
+    # The accepted trust-epoch set: the credential's epoch must be one of these. MUST
+    # be coordinated with the server's --delegated-trust-epoch (§7). Repeatable to
+    # accept {current, previous} during a bounded rollout window.
+    p.add_argument("--trust-epoch", required=True, action="append",
+                   metavar="EPOCH")
+    # Client-side revocation denylist (ADR-MCPRE-052 §3 step 7): any mix of
+    # delegated_kid / issuer_kid / credential jti. Repeatable; empty = TTL-only.
+    p.add_argument("--revoked", action="append", default=[], metavar="ID")
     p.add_argument("--audience", required=True)             # RFC 9421 audience id
     p.add_argument("--target-uri", required=True)           # canonical @target-uri
     p.add_argument("--route")                               # optional audience route
-    p.add_argument("--trust-domain", default="example.com") # server actor trust domain
+    p.add_argument("--trust-domain", default="example.com") # issuer actor trust domain
     p.add_argument("--dpop-token", default="access-token-xyz")  # OAuth-DPoP credential
     p.add_argument("--tls-cert", required=True)             # client leaf
     p.add_argument("--tls-key", required=True)
@@ -211,8 +223,19 @@ def main(argv: "list[str] | None" = None) -> int:
     method = request.get("method")
     params = request.get("params", {})
 
+    # ADR-MCPS-047 answer leg: with --load-cont, bind this request to the
+    # InputRequiredResult it answers. The saved file holds the two evidence-handle
+    # digests recorded on the OPEN leg (the previous-request handle and the input-
+    # required-response handle); the opaque `requestState` is carried in this request's
+    # own `params.requestState` (the harness places it there), so the proxy forwards it
+    # to the inner AND the continuation digest binds the exact same bytes.
+    cont = None
+    if args.load_cont:
+        with open(args.load_cont, "r", encoding="utf-8") as fh:
+            cont = json.load(fh)
+
     now = int(time.time())
-    # Sign the RFC 9421 + RFC 9530 request.
+    # Sign the RFC 9421 + RFC 9530 request (with the MRTR continuation on the answer leg).
     signed = mcp_re_sdk.sign_request(
         seed,
         args.key_id,
@@ -226,13 +249,26 @@ def main(argv: "list[str] | None" = None) -> int:
         args.nonce or secrets.token_urlsafe(16),
         now,
         now + 300,
+        cont["prev_alg"] if cont else None,
+        cont["prev_value"] if cont else None,
+        cont["irr_alg"] if cont else None,
+        cont["irr_value"] if cont else None,
+        (str(params.get("requestState")) if (cont and params.get("requestState") is not None) else None),
     )
     status, resp_headers, resp_body = post(signed.headers, signed.body())
 
     reason = ""
     try:
-        # Verify the signed response bound to THIS request (RFC 9421 `;req` + block).
-        mcp_re_sdk.verify_response(
+        # Verify the delegated-required response bound to THIS request (ADR-MCPRE-052):
+        # the inline credential must chain to the ROOT ISSUER (server-* trio), be
+        # scoped to --audience at one of --trust-epoch, and carry no revoked identifier.
+        # An unsigned / direct-root / stale-epoch / revoked response fails closed.
+        #
+        # A verified result is genuine evidence but NOT necessarily an acceptance: a
+        # delegated-SIGNED fail-closed answer (replay / trust rejection) verifies as a
+        # `rejection` outcome carrying the server's wire_code. Acceptance is
+        # outcome == "success"; a verified rejection classifies from its wire_code.
+        result = mcp_re_sdk.verify_response(
             status,
             resp_headers,
             resp_body,
@@ -242,24 +278,55 @@ def main(argv: "list[str] | None" = None) -> int:
             signed.body(),
             signed.evidence_digest_alg,
             signed.evidence_digest_value,
-            args.server_key_id,
-            server_pub,
+            args.server_key_id,      # root issuer kid
+            server_pub,              # root issuer pubkey (b64url)
             "server",
             args.trust_domain,
-            args.server_signer,
+            args.server_signer,      # root issuer subject
+            [args.audience],         # verifier_audiences
+            args.audience,           # expected_audience_hash (server defaults it to --audience)
+            args.trust_epoch,        # accepted_epochs
+            60,                      # max_clock_skew (s)
+            args.revoked,            # revoked identifiers denylist
             int(time.time()),
         )
-        accepted = True
+        accepted = result.outcome == "success"
+        # A verified rejection carries the server's frozen wire_code (the authoritative
+        # reason); fall back to the body reason only for a pre-evidence failure.
+        if not accepted:
+            reason = result.wire_code or ""
     except ValueError as exc:
+        # The response did NOT verify (unsigned / direct-root / stale-epoch / revoked /
+        # forged / pre-evidence transport error) — fail closed.
         accepted = False
         reason = str(exc)
+        result = None
+
+    # ADR-MCPS-047 open leg: with --save-cont, after a VERIFIED InputRequiredResult,
+    # record the two evidence-handle digests the answer leg will bind to — the
+    # previous-request handle (this OPEN-leg request's evidence) and the input-required-
+    # response handle (the verified response's evidence). Both come from the audited
+    # core; the raw signature bases are never retained. Only when the verified reply
+    # actually carried a `requestState` (i.e. it IS an InputRequiredResult).
+    if args.save_cont and accepted and getattr(result, "request_state", None):
+        with open(args.save_cont, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "prev_alg": signed.evidence_digest_alg,
+                    "prev_value": signed.evidence_digest_value,
+                    "irr_alg": result.resp_evidence_digest_alg,
+                    "irr_value": result.resp_evidence_digest_value,
+                    "request_state": result.request_state,
+                },
+                fh,
+            )
 
     if accepted:
         verdict = "accepted"
         plain = _strip_envelope(json.loads(resp_body))
         sys.stdout.write(json.dumps(plain, separators=(",", ":")) + "\n")
     else:
-        verdict = _classify(_body_reject_reason(resp_body) or reason)
+        verdict = _classify(reason or _body_reject_reason(resp_body))
         # Echo the proxy's signed-rejection body so the harness can still inspect it.
         sys.stdout.write(resp_body.decode("utf-8", "replace") + "\n")
 

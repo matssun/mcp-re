@@ -148,7 +148,7 @@ impl GcpAccessTokenSource for MetadataServerTokenSource {
             }
         }
         let url = format!(
-            "{}/computeMetadata/v1/instance/service-account/default/token",
+            "{}/computeMetadata/v1/instance/service-accounts/default/token",
             self.endpoint
         );
         let body = match self

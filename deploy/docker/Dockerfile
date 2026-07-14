@@ -6,7 +6,7 @@
 # server is fronted by an EXTERNAL plain-MCP adapter (e.g. FastMCP) that exposes
 # HTTP; MCP-RE ships no stdio bridge.
 #
-#   docker build -f deploy/docker/Dockerfile --target proxy -t mcp-re-proxy:0.12.0 .
+#   docker build -f deploy/docker/Dockerfile --target proxy -t mcp-re-proxy:0.12.1 .
 #
 # Local validation: this loads into a kind cluster (`kind load docker-image …`) —
 # native arch, no cross-compile. For GKE: build the SAME target for linux/amd64
@@ -20,10 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .
-# The PEP: async per-core fleet (async_serve) + shared Redis replay tier
-# (redis_replay).
+# The PEP feature set: async per-core fleet (async_serve) + shared Redis replay
+# tier (redis_replay) + Cloud KMS custody (gcp_kms_keysource). gcp_kms_keysource is
+# ADDITIVE — the KMS signer is inert unless the chart selects `--key-source gcp-kms`
+# (keySource: gcpKms), so one image serves both the fileSeed and gcpKms deployments.
+# ADR-MCPRE-052: KMS is the delegated-credential ISSUER (off the request path).
+# Override --build-arg FEATURES=… to drop KMS from a fileSeed-only image.
+ARG FEATURES=async_serve,redis_replay,gcp_kms_keysource
 RUN cargo build --release --locked \
-        -p mcp-re-proxy --features async_serve,redis_replay \
+        -p mcp-re-proxy --features "${FEATURES}" \
         --bin mcp-re-proxy
 
 # --- runtime base ------------------------------------------------------------

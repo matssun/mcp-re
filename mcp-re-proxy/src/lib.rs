@@ -53,6 +53,14 @@ pub mod cli;
 // response-signing delegation seam — a backend whose key never leaves it can drive
 // the proxy's full signing path.
 pub mod delegated_response_signer;
+// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing —
+// a shared, atomically-swappable delegated-key snapshot the fleet signs off, and
+// the cold-path rotor that keeps it fresh (root issuer off the request path).
+pub mod delegated_server_signer;
+// ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — build the delegated signer +
+// cold-path rotor from a parsed Config + a ROOT issuer (KMS/HSM/file ResponseSigner).
+// Delegated-signing is the only response-signing mode.
+pub mod delegated_wiring;
 // ADR-MCPS-028 §G: delegated TLS handshake signing — a rustls SigningKey that
 // forwards the handshake transcript to a non-exporting device/KMS so the TLS
 // server key never leaves it. Generic mechanism (always compiled); the per-backend
@@ -165,6 +173,13 @@ pub mod http_inner;
 // Behind the redis backend flag; the data plane awaits it without blocking a worker.
 #[cfg(feature = "redis_replay")]
 pub mod async_redis_store;
+// ADR-MCPS-047: the MRTR continuation correlation store — the fleet-shared tier that
+// carries a multi-round-trip continuation across a replica switch. The trait +
+// in-memory (single-process) impl are always compiled; the Redis (cross-replica)
+// backend is `redis_replay`-gated like the async replay store above.
+pub mod continuation_store;
+#[cfg(feature = "redis_replay")]
+pub mod redis_continuation_store;
 // MCPS-84 (ADR-MCPS-049 W2): trust-epoch invalidation source for the ADR-021 Push
 // tier. Core epoch->event logic is always compiled (and unit-tested); the Redis
 // reader is `redis_replay`-gated inside the module.
@@ -187,6 +202,11 @@ pub use aws_kms_keysource::AwsKmsConfig;
 #[cfg(feature = "aws_kms_keysource")]
 pub use aws_kms_keysource::AwsKmsEd25519Backend;
 pub use delegated_response_signer::DelegatedResponseSigner;
+pub use delegated_server_signer::DelegatedRotor;
+pub use delegated_server_signer::DelegatedServerSigner;
+pub use delegated_wiring::build_delegated_signing;
+pub use delegated_wiring::DelegatedSigningWiring;
+pub use delegated_wiring::ProdDelegatedRotor;
 // ADR-MCPS-028 §G: delegated TLS signing (generic mechanism).
 pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::DelegatedEd25519SigningKey;

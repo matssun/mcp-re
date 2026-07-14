@@ -14,6 +14,52 @@ or wire-format compatibility while the design lines from
 
 _Nothing yet._
 
+## [0.12.1] — 2026-07-14
+
+**First live KMS-via-Workload-Identity GKE run — a real bug fixed, the run made
+deterministic, and the §7 SLO baseline re-measured on the current serving path.**
+A patch release: a proxy bugfix that only a live Workload-Identity-on-GKE run can
+surface, plus the validation tooling and baselines that run turned up.
+
+### Fixed
+- **Cloud KMS Workload-Identity token URL.** `mcp-re-proxy` fetched the GKE
+  metadata-server access token from the singular path
+  `/computeMetadata/v1/instance/service-account/default/token` (HTTP 404), instead
+  of the correct plural `/service-accounts/…`. Under `keySource=gcpKms` +
+  `useMetadata` (the on-GKE custody), this failed key resolution and crash-looped
+  the fleet. Local/kind never hit it (kind uses the operator-token path, not the
+  metadata server), so only a live WI-on-GKE run exposed it
+  (`mcp-re-proxy/src/gcp_kms_keysource.rs`).
+
+### Changed
+- **GKE validation harness is one deterministic cluster shape.**
+  `docs/security/gke-multi-replica-validation.sh` now provisions a **Standard,
+  zonal** `e2-standard-2 ×2` cluster with `--workload-pool` (Workload Identity),
+  matching the SLO runbook §2, instead of an Autopilot **regional** cluster that
+  overran the free-trial 16-vCPU cap (the prior `FailedScheduling`). The KMS path
+  requires the GSA annotation via helm and refuses the operator-token path on GKE.
+- **ADR-MCPRE-051 §7 baselines re-measured on the delegated-required-only path.**
+  The local anchor (`docs/bench/adr-051-baseline-local.json`) was recorded before
+  the delegated-required-only cutover; re-recorded (median of 6 reps) at 4906.9 rps
+  (was 5866.4) — the expected cost of always issuing a delegated-credential-backed
+  response signature, not a regression. The GKE production measurements
+  (`docs/bench/adr-051-slo-targets.json`) were refreshed on real hardware,
+  KMS-rooted via WI: e2-standard-8 395.6 rps / c3-standard-8 492.9 rps (8-core),
+  both gated PASS; declared floors unchanged.
+
+### Added
+- `docs/security/gke-kms-wi-setup.sh` — fenced, idempotent, non-destructive
+  Workload-Identity → Cloud KMS binding (GSA + key-scoped `cloudkms.signerVerifier`
+  + WI binding).
+- `docs/security/gke-slo-phase.sh` — the SLO runbook §4 as one rerunnable script
+  (drop fleet → two 8-vCPU class pools → four jobs → gate).
+
+### Known issues
+- **Proof 4 (zero-drop rolling update) is not yet green on GKE** — a rollout dropped
+  2 of 590 in-flight requests (a GKE kube-proxy endpoint-propagation timing gap; the
+  in-process and kind lanes pass). Likely resolved by a longer `drainPreStopSeconds`;
+  tracked as a follow-up.
+
 ## [0.12.0] — 2026-07-13
 
 **Serving-path consolidation + a re-measured GKE SLO baseline.** v0.12 finishes the

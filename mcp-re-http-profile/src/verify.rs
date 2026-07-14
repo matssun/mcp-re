@@ -67,6 +67,11 @@ pub struct VerifiedHttpRequestEvidence {
     pub resolved_actor: ResolvedActor,
     /// The request signature-base handle (`SHA-256` over the reconstructed base).
     pub evidence: RequestEvidence,
+    /// The exact RFC 9421 request signature-base bytes the signature was verified
+    /// over. Retained so the MRTR continuation correlation store (ADR-MCPS-047)
+    /// can record the previous-request base the answer leg binds to; `evidence` is
+    /// its digest. Not secret — derived from the public message.
+    pub request_signature_base: Vec<u8>,
     /// The verified `Content-Digest` header value covered by the signature.
     pub content_digest: String,
     pub created: i64,
@@ -418,6 +423,7 @@ pub fn verify_request(
         signature_label: REQUEST_LABEL.to_owned(),
         resolved_actor,
         evidence: RequestEvidence::from_signature_base(&base),
+        request_signature_base: base,
         content_digest,
         created,
         expires,
@@ -656,11 +662,48 @@ pub struct DelegationExpectations<'a> {
 ///
 /// `resolve_actor(issuer_kid, Response)` must resolve the credential's root
 /// `issuer_kid`; `is_revoked(kid)` reports revocation at the current epoch.
+///
+/// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
+/// `verify_request_full`; only its `evidence` handle is used. A client that signed
+/// the request holds only that [`RequestEvidence`] handle — it uses
+/// [`verify_delegated_response_bound_full`] directly (the delegated analogue of
+/// [`verify_response_bound_full`]).
 #[allow(clippy::too_many_arguments)]
 pub fn verify_delegated_response_full(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_delegated_response_bound_full(
+        response,
+        request,
+        &verified_request.evidence,
+        resolve_actor,
+        expect,
+        is_revoked,
+        now,
+    )
+}
+
+/// Delegated-response verification bound to a request evidence HANDLE
+/// ([`RequestEvidence`]) rather than the whole [`VerifiedHttpRequestEvidence`] — the
+/// CLIENT-side entry point (the delegated analogue of [`verify_response_bound_full`]).
+///
+/// Semantics are identical to [`verify_delegated_response_full`]: delegation is
+/// REQUIRED (a response with no inline credential — including a directly root-signed
+/// one — is rejected `delegation_credential_missing`), the credential chain to the
+/// root is verified, and the `;req`-bound response signature is verified under
+/// `cnf.jwk`. The only difference is that the request-evidence binding is compared
+/// against the passed `bound_request_evidence` handle the client kept from signing.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_delegated_response_bound_full(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    bound_request_evidence: &RequestEvidence,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
@@ -738,7 +781,7 @@ pub fn verify_delegated_response_full(
     .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
 
     // Request-evidence binding (explicit MCP defense-in-depth, as verify_response_full).
-    let bound = &verified_request.evidence;
+    let bound = bound_request_evidence;
     if block.request_evidence.digest_alg != bound.digest_alg
         || block.request_evidence.digest_value != bound.digest_value
     {
@@ -761,6 +804,109 @@ pub fn verify_delegated_response_full(
             digest_alg: block.request_evidence.digest_alg.clone(),
             digest_value: block.request_evidence.digest_value.clone(),
         }),
+        server_signer: Some(server_signer),
+    })
+}
+
+/// Verify a delegated-key-signed response with NO request binding (ADR-MCPRE-052;
+/// the preflight-unbound rejection case, MCPRE-122). The credential chain to the
+/// root (§3 steps 1–7) and the response signature under `cnf.jwk` (§3 step 8) are
+/// verified exactly as in [`verify_delegated_response_full`], but the signature
+/// covers only the response components — there is no `;req` binding and no
+/// request-evidence comparison, because no trustworthy request context exists.
+///
+/// The block's `request_evidence` (a digest of the received bytes, if any) is
+/// diagnostic and is NOT treated as a binding here. Delegation remains REQUIRED: a
+/// response with no inline credential — including a directly root-signed one — is
+/// rejected `delegation_credential_missing`.
+pub fn verify_delegated_response_unbound(
+    response: &HttpResponse,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    // Content-digest floor.
+    reject_content_encoding(&response.headers)?;
+    let digest_header = required_header(&response.headers, "content-digest")
+        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // Response-only signature parse: required response components, and NO `;req`.
+    let input_header = required_header(&response.headers, "signature-input")
+        .map_err(|_| HttpProfileError::MissingEvidence("response signature-input"))?;
+    let parsed = parse_signature_input(member_value(input_header, RESPONSE_LABEL)?)?;
+    require_components(&parsed.components, &REQUIRED_RESPONSE_COMPONENTS, &[])?;
+    if parsed.components.iter().any(|c| c.req) {
+        return Err(HttpProfileError::MalformedEvidence(
+            "req component without request context",
+        ));
+    }
+    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+
+    // Response evidence block (protected by content-digest).
+    let block: HttpResponseEvidenceBlock = extract_meta_block(
+        &response.body,
+        RESPONSE_EVIDENCE_BLOCK_KEY,
+        "response evidence block",
+    )?;
+    block.validate(PROFILE_TAG)?;
+
+    // Step 1 (required mode): no inline credential — including a directly
+    // root-signed one — is rejected.
+    let credential = block
+        .server_delegation
+        .as_deref()
+        .ok_or(HttpProfileError::DelegationCredentialMissing)?;
+
+    // Steps 2–7: verify the credential chain to the root, scoped to the block's
+    // declared server signer (a lifted credential fails the scope check).
+    let expected_server_signer = block.server_signer.actor_id();
+    let params = DelegationVerifyParams {
+        now,
+        max_clock_skew: expect.max_clock_skew,
+        verifier_audiences: expect.verifier_audiences,
+        expected_profile: PROFILE_TAG,
+        expected_audience_hash: expect.expected_audience_hash,
+        expected_server_signer: &expected_server_signer,
+        accepted_epochs: expect.accepted_epochs,
+    };
+    let verified = verify_delegation_credential(
+        credential,
+        &params,
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |kid| is_revoked(kid),
+    )?;
+
+    // Step 8: the response keyid is the delegated key, the block names it, and the
+    // response-only signature verifies under cnf.jwk.
+    if key_id != verified.delegated_kid || block.server_signer.keyid != verified.delegated_kid {
+        return Err(HttpProfileError::DelegationKeyMismatch);
+    }
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::ResponseOnly(response),
+    )?;
+    let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
+    verify_ed25519_with(
+        &base,
+        &sig,
+        &verified.delegated_key,
+        McpReError::ResponseSigInvalid,
+    )
+    .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
+
+    let server_signer = block.server_signer.clone();
+    Ok(VerifiedHttpResponseEvidence {
+        resolved_server_actor: ResolvedActor {
+            identity: server_signer.clone(),
+            verification_key: verified.delegated_key,
+            slot: SignerSlot::Response,
+        },
+        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        bound_request_evidence: None,
+        body_request_evidence: None,
         server_signer: Some(server_signer),
     })
 }

@@ -105,8 +105,8 @@ fn cross_node_insert_via_a_is_replay_via_b() {
     let signer = "did:example:host#cross_node_insert_via_a_is_replay_via_b";
     let nonce = "nonce-4028-cross-node-insert-via-a-is-replay-via-b";
 
-    let mut node_a = node(&url);
-    let mut node_b = node(&url);
+    let node_a = node(&url);
+    let node_b = node(&url);
 
     assert_eq!(
         node_a.check_and_insert(signer, AUD, nonce, expires_soon()),
@@ -377,7 +377,7 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         primary_connected_slaves(&mut primary) >= 1
     });
 
-    let mut store = wait_quorum_node(&primary_url);
+    let store = wait_quorum_node(&primary_url);
 
     // (1) Healthy: WAIT 1 is satisfied by the attached replica → Fresh.
     assert_eq!(
