@@ -43,6 +43,12 @@ _PROXY_LIB_SRCS = [
     # Issue #3838 (ADR-MCPS-014): non-exporting reference ResponseSigner proving the
     # response-signing delegation seam. Always compiled; default-build, Bazel-tested.
     "src/delegated_response_signer.rs",
+    # ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5: hot-path delegated response signing — the
+    # atomically-swappable delegated-key snapshot + cold-path rotor. Always compiled.
+    "src/delegated_server_signer.rs",
+    # ADR-MCPRE-052 phase 2 (MCPRE-122): production wiring — builds the delegated signer
+    # + cold-path rotor from a parsed Config + a ROOT issuer. Always compiled.
+    "src/delegated_wiring.rs",
     # ADR-MCPS-028 §G: delegated TLS handshake signing (rustls SigningKey fronting a
     # non-exporting device/KMS). Generic mechanism, always compiled.
     "src/delegated_tls.rs",
@@ -174,6 +180,12 @@ _PROXY_LIB_DEPS = [
     "@crates_mcp_re//:x509-parser",
     # MCPS-076 (audit gap G-3): scrub raw-seed temporaries in key_source.
     "@crates_mcp_re//:zeroize",
+    # ADR-MCPS-047: continuation_store.rs derives the shared-store key via SHA-256 —
+    # always compiled by every flavor, so sha2 lives in LIB (not EXT).
+    "@crates_mcp_re//:sha2",
+    # MCPRE-122 (ADR-MCPRE-052): app.rs jitters the delegated-key rotation backoff with
+    # the OS CSPRNG — always compiled, so getrandom lives in LIB (not EXT).
+    "@crates_mcp_re//:getrandom",
 ] + _PROXY_ASYNC_CRATES
 
 # Issue #4028/#4030/#4034: deps for the all-external-backends library flavor.
@@ -199,9 +211,9 @@ _PROXY_EXT_CRATES = [
     # NOTE: der + x509-cert moved to _PROXY_LIB_DEPS — the base crate's static-CRL
     # freshness gate (MCPS-58, tls.rs) now uses them, so ext inherits them via LIB.
     "@crates_mcp_re//:spki",
-    "@crates_mcp_re//:sha2",
-    # #4063 (MCPS-088): OS CSPRNG for the per-request OCSP nonce.
-    "@crates_mcp_re//:getrandom",
+    # NOTE: sha2 + getrandom moved to _PROXY_LIB_DEPS — the base lib now uses them
+    # unconditionally (continuation_store.rs SHA-256 key derivation; app.rs rotation
+    # jitter), so ext inherits them via LIB (avoids a duplicate-dep error).
     # #4063 (MCPS-088): asn1-rs BitString for the responder-signature verify path
     # (part of the online_ocsp module; linked by every ext flavor).
     "@crates_mcp_re//:asn1-rs",
