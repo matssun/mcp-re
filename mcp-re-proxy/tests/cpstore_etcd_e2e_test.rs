@@ -106,8 +106,8 @@ fn cross_node_insert_via_a_is_replay_via_b() {
     let signer = "did:example:host#cpstore_cross_node_insert_via_a_is_replay_via_b";
     let nonce = "nonce-69-cpstore-cross-node-insert-via-a-is-replay-via-b";
 
-    let mut node_a = node(&url);
-    let mut node_b = node(&url);
+    let node_a = node(&url);
+    let node_b = node(&url);
 
     assert_eq!(
         node_a.check_and_insert(signer, AUD, nonce, expires_at),

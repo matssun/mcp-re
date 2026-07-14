@@ -295,8 +295,18 @@ pub fn run(
     };
     // The authoritative async replay tier (§4) + deployment durability posture,
     // selected below; default is the single-replica in-memory tier.
+    // `mut` is load-bearing only under the durable-store features, whose match arms
+    // reassign these below; without those features the bindings are never rewritten.
+    #[cfg_attr(
+        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
+        allow(unused_mut)
+    )]
     let mut replay_async =
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), config.max_clock_skew);
+    #[cfg_attr(
+        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
+        allow(unused_mut)
+    )]
     let mut dispatch_cfg = ProxyDispatchConfig {
         fleet_strict: false,
         tier: None,

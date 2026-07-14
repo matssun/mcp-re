@@ -299,6 +299,7 @@ const MAX_RESPONSE_BYTES: u64 = 256 * 1024;
 /// computation [`EtcdAtomicReplayStore::insert_if_absent`] performs, so a unit
 /// test that injects a fixed clock proves the store derives the TTL from a REAL
 /// `now` (the MCPS-090 fix), not the trait's hard-wired `0`, with NO live etcd.
+#[cfg(test)]
 fn ttl_secs_via_clock(clock: &UnixClock, expires_at_unix: i64) -> i64 {
     compute_ttl_secs(expires_at_unix, clock())
 }
@@ -813,8 +814,8 @@ mod tests {
     #[test]
     fn cross_instance_insert_via_a_is_replay_via_b() {
         let store = SharedEtcdModelStore::default();
-        let mut node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
-        let mut node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let node_a = SharedReplayCache::new(Box::new(store.clone()), SKEW);
+        let node_b = SharedReplayCache::new(Box::new(store.clone()), SKEW);
         assert_eq!(
             node_a.check_and_insert("did:example:host", AUD, NONCE, EXPIRES),
             Ok(ReplayDecision::Fresh),

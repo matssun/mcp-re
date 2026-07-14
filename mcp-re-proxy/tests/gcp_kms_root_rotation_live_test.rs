@@ -17,6 +17,8 @@
 //!   * `MCP_RE_GCP_ACCESS_TOKEN` (bearer) or `MCP_RE_GCP_USE_METADATA=1`.
 //!   * `MCP_RE_GCP_KMS_ENDPOINT` — OPTIONAL emulator override.
 
+#![cfg(feature = "gcp_kms_keysource")]
+
 mod common;
 
 use common::run_rotation_scenario;
