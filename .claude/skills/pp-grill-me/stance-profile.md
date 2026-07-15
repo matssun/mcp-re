@@ -75,6 +75,30 @@ technical debt policy.
 - **Source:** `feedback_no_backward_compat`; MCP-S v0.6 G.1 (no-default
   expected-version policy, fail closed at startup).
 
+#### S4 refinement — deletion requires cause
+Prefer deletion over indefinite compatibility **only when** the path is
+superseded, architecturally contradictory, unsafe to retain, or imposes
+unjustified maintenance cost.
+
+**Do not delete correct, architecturally valid code merely because its live proof
+or adoption lane is incomplete.** In that case: retain the code, WITHHOLD the
+claim, and require a named proof gate.
+
+**Conversely, delete a path rather than leave it as implied roadmap** when the
+path contradicts the governing architecture or would create an insecure mode.
+- **Why:** the "delete all incomplete things" instinct overfires. Unproven ≠
+  superseded. The discriminator is *cause*, not *completeness*.
+- **Example (retain):** the AWS KMS adapter — architecturally valid, correct
+  implementation (`ECC_NIST_EDWARDS25519` + `ED25519_SHA_512` + `MessageType: RAW`),
+  live lane already written, only the live proof unrun → retain, do not claim.
+  Codex argued to delete ~2,700 lines by over-applying the stdio/direct-root/JCS
+  precedent; those three were **superseded competing designs**.
+- **Example (delete):** EMA Mode 2 — contradicts bind-not-interpret, unsafe if
+  nobody validates tokens, implies a false authorization mode → delete, and
+  explicitly refuse a named trigger, because a trigger would let it linger as
+  implied roadmap.
+- **Source:** next-PRD grill B2 + E2 (2026-07-15), standing-confirmed.
+
 ### S5 — Fix the real cause, never band-aid
 No band-aid workarounds for structural problems. No `assert`-style enforcement in
 prod paths. No marker/bypass files. Architectural problems get architectural
@@ -152,6 +176,29 @@ higher bar; bias strict + defer-via-allowlist, and escalate the domain-scope cal
   rather than widening to full RFC 8785 floats on the highest-risk surface.
 - **Source:** harvested in another workspace (2026-06-26), confirmed standing;
   refined by MCP-S v0.6 grill B.1 (2026-06-29, see Learning log).
+
+#### S14 refinement — claim the demonstrated property, not its category
+Public claims must state the **narrow property directly evidenced by the named
+gate**. Passing one representative implementation or environment does not
+automatically justify the broader category label.
+
+Broader phrases are **gate-dependent, not permanently forbidden**. They become
+available only when their explicit evidence gate is satisfied — an eternal ban on
+a phrase that will one day be true is as dishonest as claiming it early.
+- **Why:** this governs the honesty of every future release and proposal. The
+  category label is always more attractive and always less true than the gate.
+- **Examples:**
+  - two cloud-KMS lanes do **not** by themselves prove operationally mature
+    multi-cloud support ("validated against GCP Cloud KMS and AWS KMS" ✓,
+    "multi-cloud custody" ✗ unless narrowly defined);
+  - project-authored cross-language verification does **not** prove independent
+    implementability ("machine-checked Rust/non-Rust cross-verification for
+    selected wire and credential surfaces" ✓, "independently implementable" ✗
+    until a genuine third party passes the published vectors);
+  - one validated deployment topology does **not** prove topology-independent
+    availability ("validated zero-drop under the declared GKE + NEG topology and
+    tested load envelope" ✓, "zero-drop rolling updates" ✗).
+- **Source:** next-PRD grill B2 / F2 (2026-07-15), standing-confirmed.
 
 ### S15 — Security/crypto/wire-interop code is golden-vector-gated
 Handwritten security, cryptographic, or wire-interop code MUST NOT merge without
@@ -241,6 +288,20 @@ Escalate immediately when any holds:
 5. **Claude/Codex disagreement** — the griller and the answerer diverge.
 6. **Low confidence / shaky assumption** — Codex flags uncertainty or rests on an
    unverified assumption about the codebase.
+7. **Weakening the proof system to admit the proposal** — the answer requires
+   relaxing a security-critical invariant, traceability guard, fail-closed rule,
+   or claim gate **in order to make the proposal pass**. Escalate, and **presume
+   the proposal is wrong** unless there is an independent architectural decision
+   showing that the invariant ITSELF is obsolete. Never modify the evidence system
+   merely to accommodate a not-yet-proven capability.
+   - *Deliberately not absolute:* an invariant can genuinely be obsolete and
+     should then change — but that is its own decision, made on its own merits,
+     never a side-effect of something else needing to pass.
+   - *Origin:* next-PRD grill A3 (2026-07-15) — Codex proposed an `unbacked` claim
+     category that required both a third category in the claim matrix (whose
+     invariant says "there is no third category") and a traceability guard that
+     tolerates not-yet-existing tests. Both guards were correct; the proposal was
+     wrong.
 
 Everything else: auto-accept, record with provenance, surface at branch sign-off.
 
@@ -295,3 +356,81 @@ S13/S14/S15/S16 with cross-workspace source notes. Format:
   (Codex conservative on scope-sizing again; Codex minted parallel header wire surface where
   body-carried signed evidence was established; pin shared vocabulary before parallel AFK fan-out).
   Confirm or discard each with Mats before promoting to stances.
+- [2026-07-15] (origin: escalation-override, standing-confirmed) next-PRD grill B2 — AWS KMS adapter.
+  question: AWS KMS adapter is shipped+merged but never live-proven. In scope, parked, or deleted?
+  codex-answer: DELETE it (~2,700 lines) — "merged security-critical custody code that has never
+  exercised real AWS KMS is still an unproven runtime path"; invoked the stdio/direct-root/JCS
+  deletion precedent.
+  mats-correction: KEEP it and run the existing live lane. The precedent is disanalogous — those
+  three were SUPERSEDED COMPETING designs; the AWS adapter is architecturally valid, uses the
+  correct key spec and signing mode, and already has `aws_kms_live_test.rs` written. "No live
+  proof, no production claim — but also no deletion without architectural or maintenance cause."
+  Paired with E2, where Mats DID cut EMA Mode 2 outright AND refused a named trigger (a
+  contradictory mode must not linger as implied roadmap).
+  rule: standing → [updates S4, new "S4 refinement — deletion requires cause"]. Unproven ≠
+  superseded. Deletion needs CAUSE (superseded / architecturally contradictory / unsafe /
+  unjustified maintenance), not merely incompleteness. The judge's escalation was right and its
+  codebase verification (S9) is what collapsed the analogy — worth noting that Codex asserted the
+  precedent with no citation while the judge and griller both verified against the tree.
+
+- [2026-07-15] (origin: escalation-override, standing-confirmed) next-PRD grill B2 / F2 — claim scope.
+  question: what claim does one green AWS lane buy? what does a project-authored non-Rust verifier buy?
+  codex-answer: (B2) upgrade to "multi-cloud custody"; (F2) a single allowed sentence + a single
+  permanently-forbidden sentence.
+  mats-correction: claim EXACTLY the demonstrated property, never the category — "validated against
+  Google Cloud KMS and AWS KMS", never bare "multi-cloud custody"; "machine-checked Rust/non-Rust
+  cross-verification for selected wire and credential surfaces", never "independently implementable".
+  And broader phrases are GATE-DEPENDENT, not permanently forbidden: they become available when
+  their named evidence gate is satisfied.
+  rule: standing → [updates S14, new "S14 refinement — claim the demonstrated property, not its
+  category"]. Note Codex conceded the key honesty point unprompted when pressed: "same-author
+  second-language verification catches Rust bugs, not spec ambiguity."
+
+- [2026-07-15] (origin: escalation-override → escalation rule, standing-confirmed) next-PRD grill A3.
+  question: can a claim exist in the claim matrix before its test is green, marked unbacked?
+  codex-answer: yes — marked `unbacked`, mapped to a named required test in
+  security_traceability_manifest.json, mechanically blocked from publication until green.
+  mats-correction: NO. The claim matrix is EVIDENCE of current capability, not a roadmap: "no green
+  mapped test, no claim-matrix row." Target claims live in the PRD. The proposal would have required
+  a third category (the matrix says "there is no third category") AND a relaxed traceability guard
+  (which correctly fails on a test_fn absent from disk). Both guards were doing their job.
+  rule: standing, but as an ESCALATION RULE rather than a worldview stance → [new Trigger 7 —
+  "weakening the proof system to admit the proposal"]. Deliberately NOT absolute: an invariant can
+  genuinely be obsolete, but that is its own decision on its own merits, never a side-effect of
+  something else needing to pass. (Mats explicitly rejected the stronger phrasing "a guard that
+  fires means the proposal is wrong" as turning existing invariants into untouchable scripture.)
+
+- [2026-07-15] (origin: escalation-override) next-PRD grill B1 — security vs operational claims.
+  question: where does a "zero-drop rolling update" tier live?
+  codex-answer: make zero-drop a tiered claim (implying the §B deployment-tier matrix).
+  mats-correction: zero-drop is an AVAILABILITY/operability property, not one of §B's four SECURITY
+  dimensions. Tier it — but in the fleet-deployment guide / SLO evidence / a named operational
+  profile, never in §B.
+  rule: **case-specific — no global stance.** Mats scoped this deliberately: the broad principle
+  ("do not mix distinct assurance dimensions merely because they share deployment machinery") is
+  valid, but the concrete rule is about MCP-RE's four-axis matrix and documentation architecture,
+  so it belongs in the claim-matrix rules / CONTEXT.md / security-boundary conventions / the PRD's
+  documentation invariants — NOT in this profile.
+
+- [2026-07-15] (origin: griller-calibration, next-PRD grill) Codex prompt construction.
+  finding: Codex answered decisively but never surfaced the COST of its own answer — it invoked
+  the stdio/direct-root/JCS deletion precedent with no citation (B2); proposed relaxing two
+  guards to make its proposal pass and framed that as "not over-claiming" (A3); proposed adding
+  five fields to a SIGNED preimage without noting that it changes the preimage (C2); asserted
+  "rejects duplicate identities" without the honest caveat that identity-distinctness is not
+  human-distinctness (C2); and proposed a permanently-forbidden phrase where gate-dependent was
+  correct (F2). S9 ("research before deciding, cite paths") did NOT prevent this: as a *stance*
+  it describes what Mats values, not an obligation Codex must discharge — and in practice Codex
+  researched well on C3/E1/E2 and badly on B2, i.e. the discipline was optional.
+  contributing cause (griller's own): the preamble opened with "Answer AS HIM, decisively... Do
+  not hedge. Do not give a menu of options — pick one and justify it", stacked on S1 (bias
+  aggressive) + S4 (then-unqualified zero-technical-debt). That combination actively rewards
+  "delete it" and "relax the guard". The prompt amplified the failure mode it then exhibited.
+  fix: SKILL.md Codex-assisted mode now specifies (a) the preamble is stances + verified project
+  context + THIS grill's signed-off decisions appended as they land, and (b) five verbatim
+  ANSWERER DIRECTIVES — cite-or-don't-assert; name what your answer changes; never weaken the
+  proof system to fit your answer; state the limitation you leave behind; deletion needs cause.
+  Directives are framed as obligations, not stances, precisely because the stances alone failed
+  to produce them.
+  rule: mechanics, not a decision stance → [updates SKILL.md, no Sn change]. Also recorded:
+  `codex exec` needs `< /dev/null` or it can hang on "Reading additional input from stdin...".
