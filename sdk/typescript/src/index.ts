@@ -51,3 +51,11 @@ export type {
   BindingRequestContext,
   BindingSpec,
 } from "./authorization.js";
+// The transport adapter (`McpReHttpTransport`) is deliberately NOT exported here. It is
+// the only part of this SDK that needs the upstream MCP SDK — a third-party package, not
+// MCP-RE — because it binds to that package's JSON-RPC seam. A caller who only wants the
+// signing/verification bindings must not be made to install it, so it ships as the
+// optional-peer subpath `@mcp-re/sdk/transport` and this entry point keeps no hard
+// runtime dependency. The Python package draws the same line with its `mcp` extra.
+//
+//     import { McpReHttpTransport } from "@mcp-re/sdk/transport";

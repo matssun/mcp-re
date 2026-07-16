@@ -11,18 +11,20 @@ requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Mats Sundvall" }]
 readme = "README.md"
-# No hard runtime deps yet. `mcp` is NOT pinned here on purpose: the spike found
-# it mid-refactor (v1 session layer removed, types moved to `mcp_types`), so it
-# lives in the `mcp` extra below until the transport seam is validated (#199).
-# The native core (mcp_re_sdk._core) needs no Python deps.
+# No hard runtime deps: the signing/verification core (mcp_re_sdk._core) needs none, and
+# a caller who only wants the bindings should not be made to install the upstream MCP SDK.
+# `mcp` is required only to open a real session, so it stays an extra.
 dependencies = []
 
 [project.optional-dependencies]
-# The upstream MCP Python SDK — required to actually open a session, not to load
-# the core. TODO(#199): pin to an EXACT version once the transport seam is stable.
-mcp = ["mcp>=1.16"]
+# The UPSTREAM MCP Python SDK (a third-party package, not MCP-RE) — required to open a
+# session, not to load the core. The transport adapter binds to this package's seam:
+# ClientSession consumes anyio streams of parsed `SessionMessage` objects, so JSON-RPC is
+# serialized inside the transport and that is the only byte-exact place to sign. A major
+# bump can move that seam, so the range is capped rather than open-ended (#413).
+mcp = ["mcp>=1.16,<2.0"]
 # dev pulls in `mcp` (and its `anyio`) so the transport-adapter tests run.
-dev = ["pytest>=8", "pytest-cov>=5", "maturin>=1.5,<2.0", "mcp>=1.16"]
+dev = ["pytest>=8", "pytest-cov>=5", "maturin>=1.5,<2.0", "anyio>=4", "mcp>=1.16,<2.0"]
 
 [tool.coverage.run]
 # Only the hand-written Python layer is measured. The native `_core` extension is

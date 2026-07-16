@@ -56,10 +56,17 @@ It provides a reference implementation and conformance package for protecting MC
   a frozen parity oracle gates it).
 
 The SDKs provide bindings for signing, delegated-response verification, rejection
-verification, non-exporting custody, correlation, and parity-tested evidence handling.
-**They are not yet drop-in MCP HTTP transport adapters:** callers currently drive the
-HTTP leg and invoke sign/verify explicitly. The transparent path today is the
-client-side proxy.
+verification, non-exporting custody, correlation, and parity-tested evidence handling —
+plus `McpReHttpTransport`, an MCP transport adapter that signs each request and verifies
+each delegated response underneath a standard MCP client. Application code calls
+`session.call_tool(...)` and never invokes sign/verify itself; every failure is delivered
+as a JSON-RPC error correlated to its request, so an unverifiable response can neither
+reach the application nor hang it.
+
+**Callers still supply the HTTP leg.** The adapter takes an injected `poster` that
+performs the POST; the mTLS connection helper (`connect_mtls_http` / `connectMtlsHttp`)
+is not built yet, so establishing and hardening the connection remains the caller's job.
+The client-side proxy is the path that requires no application change at all.
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
