@@ -1,5 +1,97 @@
 {
   "cases": {
+    "binding_authz_system_reference": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJhdXRob3JpemF0aW9uX3N5c3RlbV9pZCI6ImF1dGh6LTEiLCJiaW5kaW5nX3R5cGUiOiJyZWZlcmVuY2UtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGciLCJyZWZlcmVuY2Vfc2NoZW1lX2lkIjoic2NoZW1lLTEiLCJyZWZlcmVuY2VfdmFsdWUiOiJncmFudC0xMjMifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "grWlzkIU-S6RmIa2huR-LKriSmX7hWiBhDK41EKZC6o",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:B9g5Gn+BUP3bUM89TfwcwZa30nDi6EpHhrGKRnsZK+Y=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0005\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:ubZEJzN818MK3Muog9BZjVdlUO/NDem/jWnZtgMNojx7Pyl2NC4+BJ+hmz29x61KKwYQfBFNdv85K7JN7aYCBg==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "bindings_json": "[{\"artifact_type\": \"pdp-decision\", \"form\": \"authz-system-reference\", \"material_b64url\": \"cGRwLWRlY2lzaW9uLWRvY3VtZW50LXYx\", \"authorization_system_id\": \"authz-1\", \"reference_scheme_id\": \"scheme-1\", \"reference_value\": \"grant-123\"}]",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0005",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
+    "binding_opaque_bytes": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGcifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "ED-HXpFJO6810pw-q4WUxhxfRZe0Me8wcWFKGFcm8r8",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:vXWsYaRRZvK4hQzMPya6svlKr/bxjrCqfOP4gPmRThM=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0004\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:NN3+eFfcLBTO6iMdUvtZ+5egpkVgziLp4txbMb4Cx/hyQdKB4HlkcMUh0G0pMBNUzU27ZodFNZUVd6Zl6rYlDw==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "bindings_json": "[{\"artifact_type\": \"pdp-decision\", \"form\": \"opaque-bytes\", \"material_b64url\": \"cGRwLWRlY2lzaW9uLWRvY3VtZW50LXYx\"}]",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0004",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
     "continuation_answer_leg": {
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYS0yNTYiLCJkaWdlc3RfdmFsdWUiOiJhWEp5TFdoaGJtUnNaUSJ9LCJwcmV2aW91c19yZXF1ZXN0X2V2aWRlbmNlIjp7ImRpZ2VzdF9hbGciOiJzaGEtMjU2IiwiZGlnZXN0X3ZhbHVlIjoiY0hKbGRpMW9ZVzVrYkdVIn0sInJlcXVlc3Rfc3RhdGVfZGlnZXN0Ijp7ImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJucTVfdnd1dHIzemd1MDJHSWd5MTZaOU5qdGpvcVE3TFFBWVEyVTZ6NjI4In0sInR5cGUiOiJtY3AtbXJ0In0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",

@@ -22,6 +22,7 @@ use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::AudienceTuple;
+use mcp_re_client_core::BindingType;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::HttpContinuation;
 use mcp_re_client_core::HttpRequest;
@@ -57,6 +58,65 @@ fn params_object(params_json: &str) -> napi::Result<Map<String, Value>> {
     }
 }
 
+/// The binding form a provider asks for (ADR-MCPS-044 §Authorization-binding hook).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum BindingForm {
+    /// The digest is over artifact bytes the client holds.
+    OpaqueBytes,
+    /// The digest is over artifact bytes the client holds, and the record additionally
+    /// names the external authorization system that issued them, for cross-audit.
+    AuthzSystemReference,
+}
+
+/// One provider-supplied artifact binding, before the core digests it.
+///
+/// `material_b64url` is the ARTIFACT ITSELF (base64url, no pad) — never a digest. The
+/// core hashes it, so a caller cannot pass off a precomputed digest as the binding, and
+/// the raw bytes never reach the evidence block.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+struct BindingSpec {
+    artifact_type: ArtifactType,
+    form: BindingForm,
+    material_b64url: String,
+    #[serde(default)]
+    authorization_system_id: Option<String>,
+    #[serde(default)]
+    reference_scheme_id: Option<String>,
+    #[serde(default)]
+    reference_value: Option<String>,
+}
+
+/// Turn provider specs into validated `ArtifactBinding`s, digesting the real material.
+///
+/// Bindings are appended to the built-in DPoP binding, which stays header-derived.
+fn build_bindings(bindings_json: &str) -> napi::Result<Vec<ArtifactBinding>> {
+    let specs: Vec<BindingSpec> = serde_json::from_str(bindings_json)
+        .map_err(|e| napi::Error::from_reason(format!("invalid bindings json: {e}")))?;
+    specs
+        .into_iter()
+        .map(|s| {
+            let material = mcp_re_core::b64url_decode(&s.material_b64url).map_err(|_| {
+                napi::Error::from_reason("artifact material must be base64url (no pad)")
+            })?;
+            // The core digests the artifact; the caller never supplies digest_value.
+            let mut b = ArtifactBinding::opaque_digest(s.artifact_type, &material);
+            if matches!(s.form, BindingForm::AuthzSystemReference) {
+                b.binding_type = BindingType::ReferenceDigest;
+                b.authorization_system_id = s.authorization_system_id;
+                b.reference_scheme_id = s.reference_scheme_id;
+                b.reference_value = s.reference_value;
+            }
+            // Fail closed on a malformed shape: an opaque binding carrying reference
+            // fields, or a reference binding missing any of them.
+            b.validate()
+                .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+            Ok(b)
+        })
+        .collect()
+}
+
 /// The RFC 9421 signing inputs shared by both custody paths: the signed audience
 /// tuple, the DPoP artifact binding whose credential is the covered `Authorization`
 /// header, and — for an ADR-MCPS-047 MRTR answer leg — the signed continuation.
@@ -80,17 +140,23 @@ fn signing_inputs(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
+    extra_bindings: Vec<ArtifactBinding>,
 ) -> RequestSigningInputs {
     let audience = AudienceTuple {
         audience_id,
         target_uri: target_uri.to_owned(),
         route,
     };
-    let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, dpop_token.as_bytes());
+    // DPoP stays the built-in, header-derived binding: its credential is the covered
+    // `Authorization: Bearer` header, so it is never provider-supplied. Provider bindings
+    // are appended after it.
+    let mut bindings =
+        vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, dpop_token.as_bytes())];
+    bindings.extend(extra_bindings);
     let mut inputs = RequestSigningInputs::new(
         key_id,
         audience,
-        vec![binding],
+        bindings,
         nonce,
         created as i64,
         expires as i64,
@@ -210,6 +276,10 @@ pub fn sign_request(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
+    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
+    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
+    // means DPoP only — the frozen parity vectors sign through this path unchanged.
+    bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
     let key = seed_to_key(seed.as_ref())?;
     let id = parse_json(&id_json, "id")?;
@@ -228,6 +298,10 @@ pub fn sign_request(
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
+        match bindings_json.as_deref() {
+            Some(j) => build_bindings(j)?,
+            None => Vec::new(),
+        },
     );
     let signed = build_signed_request(&id, &method, params, &target_uri, &inputs, &key)
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
@@ -266,6 +340,10 @@ pub fn sign_request_with_signer(
     cont_irr_alg: Option<String>,
     cont_irr_value: Option<String>,
     cont_request_state: Option<String>,
+    // Provider-supplied artifact bindings (ADR-MCPS-044 §Authorization-binding hook), as
+    // a JSON array of specs carrying the artifact MATERIAL; the core digests it. Absent
+    // means DPoP only — the frozen parity vectors sign through this path unchanged.
+    bindings_json: Option<String>,
 ) -> napi::Result<SignedRequestJs> {
     let id = parse_json(&id_json, "id")?;
     let params = params_object(&params_json)?;
@@ -283,6 +361,10 @@ pub fn sign_request_with_signer(
         cont_irr_alg,
         cont_irr_value,
         cont_request_state,
+        match bindings_json.as_deref() {
+            Some(j) => build_bindings(j)?,
+            None => Vec::new(),
+        },
     );
     // The device seam. Any failure — the callback throwing, returning a non-Buffer
     // value, or returning a wrong-length signature — is an unusable signature and

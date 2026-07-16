@@ -24,12 +24,20 @@ import json
 import pathlib
 
 import mcp_re_sdk
-from mcp_re_sdk import Signer, SigningDevice
+from mcp_re_sdk import (
+    AuthzSystemReferenceProvider,
+    BindingRequestContext,
+    OpaqueBytesProvider,
+    Signer,
+    SigningDevice,
+)
 
 # Fixed, documented TEST-ONLY seed; the corpus is deterministic end-to-end.
 SEED = bytes(range(32))
 SIGNER_ID = "did:example:client"
 KEY_ID = "key-1"
+#: A fixed TEST-ONLY authorization artifact the core digests into a binding.
+ARTIFACT_MATERIAL = b"pdp-decision-document-v1"
 
 OUT = pathlib.Path("sdk/fixtures/parity_vectors.json")
 
@@ -104,6 +112,37 @@ def build() -> dict:
     )
     cases["continuation_answer_leg"] = case(
         mcp_re_sdk.sign_request(SEED, KEY_ID, **cont), {**cont, **meta}
+    )
+
+    # Provider-supplied artifact bindings: the core digests the artifact, so both SDKs
+    # must land on the same digest AND the same evidence bytes.
+    ctx = BindingRequestContext(
+        audience_id=BASE["audience_id"],
+        target_uri=BASE["target_uri"],
+        method=BASE["method"],
+    )
+    opaque = OpaqueBytesProvider("pdp-decision", ARTIFACT_MATERIAL)
+    opaque_args = dict(BASE, nonce="nonce-parity-0004")
+    cases["binding_opaque_bytes"] = case(
+        mcp_re_sdk.sign_request(
+            SEED, KEY_ID, **opaque_args, bindings_json=json.dumps([opaque.spec(ctx)])
+        ),
+        {**opaque_args, **meta, "bindings_json": json.dumps([opaque.spec(ctx)])},
+    )
+
+    reference = AuthzSystemReferenceProvider(
+        "pdp-decision",
+        ARTIFACT_MATERIAL,
+        authorization_system_id="authz-1",
+        reference_scheme_id="scheme-1",
+        reference_value="grant-123",
+    )
+    ref_args = dict(BASE, nonce="nonce-parity-0005")
+    cases["binding_authz_system_reference"] = case(
+        mcp_re_sdk.sign_request(
+            SEED, KEY_ID, **ref_args, bindings_json=json.dumps([reference.spec(ctx)])
+        ),
+        {**ref_args, **meta, "bindings_json": json.dumps([reference.spec(ctx)])},
     )
 
     return {

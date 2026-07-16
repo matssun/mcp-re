@@ -48,6 +48,12 @@ def _sign(name: str):
     return mcp_re_sdk.sign_request(seed, key_id, **inputs), c["expected"]
 
 
+def test_the_oracle_covers_the_binding_forms():
+    """Both authorization-binding forms must be pinned, not just DPoP."""
+    assert "binding_opaque_bytes" in CASES
+    assert "binding_authz_system_reference" in CASES
+
+
 def test_oracle_is_the_expected_schema():
     assert ORACLE["schema"] == "mcp-re-sdk-parity/v1"
     assert CASES, "the parity oracle carries no cases"

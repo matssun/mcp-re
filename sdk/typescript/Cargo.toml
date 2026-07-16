@@ -35,6 +35,9 @@ path = "src/lib.rs"
 # one source of truth for the signed preimage, shared with mcp-re-client-proxy.
 mcp-re-client-core = { path = "../../mcp-re-client-core" }
 mcp-re-core = { path = "../../mcp-re-core" }
+# Deserializing provider-supplied artifact-binding specs (the
+# AuthorizationBindingProvider hook); `derive` for the spec structs.
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # napi-rs 3.x: the N-API bindings. `default-features = false` drops the tokio async

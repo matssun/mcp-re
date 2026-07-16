@@ -32,7 +32,7 @@ export interface SignedRequestJs {
 export declare function signPreimage(seed: Buffer, preimage: Buffer): Buffer
 
 /** Sign an MCP request as an RFC 9421 + RFC 9530 message. */
-export declare function signRequest(seed: Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null): SignedRequestJs
+export declare function signRequest(seed: Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null, bindingsJson?: string | undefined | null): SignedRequestJs
 
 /**
  * Sign an MCP request under NON-EXPORTING custody: the private key never enters the
@@ -48,7 +48,7 @@ export declare function signRequest(seed: Buffer, keyId: string, idJson: string,
  * returns anything other than 64 signature bytes, fails closed as
  * `mcp-re.invalid_signature`.
  */
-export declare function signRequestWithSigner(signCallback: (arg: Buffer) => Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null): SignedRequestJs
+export declare function signRequestWithSigner(signCallback: (arg: Buffer) => Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null, bindingsJson?: string | undefined | null): SignedRequestJs
 
 /** Verify a delegated-required RFC 9421 response bound to the request the client sent. */
 export declare function verifyResponse(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, reqEvidenceDigestAlg: string, reqEvidenceDigestValue: string, issuerKeyId: string, issuerPubkeyB64Url: string, issuerRole: string, issuerTrustDomain: string, issuerSubject: string, verifierAudiences: Array<string>, expectedAudienceHash: string, acceptedEpochs: Array<string>, maxClockSkew: number, revokedIdentifiers: Array<string>, now: number): VerifyResultJs

@@ -16,6 +16,13 @@ exposed through the ``_core`` PyO3 extension (built by maturin).
 """
 
 from . import _core  # native extension (mcp_re_sdk._core)
+from .authorization import (
+    AuthorizationBindingPolicy,
+    AuthorizationBindingProvider,
+    AuthzSystemReferenceProvider,
+    BindingRequestContext,
+    OpaqueBytesProvider,
+)
 from .correlation import ContinuationHandles, CorrelationStore, PendingRequest
 from .custody import (
     CustodyClass,
@@ -47,6 +54,11 @@ __all__ = [
     "ContinuationHandles",
     "CorrelationStore",
     "PendingRequest",
+    "AuthorizationBindingPolicy",
+    "AuthorizationBindingProvider",
+    "AuthzSystemReferenceProvider",
+    "BindingRequestContext",
+    "OpaqueBytesProvider",
 ]
 
 #: The audited SDK core version string.

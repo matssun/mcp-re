@@ -62,6 +62,7 @@ function sign(name: string) {
     contIrrValue: (i["cont_irr_value"] ?? null) as unknown as string | null,
     contRequestState: (i["cont_request_state"] ?? null) as unknown as string | null,
   };
+  const bindingsJson = (i["bindings_json"] ?? null) as unknown as string | null;
   if (name.startsWith("non_exporting")) {
     const signer = Signer.fromDevice("did:example:client", keyId, SigningDevice.fromSeed(seed));
     return { signed: signer.signRequest(args), expected: c.expected };
@@ -84,6 +85,7 @@ function sign(name: string) {
     args.contIrrAlg,
     args.contIrrValue,
     args.contRequestState,
+    bindingsJson,
   );
   return { signed, expected: c.expected };
 }
