@@ -124,6 +124,8 @@ export interface SignRequestArgs {
   contIrrAlg?: string | null;
   contIrrValue?: string | null;
   contRequestState?: string | null;
+  /** Serialized artifact-binding specs; see `bindingsJson` in ./authorization.js. */
+  bindingsJson?: string | null;
 }
 
 /**
@@ -207,6 +209,7 @@ export class Signer {
       a.contIrrAlg ?? null,
       a.contIrrValue ?? null,
       a.contRequestState ?? null,
+      a.bindingsJson ?? null,
     ] as const;
     if (this.custody === CustodyClass.Software) {
       return signRequest(this.#seed!, this.keyId, ...tail);
