@@ -2,9 +2,10 @@
 
 # MCP Runtime Evidence (MCP-RE)
 
-> **MCP Runtime Evidence (MCP-RE)** is an object-level runtime-evidence layer for
-> high-value MCP tool calls. *(Formerly **MCP-S**; renamed to avoid confusion
-> with the unrelated SEP-2395 / "MCPS (MCP Secure)" work — see [#289](https://github.com/matssun/mcp-re/issues/289).)*
+> **MCP Runtime Evidence (MCP-RE)** is a runtime-evidence layer for high-value MCP
+> tool calls, carried in the RFC 9421 + RFC 9530 HTTP profile. *(Formerly **MCP-S**;
+> renamed to avoid confusion with the unrelated SEP-2395 / "MCPS (MCP Secure)" work —
+> see [#289](https://github.com/matssun/mcp-re/issues/289).)*
 
 ## Why should I care?
 
@@ -12,12 +13,15 @@
 stops it being forged, replayed, stripped of its authorization context, or
 answered by a tampered response.
 
-**MCP-RE answer.** MCP-RE protects *individual MCP calls* with object-level
-signatures, freshness, replay protection, delegated-authorization binding,
-response binding, and sidecar-injected verified context. It is proven end to end
-across a real multi-process path — an unmodified plain-MCP client → a client-side
-MCP-RE proxy or SDK → mTLS → a server-side proxy that verifies and serves — and
-against live Google Cloud KMS key custody (as of **v0.8.0**).
+**MCP-RE answer.** MCP-RE protects *individual MCP calls* with RFC 9421 HTTP
+Message Signatures over an RFC 9530 `Content-Digest`, freshness, replay protection,
+delegated-authorization binding, response binding, and sidecar-injected verified
+context. Responses are **delegated-signed** (a short-TTL key attested by a JOSE/JWS
+credential from a root in HSM/KMS). It is proven end to end across a real
+multi-process path — an unmodified plain-MCP client → a client-side MCP-RE proxy or
+SDK → mTLS → a server-side proxy that verifies and serves — and against live Google
+Cloud KMS key custody, including a live GKE run with custody via Workload Identity
+(v0.12.1).
 
 **Non-goals.** MCP-RE is **not** OAuth, **not** EMA, **not** sandboxing, **not** a
 full audit-receipt format, **not** Agent Passports, **not** an L0–L4 trust
@@ -33,8 +37,11 @@ MCP-RE is an experimental third-party security extension proposal for the Model 
 
 It provides a reference implementation and conformance package for protecting MCP tool calls with:
 
-- object-level request and response signatures over the frozen `draft-02`
-  runtime-evidence envelope;
+- RFC 9421 HTTP Message Signatures over an RFC 9530 `Content-Digest`, the sole
+  over-the-wire carrier (`mcp-re-http-v1`, ADR-MCPRE-050) — the earlier native/object
+  (Ed25519-over-JCS) envelope was removed, not kept as a fallback;
+- **delegated-required response signing** — a root in HSM/KMS issues a short-TTL
+  delegated key via a JOSE/JWS credential (ADR-MCPRE-052); direct-root signing is gone;
 - freshness and replay protection;
 - delegated authorization binding, bound into the signed evidence;
 - **stateless multi-round-trip continuation** — request-associated elicitation
@@ -51,9 +58,9 @@ MCP-RE is not part of the official MCP specification unless and until it is acce
 
 ## Quickstart — see MCP-RE fail closed
 
-Run the single-node HTTP-profile demo and watch the **real `mcp_re_proxy_cli` PEP**
+Run the single-node HTTP-profile demo and watch the **real `mcp-re-proxy` PEP**
 — over real mTLS, in front of a Streamable-HTTP inner backend — accept a valid
-signed call and fail closed on a missing/untrusted client cert, a tampered object
+signed call and fail closed on a missing/untrusted client cert, a tampered
 signature, and a wrong transport binding — no cloud credentials, no external infra:
 
 ```sh
@@ -85,11 +92,12 @@ Current implementation claim:
 
 > MCP-RE is production-hardened for single-node Rust-native deployments — and, at the
 > declared shared-tier fleet profile, for horizontally-scaled multi-node deployments
-> within one trust domain / one operator (proven live on a 2-node GKE cluster, v0.11)
-> — with a proven end-to-end client-integration path (client-side proxy +
-> Python/TypeScript SDKs) over the frozen `draft-02` runtime-evidence envelope.
+> within one trust domain / one operator (proven live on a 2-node GKE cluster, v0.11,
+> with KMS custody via Workload Identity added in v0.12.1) — with a proven end-to-end
+> client-integration path (client-side proxy + Python/TypeScript SDKs) over the
+> RFC 9421 + RFC 9530 HTTP profile, delegated-required response signing.
 
-### Recent releases (0.6 → 0.12)
+### Recent releases (0.6 → 0.12.1)
 
 Full detail per release is in [`CHANGELOG.md`](CHANGELOG.md); the design lines are
 in [`docs/adr/`](docs/adr/). In brief:
@@ -129,17 +137,26 @@ in [`docs/adr/`](docs/adr/). In brief:
   from MCP-RE** — HTTP in, HTTP out only; a stdio-only server is fronted by an
   external adapter (e.g. FastMCP). Both **SDKs are retargeted to the HTTP model** and
   exercised by live mTLS e2es against the real proxy. The fleet is proven on a **live
-  GKE cluster** (cross-replica replay coherence + zero-drop rolling update over a real
-  L4 LoadBalancer, fronting FastMCP), with live GCP-KMS custody lanes and an
+  GKE cluster** (cross-replica replay coherence + a rolling update over a real L4
+  LoadBalancer, fronting FastMCP), with live GCP-KMS custody lanes and an
   **ADR-051 §7 SLO baseline measured on real GKE hardware** (e2/c3-standard-8) — the
   targets flip from provisional to **declared**, gate-enforced.
 - **0.12** consolidates the proxy **serving path**: the RFC 9421 `HttpProfileProxy`
   wiring moves into a dedicated `App` runner (`mcp-re-proxy/src/app.rs`), slimming
   `main.rs`/`cli.rs`. Online **OCSP is now always fail-closed** (the `--ocsp-soft-fail`
   relaxation is gone). The **ADR-051 §7 SLO baseline is re-measured on GKE** under the
-  v2 canonical envelope (RFC 9421, concurrency 128 / 8000 requests) and re-declared
-  (e2-standard-8 402 rps / c3-standard-8 499 rps at 8 cores); the SLO Job runner grows
-  an in-pod primary+2-replica Redis. SDK downloader smoke tests are restored.
+  v2 canonical envelope (RFC 9421, concurrency 128 / 8000 requests) and re-declared;
+  the SLO Job runner grows an in-pod primary+2-replica Redis. SDK downloader smoke
+  tests are restored.
+- **0.12.1** is the **first live KMS-via-Workload-Identity GKE run**: it surfaced and
+  fixed a real on-GKE custody bug (the WI metadata token URL, which crash-looped the
+  fleet under `gcpKms`), made the GKE harness one deterministic cluster shape, and
+  re-measured the ADR-051 §7 SLO on the **delegated-required serving path**
+  (e2-standard-8 **395.6 rps** / c3-standard-8 **492.9 rps** at 8 cores, both gated
+  PASS). **Known residual:** the zero-drop rolling-update proof is not yet green on GKE
+  — a rollout dropped 2 of 590 in-flight requests (a kube-proxy endpoint-propagation
+  timing gap; in-process and kind lanes are clean). Topology-independent zero-drop is
+  therefore not claimed.
 
 Predecessors: **0.5** was a proposal-readiness release (conformance + claim
 hardening over `draft-01`, ADR-MCPS-031..036); **0.4** wired the tiered
@@ -150,7 +167,7 @@ The current implementation demonstrates a complete end-to-end **four-hop** path:
 
 ```text
 plain-MCP client (unmodified)
-  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs draft-02, binds authz)
+  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs the RFC 9421 request, binds authz)
   -> mTLS transport
   -> mcp-re-proxy  (server-side PEP)
   -> Core signature / freshness / replay verification
@@ -289,7 +306,7 @@ mcp-re-host/                 Client-side ambassador (signing + bound verify).
 mcp-re-transport/            Verifying mTLS client.
 mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcp-re-policy/               Delegated-authorization profiles (Phase 5).
-mcp-re-client-core/          Client-side shared seam (signed draft-02 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
+mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
 mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agnostic seam (plain-MCP -> sign -> forward -> verify).
 mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
 mcp-re-demo/                 mTLS/fixtures demo surface (host-side HostSession client + DemoFixtures).

@@ -10,6 +10,12 @@ in-repo tests (`replay_race_harness_test`, the trust-epoch flush tests,
 `async_drain_test`), and are the release gate ADR-MCPS-049 clause and the
 single-node non-claim retirement (MCPS-91) depend on.
 
+> **Proof 4 (zero-drop rolling update) has a known residual on GKE (as of v0.12.1):**
+> a live rollout dropped 2 of 590 in-flight requests to a kube-proxy
+> endpoint-propagation timing gap; the in-process and kind lanes are clean.
+> Topology-independent zero-drop is **not** claimed — bound any zero-drop expectation
+> to a declared, validated LB/NEG topology. Tracked as a follow-up.
+
 ## How to run
 
 ```bash

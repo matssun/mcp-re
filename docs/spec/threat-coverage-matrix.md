@@ -2,6 +2,14 @@
 
 # MCP-RE Threat-Coverage Matrix
 
+> **⚠️ Currency (2026-07-15).** Derived from the **v0.5** claim matrix over the frozen
+> `draft-01` object envelope. Since **v0.11** the sole wire carrier is the **RFC 9421 +
+> RFC 9530 HTTP profile** (ADR-MCPRE-050) with **delegated-required** response signing
+> (ADR-MCPRE-052); the native/object (JCS) envelope and stdio were **removed**. For current
+> state read [`PROJECT_STATUS.md`](../PROJECT_STATUS.md) and
+> [`CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md). Regeneration alongside the claim
+> matrix is planned for the next PRD.
+
 Purpose: map each external (NSA-identified) MCP-security concern to an MCP-RE coverage
 level and the §A capability that backs it — **derived from [`v0.5-claim-matrix.md`](./v0.5-claim-matrix.md) §A**.
 

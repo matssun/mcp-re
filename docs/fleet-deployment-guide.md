@@ -159,7 +159,12 @@ a mid-continuation replica switch still verifies (proven at the proxy layer).
 On `SIGTERM` (a rollout / `kubectl delete pod`) the proxy stops accepting on every
 per-core listener and joins **all** in-flight requests within a bounded grace
 window (each request already bounded by its deadline), then exits 0 with zero
-abandoned requests (ADR-MCPRE-051 §6, proven by `async_drain_test.rs`). Set
+abandoned requests (ADR-MCPRE-051 §6, proven by `async_drain_test.rs`). This is
+the proxy's **in-process** drain — clean on the in-process and kind lanes.
+End-to-end zero-drop across a live rolling update is **not** topology-independent:
+a live GKE rollout dropped **2 of 590** in-flight requests to load-balancer /
+kube-proxy endpoint-propagation timing, so bound any zero-drop expectation to
+your declared, validated LB/NEG topology. Set
 `drainGracePeriodSeconds` above your request deadline. Health probes are
 **tcpSocket** against the bind port — the proxy speaks MCP-RE over TLS, not HTTP,
 so "port accepting" is the honest readiness signal (no synthetic `/healthz`).

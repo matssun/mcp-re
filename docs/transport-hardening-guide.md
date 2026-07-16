@@ -106,8 +106,12 @@ trait:
   `/proc/<pid>/environ`. `KeyError` values carry only the var NAME and the parse
   failure, never the secret bytes, so they are safe to log.
 
-An **HSM/KMS-backed source is a documented future implementation** of the
-`KeySource` trait — it does not exist today. This guide does not claim otherwise.
+**HSM/KMS-backed sources** now implement the `KeySource` trait — PKCS#11, AWS
+KMS, and GCP KMS adapters selected with `--key-source` — each behind its own
+build feature, so a default build parses the flag but fails closed at
+construction. GCP-KMS custody has been exercised on live GKE via Workload
+Identity (v0.12.1). A non-exporting device never surrenders the private key; the
+proxy drives it through the `ResponseSigner` seam.
 
 ## Durable replay cache
 
@@ -155,17 +159,20 @@ whose validity cannot be parsed, with `mcp-re.transport_binding_failed`.
 `none`/`0` disables the check (strongly discouraged — the CLI warns). The
 exposure window of a compromised transport credential is bounded by this value;
 the end-to-end request-authority exposure window is
-`cert_lifetime + resolver_cache_ttl + request_lifetime + max_clock_skew`. CRL/OCSP
-and an HSM-backed source are deferred enterprise capabilities, not part of the v1
-claim.
+`cert_lifetime + resolver_cache_ttl + request_lifetime + max_clock_skew`. Online
+CRL/OCSP (fail-closed by default since v0.12.0) and HSM/KMS-backed key sources are
+shipped behind their build features — see the deployment profiles in the README.
 
-## Production claim ceiling
+## Production claim
 
-Per ADR-MCPS-017 ([view](https://github.com/matssun/mcp-re/discussions/366)),
-MCP-RE's production claim is bounded to a **single node**. Explicitly deferred
-future seams — not part of the v1 claim — include: distributed/durable replay
-backends (e.g. Redis), HSM/KMS-backed key sources, multi-node trust distribution,
-online revocation (CRL/OCSP), horizontal scale, and a `ReverseProxyMtlsProvider`
-(reverse-proxy header-injected identity). The serve loop is single-threaded and
-the durable cache is single-node by design. Configure within this ceiling, and
-treat anything beyond it as future work.
+The single-node-only ceiling of ADR-MCPS-017 is **superseded by ADR-MCPS-049**
+([view](https://github.com/matssun/mcp-re/discussions/397)): MCP-RE's production
+claim is **tiered** — a single-node floor, plus, at the declared shared,
+quorum-durable replay tier, horizontally-scaled multi-node fleets within one trust
+domain / one operator (`--fleet` fails closed on a node-local cache), proven live on
+GKE. The serve loop is the **async per-core fleet** of ADR-MCPRE-051 (no longer
+single-threaded). The former "deferred future seams" have shipped: distributed
+replay (Redis), HSM/KMS-backed key sources (GCP live-proven, including on GKE via
+Workload Identity), multi-node trust distribution, and online revocation (CRL/OCSP).
+For the exact current claim and its bounds see
+[`docs/PROJECT_STATUS.md`](PROJECT_STATUS.md).
