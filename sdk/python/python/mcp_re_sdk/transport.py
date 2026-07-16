@@ -118,6 +118,20 @@ class McpReConfig:
     clock: Callable[[], int] = _default_clock
     nonce_factory: Callable[[], str] = _default_nonce
 
+    #: How many signed exchanges may be in flight at once.
+    #:
+    #: MCP is not lock-step — a client may have several requests outstanding, and each
+    #: MCP-RE exchange is an independent signed POST with its own nonce and its own
+    #: correlation entry, so nothing about the protocol requires serializing them. Running
+    #: them one at a time would make one slow tool call block every other, which is
+    #: head-of-line blocking the transport has no reason to impose.
+    #:
+    #: It is bounded rather than unlimited because each in-flight exchange holds a
+    #: connection in the caller's `poster` and a signing operation (a KMS round trip under
+    #: non-exporting custody); an unbounded fan-out would let a burst of calls exhaust
+    #: either. Raise it for a client that genuinely wants more parallelism.
+    max_concurrent_exchanges: int = 8
+
     #: Called with each client->server notification the adapter drops. MCP-RE's wire is
     #: one signed POST per request: a notification has no reply, so it carries no
     #: evidence and cannot be verified. Dropping is the honest behaviour, but it is
@@ -257,29 +271,51 @@ async def _exchange(config: McpReConfig, poster: Poster, request: JSONRPCRequest
     return SessionMessage(JSONRPCMessage.model_validate_json(_strip_response_evidence(reply.body)))
 
 
+async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, read_writer,
+               limiter) -> None:
+    """Run one exchange to completion and deliver its outcome to the session.
+
+    Every failure becomes a message. The session is awaiting this id, so returning
+    without sending would hang it forever.
+    """
+    async with limiter:
+        try:
+            message = await _exchange(config, poster, request)
+        except McpReError as e:
+            message = _error_message(request.id, e.wire_code)
+        except McpReSdkError as e:
+            # A local failure (e.g. the signing device). No wire code describes it.
+            message = _error_message(request.id, f"mcp-re-sdk: {e}")
+        except ValueError as e:
+            # The core's own fail-closed errors arrive as ValueError carrying the
+            # frozen token; deliver it rather than letting the caller hang.
+            message = _error_message(request.id, str(e))
+    await read_writer.send(message)
+
+
 async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer) -> None:
-    """Drive every outbound session message through the MCP-RE obligation."""
+    """Drive every outbound session message through the MCP-RE obligation.
+
+    Exchanges run concurrently, up to ``max_concurrent_exchanges``: awaiting each one
+    before reading the next request would make a single slow tool call block every other
+    request on the session.
+    """
+    limiter = anyio.CapacityLimiter(config.max_concurrent_exchanges)
     async with write_reader, read_writer:
-        async for outgoing in write_reader:
-            root = outgoing.message.root
-            if not isinstance(root, JSONRPCRequest):
-                # A notification has no reply, so it carries no evidence and cannot be
-                # verified. MCP-RE is the client-initiated request/response subset.
-                if config.on_dropped_notification is not None:
-                    config.on_dropped_notification(getattr(root, "method", "<unknown>"))
-                continue
-            try:
-                message = await _exchange(config, poster, root)
-            except McpReError as e:
-                message = _error_message(root.id, e.wire_code)
-            except McpReSdkError as e:
-                # A local failure (e.g. the signing device). No wire code describes it.
-                message = _error_message(root.id, f"mcp-re-sdk: {e}")
-            except ValueError as e:
-                # The core's own fail-closed errors arrive as ValueError carrying the
-                # frozen token; deliver it rather than letting the caller hang.
-                message = _error_message(root.id, str(e))
-            await read_writer.send(message)
+        # The task group closes INSIDE the streams: it waits for every in-flight exchange
+        # before the streams are closed, so a slow exchange can still deliver its reply
+        # rather than failing to send on a closed stream.
+        async with anyio.create_task_group() as tg:
+            async for outgoing in write_reader:
+                root = outgoing.message.root
+                if not isinstance(root, JSONRPCRequest):
+                    # A notification has no reply, so it carries no evidence and cannot be
+                    # verified. MCP-RE is the client-initiated request/response subset;
+                    # whether that subset is the right scope is #418.
+                    if config.on_dropped_notification is not None:
+                        config.on_dropped_notification(getattr(root, "method", "<unknown>"))
+                    continue
+                tg.start_soon(_one, config, poster, root, read_writer, limiter)
 
 
 @asynccontextmanager

@@ -112,6 +112,20 @@ export interface McpReConfig {
   nonceFactory?: () => string;
 
   /**
+   * How many signed exchanges may be in flight at once. Defaults to 8.
+   *
+   * MCP is not lock-step — a client may have several requests outstanding, and each
+   * MCP-RE exchange is an independent signed POST with its own nonce and its own
+   * correlation entry, so nothing about the protocol requires serializing them.
+   *
+   * It is bounded rather than unlimited because each in-flight exchange holds a
+   * connection in the caller's `poster` and a signing operation (a KMS round trip under
+   * non-exporting custody); an unbounded fan-out would let a burst of calls exhaust
+   * either. Raise it for a client that genuinely wants more parallelism.
+   */
+  maxConcurrentExchanges?: number;
+
+  /**
    * Called with each client->server notification the adapter drops. MCP-RE's wire is one
    * signed POST per request: a notification has no reply, so it carries no evidence and
    * cannot be verified. Dropping is the honest behaviour, but it is surfaced here rather
@@ -147,6 +161,38 @@ const errorMessage = (id: RequestId, wireCode: string): JSONRPCMessage => ({
 });
 
 /**
+ * Bounds how many exchanges run at once.
+ *
+ * `send()` is called once per outgoing request and each call awaits its own reply, so
+ * without a bound a burst of concurrent requests would fan out into unbounded in-flight
+ * POSTs and signing operations.
+ */
+class Semaphore {
+  #free: number;
+  readonly #waiting: (() => void)[] = [];
+
+  constructor(slots: number) {
+    this.#free = slots;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.#free > 0) {
+      this.#free -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.#waiting.push(resolve));
+  }
+
+  release(): void {
+    // Hand the slot straight to the next waiter rather than returning it to the pool —
+    // incrementing here would let a later arrival overtake the queue.
+    const next = this.#waiting.shift();
+    if (next) next();
+    else this.#free += 1;
+  }
+}
+
+/**
  * An MCP client transport that signs requests and verifies responses.
  *
  * ```ts
@@ -167,11 +213,13 @@ export class McpReHttpTransport implements Transport {
   readonly #config: McpReConfig;
   readonly #poster: Poster;
   readonly #correlation = new CorrelationStore();
+  readonly #slots: Semaphore;
   #started = false;
 
   constructor(config: McpReConfig, poster: Poster) {
     this.#config = config;
     this.#poster = poster;
+    this.#slots = new Semaphore(config.maxConcurrentExchanges ?? 8);
   }
 
   get #clock(): () => number {
@@ -201,6 +249,7 @@ export class McpReHttpTransport implements Transport {
 
     const request = message;
     let reply: JSONRPCMessage;
+    await this.#slots.acquire();
     try {
       reply = await this.#exchange(request);
     } catch (e) {
@@ -216,6 +265,10 @@ export class McpReHttpTransport implements Transport {
       } else {
         throw e;
       }
+    } finally {
+      // In a finally because the non-Error branch above re-throws: leaking a slot there
+      // would shrink the pool permanently, and enough of them would deadlock the session.
+      this.#slots.release();
     }
     this.onmessage?.(reply);
   }

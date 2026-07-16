@@ -57,15 +57,24 @@ It provides a reference implementation and conformance package for protecting MC
 
 The SDKs provide bindings for signing, delegated-response verification, rejection
 verification, non-exporting custody, correlation, and parity-tested evidence handling —
-plus `McpReHttpTransport`, an MCP transport adapter that signs each request and verifies
-each delegated response underneath a standard MCP client. Application code calls
-`session.call_tool(...)` and never invokes sign/verify itself; every failure is delivered
-as a JSON-RPC error correlated to its request, so an unverifiable response can neither
-reach the application nor hang it.
+plus `McpReHttpTransport`, an **MCP request/response transport adapter** that signs each
+request and verifies each delegated response underneath a standard MCP client.
+Application code calls `session.call_tool(...)` and never invokes sign/verify itself;
+every failure is delivered as a JSON-RPC error correlated to its request, so an
+unverifiable response can neither reach the application nor hang it.
 
-**Callers still supply the HTTP leg.** The adapter takes an injected `poster` that
-performs the POST; the mTLS connection helper (`connect_mtls_http` / `connectMtlsHttp`)
-is not built yet, so establishing and hardening the connection remains the caller's job.
+Two boundaries, stated rather than implied:
+
+- **Notifications are unsupported.** MCP-RE's evidence rides on the response, and a
+  one-way notification has none, so the adapter drops every client→server notification —
+  including `notifications/initialized` and `notifications/cancelled`. It is therefore
+  **not** a general standard-MCP transport. Whether MCP-RE signs one-way notifications,
+  rejects them, or formally declares a request/response-only subset is undecided (#418).
+- **Callers still supply the HTTP leg.** The adapter takes an injected `poster` that
+  performs the POST; the mTLS connection helper (`connect_mtls_http` / `connectMtlsHttp`)
+  is not built yet (#413), so establishing and hardening the connection remains the
+  caller's job.
+
 The client-side proxy is the path that requires no application change at all.
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.

@@ -197,6 +197,81 @@ describe("McpReHttpTransport failure delivery", () => {
   });
 });
 
+describe("McpReHttpTransport concurrency", () => {
+  // Mirrors `concurrency` in sdk/python/tests/test_transport.py: the two SDKs must agree
+  // on how many exchanges may be in flight, not just on the bytes they emit.
+
+  /** Count how many posts are in flight at once. */
+  function gatedPoster(hold = 50): { poster: Poster; peak: () => number } {
+    let now = 0;
+    let max = 0;
+    const poster: Poster = async () => {
+      now += 1;
+      max = Math.max(max, now);
+      await new Promise((r) => setTimeout(r, hold));
+      now -= 1;
+      throw new McpReError("mcp-re.replay_detected"); // stop before native verification
+    };
+    return { poster, peak: () => max };
+  }
+
+  /** Send `count` requests at once and wait for all their replies. */
+  async function drive(config: McpReConfig, poster: Poster, count: number) {
+    const transport = new McpReHttpTransport(config, poster);
+    const seen: JSONRPCMessage[] = [];
+    transport.onmessage = (m) => seen.push(m);
+    await transport.start();
+    await Promise.all(
+      Array.from({ length: count }, (_, id) =>
+        transport.send({ jsonrpc: "2.0", id, method: "tools/list", params: {} }),
+      ),
+    );
+    return seen;
+  }
+
+  it("runs exchanges concurrently rather than head-of-line blocking", async () => {
+    // MCP is not lock-step. Serializing would make one slow tool call block every other
+    // request on the session.
+    const { poster, peak } = gatedPoster();
+    const seen = await drive(minimalConfig(), poster, 4);
+
+    expect(peak(), "exchanges serialized").toBe(4);
+    expect(seen, "every request must still get its reply").toHaveLength(4);
+  });
+
+  it("bounds concurrency so a burst cannot exhaust the poster", async () => {
+    // Each in-flight exchange holds a connection and a signing operation (a KMS round
+    // trip under non-exporting custody); unbounded fan-out would exhaust either.
+    const { poster, peak } = gatedPoster();
+    const seen = await drive(minimalConfig({ maxConcurrentExchanges: 2 }), poster, 6);
+
+    expect(peak(), "the bound was not honoured").toBe(2);
+    expect(seen, "bounding must delay a request, never drop it").toHaveLength(6);
+  });
+
+  it("correlates every concurrent reply to its own request", async () => {
+    // Concurrency must not let one request's outcome land on another's id.
+    const { poster } = gatedPoster();
+    const seen = await drive(minimalConfig(), poster, 4);
+    expect(seen.map((m) => (m as { id: number }).id).sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it("does not leak a slot when an exchange throws a non-Error", async () => {
+    // The non-Error branch re-throws; a leaked slot there would shrink the pool
+    // permanently and eventually deadlock the session.
+    const transport = new McpReHttpTransport(
+      minimalConfig({ maxConcurrentExchanges: 1 }),
+      throwingPoster("not an error"),
+    );
+    transport.onmessage = () => {};
+    await transport.start();
+    for (let i = 0; i < 3; i++) {
+      await expect(transport.send({ ...REQUEST, id: i })).rejects.toBe("not an error");
+    }
+    // A leaked slot would have deadlocked the second send rather than reaching here.
+  });
+});
+
 describe("McpReHttpTransport signing inputs", () => {
   /** Capture what the transport actually put on the wire. */
   function capturingPoster(): { poster: Poster; calls: { headers: { key: string; value: string }[]; body: Buffer }[] } {
