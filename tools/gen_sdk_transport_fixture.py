@@ -102,6 +102,10 @@ def base_config(target: str, created: int, poster_nonce, **over) -> McpReConfig:
         accepted_epochs=["epoch-1"],
         max_clock_skew=60,
         request_ttl=300,
+        # A standard ClientSession sends `notifications/initialized`; MCP-RE has no
+        # ratified one-way notification profile yet (#418), so recording a session needs
+        # the unsafe opt-in to get one open at all.
+        unsafe_drop_notifications=True,
         nonce_factory=poster_nonce,
         clock=lambda: created,
     )

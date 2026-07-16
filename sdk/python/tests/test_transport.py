@@ -26,10 +26,14 @@ from mcp_re_sdk import (  # noqa: E402
     HttpReply,
     McpReConfig,
     McpReError,
+    McpReSdkError,
+    NotificationsUnsupported,
     OpaqueBytesProvider,
     Signer,
     SignerPolicy,
     SignerUnavailable,
+    SigningDevice,
+    UnsafeConfigurationRefused,
     mcp_re_http_transport,
 )
 from mcp_re_sdk.transport import _pump  # noqa: E402
@@ -137,11 +141,31 @@ async def test_a_satisfied_policy_opens_the_transport():
 
 
 @pytest.mark.anyio
-async def test_a_notification_is_dropped_and_reported_because_it_carries_no_evidence():
-    # MCP-RE's wire is one signed POST per request. A notification has no reply, so it
-    # carries no evidence and cannot be verified — dropping is honest, silence is not.
+async def test_a_notification_fails_closed_by_default():
+    """The default must not silently discard a standard MCP message.
+
+    MCP-RE has no ratified one-way notification profile (#418). Until it does, the two
+    ways to proceed are both worse than stopping: pass the message unprotected, or
+    discard a `notifications/cancelled` and let the peer keep working.
+    """
+    posted = []
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(),
+            _capturing_poster(posted),
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+
+    leaves = _flatten(ei.value)
+    assert [type(e) for e in leaves] == [NotificationsUnsupported]
+    assert "#418" in str(leaves[0])
+    assert posted == [], "nothing may reach the wire"
+
+
+@pytest.mark.anyio
+async def test_dropping_notifications_requires_an_explicit_unsafe_opt_in():
     dropped, posted = [], []
-    config = _config(on_dropped_notification=dropped.append)
+    config = _config(unsafe_drop_notifications=True, on_dropped_notification=dropped.append)
     out = await _send(
         config,
         _capturing_poster(posted),
@@ -153,14 +177,43 @@ async def test_a_notification_is_dropped_and_reported_because_it_carries_no_evid
 
 
 @pytest.mark.anyio
-async def test_a_notification_is_dropped_silently_when_no_observer_is_installed():
+async def test_the_unsafe_opt_in_drops_even_with_no_observer_installed():
+    # Opting in is the decision; the observer is only how you watch it.
     posted = []
     out = await _send(
-        _config(),
+        _config(unsafe_drop_notifications=True),
         _capturing_poster(posted),
         JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled"),
     )
     assert posted == [] and out == []
+
+
+@pytest.mark.anyio
+async def test_a_hardened_policy_refuses_the_unsafe_notification_opt_in():
+    # The hardening profile makes "no known-unsafe behaviour here" enforceable rather
+    # than advisory, so the opt-in must fail the CONNECTION.
+    config = _config(
+        signer=Signer.from_device(
+            "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
+        ),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+        unsafe_drop_notifications=True,
+    )
+    with pytest.raises(UnsafeConfigurationRefused, match="#418"):
+        async with mcp_re_http_transport(config, _capturing_poster([])):
+            pass
+
+
+@pytest.mark.anyio
+async def test_a_hardened_policy_accepts_the_fail_closed_default():
+    config = _config(
+        signer=Signer.from_device(
+            "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
+        ),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+    )
+    async with mcp_re_http_transport(config, _capturing_poster([])) as (read, write):
+        assert read is not None and write is not None
 
 
 # --- failure delivery ------------------------------------------------------------
@@ -315,6 +368,23 @@ async def test_concurrency_is_bounded_so_a_burst_cannot_exhaust_the_poster():
 
     assert peak["max"] == 2, f"the bound was not honoured (peak {peak['max']}, limit 2)"
     assert len(replies) == 6, "bounding must delay a request, never drop it"
+
+
+@pytest.mark.parametrize("bad", [0, -1, 2.5, True, None, "8"])
+def test_an_invalid_bound_is_refused_rather_than_deadlocking(bad):
+    """A bound of 0 does not throttle — it deadlocks.
+
+    Every sender waits for a slot that can never be released, and the session hangs in
+    silence. Nothing about that is recoverable at runtime, so it must be refused where
+    the value enters. `True` is in here because `isinstance(True, int)` is True in
+    Python: a bool would otherwise sail through as a bound of 1.
+    """
+    with pytest.raises(McpReSdkError, match="positive integer"):
+        _config(max_concurrent_exchanges=bad)
+
+
+def test_a_valid_bound_is_accepted():
+    assert _config(max_concurrent_exchanges=1).max_concurrent_exchanges == 1
 
 
 @pytest.mark.anyio

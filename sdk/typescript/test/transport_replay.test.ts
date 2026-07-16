@@ -62,6 +62,10 @@ function config(over: Partial<McpReConfig> = {}): McpReConfig {
     acceptedEpochs: FIXTURE.accepted_epochs,
     maxClockSkew: FIXTURE.max_clock_skew,
     requestTtl: FIXTURE.request_ttl,
+    // A standard Client sends `notifications/initialized`; MCP-RE has no ratified
+    // one-way notification profile yet (#418), so the recording — and this replay —
+    // need the unsafe opt-in to get a session open at all.
+    unsafeDropNotifications: true,
     // A response is bound to the request that produced it, so the request must be
     // byte-reproducible: pin the only two inputs that float. The same frozen instant is
     // handed to verification, keeping the recorded credential inside its window.

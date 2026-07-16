@@ -21,6 +21,10 @@ transport that dropped a failed exchange would leave ``ClientSession`` awaiting 
 that never comes; a hang is a worse failure mode than a raise, and an unverifiable
 response must never reach the application as a result.
 
+**This is a request/response adapter.** One-way notifications fail closed by default —
+see :class:`NotificationsUnsupported` for why that is a missing profile rather than an
+inherent limit, and ``unsafe_drop_notifications`` for the interim escape hatch.
+
 MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
 a ``poster`` so this layer stays transport-agnostic and testable; ``connect_mtls_http``
 (the mTLS construction helper) builds on top of it.
@@ -46,8 +50,36 @@ from .custody import McpReError, McpReSdkError, Signer, SignerPolicy
 __all__ = [
     "HttpReply",
     "McpReConfig",
+    "NotificationsUnsupported",
+    "UnsafeConfigurationRefused",
     "mcp_re_http_transport",
 ]
+
+
+class NotificationsUnsupported(McpReSdkError):
+    """A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
+
+    **Not** an inherent limitation: a notification is its own POST under MCP Streamable
+    HTTP, so its request signature and ``Content-Digest`` authenticate it exactly like any
+    other request. What is missing is the ratified one-way notification + acknowledgement
+    profile (MCP-RE issue #418) — what a verifier returns for a message with no JSON-RPC
+    response, and how that acknowledgement binds to the request evidence.
+
+    Until that lands the adapter fails closed here rather than passing the message
+    unprotected or discarding it silently. ``unsafe_drop_notifications=True`` opts into
+    dropping instead; a hardened policy refuses that opt-in outright.
+
+    A local condition — nothing was transmitted, so no wire code describes it.
+    """
+
+
+class UnsafeConfigurationRefused(McpReSdkError):
+    """A hardening profile refused an explicitly unsafe option.
+
+    The hardened profile exists to make "this deployment does not accept known-unsafe
+    behaviour" enforceable rather than advisory, so an unsafe opt-in must fail the
+    connection there instead of being honoured.
+    """
 
 #: The response-side body evidence block. Stripped before the result reaches the app:
 #: MCP-RE's own evidence is not part of the MCP result.
@@ -132,10 +164,21 @@ class McpReConfig:
     #: either. Raise it for a client that genuinely wants more parallelism.
     max_concurrent_exchanges: int = 8
 
-    #: Called with each client->server notification the adapter drops. MCP-RE's wire is
-    #: one signed POST per request: a notification has no reply, so it carries no
-    #: evidence and cannot be verified. Dropping is the honest behaviour, but it is
-    #: surfaced here rather than done silently.
+    #: Drop client->server notifications instead of failing closed on them. **Unsafe.**
+    #:
+    #: A standard MCP client cannot complete its lifecycle without
+    #: `notifications/initialized`, so this exists to keep the adapter usable at all until
+    #: the one-way notification + acknowledgement profile is ratified (#418). It is named
+    #: for what it is: the notification leaves the process unprotected in the sense that
+    #: it never leaves the process at all — `notifications/cancelled` silently becomes
+    #: "keep going", which is a safety hole, not a compatibility quirk.
+    #:
+    #: A hardened `SignerPolicy` refuses this outright.
+    unsafe_drop_notifications: bool = False
+
+    #: Called with each client->server notification the adapter drops, when
+    #: `unsafe_drop_notifications` is on. Dropping is never silent by default — the
+    #: default is to fail closed — but a caller who opts in should still be able to see it.
     on_dropped_notification: Optional[Callable[[str], None]] = None
 
     #: Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
@@ -143,6 +186,16 @@ class McpReConfig:
     on_input_required: Optional[Callable[[ContinuationHandles], None]] = None
 
     _correlation: CorrelationStore = field(default_factory=CorrelationStore, init=False)
+
+    def __post_init__(self) -> None:
+        # Validated where the value first enters SDK-owned code. A bound of 0 is not a
+        # degenerate case that merely throttles: every sender waits for a slot that can
+        # never be released, so the session deadlocks in silence.
+        n = self.max_concurrent_exchanges
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise McpReSdkError(
+                f"max_concurrent_exchanges must be a positive integer, got {n!r}"
+            )
 
 
 def _binding_context(config: McpReConfig, method: str) -> BindingRequestContext:
@@ -309,11 +362,19 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer) 
             async for outgoing in write_reader:
                 root = outgoing.message.root
                 if not isinstance(root, JSONRPCRequest):
-                    # A notification has no reply, so it carries no evidence and cannot be
-                    # verified. MCP-RE is the client-initiated request/response subset;
-                    # whether that subset is the right scope is #418.
+                    method = getattr(root, "method", "<unknown>")
+                    if not config.unsafe_drop_notifications:
+                        # Fail closed. MCP-RE has no ratified profile for a one-way
+                        # message (#418), and the two ways to proceed without one are
+                        # both worse than stopping: pass it unprotected, or discard a
+                        # `notifications/cancelled` and let the peer keep going.
+                        raise NotificationsUnsupported(
+                            f"'{method}' is a one-way notification; MCP-RE has no ratified "
+                            f"one-way notification profile yet (#418). Set "
+                            f"unsafe_drop_notifications=True to drop notifications instead."
+                        )
                     if config.on_dropped_notification is not None:
-                        config.on_dropped_notification(getattr(root, "method", "<unknown>"))
+                        config.on_dropped_notification(method)
                     continue
                 tg.start_soon(_one, config, poster, root, read_writer, limiter)
 
@@ -334,6 +395,14 @@ async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
     """
     if config.policy is not None:
         config.policy.check(config.signer)
+        if config.policy.require_non_exporting and config.unsafe_drop_notifications:
+            # The hardening profile is what makes "this deployment does not accept
+            # known-unsafe behaviour" enforceable rather than advisory.
+            raise UnsafeConfigurationRefused(
+                f"profile '{config.policy.profile}' requires non-exporting custody and so "
+                f"refuses unsafe_drop_notifications: silently discarding "
+                f"'notifications/cancelled' is not acceptable under a hardened policy (#418)"
+            )
     if config.authorization_policy is not None:
         config.authorization_policy.check(list(config.authorization))
 

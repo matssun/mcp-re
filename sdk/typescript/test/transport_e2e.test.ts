@@ -150,6 +150,11 @@ function config(over: Partial<McpReConfig> = {}): McpReConfig {
     targetUri: target,
     route: "a",
     dpopToken: "access-token-xyz",
+    // A standard Client cannot complete its lifecycle without
+    // `notifications/initialized`, and MCP-RE has no ratified one-way notification
+    // profile yet (#418) — so every live session today needs this unsafe opt-in. That it
+    // is required here is the point: the hole is visible, not papered over.
+    unsafeDropNotifications: true,
     // The trusted ROOT anchor only: the delegated key is learned from the credential the
     // response carries, never enrolled here.
     issuerKeyId: "server-key-1",

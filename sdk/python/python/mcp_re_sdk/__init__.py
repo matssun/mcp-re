@@ -62,13 +62,23 @@ __all__ = [
     # Lazy — these need the upstream `mcp` extra (see __getattr__ below).
     "HttpReply",
     "McpReConfig",
+    "NotificationsUnsupported",
+    "UnsafeConfigurationRefused",
     "mcp_re_http_transport",
 ]
 
 #: The transport adapter's names, resolved lazily. `transport` imports the upstream MCP
 #: SDK, which is an optional extra: a caller who wants only the signing/verification
 #: bindings must be able to `import mcp_re_sdk` without installing `mcp`.
-_TRANSPORT_EXPORTS = frozenset({"HttpReply", "McpReConfig", "mcp_re_http_transport"})
+_TRANSPORT_EXPORTS = frozenset(
+    {
+        "HttpReply",
+        "McpReConfig",
+        "NotificationsUnsupported",
+        "UnsafeConfigurationRefused",
+        "mcp_re_http_transport",
+    }
+)
 
 
 def __getattr__(name: str):

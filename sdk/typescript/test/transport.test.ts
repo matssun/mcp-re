@@ -18,8 +18,15 @@ import {
   Signer,
   SignerPolicy,
   SignerUnavailable,
+  SigningDevice,
 } from "../src/index.js";
-import { McpReHttpTransport, type McpReConfig, type Poster } from "../src/transport.js";
+import {
+  McpReHttpTransport,
+  NotificationsUnsupported,
+  UnsafeConfigurationRefused,
+  type McpReConfig,
+  type Poster,
+} from "../src/transport.js";
 
 const CLIENT_SEED = Buffer.alloc(32, 11);
 const TARGET = "https://proxy.internal:8600/mcp";
@@ -122,13 +129,28 @@ describe("McpReHttpTransport lifecycle", () => {
 describe("McpReHttpTransport notification handling", () => {
   const NOTIFICATION: JSONRPCMessage = { jsonrpc: "2.0", method: "notifications/initialized" };
 
-  it("drops a notification and reports it, because it carries no evidence", async () => {
-    // MCP-RE's wire is one signed POST per request. A notification has no reply, so it
-    // carries no evidence and cannot be verified — dropping is honest, silence is not.
+  it("fails closed on a notification by default", async () => {
+    // The default must not silently discard a standard MCP message. MCP-RE has no
+    // ratified one-way notification profile (#418); until it does, the two ways to
+    // proceed are both worse than stopping: pass the message unprotected, or discard a
+    // `notifications/cancelled` and let the peer keep working.
+    const poster = vi.fn<Poster>();
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationsUnsupported);
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/#418/);
+    expect(poster, "nothing may reach the wire").not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit unsafe opt-in to drop notifications", async () => {
     const dropped: string[] = [];
     const poster = vi.fn<Poster>();
     const seen = await sendAndCapture(
-      minimalConfig({ onDroppedNotification: (m) => dropped.push(m) }),
+      minimalConfig({
+        unsafeDropNotifications: true,
+        onDroppedNotification: (m) => dropped.push(m),
+      }),
       poster,
       NOTIFICATION,
     );
@@ -138,17 +160,57 @@ describe("McpReHttpTransport notification handling", () => {
     expect(seen).toBeUndefined();
   });
 
-  it("drops a notification silently when no observer is installed", async () => {
+  it("drops under the opt-in even with no observer installed", async () => {
+    // Opting in is the decision; the observer is only how you watch it.
     const poster = vi.fn<Poster>();
-    await expect(sendAndCapture(minimalConfig(), poster, NOTIFICATION)).resolves.toBeUndefined();
+    await expect(
+      sendAndCapture(minimalConfig({ unsafeDropNotifications: true }), poster, NOTIFICATION),
+    ).resolves.toBeUndefined();
     expect(poster).not.toHaveBeenCalled();
   });
 
-  it("drops a client-side response, which is not a client-initiated request", async () => {
+  it("treats a client-side response the same way — it is not a client-initiated request", async () => {
     const dropped: string[] = [];
     const response: JSONRPCMessage = { jsonrpc: "2.0", id: 1, result: {} };
-    await sendAndCapture(minimalConfig({ onDroppedNotification: (m) => dropped.push(m) }), vi.fn<Poster>(), response);
+    await sendAndCapture(
+      minimalConfig({ unsafeDropNotifications: true, onDroppedNotification: (m) => dropped.push(m) }),
+      vi.fn<Poster>(),
+      response,
+    );
     expect(dropped).toEqual(["<unknown>"]);
+  });
+
+  it("refuses the unsafe opt-in under a hardened policy", async () => {
+    // The hardening profile makes "no known-unsafe behaviour here" enforceable rather
+    // than advisory, so the opt-in must fail the CONNECTION.
+    const transport = new McpReHttpTransport(
+      minimalConfig({
+        signer: Signer.fromDevice(
+          "did:example:host-a",
+          "client-key-1",
+          SigningDevice.fromSeed(CLIENT_SEED),
+        ),
+        policy: SignerPolicy.hardened("did:example:host-a"),
+        unsafeDropNotifications: true,
+      }),
+      vi.fn<Poster>(),
+    );
+    await expect(transport.start()).rejects.toThrow(UnsafeConfigurationRefused);
+  });
+
+  it("accepts the fail-closed default under a hardened policy", async () => {
+    const transport = new McpReHttpTransport(
+      minimalConfig({
+        signer: Signer.fromDevice(
+          "did:example:host-a",
+          "client-key-1",
+          SigningDevice.fromSeed(CLIENT_SEED),
+        ),
+        policy: SignerPolicy.hardened("did:example:host-a"),
+      }),
+      vi.fn<Poster>(),
+    );
+    await expect(transport.start()).resolves.toBeUndefined();
   });
 });
 
@@ -247,6 +309,24 @@ describe("McpReHttpTransport concurrency", () => {
 
     expect(peak(), "the bound was not honoured").toBe(2);
     expect(seen, "bounding must delay a request, never drop it").toHaveLength(6);
+  });
+
+  it.each([0, -1, 2.5, NaN, Infinity, "8" as unknown as number])(
+    "refuses an invalid bound (%s) rather than deadlocking",
+    async (bad) => {
+      // A bound of 0 does not throttle — it deadlocks. Every sender waits for a slot that
+      // can never be released, and the session hangs in silence. Nothing about that is
+      // recoverable at runtime, so it must be refused where the value enters.
+      expect(
+        () => new McpReHttpTransport(minimalConfig({ maxConcurrentExchanges: bad }), vi.fn<Poster>()),
+      ).toThrow(McpReSdkError);
+    },
+  );
+
+  it("accepts a valid bound", () => {
+    expect(
+      () => new McpReHttpTransport(minimalConfig({ maxConcurrentExchanges: 1 }), vi.fn<Poster>()),
+    ).not.toThrow();
   });
 
   it("correlates every concurrent reply to its own request", async () => {
