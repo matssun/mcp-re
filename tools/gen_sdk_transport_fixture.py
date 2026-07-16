@@ -40,6 +40,8 @@ import anyio
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mcp import ClientSession
+from mcp.shared.message import SessionMessage
+from mcp.types import JSONRPCMessage, JSONRPCRequest
 
 from mcp_re_sdk import HttpReply, McpReConfig, Signer, mcp_re_http_transport
 
@@ -51,6 +53,13 @@ OUT = pathlib.Path("sdk/fixtures/delegated_response_replay.json")
 
 TOOL = "add"
 TOOL_ARGS = {"a": 2, "b": 40}
+#: The ADR-MCPS-047 eliciting tool. Its OPEN leg returns an `InputRequiredResult`, which
+#: is not an ordinary `CallToolResult`, so it is driven through the transport's streams
+#: rather than `ClientSession.call_tool` — the elicitation convention lives below the
+#: session layer. Served by the backend's ConfirmActionShim (its direct-run entry point;
+#: `fastmcp run` bypasses the shim and never elicits).
+ELICIT_TOOL = "confirm_action"
+ELICIT_NONCE = "nonce-transport-fixture-elicit"
 
 
 def b64(raw: bytes) -> str:
@@ -76,8 +85,33 @@ def nonce_sequence():
     return next_nonce
 
 
+def base_config(target: str, created: int, poster_nonce, **over) -> McpReConfig:
+    args = dict(
+        signer=Signer.software(CLIENT_SEED, "did:example:host-a", "client-key-1"),
+        audience_id="verifier-1",
+        target_uri=target,
+        route="a",
+        dpop_token="access-token-xyz",
+        issuer_key_id="server-key-1",
+        issuer_pubkey_b64url=ROOT_PUB,
+        issuer_role="server",
+        issuer_trust_domain="example.com",
+        issuer_subject="did:example:server-1",
+        verifier_audiences=["verifier-1"],
+        expected_audience_hash="aud-scope-1",
+        accepted_epochs=["epoch-1"],
+        max_clock_skew=60,
+        request_ttl=300,
+        nonce_factory=poster_nonce,
+        clock=lambda: created,
+    )
+    args.update(over)
+    return McpReConfig(**args)
+
+
 async def record(target: str, created: int) -> dict:
     exchanges = []
+    elicitation = {}
 
     async with httpx.AsyncClient(timeout=15) as http:
 
@@ -97,30 +131,104 @@ async def record(target: str, created: int) -> dict:
                 raise SystemExit(f"proxy refused a recording request: {r.status_code} {r.text[:200]}")
             return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
 
-        config = McpReConfig(
-            signer=Signer.software(CLIENT_SEED, "did:example:host-a", "client-key-1"),
-            audience_id="verifier-1",
-            target_uri=target,
-            route="a",
-            dpop_token="access-token-xyz",
-            issuer_key_id="server-key-1",
-            issuer_pubkey_b64url=ROOT_PUB,
-            issuer_role="server",
-            issuer_trust_domain="example.com",
-            issuer_subject="did:example:server-1",
-            verifier_audiences=["verifier-1"],
-            expected_audience_hash="aud-scope-1",
-            accepted_epochs=["epoch-1"],
-            max_clock_skew=60,
-            request_ttl=300,
-            nonce_factory=nonce_sequence(),
-            clock=lambda: created,
-        )
+        config = base_config(target, created, nonce_sequence())
 
         async with mcp_re_http_transport(config, poster) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool(TOOL, TOOL_ARGS)
+                await session.call_tool(TOOL, TOOL_ARGS)
+
+        # --- the ADR-MCPS-047 open leg, recorded separately ------------------------
+        #
+        # An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot
+        # carry it: the elicitation convention lives BELOW the session layer, which is
+        # where the adapter implements it. Drive the transport's streams directly, with
+        # its own nonce and a fresh correlation store.
+        handles = []
+        elicit_config = base_config(
+            target,
+            created,
+            lambda: ELICIT_NONCE,
+            on_input_required=handles.append,
+        )
+        elicit_exchange = {}
+
+        # The signed request is kept whole, so the rejection recording below can re-send
+        # the very same bytes rather than a reconstruction of them.
+        sent = {}
+
+        async def elicit_poster(method, target_uri, headers, body) -> HttpReply:
+            r = await http.request(method, target_uri, headers=dict(headers), content=body)
+            sent.update(method=method, target_uri=target_uri, headers=list(headers), body=body)
+            elicit_exchange.update(
+                {
+                    "request_body_b64": b64(body),
+                    "status": r.status_code,
+                    "headers": [[k, v] for k, v in r.headers.items()],
+                    "body_b64": b64(r.content),
+                }
+            )
+            if r.status_code != 200:
+                raise SystemExit(f"proxy refused the elicitation open leg: {r.status_code} {r.text[:200]}")
+            return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
+
+        async with mcp_re_http_transport(elicit_config, elicit_poster) as (read, write):
+            await write.send(
+                SessionMessage(
+                    JSONRPCMessage(
+                        JSONRPCRequest(
+                            jsonrpc="2.0",
+                            id=0,
+                            method="tools/call",
+                            params={"name": ELICIT_TOOL, "arguments": {}},
+                        )
+                    )
+                )
+            )
+            await read.receive()
+
+        if not handles:
+            raise SystemExit(
+                f"the backend did not elicit: {ELICIT_TOOL} returned no InputRequiredResult. "
+                "Start it via its direct-run entry point (python tools/fastmcp_inner_backend.py), "
+                "not `fastmcp run` — the latter bypasses the ConfirmActionShim."
+            )
+        # --- a signed REJECTION receipt, recorded ---------------------------------
+        #
+        # Re-send the open leg's exact bytes. Its nonce is spent, so the proxy refuses the
+        # replay with a DELEGATED rejection receipt: genuine evidence, but NOT an
+        # acceptance. The adapter must deliver it as an error — a path no accepted
+        # response can exercise.
+        rr = await http.request(
+            sent["method"], sent["target_uri"], headers=dict(sent["headers"]), content=sent["body"]
+        )
+        if rr.status_code == 200:
+            raise SystemExit("the proxy accepted a replayed nonce; it should have refused it")
+        rejection = {
+            "request_body_b64": b64(sent["body"]),
+            "status": rr.status_code,
+            "headers": [[k, v] for k, v in rr.headers.items()],
+            "body_b64": b64(rr.content),
+            # Read from the TRUSTED body by the verifier, not from the HTTP status.
+            "expect_wire_code": "mcp-re.replay_detected",
+        }
+
+        h = handles[0]
+        elicitation = {
+            "nonce": ELICIT_NONCE,
+            "tool": ELICIT_TOOL,
+            "exchange": elicit_exchange,
+            # The two evidence handles + opaque state the answer leg must sign over.
+            # `prev` is the OPEN leg's request evidence; `irr` is the input-required
+            # response's. Frozen so a replay proves the adapter surfaces the right pair.
+            "expect_handles": {
+                "prev_alg": h.prev_alg,
+                "prev_value": h.prev_value,
+                "irr_alg": h.irr_alg,
+                "irr_value": h.irr_value,
+                "request_state": h.request_state,
+            },
+        }
 
     return {
         "_comment": (
@@ -160,9 +268,14 @@ async def record(target: str, created: int) -> dict:
         # The delegated kid the credential authorizes, for the revocation test.
         "delegated_key_id": "server-key-1/delegated/1",
         "tool": {"name": TOOL, "arguments": TOOL_ARGS},
-        # In order: initialize, then tools/call. The client->server
-        # notifications/initialized carries no evidence and never reaches the wire.
+        # In order: initialize, tools/call, then the tools/list the MCP SDK issues to
+        # validate structuredContent. The client->server notifications/initialized
+        # carries no evidence and never reaches the wire.
         "exchanges": exchanges,
+        # The ADR-MCPS-047 open leg, driven below the session layer.
+        "elicitation": elicitation,
+        # A delegated rejection receipt for the open leg's replayed bytes.
+        "rejection": rejection,
         "expect": {
             "server_name": "mcp-re-inner-backend",
             "structured_content": {"result": 42},

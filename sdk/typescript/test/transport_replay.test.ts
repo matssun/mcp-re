@@ -27,7 +27,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
-import { Signer } from "../src/index.js";
+import { ContinuationHandles, Signer } from "../src/index.js";
 import { McpReHttpTransport, type HttpReply, type McpReConfig, type Poster } from "../src/transport.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
@@ -153,5 +153,96 @@ describe("McpReHttpTransport replaying a recorded delegated session", () => {
     await expect(
       callTool(config({ revokedIdentifiers: [FIXTURE.delegated_key_id] }), replayingPoster()),
     ).rejects.toThrow(/mcp-re\./);
+  });
+
+  it("surfaces the answer leg's handles for a verified input-required response", async () => {
+    // An elicitation is not the end of the exchange (ADR-MCPS-047). An
+    // `InputRequiredResult` is not a `CallToolResult`, so `Client` cannot carry it: the
+    // convention lives BELOW the session layer, which is where the adapter implements
+    // it. Drive the transport directly and assert it hands up the two evidence handles +
+    // opaque state the answer leg signs over, read only from the VERIFIED response.
+    const elicit = FIXTURE.elicitation;
+    const handles: ContinuationHandles[] = [];
+    const transport = new McpReHttpTransport(
+      config({ nonceFactory: () => elicit.nonce, onInputRequired: (h) => handles.push(h) }),
+      async (_m, _u, _h, body) => {
+        expect(
+          body.toString("base64"),
+          "the adapter's open-leg request bytes drifted from the recording " +
+            "(re-record with tools/gen_sdk_transport_fixture.py)",
+        ).toBe(elicit.exchange.request_body_b64);
+        return {
+          status: elicit.exchange.status,
+          headers: (elicit.exchange.headers as [string, string][]).map(([key, value]) => ({
+            key,
+            value,
+          })),
+          body: Buffer.from(elicit.exchange.body_b64, "base64"),
+        };
+      },
+    );
+
+    let reply: unknown;
+    transport.onmessage = (m) => {
+      reply = m;
+    };
+    await transport.start();
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "tools/call",
+      params: { name: elicit.tool, arguments: {} },
+    });
+
+    expect(handles, "the adapter did not surface the elicitation").toHaveLength(1);
+    expect({ ...handles[0] }).toMatchObject({
+      prevAlg: elicit.expect_handles.prev_alg,
+      prevValue: elicit.expect_handles.prev_value,
+      irrAlg: elicit.expect_handles.irr_alg,
+      irrValue: elicit.expect_handles.irr_value,
+      requestState: elicit.expect_handles.request_state,
+    });
+    // The open leg is genuine evidence and reaches the caller as a result, not an error.
+    expect((reply as { result: { resultType: string } }).result.resultType).toBe("input_required");
+  });
+
+  it("delivers a verified rejection receipt as an error, not a result", async () => {
+    // A recorded DELEGATED rejection: the proxy refused a replayed nonce and signed the
+    // refusal. That is genuine evidence but NOT an acceptance. The adapter must verify
+    // the receipt, read its frozen wire code from the TRUSTED body (never from the HTTP
+    // status), and deliver it as a JSON-RPC error correlated to the request — so the
+    // caller rejects instead of hanging, and the refusal never lands as a result.
+    const rejection = FIXTURE.rejection;
+    const transport = new McpReHttpTransport(
+      config({ nonceFactory: () => FIXTURE.elicitation.nonce }),
+      async (_m, _u, _h, body) => {
+        expect(body.toString("base64")).toBe(rejection.request_body_b64);
+        return {
+          status: rejection.status,
+          headers: (rejection.headers as [string, string][]).map(([key, value]) => ({
+            key,
+            value,
+          })),
+          body: Buffer.from(rejection.body_b64, "base64"),
+        };
+      },
+    );
+
+    let reply: unknown;
+    transport.onmessage = (m) => {
+      reply = m;
+    };
+    await transport.start();
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "tools/call",
+      params: { name: FIXTURE.elicitation.tool, arguments: {} },
+    });
+
+    expect(reply).toMatchObject({
+      id: 0,
+      error: { code: -32001, message: rejection.expect_wire_code },
+    });
   });
 });

@@ -194,7 +194,7 @@ The transport adapter is proved three ways, because each covers what the others 
 | Test | Counterparty | Runs in CI |
 | --- | --- | --- |
 | `transport.test.ts` | injected `poster`, no network | always |
-| `transport_replay.test.ts` | a **recorded** delegated session (`../fixtures/delegated_response_replay.json`) | always |
+| `transport_replay.test.ts` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`../fixtures/delegated_response_replay.json`) | always |
 | `transport_e2e.test.ts` | the **live** `http_profile_proxy` + a real FastMCP backend | only where the harness is available; self-skips otherwise |
 
 The replay fixture exists because the live test self-skips in the npm downloader lane —

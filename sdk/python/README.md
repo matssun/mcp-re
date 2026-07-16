@@ -99,7 +99,7 @@ The signing/verification/enforcement logic lives **once**, in the audited Rust
 than reimplementing it in Python) guarantees the canonical signed preimage is
 byte-identical across SDK and proxy, by construction, and means a draft-spec
 change is edited in one place. The Python you actually touch — the transport
-adapter, `connect_mtls_http()`, policy, tests — stays plain Python. End users `pip install`
+adapter, custody, policy, tests — stays plain Python. End users `pip install`
 a prebuilt `abi3` wheel and need no Rust toolchain.
 
 ## Layout
@@ -115,12 +115,16 @@ sdk/python/
     custody.py           # CustodyClass / Signer / SignerPolicy / SigningDevice / McpReError
     correlation.py       # CorrelationStore / PendingRequest / ContinuationHandles
     authorization.py     # OpaqueBytesProvider / AuthzSystemReferenceProvider / policy
+    transport.py         # McpReConfig / mcp_re_http_transport — the adapter
   tests/
     test_smoke.py        # the installed wheel stands alone (native _core loads, signing works)
     test_custody.py      # the two custody classes + the hardening policy, fail-closed
     test_correlation.py  # in-flight correlation, fail-closed on unbound/late/duplicate
     test_authorization.py # binding providers, digests checked vs an independent oracle
     test_parity.py       # the frozen cross-language oracle (../fixtures/parity_vectors.json)
+    test_transport.py    # the adapter, offline, with an injected poster
+    test_transport_replay.py  # a RECORDED delegated session (../fixtures/delegated_response_replay.json)
+    test_transport_e2e.py     # the LIVE proxy + a real FastMCP backend; self-skips without them
 ```
 
 ## Develop
@@ -143,7 +147,7 @@ The transport adapter is proved three ways, because each covers what the others 
 | Test | Counterparty | Runs in CI |
 | --- | --- | --- |
 | `test_transport.py` | injected `poster`, no network | always |
-| `test_transport_replay.py` | a **recorded** delegated session (`sdk/fixtures/delegated_response_replay.json`) | always |
+| `test_transport_replay.py` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`sdk/fixtures/delegated_response_replay.json`) | always |
 | `test_transport_e2e.py` | the **live** `http_profile_proxy` + a real FastMCP backend | only where the harness is available; self-skips otherwise |
 
 The replay fixture exists because the live test self-skips in the downloader lane — the
@@ -161,10 +165,11 @@ parity oracle from the primitives to the transport itself. Re-record with
 - **The mTLS connection helper** (`connect_mtls_http`) — the adapter takes an injected
   `poster`, so establishing and hardening the connection is still the caller's job. See
   the status table above.
-- **The ADR-MCPS-047 elicitation leg is not covered by a live test.** The adapter
-  implements it (`on_input_required`), but the demo backend never returns an
-  `InputRequiredResult`, so no e2e test exercises that branch. Covering it needs a backend
-  tool that elicits.
+- **The ADR-MCPS-047 answer leg is not driven end-to-end by the adapter.** The open leg is
+  covered — `on_input_required` hands up the two evidence handles and the opaque
+  `requestState`, against a recorded elicitation from the real backend's `confirm_action`
+  tool. Signing the answer leg with those handles is still the caller's move
+  (`sign_request(..., cont_*)`); the adapter does not yet re-drive it for you.
 - **Transport-as-dispatcher rework** upstream may move the integration seam.
 
   (An earlier note here claimed the package was "mid-refactor — the v1 session layer was

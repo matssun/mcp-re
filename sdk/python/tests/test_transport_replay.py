@@ -28,6 +28,8 @@ import pytest
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
 
 from mcp import ClientSession  # noqa: E402
+from mcp.shared.message import SessionMessage  # noqa: E402
+from mcp.types import JSONRPCMessage, JSONRPCRequest  # noqa: E402
 
 from mcp_re_sdk import HttpReply, McpReConfig, Signer, mcp_re_http_transport  # noqa: E402
 
@@ -176,3 +178,106 @@ async def test_a_revoked_delegated_key_is_refused():
         _config(revoked_identifiers=[FIXTURE["delegated_key_id"]]), _replaying_poster()
     )
     assert "mcp-re." in detail
+
+
+# --- ADR-MCPS-047: the elicitation open leg ---------------------------------------
+
+
+def _elicit_poster():
+    exchange = FIXTURE["elicitation"]["exchange"]
+
+    async def post(method, target_uri, headers, body) -> HttpReply:
+        assert body == base64.b64decode(exchange["request_body_b64"]), (
+            "the adapter's open-leg request bytes drifted from the recording; "
+            "re-record with tools/gen_sdk_transport_fixture.py"
+        )
+        return HttpReply(
+            status=exchange["status"],
+            headers=[(k, v) for k, v in exchange["headers"]],
+            body=base64.b64decode(exchange["body_b64"]),
+        )
+
+    return post
+
+
+@pytest.mark.anyio
+async def test_a_verified_input_required_response_surfaces_the_answer_legs_handles():
+    """An elicitation is not the end of the exchange (ADR-MCPS-047).
+
+    An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot carry
+    it: the convention lives BELOW the session layer, which is where the adapter
+    implements it. The adapter must hand up the two evidence handles + opaque state the
+    answer leg signs over, read only from the VERIFIED response.
+    """
+    handles = []
+    config = _config(
+        nonce_factory=lambda: FIXTURE["elicitation"]["nonce"],
+        on_input_required=handles.append,
+    )
+
+    async with mcp_re_http_transport(config, _elicit_poster()) as (read, write):
+        await write.send(
+            SessionMessage(
+                JSONRPCMessage(
+                    JSONRPCRequest(
+                        jsonrpc="2.0",
+                        id=0,
+                        method="tools/call",
+                        params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
+                    )
+                )
+            )
+        )
+        reply = await read.receive()
+
+    assert len(handles) == 1, "the adapter did not surface the elicitation"
+    h = handles[0]
+    expect = FIXTURE["elicitation"]["expect_handles"]
+    assert h.prev_alg == expect["prev_alg"]
+    assert h.prev_value == expect["prev_value"]
+    assert h.irr_alg == expect["irr_alg"]
+    assert h.irr_value == expect["irr_value"]
+    assert h.request_state == expect["request_state"]
+
+    # The open leg is genuine evidence and reaches the caller as a result, not an error.
+    assert reply.message.root.result["resultType"] == "input_required"
+
+
+@pytest.mark.anyio
+async def test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result():
+    """A recorded DELEGATED rejection: genuine evidence, but NOT an acceptance.
+
+    The proxy refused a replayed nonce and signed the refusal. The adapter must verify
+    that receipt, read its frozen wire code from the TRUSTED body (never from the HTTP
+    status), and deliver it as a JSON-RPC error correlated to the request — so the caller
+    raises instead of hanging, and the refusal never lands as a result.
+    """
+    rejection = FIXTURE["rejection"]
+
+    async def post(method, target_uri, headers, body) -> HttpReply:
+        assert body == base64.b64decode(rejection["request_body_b64"])
+        return HttpReply(
+            status=rejection["status"],
+            headers=[(k, v) for k, v in rejection["headers"]],
+            body=base64.b64decode(rejection["body_b64"]),
+        )
+
+    config = _config(nonce_factory=lambda: FIXTURE["elicitation"]["nonce"])
+    async with mcp_re_http_transport(config, post) as (read, write):
+        await write.send(
+            SessionMessage(
+                JSONRPCMessage(
+                    JSONRPCRequest(
+                        jsonrpc="2.0",
+                        id=0,
+                        method="tools/call",
+                        params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
+                    )
+                )
+            )
+        )
+        reply = await read.receive()
+
+    error = reply.message.root.error
+    assert error.code == -32001
+    assert error.message == rejection["expect_wire_code"]
