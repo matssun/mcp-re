@@ -22,7 +22,13 @@ signed requests and verified responses, added without changing application code.
 > | Concurrent exchanges, bounded (`maxConcurrentExchanges`, default 8) | **done** |
 > | One-way notifications (`notifications/*`) | **unsupported — dropped** ([#418](https://github.com/matssun/mcp-re/issues/418)) |
 > | ADR-MCPS-047 answer-leg orchestration | **not implemented** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
+> | Transport shutdown contract | **undecided — untested** ([#421](https://github.com/matssun/mcp-re/issues/421), release-blocking) |
 > | mTLS connection helper (`connectMtlsHttp`) | **not implemented** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
+>
+> **Not released.** The SDK stays unreleased until the one-way notification profile
+> ([#418](https://github.com/matssun/mcp-re/issues/418)) and the shutdown contract
+> ([#421](https://github.com/matssun/mcp-re/issues/421)) are resolved. What is on `main` is the
+> honest fail-closed implementation, not a shippable one.
 >
 > A standard `Client` now speaks MCP-RE by construction: hand it an `McpReHttpTransport`
 > and application code calls `client.callTool(...)` with no sign/verify of its own. **You

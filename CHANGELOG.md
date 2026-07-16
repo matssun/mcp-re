@@ -61,12 +61,18 @@ or wire-format compatibility while the design lines from
   Both SDKs now refuse a non-positive / non-integer bound where the value enters.
 
 ### Changed
+- **The SDK is not releasable yet, and says so.** Two boundaries are release-blocking: the
+  one-way notification + acknowledgement profile (#418) and the transport shutdown contract
+  (#421). `main` carries the honest fail-closed implementation; shipping waits on both.
 - **The SDK parity contract is written down** (`sdk/PARITY.md`). Byte parity and
   behavioural parity are separate gates: the frozen fixtures pin what the SDKs *emit* and
   cannot see what they *do*. Concurrency, resource bounds, error propagation, lifecycle,
   notification handling and shutdown must each be measured in both languages. Deliberate
-  asymmetries (and one untested one — shutdown with work in flight) are recorded there
-  rather than left to be rediscovered.
+  asymmetries are recorded there rather than left to be rediscovered — as is the one
+  dimension that is still undecided: **public shutdown** (#421). Measured, not inferred:
+  Python's public context manager *cancels* in-flight work rather than draining it, while
+  TypeScript's `close()` lets an in-flight `send()` finish and call `onmessage` **after**
+  `onclose`, and a send after close still reaches the poster.
 - **`@mcp-re/sdk` declares `@modelcontextprotocol/sdk` as an optional peer** and ships the
   adapter from the subpath `@mcp-re/sdk/transport`. The upstream MCP SDK is needed only to
   open a session, so the root entry point keeps no hard runtime dependency — the same line
