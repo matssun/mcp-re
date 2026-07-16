@@ -273,6 +273,72 @@ async def test_an_unexpected_exception_propagates_rather_than_being_disguised():
     assert str(leaves[0]) == "boom"
 
 
+# --- shutdown (#421) -------------------------------------------------------------
+#
+# Python's lifecycle IS the `async with` block, so most of the contract holds
+# structurally. Mirrors `lifecycle`/shutdown in sdk/typescript/test/transport.test.ts —
+# see sdk/PARITY.md for why the two surfaces differ.
+
+
+@pytest.mark.anyio
+async def test_close_aborts_in_flight_work_rather_than_draining_it():
+    # Abortive by design, matching the upstream client's rejection of pending requests.
+    # It makes NO claim that already-dispatched remote work has stopped.
+    started, completed = [], []
+
+    async def slow(method, target_uri, headers, body) -> HttpReply:
+        started.append(1)
+        await anyio.sleep(5)
+        completed.append(1)
+        raise McpReError("mcp-re.replay_detected")
+
+    async with mcp_re_http_transport(_config(), slow) as (read, write):
+        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await anyio.sleep(0.05)
+
+    assert started == [1], "the exchange must have begun"
+    assert completed == [], "in-flight work is aborted, not drained"
+
+
+@pytest.mark.anyio
+async def test_close_refuses_further_work():
+    posted = []
+    async with mcp_re_http_transport(_config(), _capturing_poster(posted)) as (read, write):
+        pass
+
+    # The streams are closed, so a signed request cannot leave a transport the caller has
+    # already left. (Broken vs Closed depends on which end shut first; both refuse.)
+    with pytest.raises((anyio.ClosedResourceError, anyio.BrokenResourceError)):
+        await write.send(SessionMessage(JSONRPCMessage(_request())))
+    assert posted == []
+
+
+@pytest.mark.anyio
+async def test_close_delivers_nothing_to_a_caller_that_has_left():
+    async with mcp_re_http_transport(_config(), _capturing_poster([])) as (read, write):
+        pass
+
+    with pytest.raises((anyio.ClosedResourceError, anyio.EndOfStream)):
+        read.receive_nowait()
+
+
+@pytest.mark.anyio
+async def test_close_clears_abandoned_correlation_state():
+    # Correlation entries would otherwise outlive the transport that owns them.
+    config = _config()
+
+    async def slow(method, target_uri, headers, body) -> HttpReply:
+        await anyio.sleep(5)
+        raise McpReError("mcp-re.replay_detected")
+
+    async with mcp_re_http_transport(config, slow) as (read, write):
+        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await anyio.sleep(0.05)
+        assert len(config._correlation) == 1, "the request must be outstanding"
+
+    assert len(config._correlation) == 0, "close must clear abandoned correlation state"
+
+
 # --- signing inputs --------------------------------------------------------------
 
 

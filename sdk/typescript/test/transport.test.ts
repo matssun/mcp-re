@@ -21,8 +21,10 @@ import {
   SigningDevice,
 } from "../src/index.js";
 import {
+  ConnectionClosed,
   McpReHttpTransport,
   NotificationsUnsupported,
+  TransportState,
   UnsafeConfigurationRefused,
   type McpReConfig,
   type Poster,
@@ -111,14 +113,93 @@ describe("McpReHttpTransport lifecycle", () => {
     await expect(transport.start()).rejects.toThrow(McpReSdkError);
   });
 
-  it("fires onclose when closed, and can be started again afterwards", async () => {
+  it("fires onclose when closed, and is single-use afterwards", async () => {
+    // NEW -> OPEN -> CLOSING -> CLOSED is one-way (#421): start() is not a reset, and
+    // reopening would sign under a policy accepted for a connection that is gone.
     const transport = new McpReHttpTransport(minimalConfig(), vi.fn<Poster>());
     const onclose = vi.fn();
     transport.onclose = onclose;
     await transport.start();
     await transport.close();
     expect(onclose).toHaveBeenCalledOnce();
-    await expect(transport.start()).resolves.toBeUndefined();
+    await expect(transport.start()).rejects.toThrow(McpReSdkError);
+  });
+
+  it("walks NEW -> OPEN -> CLOSED", async () => {
+    const transport = new McpReHttpTransport(minimalConfig(), vi.fn<Poster>());
+    expect(transport.state).toBe(TransportState.New);
+    await transport.start();
+    expect(transport.state).toBe(TransportState.Open);
+    await transport.close();
+    expect(transport.state).toBe(TransportState.Closed);
+  });
+
+  it("refuses work before start and after close", async () => {
+    const poster = vi.fn<Poster>();
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    await expect(transport.send(REQUEST)).rejects.toThrow(ConnectionClosed);
+    await transport.start();
+    await transport.close();
+    await expect(transport.send(REQUEST)).rejects.toThrow(ConnectionClosed);
+    expect(poster, "a closed transport must not emit a signed request").not.toHaveBeenCalled();
+  });
+
+  it("closes idempotently", async () => {
+    const transport = new McpReHttpTransport(minimalConfig(), vi.fn<Poster>());
+    const onclose = vi.fn();
+    transport.onclose = onclose;
+    await transport.start();
+    await transport.close();
+    await transport.close();
+    await transport.close();
+    expect(onclose).toHaveBeenCalledOnce();
+  });
+
+  it("aborts an in-flight exchange and never delivers after onclose", async () => {
+    // The two failures this prevents: a message handed to an application that believes it
+    // has disconnected, and an in-flight request that hangs forever because close() ate
+    // its reply.
+    const events: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const poster: Poster = async () => {
+      events.push("poster-hit");
+      await gate;
+      throw new McpReError("mcp-re.replay_detected");
+    };
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    transport.onmessage = () => events.push("onmessage");
+    transport.onclose = () => events.push("onclose");
+    await transport.start();
+
+    const inflight = transport.send(REQUEST);
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.close();
+
+    await expect(inflight, "an in-flight request fails connection-closed").rejects.toThrow(
+      ConnectionClosed,
+    );
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events).toEqual(["poster-hit", "onclose"]);
+  });
+
+  it("clears abandoned correlation state on close", async () => {
+    // Correlation entries would otherwise outlive the transport that owns them.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const transport = new McpReHttpTransport(minimalConfig(), async () => {
+      await gate;
+      throw new McpReError("mcp-re.replay_detected");
+    });
+    transport.onmessage = () => {};
+    await transport.start();
+    const inflight = transport.send(REQUEST);
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.close();
+    await expect(inflight).rejects.toThrow(ConnectionClosed);
+    release();
+    expect(transport.pendingCorrelations).toBe(0);
   });
 
   it("closes cleanly with no onclose installed", async () => {
