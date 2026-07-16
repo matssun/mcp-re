@@ -9,8 +9,9 @@
 //!      bound to THIS request (`;req`). The FastMCP tool result is printed from the
 //!      verified body.
 //!   2. REPLAY: POST the SAME signed bytes again. The proxy fails closed and
-//!      returns a SIGNED rejection; `verify_signed_rejection` proves it authentic
-//!      and surfaces the frozen wire code (`mcp-re.replay_detected`).
+//!      returns a DELEGATED-signed rejection; the same delegated verifier proves it
+//!      authentic and bound, and the frozen wire code (`mcp-re.replay_detected`) is read
+//!      from the trusted body.
 //!
 //! Run (target from config/ports.toml via the launcher, never a literal):
 //!   HPP_TARGET=http://127.0.0.1:8601/mcp \
@@ -21,8 +22,8 @@ use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
 
-use mcp_re_http_profile::verify_response;
-use mcp_re_http_profile::verify_signed_rejection;
+use mcp_re_http_profile::verify_delegated_response_bound_full;
+use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
@@ -48,6 +49,20 @@ fn main() {
     let agent = ureq::AgentBuilder::new().build();
     let now = hpp_common::now_unix();
     let resolver = hpp_common::resolver();
+    // ADR-MCPRE-052: the client enrols ONLY the root; the credential the response carries
+    // is what authorizes the delegated key. A directly root-signed response is rejected
+    // (`delegation_credential_missing`) — delegation is required, not preferred.
+    let verifier_audiences = [hpp_common::AUDIENCE_ID];
+    let accepted_epochs = [hpp_common::EPOCH];
+    let expect = DelegationExpectations {
+        verifier_audiences: &verifier_audiences,
+        expected_audience_hash: hpp_common::AUD_SCOPE,
+        accepted_epochs: &accepted_epochs,
+        max_clock_skew: 60,
+    };
+    // No delegated key is revoked in the proof; a real client resolves this from its
+    // revocation source.
+    let is_revoked = |_kid: &str| false;
 
     // A plain MCP tools/call (add(2,40)) — the payload the backend actually runs.
     let call = json!({
@@ -81,7 +96,9 @@ fn main() {
         ],
         body: serde_json::to_vec(&call).expect("serialize call"),
     };
-    sign_request_full(
+    // The delegated verifier binds the response to THIS request's evidence handle, so
+    // keep what signing produced rather than recomputing it.
+    let request_evidence = sign_request_full(
         &mut request,
         &block,
         &hpp_common::client_key(),
@@ -99,7 +116,15 @@ fn main() {
     // stamped by the server when it replies, which is necessarily after the `now` we
     // captured for signing — reusing the stale `now` would spuriously reject a
     // response created "in the future" relative to it.
-    match verify_response(&resp, &request, &resolver, hpp_common::now_unix()) {
+    match verify_delegated_response_bound_full(
+        &resp,
+        &request,
+        &request_evidence,
+        &resolver,
+        &expect,
+        &is_revoked,
+        hpp_common::now_unix(),
+    ) {
         // A signed rejection ALSO verifies as a bound response, so distinguish a
         // success (`result`) from a fail-closed receipt (`error`) on the trusted body.
         Ok(_) if is_error_body(&resp.body) => {
@@ -128,16 +153,37 @@ fn main() {
     let cross = if post_b == post_a { "" } else { "  [CROSS-REPLICA]" };
     eprintln!("leg 2  POST {post_b}  (SAME nonce -> replay){cross}");
     let resp2 = post(&agent, &post_b, &request);
-    match verify_signed_rejection(&resp2, Some(&request), &resolver, hpp_common::now_unix()) {
-        Ok(rej) => {
+    // A DELEGATED rejection receipt is verified through the SAME delegated path as an
+    // answer — it is signed by the delegated key and carries the same credential, so the
+    // refusal is as verifiable as an acceptance. `verify_signed_rejection` is the
+    // direct-root verifier: it has no credential chain, so it cannot resolve the
+    // delegated kid and would fail `actor_binding_failed` on a genuine receipt.
+    //
+    // Verifying only proves the receipt is authentic and bound to THIS request; whether
+    // it is an acceptance is then read from the trusted body.
+    match verify_delegated_response_bound_full(
+        &resp2,
+        &request,
+        &request_evidence,
+        &resolver,
+        &expect,
+        &is_revoked,
+        hpp_common::now_unix(),
+    ) {
+        Ok(_) if is_error_body(&resp2.body) => {
+            let wire_code = body_wire_code(&resp2.body).unwrap_or_default();
             println!(
-                "leg 2  REJECTED  signed rejection verified  status={}  wire_code={}",
-                rej.status, rej.wire_code
+                "leg 2  REJECTED  delegated rejection verified  status={}  wire_code={}",
+                resp2.status, wire_code
             );
-            if rej.wire_code != "mcp-re.replay_detected" {
+            if wire_code != "mcp-re.replay_detected" {
                 println!("leg 2  WARNING: expected mcp-re.replay_detected");
                 std::process::exit(1);
             }
+        }
+        Ok(_) => {
+            println!("leg 2  UNEXPECTED: replay was ACCEPTED");
+            std::process::exit(1);
         }
         Err(e) => {
             println!("leg 2  UNEXPECTED: rejection did not verify: {}", e.wire_code());

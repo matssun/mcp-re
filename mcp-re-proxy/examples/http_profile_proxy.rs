@@ -12,8 +12,11 @@
 //!   3. `dispatch_request_with_tier_gate` — replay admission (fail-closed);
 //!   4. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
 //!      the Streamable-HTTP backend through the proxy's real `HttpInnerPool`;
-//!   5. `sign_response_full` — sign the backend's reply, bound to THIS request.
-//! Any fail-closed step emits a `build_signed_rejection` receipt instead.
+//!   5. `sign_delegated_response_full` — sign the backend's reply with the DELEGATED
+//!      key, bound to THIS request, carrying the root-signed credential that
+//!      authorizes it (ADR-MCPRE-052 delegated-required).
+//! Any fail-closed step emits a DELEGATED-signed rejection receipt instead — bound to
+//! the request once it has verified, preflight (unbound) before that.
 //!
 //! This proof front is PLAIN HTTP: the HTTP-profile security is application-layer
 //! (RFC 9421 request/response signatures), so a plain-HTTP local proof isolates the
@@ -42,13 +45,15 @@ use tokio::net::TcpListener;
 
 use mcp_re_core::InMemoryReplayCache;
 use mcp_re_core::ReplayCache;
-use mcp_re_http_profile::build_signed_rejection;
-use mcp_re_http_profile::sign_response_full;
+use mcp_re_http_profile::build_delegated_rejection;
+use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::RequestEvidence;
 
 use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::http_inner::HttpInnerPool;
@@ -172,7 +177,7 @@ async fn handle(
         .collect();
     let body = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes().to_vec(),
-        Err(_) => return Ok(to_hyper(rejection(None, "mcp-re.serialization_failed", 400))),
+        Err(_) => return Ok(to_hyper(rejection(None, None, "mcp-re.serialization_failed", 400))),
     };
 
     // The canonical @target-uri both sides sign over (deployment-configured).
@@ -201,7 +206,8 @@ async fn handle(
         Ok(v) => v,
         Err(e) => {
             eprintln!("reject: verify_request_full -> {}", e.wire_code());
-            return Ok(to_hyper(rejection(Some(&http_req), e.wire_code(), 403)));
+            // The request never verified: nothing to bind the receipt to.
+            return Ok(to_hyper(rejection(Some(&http_req), None, e.wire_code(), 403)));
         }
     };
 
@@ -211,7 +217,8 @@ async fn handle(
     if let Err(e) =
         dispatch_request_with_tier_gate(&verified, state.replay.as_ref(), None, &state.dispatch_cfg)
     {
-        return Ok(to_hyper(rejection(Some(&http_req), e.wire_code(), 409)));
+        // Verified, then refused by replay admission: bind the receipt to its evidence.
+        return Ok(to_hyper(rejection(Some(&http_req), Some(&verified.evidence), e.wire_code(), 409)));
     }
 
     // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
@@ -228,36 +235,70 @@ async fn handle(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: inner_bytes,
     };
-    match sign_response_full(
+    // The DELEGATED signer signs; the root only vouches for it via the credential the
+    // response carries (ADR-MCPRE-052). The root key never touches a response, and the
+    // verifier enrols only the root — it learns the delegated key from the credential.
+    match sign_delegated_response_full(
         &mut response,
         &http_req,
         &verified.evidence,
-        &hpp_common::server_identity(),
-        &hpp_common::server_key(),
-        hpp_common::SERVER_KEY_ID,
+        &hpp_common::delegated_server_identity(),
+        &hpp_common::delegation_credential(now),
+        &hpp_common::delegated_key(),
+        hpp_common::DELEGATED_KEY_ID,
         now,
         now + 300,
     ) {
-        Ok(()) => Ok(to_hyper(response)),
-        Err(e) => Ok(to_hyper(rejection(Some(&http_req), e.wire_code(), 500))),
+        Ok(_response_base) => Ok(to_hyper(response)),
+        Err(e) => Ok(to_hyper(rejection(Some(&http_req), Some(&verified.evidence), e.wire_code(), 500))),
     }
 }
 
-/// Build a signed rejection receipt bound to `request` (when available).
-fn rejection(request: Option<&HttpRequest>, wire_code: &'static str, status: u16) -> HttpResponse {
+/// A DELEGATED-signed rejection receipt (ADR-MCPRE-052): a client that requires
+/// delegation must be able to READ the refusal, so a receipt is signed the same way an
+/// answer is — a direct-root receipt would fail the client's own verifier and the wire
+/// code would be lost.
+///
+/// `evidence` is `Some` once the request has verified: the receipt is then BOUND to it,
+/// which is strictly stronger. Before verification there is nothing to bind to, so the
+/// preflight form is used.
+fn rejection(
+    request: Option<&HttpRequest>,
+    evidence: Option<&RequestEvidence>,
+    wire_code: &'static str,
+    status: u16,
+) -> HttpResponse {
     let now = hpp_common::now_unix();
-    build_signed_rejection(
-        request,
-        &RejectionReason {
-            wire_code,
-            message: format!("mcp-re http-profile proxy rejected: {wire_code}"),
-        },
-        status,
-        &hpp_common::server_key(),
-        hpp_common::SERVER_KEY_ID,
-        now,
-        now + 300,
-    )
+    let reason = RejectionReason {
+        wire_code,
+        message: format!("mcp-re http-profile proxy rejected: {wire_code}"),
+    };
+    let credential = hpp_common::delegation_credential(now);
+    match (request, evidence) {
+        (Some(req), Some(ev)) => build_delegated_rejection(
+            req,
+            ev,
+            &reason,
+            status,
+            &hpp_common::delegated_server_identity(),
+            &credential,
+            &hpp_common::delegated_key(),
+            hpp_common::DELEGATED_KEY_ID,
+            now,
+            now + 300,
+        ),
+        _ => build_delegated_rejection_preflight(
+            request,
+            &reason,
+            status,
+            &hpp_common::delegated_server_identity(),
+            &credential,
+            &hpp_common::delegated_key(),
+            hpp_common::DELEGATED_KEY_ID,
+            now,
+            now + 300,
+        ),
+    }
     .expect("rejection signs")
 }
 
