@@ -22,13 +22,14 @@ signed requests and verified responses, added without changing application code.
 > | Concurrent exchanges, bounded (`max_concurrent_exchanges`, default 8) | **done** |
 > | One-way notifications (`notifications/*`) | **fail closed** — no ratified profile yet; `unsafe_drop_notifications` is an unsafe interim opt-in, refused under a hardened policy ([#418](https://github.com/matssun/mcp-re/issues/418), release-blocking) |
 > | ADR-MCPS-047 answer-leg orchestration | **not implemented** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
-> | Transport shutdown contract | **undecided — untested** ([#421](https://github.com/matssun/mcp-re/issues/421), release-blocking) |
+> | Transport shutdown contract — abortive close, `NEW → OPEN → CLOSING → CLOSED` | **done** ([#421](https://github.com/matssun/mcp-re/issues/421)) |
 > | mTLS connection helper (`connect_mtls_http`) | **not implemented** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
 >
-> **Not released.** The SDK stays unreleased until the one-way notification profile
-> ([#418](https://github.com/matssun/mcp-re/issues/418)) and the shutdown contract
-> ([#421](https://github.com/matssun/mcp-re/issues/421)) are resolved. What is on `main` is the
-> honest fail-closed implementation, not a shippable one.
+> **Not released.** One boundary remains: the one-way notification + acknowledgement
+> profile ([#418](https://github.com/matssun/mcp-re/issues/418)), which is a **wire-format**
+> decision — the response evidence block rides in the body, and an accepted notification is
+> `202` with no body, so the acknowledgement needs a ratified carrier. Until then a standard
+> client needs the unsafe notification opt-in, so this is not shippable.
 >
 > `mcp.ClientSession` now speaks MCP-RE by construction: open it on the adapter's streams
 > and application code calls `session.call_tool(...)` with no sign/verify of its own. **You

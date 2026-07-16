@@ -48,6 +48,7 @@ from .correlation import ContinuationHandles, CorrelationStore
 from .custody import McpReError, McpReSdkError, Signer, SignerPolicy
 
 __all__ = [
+    "ConnectionClosed",
     "HttpReply",
     "McpReConfig",
     "NotificationsUnsupported",
@@ -73,6 +74,17 @@ class NotificationsUnsupported(McpReSdkError):
     """
 
 
+class ConnectionClosed(McpReSdkError):
+    """The transport is not open for work: not started, or closing/closed.
+
+    Also what queued and in-flight local requests fail with when ``close`` aborts them.
+
+    **This says nothing about the server.** Cancelling a local ``poster`` call does not
+    mean the request never arrived or that already-dispatched remote work has stopped —
+    only that this client will not process an answer to it.
+    """
+
+
 class UnsafeConfigurationRefused(McpReSdkError):
     """A hardening profile refused an explicitly unsafe option.
 
@@ -88,6 +100,10 @@ _RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response"
 #: JSON-RPC application error code for a delivered MCP-RE failure. The precise cause is
 #: always the frozen `mcp-re.*` token in `.message`.
 _MCP_RE_ERROR_CODE = -32001
+
+#: Past every possible deadline: close reaps ALL outstanding correlation entries, not the
+#: merely-expired ones.
+_FAR_FUTURE = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -414,4 +430,14 @@ async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
         try:
             yield read_stream, write_stream
         finally:
+            # Abortive close (#421), matching the upstream client's rejection of pending
+            # requests: in-flight exchanges are cancelled rather than drained, and the
+            # streams close, so a later send fails and no reply can be delivered to a
+            # caller that has left the block.
+            #
+            # This makes NO claim that already-dispatched remote work has stopped: the
+            # server may have received the request and acted on it. Only that this client
+            # will not process an answer.
             tg.cancel_scope.cancel()
+            # Abandoned entries would otherwise outlive the transport that owns them.
+            config._correlation.expire_before(_FAR_FUTURE)

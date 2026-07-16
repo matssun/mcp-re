@@ -77,37 +77,26 @@ Where that is true it is recorded here rather than papered over:
 | Notification refusal surfaces as | the pump raises, tearing down the session | `send()` rejects | Python's transport is a stream pair with no per-message reply channel; TypeScript's `Transport.send` is a method call that can reject. Both fail closed; both are visible. |
 | Unexpected-exception shape | `ExceptionGroup` (task group) | the thrown value | anyio task groups always wrap. Callers already saw this — `mcp_re_http_transport` runs the pump in a task group. |
 
-### Not covered — public shutdown is UNTESTED and UNDECIDED
+### Shutdown — decided and covered (#421)
 
-**Shutdown is release-critical and unresolved ([#421](https://github.com/matssun/mcp-re/issues/421)).**
-Neither SDK has a specified shutdown contract; what each does today is an accident of its
-seam, not a decision, and the two differ. Measured, not inferred:
+`close()` is **abortive**, matching the upstream client's rejection of pending requests. It
+makes **no claim that already-dispatched remote work has stopped**: the server may have
+received the request and acted on it. Only that this client will not process an answer.
 
-| Observed | Python | TypeScript |
+| Contract | Python | TypeScript |
 | --- | --- | --- |
-| In-flight exchange when the caller shuts down | **cancelled, not drained** — `mcp_re_http_transport` calls `tg.cancel_scope.cancel()` on exit, so a poster that has started never completes | the in-flight `send()` **runs to completion** and still calls `onmessage` |
-| Callback ordering | n/a (stream pair, no `onclose`) | **`onmessage` fires *after* `onclose`** — observed: `poster-hit \| onclose \| onmessage` |
-| Work submitted after close | n/a | **still reaches the `poster`** — `close()` sets `#started = false`, but `send()` never reads it |
+| Explicit lifecycle | structural — the `async with` block **is** the state | `TransportState` `NEW → OPEN → CLOSING → CLOSED`, one-way |
+| Send before start / after close fails | streams do not exist / are closed → `ClosedResourceError` \| `BrokenResourceError` | `ConnectionClosed` |
+| Close idempotent, refuses new work at once | structural (the block exits once) | `close()` returns early when already CLOSING/CLOSED |
+| In-flight local requests fail connection-closed | cancelled scope | in-flight `send()` rejects `ConnectionClosed` |
+| Poster work cancelled where possible | anyio cancel scope | `AbortController` raced against the exchange |
+| No message callback after the close callback | streams closed — nothing can be delivered | `onmessage` suppressed unless state is OPEN |
+| Abandoned correlation cleared | `expire_before(_FAR_FUTURE)` on exit | `expireBefore(MAX_SAFE_INTEGER)` in `close()` |
 
-Do not read the inner `_pump` as evidence of draining: its task group does close inside
-the streams, so an exchange can deliver its reply *when the write stream ends normally* —
-but the public context manager cancels that scope on exit, which is the path callers
-actually take. (An earlier revision of this document made exactly that mistake:
-generalising the inner nesting into a claim about the public API.)
-
-The intended contract, to be ratified in #421:
-
-- explicit `NEW → OPEN → CLOSING → CLOSED` state;
-- send before start or after close **fails**;
-- close is **idempotent** and refuses new work immediately;
-- queued and in-flight local requests fail with a **connection-closed** condition;
-- poster work is cancelled where possible;
-- **no message callback after the close callback**;
-- abandoned correlation state is cleared;
-- **no claim that already-dispatched remote work has stopped.**
-
-Normal `close()` is **abortive**, matching upstream client behaviour of rejecting pending
-requests. A separately named bounded drain may be considered later.
+The lifecycle asymmetry is seam-forced and deliberate: Python's public surface is a context
+manager, so the state is the block — an enum nobody can observe would be theatre.
+TypeScript's `Transport` is a long-lived object the caller holds across `start`/`close`, so
+it needs the explicit state.
 
 ## Running both gates
 

@@ -60,6 +60,7 @@ __all__ = [
     "BindingRequestContext",
     "OpaqueBytesProvider",
     # Lazy — these need the upstream `mcp` extra (see __getattr__ below).
+    "ConnectionClosed",
     "HttpReply",
     "McpReConfig",
     "NotificationsUnsupported",
@@ -72,6 +73,7 @@ __all__ = [
 #: bindings must be able to `import mcp_re_sdk` without installing `mcp`.
 _TRANSPORT_EXPORTS = frozenset(
     {
+        "ConnectionClosed",
         "HttpReply",
         "McpReConfig",
         "NotificationsUnsupported",

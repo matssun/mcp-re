@@ -94,6 +94,35 @@ export class UnsafeConfigurationRefused extends McpReSdkError {
   }
 }
 
+/**
+ * The transport's lifecycle state (#421).
+ *
+ * Explicit because the alternative is a boolean that cannot express "closing": work must
+ * be refused the instant close begins, not once it finishes.
+ */
+export enum TransportState {
+  New = "NEW",
+  Open = "OPEN",
+  Closing = "CLOSING",
+  Closed = "CLOSED",
+}
+
+/**
+ * The transport is not open for work: it has not started, or it is closing/closed.
+ *
+ * Also what queued and in-flight local requests fail with when `close()` aborts them.
+ *
+ * **This says nothing about the server.** Cancelling a local `poster` call does not mean
+ * the request never arrived or that already-dispatched remote work has stopped — only
+ * that this client will not process an answer to it.
+ */
+export class ConnectionClosed extends McpReSdkError {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "ConnectionClosed";
+  }
+}
+
 /** What a {@link Poster} returns: the raw HTTP response, unparsed and unverified. */
 export interface HttpReply {
   status: number;
@@ -266,7 +295,9 @@ export class McpReHttpTransport implements Transport {
   readonly #poster: Poster;
   readonly #correlation = new CorrelationStore();
   readonly #slots: Semaphore;
-  #started = false;
+  #state: TransportState = TransportState.New;
+  /** Aborts in-flight exchanges when close() begins. */
+  #abort = new AbortController();
 
   constructor(config: McpReConfig, poster: Poster) {
     // Validated where the value first enters SDK-owned code — `McpReConfig` is a plain
@@ -290,11 +321,24 @@ export class McpReHttpTransport implements Transport {
     return this.#config.clock ?? defaultClock;
   }
 
+  /** The lifecycle state (#421). */
+  get state(): TransportState {
+    return this.#state;
+  }
+
+  /** Outstanding correlation entries. Observable so "close clears it" is testable. */
+  get pendingCorrelations(): number {
+    return this.#correlation.size;
+  }
+
   async start(): Promise<void> {
-    if (this.#started) {
+    if (this.#state !== TransportState.New) {
       // The MCP SDK's own transports treat a double start as a defect; a second start
       // would sign under a policy that was already accepted, hiding the first one.
-      throw new McpReSdkError("McpReHttpTransport is already started");
+      throw new McpReSdkError(
+        `McpReHttpTransport cannot start from state ${this.#state}; a transport is ` +
+          `single-use and start() is not a reset`,
+      );
     }
     this.#config.policy?.check(this.#config.signer);
     if (this.#config.policy?.requireNonExporting && this.#config.unsafeDropNotifications) {
@@ -307,10 +351,17 @@ export class McpReHttpTransport implements Transport {
       );
     }
     this.#config.authorizationPolicy?.check(this.#config.authorization ?? []);
-    this.#started = true;
+    this.#state = TransportState.Open;
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
+    // Refused the instant close begins, not once it finishes: a signed request must never
+    // leave a transport the caller has already torn down (#421).
+    if (this.#state !== TransportState.Open) {
+      throw new ConnectionClosed(
+        `McpReHttpTransport is ${this.#state}, not OPEN; it accepts no work`,
+      );
+    }
     if (!("method" in message) || !("id" in message)) {
       const method = "method" in message ? message.method : "<unknown>";
       if (!this.#config.unsafeDropNotifications) {
@@ -331,8 +382,17 @@ export class McpReHttpTransport implements Transport {
     let reply: JSONRPCMessage;
     await this.#slots.acquire();
     try {
-      reply = await this.#exchange(request);
+      // Race the exchange against close(): an aborted exchange fails its request with
+      // ConnectionClosed rather than waiting out a poster the caller no longer wants.
+      reply = await Promise.race([this.#exchange(request), this.#aborted()]);
     } catch (e) {
+      if (e instanceof ConnectionClosed) {
+        // Not a wire outcome: the local transport went away. The upstream Client already
+        // rejects its pending requests from onclose, so this must not be laundered into a
+        // JSON-RPC error that claims the peer said something. The finally below releases
+        // the slot — releasing here too would inflate the pool.
+        throw e;
+      }
       if (e instanceof McpReError) {
         reply = errorMessage(request.id, e.wireCode);
       } else if (e instanceof McpReSdkError) {
@@ -350,11 +410,42 @@ export class McpReHttpTransport implements Transport {
       // would shrink the pool permanently, and enough of them would deadlock the session.
       this.#slots.release();
     }
-    this.onmessage?.(reply);
+    // No message callback after the close callback: delivering to an application that
+    // believes it has disconnected is worse than dropping (#421).
+    if (this.#state === TransportState.Open) this.onmessage?.(reply);
   }
 
+  /** Rejects with ConnectionClosed as soon as close() begins. */
+  #aborted(): Promise<never> {
+    return new Promise((_resolve, reject) => {
+      const signal = this.#abort.signal;
+      if (signal.aborted) return reject(signal.reason);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  }
+
+  /**
+   * Close the transport: abortive, idempotent (#421).
+   *
+   * New work is refused immediately, in-flight exchanges are aborted and fail with
+   * {@link ConnectionClosed}, and abandoned correlation state is cleared. `onmessage`
+   * never fires after `onclose` — a message delivered to an application that believes it
+   * has disconnected is worse than a dropped one.
+   *
+   * **Abortive, matching the upstream client's rejection of pending requests.** It makes
+   * no claim that already-dispatched remote work has stopped: the server may have
+   * received the request and acted on it. Only that this client will not process an
+   * answer.
+   */
   async close(): Promise<void> {
-    this.#started = false;
+    if (this.#state === TransportState.Closing || this.#state === TransportState.Closed) {
+      return; // idempotent
+    }
+    this.#state = TransportState.Closing;
+    this.#abort.abort(new ConnectionClosed("the transport was closed"));
+    // Abandoned correlation entries would otherwise outlive the transport that owns them.
+    this.#correlation.expireBefore(Number.MAX_SAFE_INTEGER);
+    this.#state = TransportState.Closed;
     this.onclose?.();
   }
 
