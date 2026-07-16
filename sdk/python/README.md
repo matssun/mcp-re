@@ -118,9 +118,14 @@ drifting from the core or from the other language.
 - **The transport adapter** (`McpReHttpTransport` / `connect_mtls_http`) — the last
   remaining piece of the ADR-MCPS-044 client obligation. Until it lands these are SDK
   bindings, not a transport adapter. See the status table above.
-- **Pin upstream `mcp`.** The package is mid-refactor (the v1 session layer was
-  removed; message types moved to `mcp_types`). Pin to an exact version once the
-  transport seam stabilizes.
+- **Pin upstream `mcp`.** This is the *upstream* MCP Python SDK (a third-party
+  dependency), not MCP-RE. It is declared `mcp>=1.16` with no upper bound and currently
+  resolves to **1.28.1** — the transport adapter binds to that package's seam, so an
+  unpinned major can move it underneath us. Pin an exact version with the adapter (#413).
 - **Transport-as-dispatcher rework** upstream may move the integration seam.
+
+  (An earlier note here claimed the package was "mid-refactor — the v1 session layer was
+  removed; message types moved to `mcp_types`". That is stale: at 1.28.1 `mcp.types` and
+  `mcp.ClientSession` both exist and `mcp_types` does not.)
 
 See ADR-MCPS-044 §SDK wrap-or-fork rule and issue #199.
