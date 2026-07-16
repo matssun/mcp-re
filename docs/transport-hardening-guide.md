@@ -141,27 +141,45 @@ Honest limits of the durable cache:
   can reopen a replay window. Mitigate by keeping freshness windows short and not
   restoring the file from stale snapshots.
 
-## Max client-certificate lifetime — the v1 revocation posture
+## Certificate revocation — three planes, and the short-lived-cert baseline
 
 Source: `ServerOptions::max_client_cert_lifetime` in [`tls.rs`](../mcp-re-proxy/src/tls.rs).
 
-MCP-RE Core defines **no online revocation** — no CRL, no OCSP, no transparency
-log (per the spec's trust-resolution section and ADR-MCPS-007). With no online
-revocation, a compromised client certificate is usable until it expires. The v1
-posture is therefore to ENFORCE **short-lived** client certs: the proxy rejects a
-certificate whose validity span (`not_after - not_before`) exceeds the limit, or
-whose validity cannot be parsed, with `mcp-re.transport_binding_failed`.
+Revocation lives on three separate planes; do not conflate them:
+
+1. **TLS/mTLS certificate revocation** — a transport-hardening concern. For
+   deployments that use mTLS identity, the proxy supports **online OCSP/CRL**
+   (fail-closed by default since v0.12.0), alongside the short-lived-cert ceiling
+   below.
+2. **MCP-RE signer/key revocation** — the runtime-evidence plane. MCP-RE Core / the
+   HTTP profile does **not** use OCSP; it verifies RFC 9421 signatures, the RFC 9530
+   `Content-Digest`, actor trust resolution, artifact bindings, replay, response
+   binding, and continuation binding. A compromised or rotated *actor signing key* is
+   revoked through the **trust resolver / key policy** (per the spec's
+   trust-resolution section and ADR-MCPS-007), never a certificate mechanism.
+3. **OAuth/token revocation** — a separate authorization-server / introspection /
+   token-policy concern, outside MCP-RE. MCP-RE **binds** an authorization artifact;
+   it does not interpret or revoke it.
+
+Where an ingress or attestor performs mTLS revocation checking, that result may be
+recorded or bound as ingress/attestor evidence (Mode C) — but it is transport
+evidence, not part of the MCP-RE object-evidence protocol.
+
+**The short-lived-cert baseline (plane 1).** Independent of OCSP/CRL, the proxy
+enforces **short-lived** client certs: it rejects a certificate whose validity span
+(`not_after - not_before`) exceeds the limit, or whose validity cannot be parsed,
+with `mcp-re.transport_binding_failed`.
 
 ```text
 --max-client-cert-lifetime 1h    # default; also accepts 30m, 3600, none
 ```
 
-`none`/`0` disables the check (strongly discouraged — the CLI warns). The
-exposure window of a compromised transport credential is bounded by this value;
-the end-to-end request-authority exposure window is
-`cert_lifetime + resolver_cache_ttl + request_lifetime + max_clock_skew`. Online
-CRL/OCSP (fail-closed by default since v0.12.0) and HSM/KMS-backed key sources are
-shipped behind their build features — see the deployment profiles in the README.
+`none`/`0` disables the check (strongly discouraged — the CLI warns). The exposure
+window of a compromised transport credential is bounded by this value; the
+end-to-end request-authority exposure window is
+`cert_lifetime + resolver_cache_ttl + request_lifetime + max_clock_skew`. HSM/KMS-backed
+key sources are shipped behind their build features — see the deployment profiles in
+the README.
 
 ## Production claim
 

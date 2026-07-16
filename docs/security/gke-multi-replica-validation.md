@@ -59,22 +59,22 @@ signed mTLS POST per request; MCP-RE owns no stdio client) using its proof flags
 continuation opened on one replica and answer it on another). All ports resolve
 from `config/ports.toml` (the reserved 8600–8699 band); nothing is hardcoded.
 
-## The physical step (HITL)
+## The physical step — the reproduction runbook
 
-Provisioning a GKE cluster + the TLS/trust Secret and running the four proofs is
-the live-infra action only the operator can take (authenticated project, billing).
-Everything the run needs — chart, guardrails, the four proof procedures, teardown —
-is authored here; the run itself is what remains.
+Provisioning a GKE cluster + the TLS/trust Secret and running the four proofs is a
+live-infra action (authenticated project, billing). This run **was performed** — the
+v0.11 fleet proof and the v0.12.1 KMS-via-Workload-Identity run — and everything it
+needs (chart, guardrails, the four proof procedures, teardown) is authored here, so
+this remains the reproduction runbook.
 
-## What a green run unlocks (MCPS-91)
+## What the green run unlocked (MCPS-91)
 
-The single-node non-claim in [`docs/PROJECT_STATUS.md`](../PROJECT_STATUS.md) is
-currently lifted **conditionally**: the fleet posture proves cross-replica replay +
-trust coherence in-process, but full retirement is gated on (a) the dedicated
-MRT-survives-replica-switch proof (MCPS-82) and (b) this live multi-node run.
-
-On a green run of `gke-multi-replica-validation.sh` (all four proofs pass, with the
-run's output attached as evidence), retire the non-claim by updating
-`docs/PROJECT_STATUS.md`: move the "fully retired single-node ceiling" bullet out of
-**Not yet claimed** and record the live-cluster evidence. **Do not** retire it before
-that evidence exists — the claim boundary must track reality, not intent.
+The single-node ceiling in [`docs/PROJECT_STATUS.md`](../PROJECT_STATUS.md) is retired
+**at the declared shared, quorum-durable replay tier**: both conditions are discharged —
+the dedicated MRT-survives-replica-switch proof (MCPS-82) and the live multi-node GKE
+run (MCPS-90, v0.11). The retirement is bounded to that declared tier — it validates the
+exercised GKE deployment shape, not a universal production SLO or a blanket zero-drop
+guarantee across topologies (`--fleet` still fails closed on a node-local cache). To
+re-verify, run `gke-multi-replica-validation.sh` (all four proofs; Proof 4's residual is
+noted above) and attach the run's output as evidence. The claim boundary tracks reality,
+not intent — do not broaden it beyond the declared tier without new evidence.
