@@ -34,3 +34,5 @@ export {
   SigningDevice,
 } from "./custody.js";
 export type { SignRequestArgs } from "./custody.js";
+export { ContinuationHandles, CorrelationStore } from "./correlation.js";
+export type { PendingRequest, RecordArgs } from "./correlation.js";

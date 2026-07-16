@@ -14,7 +14,7 @@ signed requests and verified responses, added without changing application code.
 > | Custody classes (`Signer` / `SignerPolicy` / `SigningDevice`) incl. non-exporting | **done** |
 > | ADR-MCPS-047 continuation (answer leg) — `sign_request(..., cont_*)` / `verify_response().request_state` | **done** |
 > | Cross-language parity gate vs the frozen oracle | **done** |
-> | In-flight correlation (`CorrelationStore`) | **not implemented** |
+> | In-flight correlation (`CorrelationStore`) — fail-closed on unbound / late / duplicate responses | **done** |
 > | Authorization-binding providers (`opaque-bytes` / `authz-system-reference`) | **not implemented** — the DPoP token is currently the only binding |
 > | Transport adapter (`McpReHttpTransport` / `connect_mtls_http`) | **not implemented** |
 > | Nonce/freshness generation | **caller-supplied** |
@@ -88,9 +88,11 @@ sdk/python/
   python/mcp_re_sdk/
     __init__.py          # public surface
     custody.py           # CustodyClass / Signer / SignerPolicy / SigningDevice / McpReError
+    correlation.py       # CorrelationStore / PendingRequest / ContinuationHandles
   tests/
     test_smoke.py        # the installed wheel stands alone (native _core loads, signing works)
     test_custody.py      # the two custody classes + the hardening policy, fail-closed
+    test_correlation.py  # in-flight correlation, fail-closed on unbound/late/duplicate
     test_parity.py       # the frozen cross-language oracle (../fixtures/parity_vectors.json)
 ```
 
@@ -111,9 +113,9 @@ drifting from the core or from the other language.
 
 ## Known open work
 
-- **The transport adapter** (`McpReHttpTransport` / `connect_mtls_http`), in-flight
-  correlation, and the authorization-binding providers — see the status table above.
-  These are the remainder of the ADR-MCPS-044 client obligation.
+- **The transport adapter** (`McpReHttpTransport` / `connect_mtls_http`) and the
+  authorization-binding providers — see the status table above. These are the remainder
+  of the ADR-MCPS-044 client obligation.
 - **Pin upstream `mcp`.** The package is mid-refactor (the v1 session layer was
   removed; message types moved to `mcp_types`). Pin to an exact version once the
   transport seam stabilizes.

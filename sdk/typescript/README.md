@@ -14,7 +14,7 @@ signed requests and verified responses, added without changing application code.
 > | Custody classes (`Signer` / `SignerPolicy` / `SigningDevice`) incl. non-exporting | **done** |
 > | ADR-MCPS-047 continuation (answer leg) — `signRequest(..., cont*)` / `verifyResponse().requestState` | **done** |
 > | Cross-language parity gate vs the frozen oracle | **done** |
-> | In-flight correlation (`CorrelationStore`) | **not implemented** |
+> | In-flight correlation (`CorrelationStore`) — fail-closed on unbound / late / duplicate responses | **done** |
 > | Authorization-binding providers (`opaque-bytes` / `authz-system-reference`) | **not implemented** — the DPoP token is currently the only binding |
 > | Transport adapter (`McpReHttpTransport` / `connectMtlsHttp`) | **not implemented** |
 > | Nonce/freshness generation | **caller-supplied** |
@@ -135,9 +135,11 @@ sdk/typescript/
     lib.rs               # the napi binding (the exact analog of sdk/python/src/lib.rs)
     index.ts             # public surface (re-exports the native core + the modules)
     custody.ts           # CustodyClass / Signer / SignerPolicy / SigningDevice / McpReError
+    correlation.ts       # CorrelationStore / PendingRequest / ContinuationHandles
   test/
     smoke.test.ts        # the built package stands alone (native addon loads, signing works)
     custody.test.ts      # the two custody classes + the hardening policy, fail-closed
+    correlation.test.ts  # in-flight correlation, fail-closed on unbound/late/duplicate
     parity.test.ts       # the frozen cross-language oracle (../../fixtures/parity_vectors.json)
 ```
 
