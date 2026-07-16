@@ -289,6 +289,18 @@ jobs:
       - name: Build the release wheel
         run: maturin build --release --out dist
 
+      - name: Regenerated parity oracle must match the committed one
+        # The frozen cross-language oracle (sdk/fixtures/parity_vectors.json) is what
+        # pins the Python and TypeScript bindings to the same bytes. If regenerating it
+        # changes anything, a binding drifted from the core — fail rather than ship.
+        working-directory: ${{ github.workspace }}
+        run: |
+          python -m venv /tmp/oracle
+          /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl 2>/dev/null \
+            || /tmp/oracle/bin/pip install --quiet sdk/python/dist/*.whl
+          /tmp/oracle/bin/python tools/gen_sdk_parity_fixture.py
+          git diff --exit-code -- sdk/fixtures/parity_vectors.json
+
       # Clean-env smoke install: a fresh venv gets ONLY the built wheel plus the
       # upstream MCP SDK + pytest — never an editable install and never the
       # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
@@ -298,15 +310,17 @@ jobs:
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
-          /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8"
+          /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8" "pytest-cov>=5"
           /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
       # Run the SDK suite against the installed wheel from the repo root so the
-      # source package cannot shadow it. The e2e/mtls tests self-skip (no built
-      # workspace binaries in this Bazel-free lane); the unit surface runs.
-      - name: pytest (installed wheel; e2e self-skip without binaries)
+      # source package cannot shadow it. Coverage is gated at the repo-wide 90% bar
+      # by [tool.coverage.report] fail_under in sdk/python/pyproject.toml.
+      - name: pytest + coverage gate (installed wheel)
         working-directory: ${{ github.workspace }}
-        run: /tmp/venv/bin/python -m pytest sdk/python/tests -q
+        run: |
+          /tmp/venv/bin/python -m pytest sdk/python/tests -q \
+            --cov --cov-config=sdk/python/pyproject.toml --cov-report=term-missing
 
   sdk-typescript:
     name: downloader — TypeScript napi package (no Bazel)
@@ -337,8 +351,10 @@ jobs:
       - name: Build native addon + TypeScript
         run: npm run build
 
-      - name: Test (vitest; live-transport tests self-skip without binaries)
-        run: npx vitest run
+      # Coverage is gated at the repo-wide 90% bar by the `thresholds` block in
+      # sdk/typescript/vitest.config.ts; the run fails below it.
+      - name: Test + coverage gate (vitest)
+        run: npx vitest run --coverage
 
       # Clean-env smoke install: pack the tarball exactly as published, install it
       # into an EMPTY project (no dev deps, no workspace), and require it — the

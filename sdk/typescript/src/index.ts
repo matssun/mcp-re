@@ -16,7 +16,9 @@
 export {
   coreVersion,
   profileTag,
+  signPreimage,
   signRequest,
+  signRequestWithSigner,
   verifyResponse,
 } from "../native/binding.js";
 export type {
@@ -24,3 +26,28 @@ export type {
   SignedRequestJs,
   VerifyResultJs,
 } from "../native/binding.js";
+export {
+  CustodyClass,
+  McpReError,
+  McpReSdkError,
+  Signer,
+  SignerPolicy,
+  SignerUnavailable,
+  SigningDevice,
+} from "./custody.js";
+export type { SignRequestArgs } from "./custody.js";
+export { ContinuationHandles, CorrelationStore } from "./correlation.js";
+export type { PendingRequest, RecordArgs } from "./correlation.js";
+export {
+  ARTIFACT_TYPES,
+  AuthorizationBindingPolicy,
+  AuthzSystemReferenceProvider,
+  OpaqueBytesProvider,
+  bindingsJson,
+} from "./authorization.js";
+export type {
+  ArtifactType,
+  AuthorizationBindingProvider,
+  BindingRequestContext,
+  BindingSpec,
+} from "./authorization.js";

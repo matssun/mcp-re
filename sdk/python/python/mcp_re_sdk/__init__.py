@@ -16,23 +16,61 @@ exposed through the ``_core`` PyO3 extension (built by maturin).
 """
 
 from . import _core  # native extension (mcp_re_sdk._core)
+from .authorization import (
+    AuthorizationBindingPolicy,
+    AuthorizationBindingProvider,
+    AuthzSystemReferenceProvider,
+    BindingRequestContext,
+    OpaqueBytesProvider,
+)
+from .correlation import ContinuationHandles, CorrelationStore, PendingRequest
+from .custody import (
+    CustodyClass,
+    McpReError,
+    McpReSdkError,
+    Signer,
+    SignerPolicy,
+    SignerUnavailable,
+    SigningDevice,
+)
 
 __version__ = "0.12.1"
 __all__ = [
     "core_version",
     "profile_tag",
+    "sign_preimage",
     "sign_request",
+    "sign_request_with_signer",
     "verify_response",
     "SignedRequest",
     "VerifyResult",
+    "CustodyClass",
+    "McpReError",
+    "McpReSdkError",
+    "SignerUnavailable",
+    "Signer",
+    "SignerPolicy",
+    "SigningDevice",
+    "ContinuationHandles",
+    "CorrelationStore",
+    "PendingRequest",
+    "AuthorizationBindingPolicy",
+    "AuthorizationBindingProvider",
+    "AuthzSystemReferenceProvider",
+    "BindingRequestContext",
+    "OpaqueBytesProvider",
 ]
 
 #: The audited SDK core version string.
 core_version = _core.core_version
 #: The RFC 9421 profile tag the signature is emitted/verified under.
 profile_tag = _core.profile_tag
+#: Sign exact preimage bytes with a raw seed (the primitive behind SigningDevice).
+sign_preimage = _core.sign_preimage
 #: Sign an MCP request as an RFC 9421 + RFC 9530 message (returns a SignedRequest).
 sign_request = _core.sign_request
+#: Sign an MCP request under non-exporting custody: the SDK holds only a sign callback.
+sign_request_with_signer = _core.sign_request_with_signer
 #: Verify a signed RFC 9421 response bound to the request the client sent.
 verify_response = _core.verify_response
 #: A signed RFC 9421 request: ``.method`` / ``.target_uri`` / ``.headers`` /

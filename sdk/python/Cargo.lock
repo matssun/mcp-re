@@ -210,6 +210,7 @@ dependencies = [
  "mcp-re-client-core",
  "mcp-re-core",
  "pyo3",
+ "serde",
  "serde_json",
 ]
 

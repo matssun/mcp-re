@@ -33,6 +33,7 @@
     "@modelcontextprotocol/sdk": "^1.16.0",
     "@napi-rs/cli": "^3.7.2",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"
   }

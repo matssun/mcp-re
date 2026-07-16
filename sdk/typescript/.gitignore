@@ -10,3 +10,7 @@ dist/
 # Node
 node_modules/
 npm-debug.log*
+
+# Coverage artifacts (the 90% gate reports; never committed).
+coverage/
+lcov.info

@@ -22,14 +22,63 @@ export interface SignedRequestJs {
   evidenceDigestValue: string
 }
 
+/**
+ * Sign exact preimage bytes with a raw seed, returning the 64-byte detached Ed25519
+ * signature — the primitive a `SigningDevice` (the HSM/KMS stand-in) is built on.
+ *
+ * This is the same operation the software signing path performs internally, so a
+ * device-delegated signature is byte-identical to the in-process one.
+ */
+export declare function signPreimage(seed: Buffer, preimage: Buffer): Buffer
+
 /** Sign an MCP request as an RFC 9421 + RFC 9530 message. */
-export declare function signRequest(seed: Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number): SignedRequestJs
+export declare function signRequest(seed: Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null, bindingsJson?: string | undefined | null): SignedRequestJs
 
-/** Verify a signed RFC 9421 response bound to the request the client sent. */
-export declare function verifyResponse(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, reqEvidenceDigestAlg: string, reqEvidenceDigestValue: string, serverKeyId: string, serverPubkeyB64Url: string, serverRole: string, serverTrustDomain: string, serverSubject: string, now: number): VerifyResultJs
+/**
+ * Sign an MCP request under NON-EXPORTING custody: the private key never enters the
+ * SDK (ADR-MCPS-044 §Compliance).
+ *
+ * `signCallback` is the only thing held — `(preimage: Buffer) => Buffer` — a KMS/HSM
+ * client call in production, invoked synchronously on the Node main thread. The SDK
+ * composes the RFC 9421 signature base, hands those exact bytes to the device, and
+ * takes back the detached Ed25519 signature; it never sees key material.
+ *
+ * The produced evidence is byte-identical to the software path for the same inputs —
+ * the key has only moved behind the device. A device that cannot sign, or that
+ * returns anything other than 64 signature bytes, fails closed as
+ * `mcp-re.invalid_signature`.
+ */
+export declare function signRequestWithSigner(signCallback: (arg: Buffer) => Buffer, keyId: string, idJson: string, method: string, paramsJson: string, targetUri: string, audienceId: string, route: string | undefined | null, dpopToken: string, nonce: string, created: number, expires: number, contPrevAlg?: string | undefined | null, contPrevValue?: string | undefined | null, contIrrAlg?: string | undefined | null, contIrrValue?: string | undefined | null, contRequestState?: string | undefined | null, bindingsJson?: string | undefined | null): SignedRequestJs
 
-/** The outcome of verifying a signed RFC 9421 response. */
+/** Verify a delegated-required RFC 9421 response bound to the request the client sent. */
+export declare function verifyResponse(status: number, respHeaders: Array<HttpHeader>, respBody: Buffer, reqMethod: string, reqTargetUri: string, reqHeaders: Array<HttpHeader>, reqBody: Buffer, reqEvidenceDigestAlg: string, reqEvidenceDigestValue: string, issuerKeyId: string, issuerPubkeyB64Url: string, issuerRole: string, issuerTrustDomain: string, issuerSubject: string, verifierAudiences: Array<string>, expectedAudienceHash: string, acceptedEpochs: Array<string>, maxClockSkew: number, revokedIdentifiers: Array<string>, now: number): VerifyResultJs
+
+/** The outcome of verifying a delegated-required RFC 9421 response. */
 export interface VerifyResultJs {
   ok: boolean
   serverKeyid: string
+  /**
+   * `"success"` for an accepted answer; `"rejection"` for a verified rejection
+   * receipt — genuine evidence, but NOT an acceptance.
+   */
+  outcome: string
+  /** The wire code carried by a verified rejection receipt; absent on success. */
+  wireCode?: string
+  /** Whether a rejection receipt is bound to this client's request. */
+  bound: boolean
+  /**
+   * The verified response's evidence-handle digest algorithm — the
+   * `input_required_response_evidence` handle an MRTR answer leg binds to
+   * (ADR-MCPS-047). Read from the VERIFIED response only.
+   */
+  respEvidenceDigestAlg: string
+  /** The verified response's evidence-handle digest value (base64url, no pad). */
+  respEvidenceDigestValue: string
+  /**
+   * `result.requestState` (a string) from the verified response body IFF it is an
+   * `InputRequiredResult` (`result.resultType == "input_required"`); else absent.
+   * The opaque MRTR state the answer leg re-presents. Read only after the response
+   * verified as genuine evidence.
+   */
+  requestState?: string
 }

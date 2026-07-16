@@ -23,3 +23,6 @@
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Coverage artifact from running the SDK suite at the repo root.
+.coverage
