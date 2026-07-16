@@ -589,5 +589,7 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.coreVersion = nativeBinding.coreVersion
 module.exports.profileTag = nativeBinding.profileTag
+module.exports.signPreimage = nativeBinding.signPreimage
 module.exports.signRequest = nativeBinding.signRequest
+module.exports.signRequestWithSigner = nativeBinding.signRequestWithSigner
 module.exports.verifyResponse = nativeBinding.verifyResponse

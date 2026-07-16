@@ -16,7 +16,9 @@
 export {
   coreVersion,
   profileTag,
+  signPreimage,
   signRequest,
+  signRequestWithSigner,
   verifyResponse,
 } from "../native/binding.js";
 export type {
@@ -24,3 +26,11 @@ export type {
   SignedRequestJs,
   VerifyResultJs,
 } from "../native/binding.js";
+export {
+  CustodyClass,
+  McpReError,
+  Signer,
+  SignerPolicy,
+  SigningDevice,
+} from "./custody.js";
+export type { SignRequestArgs } from "./custody.js";

@@ -22,7 +22,24 @@ dependencies = []
 # the core. TODO(#199): pin to an EXACT version once the transport seam is stable.
 mcp = ["mcp>=1.16"]
 # dev pulls in `mcp` (and its `anyio`) so the transport-adapter tests run.
-dev = ["pytest>=8", "maturin>=1.5,<2.0", "mcp>=1.16"]
+dev = ["pytest>=8", "pytest-cov>=5", "maturin>=1.5,<2.0", "mcp>=1.16"]
+
+[tool.coverage.run]
+# Only the hand-written Python layer is measured. The native `_core` extension is
+# Rust behind PyO3 — coverage.py cannot see it, and the Rust it binds is covered by
+# the cargo suites in the root workspace.
+source = ["mcp_re_sdk"]
+omit = ["*/_core*"]
+
+[tool.coverage.report]
+# The repo-wide bar. Below it, `pytest --cov` exits non-zero.
+fail_under = 90
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
 
 [tool.maturin]
 # Mixed Rust/Python layout: Python sources under python/, native ext built from

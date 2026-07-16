@@ -3,75 +3,43 @@
 Runtime-evidence security for the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk):
 signed requests and verified responses, added without changing application code.
 
-> **Status (issue #199, ADR-MCPS-044).** The full client obligation is bound and
-> tested over the audited `mcp-re-client-core` via PyO3: request signing
-> (`sign_request`), custody/signer policy (`Signer` / `SignerPolicy`), response
-> verification (`verify_response` / `TrustResolver`), in-flight correlation
-> (`CorrelationStore`), and the **transport adapter** (`McpReHttpTransport` /
-> `connect_mtls_http`) that signs/verifies at the byte boundary so `mcp.ClientSession`
-> speaks plain MCP. MCP-RE is **HTTP-profile only** — one signed mTLS POST per request
-> against the production `mcp-re-proxy`; a stdio-only MCP server is fronted by an
-> external plain-MCP adapter (e.g. FastMCP) that speaks HTTP to the proxy. All tests
-> pass, all parity against independent `mcp-re-client-core` oracle vectors — including
-> **two live cross-process e2es against the real Rust `mcp-re-proxy`**:
-> 1. **mTLS/HTTP (raw request)** — the SDK signs a `read_file`, opens one mTLS
->    connection, and `POST`s it to the **real production `mcp-re-proxy`** fronting an
->    **HTTP inner MCP backend** (`--inner-http-url`); the production-signed response is
->    verified + correlated back to a plain MCP result.
-> 2. **mTLS/HTTP (full `ClientSession`)** — a real `mcp.ClientSession` runs
->    `initialize()` then `call_tool("read_file")` over `connect_mtls_http`, mapping
->    ClientSession's stream model onto the proxy's one-POST-per-connection wire.
->    `initialize` round-trips as a signed request; client→server notifications are
->    dropped (no fire-and-forget channel); a rejected response is delivered as a
->    JSON-RPC error correlated to the request id so the awaiting call raises rather
->    than hangs. Both have a fail-closed live negative.
+> **Status — partial (ADR-MCPS-044).** This SDK is **not yet a drop-in transport
+> adapter**. It binds the audited `mcp-re-client-core` over PyO3 and gives you the two
+> cryptographic halves of the client obligation, plus custody:
 >
-> **Multi-path inbound decode + server-initiated policy (done).** `streamable.py`
-> decodes all three streamable-HTTP inbound sites (direct JSON, POST-SSE,
-> standalone GET-SSE) to JSON-RPC payloads and routes EVERY one through the same
-> verification. Server-initiated messages (a server→client request/notification)
-> carry no `request_hash`, so the core cannot verify them and draft-02 defines no
-> evidence for this direction. **Strict MCP-RE is the client-initiated
-> request/response subset:** the inbound policy **fails closed** by default
-> (`mcp-re.missing_envelope` / `mcp-re.notification_forbidden`).
-> `allow_unverified_server_initiated` is a **degraded/migration opt-out only**
-> (delivered, audited as no-evidence) — never strict MCP-RE. A future v0.8 profile
-> (stateless multi-round-trip continuation) will fold request-associated elicitation
-> (`InputRequiredResult` → signed continuation) back into the strict request/response
-> profile; **arbitrary** server push stays out of scope and fails closed.
+> | Capability | State |
+> | --- | --- |
+> | Request signing (`sign_request`) — RFC 9421 + RFC 9530 | **done** |
+> | Delegated response verification (`verify_response`) — ADR-MCPRE-052 credential chain, revocation, trust epoch, audience | **done** |
+> | Custody classes (`Signer` / `SignerPolicy` / `SigningDevice`) incl. non-exporting | **done** |
+> | ADR-MCPS-047 continuation (answer leg) — `sign_request(..., cont_*)` / `verify_response().request_state` | **done** |
+> | Cross-language parity gate vs the frozen oracle | **done** |
+> | In-flight correlation (`CorrelationStore`) | **not implemented** |
+> | Authorization-binding providers (`opaque-bytes` / `authz-system-reference`) | **not implemented** — the DPoP token is currently the only binding |
+> | Transport adapter (`McpReHttpTransport` / `connect_mtls_http`) | **not implemented** |
+> | Nonce/freshness generation | **caller-supplied** |
 >
-> **Authorization-binding provider (done).** The signed request's
-> `authorization_binding.digest_value` is now computed by the audited core from the
-> ACTUAL artifact, not handed in as a constant. `authorization.py` mirrors
-> `mcp-re-client-core::authz`: `OpaqueBytesProvider` binds the exact decoded artifact
-> bytes (`base64url-no-pad(SHA-256(bytes))`, computed in Rust — checked against an
-> independent stdlib-SHA-256 oracle), `AuthzSystemReferenceProvider` binds an
-> external authz system's digest+reference, and `AuthorizationBindingPolicy` fails a
-> route closed to permitted binding types (`mcp-re.authorization_binding_type_unsupported`).
-> `McpReConfig.authorization` / `authorization_policy` wire a provider per request
-> (called with a real `BindingRequestContext`); the live mTLS `ClientSession` e2e
-> signs via `OpaqueBytesProvider` so the production proxy accepts a real-evidence
-> digest. The raw `binding_digest_*` kwargs remain as a documented dev/test shortcut.
+> Until the transport adapter lands you must drive the two calls yourself: sign, POST the
+> returned `.method` / `.target_uri` / `.headers` / `.body()` over your own mTLS client,
+> then verify the reply. `mcp.ClientSession` does **not** yet speak MCP-RE by construction
+> here — that is the ADR-MCPS-044 wrap-or-fork endpoint, and it is still open work.
 >
-> **Non-exporting custody (done).** `Signer.non_exporting(signer_id, key_id,
-> sign_callback)` is a signer whose private key NEVER enters the SDK — it holds only
-> a `preimage -> signature` callback (a KMS/HSM client call in production). Custody is
-> `NonExporting`, the only class `SignerPolicy.require_non_exporting()` accepts.
-> `SigningDevice.from_seed(...)` is the HSM/KMS stand-in: it encapsulates the key and
-> exposes ONLY `.sign(preimage)` (no getter). Proven both ways — the hardening
-> profile rejects software/dev-file keys (`mcp-re.actor_binding_failed`) and accepts
-> the device-delegated signer; the delegation is byte-identical to the direct
-> software path (same evidence, key just moved behind the device); a device that
-> can't sign fails closed; and a live mTLS test signs via the non-exporting signer
-> under the **production** hardening profile, accepted by the real `mcp-re-proxy`.
-> **Remaining:** an incremental SSE *streaming* transport (consuming events on a
-> long-lived connection — the decoder is the layer it plugs into) and pinning
-> upstream `mcp`.
+> MCP-RE is **HTTP-profile only** — one signed mTLS POST per request against the production
+> `mcp-re-proxy`; a stdio-only MCP server is fronted by an external plain-MCP adapter (e.g.
+> FastMCP) that speaks HTTP to the proxy.
 >
-> Transport/e2e tests need `mcp` (Python ≥ 3.10): `uv venv --python 3.12 .venv312`.
-> The mTLS e2es need `cargo build -p mcp-re-proxy` + cargo (to mint `DemoFixtures`
-> material); the inner MCP server is an in-process HTTP backend (`tests/_inner_backend.py`),
-> so no separate server binary is required. All skip cleanly if absent.
+> **Delegated-required.** `verify_response` implements the ADR-MCPRE-052 credential chain and
+> is the only response-verification mode: a direct-root-signed response is **rejected**. A
+> verified *rejection receipt* is genuine evidence but is NOT an acceptance — read
+> `.outcome` (`"success"` / `"rejection"`) and `.wire_code`, never `.ok` alone.
+>
+> **Non-exporting custody.** `Signer.non_exporting(signer_id, key_id, sign_callback)` holds
+> only a `preimage -> signature` callback (a KMS/HSM client call in production); the private
+> key never enters the SDK. Custody is `NON_EXPORTING`, the only class
+> `SignerPolicy.hardened()` accepts. `SigningDevice.from_seed(...)` is the HSM/KMS stand-in:
+> it encapsulates the key and exposes ONLY `.sign(preimage)` (no getter). The delegation is
+> byte-identical to the software path — the frozen parity oracle asserts exactly that — and a
+> device that cannot sign fails closed as `mcp-re.invalid_signature`.
 
 ## Why this exists, and why it's an *adapter*
 
@@ -87,10 +55,14 @@ exact-byte control is the transport itself. Per ADR-MCPS-044 this is the
 **transport-adapter** path (not a transparent wrapper): we ship our own
 implementation of the SDK's public `Transport` protocol.
 
+That adapter is the **target**, and is not built yet — the `McpReHttpTransport` row below
+is the design, not shipped code:
+
 ```
 application code
   -> mcp.ClientSession            plain MCP; unaware of MCP-RE
-  -> McpReHttpTransport (this SDK)  signs outbound bytes / verifies inbound bytes
+  -> McpReHttpTransport             TARGET — not implemented; today you call
+                                    sign_request / verify_response yourself
   -> mcp_re_sdk._core (PyO3)         the AUDITED mcp-re-client-core logic, in Rust
   -> mcp-re-proxy (HTTP profile)     one signed mTLS POST per request
 ```
@@ -110,16 +82,16 @@ a prebuilt `abi3` wheel and need no Rust toolchain.
 ```
 sdk/python/
   Cargo.toml             # PyO3 cdylib -> mcp_re_sdk._core; OWN workspace (separate from root)
-  src/lib.rs             # the binding (constants now; sign/verify/enforce next)
-  pyproject.toml         # maturin backend, mixed Rust/Python layout
+  src/lib.rs             # the binding: sign_request / sign_request_with_signer /
+                         #   verify_response (delegated) / sign_preimage
+  pyproject.toml         # maturin backend, mixed Rust/Python layout, coverage gate
   python/mcp_re_sdk/
     __init__.py          # public surface
-    transport.py         # sign_outbound / verify_inbound — the pipeline mirroring proxy.rs::handle
-    http_transport.py    # McpReHttpTransport — one signed mTLS POST per request
-    client.py            # connect_mtls_http() helper over ClientSession
+    custody.py           # CustodyClass / Signer / SignerPolicy / SigningDevice / McpReError
   tests/
-    test_parity.py       # byte-parity gate vs the Rust proxy (#199)
-    _inner_backend.py    # the in-process HTTP inner MCP backend the mTLS e2es front
+    test_smoke.py        # the installed wheel stands alone (native _core loads, signing works)
+    test_custody.py      # the two custody classes + the hardening policy, fail-closed
+    test_parity.py       # the frozen cross-language oracle (../fixtures/parity_vectors.json)
 ```
 
 ## Develop
@@ -127,25 +99,24 @@ sdk/python/
 ```sh
 cd sdk/python
 python -m venv .venv && . .venv/bin/activate
-pip install -U maturin pytest
+pip install -U maturin 'pytest>=8' 'pytest-cov>=5'
 maturin develop            # builds mcp_re_sdk._core against the in-repo Rust crates
-pytest                     # test_core_link runs; parity tests skip until impl
+pytest --cov               # the suite + the 90% coverage gate (fail_under in pyproject)
 ```
 
-## Known open work (from the spike)
+Both SDKs are pinned to one frozen oracle, `sdk/fixtures/parity_vectors.json`. Regenerate
+it with `tools/gen_sdk_parity_fixture.py` (against an installed wheel); CI fails if the
+regenerated bytes differ from the committed ones, which is what catches either binding
+drifting from the core or from the other language.
 
+## Known open work
+
+- **The transport adapter** (`McpReHttpTransport` / `connect_mtls_http`), in-flight
+  correlation, and the authorization-binding providers — see the status table above.
+  These are the remainder of the ADR-MCPS-044 client obligation.
 - **Pin upstream `mcp`.** The package is mid-refactor (the v1 session layer was
   removed; message types moved to `mcp_types`). Pin to an exact version once the
   transport seam stabilizes.
-- ~~**Streamable HTTP has three inbound decode sites** (direct JSON, POST-SSE,
-  standalone-GET SSE) — all must route through verification.~~ Done: `streamable.py`
-  (`decode_inbound` / `verify_inbound_messages`). Remaining is the incremental SSE
-  *streaming* transport that consumes a long-lived connection.
-- ~~**Server-initiated messages** (sampling / roots / notifications) aren't
-  responses to a correlated request, so the `request_hash` binding doesn't cover
-  them; the adapter needs an inbound policy for them.~~ Done: fail-closed inbound
-  policy (the core cannot verify them — no `request_hash`), opt-out via
-  `McpReConfig.allow_unverified_server_initiated`.
 - **Transport-as-dispatcher rework** upstream may move the integration seam.
 
 See ADR-MCPS-044 §SDK wrap-or-fork rule and issue #199.

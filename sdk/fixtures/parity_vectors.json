@@ -1,0 +1,192 @@
+{
+  "cases": {
+    "continuation_answer_leg": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYS0yNTYiLCJkaWdlc3RfdmFsdWUiOiJhWEp5TFdoaGJtUnNaUSJ9LCJwcmV2aW91c19yZXF1ZXN0X2V2aWRlbmNlIjp7ImRpZ2VzdF9hbGciOiJzaGEtMjU2IiwiZGlnZXN0X3ZhbHVlIjoiY0hKbGRpMW9ZVzVrYkdVIn0sInJlcXVlc3Rfc3RhdGVfZGlnZXN0Ijp7ImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJucTVfdnd1dHIzemd1MDJHSWd5MTZaOU5qdGpvcVE3TFFBWVEyVTZ6NjI4In0sInR5cGUiOiJtY3AtbXJ0In0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "pzbMApH4UULIiMNeg3SuD4yPdF9aaBmVywxwTREq23w",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:v84Obun2WoOIVgpN89tsm7USd54iwVaW9FyC1ziFTC4=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0003\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:/T5zTf5Ig8mT3It7CCfs48pDHz3611oaP/KxRu+2gVMXaVr/RistxLdzZpFSd9Wq+aGzrHK3ZkO7nOmJKcIqBw==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "cont_irr_alg": "sha-256",
+        "cont_irr_value": "aXJyLWhhbmRsZQ",
+        "cont_prev_alg": "sha-256",
+        "cont_prev_value": "cHJldi1oYW5kbGU",
+        "cont_request_state": "opaque-state-xyz",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0003",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
+    "non_exporting_tools_list": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "SAfSBhyOJOF_AmzwpJrb7e2u7GzXzMFSxwclFao19hM",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:/ZvV55wlB/hwxXsKJqql261f8HZrAFZg5cdBghnlQ1c=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:MjL9OkdJQwlD9/r7rxFI3UnVV4m5S5OLVtulWW9P6FU6GsoHoeQvnKd+S2IN/SGcwHrNEeKLN0Kp8xXOX3uSAg==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0001",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
+    "software_tools_call_routed": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJyb3V0ZSI6InJvdXRlLWEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoicmVxLTciLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnsicGF0aCI6Ii9ldGMvaG9zdHMifSwibmFtZSI6InJlYWRfZmlsZSJ9fQ==",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "7supGqcbK-fg6uRDEnylaFN3FXOn9dpDvsXGG7pq9Cg",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:pVaBrVAvMrAswlIhZAYIHJBZ3EhMgoRNYmqGfo0nYTw=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0002\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:NnRvaOoeHIT9PztY/w+FLTeYjny8pEVL5vXQXNAcCR/0ZYJF6k+NQipTWAIE67edPDgMya+vxCxcUoDTmD75DQ==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "\"req-7\"",
+        "key_id": "key-1",
+        "method": "tools/call",
+        "nonce": "nonce-parity-0002",
+        "params_json": "{\"name\":\"read_file\",\"arguments\":{\"path\":\"/etc/hosts\"}}",
+        "route": "route-a",
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    },
+    "software_tools_list": {
+      "expected": {
+        "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
+        "evidence_digest_alg": "sha256",
+        "evidence_digest_value": "SAfSBhyOJOF_AmzwpJrb7e2u7GzXzMFSxwclFao19hM",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "Authorization",
+            "Bearer dpop-token"
+          ],
+          [
+            "Content-Digest",
+            "sha-256=:/ZvV55wlB/hwxXsKJqql261f8HZrAFZg5cdBghnlQ1c=:"
+          ],
+          [
+            "Signature-Input",
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+          ],
+          [
+            "Signature",
+            "mcp-re=:MjL9OkdJQwlD9/r7rxFI3UnVV4m5S5OLVtulWW9P6FU6GsoHoeQvnKd+S2IN/SGcwHrNEeKLN0Kp8xXOX3uSAg==:"
+          ]
+        ],
+        "method": "POST",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      },
+      "inputs": {
+        "audience_id": "did:example:server-1",
+        "created": 1700000000,
+        "dpop_token": "dpop-token",
+        "expires": 1700000300,
+        "id_json": "1",
+        "key_id": "key-1",
+        "method": "tools/list",
+        "nonce": "nonce-parity-0001",
+        "params_json": "{}",
+        "route": null,
+        "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        "target_uri": "https://proxy.internal:8600/mcp"
+      }
+    }
+  },
+  "comment": "Frozen cross-language parity oracle. Both SDKs bind the same audited mcp-re-client-core, so every byte below MUST reproduce identically in Python and TypeScript. Regenerate: tools/gen_sdk_parity_fixture.py",
+  "profile_tag": "mcp-re-http-v1",
+  "schema": "mcp-re-sdk-parity/v1"
+}
