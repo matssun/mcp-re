@@ -7,8 +7,11 @@
 
 **Status:** NON-NORMATIVE reference, mirroring the
 [Mode-C GCP cookbook](mode-c-attested-ingress-gcp-cookbook.md). The design is
-[ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397). Live-cluster validation is tracked
-separately (MCPS-90, HITL); this guide + the Helm chart under
+[ADR-MCPS-049](https://github.com/matssun/mcp-re/discussions/397). Live-cluster validation was
+**performed** on GKE — the v0.11 fleet proof plus the v0.12.1 KMS-via-Workload-Identity run
+(see [`PROJECT_STATUS.md`](PROJECT_STATUS.md)); it validates the exercised GKE deployment
+shape, not a universal production SLO or a blanket zero-drop guarantee for every topology.
+This guide + the Helm chart under
 [`deploy/helm/mcp-re-proxy`](../deploy/helm/mcp-re-proxy) are the reference, and the
 coherence properties are proven by the CI-gated e2e tests named below.
 
@@ -105,8 +108,8 @@ Build the image with the `gcp_kms_keysource` feature, then:
 `helm template`/`install` fails closed if `keySource=gcpKms` is set without
 `gcpKms.keyVersion`. Setting `gcpKms.tlsKeyVersion` (a second, distinct KMS key)
 additionally delegates the TLS server private key to KMS; the chart then omits
-`--tls-key` and the Secret need not carry `tls.key`. Live-cluster validation of
-this path is MCPS-90 (HITL).
+`--tls-key` and the Secret need not carry `tls.key`. This KMS-custody path was
+validated live on GKE via Workload Identity (v0.12.1).
 
 ## The four fleet concerns
 
@@ -159,7 +162,12 @@ a mid-continuation replica switch still verifies (proven at the proxy layer).
 On `SIGTERM` (a rollout / `kubectl delete pod`) the proxy stops accepting on every
 per-core listener and joins **all** in-flight requests within a bounded grace
 window (each request already bounded by its deadline), then exits 0 with zero
-abandoned requests (ADR-MCPRE-051 §6, proven by `async_drain_test.rs`). Set
+abandoned requests (ADR-MCPRE-051 §6, proven by `async_drain_test.rs`). This is
+the proxy's **in-process** drain — clean on the in-process and kind lanes.
+End-to-end zero-drop across a live rolling update is **not** topology-independent:
+a live GKE rollout dropped **2 of 590** in-flight requests to load-balancer /
+kube-proxy endpoint-propagation timing, so bound any zero-drop expectation to
+your declared, validated LB/NEG topology. Set
 `drainGracePeriodSeconds` above your request deadline. Health probes are
 **tcpSocket** against the bind port — the proxy speaks MCP-RE over TLS, not HTTP,
 so "port accepting" is the honest readiness signal (no synthetic `/healthz`).
@@ -184,4 +192,6 @@ measure the concurrent serving path.)
   is one trust domain / one operator (see
   [security boundary §8](spec/security-boundary.md)).
 
-Live-cluster validation on real Kubernetes (GKE) is MCPS-90 (HITL).
+Live-cluster validation on real Kubernetes (GKE) was performed (v0.11 fleet proof +
+the v0.12.1 KMS-via-Workload-Identity run); it validates the exercised deployment
+shape, not a universal production SLO or a blanket zero-drop guarantee across topologies.

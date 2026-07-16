@@ -37,9 +37,9 @@ body-signed JCS profile.
 
 | ADR | Role |
 |---|---|
-| ADR-MCPRE-050 (Accepted) | Standards HTTP profile is the one carrier |
-| ADR-MCPRE-051 (Accepted) | Per-core async data plane; stateless inner plane; authoritative replay; delegated custody; HTTP-profile only (stdio out of scope) |
-| ADR-MCPRE-052 (Proposed) | Delegated signing = JOSE/JWS credential in the RFC 9421 evidence (not a JCS object) |
+| ADR-MCPRE-050 (Implemented) | Standards HTTP profile is the one carrier |
+| ADR-MCPRE-051 (Implemented) | Per-core async data plane; stateless inner plane; authoritative replay; delegated custody; HTTP-profile only (stdio out of scope) |
+| ADR-MCPRE-052 (Implemented) | Delegated signing = JOSE/JWS credential in the RFC 9421 evidence (not a JCS object) |
 | [Active Profile Boundary and Legacy Quarantine](design/active-profile-and-legacy-quarantine.md) | Freezes this worldview; quarantines legacy JCS |
 
 Legacy `ADR-MCPS-*` records (e.g. ADR-MCPS-004 Ed25519-over-JCS, ADR-MCPS-005

@@ -2,6 +2,14 @@
 
 # MCP-RE Proposal Scope
 
+> **⚠️ Currency (2026-07-15).** Written for the **v0.5** proposal-readiness release over
+> `draft-01`. Since **v0.11** the sole wire carrier is the **RFC 9421 + RFC 9530 HTTP profile**
+> (ADR-MCPRE-050) with **delegated-required** response signing (ADR-MCPRE-052); the
+> native/object (JCS) envelope and stdio were **removed**. The scope principles below still
+> hold, but the version framing is superseded — see
+> [`PROJECT_STATUS.md`](../PROJECT_STATUS.md) and
+> [`CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md).
+
 Purpose: state what MCP-RE 0.5 proposal-readiness includes and excludes over draft-01.
 
 **MCP-RE can protect messages that carry extension data, but does not define the semantics of those extensions.**

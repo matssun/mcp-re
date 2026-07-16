@@ -1,5 +1,14 @@
 # MCP-RE Core Specification
 
+> **⚠️ Currency (2026-07-15).** The normative rules below describe the
+> **`draft-01`/`draft-02` object profile** (Ed25519-over-JCS), which was **superseded by
+> the RFC 9421 + RFC 9530 HTTP profile** (`mcp-re-http-v1`, ADR-MCPRE-050) and **removed as
+> a carrier**; response signing is now **delegated-required** (ADR-MCPRE-052). This document
+> is retained as the record of the object-profile rules. For the current carrier and
+> architecture read [`CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md) and
+> [`PROJECT_STATUS.md`](../PROJECT_STATUS.md); a regenerated HTTP-profile core spec is planned
+> for the next PRD.
+
 **Status:** Normative for MCP-RE Core. The released field baseline is `draft-01` (v0.5.1); v0.6 adds the strictly-separated `draft-02` profile (runtime-evidence preimages — ADRs [037](https://github.com/matssun/mcp-re/discussions/385)–[042](https://github.com/matssun/mcp-re/discussions/390)), verified alongside `draft-01` by a version-dispatched dual verifier. `draft-01` rules below are unchanged; `draft-02` deltas are called out inline.
 **Scope:** The frozen wire vocabulary, signing rule, canonicalization domain, freshness/replay model, trust resolution, message constraints, error taxonomy, and verification pipeline of MCP-RE Core.
 

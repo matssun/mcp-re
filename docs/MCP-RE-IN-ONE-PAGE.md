@@ -10,12 +10,13 @@ governance and SEP process.*
 
 MCP-RE is a reference implementation and conformance package that protects
 **individual MCP tool calls** — not the session, not the transport alone, but the
-call itself. Every request and response carries an object-level Ed25519
-signature, and a Rust-native sidecar (`mcp-re-proxy`) verifies that signature plus
-freshness, replay state, and delegated authorization *before* the call ever
-reaches the inner MCP server. The response is signed and bound back to the
-request hash, so the host can prove the answer it received belongs to the
-question it asked.
+call itself. Every request carries an **RFC 9421 HTTP Message Signature** over an
+**RFC 9530 `Content-Digest`** (the sole carrier, `mcp-re-http-v1`), and a
+Rust-native sidecar (`mcp-re-proxy`) verifies that signature plus freshness, replay
+state, and delegated authorization *before* the call ever reaches the inner MCP
+server. The response is **delegated-signed** — a short-TTL key attested by a
+JOSE/JWS credential from a root in HSM/KMS — and bound back to the request evidence,
+so the host can prove the answer it received belongs to the question it asked.
 
 It is built to wrap ordinary Streamable-HTTP MCP servers without modifying them (MCP-RE is HTTP-profile only; a stdio-only server is fronted by an external plain-MCP adapter such as FastMCP): the
 sidecar terminates mTLS, verifies, strips any caller-supplied "verified context,"
@@ -35,8 +36,8 @@ leaves it open to:
   is substituted for another.
 - **Channel confusion** — a signed call is lifted onto a different transport.
 
-MCP-RE closes these with object signatures, a freshness window, a replay cache
-keyed on `(signer, audience, nonce)`, delegated-authorization *binding*,
+MCP-RE closes these with RFC 9421 message signatures, a freshness window, a replay
+cache keyed on `(signer, audience, nonce)`, delegated-authorization *binding*,
 response-to-request hash binding, and transport channel binding. This mirrors,
 line for line, the public NSA/CISA MCP-hardening direction: sign and verify MCP
 messages, carry expiry and replay metadata, and bind requests to time and
@@ -62,13 +63,16 @@ Think of it as the layer that makes "this exact call, authorized this way, at
 this time" cryptographically checkable — and it stacks with the identity,
 policy, and isolation layers around it.
 
-## What does v0.10.1 prove?
+## What does v0.12.1 prove?
 
-The wire envelope is the frozen `draft-02` runtime-evidence profile (frozen at
-v0.6.0). On top of it the current package proves:
+The sole wire carrier is the **RFC 9421 + RFC 9530 HTTP profile** (`mcp-re-http-v1`,
+ADR-MCPRE-050); the earlier native/object (Ed25519-over-JCS) envelope and the stdio
+transport were removed, not kept as fallbacks. Response signing is
+**delegated-required only** (ADR-MCPRE-052) — a root in HSM/KMS issues a short-TTL
+delegated key; direct-root signing is gone. On top of that the current package proves:
 
 **End-to-end path as separate OS processes.** A plain-MCP client →
-`mcp-re-client-proxy` (the local adoption bridge — signs `draft-02` requests,
+`mcp-re-client-proxy` (the local adoption bridge — signs the RFC 9421 request,
 verifies responses) → mTLS → `mcp-re-proxy` server PEP → unmodified inner MCP server.
 The proxy verifies signature, freshness, replay, and delegated authorization,
 strips caller context and injects sidecar context, and forwards to a persistent
@@ -94,7 +98,7 @@ a controlled ingress attestor signs a request-bound `mcp-re/lb-ingress-assertion
 assertion the node verifies over a pinned attestor→node channel — **attested
 delegation, not end-to-end mTLS** (the load balancer witnesses proof-of-possession
 and stays in the trusted computing base). The forwarded request is byte-identical
-to Mode A (zero `draft-02` preimage change).
+to Mode A (zero change to the signed RFC 9421 evidence).
 
 **Horizontally-scaled fleet deployment.** Behind an explicit `--fleet` flag
 (orthogonal to `--strict`), MCP-RE runs as N identical replicas behind a load
@@ -103,12 +107,17 @@ node-local replay caches so replicas share a cross-replica ReplayCache (Redis), 
 Redis-backed trust-epoch source propagates revocation across replicas, and graceful
 drain supports rolling deploys — replay and trust-revocation coherence are each
 proven by a cross-replica e2e. A Kubernetes/Helm reference ships with it. The fleet
-was validated **live on a real 2-node GKE cluster** (v0.11): cross-replica replay
-coherence and a zero-drop rolling update over a real L4 LoadBalancer (FastMCP inner),
-with an ADR-MCPRE-051 §7 SLO baseline measured on declared cloud hardware — 390 rps
-(e2-standard-8) / 482 rps (c3-standard-8) at 8 cores, 2000/2000 verified.
+was validated **live on a real GKE cluster** (v0.11), and in **v0.12.1** on the
+first live **KMS-via-Workload-Identity** run: cross-replica replay coherence, with an
+ADR-MCPRE-051 §7 SLO baseline measured, **declared and gated** on the
+delegated-required serving path — **395.6 rps (e2-standard-8) / 492.9 rps
+(c3-standard-8) at 8 cores**, both PASS. The rolling-update drain has a known
+residual — a live GKE rollout dropped 2 of 590 in-flight requests (a kube-proxy
+endpoint-propagation timing gap; in-process and kind lanes are clean), so
+topology-independent zero-drop is **not** claimed.
 
-**Live Google Cloud KMS validation.** Against *real* Cloud KMS, not an emulator:
+**Live Google Cloud KMS validation.** Against *real* Cloud KMS, not an emulator
+(including on GKE via Workload Identity, v0.12.1):
 
 - **Object signing** with an `EC_SIGN_ED25519` key: signatures produced by a live
   `asymmetricSign` and verified by `mcp-re-core`. The private key never leaves KMS

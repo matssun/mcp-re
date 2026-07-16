@@ -26,7 +26,8 @@ Source: [`cli.rs`](../mcp-re-proxy/src/cli.rs), [`main.rs`](../mcp-re-proxy/src/
 
 The `:mcp_re_proxy_cli` binary is the **policy-enforcement point (PEP)** — a
 cryptographic trust boundary. For each connection it: terminates TLS itself,
-verifies the mTLS client certificate, verifies the MCP-RE object signature,
+verifies the mTLS client certificate, verifies the RFC 9421 HTTP message
+signature (with the RFC 9530 `Content-Digest`),
 optionally evaluates authorization (Phase 5) and transport binding (Phase 6), and
 only then forwards the verified, context-injected request to an inner MCP server,
 signing the response.

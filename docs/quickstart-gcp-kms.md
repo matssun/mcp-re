@@ -2,14 +2,14 @@
 
 # Quickstart — live Google Cloud KMS validation
 
-This proves **v0.5.1's live enterprise key-custody path**: MCP-RE signing keys can
+This proves the **live enterprise key-custody path**: MCP-RE signing keys can
 live entirely inside Google Cloud KMS and never leave it, while a fully-validating
 signature and mTLS handshake still complete against *real* Cloud KMS — not an
 emulator.
 
 It exercises the already-shipped `GcpKmsKeySource` adapter
 (`mcp-re-proxy/src/gcp_kms_keysource.rs`). No protocol change is involved; the
-`draft-01` request/response envelopes are unchanged. This is evidence and test
+signed request/response wire format is unchanged. This is evidence and test
 surface.
 
 ## Run it
