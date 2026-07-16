@@ -73,6 +73,10 @@ def _config(**over) -> McpReConfig:
         accepted_epochs=f["accepted_epochs"],
         max_clock_skew=f["max_clock_skew"],
         request_ttl=f["request_ttl"],
+        # A standard ClientSession sends `notifications/initialized`; MCP-RE has no
+        # ratified one-way notification profile yet (#418), so the recording — and this
+        # replay — need the unsafe opt-in to get a session open at all.
+        unsafe_drop_notifications=True,
         # A response is bound to the request that produced it, so the request must be
         # byte-reproducible: pin the only two inputs that float. The same frozen instant
         # is handed to verification, keeping the recorded credential inside its window.

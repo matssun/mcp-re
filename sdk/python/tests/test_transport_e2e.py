@@ -131,6 +131,11 @@ def _config(target: str, **over) -> McpReConfig:
         target_uri=target,
         route="a",
         dpop_token="access-token-xyz",
+        # A standard ClientSession cannot complete its lifecycle without
+        # `notifications/initialized`, and MCP-RE has no ratified one-way notification
+        # profile yet (#418) — so every live session today needs this unsafe opt-in.
+        # That it is required here is the point: the hole is visible, not papered over.
+        unsafe_drop_notifications=True,
         # The trusted ROOT anchor only: the delegated key is learned from the credential
         # the response carries, never enrolled here.
         issuer_key_id="server-key-1",

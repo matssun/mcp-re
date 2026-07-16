@@ -22,6 +22,10 @@
  * never comes; a hang is a worse failure mode than a raise, and an unverifiable response
  * must never reach the application as a result.
  *
+ * **This is a request/response adapter.** One-way notifications fail closed by default —
+ * see {@link NotificationsUnsupported} for why that is a missing profile rather than an
+ * inherent limit, and `unsafeDropNotifications` for the interim escape hatch.
+ *
  * MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
  * a `poster` so this layer stays transport-agnostic and testable; `connectMtlsHttp` (the
  * mTLS construction helper) builds on top of it.
@@ -53,6 +57,42 @@ const RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response";
  * always the frozen `mcp-re.*` token in `.message`.
  */
 const MCP_RE_ERROR_CODE = -32001;
+
+/**
+ * A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
+ *
+ * **Not** an inherent limitation: a notification is its own POST under MCP Streamable
+ * HTTP, so its request signature and `Content-Digest` authenticate it exactly like any
+ * other request. What is missing is the ratified one-way notification + acknowledgement
+ * profile (MCP-RE issue #418) — what a verifier returns for a message with no JSON-RPC
+ * response, and how that acknowledgement binds to the request evidence.
+ *
+ * Until that lands the adapter fails closed here rather than passing the message
+ * unprotected or discarding it silently. `unsafeDropNotifications: true` opts into
+ * dropping instead; a hardened policy refuses that opt-in outright.
+ *
+ * A local condition — nothing was transmitted, so no wire code describes it.
+ */
+export class NotificationsUnsupported extends McpReSdkError {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "NotificationsUnsupported";
+  }
+}
+
+/**
+ * A hardening profile refused an explicitly unsafe option.
+ *
+ * The hardened profile exists to make "this deployment does not accept known-unsafe
+ * behaviour" enforceable rather than advisory, so an unsafe opt-in must fail the
+ * connection there instead of being honoured.
+ */
+export class UnsafeConfigurationRefused extends McpReSdkError {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "UnsafeConfigurationRefused";
+  }
+}
 
 /** What a {@link Poster} returns: the raw HTTP response, unparsed and unverified. */
 export interface HttpReply {
@@ -112,10 +152,36 @@ export interface McpReConfig {
   nonceFactory?: () => string;
 
   /**
-   * Called with each client->server notification the adapter drops. MCP-RE's wire is one
-   * signed POST per request: a notification has no reply, so it carries no evidence and
-   * cannot be verified. Dropping is the honest behaviour, but it is surfaced here rather
-   * than done silently.
+   * How many signed exchanges may be in flight at once. Defaults to 8.
+   *
+   * MCP is not lock-step — a client may have several requests outstanding, and each
+   * MCP-RE exchange is an independent signed POST with its own nonce and its own
+   * correlation entry, so nothing about the protocol requires serializing them.
+   *
+   * It is bounded rather than unlimited because each in-flight exchange holds a
+   * connection in the caller's `poster` and a signing operation (a KMS round trip under
+   * non-exporting custody); an unbounded fan-out would let a burst of calls exhaust
+   * either. Raise it for a client that genuinely wants more parallelism.
+   */
+  maxConcurrentExchanges?: number;
+
+  /**
+   * Drop client->server notifications instead of failing closed on them. **Unsafe.**
+   *
+   * A standard MCP client cannot complete its lifecycle without
+   * `notifications/initialized`, so this exists to keep the adapter usable at all until
+   * the one-way notification + acknowledgement profile is ratified (#418). It is named
+   * for what it is: `notifications/cancelled` silently becomes "keep going", which is a
+   * safety hole, not a compatibility quirk.
+   *
+   * A hardened {@link SignerPolicy} refuses this outright.
+   */
+  unsafeDropNotifications?: boolean;
+
+  /**
+   * Called with each client->server notification the adapter drops, when
+   * `unsafeDropNotifications` is on. Dropping is never silent by default — the default is
+   * to fail closed — but a caller who opts in should still be able to see it.
    */
   onDroppedNotification?: (method: string) => void;
 
@@ -147,6 +213,38 @@ const errorMessage = (id: RequestId, wireCode: string): JSONRPCMessage => ({
 });
 
 /**
+ * Bounds how many exchanges run at once.
+ *
+ * `send()` is called once per outgoing request and each call awaits its own reply, so
+ * without a bound a burst of concurrent requests would fan out into unbounded in-flight
+ * POSTs and signing operations.
+ */
+class Semaphore {
+  #free: number;
+  readonly #waiting: (() => void)[] = [];
+
+  constructor(slots: number) {
+    this.#free = slots;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.#free > 0) {
+      this.#free -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.#waiting.push(resolve));
+  }
+
+  release(): void {
+    // Hand the slot straight to the next waiter rather than returning it to the pool —
+    // incrementing here would let a later arrival overtake the queue.
+    const next = this.#waiting.shift();
+    if (next) next();
+    else this.#free += 1;
+  }
+}
+
+/**
  * An MCP client transport that signs requests and verifies responses.
  *
  * ```ts
@@ -167,11 +265,25 @@ export class McpReHttpTransport implements Transport {
   readonly #config: McpReConfig;
   readonly #poster: Poster;
   readonly #correlation = new CorrelationStore();
+  readonly #slots: Semaphore;
   #started = false;
 
   constructor(config: McpReConfig, poster: Poster) {
+    // Validated where the value first enters SDK-owned code — `McpReConfig` is a plain
+    // interface, so this constructor is the earliest point this SDK controls. A bound of
+    // 0 is not a degenerate case that merely throttles: every sender waits for a slot
+    // that can never be released, so the session deadlocks in silence.
+    const bound = config.maxConcurrentExchanges ?? 8;
+    if (!Number.isInteger(bound) || bound < 1) {
+      throw new McpReSdkError(
+        `maxConcurrentExchanges must be a positive integer, got ${JSON.stringify(
+          config.maxConcurrentExchanges,
+        )}`,
+      );
+    }
     this.#config = config;
     this.#poster = poster;
+    this.#slots = new Semaphore(bound);
   }
 
   get #clock(): () => number {
@@ -185,22 +297,39 @@ export class McpReHttpTransport implements Transport {
       throw new McpReSdkError("McpReHttpTransport is already started");
     }
     this.#config.policy?.check(this.#config.signer);
+    if (this.#config.policy?.requireNonExporting && this.#config.unsafeDropNotifications) {
+      // The hardening profile is what makes "this deployment does not accept known-unsafe
+      // behaviour" enforceable rather than advisory.
+      throw new UnsafeConfigurationRefused(
+        `profile '${this.#config.policy.profile}' requires non-exporting custody and so ` +
+          `refuses unsafeDropNotifications: silently discarding 'notifications/cancelled' ` +
+          `is not acceptable under a hardened policy (#418)`,
+      );
+    }
     this.#config.authorizationPolicy?.check(this.#config.authorization ?? []);
     this.#started = true;
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
     if (!("method" in message) || !("id" in message)) {
-      // A notification (or a client-side response) has no reply, so it carries no
-      // evidence and cannot be verified. MCP-RE is the client-initiated
-      // request/response subset.
       const method = "method" in message ? message.method : "<unknown>";
+      if (!this.#config.unsafeDropNotifications) {
+        // Fail closed. MCP-RE has no ratified profile for a one-way message (#418), and
+        // the two ways to proceed without one are both worse than stopping: pass it
+        // unprotected, or discard a `notifications/cancelled` and let the peer keep going.
+        throw new NotificationsUnsupported(
+          `'${method}' is a one-way notification; MCP-RE has no ratified one-way ` +
+            `notification profile yet (#418). Set unsafeDropNotifications: true to drop ` +
+            `notifications instead.`,
+        );
+      }
       this.#config.onDroppedNotification?.(method);
       return;
     }
 
     const request = message;
     let reply: JSONRPCMessage;
+    await this.#slots.acquire();
     try {
       reply = await this.#exchange(request);
     } catch (e) {
@@ -216,6 +345,10 @@ export class McpReHttpTransport implements Transport {
       } else {
         throw e;
       }
+    } finally {
+      // In a finally because the non-Error branch above re-throws: leaking a slot there
+      // would shrink the pool permanently, and enough of them would deadlock the session.
+      this.#slots.release();
     }
     this.onmessage?.(reply);
   }

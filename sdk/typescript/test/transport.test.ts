@@ -18,8 +18,15 @@ import {
   Signer,
   SignerPolicy,
   SignerUnavailable,
+  SigningDevice,
 } from "../src/index.js";
-import { McpReHttpTransport, type McpReConfig, type Poster } from "../src/transport.js";
+import {
+  McpReHttpTransport,
+  NotificationsUnsupported,
+  UnsafeConfigurationRefused,
+  type McpReConfig,
+  type Poster,
+} from "../src/transport.js";
 
 const CLIENT_SEED = Buffer.alloc(32, 11);
 const TARGET = "https://proxy.internal:8600/mcp";
@@ -122,13 +129,28 @@ describe("McpReHttpTransport lifecycle", () => {
 describe("McpReHttpTransport notification handling", () => {
   const NOTIFICATION: JSONRPCMessage = { jsonrpc: "2.0", method: "notifications/initialized" };
 
-  it("drops a notification and reports it, because it carries no evidence", async () => {
-    // MCP-RE's wire is one signed POST per request. A notification has no reply, so it
-    // carries no evidence and cannot be verified — dropping is honest, silence is not.
+  it("fails closed on a notification by default", async () => {
+    // The default must not silently discard a standard MCP message. MCP-RE has no
+    // ratified one-way notification profile (#418); until it does, the two ways to
+    // proceed are both worse than stopping: pass the message unprotected, or discard a
+    // `notifications/cancelled` and let the peer keep working.
+    const poster = vi.fn<Poster>();
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationsUnsupported);
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/#418/);
+    expect(poster, "nothing may reach the wire").not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit unsafe opt-in to drop notifications", async () => {
     const dropped: string[] = [];
     const poster = vi.fn<Poster>();
     const seen = await sendAndCapture(
-      minimalConfig({ onDroppedNotification: (m) => dropped.push(m) }),
+      minimalConfig({
+        unsafeDropNotifications: true,
+        onDroppedNotification: (m) => dropped.push(m),
+      }),
       poster,
       NOTIFICATION,
     );
@@ -138,17 +160,57 @@ describe("McpReHttpTransport notification handling", () => {
     expect(seen).toBeUndefined();
   });
 
-  it("drops a notification silently when no observer is installed", async () => {
+  it("drops under the opt-in even with no observer installed", async () => {
+    // Opting in is the decision; the observer is only how you watch it.
     const poster = vi.fn<Poster>();
-    await expect(sendAndCapture(minimalConfig(), poster, NOTIFICATION)).resolves.toBeUndefined();
+    await expect(
+      sendAndCapture(minimalConfig({ unsafeDropNotifications: true }), poster, NOTIFICATION),
+    ).resolves.toBeUndefined();
     expect(poster).not.toHaveBeenCalled();
   });
 
-  it("drops a client-side response, which is not a client-initiated request", async () => {
+  it("treats a client-side response the same way — it is not a client-initiated request", async () => {
     const dropped: string[] = [];
     const response: JSONRPCMessage = { jsonrpc: "2.0", id: 1, result: {} };
-    await sendAndCapture(minimalConfig({ onDroppedNotification: (m) => dropped.push(m) }), vi.fn<Poster>(), response);
+    await sendAndCapture(
+      minimalConfig({ unsafeDropNotifications: true, onDroppedNotification: (m) => dropped.push(m) }),
+      vi.fn<Poster>(),
+      response,
+    );
     expect(dropped).toEqual(["<unknown>"]);
+  });
+
+  it("refuses the unsafe opt-in under a hardened policy", async () => {
+    // The hardening profile makes "no known-unsafe behaviour here" enforceable rather
+    // than advisory, so the opt-in must fail the CONNECTION.
+    const transport = new McpReHttpTransport(
+      minimalConfig({
+        signer: Signer.fromDevice(
+          "did:example:host-a",
+          "client-key-1",
+          SigningDevice.fromSeed(CLIENT_SEED),
+        ),
+        policy: SignerPolicy.hardened("did:example:host-a"),
+        unsafeDropNotifications: true,
+      }),
+      vi.fn<Poster>(),
+    );
+    await expect(transport.start()).rejects.toThrow(UnsafeConfigurationRefused);
+  });
+
+  it("accepts the fail-closed default under a hardened policy", async () => {
+    const transport = new McpReHttpTransport(
+      minimalConfig({
+        signer: Signer.fromDevice(
+          "did:example:host-a",
+          "client-key-1",
+          SigningDevice.fromSeed(CLIENT_SEED),
+        ),
+        policy: SignerPolicy.hardened("did:example:host-a"),
+      }),
+      vi.fn<Poster>(),
+    );
+    await expect(transport.start()).resolves.toBeUndefined();
   });
 });
 
@@ -194,6 +256,99 @@ describe("McpReHttpTransport failure delivery", () => {
     );
     await transport.start();
     await expect(transport.send(REQUEST)).resolves.toBeUndefined();
+  });
+});
+
+describe("McpReHttpTransport concurrency", () => {
+  // Mirrors `concurrency` in sdk/python/tests/test_transport.py: the two SDKs must agree
+  // on how many exchanges may be in flight, not just on the bytes they emit.
+
+  /** Count how many posts are in flight at once. */
+  function gatedPoster(hold = 50): { poster: Poster; peak: () => number } {
+    let now = 0;
+    let max = 0;
+    const poster: Poster = async () => {
+      now += 1;
+      max = Math.max(max, now);
+      await new Promise((r) => setTimeout(r, hold));
+      now -= 1;
+      throw new McpReError("mcp-re.replay_detected"); // stop before native verification
+    };
+    return { poster, peak: () => max };
+  }
+
+  /** Send `count` requests at once and wait for all their replies. */
+  async function drive(config: McpReConfig, poster: Poster, count: number) {
+    const transport = new McpReHttpTransport(config, poster);
+    const seen: JSONRPCMessage[] = [];
+    transport.onmessage = (m) => seen.push(m);
+    await transport.start();
+    await Promise.all(
+      Array.from({ length: count }, (_, id) =>
+        transport.send({ jsonrpc: "2.0", id, method: "tools/list", params: {} }),
+      ),
+    );
+    return seen;
+  }
+
+  it("runs exchanges concurrently rather than head-of-line blocking", async () => {
+    // MCP is not lock-step. Serializing would make one slow tool call block every other
+    // request on the session.
+    const { poster, peak } = gatedPoster();
+    const seen = await drive(minimalConfig(), poster, 4);
+
+    expect(peak(), "exchanges serialized").toBe(4);
+    expect(seen, "every request must still get its reply").toHaveLength(4);
+  });
+
+  it("bounds concurrency so a burst cannot exhaust the poster", async () => {
+    // Each in-flight exchange holds a connection and a signing operation (a KMS round
+    // trip under non-exporting custody); unbounded fan-out would exhaust either.
+    const { poster, peak } = gatedPoster();
+    const seen = await drive(minimalConfig({ maxConcurrentExchanges: 2 }), poster, 6);
+
+    expect(peak(), "the bound was not honoured").toBe(2);
+    expect(seen, "bounding must delay a request, never drop it").toHaveLength(6);
+  });
+
+  it.each([0, -1, 2.5, NaN, Infinity, "8" as unknown as number])(
+    "refuses an invalid bound (%s) rather than deadlocking",
+    async (bad) => {
+      // A bound of 0 does not throttle — it deadlocks. Every sender waits for a slot that
+      // can never be released, and the session hangs in silence. Nothing about that is
+      // recoverable at runtime, so it must be refused where the value enters.
+      expect(
+        () => new McpReHttpTransport(minimalConfig({ maxConcurrentExchanges: bad }), vi.fn<Poster>()),
+      ).toThrow(McpReSdkError);
+    },
+  );
+
+  it("accepts a valid bound", () => {
+    expect(
+      () => new McpReHttpTransport(minimalConfig({ maxConcurrentExchanges: 1 }), vi.fn<Poster>()),
+    ).not.toThrow();
+  });
+
+  it("correlates every concurrent reply to its own request", async () => {
+    // Concurrency must not let one request's outcome land on another's id.
+    const { poster } = gatedPoster();
+    const seen = await drive(minimalConfig(), poster, 4);
+    expect(seen.map((m) => (m as { id: number }).id).sort()).toEqual([0, 1, 2, 3]);
+  });
+
+  it("does not leak a slot when an exchange throws a non-Error", async () => {
+    // The non-Error branch re-throws; a leaked slot there would shrink the pool
+    // permanently and eventually deadlock the session.
+    const transport = new McpReHttpTransport(
+      minimalConfig({ maxConcurrentExchanges: 1 }),
+      throwingPoster("not an error"),
+    );
+    transport.onmessage = () => {};
+    await transport.start();
+    for (let i = 0; i < 3; i++) {
+      await expect(transport.send({ ...REQUEST, id: i })).rejects.toBe("not an error");
+    }
+    // A leaked slot would have deadlocked the second send rather than reaching here.
   });
 });
 

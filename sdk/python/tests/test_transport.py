@@ -13,6 +13,7 @@ comes, and a hang is a worse failure mode than a raise.
 """
 import json
 
+import anyio
 import pytest
 
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
@@ -25,10 +26,14 @@ from mcp_re_sdk import (  # noqa: E402
     HttpReply,
     McpReConfig,
     McpReError,
+    McpReSdkError,
+    NotificationsUnsupported,
     OpaqueBytesProvider,
     Signer,
     SignerPolicy,
     SignerUnavailable,
+    SigningDevice,
+    UnsafeConfigurationRefused,
     mcp_re_http_transport,
 )
 from mcp_re_sdk.transport import _pump  # noqa: E402
@@ -136,11 +141,31 @@ async def test_a_satisfied_policy_opens_the_transport():
 
 
 @pytest.mark.anyio
-async def test_a_notification_is_dropped_and_reported_because_it_carries_no_evidence():
-    # MCP-RE's wire is one signed POST per request. A notification has no reply, so it
-    # carries no evidence and cannot be verified — dropping is honest, silence is not.
+async def test_a_notification_fails_closed_by_default():
+    """The default must not silently discard a standard MCP message.
+
+    MCP-RE has no ratified one-way notification profile (#418). Until it does, the two
+    ways to proceed are both worse than stopping: pass the message unprotected, or
+    discard a `notifications/cancelled` and let the peer keep working.
+    """
+    posted = []
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(),
+            _capturing_poster(posted),
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+
+    leaves = _flatten(ei.value)
+    assert [type(e) for e in leaves] == [NotificationsUnsupported]
+    assert "#418" in str(leaves[0])
+    assert posted == [], "nothing may reach the wire"
+
+
+@pytest.mark.anyio
+async def test_dropping_notifications_requires_an_explicit_unsafe_opt_in():
     dropped, posted = [], []
-    config = _config(on_dropped_notification=dropped.append)
+    config = _config(unsafe_drop_notifications=True, on_dropped_notification=dropped.append)
     out = await _send(
         config,
         _capturing_poster(posted),
@@ -152,14 +177,43 @@ async def test_a_notification_is_dropped_and_reported_because_it_carries_no_evid
 
 
 @pytest.mark.anyio
-async def test_a_notification_is_dropped_silently_when_no_observer_is_installed():
+async def test_the_unsafe_opt_in_drops_even_with_no_observer_installed():
+    # Opting in is the decision; the observer is only how you watch it.
     posted = []
     out = await _send(
-        _config(),
+        _config(unsafe_drop_notifications=True),
         _capturing_poster(posted),
         JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled"),
     )
     assert posted == [] and out == []
+
+
+@pytest.mark.anyio
+async def test_a_hardened_policy_refuses_the_unsafe_notification_opt_in():
+    # The hardening profile makes "no known-unsafe behaviour here" enforceable rather
+    # than advisory, so the opt-in must fail the CONNECTION.
+    config = _config(
+        signer=Signer.from_device(
+            "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
+        ),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+        unsafe_drop_notifications=True,
+    )
+    with pytest.raises(UnsafeConfigurationRefused, match="#418"):
+        async with mcp_re_http_transport(config, _capturing_poster([])):
+            pass
+
+
+@pytest.mark.anyio
+async def test_a_hardened_policy_accepts_the_fail_closed_default():
+    config = _config(
+        signer=Signer.from_device(
+            "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
+        ),
+        policy=SignerPolicy.hardened("did:example:host-a"),
+    )
+    async with mcp_re_http_transport(config, _capturing_poster([])) as (read, write):
+        assert read is not None and write is not None
 
 
 # --- failure delivery ------------------------------------------------------------
@@ -196,11 +250,27 @@ async def test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging(
     assert out[0].message.root.error.message == "mcp-re.response_sig_invalid"
 
 
+def _flatten(exc: BaseException) -> list:
+    """Every leaf of a (possibly nested) ExceptionGroup.
+
+    Exchanges run in a task group, so anything escaping one arrives wrapped. Callers
+    already saw this — ``mcp_re_http_transport`` runs the pump in a task group of its own
+    — so assert on what was raised, not on how many groups it came wrapped in.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for e in exc.exceptions for leaf in _flatten(e)]
+    return [exc]
+
+
 @pytest.mark.anyio
 async def test_an_unexpected_exception_propagates_rather_than_being_disguised():
     # A defect is not a protocol outcome; it must not be laundered into a wire code.
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(BaseException) as ei:
         await _send(_config(), _throwing_poster(RuntimeError("boom")), _request())
+
+    leaves = _flatten(ei.value)
+    assert [type(e) for e in leaves] == [RuntimeError]
+    assert str(leaves[0]) == "boom"
 
 
 # --- signing inputs --------------------------------------------------------------
@@ -237,6 +307,91 @@ async def test_the_signed_body_is_the_request_the_caller_described():
     body = json.loads(calls[0]["body"])
     assert body["method"] == "tools/list"
     assert body["id"] == 7
+
+
+# --- concurrency -----------------------------------------------------------------
+#
+# Mirrors `concurrency` in sdk/typescript/test/transport.test.ts: the two SDKs must agree
+# on how many exchanges may be in flight, not just on the bytes they emit.
+
+
+def _gated_poster(peak: dict, hold: float = 0.05):
+    """Count how many posts are in flight at once."""
+    peak.setdefault("now", 0)
+    peak.setdefault("max", 0)
+
+    async def post(method, target_uri, headers, body) -> HttpReply:
+        peak["now"] += 1
+        peak["max"] = max(peak["max"], peak["now"])
+        await anyio.sleep(hold)
+        peak["now"] -= 1
+        raise McpReError("mcp-re.replay_detected")  # stop before native verification
+
+    return post
+
+
+async def _drive(config, poster, count: int):
+    """Send `count` requests at once and wait for all their replies."""
+    read_writer, read_stream = anyio.create_memory_object_stream(64)
+    write_stream, write_reader = anyio.create_memory_object_stream(64)
+    for i in range(count):
+        await write_stream.send(SessionMessage(JSONRPCMessage(_request(id=i))))
+    await write_stream.aclose()
+    await _pump(config, poster, write_reader, read_writer)
+
+    replies = []
+    for _ in range(count):
+        try:
+            replies.append(read_stream.receive_nowait())
+        except (anyio.WouldBlock, anyio.EndOfStream):
+            break
+    return replies
+
+
+@pytest.mark.anyio
+async def test_exchanges_run_concurrently_rather_than_head_of_line_blocking():
+    # MCP is not lock-step. Awaiting each exchange before reading the next request would
+    # make one slow tool call block every other request on the session.
+    peak = {}
+    replies = await _drive(_config(), _gated_poster(peak), 4)
+
+    assert peak["max"] == 4, f"exchanges serialized (peak {peak['max']} of 4)"
+    assert len(replies) == 4, "every request must still get its reply"
+
+
+@pytest.mark.anyio
+async def test_concurrency_is_bounded_so_a_burst_cannot_exhaust_the_poster():
+    # Each in-flight exchange holds a connection and a signing operation (a KMS round
+    # trip under non-exporting custody); unbounded fan-out would exhaust either.
+    peak = {}
+    replies = await _drive(_config(max_concurrent_exchanges=2), _gated_poster(peak), 6)
+
+    assert peak["max"] == 2, f"the bound was not honoured (peak {peak['max']}, limit 2)"
+    assert len(replies) == 6, "bounding must delay a request, never drop it"
+
+
+@pytest.mark.parametrize("bad", [0, -1, 2.5, True, None, "8"])
+def test_an_invalid_bound_is_refused_rather_than_deadlocking(bad):
+    """A bound of 0 does not throttle — it deadlocks.
+
+    Every sender waits for a slot that can never be released, and the session hangs in
+    silence. Nothing about that is recoverable at runtime, so it must be refused where
+    the value enters. `True` is in here because `isinstance(True, int)` is True in
+    Python: a bool would otherwise sail through as a bound of 1.
+    """
+    with pytest.raises(McpReSdkError, match="positive integer"):
+        _config(max_concurrent_exchanges=bad)
+
+
+def test_a_valid_bound_is_accepted():
+    assert _config(max_concurrent_exchanges=1).max_concurrent_exchanges == 1
+
+
+@pytest.mark.anyio
+async def test_every_concurrent_reply_is_correlated_to_its_own_request():
+    # Concurrency must not let one request's outcome land on another's id.
+    replies = await _drive(_config(), _gated_poster({}), 4)
+    assert sorted(r.message.root.id for r in replies) == [0, 1, 2, 3]
 
 
 @pytest.mark.anyio
