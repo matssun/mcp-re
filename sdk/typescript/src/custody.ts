@@ -25,6 +25,8 @@ import {
 
 /** The Ed25519 seed length. */
 const SEED_LEN = 32;
+/** The Ed25519 detached-signature length the RFC 9421 profile emits. */
+const SIGNATURE_LEN = 64;
 
 /** How the signing key is held. */
 export enum CustodyClass {
@@ -32,13 +34,17 @@ export enum CustodyClass {
   NonExporting = "non-exporting",
 }
 
+/** Base for every error this SDK raises. Catch this to catch them all. */
+export class McpReSdkError extends Error {}
+
 /**
- * An MCP-RE failure carrying a frozen `mcp-re.*` wire code.
+ * A protocol failure carrying a frozen `mcp-re.*` wire code.
  *
  * The taxonomy is the one the proxy and the Rust core emit, so a caller can branch on
- * `.wireCode` without parsing prose (ADR-MCPS-044 §error taxonomy).
+ * `.wireCode` without parsing prose (ADR-MCPS-044 §error taxonomy). The taxonomy is
+ * **wire-only and reuse-only** — no code here is invented.
  */
-export class McpReError extends Error {
+export class McpReError extends McpReSdkError {
   readonly wireCode: string;
   readonly detail: string;
 
@@ -46,6 +52,28 @@ export class McpReError extends Error {
     super(detail ? `${wireCode}: ${detail}` : wireCode);
     this.name = "McpReError";
     this.wireCode = wireCode;
+    this.detail = detail;
+  }
+}
+
+/**
+ * The local signing device could not produce a usable signature.
+ *
+ * Deliberately **not** an {@link McpReError}: this is a local condition — the device
+ * threw, or handed back something that is not a 64-byte signature — and nothing was ever
+ * transmitted, so no wire code describes it. Reporting it as `mcp-re.invalid_signature`
+ * would claim a peer rejected a signature that was never sent, and the frozen taxonomy is
+ * wire-only and reuse-only, so there is no client-side token to borrow either.
+ *
+ * Fail-closed either way: no evidence is emitted. `.cause` carries whatever the device
+ * actually did.
+ */
+export class SignerUnavailable extends McpReSdkError {
+  readonly detail: string;
+
+  constructor(detail: string, cause?: unknown) {
+    super(`signing device unavailable: ${detail}`, { cause });
+    this.name = "SignerUnavailable";
     this.detail = detail;
   }
 }
@@ -156,7 +184,12 @@ export class Signer {
     return Signer.nonExporting(signerId, keyId, device.sign);
   }
 
-  /** Sign an MCP request, dispatching on custody class. */
+  /**
+   * Sign an MCP request, dispatching on custody class.
+   *
+   * Throws {@link SignerUnavailable} if a non-exporting device cannot sign, and an Error
+   * carrying a frozen wire code for a genuine protocol failure.
+   */
   signRequest(a: SignRequestArgs): SignedRequestJs {
     const tail = [
       a.idJson,
@@ -178,7 +211,42 @@ export class Signer {
     if (this.custody === CustodyClass.Software) {
       return signRequest(this.#seed!, this.keyId, ...tail);
     }
-    return signRequestWithSigner(this.#signCallback!, this.keyId, ...tail);
+
+    // The core cannot tell "the device is broken" from "the signature is bad" — it only
+    // sees a callback that failed, and maps that to a wire code. Capture what the device
+    // actually did on this side of the boundary so the local condition is reported as a
+    // local condition.
+    let cause: unknown;
+    const guarded = (preimage: Buffer): Buffer => {
+      let sig: unknown;
+      try {
+        sig = this.#signCallback!(preimage);
+      } catch (e) {
+        cause = e;
+        throw e;
+      }
+      if (!Buffer.isBuffer(sig)) {
+        cause = new TypeError(`device returned ${typeof sig}, expected a Buffer`);
+        throw cause;
+      }
+      if (sig.length !== SIGNATURE_LEN) {
+        cause = new RangeError(
+          `device returned a ${sig.length}-byte signature, expected ${SIGNATURE_LEN}`,
+        );
+        throw cause;
+      }
+      return sig;
+    };
+
+    try {
+      return signRequestWithSigner(guarded, this.keyId, ...tail);
+    } catch (e) {
+      if (cause === undefined) throw e; // a real protocol failure in the core
+      throw new SignerUnavailable(
+        cause instanceof Error ? cause.message : String(cause),
+        cause,
+      );
+    }
   }
 
   /** Never render key material. */

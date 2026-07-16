@@ -29,8 +29,10 @@ export type {
 export {
   CustodyClass,
   McpReError,
+  McpReSdkError,
   Signer,
   SignerPolicy,
+  SignerUnavailable,
   SigningDevice,
 } from "./custody.js";
 export type { SignRequestArgs } from "./custody.js";

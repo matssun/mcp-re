@@ -11,8 +11,10 @@ import pytest
 from mcp_re_sdk import (
     CustodyClass,
     McpReError,
+    McpReSdkError,
     Signer,
     SignerPolicy,
+    SignerUnavailable,
     SigningDevice,
     sign_preimage,
 )
@@ -104,24 +106,65 @@ class TestNonExportingIsByteIdentical:
 
 
 class TestDeviceFailsClosed:
+    """A device failure is a LOCAL condition, not a wire condition.
+
+    Nothing was transmitted, so no `mcp-re.*` code describes it — reporting
+    `mcp-re.invalid_signature` would claim a peer rejected a signature that was never
+    sent. Fail-closed either way; the distinction is for diagnostics.
+    """
+
     def _raise(self, _preimage):
         raise RuntimeError("HSM unavailable")
 
-    def test_a_throwing_device_maps_to_invalid_signature(self):
+    def test_a_throwing_device_raises_signer_unavailable(self):
         signer = Signer.non_exporting(SIGNER_ID, KEY_ID, self._raise)
-        with pytest.raises(ValueError, match="mcp-re.invalid_signature"):
+        with pytest.raises(SignerUnavailable, match="HSM unavailable"):
             signer.sign_request(**ARGS)
+
+    def test_signer_unavailable_keeps_the_underlying_cause(self):
+        signer = Signer.non_exporting(SIGNER_ID, KEY_ID, self._raise)
+        with pytest.raises(SignerUnavailable) as ei:
+            signer.sign_request(**ARGS)
+        assert isinstance(ei.value.__cause__, RuntimeError)
+
+    def test_signer_unavailable_is_not_a_wire_error(self):
+        signer = Signer.non_exporting(SIGNER_ID, KEY_ID, self._raise)
+        with pytest.raises(SignerUnavailable) as ei:
+            signer.sign_request(**ARGS)
+        assert not isinstance(ei.value, McpReError)
+        assert not hasattr(ei.value, "wire_code")
+        # ...but it is still one of ours, so a caller can catch the whole family.
+        assert isinstance(ei.value, McpReSdkError)
 
     @pytest.mark.parametrize("bad", [b"", bytes(63), bytes(65)])
-    def test_a_wrong_length_signature_maps_to_invalid_signature(self, bad):
+    def test_a_wrong_length_signature_raises_signer_unavailable(self, bad):
         signer = Signer.non_exporting(SIGNER_ID, KEY_ID, lambda _p: bad)
-        with pytest.raises(ValueError, match="mcp-re.invalid_signature"):
+        with pytest.raises(SignerUnavailable, match="expected 64"):
             signer.sign_request(**ARGS)
 
-    def test_a_non_bytes_return_maps_to_invalid_signature(self):
+    def test_a_non_bytes_return_raises_signer_unavailable(self):
         signer = Signer.non_exporting(SIGNER_ID, KEY_ID, lambda _p: "not-bytes")
-        with pytest.raises(ValueError, match="mcp-re.invalid_signature"):
+        with pytest.raises(SignerUnavailable, match="expected bytes"):
             signer.sign_request(**ARGS)
+
+    def test_a_misbehaving_device_emits_no_evidence(self):
+        signer = Signer.non_exporting(SIGNER_ID, KEY_ID, self._raise)
+        with pytest.raises(SignerUnavailable):
+            signer.sign_request(**ARGS)
+
+    def test_a_core_failure_is_not_blamed_on_the_device(self):
+        """The guard must not swallow genuine protocol errors.
+
+        Bad params are rejected before the device is ever consulted, so this must
+        surface as the core's own error — not as SignerUnavailable.
+        """
+        dev = SigningDevice.from_seed(SEED)
+        signer = Signer.from_device(SIGNER_ID, KEY_ID, dev)
+        bad = dict(ARGS, params_json='"not-an-object"')
+        with pytest.raises(ValueError) as ei:
+            signer.sign_request(**bad)
+        assert not isinstance(ei.value, SignerUnavailable)
+        assert "params must be a JSON object" in str(ei.value)
 
 
 class TestSignerPolicyFailsClosed:

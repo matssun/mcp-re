@@ -10,8 +10,10 @@ import { describe, it, expect } from "vitest";
 import {
   CustodyClass,
   McpReError,
+  McpReSdkError,
   Signer,
   SignerPolicy,
+  SignerUnavailable,
   SigningDevice,
   signPreimage,
   type SignRequestArgs,
@@ -95,21 +97,67 @@ describe("non-exporting custody is byte-identical to software custody", () => {
 });
 
 describe("a device that cannot sign fails closed", () => {
-  it("maps a throwing device to mcp-re.invalid_signature", () => {
-    const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => {
+  // A device failure is a LOCAL condition, not a wire condition. Nothing was
+  // transmitted, so no `mcp-re.*` code describes it — reporting
+  // `mcp-re.invalid_signature` would claim a peer rejected a signature that was never
+  // sent. Fail-closed either way; the distinction is for diagnostics.
+  const throwing = () =>
+    Signer.nonExporting(SIGNER_ID, KEY_ID, () => {
       throw new Error("HSM unavailable");
     });
-    expect(() => signer.signRequest(ARGS)).toThrow(/mcp-re\.invalid_signature/);
+
+  it("raises SignerUnavailable for a throwing device", () => {
+    expect(() => throwing().signRequest(ARGS)).toThrow(SignerUnavailable);
+    expect(() => throwing().signRequest(ARGS)).toThrow(/HSM unavailable/);
   });
 
-  it("maps a wrong-length signature to mcp-re.invalid_signature", () => {
-    const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => Buffer.alloc(63));
-    expect(() => signer.signRequest(ARGS)).toThrow(/mcp-re\.invalid_signature/);
+  it("keeps the underlying cause", () => {
+    try {
+      throwing().signRequest(ARGS);
+      throw new Error("expected SignerUnavailable");
+    } catch (e) {
+      expect(e).toBeInstanceOf(SignerUnavailable);
+      expect((e as SignerUnavailable).cause).toBeInstanceOf(Error);
+      expect(((e as SignerUnavailable).cause as Error).message).toBe("HSM unavailable");
+    }
+  });
+
+  it("is not a wire error, but is still one of ours", () => {
+    try {
+      throwing().signRequest(ARGS);
+      throw new Error("expected SignerUnavailable");
+    } catch (e) {
+      expect(e).not.toBeInstanceOf(McpReError);
+      expect(e).toBeInstanceOf(McpReSdkError);
+      expect((e as { wireCode?: string }).wireCode).toBeUndefined();
+    }
+  });
+
+  it.each([0, 63, 65])("raises SignerUnavailable for a %i-byte signature", (n) => {
+    const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => Buffer.alloc(n));
+    expect(() => signer.signRequest(ARGS)).toThrow(SignerUnavailable);
+    expect(() => signer.signRequest(ARGS)).toThrow(/expected 64/);
+  });
+
+  it("raises SignerUnavailable for a non-Buffer return", () => {
+    // @ts-expect-error deliberately wrong return type at the device boundary
+    const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => "not-a-buffer");
+    expect(() => signer.signRequest(ARGS)).toThrow(/expected a Buffer/);
   });
 
   it("never emits unsigned evidence when the device misbehaves", () => {
     const signer = Signer.nonExporting(SIGNER_ID, KEY_ID, () => Buffer.alloc(0));
     expect(() => signer.signRequest(ARGS)).toThrow();
+  });
+
+  it("does not blame the device for a core failure", () => {
+    // The guard must not swallow genuine protocol errors. Bad params are rejected
+    // before the device is ever consulted, so this must surface as the core's own
+    // error — not as SignerUnavailable.
+    const signer = Signer.fromDevice(SIGNER_ID, KEY_ID, SigningDevice.fromSeed(SEED));
+    const bad = { ...ARGS, paramsJson: '"not-an-object"' };
+    expect(() => signer.signRequest(bad)).toThrow(/params must be a JSON object/);
+    expect(() => signer.signRequest(bad)).not.toThrow(SignerUnavailable);
   });
 });
 

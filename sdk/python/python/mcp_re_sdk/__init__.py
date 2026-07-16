@@ -17,7 +17,15 @@ exposed through the ``_core`` PyO3 extension (built by maturin).
 
 from . import _core  # native extension (mcp_re_sdk._core)
 from .correlation import ContinuationHandles, CorrelationStore, PendingRequest
-from .custody import CustodyClass, McpReError, Signer, SignerPolicy, SigningDevice
+from .custody import (
+    CustodyClass,
+    McpReError,
+    McpReSdkError,
+    Signer,
+    SignerPolicy,
+    SignerUnavailable,
+    SigningDevice,
+)
 
 __version__ = "0.12.1"
 __all__ = [
@@ -31,6 +39,8 @@ __all__ = [
     "VerifyResult",
     "CustodyClass",
     "McpReError",
+    "McpReSdkError",
+    "SignerUnavailable",
     "Signer",
     "SignerPolicy",
     "SigningDevice",

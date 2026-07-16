@@ -27,8 +27,10 @@ from . import _core
 __all__ = [
     "CustodyClass",
     "McpReError",
+    "McpReSdkError",
     "Signer",
     "SignerPolicy",
+    "SignerUnavailable",
     "SigningDevice",
 ]
 
@@ -38,16 +40,40 @@ _SIGNATURE_LEN = 64
 _SEED_LEN = 32
 
 
-class McpReError(Exception):
-    """An MCP-RE failure carrying a frozen ``mcp-re.*`` wire code.
+class McpReSdkError(Exception):
+    """Base for every error this SDK raises. Catch this to catch them all."""
+
+
+class McpReError(McpReSdkError):
+    """A protocol failure carrying a frozen ``mcp-re.*`` wire code.
 
     The taxonomy is the one the proxy and the Rust core emit, so a caller can branch
-    on ``.wire_code`` without parsing prose (ADR-MCPS-044 §error taxonomy).
+    on ``.wire_code`` without parsing prose (ADR-MCPS-044 §error taxonomy). The
+    taxonomy is **wire-only and reuse-only** — no code here is invented.
     """
 
     def __init__(self, wire_code: str, detail: str = "") -> None:
         super().__init__(f"{wire_code}: {detail}" if detail else wire_code)
         self.wire_code = wire_code
+        self.detail = detail
+
+
+class SignerUnavailable(McpReSdkError):
+    """The local signing device could not produce a usable signature.
+
+    Deliberately **not** an :class:`McpReError`: this is a local condition — the device
+    raised, or handed back something that is not a 64-byte signature — and nothing was
+    ever transmitted, so no wire code describes it. Reporting it as
+    ``mcp-re.invalid_signature`` would claim a peer rejected a signature that was never
+    sent, and the frozen taxonomy is wire-only and reuse-only, so there is no client-side
+    token to borrow either.
+
+    Fail-closed either way: no evidence is emitted. ``__cause__`` carries whatever the
+    device actually did.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"signing device unavailable: {detail}")
         self.detail = detail
 
 
@@ -142,10 +168,44 @@ class Signer:
         Keyword arguments are those of :func:`mcp_re_sdk.sign_request` minus the
         credential (``seed``/``sign_callback``) and ``key_id``, which this signer
         supplies.
+
+        Raises :class:`SignerUnavailable` if a non-exporting device cannot sign, and
+        :class:`ValueError` carrying a frozen wire code for a genuine protocol failure.
         """
         if self.custody is CustodyClass.SOFTWARE:
             return _core.sign_request(self._seed, self.key_id, **kwargs)
-        return _core.sign_request_with_signer(self._sign_callback, self.key_id, **kwargs)
+
+        # The core cannot tell "the device is broken" from "the signature is bad" — it
+        # only sees a callback that failed, and maps that to a wire code. Capture what
+        # the device actually did on this side of the boundary so the local condition is
+        # reported as a local condition.
+        failure: dict = {}
+
+        def guarded(preimage: bytes) -> bytes:
+            try:
+                sig = self._sign_callback(preimage)
+            except BaseException as exc:
+                failure["cause"] = exc
+                raise
+            if not isinstance(sig, (bytes, bytearray)):
+                failure["cause"] = TypeError(
+                    f"device returned {type(sig).__name__}, expected bytes"
+                )
+                raise failure["cause"]
+            if len(sig) != _SIGNATURE_LEN:
+                failure["cause"] = ValueError(
+                    f"device returned a {len(sig)}-byte signature, expected {_SIGNATURE_LEN}"
+                )
+                raise failure["cause"]
+            return bytes(sig)
+
+        try:
+            return _core.sign_request_with_signer(guarded, self.key_id, **kwargs)
+        except ValueError:
+            cause = failure.get("cause")
+            if cause is None:
+                raise  # a real protocol failure in the core, not the device
+            raise SignerUnavailable(str(cause) or type(cause).__name__) from cause
 
     def __repr__(self) -> str:  # never render key material
         return (
