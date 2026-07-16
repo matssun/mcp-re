@@ -51,8 +51,15 @@ It provides a reference implementation and conformance package for protecting MC
   HTTP-profile only; a stdio-only server is fronted by an external plain-MCP
   adapter such as FastMCP);
 - signed response verification on the host/client side, via a client-side proxy
-  **or** a native SDK (**Python and TypeScript**, both bound to the same audited
-  `mcp-re-client-core` so the signed evidence is byte-identical across languages).
+  **or** the Python/TypeScript **SDK bindings** (both bound to the same audited
+  `mcp-re-client-core`, so the signed evidence is byte-identical across languages —
+  a frozen parity oracle gates it).
+
+The SDKs provide bindings for signing, delegated-response verification, rejection
+verification, non-exporting custody, correlation, and parity-tested evidence handling.
+**They are not yet drop-in MCP HTTP transport adapters:** callers currently drive the
+HTTP leg and invoke sign/verify explicitly. The transparent path today is the
+client-side proxy.
 
 MCP-RE is not part of the official MCP specification unless and until it is accepted through the MCP governance and SEP process.
 
@@ -75,10 +82,12 @@ Full walkthrough and what each case proves:
 [`docs/quickstart-local.md`](docs/quickstart-local.md). For the live Google Cloud
 KMS key-custody path (optional, separate): [`docs/quickstart-gcp-kms.md`](docs/quickstart-gcp-kms.md).
 
-For the **end-to-end** path (a plain-MCP client → client-side proxy/SDK → mTLS →
-server-side MCP-RE proxy → Streamable-HTTP MCP backend), the **Python** and
-**TypeScript** SDKs bind to the same audited `mcp-re-client-core`. See
-[`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript). MCP-RE is
+For the **end-to-end** path (a plain-MCP client → client-side proxy → mTLS →
+server-side MCP-RE proxy → Streamable-HTTP MCP backend), the transparent client leg is
+the **client-side proxy**. The **Python** and **TypeScript** SDK bindings cover the same
+evidence obligation in-process over the same audited `mcp-re-client-core`, but the caller
+still drives the HTTP leg and calls sign/verify explicitly — they are not yet transport
+adapters. See [`sdk/python`](sdk/python) and [`sdk/typescript`](sdk/typescript). MCP-RE is
 HTTP-profile only; the over-the-wire persona-ladder walkthrough runs over the HTTP
 profile (a stdio-only endpoint is fronted by an external adapter such as FastMCP).
 
