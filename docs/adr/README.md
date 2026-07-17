@@ -70,6 +70,10 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPRE-053](https://github.com/matssun/mcp-re/discussions/437) | Admission Assertion + §7 Admission-State Binding | 🟡 Proposed |
 | [ADR-MCPRE-054](https://github.com/matssun/mcp-re/discussions/438) | Portable Audit Receipts on SCITT (RFC 9943) + COSE Receipts (RFC 9942) | 🟡 Proposed |
 
+> ADR-MCPRE-053 and -054 are **Proposed** with their implementation on
+> [PR #436](https://github.com/matssun/mcp-re/pull/436); they move to Implemented
+> only after owner ratification.
+
 ## Active vs Legacy
 
 The current MCP-RE worldview is frozen in [`docs/design/active-profile-and-legacy-quarantine.md`](../design/active-profile-and-legacy-quarantine.md) and summarized in [`docs/CURRENT_ARCHITECTURE.md`](../CURRENT_ARCHITECTURE.md). In short:
