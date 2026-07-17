@@ -22,22 +22,35 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::build_signed_rejection;
+use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::sign_request;
+use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
+use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
+use mcp_re_http_profile::verify_response_bound_full;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::ChainLabel;
+use mcp_re_http_profile::HopOutcome;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::IncompleteReason;
 use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::VerifierPolicy;
 
 /// Credentials in artifact fixtures are base64url-no-pad (reusing the core
 /// codec so the corpus needs no extra base64 dependency).
@@ -114,6 +127,29 @@ struct ContinuationCheck {
     request_state_b64: String,
 }
 
+/// A frozen retained-CHAIN reconstruction check (#416 rev 2 §9/§13, MCPRE-431).
+/// Each hop freezes the complete signed request and response; the runner replays
+/// them through `reconstruct_chain` and compares the label. `outcomes` classifies
+/// each hop's response terminal / input_required — MCP-level semantics the
+/// standards profile is deliberately not in the business of reading from a body.
+///
+/// `expected_label` is `complete`, or `incomplete:<hop>:<reason>` — an incomplete
+/// record must name WHICH hop broke it, so the frozen expectation names it too.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChainCheck {
+    hops: Vec<ChainHop>,
+    outcomes: Vec<String>,
+    expected_label: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChainHop {
+    request: WireMessage,
+    response: WireMessage,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
@@ -121,7 +157,8 @@ struct Fixture {
     name: String,
     /// `request` fixtures verify `request`; `response` fixtures verify
     /// `response` against `request` (the ;req binding source); `artifact`
-    /// fixtures verify `artifact_check`.
+    /// fixtures verify `artifact_check`; `chain` fixtures reconstruct
+    /// `chain_check`.
     kind: String,
     /// `verify_ok` or the exact frozen `mcp-re.*` wire code observed.
     expected: String,
@@ -135,6 +172,8 @@ struct Fixture {
     artifact_check: Option<ArtifactCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation_check: Option<ContinuationCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chain_check: Option<ChainCheck>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -329,6 +368,7 @@ fn build_fixtures() -> Vec<Fixture> {
         }),
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 2. h02_request_body_tamper — frozen post-tamper message. The body no
@@ -347,6 +387,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 3. h03_request_missing_covered_component — content-digest stripped from
@@ -367,6 +408,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 4. h04_request_foreign_tag — same evidence under a foreign profile tag.
@@ -386,6 +428,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 4b. h23_request_alg_not_allowlisted — a signature naming an algorithm that
@@ -410,6 +453,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
@@ -433,6 +477,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 6. h06_request_wrong_keyid — untrusted keyid, trust must fail first.
@@ -456,6 +501,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 7. h07_response_valid — full signed exchange.
@@ -484,6 +530,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // 8. h08_response_splice — a response signed for request B presented as
@@ -524,6 +571,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // ----- artifact-binding fixtures (MCPRE-95) -----
@@ -601,6 +649,7 @@ fn build_fixtures() -> Vec<Fixture> {
                 credential_b64: credential_b64(&presented),
             }),
             continuation_check: None,
+            chain_check: None,
         });
     }
 
@@ -624,6 +673,7 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(&prev_base),
@@ -642,6 +692,7 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(b"a-different-previous-request-base"),
@@ -660,6 +711,7 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value,
             previous_request_base_b64: credential_b64(&prev_base),
@@ -667,6 +719,13 @@ fn build_fixtures() -> Vec<Fixture> {
             request_state_b64: credential_b64(b"opaque-request-state-blob-TAMPERED"),
         }),
     });
+
+    // ----- retained-chain fixtures (#416 rev 2 §9/§13, MCPRE-430/431) -----
+    // The continuation fixtures above check ONE handle set in isolation. These
+    // check what §9 actually requires: that a whole chain re-links. Each freezes
+    // complete signed messages per hop, so a third party replays real evidence
+    // rather than this project's opinion of a handle.
+    fixtures.extend(chain_fixtures());
 
     // ----- signed-rejection fixtures (MCPRE-96) -----
     // A rejection is a signed response carrying error.data.mcp_re_error.wire_code.
@@ -699,6 +758,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // h19 — unbound valid: no request context, signed response-only.
@@ -722,6 +782,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // h20 — body tamper: an edited human message breaks Content-Digest.
@@ -739,6 +800,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // h21 — splice: a rejection bound to `req` presented against a different
@@ -764,6 +826,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     // h22 — unsigned: a bare JSON-RPC error with no signature is untrusted.
@@ -782,9 +845,260 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
     });
 
     fixtures
+}
+
+// ---------------------------------------------------------------------------
+// Retained-chain fixtures (#416 rev 2 §9/§13).
+// ---------------------------------------------------------------------------
+
+const CHAIN_TARGET: &str = "https://mcp.example.com/mcp";
+const AWAITING: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#;
+const DONE: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+
+fn chain_audience() -> AudienceTuple {
+    AudienceTuple {
+        audience_id: "mcp.example.com".into(),
+        target_uri: CHAIN_TARGET.into(),
+        route: Some("tools/call".into()),
+    }
+}
+
+fn chain_server_signer() -> ActorIdentity {
+    ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: SERVER_KEY_ID.into(),
+    }
+}
+
+fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
+    HttpRequestEvidenceBlock {
+        profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        audience: chain_audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        continuation,
+    }
+}
+
+fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
+    RequestEvidenceDigest {
+        digest_alg: e.digest_alg.clone(),
+        digest_value: e.digest_value.clone(),
+    }
+}
+
+/// Sign one hop and return it with the two role-labeled handles the next hop's
+/// continuation must name.
+fn chain_hop(
+    nonce: &str,
+    continuation: Option<HttpContinuation>,
+    body: &str,
+) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+    let mut request = HttpRequest {
+        method: "POST".into(),
+        target_uri: CHAIN_TARGET.into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let req_evidence = sign_request_full(
+        &mut request,
+        &chain_block(continuation),
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("request signs");
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    sign_response_full(
+        &mut response,
+        &request,
+        &req_evidence,
+        &chain_server_signer(),
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signs");
+    let rsp_evidence =
+        verify_response_bound_full(&response, &request, &req_evidence, &resolver(), NOW)
+            .expect("response verifies")
+            .response_signature_base_digest;
+    (RetainedHop { request, response }, req_evidence, rsp_evidence)
+}
+
+fn to_chain_hop(h: &RetainedHop) -> ChainHop {
+    ChainHop {
+        request: to_wire_request(&h.request),
+        response: to_wire_response(&h.response),
+    }
+}
+
+fn chain_fixture(name: &str, hops: &[RetainedHop], outcomes: &[&str], label: &str) -> Fixture {
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "chain".into(),
+        expected: "verify_ok".into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: Some(ChainCheck {
+            hops: hops.iter().map(to_chain_hop).collect(),
+            outcomes: outcomes.iter().map(|s| (*s).to_owned()).collect(),
+            expected_label: label.into(),
+        }),
+    }
+}
+
+/// The full three-hop chain R0→S0→R1→S1→R2→S2 the chain fixtures are cut from.
+fn three_hop() -> Vec<RetainedHop> {
+    let (h0, r0, s0) = chain_hop("chain-n0", None, AWAITING);
+    let (h1, r1, s1) = chain_hop(
+        "chain-n1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-0",
+        )),
+        AWAITING,
+    );
+    let (h2, _, _) = chain_hop(
+        "chain-n2",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r1),
+            to_digest(&s1),
+            b"state-1",
+        )),
+        DONE,
+    );
+    vec![h0, h1, h2]
+}
+
+fn chain_fixtures() -> Vec<Fixture> {
+    let full = three_hop();
+    let mut out = Vec::new();
+
+    // h24 — multi-hop positive (§13.4 "multi-hop" claim): two consecutive
+    // non-terminal turns followed by a terminal one, every hop re-linking.
+    out.push(chain_fixture(
+        "h24_chain_multi_hop_complete",
+        &full,
+        &["input_required", "input_required", "terminal"],
+        "complete",
+    ));
+
+    // h25 — the missing MIDDLE hop (§9.1/§9.3). Every retained message verifies
+    // on its own and S2 is a genuine terminal result; the record is still
+    // incomplete, and says so naming hop 1. This is the case §9 exists for.
+    out.push(chain_fixture(
+        "h25_chain_missing_middle_hop_incomplete",
+        &[full[0].clone(), full[2].clone()],
+        &["input_required", "terminal"],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h26 — truncated chain (§13.2): the record stops on a turn still awaiting
+    // input. Every hop verifies; the call has no ending.
+    out.push(chain_fixture(
+        "h26_chain_truncated_incomplete",
+        &[full[0].clone(), full[1].clone()],
+        &["input_required", "input_required"],
+        "incomplete:1:terminal_expected",
+    ));
+
+    // h27 — a continuation naming ANOTHER chain's evidence (§13.2 "response from
+    // another chain"): well-formed handles that do not describe this record.
+    let (o0, _, _) = chain_hop("chain-other0", None, AWAITING);
+    let (_, other_r, other_s) = chain_hop("chain-other-src", None, AWAITING);
+    let (o1, _, _) = chain_hop(
+        "chain-other1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&other_r),
+            to_digest(&other_s),
+            b"state-o",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h27_chain_foreign_continuation_incomplete",
+        &[o0, o1],
+        &["input_required", "terminal"],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h28 — role substitution (§7.3): the previous RESPONSE handle presented as
+    // the previous-REQUEST handle and vice versa. Domain separation makes the
+    // lifted handles different values in the wrong role, so re-linking rejects.
+    let (s0h, sr0, ss0) = chain_hop("chain-swap0", None, AWAITING);
+    let (s1h, _, _) = chain_hop(
+        "chain-swap1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&ss0),
+            to_digest(&sr0),
+            b"state-s",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h28_chain_role_swapped_handles_incomplete",
+        &[s0h, s1h],
+        &["input_required", "terminal"],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h29 — terminal spliced onto a continuation request (§13.2): the chain
+    // claims to continue past a turn that already answered terminally.
+    let (t0, tr0, ts0) = chain_hop("chain-term0", None, DONE);
+    let (t1, _, _) = chain_hop(
+        "chain-term1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&tr0),
+            to_digest(&ts0),
+            b"state-t",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h29_chain_terminal_spliced_incomplete",
+        &[t0, t1],
+        &["terminal", "terminal"],
+        "incomplete:0:non_terminal_expected",
+    ));
+
+    out
+}
+
+/// The runner's label encoding, mirroring `expected_label` in the fixture.
+fn label_token(label: &ChainLabel) -> String {
+    match label {
+        ChainLabel::Complete => "complete".to_owned(),
+        ChainLabel::Incomplete { hop, reason } => {
+            let r = match reason {
+                IncompleteReason::RequestUnverifiable(_) => "request_unverifiable",
+                IncompleteReason::ResponseUnverifiable(_) => "response_unverifiable",
+                IncompleteReason::MissingContinuation => "missing_continuation",
+                IncompleteReason::ContinuationDoesNotLink => "continuation_does_not_link",
+                IncompleteReason::NonTerminalExpected => "non_terminal_expected",
+                IncompleteReason::TerminalExpected => "terminal_expected",
+                IncompleteReason::EmptyChain => "empty_chain",
+            };
+            format!("incomplete:{hop}:{r}")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -912,6 +1226,41 @@ fn frozen_http_profile_corpus_verifies() {
                     Ok(()) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
+            }
+            "chain" => {
+                let check = fixture.chain_check.as_ref().expect("chain_check");
+                let hops: Vec<RetainedHop> = check
+                    .hops
+                    .iter()
+                    .map(|h| RetainedHop {
+                        request: from_wire_request(&h.request),
+                        response: from_wire_response(&h.response),
+                    })
+                    .collect();
+                let outcomes: Vec<HopOutcome> = check
+                    .outcomes
+                    .iter()
+                    .map(|o| match o.as_str() {
+                        "terminal" => HopOutcome::Terminal,
+                        "input_required" => HopOutcome::InputRequired,
+                        other => panic!("{name}: unknown hop outcome {other}"),
+                    })
+                    .collect();
+                let out = reconstruct_chain(
+                    &hops,
+                    &outcomes,
+                    &resolver(),
+                    &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                );
+                // The label IS the frozen verdict: an incomplete record must name
+                // the hop that broke it, so the comparison covers WHICH hop too.
+                assert_eq!(
+                    label_token(&out.label),
+                    check.expected_label,
+                    "{name}: chain label drifted from the frozen expectation"
+                );
+                "verify_ok".to_owned()
             }
             "rejection" => {
                 // A rejection carries request context only when bound.

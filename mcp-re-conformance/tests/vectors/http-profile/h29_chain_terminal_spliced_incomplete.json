@@ -1,0 +1,115 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h29_chain_terminal_spliced_incomplete",
+  "kind": "chain",
+  "expected": "verify_ok",
+  "chain_check": {
+    "hops": [
+      {
+        "request": {
+          "method": "POST",
+          "target_uri": "https://mcp.example.com/mcp",
+          "status": null,
+          "headers": [
+            [
+              "Content-Type",
+              "application/json"
+            ],
+            [
+              "Content-Digest",
+              "sha-256=:CpSwyc8gK8crCz3K6Zp7XrzFubjZK3chS7T+rjLBlAs=:"
+            ],
+            [
+              "Signature-Input",
+              "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"chain-term0\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            ],
+            [
+              "Signature",
+              "mcp-re=:MLQMIe/ip8jCwmHBWG95kV6NLE7sOoU+lHLglQTabkqofwFil9QktyNsjvovfMxGC+JnSEG4Sx9C4oPZTTQEAQ==:"
+            ]
+          ],
+          "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.request\":{\"artifact_bindings\":[{\"artifact_type\":\"oauth-dpop\",\"binding_type\":\"opaque-digest\",\"digest_alg\":\"sha256\",\"digest_value\":\"GnZ0607njffhrEOak8P6jjyUV4TU3sn9jjARc4svHWI\"}],\"audience\":{\"audience_id\":\"mcp.example.com\",\"route\":\"tools/call\",\"target_uri\":\"https://mcp.example.com/mcp\"},\"profile\":\"mcp-re-http-v1\"}},\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\"}"
+        },
+        "response": {
+          "method": null,
+          "target_uri": null,
+          "status": 200,
+          "headers": [
+            [
+              "Content-Type",
+              "application/json"
+            ],
+            [
+              "Content-Digest",
+              "sha-256=:lIVXwACwk1v19LMmy6MFb5NipaYDTPnp02uum/DnglA=:"
+            ],
+            [
+              "Signature-Input",
+              "mcp-re-response=(\"@status\" \"content-digest\" \"content-type\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"server-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            ],
+            [
+              "Signature",
+              "mcp-re-response=:XXelb2vqWso9udr8EQqmqArLMoSEWTIZv2T5Hv054aGLCA5fj82TpELMeSDRipiJX9eXmIuLzaYd/3vj7IplAw==:"
+            ]
+          ],
+          "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"opkcrvF8hzvVxdm9L9tD6stxI0HeORWCawHSo46gKPk\"},\"server_signer\":{\"keyid\":\"server-key-1\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
+        }
+      },
+      {
+        "request": {
+          "method": "POST",
+          "target_uri": "https://mcp.example.com/mcp",
+          "status": null,
+          "headers": [
+            [
+              "Content-Type",
+              "application/json"
+            ],
+            [
+              "Content-Digest",
+              "sha-256=:jcUFeKB1/JbkDkvrl0guxSTLGetQpwAE6ECn1Ihxg6U=:"
+            ],
+            [
+              "Signature-Input",
+              "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"chain-term1\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            ],
+            [
+              "Signature",
+              "mcp-re=:WvG3XMH3FsJvazDqiRIhEKc616iHB91nXolvwTQ6rvShfsYP51ptKuEZpT0Mz4SsRjhfbVoY64M/LjeHKbIUBw==:"
+            ]
+          ],
+          "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.request\":{\"artifact_bindings\":[{\"artifact_type\":\"oauth-dpop\",\"binding_type\":\"opaque-digest\",\"digest_alg\":\"sha256\",\"digest_value\":\"GnZ0607njffhrEOak8P6jjyUV4TU3sn9jjARc4svHWI\"}],\"audience\":{\"audience_id\":\"mcp.example.com\",\"route\":\"tools/call\",\"target_uri\":\"https://mcp.example.com/mcp\"},\"continuation\":{\"input_required_response_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"N_wbSA3-IWj7M-YKxO0rWOeoZ8QGvnlonYFXHQxho30\"},\"previous_request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"opkcrvF8hzvVxdm9L9tD6stxI0HeORWCawHSo46gKPk\"},\"request_state_digest\":{\"digest_alg\":\"sha256\",\"digest_value\":\"ulsb1rykj32FOncbVoe0J3fRnb54RpGki2P4Tnzydmw\"},\"type\":\"mcp-mrt\"},\"profile\":\"mcp-re-http-v1\"}},\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\"}"
+        },
+        "response": {
+          "method": null,
+          "target_uri": null,
+          "status": 200,
+          "headers": [
+            [
+              "Content-Type",
+              "application/json"
+            ],
+            [
+              "Content-Digest",
+              "sha-256=:ibITL741PfFetZm5M0ZVx6mQQmFvG+S3hBUk/MJlgjs=:"
+            ],
+            [
+              "Signature-Input",
+              "mcp-re-response=(\"@status\" \"content-digest\" \"content-type\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"server-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            ],
+            [
+              "Signature",
+              "mcp-re-response=:J7k0vblLn0oMbc5/MJiEebe8kOHsWtjR0Zf5S3UO7UEiBsLW2/5zasMrxQHx46/Oe/gR7VmKZuzkQtf4xr5kBA==:"
+            ]
+          ],
+          "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"IDE9oWxjHYIDWA_As7cB-ncUHYvqL7iGIHS7pQaZiE8\"},\"server_signer\":{\"keyid\":\"server-key-1\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
+        }
+      }
+    ],
+    "outcomes": [
+      "terminal",
+      "terminal"
+    ],
+    "expected_label": "incomplete:0:non_terminal_expected"
+  }
+}

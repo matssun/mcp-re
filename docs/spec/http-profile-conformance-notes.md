@@ -124,3 +124,118 @@ The seam is additive: `verify_request`, `verify_response`, and friends are the
 extra algorithm passes a policy; everything else keeps calling what it called.
 `DelegationExpectations` carries a `policy` field for the delegated response path —
 distinct from its `max_clock_skew`, which governs the CREDENTIAL's own window.
+
+---
+
+## #416 §7.1/§7.3 — evidence handles are domain-separated by role
+
+**Rule.** Every evidence handle is a SHA-256 over a role-labeled preimage:
+
+```
+handle = base64url-no-pad( SHA-256( <role label> || 0x00 || <mandated input> ) )
+```
+
+| Role | Label | Input |
+|---|---|---|
+| Request evidence | `mcp-re-http-v1/request-evidence` | the request's RFC 9421 signature base |
+| Response evidence | `mcp-re-http-v1/response-evidence` | the response's RFC 9421 signature base |
+| Request state | `mcp-re-http-v1/request-state` | the opaque MRTR `requestState` bytes |
+
+**Why this changed.** Previously all five handle sites shared one derivation, so a
+handle's role was carried only by which field it sat in — and the response handle
+was in fact derived by the request-role constructor. §7.3 requires role
+distinction robust against substitution. A positional convention is not that: it
+holds exactly as long as every consumer reads the right field, which is the
+assumption an attacker is trying to break. With a label per role, a request-role
+and a response-role handle over identical bytes are *different values*, so a
+handle lifted into the wrong field cannot verify. The separation is cryptographic
+rather than clerical.
+
+The `0x00` separator makes the encoding injective: labels are ASCII and can never
+contain a NUL, so no two (label, input) pairs collide. The labels are
+profile-scoped, so they also separate this profile's handles from a future one's.
+
+**Breaking.** Handle bytes changed; both frozen corpora were regenerated. This was
+sequenced BEFORE the corpus content-pinning (#427) precisely so the corpus is
+pinned once, against the final bytes.
+
+**Proven by.** `evidence.rs::roles_are_domain_separated_over_identical_bytes`,
+`::label_and_input_cannot_be_confused`, `::handle_is_not_a_bare_digest_of_the_base`,
+vector `h28_chain_role_swapped_handles_incomplete`.
+
+---
+
+## #416 §9 — retained-chain reconstruction
+
+**Rule.** A complete call record requires re-linking and verifying every hop
+R0→S0→R1→…→Sn. The verdict is never a bare boolean: a chain is `Complete`, or
+`Incomplete` and names the hop that broke it plus the verified prefix that stands.
+
+Per hop, reconstruction checks: the request verifies; the response verifies and is
+`;req`-bound to it; for hops after the first, the continuation re-links to the
+previous hop's two role-labeled handles; and the chain's shape — every hop before
+the last is non-terminal, the last is terminal, only the first may lack a
+continuation.
+
+**The failure it prevents.** Given R0→S0 and R2→S2 with R1→S1 missing, every
+retained message still verifies and S2 is a genuine, correctly-signed terminal
+result. A checker that only verified signatures would call that a complete record.
+It is not: a turn is unaccounted for. §9.3 — a terminal response completes only its
+own request unless the whole chain verifies.
+
+**Handles are recomputed, not retained.** The §9.2 evidence list is carried by the
+messages themselves plus the trust seam. Retaining derived handles alongside the
+bytes would let a retention bug or a dishonest archivist state a handle that
+disagrees with the bytes next to it; recomputing means the bytes are the only thing
+anyone has to keep honest.
+
+**Terminal classification is caller-supplied.** `resultType == "input_required"` is
+MCP-level semantics (ADR-MCPS-047). The standards profile binds bytes; it does not
+read MCP result models. `HopOutcome` is the seam.
+
+**Proven by.** `chain_reconstruction_test` (12 tests; the load-bearing one is
+`missing_middle_hop_is_incomplete_not_a_complete_terminal`, which asserts each
+retained hop verifies on its own BEFORE asserting the chain does not) and vectors
+`h24`–`h29`.
+
+---
+
+## #416 §13.2 — negative-category coverage map
+
+Every §13.2 category maps to a vector, an existing test, or an explicit N/A.
+
+| §13.2 category | Covered by | Kind |
+|---|---|---|
+| Missing previous-request handle | `h25_chain_missing_middle_hop_incomplete`, `later_hop_without_a_continuation_is_incomplete` | vector + test |
+| Wrong previous-request handle | `h16_continuation_splice`, `h27_chain_foreign_continuation_incomplete` | vector |
+| Missing response handle | `later_hop_without_a_continuation_is_incomplete` | test |
+| Wrong response handle | `h27_chain_foreign_continuation_incomplete`, `h28_chain_role_swapped_handles_incomplete` | vector |
+| Response from another chain | `h27_chain_foreign_continuation_incomplete` | vector |
+| Artifact substitution/alteration | `h10`, `h12`, `h14` (DPoP / mTLS / RAR mismatch) | vector |
+| Unknown binding identifier | `binding_identifier_test` — unknown `artifact_type`, unknown `binding_type`, and both shape/`binding_type` disagreements are `malformed_envelope`, never a silently-ignored binding | test |
+| Classification outside protected content | **N/A by construction.** The terminal/non-terminal discriminator is read from the JSON-RPC `result`, which is inside the body that `content-digest` covers. There is no unprotected classification surface to attack: the profile mints no header carrying it (v0.11 grill E-3), and `HopOutcome` is supplied by the caller from already-verified content, never parsed from the wire by the profile. |
+| Invalid response signature claiming non-terminal | `tampered_hop_is_named_by_index` (hop named, `ResponseUnverifiable`) | test |
+| Truncated chain | `h26_chain_truncated_incomplete` | vector |
+| Replayed continuation | five-tuple replay tier — `replayed_request_is_rejected_by_the_replay_tier`, `replayed_request_yields_a_verified_delegated_rejection` | test |
+| Duplicate single-use across replicas | cross-replica atomic single-use — `mrt_continuation_serving_test` (open-on-A / answer-on-B) | live proof |
+| Stale continuation | freshness gate + bounded skew — `request_within_the_skew_bound_is_accepted_but_beyond_it_is_not` | test |
+| Wrong audience/server | `h18_rejection_bound_valid` (`invalid_audience`), `full_profile_test` audience binding | vector + test |
+| Terminal spliced onto another continuation request | `h29_chain_terminal_spliced_incomplete` | vector |
+
+---
+
+## #416 §13.4 — conformance claims
+
+What MCP-RE claims today, and what it does not:
+
+| Claim | Status | Basis |
+|---|---|---|
+| **Base** — per-turn request/response binding | **Claimed** | RFC 9421 dual binding + `request_evidence`; `h01`–`h08` |
+| **One-hop** — a single continuation binds its three handles | **Claimed** | `h15`–`h17`, `block.rs` |
+| **Multi-hop** — consecutive non-terminal turns re-link to a terminal end | **Claimed** | `h24`, `chain_reconstruction_test` |
+| **Fleet-safe** — cross-replica atomic single-use | **Claimed** | shared-Redis correlation store; live open-on-A/answer-on-B proof (ADR-MCPS-047) |
+| **Complete retained-chain reconstruction** | **Claimed** | `chain.rs`; `h24`–`h29`; incomplete records name the failing hop |
+
+Claims deliberately NOT made: per-event SSE evidence (deferred to a future
+companion profile, §3.4); tasks and elicitation models (#416 §1.4); portable
+audit receipts (Layer 5 — roadmap, see #434).
