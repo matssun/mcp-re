@@ -12,6 +12,7 @@
 //! them the manifest would carry hashes nobody checks, which is worse than no
 //! hashes — it reads as a guarantee.
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -45,7 +46,29 @@ fn corpus_digest(entries: &[ManifestEntry]) -> String {
     hex_sha256(lines.concat().as_bytes())
 }
 
+/// Locate a committed corpus under BOTH build systems (the same dual-mode bridge
+/// the vector runners use): Bazel passes `MCP_RE_*_VECTORS_MANIFEST` as a runfiles
+/// path, and Cargo falls back to `CARGO_MANIFEST_DIR`.
 fn corpus(dir: &str) -> PathBuf {
+    let env_key = match dir {
+        "http-profile" => "MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST",
+        "delegation-profile" => "MCP_RE_DELEGATION_VECTORS_MANIFEST",
+        other => panic!("unknown corpus {other}"),
+    };
+    if let Ok(rel) = std::env::var(env_key) {
+        for key in ["TEST_SRCDIR", "RUNFILES_DIR"] {
+            if let Ok(root) = std::env::var(key) {
+                let candidate = Path::new(&root).join(&rel);
+                if candidate.exists() {
+                    return candidate.parent().expect("manifest has a parent").to_path_buf();
+                }
+            }
+        }
+        let candidate = PathBuf::from(&rel);
+        if candidate.exists() {
+            return candidate.parent().expect("manifest has a parent").to_path_buf();
+        }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("vectors")

@@ -383,8 +383,14 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Startup issuance: the KMS signs the FIRST credential (one KMS op).
     rotor.rotate(NOW).expect("startup issuance mints the first delegated key via the KMS root");
     assert_eq!(kms_calls.load(Ordering::SeqCst), 1, "startup issuance is exactly one KMS op");
-    let first_kid = signer.current(NOW).expect("a key is published").delegated_kid.clone();
-    assert_eq!(first_kid, format!("{ROOT_KID}/delegated/1"));
+    // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5, MCPRE-432),
+    // derived from the delegated key itself rather than an issuer counter.
+    let snap = signer.current(NOW).expect("a key is published");
+    let first_kid = snap.delegated_kid.clone();
+    assert_eq!(
+        first_kid,
+        mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
+    );
 
     // Serve a batch under the one delegated key; each response verifies via the
     // credential→KMS-root chain, signed by the DELEGATED key (not the root).

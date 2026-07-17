@@ -145,3 +145,90 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
     ],
 )
+
+nt_rust_test(
+    name = "algorithm_confusion_test",
+    srcs = ["tests/algorithm_confusion_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:base64",
+    ],
+)
+
+nt_rust_test(
+    name = "binding_identifier_test",
+    srcs = ["tests/binding_identifier_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
+nt_rust_test(
+    name = "bodyless_202_test",
+    srcs = ["tests/bodyless_202_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
+nt_rust_test(
+    name = "chain_reconstruction_test",
+    srcs = ["tests/chain_reconstruction_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
+nt_rust_test(
+    name = "json_mode_test",
+    srcs = ["tests/json_mode_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
+nt_rust_test(
+    name = "mcp_transport_headers_test",
+    srcs = ["tests/mcp_transport_headers_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
+
+nt_rust_test(
+    name = "admission_binding_test",
+    srcs = ["tests/admission_binding_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+        "@crates_mcp_re//:sha2",
+    ],
+)
