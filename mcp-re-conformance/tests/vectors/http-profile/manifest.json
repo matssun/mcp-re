@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "170aaf264363855cb82d3fe3d1b25980fa93127775fdbe4d235b20cc77cbed28",
+  "corpus_digest": "5ac674efd5734be977a26a19508cf1769e882b9463b760397993f7289f6ea911",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -102,6 +102,22 @@
     {
       "file": "h33_mcp_method_body_divergence.json",
       "sha256": "f8c985169153a950d232f422face5f02aa95dbbc6552ee42c6ab7e2102305920"
+    },
+    {
+      "file": "h38_transport_contract_valid.json",
+      "sha256": "d1d82e13d1bb47abbc917158dbb338fba2fd0aa012734f8835f0106ab15c3686"
+    },
+    {
+      "file": "h39_transport_required_header_absent.json",
+      "sha256": "2611579cc073e25b887d8ac454222845ebd6e43f3d52d9c47ec582be792fa605"
+    },
+    {
+      "file": "h40_transport_unsupported_version.json",
+      "sha256": "d7ad416eb6977bb46ddbd978019d882be60ea537fe6470589a0dfa4a255ed5e4"
+    },
+    {
+      "file": "h41_transport_mcp_name_divergence.json",
+      "sha256": "1943d4b2e1e9ba16ca016cc4e72c03e8caa991107a906764f72bc8d8db24d3a3"
     },
     {
       "file": "h30_response_sse_on_covered_exchange.json",

@@ -917,6 +917,115 @@ fn build_fixtures() -> Vec<Fixture> {
         chain_check: None,
     });
 
+    // ----- MCP transport CONTRACT fixtures (#415 rev 2 §4.1, MCPRE-425) -----
+    // h31-h33 above check header integrity under the default policy. These check
+    // the full §4.1 contract — required-header presence, supported-version policy,
+    // and header/body agreement — under a strict 2026-07-28 transport policy. The
+    // runner replays them with that policy attached.
+    let tx_body =
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    let tx_sign = |headers: Vec<(&str, &str)>, body: &[u8], nonce: &str| -> HttpRequest {
+        let mut hs: Vec<(String, String)> =
+            vec![("Content-Type".into(), "application/json".into())];
+        for (k, v) in headers {
+            hs.push((k.into(), v.into()));
+        }
+        let mut r = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: hs,
+            body: body.to_vec(),
+        };
+        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
+            .expect("signing succeeds");
+        r
+    };
+
+    // h38 — fully conforming under the strict contract.
+    let tx_ok = tx_sign(
+        vec![
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "read"),
+            ("MCP-Protocol-Version", "2026-07-28"),
+        ],
+        &tx_body,
+        "vec-nonce-tx-ok",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h38_transport_contract_valid".into(),
+        kind: "transport_request".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&tx_ok)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h39 — a required header absent (no Mcp-Method) under the strict contract.
+    let tx_missing = tx_sign(
+        vec![("MCP-Protocol-Version", "2026-07-28")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "vec-nonce-tx-miss",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h39_transport_required_header_absent".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.missing_envelope".into(),
+        request: Some(to_wire_request(&tx_missing)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h40 — an unsupported protocol version (a client's claim is not consent).
+    let tx_badver = tx_sign(
+        vec![("Mcp-Method", "initialize"), ("MCP-Protocol-Version", "1999-01-01")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "vec-nonce-tx-ver",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h40_transport_unsupported_version".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.unsupported_version".into(),
+        request: Some(to_wire_request(&tx_badver)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h41 — Mcp-Name disagreeing with params.name (the routing header naming a
+    //       different tool than the signed body invokes).
+    let tx_name = tx_sign(
+        vec![
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "delete"),
+            ("MCP-Protocol-Version", "2026-07-28"),
+        ],
+        &tx_body,
+        "vec-nonce-tx-name",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h41_transport_mcp_name_divergence".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&tx_name)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
     // h30 — SSE response on a covered exchange (#415 rev 2 §3.4, MCPRE-423).
     //       The server GENUINELY signs it: the signature is valid and the digest
     //       matches its body. It is rejected purely because a covered exchange is
@@ -1506,6 +1615,22 @@ fn frozen_http_profile_corpus_verifies() {
                     &request,
                     &resolver(),
                     &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "transport_request" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
+                // The strict 2026-07-28 contract these fixtures were built under.
+                let policy = VerifierPolicy::default().with_mcp_transport(
+                    mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
+                );
+                match mcp_re_http_profile::verify_request_with_policy(
+                    &request,
+                    &resolver(),
+                    &policy,
                     manifest.verify_at_unix,
                 ) {
                     Ok(_) => "verify_ok".to_owned(),

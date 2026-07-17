@@ -589,13 +589,21 @@ pub fn verify_request_with_policy(
         McpReError::InvalidSignature,
     )?;
 
-    // 5. Header/body agreement (§4.1). Deliberately AFTER the signature: before
-    //    it, both sides of this comparison are unauthenticated, and two attacker-
-    //    chosen strings agreeing with each other proves nothing. Once the
-    //    signature verifies, `mcp-method` is covered (enforced above) and the body
-    //    is covered via `content-digest` — so a disagreement means the signer
-    //    itself stated two different methods, and the verifier must not pick one.
+    // 5. MCP transport contract (§4.1). Deliberately AFTER the signature: before
+    //    it, both sides of every comparison are unauthenticated, and two attacker-
+    //    chosen strings agreeing proves nothing. Once the signature verifies, a
+    //    present `mcp-*` header is covered (the closed-allowlist gate enforced
+    //    present ⇒ covered) and the body is covered via `content-digest`.
+    //
+    //    The `mcp-method`/body agreement is ALWAYS checked — a covered header must
+    //    never lie about the signed body, regardless of policy. Required-header
+    //    presence, the supported-version set, and `mcp-name` agreement are the
+    //    configurable part, enforced only when the deployment attached a transport
+    //    policy.
     reject_mcp_method_divergence(request)?;
+    if let Some(transport) = policy.mcp_transport() {
+        transport.enforce(request)?;
+    }
 
     // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.

@@ -227,3 +227,156 @@ fn the_component_allowlist_is_still_closed() {
         HttpProfileError::MalformedEvidence("unknown covered component"),
     );
 }
+
+// --- the full §4.1 transport contract (issue #425) ---------------------------
+// The tests above cover header INTEGRITY (present ⇒ covered, mcp-method agreement).
+// These cover the rest of §4.1 through the real verify path: required-header
+// presence, the supported-version set, protocol-version/body agreement, and
+// mcp-name agreement — all enforced AFTER the signature, against protected bytes.
+
+use mcp_re_http_profile::McpTransportPolicy;
+use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_http_profile::verify_request_with_policy;
+
+fn strict_transport() -> VerifierPolicy {
+    VerifierPolicy::default()
+        .with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))
+}
+
+/// A fully-conforming 2026-07-28 request verifies under the strict contract.
+#[test]
+fn conforming_2026_request_verifies_under_the_transport_contract() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Mcp-Method".into(), "tools/call".into()),
+            ("Mcp-Name".into(), "read".into()),
+            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-ok")
+        .expect("signs");
+    verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW)
+        .expect("a conforming request verifies");
+}
+
+/// A required header ABSENT is rejected — the gap the narrowed claim left open.
+/// Under the strict contract, a POST with no `Mcp-Method` fails even though the
+/// signature is valid.
+#[test]
+fn a_required_header_absent_is_rejected_through_verify() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-miss")
+        .expect("signs");
+    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    assert_eq!(err, HttpProfileError::McpTransportHeaderMissing("mcp-method"));
+    assert_eq!(err.wire_code(), "mcp-re.missing_envelope");
+}
+
+/// An unsupported protocol version is rejected — a client's claim is not consent.
+#[test]
+fn an_unsupported_protocol_version_is_rejected_through_verify() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Mcp-Method".into(), "initialize".into()),
+            ("MCP-Protocol-Version".into(), "1999-01-01".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-ver")
+        .expect("signs");
+    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    assert_eq!(err, HttpProfileError::McpProtocolVersionUnsupported);
+    assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
+}
+
+/// Protocol-version header vs body `_meta` disagreement — the signer stating two
+/// versions. Both are protected; the verifier refuses rather than picking one.
+#[test]
+fn protocol_version_header_body_divergence_is_rejected_through_verify() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Mcp-Method".into(), "initialize".into()),
+            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-vd")
+        .expect("signs");
+    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-protocol-version"));
+}
+
+/// Mcp-Name disagreeing with params.name is rejected — the routing header must not
+/// name a different tool than the signed body invokes.
+#[test]
+fn mcp_name_body_divergence_is_rejected_through_verify() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Mcp-Method".into(), "tools/call".into()),
+            ("Mcp-Name".into(), "delete".into()),
+            ("MCP-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nd")
+        .expect("signs");
+    let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
+    assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-name"));
+}
+
+/// Without a transport policy attached, behavior is unchanged: a request omitting
+/// the headers verifies (the default VerifierPolicy enforces integrity of present
+/// headers only). This pins that the contract is opt-in and additive.
+#[test]
+fn absent_headers_verify_when_no_transport_policy_is_attached() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-none")
+        .expect("signs");
+    verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW)
+        .expect("no transport policy: present-header integrity only, absence allowed");
+}
+
+/// Legacy omission serves a headerless client but still rejects a present header
+/// that lies — through the real verify path.
+#[test]
+fn legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify() {
+    let policy = VerifierPolicy::default().with_mcp_transport(
+        McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]).with_legacy_header_omission(true),
+    );
+    let mut bare = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+    };
+    sign_request(&mut bare, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-leg")
+        .expect("signs");
+    verify_request_with_policy(&bare, &resolver(), &policy, NOW)
+        .expect("a legacy client omitting the headers is served");
+}

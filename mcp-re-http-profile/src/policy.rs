@@ -79,6 +79,12 @@ pub const DEFAULT_ALGORITHMS: [&str; 1] = [ALG_ED25519];
 pub struct VerifierPolicy {
     algorithms: Vec<ProfileAlgorithm>,
     max_clock_skew: i64,
+    /// The MCP transport/version contract (§4.1). `None` = no transport policy,
+    /// which is today's behavior: `Mcp-Method` divergence is still always checked
+    /// (a covered header must not lie about the body), but required-header
+    /// presence, supported-version policy, and `Mcp-Name` agreement are enforced
+    /// only when a deployment opts in with [`VerifierPolicy::with_mcp_transport`].
+    mcp_transport: Option<crate::mcp_transport::McpTransportPolicy>,
 }
 
 impl VerifierPolicy {
@@ -124,7 +130,20 @@ impl VerifierPolicy {
         Ok(VerifierPolicy {
             algorithms: resolved,
             max_clock_skew,
+            mcp_transport: None,
         })
+    }
+
+    /// Attach an MCP transport/version contract (§4.1), enforced after signature
+    /// verification against covered headers and the protected body.
+    pub fn with_mcp_transport(mut self, transport: crate::mcp_transport::McpTransportPolicy) -> Self {
+        self.mcp_transport = Some(transport);
+        self
+    }
+
+    /// The active MCP transport policy, if any.
+    pub fn mcp_transport(&self) -> Option<&crate::mcp_transport::McpTransportPolicy> {
+        self.mcp_transport.as_ref()
     }
 
     /// Resolve a wire `alg` token to an accepted algorithm, or `None`.
@@ -150,6 +169,7 @@ impl Default for VerifierPolicy {
         VerifierPolicy {
             algorithms: vec![ProfileAlgorithm::Ed25519],
             max_clock_skew: Self::DEFAULT_MAX_CLOCK_SKEW,
+            mcp_transport: None,
         }
     }
 }

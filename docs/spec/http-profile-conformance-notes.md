@@ -295,19 +295,6 @@ audit receipts (Layer 5 — roadmap, see #434).
 
 ## §4.1 — MCP transport headers are covered when present
 
-> **SCOPE — PARTIAL (2026-07-17 review).** What is implemented is *integrity of the
-> MCP transport headers that are sent*: present ⇒ covered, and `Mcp-Method` must
-> agree with the signed body. That is NOT full 2026-07-28 transport conformance.
-> **Not enforced:** required-header *presence* (2026-07-28 makes `Mcp-Method` and
-> `MCP-Protocol-Version` mandatory on every POST — a request omitting them is
-> accepted here); supported-version policy; `MCP-Protocol-Version` agreement with
-> `io.modelcontextprotocol/protocolVersion` in the body; `Mcp-Name` agreement with
-> `params.name`/`params.uri`. Those need a verifier-local MCP transport policy
-> (`supported_protocol_versions`, `require_protocol_version_header`,
-> `require_mcp_method`, `require_mcp_name_for_methods`, `allow_legacy_header_omission`)
-> validated against the protected body after signature verification. Tracked on #425,
-> which remains OPEN. Claim only "covered-header integrity", not "§4.1 conformance".
-
 **Rule.** `Mcp-Method`, `Mcp-Name`, and `Mcp-Protocol-Version` are coverable
 components, and each is **conditionally mandatory on exactly the
 `authorization`/`dpop` pattern: present means covered**. Additionally, a covered
@@ -349,6 +336,51 @@ an omission.
 `the_component_allowlist_is_still_closed` — widening the allowlist for these three
 must not have opened it generally), and vectors `h31_mcp_headers_covered_valid`,
 `h32_mcp_method_present_but_uncovered`, `h33_mcp_method_body_divergence`.
+
+### The full §4.1 transport contract — `McpTransportPolicy`
+
+Header integrity above is *one* half of §4.1: a header that is *sent* is covered
+and must not lie. The other half is which headers MUST be sent, which protocol
+versions are acceptable, and agreement with the protected body. That is
+[`McpTransportPolicy`], attached to a `VerifierPolicy` and enforced by
+`verify_request_with_policy` AFTER the signature verifies.
+
+**`McpTransportPolicy::mcp_2026_07_28(supported_versions)`** is the strict
+per-request contract:
+
+| Requirement | Enforced |
+|---|---|
+| `Mcp-Method` present on every POST | ✅ absent ⇒ `missing_envelope` |
+| `MCP-Protocol-Version` present on every POST | ✅ absent ⇒ `missing_envelope` |
+| Version ∈ the deployment's supported set | ✅ otherwise ⇒ `unsupported_version` — a client's claim is not consent |
+| `MCP-Protocol-Version` = body `io.modelcontextprotocol/protocolVersion` | ✅ disagreement ⇒ `malformed_envelope` |
+| `Mcp-Method` = body `method` | ✅ (always on, policy or not) ⇒ `malformed_envelope` |
+| `Mcp-Name` present for `tools/call` / `resources/read` | ✅ absent ⇒ `missing_envelope` |
+| `Mcp-Name` = `params.name` (`tools/call`) / `params.uri` (`resources/read`) | ✅ disagreement ⇒ `malformed_envelope` |
+
+**Every check runs after the signature, against protected values.** Before it, both
+a header and the body are attacker-chosen, so their agreement — or a version
+string's value — proves nothing. After it, a present header is covered (the
+closed-allowlist gate enforced present ⇒ covered), so a required header that is
+present is signed, and a disagreement is the *signer* contradicting itself.
+
+**`allow_legacy_header_omission` gates ABSENCE only.** A deployment still serving
+pre-2026-07-28 clients sets it: a request carrying *none* of these headers is
+served as legacy rather than rejected. Any header it *does* carry is still validated
+in full — the flag waives "you must send it", never "it may lie".
+
+**Opt-in and additive.** The default `VerifierPolicy` attaches no transport policy,
+so a deployment that has not opted in behaves exactly as before (present-header
+integrity only, absence allowed). Supported versions are a constructor input rather
+than hardcoded, so the policy does not bake in a spec that is not yet final.
+
+**Proven by.** `mcp_transport_headers_test` — the full contract through the real
+verify path (`a_required_header_absent_is_rejected_through_verify`,
+`an_unsupported_protocol_version_is_rejected_through_verify`,
+`protocol_version_header_body_divergence_is_rejected_through_verify`,
+`mcp_name_body_divergence_is_rejected_through_verify`,
+`legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify`), the
+`mcp_transport.rs` unit tests, and frozen vectors `h38`–`h41`.
 
 ---
 

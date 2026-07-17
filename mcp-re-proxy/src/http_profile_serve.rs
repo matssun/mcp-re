@@ -31,7 +31,8 @@ use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::strip_proxy_owned_meta;
 use mcp_re_http_profile::HttpProfileError;
-use mcp_re_http_profile::verify_request_full;
+use mcp_re_http_profile::verify_request_full_with_policy;
+use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::VerifiedContext;
 use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
@@ -109,6 +110,11 @@ pub struct HttpProfileProxy {
     /// design, so it is only meaningful over a channel the PEP alone can write to
     /// — an operator asserts that, and nothing here can check it.
     verified_context_policy: VerifiedContextPolicy,
+    /// The verifier-local acceptance policy: algorithm registry, bounded skew, and
+    /// the optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
+    /// `VerifierPolicy::default()` — Ed25519, 30s skew, no transport contract — so
+    /// serving behaves as before unless a deployment attaches a stricter policy.
+    verifier_policy: VerifierPolicy,
 }
 
 impl HttpProfileProxy {
@@ -141,7 +147,17 @@ impl HttpProfileProxy {
             continuation_store: None,
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
             verified_context_policy: VerifiedContextPolicy::default(),
+            verifier_policy: VerifierPolicy::default(),
         }
+    }
+
+    /// Attach a verifier-local acceptance policy (§4.1 MCP transport contract,
+    /// §5.1 clock skew, §13.1 algorithm registry). A deployment on MCP 2026-07-28
+    /// passes `VerifierPolicy::default().with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))`
+    /// to enforce required-header presence and version policy on the served path.
+    pub fn with_verifier_policy(mut self, policy: VerifierPolicy) -> Self {
+        self.verifier_policy = policy;
+        self
     }
 
     /// Carry verified context to the inner server over an EXPLICITLY TRUSTED
@@ -201,11 +217,12 @@ impl HttpProfileProxy {
         // no external material is supplied here; any binding lacking a credential
         // still fails closed.
         let no_material = |_b: &ArtifactBinding| None;
-        let verified = match verify_request_full(
+        let verified = match verify_request_full_with_policy(
             &http_req,
             &self.expected_audience,
             &no_material,
             self.resolve_actor.as_ref(),
+            &self.verifier_policy,
             now,
         ) {
             Ok(v) => v,

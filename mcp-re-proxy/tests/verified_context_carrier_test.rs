@@ -323,3 +323,72 @@ async fn unrelated_application_meta_survives_the_guard() {
         );
     }
 }
+
+
+/// The MCP transport contract enforced on the REAL served path (#425). A proxy
+/// configured with the strict 2026-07-28 policy rejects a request that omits a
+/// required transport header, with a signed rejection — proving §4.1 reaches
+/// production, not just the profile crate's unit tests.
+#[tokio::test]
+async fn transport_contract_is_enforced_on_the_served_path() {
+    use mcp_re_http_profile::McpTransportPolicy;
+    use mcp_re_http_profile::VerifierPolicy;
+
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let p = proxy(VerifiedContextPolicy::Disabled, Arc::clone(&seen)).with_verifier_policy(
+        VerifierPolicy::default()
+            .with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"])),
+    );
+
+    // A conforming request is served.
+    let mut ok = signed_request("n-tx-ok", None);
+    ok.headers.push(("Mcp-Method".into(), "tools/call".into()));
+    ok.headers.push(("Mcp-Name".into(), "read".into()));
+    ok.headers.push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
+    // Re-sign so the new headers are covered (present ⇒ covered).
+    let ok = resign(ok, "n-tx-ok2");
+    assert_eq!(p.handle(served(&ok), NOW).await.status, 200);
+
+    // A request OMITTING Mcp-Method is rejected before it reaches the inner server.
+    let before = seen.lock().unwrap().len();
+    let mut missing = signed_request("n-tx-miss", None);
+    missing.headers.push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
+    let missing = resign(missing, "n-tx-miss2");
+    let out = p.handle(served(&missing), NOW).await;
+    assert_eq!(out.status, 403, "a required-header omission is refused");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        before,
+        "the rejected request never reached the inner server"
+    );
+}
+
+/// Re-sign a request whose headers were mutated after the first signing, so the
+/// added transport headers become covered components.
+fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
+    // Drop the prior signature material and the evidence block, then full-sign again.
+    req.headers.retain(|(k, _)| {
+        !k.eq_ignore_ascii_case("signature")
+            && !k.eq_ignore_ascii_case("signature-input")
+            && !k.eq_ignore_ascii_case("content-digest")
+    });
+    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+    // strip the request evidence block the first sign inserted, keep the rest
+    let mut body = body;
+    if let Some(m) = body.get_mut("_meta").and_then(|m| m.as_object_mut()) {
+        m.remove("se.syncom/mcp-re.http.request");
+        if m.is_empty() {
+            body.as_object_mut().unwrap().remove("_meta");
+        }
+    }
+    req.body = serde_json::to_vec(&body).unwrap();
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        continuation: None,
+    };
+    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
+        .expect("re-sign");
+    req
+}

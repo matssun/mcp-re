@@ -87,6 +87,22 @@ pub enum HttpProfileError {
     /// that is present, self-contradictory, and therefore not interpretable.
     /// Maps to `mcp-re.malformed_envelope`.
     McpMethodDivergence,
+    /// A transport header the deployment's MCP protocol version REQUIRES on every
+    /// POST is absent (#415 rev 2 §4.1, MCPRE-425): the named `mcp-*` header is
+    /// mandatory under the active [`McpTransportPolicy`] and the request omitted
+    /// it. Maps to `mcp-re.missing_envelope`.
+    ///
+    /// [`McpTransportPolicy`]: crate::mcp_transport::McpTransportPolicy
+    McpTransportHeaderMissing(&'static str),
+    /// The `MCP-Protocol-Version` header names a version outside the deployment's
+    /// accepted set (§4.1). Registration or a client's claim is not consent; the
+    /// verifier's supported set is. Maps to `mcp-re.unsupported_version`.
+    McpProtocolVersionUnsupported,
+    /// A covered transport header (`MCP-Protocol-Version` or `Mcp-Name`) disagrees
+    /// with the covered body it must match — the signer contradicting itself, as
+    /// with [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
+    /// `mcp-re.malformed_envelope`.
+    McpTransportDivergence(&'static str),
 
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
@@ -126,6 +142,7 @@ impl HttpProfileError {
             // both "the evidence you needed is not there".
             HttpProfileError::MissingEvidence(_)
             | HttpProfileError::DuplicateHeader(_)
+            | HttpProfileError::McpTransportHeaderMissing(_)
             | HttpProfileError::MissingCoveredComponent(_) => "mcp-re.missing_envelope",
             // Evidence present but structurally invalid (MCPRE-92): a foreign
             // component/parameter, an unparseable inner list, a wrong-shaped
@@ -134,9 +151,9 @@ impl HttpProfileError {
             // Self-contradictory evidence is malformed evidence: the covered
             // header and the covered body state different methods (§4.1), so
             // there is nothing coherent to act on.
-            HttpProfileError::MalformedEvidence(_) | HttpProfileError::McpMethodDivergence => {
-                "mcp-re.malformed_envelope"
-            }
+            HttpProfileError::MalformedEvidence(_)
+            | HttpProfileError::McpMethodDivergence
+            | HttpProfileError::McpTransportDivergence(_) => "mcp-re.malformed_envelope",
             // Content-model / value-domain violation of the protected message:
             // an encoded body, or a media type outside JSON mode (§3.4).
             HttpProfileError::ContentEncodingPresent | HttpProfileError::NonJsonMediaType => {
@@ -148,9 +165,9 @@ impl HttpProfileError {
             // The signature does not authenticate the bytes.
             HttpProfileError::InvalidSignature => "mcp-re.invalid_signature",
             // Profile-selection failure: cannot select this profile.
-            HttpProfileError::UnknownProfileTag | HttpProfileError::UnsupportedAlgorithm => {
-                "mcp-re.unsupported_version"
-            }
+            HttpProfileError::UnknownProfileTag
+            | HttpProfileError::UnsupportedAlgorithm
+            | HttpProfileError::McpProtocolVersionUnsupported => "mcp-re.unsupported_version",
             HttpProfileError::StaleWindow => "mcp-re.expired_request",
             // A keyid outside trust is an actor-binding failure, not a broken
             // signature: the crypto may verify under an untrusted key.
@@ -234,6 +251,9 @@ mod tests {
             HttpProfileError::ResponseSignatureInvalid,
             HttpProfileError::ContinuationBindingFailed,
             HttpProfileError::McpMethodDivergence,
+            HttpProfileError::McpTransportHeaderMissing("x"),
+            HttpProfileError::McpProtocolVersionUnsupported,
+            HttpProfileError::McpTransportDivergence("x"),
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,

@@ -1,0 +1,38 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h40_transport_unsupported_version",
+  "kind": "transport_request",
+  "expected": "mcp-re.unsupported_version",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Mcp-Method",
+        "initialize"
+      ],
+      [
+        "MCP-Protocol-Version",
+        "1999-01-01"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:5pIPUWpE6SDON1D+oiovQdHgCrt3/57s81sDpeShrXQ=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-method\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-tx-ver\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:SYegeZAvoIAg3qVKwScgtWHhiQf0R0HIq2uUc1frPG4bBuLWee5SGE2KOUN2xAjXrSPHZMKnrBCHPQK1SpMnAQ==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"
+  }
+}
