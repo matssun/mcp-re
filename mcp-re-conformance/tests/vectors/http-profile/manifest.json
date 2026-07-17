@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "d8af1242831ce3be953ce2ec98a1a62e53e42e05f982b6fe734c1adeae1413ef",
+  "corpus_digest": "170aaf264363855cb82d3fe3d1b25980fa93127775fdbe4d235b20cc77cbed28",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -109,27 +109,27 @@
     },
     {
       "file": "h24_chain_multi_hop_complete.json",
-      "sha256": "851932e708a9b977916551b182838c2033d596be5823494db809d81d241bd20d"
+      "sha256": "448f9a64cc87258255ca6408d68b2e84b8477a57ac2a5e2fc01e311f982d43ed"
     },
     {
       "file": "h25_chain_missing_middle_hop_incomplete.json",
-      "sha256": "2c40e1832b740244a27cf3f67998940390024d709d547ba8b51eac99375da375"
+      "sha256": "b28491ac0cbc1e3bca2c743ead28ba1a5ee2abfb34fe730527bb964688ada11a"
     },
     {
       "file": "h26_chain_truncated_incomplete.json",
-      "sha256": "33eddf65b27ba64612b734330496215341ce993a29822b5dcb46e69caa6e56ea"
+      "sha256": "ba1fe4a946b051030313ae5c3cf1d1ef06bab83f4da4abc861f635fbeaac5ae8"
     },
     {
       "file": "h27_chain_foreign_continuation_incomplete.json",
-      "sha256": "752234827556522cee6b4c19d374a81b780c1ae2351cfcbae4048946dc6c7b58"
+      "sha256": "85d128b478ad68bc2bc404ad8580d4c3645ce7ee3b4df49c82d5ab708e6906f0"
     },
     {
       "file": "h28_chain_role_swapped_handles_incomplete.json",
-      "sha256": "d76b6400128cb551ea3fd3b0b0fbef67f26b8596e19dafa05b978ca3265bd282"
+      "sha256": "354cfaaad53f6cc80a4ddce67535e0b7b5dc390bdebb13d7dc3d57f499afdd31"
     },
     {
       "file": "h29_chain_terminal_spliced_incomplete.json",
-      "sha256": "c7d812a5a6553a5da49ef25e34d693c73ddf002968df3293f2d5016abb499f0b"
+      "sha256": "82b062ea68d6b1278cc63b8fef018a2ee4ca5b4eacb06d86e59d925894904538"
     },
     {
       "file": "h18_rejection_bound_valid.json",

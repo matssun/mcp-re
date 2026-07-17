@@ -15,7 +15,6 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::ChainLabel;
-use mcp_re_http_profile::HopOutcome;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -190,15 +189,8 @@ fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest 
     }
 }
 
-fn reconstruct(hops: &[RetainedHop], outcomes: &[HopOutcome]) -> ChainLabel {
-    reconstruct_chain(
-        hops,
-        outcomes,
-        &resolver(),
-        &VerifierPolicy::default(),
-        NOW,
-    )
-    .label
+fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
+    reconstruct_chain(hops, &resolver(), &VerifierPolicy::default(), NOW).label
 }
 
 // --- positives ---------------------------------------------------------------
@@ -206,37 +198,20 @@ fn reconstruct(hops: &[RetainedHop], outcomes: &[HopOutcome]) -> ChainLabel {
 #[test]
 fn multi_hop_chain_reconstructs_complete() {
     let hops = three_hop_chain();
-    let label = reconstruct(
-        &hops,
-        &[
-            HopOutcome::InputRequired,
-            HopOutcome::InputRequired,
-            HopOutcome::Terminal,
-        ],
-    );
+    let label = reconstruct(&hops);
     assert_eq!(label, ChainLabel::Complete, "every hop verifies and re-links");
 }
 
 #[test]
 fn single_terminal_hop_reconstructs_complete() {
     let (h0, _, _) = hop("n-solo", None, DONE);
-    assert_eq!(reconstruct(&[h0], &[HopOutcome::Terminal]), ChainLabel::Complete);
+    assert_eq!(reconstruct(&[h0]), ChainLabel::Complete);
 }
 
 #[test]
 fn complete_chain_reports_every_hops_evidence() {
     let hops = three_hop_chain();
-    let out = reconstruct_chain(
-        &hops,
-        &[
-            HopOutcome::InputRequired,
-            HopOutcome::InputRequired,
-            HopOutcome::Terminal,
-        ],
-        &resolver(),
-        &VerifierPolicy::default(),
-        NOW,
-    );
+    let out = reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), NOW);
     assert!(out.label.is_complete());
     assert_eq!(out.hop_evidence.len(), 3, "the record accounts for all 3 hops");
     // Request-role and response-role handles are domain-separated (§7.3), so no
@@ -273,7 +248,7 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
         .expect("the retained response verifies and is bound to its request");
     }
 
-    let label = reconstruct(&truncated, &[HopOutcome::InputRequired, HopOutcome::Terminal]);
+    let label = reconstruct(&truncated);
     assert_eq!(
         label,
         ChainLabel::Incomplete {
@@ -292,13 +267,7 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
 fn per_hop_validity_does_not_imply_a_complete_chain() {
     let all = three_hop_chain();
     let truncated = vec![all[0].clone(), all[2].clone()];
-    let out = reconstruct_chain(
-        &truncated,
-        &[HopOutcome::InputRequired, HopOutcome::Terminal],
-        &resolver(),
-        &VerifierPolicy::default(),
-        NOW,
-    );
+    let out = reconstruct_chain(&truncated, &resolver(), &VerifierPolicy::default(), NOW);
     assert!(!out.label.is_complete());
     // The verified prefix is still reported: hop 0 IS accounted for. An auditor
     // learns which part of the record stands, not merely that it failed.
@@ -314,7 +283,7 @@ fn chain_ending_non_terminally_is_incomplete() {
     let all = three_hop_chain();
     let prefix = vec![all[0].clone(), all[1].clone()];
     assert_eq!(
-        reconstruct(&prefix, &[HopOutcome::InputRequired, HopOutcome::InputRequired]),
+        reconstruct(&prefix),
         ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::TerminalExpected,
@@ -328,7 +297,7 @@ fn later_hop_without_a_continuation_is_incomplete() {
     let (h0, _, _) = hop("n-a", None, AWAITING);
     let (h1, _, _) = hop("n-b", None, DONE);
     assert_eq!(
-        reconstruct(&[h0, h1], &[HopOutcome::InputRequired, HopOutcome::Terminal]),
+        reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::MissingContinuation,
@@ -352,7 +321,7 @@ fn continuation_from_another_chain_is_incomplete() {
         DONE,
     );
     assert_eq!(
-        reconstruct(&[h0, h1], &[HopOutcome::InputRequired, HopOutcome::Terminal]),
+        reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::ContinuationDoesNotLink,
@@ -374,7 +343,7 @@ fn terminal_before_the_end_is_incomplete() {
         DONE,
     );
     assert_eq!(
-        reconstruct(&[h0, h1], &[HopOutcome::Terminal, HopOutcome::Terminal]),
+        reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::NonTerminalExpected,
@@ -398,7 +367,7 @@ fn handles_swapped_between_roles_do_not_relink() {
         DONE,
     );
     assert_eq!(
-        reconstruct(&[h0, h1], &[HopOutcome::InputRequired, HopOutcome::Terminal]),
+        reconstruct(&[h0, h1]),
         ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::ContinuationDoesNotLink,
@@ -411,14 +380,7 @@ fn handles_swapped_between_roles_do_not_relink() {
 fn tampered_hop_is_named_by_index() {
     let mut hops = three_hop_chain();
     hops[1].response.body = DONE.as_bytes().to_vec(); // breaks its content-digest
-    let out = reconstruct(
-        &hops,
-        &[
-            HopOutcome::InputRequired,
-            HopOutcome::InputRequired,
-            HopOutcome::Terminal,
-        ],
-    );
+    let out = reconstruct(&hops);
     match out {
         ChainLabel::Incomplete {
             hop: 1,
@@ -431,10 +393,64 @@ fn tampered_hop_is_named_by_index() {
 #[test]
 fn empty_chain_is_incomplete() {
     assert_eq!(
-        reconstruct(&[], &[]),
+        reconstruct(&[]),
         ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::EmptyChain,
+        },
+    );
+}
+
+/// THE regression for the detached-classification hole. A chain whose last hop is
+/// a signed `InputRequiredResult` is TRUNCATED: the call has no ending. Previously
+/// a caller could pass `HopOutcome::Terminal` alongside it and the chain would
+/// reconstruct as COMPLETE — the classification was authoritative over the
+/// protected bytes that contradicted it.
+///
+/// The classification is now read from the response body that just verified, so
+/// there is no parameter left to lie with. The truncated chain is incomplete
+/// because its own protected content says the turn was still awaiting input.
+#[test]
+fn a_truncated_chain_cannot_be_relabelled_complete() {
+    let all = three_hop_chain();
+    let prefix = vec![all[0].clone(), all[1].clone()];
+
+    // Both hops verify, and hop 1's response is a genuine, correctly-signed
+    // InputRequiredResult — the record simply stops mid-call.
+    assert_eq!(
+        reconstruct(&prefix),
+        ChainLabel::Incomplete {
+            hop: 1,
+            reason: IncompleteReason::TerminalExpected,
+        },
+        "protected content says the last turn awaited input; nothing can override it"
+    );
+}
+
+/// The mirror: terminality is read from the bytes, so a genuinely terminal ending
+/// is recognised without anyone asserting it.
+#[test]
+fn terminality_is_derived_from_protected_content() {
+    let hops = three_hop_chain();
+    assert_eq!(reconstruct(&hops), ChainLabel::Complete);
+
+    // Flip ONLY the last response's protected classification (re-signed), and the
+    // same three hops become a truncated chain — the label tracks the bytes.
+    let (h0, r0, s0) = hop("n-d0", None, AWAITING);
+    let (h1, _, _) = hop(
+        "n-d1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-d",
+        )),
+        AWAITING, // the final turn still awaits input
+    );
+    assert_eq!(
+        reconstruct(&[h0, h1]),
+        ChainLabel::Incomplete {
+            hop: 1,
+            reason: IncompleteReason::TerminalExpected,
         },
     );
 }

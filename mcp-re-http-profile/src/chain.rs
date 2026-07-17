@@ -129,10 +129,15 @@ pub struct HopEvidence {
     pub response_evidence: RequestEvidence,
 }
 
-/// Whether a hop's response was terminal or awaited client input. Supplied by the
-/// caller because the terminal/non-terminal discriminator is MCP-level semantics
-/// (`resultType == "input_required"`, ADR-MCPS-047) and this crate is the
-/// standards profile — it binds bytes, it does not read MCP result models.
+/// Whether a hop's response was terminal or awaited client input.
+///
+/// DERIVED from the response's protected body, never supplied alongside it. An
+/// earlier revision took this from a caller array parallel to `hops`, which was a
+/// real hole: a caller could label a signed `InputRequiredResult` as `Terminal`
+/// and a truncated chain would reconstruct as COMPLETE — the exact
+/// "classification outside protected content" failure §13.2 lists. The
+/// discriminator does live inside protected bytes; the bug was that
+/// reconstruction was not reading them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HopOutcome {
     /// An `InputRequiredResult`: this turn expects a continuation to follow.
@@ -141,12 +146,41 @@ pub enum HopOutcome {
     Terminal,
 }
 
+/// Classify a VERIFIED response body (`resultType == "input_required"`,
+/// SEP-2322 / ADR-MCPS-047).
+///
+/// Only ever called on bytes whose signature and `content-digest` already
+/// verified, so the classification is a reading of protected content rather than
+/// a claim about it. Anything that is not the input-required discriminator is
+/// terminal — the conservative direction, since mislabeling a terminal answer as
+/// non-terminal would make a COMPLETE chain look truncated (a false alarm),
+/// whereas the reverse would let a truncated chain pass as complete.
+fn classify_verified_response(body: &[u8]) -> HopOutcome {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
+    let is_input_required = parsed
+        .as_ref()
+        .and_then(|v| v.get("result"))
+        .and_then(|r| r.get("resultType"))
+        .and_then(|t| t.as_str())
+        == Some("input_required");
+    if is_input_required {
+        HopOutcome::InputRequired
+    } else {
+        HopOutcome::Terminal
+    }
+}
+
 /// Re-link and verify a retained chain R0→S0→R1→…→Sn (§9).
 ///
-/// `hops` is the retained evidence in call order. `outcomes[i]` classifies hop
-/// `i`'s response. `resolve_actor` is the same trust seam the live path uses — a
-/// keyid never introduces trust here either, and reconstruction is not a reason
-/// to relax it.
+/// `hops` is the retained evidence in call order. `resolve_actor` is the same
+/// trust seam the live path uses — a keyid never introduces trust here either, and
+/// reconstruction is not a reason to relax it.
+///
+/// Terminal/non-terminal status is DERIVED from each response's protected body
+/// after that response verifies. It is deliberately not a parameter: a caller-
+/// supplied classification would be authoritative over the chain-shape rule, and a
+/// truncated chain could be labeled complete by asserting its last
+/// `InputRequiredResult` was terminal.
 ///
 /// Returns the label plus the verified prefix. Verification stops at the first
 /// broken hop: past that point the record is already not complete, and continuing
@@ -154,14 +188,13 @@ pub enum HopOutcome {
 /// beginning.
 pub fn reconstruct_chain(
     hops: &[RetainedHop],
-    outcomes: &[HopOutcome],
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
-    policy: &VerifierPolicy<'_>,
+    policy: &VerifierPolicy,
     now: i64,
 ) -> ChainReconstruction {
     let mut hop_evidence: Vec<HopEvidence> = Vec::with_capacity(hops.len());
 
-    if hops.is_empty() || outcomes.len() != hops.len() {
+    if hops.is_empty() {
         return ChainReconstruction {
             label: ChainLabel::Incomplete {
                 hop: 0,
@@ -223,9 +256,13 @@ pub fn reconstruct_chain(
             }
         }
 
-        // 4. Chain shape: every hop but the last awaits input; the last is terminal.
+        // 4. Chain shape: every hop but the last awaits input; the last is
+        //    terminal. The classification is read from the response body that
+        //    just verified in step 2 — protected content, not an assertion
+        //    travelling beside it.
+        let outcome = classify_verified_response(&hop.response.body);
         let is_last = i + 1 == hops.len();
-        match (is_last, outcomes[i]) {
+        match (is_last, outcome) {
             (false, HopOutcome::Terminal) => {
                 return incomplete(hop_evidence, i, IncompleteReason::NonTerminalExpected)
             }

@@ -108,10 +108,21 @@ algorithm the signer used — it never states which are acceptable.
 the decision from a constant to a policy value, so adding an algorithm later is a
 deliberate local act rather than a code change.
 
-**Proven by.** `policy.rs::allowlist_is_the_agility_mechanism`,
-`policy.rs::default_is_ed25519_only_with_bounded_skew`, and the frozen negative
-vector `h23_request_alg_not_allowlisted` (a registered-but-not-allowlisted `alg`
-rejected on policy, not on crypto).
+**The registry is typed, and that is a correction.** A list of strings cannot
+express the property that makes an allowlist safe — "…and this crate has a verifier
+for that". While it was strings, a policy naming `ml-dsa-65` accepted a message
+DECLARING `ml-dsa-65` at the parameter gate, and verification ran Ed25519 anyway:
+a genuine Ed25519 signature over a base declaring ML-DSA verified. The agility
+interface itself created an algorithm-confusion path. A `ProfileAlgorithm` variant
+now exists only where an implemented verifier exists, `VerifierPolicy::new` refuses
+any token that does not resolve to one, and the gate returns the *typed* algorithm
+so the verifier must dispatch on it — a new variant will not compile until its
+verifier is wired.
+
+**Proven by.** `algorithm_confusion_test` (an Ed25519 signature declaring ML-DSA is
+rejected; the same signature declaring the truth verifies; the unsafe policy cannot
+be constructed), `policy.rs::an_algorithm_without_a_verifier_cannot_be_allowlisted`,
+and the frozen negative vector `h23_request_alg_not_allowlisted`.
 
 ---
 
@@ -253,7 +264,7 @@ Every §13.2 category maps to a vector, an existing test, or an explicit N/A.
 | Response from another chain | `h27_chain_foreign_continuation_incomplete` | vector |
 | Artifact substitution/alteration | `h10`, `h12`, `h14` (DPoP / mTLS / RAR mismatch) | vector |
 | Unknown binding identifier | `binding_identifier_test` — unknown `artifact_type`, unknown `binding_type`, and both shape/`binding_type` disagreements are `malformed_envelope`, never a silently-ignored binding | test |
-| Classification outside protected content | **N/A by construction.** The terminal/non-terminal discriminator is read from the JSON-RPC `result`, which is inside the body that `content-digest` covers. There is no unprotected classification surface to attack: the profile mints no header carrying it (v0.11 grill E-3), and `HopOutcome` is supplied by the caller from already-verified content, never parsed from the wire by the profile. |
+| Classification outside protected content | `a_truncated_chain_cannot_be_relabelled_complete`. **This row previously claimed N/A by construction and was wrong.** The discriminator does live inside `content-digest`-covered content — but `reconstruct_chain` took the classification from a caller array *parallel to* the hops, and that array was authoritative. A caller could label a signed `InputRequiredResult` as terminal and a truncated chain reconstructed as COMPLETE. The classification is now derived from each response's body after that response verifies; there is no parameter left to lie with. |
 | Invalid response signature claiming non-terminal | `tampered_hop_is_named_by_index` (hop named, `ResponseUnverifiable`) | test |
 | Truncated chain | `h26_chain_truncated_incomplete` | vector |
 | Replayed continuation | five-tuple replay tier — `replayed_request_is_rejected_by_the_replay_tier`, `replayed_request_yields_a_verified_delegated_rejection` | test |
@@ -283,6 +294,19 @@ audit receipts (Layer 5 — roadmap, see #434).
 ---
 
 ## §4.1 — MCP transport headers are covered when present
+
+> **SCOPE — PARTIAL (2026-07-17 review).** What is implemented is *integrity of the
+> MCP transport headers that are sent*: present ⇒ covered, and `Mcp-Method` must
+> agree with the signed body. That is NOT full 2026-07-28 transport conformance.
+> **Not enforced:** required-header *presence* (2026-07-28 makes `Mcp-Method` and
+> `MCP-Protocol-Version` mandatory on every POST — a request omitting them is
+> accepted here); supported-version policy; `MCP-Protocol-Version` agreement with
+> `io.modelcontextprotocol/protocolVersion` in the body; `Mcp-Name` agreement with
+> `params.name`/`params.uri`. Those need a verifier-local MCP transport policy
+> (`supported_protocol_versions`, `require_protocol_version_header`,
+> `require_mcp_method`, `require_mcp_name_for_methods`, `allow_legacy_header_omission`)
+> validated against the protected body after signature verification. Tracked on #425,
+> which remains OPEN. Claim only "covered-header integrity", not "§4.1 conformance".
 
 **Rule.** `Mcp-Method`, `Mcp-Name`, and `Mcp-Protocol-Version` are coverable
 components, and each is **conditionally mandatory on exactly the

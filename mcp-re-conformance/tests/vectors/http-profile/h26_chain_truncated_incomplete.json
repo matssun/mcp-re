@@ -106,10 +106,6 @@
         }
       }
     ],
-    "outcomes": [
-      "input_required",
-      "input_required"
-    ],
     "expected_label": "incomplete:1:terminal_expected"
   }
 }

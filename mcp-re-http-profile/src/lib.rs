@@ -83,7 +83,7 @@ pub use ids::BODYLESS_RESPONSE_COMPONENTS;
 pub use ids::STATUS_ACCEPTED;
 pub use context::extract_verified_context;
 pub use context::insert_verified_context;
-pub use context::strip_reserved_context;
+pub use context::strip_proxy_owned_meta;
 pub use context::VerifiedContext;
 pub use context::VerifiedContextPolicy;
 pub use ids::VERIFIED_CONTEXT_BLOCK_KEY;

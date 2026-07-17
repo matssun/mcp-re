@@ -106,10 +106,6 @@
         }
       }
     ],
-    "outcomes": [
-      "terminal",
-      "terminal"
-    ],
     "expected_label": "incomplete:0:non_terminal_expected"
   }
 }

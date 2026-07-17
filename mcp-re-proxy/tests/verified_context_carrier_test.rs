@@ -160,7 +160,12 @@ fn signed_request(nonce: &str, seed_reserved: Option<serde_json::Value>) -> Http
         "params": { "name": "read" }
     });
     if let Some(forged) = seed_reserved {
-        body["_meta"] = serde_json::json!({ VERIFIED_CONTEXT_BLOCK_KEY: forged });
+        // Alongside the forged reserved key, an ordinary application _meta entry:
+        // the PEP owns one of these and must not touch the other.
+        body["_meta"] = serde_json::json!({
+            VERIFIED_CONTEXT_BLOCK_KEY: forged,
+            "application.example/keep": "value",
+        });
     }
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -283,5 +288,38 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
                 assert!(extract_verified_context(&forwarded).is_err());
             }
         }
+    }
+}
+
+/// The PEP owns two `_meta` keys and no more. Stripping the whole `_meta` would
+/// destroy application and MCP metadata the enforcement boundary was only asked to
+/// pass through — caution about one key is not a licence to delete the rest.
+#[tokio::test]
+async fn unrelated_application_meta_survives_the_guard() {
+    for policy in [VerifiedContextPolicy::Trusted, VerifiedContextPolicy::Disabled] {
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let p = proxy(policy, Arc::clone(&seen));
+        let req = signed_request("n-keep", Some(serde_json::json!({ "actor_id": "forged" })));
+        assert_eq!(p.handle(served(&req), NOW).await.status, 200);
+
+        let forwarded = seen.lock().unwrap()[0].clone();
+        let v: serde_json::Value = serde_json::from_slice(&forwarded).unwrap();
+
+        // The forged reserved key is gone...
+        assert!(
+            !String::from_utf8_lossy(&forwarded).contains("forged"),
+            "{policy:?}: the caller's forged context leaked"
+        );
+        // ...and the unrelated application key is untouched.
+        assert_eq!(
+            v["_meta"]["application.example/keep"],
+            serde_json::json!("value"),
+            "{policy:?}: the PEP destroyed metadata it does not own"
+        );
+        // The proxy-owned request-evidence block IS removed — the PEP consumed it.
+        assert!(
+            v["_meta"].get("se.syncom/mcp-re.http.request").is_none(),
+            "{policy:?}: the consumed request-evidence block should not be forwarded"
+        );
     }
 }

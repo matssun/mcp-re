@@ -37,7 +37,6 @@
 //! There is no body-level defense-in-depth here because there is no body — which
 //! is precisely why the `;req` set is mandatory rather than optional.
 
-use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
 
 use crate::block::ResolvedActor;
@@ -190,7 +189,7 @@ pub fn verify_accepted_202(
     response: &HttpResponse,
     request: &HttpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
-    policy: &VerifierPolicy<'_>,
+    policy: &VerifierPolicy,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
@@ -229,7 +228,7 @@ pub fn verify_accepted_202(
             "content-type covered on a bodyless message",
         ));
     }
-    let (_c, _e, _n, key_id) =
+    let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, policy, now, false)?;
     let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
 
@@ -239,13 +238,13 @@ pub fn verify_accepted_202(
         &SourceMessage::Response { response, request },
     )?;
     let sig = crate::verify::signature_value_for(&response.headers, RESPONSE_LABEL)?;
-    verify_ed25519_with(
+    crate::verify::verify_under(
+        algorithm,
         &base,
         &sig,
         &actor.verification_key,
         McpReError::ResponseSigInvalid,
-    )
-    .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    )?;
     Ok(actor)
 }
 
@@ -290,7 +289,7 @@ pub fn sign_bodyless_request(
 pub fn verify_bodyless_request(
     request: &HttpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
-    policy: &VerifierPolicy<'_>,
+    policy: &VerifierPolicy,
     now: i64,
 ) -> Result<(ResolvedActor, RequestEvidence), HttpProfileError> {
     reject_content_encoding(&request.headers)?;
@@ -315,12 +314,17 @@ pub fn verify_bodyless_request(
             "content-type covered on a bodyless message",
         ));
     }
-    let (_c, _e, _n, key_id) =
+    let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, policy, now, true)?;
     let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
     let base = signature_base(&parsed.components, &parsed.params, &SourceMessage::Request(request))?;
     let sig = crate::verify::signature_value_for(&request.headers, REQUEST_LABEL)?;
-    verify_ed25519_with(&base, &sig, &actor.verification_key, McpReError::InvalidSignature)
-        .map_err(|_| HttpProfileError::InvalidSignature)?;
+    crate::verify::verify_under(
+        algorithm,
+        &base,
+        &sig,
+        &actor.verification_key,
+        McpReError::InvalidSignature,
+    )?;
     Ok((actor, RequestEvidence::from_signature_base(&base)))
 }

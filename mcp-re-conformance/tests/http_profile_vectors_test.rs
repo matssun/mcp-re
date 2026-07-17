@@ -40,7 +40,6 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::ChainLabel;
-use mcp_re_http_profile::HopOutcome;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -141,7 +140,6 @@ struct ContinuationCheck {
 #[serde(deny_unknown_fields)]
 struct ChainCheck {
     hops: Vec<ChainHop>,
-    outcomes: Vec<String>,
     expected_label: String,
 }
 
@@ -1184,7 +1182,7 @@ fn to_chain_hop(h: &RetainedHop) -> ChainHop {
     }
 }
 
-fn chain_fixture(name: &str, hops: &[RetainedHop], outcomes: &[&str], label: &str) -> Fixture {
+fn chain_fixture(name: &str, hops: &[RetainedHop], label: &str) -> Fixture {
     Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: name.into(),
@@ -1197,7 +1195,6 @@ fn chain_fixture(name: &str, hops: &[RetainedHop], outcomes: &[&str], label: &st
         continuation_check: None,
         chain_check: Some(ChainCheck {
             hops: hops.iter().map(to_chain_hop).collect(),
-            outcomes: outcomes.iter().map(|s| (*s).to_owned()).collect(),
             expected_label: label.into(),
         }),
     }
@@ -1236,7 +1233,7 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h24_chain_multi_hop_complete",
         &full,
-        &["input_required", "input_required", "terminal"],
+        
         "complete",
     ));
 
@@ -1246,7 +1243,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h25_chain_missing_middle_hop_incomplete",
         &[full[0].clone(), full[2].clone()],
-        &["input_required", "terminal"],
         "incomplete:1:continuation_does_not_link",
     ));
 
@@ -1255,7 +1251,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h26_chain_truncated_incomplete",
         &[full[0].clone(), full[1].clone()],
-        &["input_required", "input_required"],
         "incomplete:1:terminal_expected",
     ));
 
@@ -1275,7 +1270,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h27_chain_foreign_continuation_incomplete",
         &[o0, o1],
-        &["input_required", "terminal"],
         "incomplete:1:continuation_does_not_link",
     ));
 
@@ -1295,7 +1289,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h28_chain_role_swapped_handles_incomplete",
         &[s0h, s1h],
-        &["input_required", "terminal"],
         "incomplete:1:continuation_does_not_link",
     ));
 
@@ -1314,7 +1307,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h29_chain_terminal_spliced_incomplete",
         &[t0, t1],
-        &["terminal", "terminal"],
         "incomplete:0:non_terminal_expected",
     ));
 
@@ -1530,18 +1522,8 @@ fn frozen_http_profile_corpus_verifies() {
                         response: from_wire_response(&h.response),
                     })
                     .collect();
-                let outcomes: Vec<HopOutcome> = check
-                    .outcomes
-                    .iter()
-                    .map(|o| match o.as_str() {
-                        "terminal" => HopOutcome::Terminal,
-                        "input_required" => HopOutcome::InputRequired,
-                        other => panic!("{name}: unknown hop outcome {other}"),
-                    })
-                    .collect();
                 let out = reconstruct_chain(
                     &hops,
-                    &outcomes,
                     &resolver(),
                     &VerifierPolicy::default(),
                     manifest.verify_at_unix,

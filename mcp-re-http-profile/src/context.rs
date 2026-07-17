@@ -37,6 +37,7 @@ use serde::Serialize;
 use crate::block::AudienceTuple;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
+use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::VERIFIED_CONTEXT_BLOCK_KEY;
 use crate::verify::VerifiedHttpRequestEvidence;
 
@@ -98,19 +99,37 @@ impl VerifiedContext {
     }
 }
 
-/// Strip the reserved verified-context key from caller input (§10).
+/// Strip ONLY the PEP-owned `_meta` keys from caller input (§10), leaving every
+/// other entry intact.
 ///
-/// Called at the boundary on EVERY request, regardless of policy: a caller-seeded
-/// reserved field is an attempted authentication bypass, and a deployment with the
-/// carrier disabled must not be one config change away from forwarding it.
+/// Two keys are proxy-owned: the incoming request-evidence block (the PEP consumed
+/// it; the inner server has no use for it) and the reserved verified-context key.
+/// Everything else in `_meta` belongs to the application or to MCP itself and is
+/// none of the enforcement boundary's business — a PEP that deletes the whole
+/// `_meta` is not being careful, it is destroying data it was only asked to pass
+/// through.
 ///
-/// Returns `true` if the caller had in fact seeded the reserved key — the caller
-/// gets no signal, but the PEP can audit the attempt.
-pub fn strip_reserved_context(body: &mut serde_json::Value) -> bool {
+/// Called on EVERY request regardless of policy: a caller-seeded reserved field is
+/// an attempted authentication bypass, and a deployment with the carrier disabled
+/// must not be one config change away from forwarding it.
+///
+/// Returns `true` if the caller had in fact seeded the reserved verified-context
+/// key — the caller gets no signal, but the PEP can audit the attempt.
+pub fn strip_proxy_owned_meta(body: &mut serde_json::Value) -> bool {
     let Some(meta) = body.get_mut("_meta").and_then(|m| m.as_object_mut()) else {
         return false;
     };
-    meta.remove(VERIFIED_CONTEXT_BLOCK_KEY).is_some()
+    meta.remove(REQUEST_EVIDENCE_BLOCK_KEY);
+    let seeded = meta.remove(VERIFIED_CONTEXT_BLOCK_KEY).is_some();
+    // An empty `_meta` the PEP emptied is noise the caller never sent; drop it so
+    // the inner server sees the body it would have seen without MCP-RE.
+    let now_empty = meta.is_empty();
+    if now_empty {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("_meta");
+        }
+    }
+    seeded
 }
 
 /// Write the PEP's verified context into the forwarded body under the reserved key
@@ -140,20 +159,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_removes_a_caller_seeded_reserved_key() {
+    fn strip_removes_proxy_keys_and_preserves_application_meta() {
         let mut body: serde_json::Value = serde_json::from_str(&format!(
-            r#"{{"jsonrpc":"2.0","_meta":{{"{VERIFIED_CONTEXT_BLOCK_KEY}":{{"actor_id":"admin"}},"keep":1}}}}"#
+            r#"{{"jsonrpc":"2.0","_meta":{{"{VERIFIED_CONTEXT_BLOCK_KEY}":{{"actor_id":"admin"}},"{REQUEST_EVIDENCE_BLOCK_KEY}":{{"profile":"x"}},"application.example/trace":"abc","io.modelcontextprotocol/x":1}}}}"#
         ))
         .unwrap();
-        assert!(strip_reserved_context(&mut body), "the attempt is reported");
+        assert!(strip_proxy_owned_meta(&mut body), "the seeding attempt is reported");
         assert!(body["_meta"].get(VERIFIED_CONTEXT_BLOCK_KEY).is_none());
-        assert_eq!(body["_meta"]["keep"], serde_json::json!(1), "other keys survive");
-        assert!(!strip_reserved_context(&mut body), "idempotent, and now reports nothing");
+        assert!(body["_meta"].get(REQUEST_EVIDENCE_BLOCK_KEY).is_none());
+        // Not the PEP's data, not the PEP's business.
+        assert_eq!(body["_meta"]["application.example/trace"], serde_json::json!("abc"));
+        assert_eq!(body["_meta"]["io.modelcontextprotocol/x"], serde_json::json!(1));
+        assert!(!strip_proxy_owned_meta(&mut body), "idempotent; nothing left to report");
+    }
+
+    #[test]
+    fn a_meta_containing_only_proxy_keys_is_removed_entirely() {
+        let mut body: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{"jsonrpc":"2.0","_meta":{{"{REQUEST_EVIDENCE_BLOCK_KEY}":{{"profile":"x"}}}}}}"#
+        ))
+        .unwrap();
+        strip_proxy_owned_meta(&mut body);
+        assert!(body.get("_meta").is_none(), "an emptied _meta is noise the caller never sent");
     }
 
     #[test]
     fn strip_is_noop_without_meta() {
         let mut body: serde_json::Value = serde_json::from_str(r#"{"jsonrpc":"2.0"}"#).unwrap();
-        assert!(!strip_reserved_context(&mut body));
+        assert!(!strip_proxy_owned_meta(&mut body));
     }
 }

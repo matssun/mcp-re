@@ -56,7 +56,7 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
     }
 }
 
-fn policy() -> VerifierPolicy<'static> {
+fn policy() -> VerifierPolicy {
     VerifierPolicy::default()
 }
 

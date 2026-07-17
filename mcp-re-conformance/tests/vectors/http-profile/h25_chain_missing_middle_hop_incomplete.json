@@ -106,10 +106,6 @@
         }
       }
     ],
-    "outcomes": [
-      "input_required",
-      "terminal"
-    ],
     "expected_label": "incomplete:1:continuation_does_not_link"
   }
 }
