@@ -104,6 +104,32 @@ pub enum HttpProfileError {
     /// `mcp-re.malformed_envelope`.
     McpTransportDivergence(&'static str),
 
+    // Admission assertion + §7 binding (Layer 1 → Layer 4, MCPRE-433).
+    /// The admission assertion is malformed, has the wrong `typ`/`alg`, an
+    /// inconsistent `kid`, a bad root signature, or a profile/audience mismatch.
+    /// Maps to `mcp-re.actor_binding_failed` — the workload's admission identity
+    /// did not authenticate.
+    AdmissionAssertionInvalid,
+    /// The admission assertion's `issuer_kid` is not a trusted admission authority.
+    /// Maps to `mcp-re.actor_binding_failed`.
+    AdmissionIssuerUntrusted,
+    /// The admission assertion is outside its `[nbf, exp]` window or older than the
+    /// declared freshness budget N. Maps to `mcp-re.expired_request`.
+    AdmissionAssertionExpired,
+    /// The call's admission binding does not describe the presented assertion
+    /// (wrong id/generation, or it commits to a different admitted state). Maps to
+    /// `mcp-re.request_binding_mismatch`.
+    AdmissionBindingMismatch,
+    /// The bound admission generation is not the authoritative current one, or the
+    /// workload's status is not `Admitted` — a call from a superseded or
+    /// revoked/suspended admission (§7 currency). Maps to
+    /// `mcp-re.actor_binding_failed`.
+    AdmissionNotCurrent,
+    /// The authoritative admission state was unreachable and degraded mode was
+    /// disabled or its bound exhausted — fail closed. Maps to
+    /// `mcp-re.actor_binding_failed`.
+    AdmissionStateUnavailable,
+
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
     /// A delegated-key response carried no valid delegation credential (in
@@ -168,18 +194,24 @@ impl HttpProfileError {
             HttpProfileError::UnknownProfileTag
             | HttpProfileError::UnsupportedAlgorithm
             | HttpProfileError::McpProtocolVersionUnsupported => "mcp-re.unsupported_version",
-            HttpProfileError::StaleWindow => "mcp-re.expired_request",
+            HttpProfileError::StaleWindow | HttpProfileError::AdmissionAssertionExpired => {
+                "mcp-re.expired_request"
+            }
             // A keyid outside trust is an actor-binding failure, not a broken
             // signature: the crypto may verify under an untrusted key.
-            HttpProfileError::UnresolvedKeyId | HttpProfileError::ActorSlotMismatch => {
-                "mcp-re.actor_binding_failed"
-            }
+            HttpProfileError::UnresolvedKeyId
+            | HttpProfileError::ActorSlotMismatch
+            | HttpProfileError::AdmissionAssertionInvalid
+            | HttpProfileError::AdmissionIssuerUntrusted
+            | HttpProfileError::AdmissionNotCurrent
+            | HttpProfileError::AdmissionStateUnavailable => "mcp-re.actor_binding_failed",
             HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             HttpProfileError::AudienceMismatch => "mcp-re.invalid_audience",
             // A response bound to a different request is a request-binding
             // splice — precise code (MCPRE-92), not the native response_hash
             // field name.
-            HttpProfileError::ResponseBindingMismatch => "mcp-re.request_binding_mismatch",
+            HttpProfileError::ResponseBindingMismatch
+            | HttpProfileError::AdmissionBindingMismatch => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
@@ -254,6 +286,12 @@ mod tests {
             HttpProfileError::McpTransportHeaderMissing("x"),
             HttpProfileError::McpProtocolVersionUnsupported,
             HttpProfileError::McpTransportDivergence("x"),
+            HttpProfileError::AdmissionAssertionInvalid,
+            HttpProfileError::AdmissionIssuerUntrusted,
+            HttpProfileError::AdmissionAssertionExpired,
+            HttpProfileError::AdmissionBindingMismatch,
+            HttpProfileError::AdmissionNotCurrent,
+            HttpProfileError::AdmissionStateUnavailable,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,

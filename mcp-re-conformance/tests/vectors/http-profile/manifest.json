@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "5ac674efd5734be977a26a19508cf1769e882b9463b760397993f7289f6ea911",
+  "corpus_digest": "97dea22ae82b3e56acb48cf518f9236abf7499ddb11d34d6a21e3b80e7e9dc35",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -118,6 +118,26 @@
     {
       "file": "h41_transport_mcp_name_divergence.json",
       "sha256": "1943d4b2e1e9ba16ca016cc4e72c03e8caa991107a906764f72bc8d8db24d3a3"
+    },
+    {
+      "file": "h42_admission_current_admitted.json",
+      "sha256": "86e49e01d5a2e5dd734c916f1e611b6d6b5508d4e0c6d1876367f4339817bcd8"
+    },
+    {
+      "file": "h43_admission_stale_generation.json",
+      "sha256": "4129a244a7ad7f246c8a2e854d3991e67e4797e44330fd967299a2a27f63d16e"
+    },
+    {
+      "file": "h44_admission_revoked_after_issuance.json",
+      "sha256": "6c16a90cc2d40c01a0a9c699999fbeb11d3a7bd0d5789eb042f5aa832c3fb955"
+    },
+    {
+      "file": "h45_admission_state_unreachable_failclosed.json",
+      "sha256": "3a58999ae293ca4a2f678e7239017d8f80336e7e5a9c6e1e7a14b567660915d9"
+    },
+    {
+      "file": "h46_admission_degraded_within_bound.json",
+      "sha256": "5cca5a0e6b30434d5171410be6f0e26e8cf86550d3ad40b738173abc4d4abfec"
     },
     {
       "file": "h30_response_sse_on_covered_exchange.json",

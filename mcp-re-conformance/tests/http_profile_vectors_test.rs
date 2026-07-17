@@ -150,6 +150,24 @@ struct ChainHop {
     response: WireMessage,
 }
 
+/// A frozen admission check (#414 §4.3/§5, #415 §7, MCPRE-433). The assertion JWS,
+/// the call's binding, and the authoritative admission snapshot are all frozen, so
+/// the §7 currency verdict is a deterministic function a third party replays. A
+/// `null` authoritative state models the unreachable-authority (degraded) fork.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdmissionCheck {
+    assertion_jws: String,
+    binding: serde_json::Value,
+    /// `[generation, status]` — the PEP's authoritative state, or absent for the
+    /// unreachable-authority case.
+    authoritative_generation: Option<u64>,
+    authoritative_status: Option<String>,
+    issuer_public_key_b64url: String,
+    allow_degraded_mode: bool,
+    degraded_propagation_bound: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
@@ -174,6 +192,8 @@ struct Fixture {
     continuation_check: Option<ContinuationCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chain_check: Option<ChainCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admission_check: Option<AdmissionCheck>,
 }
 
 /// One manifest entry: the fixture path and the SHA-256 of its exact bytes
@@ -411,6 +431,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 2. h02_request_body_tamper — frozen post-tamper message. The body no
@@ -430,6 +451,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 3. h03_request_missing_covered_component — content-digest stripped from
@@ -451,6 +473,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 4. h04_request_foreign_tag — same evidence under a foreign profile tag.
@@ -471,6 +494,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 4b. h23_request_alg_not_allowlisted — a signature naming an algorithm that
@@ -496,6 +520,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
@@ -520,6 +545,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 6. h06_request_wrong_keyid — untrusted keyid, trust must fail first.
@@ -544,6 +570,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 7. h07_response_valid — full signed exchange.
@@ -573,6 +600,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // 8. h08_response_splice — a response signed for request B presented as
@@ -614,6 +642,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // ----- artifact-binding fixtures (MCPRE-95) -----
@@ -692,6 +721,7 @@ fn build_fixtures() -> Vec<Fixture> {
             }),
             continuation_check: None,
             chain_check: None,
+        admission_check: None,
         });
     }
 
@@ -716,6 +746,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         chain_check: None,
+        admission_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(&prev_base),
@@ -735,6 +766,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         chain_check: None,
+        admission_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(b"a-different-previous-request-base"),
@@ -754,6 +786,7 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         chain_check: None,
+        admission_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value,
             previous_request_base_b64: credential_b64(&prev_base),
@@ -789,6 +822,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h35 — content-type present when the named set says it must be absent.
@@ -805,6 +839,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h36 — content injected into a message whose digest commits to empty content.
@@ -821,6 +856,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h37 — the splice: A's acknowledgement presented against notification B.
@@ -843,6 +879,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
@@ -877,6 +914,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h32 — the header rides on the wire but was dropped from the covered set:
@@ -898,6 +936,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h33 — the covered header says tools/list, the covered body says tools/call.
@@ -915,6 +954,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // ----- MCP transport CONTRACT fixtures (#415 rev 2 §4.1, MCPRE-425) -----
@@ -962,6 +1002,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h39 — a required header absent (no Mcp-Method) under the strict contract.
@@ -981,6 +1022,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h40 — an unsupported protocol version (a client's claim is not consent).
@@ -1000,6 +1042,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h41 — Mcp-Name disagreeing with params.name (the routing header naming a
@@ -1024,7 +1067,15 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
+
+    // ----- admission fixtures (#414 §4.3/§5, #415 §7, MCPRE-433) -----
+    // Each freezes the assertion JWS, the call's binding, and the authoritative
+    // snapshot, so the §7 currency verdict is deterministic. The load-bearing one
+    // (h43) freezes a signed, fresh, "admitted" assertion that is STILL refused
+    // because the authoritative generation moved on — a snapshot is not currency.
+    fixtures.extend(admission_fixtures());
 
     // h30 — SSE response on a covered exchange (#415 rev 2 §3.4, MCPRE-423).
     //       The server GENUINELY signs it: the signature is valid and the digest
@@ -1058,6 +1109,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // ----- retained-chain fixtures (#416 rev 2 §9/§13, MCPRE-430/431) -----
@@ -1099,6 +1151,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h19 — unbound valid: no request context, signed response-only.
@@ -1123,6 +1176,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h20 — body tamper: an edited human message breaks Content-Digest.
@@ -1141,6 +1195,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h21 — splice: a rejection bound to `req` presented against a different
@@ -1167,6 +1222,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     // h22 — unsigned: a bare JSON-RPC error with no signature is untrusted.
@@ -1186,6 +1242,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         continuation_check: None,
         chain_check: None,
+        admission_check: None,
     });
 
     fixtures
@@ -1228,6 +1285,7 @@ fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlo
         audience: chain_audience(),
         artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
         continuation,
+        admission: None,
     }
 }
 
@@ -1306,6 +1364,7 @@ fn chain_fixture(name: &str, hops: &[RetainedHop], label: &str) -> Fixture {
             hops: hops.iter().map(to_chain_hop).collect(),
             expected_label: label.into(),
         }),
+        admission_check: None,
     }
 }
 
@@ -1439,6 +1498,87 @@ fn label_token(label: &ChainLabel) -> String {
             format!("incomplete:{hop}:{r}")
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Admission fixtures (#414 §4.3/§5, #415 §7).
+// ---------------------------------------------------------------------------
+
+const ADMISSION_ISSUER_KID: &str = "admission-root-1";
+
+fn admission_root() -> SigningKey {
+    SigningKey::from_seed_bytes(&[44u8; 32])
+}
+
+fn admission_claims(generation: u64, status: mcp_re_http_profile::AdmissionStatus) -> mcp_re_http_profile::AdmissionClaims {
+    use sha2::Digest;
+    mcp_re_http_profile::AdmissionClaims {
+        iss: "did:example:admission".into(),
+        iat: NOW - 10,
+        nbf: NOW - 10,
+        exp: NOW + 300,
+        jti: format!("adm#{generation}"),
+        aud: mcp_re_http_profile::Audience::One("mcp.example.com".into()),
+        mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        mcp_re_admission_id: "workload-7".into(),
+        mcp_re_admission_generation: generation,
+        mcp_re_admitted_state_digest: mcp_re_core::b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
+        mcp_re_admission_status: status,
+        issuer_kid: ADMISSION_ISSUER_KID.into(),
+    }
+}
+
+fn admission_fixture(
+    name: &str,
+    claims: &mcp_re_http_profile::AdmissionClaims,
+    authoritative: Option<(u64, &str)>,
+    degraded: Option<i64>,
+    expected: &str,
+) -> Fixture {
+    let jws = mcp_re_http_profile::issue_admission_assertion(claims, |input| {
+        mcp_re_core::b64url_decode(&admission_root().sign(input))
+            .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
+    })
+    .expect("issue");
+    let binding = mcp_re_http_profile::AdmissionBinding::opaque_from(claims);
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "admission".into(),
+        expected: expected.into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: Some(AdmissionCheck {
+            assertion_jws: jws,
+            binding: serde_json::to_value(&binding).expect("binding serializes"),
+            authoritative_generation: authoritative.map(|(g, _)| g),
+            authoritative_status: authoritative.map(|(_, s)| s.to_owned()),
+            issuer_public_key_b64url: admission_root().public_key().to_b64url(),
+            allow_degraded_mode: degraded.is_some(),
+            degraded_propagation_bound: degraded.unwrap_or(0),
+        }),
+    }
+}
+
+fn admission_fixtures() -> Vec<Fixture> {
+    use mcp_re_http_profile::AdmissionStatus::*;
+    vec![
+        // h42 — current admitted workload: served.
+        admission_fixture("h42_admission_current_admitted", &admission_claims(5, Admitted), Some((5, "admitted")), None, "verify_ok"),
+        // h43 — the load-bearing case: a valid, fresh, admitted assertion refused
+        //       because the authoritative generation advanced. A snapshot is not currency.
+        admission_fixture("h43_admission_stale_generation", &admission_claims(5, Admitted), Some((6, "admitted")), None, "mcp-re.actor_binding_failed"),
+        // h44 — revoked after issuance.
+        admission_fixture("h44_admission_revoked_after_issuance", &admission_claims(5, Admitted), Some((5, "revoked")), None, "mcp-re.actor_binding_failed"),
+        // h45 — authoritative state unreachable, degraded disabled: fail closed.
+        admission_fixture("h45_admission_state_unreachable_failclosed", &admission_claims(5, Admitted), None, None, "mcp-re.actor_binding_failed"),
+        // h46 — unreachable state within the P bound with degraded enabled: served.
+        admission_fixture("h46_admission_degraded_within_bound", &admission_claims(5, Admitted), None, Some(600), "verify_ok"),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -1616,6 +1756,45 @@ fn frozen_http_profile_corpus_verifies() {
                     &resolver(),
                     &VerifierPolicy::default(),
                     manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "admission" => {
+                let check = fixture.admission_check.as_ref().expect("admission_check");
+                let binding: mcp_re_http_profile::AdmissionBinding =
+                    serde_json::from_value(check.binding.clone()).expect("binding parses");
+                let issuer_key = mcp_re_core::VerificationKey::from_b64url(
+                    &check.issuer_public_key_b64url,
+                )
+                .expect("issuer key parses");
+                let authoritative = match (&check.authoritative_generation, &check.authoritative_status) {
+                    (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
+                        generation: *g,
+                        status: match s.as_str() {
+                            "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
+                            "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
+                            "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
+                            other => panic!("{name}: unknown status {other}"),
+                        },
+                    }),
+                    _ => None,
+                };
+                let policy = mcp_re_http_profile::AdmissionPolicy {
+                    allow_degraded_mode: check.allow_degraded_mode,
+                    degraded_propagation_bound: check.degraded_propagation_bound,
+                    ..mcp_re_http_profile::AdmissionPolicy::default()
+                };
+                match mcp_re_http_profile::check_admission(
+                    &binding,
+                    &check.assertion_jws,
+                    authoritative.as_ref(),
+                    mcp_re_http_profile::PROFILE_TAG,
+                    &["mcp.example.com"],
+                    &policy,
+                    manifest.verify_at_unix,
+                    |kid: &str| (kid == ADMISSION_ISSUER_KID).then(|| issuer_key.clone()),
                 ) {
                     Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),

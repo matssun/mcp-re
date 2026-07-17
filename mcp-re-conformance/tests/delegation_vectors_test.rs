@@ -276,6 +276,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence) {
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let ev = sign_request_full(
         &mut req, &block, &client_key(), CLIENT_KID, CREATED, EXPIRES, "nonce-1",

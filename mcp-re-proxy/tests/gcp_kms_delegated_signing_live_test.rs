@@ -185,6 +185,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidenc
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let ev = sign_request_full(
         &mut req,

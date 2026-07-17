@@ -1,0 +1,21 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h42_admission_current_admitted",
+  "kind": "admission",
+  "expected": "verify_ok",
+  "admission_check": {
+    "assertion_jws": "eyJ0eXAiOiJtY3AtcmUtYWRtaXNzaW9uK2p3cyIsImFsZyI6IkVkRFNBIiwia2lkIjoiYWRtaXNzaW9uLXJvb3QtMSJ9.eyJpc3MiOiJkaWQ6ZXhhbXBsZTphZG1pc3Npb24iLCJpYXQiOjE3MDAwMDAwOTAsIm5iZiI6MTcwMDAwMDA5MCwiZXhwIjoxNzAwMDAwNDAwLCJqdGkiOiJhZG0jNSIsImF1ZCI6Im1jcC5leGFtcGxlLmNvbSIsIm1jcF9yZV9wcm9maWxlIjoibWNwLXJlLWh0dHAtdjEiLCJtY3BfcmVfYWRtaXNzaW9uX2lkIjoid29ya2xvYWQtNyIsIm1jcF9yZV9hZG1pc3Npb25fZ2VuZXJhdGlvbiI6NSwibWNwX3JlX2FkbWl0dGVkX3N0YXRlX2RpZ2VzdCI6IlIzT2xqTXVtRXdZVnpwOTlJeVV2NDNtY1ZKNE1sdmViV2hHNG0zRlU0c1EiLCJtY3BfcmVfYWRtaXNzaW9uX3N0YXR1cyI6ImFkbWl0dGVkIiwiaXNzdWVyX2tpZCI6ImFkbWlzc2lvbi1yb290LTEifQ.6XbZBqc0nuYBKFEY1aRdCQ0S8U46_ADDfbbzahJGkpME1n619KHBdfuqeId9zul6QCF0HBvHLHQCmuUCcMDwDw",
+    "binding": {
+      "admission_id": "workload-7",
+      "binding_type": "opaque-digest",
+      "digest_alg": "sha256",
+      "digest_value": "TSi0Iej80THVLSvteujmxvdwfLopgDiDO4lwikkK9Oc",
+      "generation": 5
+    },
+    "authoritative_generation": 5,
+    "authoritative_status": "admitted",
+    "issuer_public_key_b64url": "lHXGzw7aNAV1KNhpR4HsySrWOdfivSd2HtPvdJJL6wc",
+    "allow_degraded_mode": false,
+    "degraded_propagation_bound": 0
+  }
+}

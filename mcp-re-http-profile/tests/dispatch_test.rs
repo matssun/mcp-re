@@ -95,6 +95,7 @@ fn request_block(audience: AudienceTuple, continuation: Option<HttpContinuation>
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation,
+        admission: None,
     }
 }
 

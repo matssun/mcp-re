@@ -414,6 +414,11 @@ pub struct HttpRequestEvidenceBlock {
     /// MRTR continuation (present only on continuation requests).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<HttpContinuation>,
+    /// The §7 admission binding: which admission the call acts under (MCPRE-433).
+    /// Present only where a deployment enforces admission; optional so pre-433
+    /// vectors and admission-free deployments are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<crate::admission::AdmissionBinding>,
 }
 
 impl HttpRequestEvidenceBlock {
@@ -509,6 +514,7 @@ mod tests {
             },
             artifact_bindings: vec![dpop_binding()],
             continuation: None,
+            admission: None,
         }
     }
 

@@ -86,6 +86,7 @@ fn main() {
             hpp_common::ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let nonce = format!("nonce-{now}");
     let mut request = HttpRequest {

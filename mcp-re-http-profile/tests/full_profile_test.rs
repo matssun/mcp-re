@@ -87,6 +87,7 @@ fn request_block(bindings: Vec<ArtifactBinding>) -> HttpRequestEvidenceBlock {
         audience: audience(),
         artifact_bindings: bindings,
         continuation: None,
+            admission: None,
     }
 }
 

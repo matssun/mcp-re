@@ -183,6 +183,7 @@ fn signed_request(nonce: &str, seed_reserved: Option<serde_json::Value>) -> Http
         audience: audience(),
         artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
         continuation: None,
+            admission: None,
     };
     sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
         .expect("signing succeeds");
@@ -387,6 +388,7 @@ fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
         audience: audience(),
         artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
         continuation: None,
+            admission: None,
     };
     sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
         .expect("re-sign");

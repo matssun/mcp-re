@@ -28,6 +28,7 @@
 //! bindings, signed rejections, and MRTR continuation reuse the existing
 //! machinery and land with the full profile (ADR-MCPRE-050 parity gate).
 
+pub mod admission;
 pub mod artifact;
 pub mod block;
 pub mod bodyless;
@@ -68,6 +69,16 @@ pub use block::RequestEvidenceDigest;
 pub use block::ResolvedActor;
 pub use block::SignerSlot;
 pub use block::CONTINUATION_TYPE_MCP_MRT;
+pub use admission::check_admission;
+pub use admission::issue_admission_assertion;
+pub use admission::verify_admission_assertion;
+pub use admission::AdmissionBinding;
+pub use admission::AdmissionClaims;
+pub use admission::AdmissionHeader;
+pub use admission::AdmissionPolicy;
+pub use admission::AdmissionStatus;
+pub use admission::AuthoritativeAdmission;
+pub use admission::VerifiedAdmission;
 pub use chain::reconstruct_chain;
 pub use chain::ChainLabel;
 pub use chain::ChainReconstruction;

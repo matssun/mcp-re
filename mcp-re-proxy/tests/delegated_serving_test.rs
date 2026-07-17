@@ -203,6 +203,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),

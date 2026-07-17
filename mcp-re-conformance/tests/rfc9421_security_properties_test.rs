@@ -91,6 +91,7 @@ fn block() -> HttpRequestEvidenceBlock {
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+        admission: None,
     }
 }
 fn base_request(body: &[u8]) -> HttpRequest {

@@ -254,6 +254,7 @@ fn signed_request(
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation,
+        admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),

@@ -274,6 +274,7 @@ fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, Verifi
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let mut req = base_request();
     let evidence = sign_request_full(

@@ -103,6 +103,7 @@ fn request_block() -> HttpRequestEvidenceBlock {
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     }
 }
 

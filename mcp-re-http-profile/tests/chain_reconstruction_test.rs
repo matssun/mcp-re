@@ -89,6 +89,7 @@ fn block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
             b"tok",
         )],
         continuation,
+        admission: None,
     }
 }
 
