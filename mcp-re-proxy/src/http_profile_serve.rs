@@ -20,13 +20,18 @@
 //!      the stateless Streamable-HTTP inner backend via the async inner pool;
 //!   6. `sign_delegated_response_full` — sign the reply with the active delegated
 //!      key + inline credential, bound to THIS request (ADR-MCPRE-052).
-//! Any fail-closed step emits a delegated-signed rejection receipt instead.
+//!
+//! Any fail-closed step emits a delegated-signed rejection receipt instead. A
+//! one-way notification (a `method` with no `id`) is answered with a delegated
+//! bodyless 202 whose credential rides in the covered `mcp-re-delegation` header
+//! (#424).
 
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::strip_proxy_owned_meta;
@@ -347,6 +352,28 @@ impl HttpProfileProxy {
                 )
             }
         };
+        // Step 7a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
+        // signed bodyless 202, not a bodied reply (#424 / #418). The backend already
+        // received it above (its side effects run); the 202 states only that the
+        // enforcement boundary authenticated and accepted the message — NOT that any
+        // action completed. The credential rides in the covered `mcp-re-delegation`
+        // header, since a bodyless 202 has no body to carry it.
+        if is_notification(&http_req.body) {
+            return match sign_delegated_accepted_202(
+                &http_req,
+                &a.credential,
+                a.key.as_ref(),
+                &a.delegated_kid,
+                now,
+                expires,
+            ) {
+                Ok(ack) => served(ack),
+                Err(e) => {
+                    self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
+                }
+            };
+        }
+
         let response_base = match sign_delegated_response_full(
             &mut response,
             &http_req,
@@ -476,6 +503,16 @@ fn extract_request_state(body: &[u8]) -> Option<String> {
 }
 
 /// Read `result.requestState` from a JSON-RPC RESPONSE body IFF the reply is an
+/// A JSON-RPC NOTIFICATION: a message with a `method` and NO `id` (JSON-RPC 2.0
+/// §4.1). A notification has no response, so an accepted one earns a signed
+/// bodyless 202 rather than a bodied reply (#424 / #418).
+fn is_notification(body: &[u8]) -> bool {
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(v) => v.get("method").is_some() && v.get("id").is_none(),
+        Err(_) => false,
+    }
+}
+
 /// `InputRequiredResult` (`result.resultType == "input_required"`) — the opaque MRTR
 /// state the OPEN leg minted (ADR-MCPS-047). `None` for a terminal reply, a
 /// non-JSON body, or a missing/non-string state.

@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "97dea22ae82b3e56acb48cf518f9236abf7499ddb11d34d6a21e3b80e7e9dc35",
+  "corpus_digest": "064be0a55bb1e49d1d5d3e72e50790887aae9ef9e9eb6019429c3c4c669211c8",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -118,6 +118,18 @@
     {
       "file": "h41_transport_mcp_name_divergence.json",
       "sha256": "1943d4b2e1e9ba16ca016cc4e72c03e8caa991107a906764f72bc8d8db24d3a3"
+    },
+    {
+      "file": "h47_delegated_202_valid.json",
+      "sha256": "bc72e3e4d62bdd17509d9cb9fd3fe7e1d5c6cb107272015a144781f1c70d9adf"
+    },
+    {
+      "file": "h48_delegated_202_credential_uncovered.json",
+      "sha256": "db2bddc844c6a4545a215e41b31802594e30b143d84c1186543529d72cd3bfc0"
+    },
+    {
+      "file": "h49_delegated_202_revoked.json",
+      "sha256": "34eacd015659007fea6e299b014121babacaed462a289b44ec73ab0258e200aa"
     },
     {
       "file": "h42_admission_current_admitted.json",

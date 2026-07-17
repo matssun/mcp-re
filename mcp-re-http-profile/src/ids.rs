@@ -140,6 +140,29 @@ pub const BODYLESS_REQUEST_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "c
 /// acknowledging a client-posted notification or response.
 pub const BODYLESS_RESPONSE_COMPONENTS: [&str; 2] = ["@status", "content-digest"];
 
+/// The dedicated delegation-credential header on a DELEGATED bodyless 202
+/// (#424 / #418, owner ruling 2026-07-17). This is the ONE narrow exception to the
+/// "no new MCP-RE header fields" rule (E-3): a bodyless 202 has no body to carry
+/// the inline `server_delegation` credential the way a bodied response does, and
+/// MCP requires the accepted-notification 202 to be bodyless. So on THIS message
+/// shape ONLY, the compact-JWS credential rides in this header — and it MUST be a
+/// covered component of the RFC 9421 response signature, so it is exactly as
+/// protected as a body-carried credential would be.
+pub const MCP_RE_DELEGATION_HEADER: &str = "mcp-re-delegation";
+
+/// Hard size bound on the delegation-credential header value (§424 ruling: an
+/// explicit size bound). A delegated credential is a compact JWS over a small
+/// claim set; a value beyond this is malformed, and an unbounded header is a
+/// memory/DoS surface, so it is rejected before parsing.
+pub const MAX_DELEGATION_HEADER_LEN: usize = 8192;
+
+/// Covered components of a DELEGATED bodyless 202 (§3.4/§424): the bodyless
+/// response set PLUS the delegation-credential header, bound to the request via
+/// the `;req` components. The header's presence in this set is what makes the
+/// credential covered by the signature.
+pub const BODYLESS_DELEGATED_RESPONSE_COMPONENTS: [&str; 3] =
+    ["@status", "content-digest", MCP_RE_DELEGATION_HEADER];
+
 /// The HTTP status of an accepted one-way notification/response (#418, §3.4).
 ///
 /// A signed 202 states exactly one thing: THE ENFORCEMENT BOUNDARY AUTHENTICATED

@@ -230,6 +230,10 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             "mcp-method" => "mcp-method",
             "mcp-name" => "mcp-name",
             "mcp-protocol-version" => "mcp-protocol-version",
+            // The delegation-credential header on a delegated bodyless 202
+            // (#424): coverable so the credential it carries is protected by the
+            // response signature. Only the bodyless-202 path requires it.
+            "mcp-re-delegation" => "mcp-re-delegation",
             _ => {
                 return Err(HttpProfileError::MalformedEvidence(
                     "unknown covered component",

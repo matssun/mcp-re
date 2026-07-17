@@ -168,6 +168,23 @@ struct AdmissionCheck {
     degraded_propagation_bound: i64,
 }
 
+/// A frozen DELEGATED bodyless-202 check (#424, owner ruling 2026-07-17). Freezes
+/// the notification request and the signed 202 (credential in the covered
+/// `mcp-re-delegation` header), plus the root key + scope so the delegated
+/// verification is deterministic for a third party.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Delegated202Check {
+    request: WireMessage,
+    response: WireMessage,
+    root_public_key_b64url: String,
+    root_kid: String,
+    verifier_audience: String,
+    audience_hash: String,
+    epoch: String,
+    revoked: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
@@ -194,6 +211,8 @@ struct Fixture {
     chain_check: Option<ChainCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     admission_check: Option<AdmissionCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delegated_202_check: Option<Delegated202Check>,
 }
 
 /// One manifest entry: the fixture path and the SHA-256 of its exact bytes
@@ -432,6 +451,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 2. h02_request_body_tamper — frozen post-tamper message. The body no
@@ -452,6 +472,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 3. h03_request_missing_covered_component — content-digest stripped from
@@ -474,6 +495,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 4. h04_request_foreign_tag — same evidence under a foreign profile tag.
@@ -495,6 +517,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 4b. h23_request_alg_not_allowlisted — a signature naming an algorithm that
@@ -521,6 +544,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
@@ -546,6 +570,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 6. h06_request_wrong_keyid — untrusted keyid, trust must fail first.
@@ -571,6 +596,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 7. h07_response_valid — full signed exchange.
@@ -601,6 +627,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // 8. h08_response_splice — a response signed for request B presented as
@@ -643,6 +670,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // ----- artifact-binding fixtures (MCPRE-95) -----
@@ -722,6 +750,7 @@ fn build_fixtures() -> Vec<Fixture> {
             continuation_check: None,
             chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
         });
     }
 
@@ -747,6 +776,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(&prev_base),
@@ -767,6 +797,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(b"a-different-previous-request-base"),
@@ -787,6 +818,7 @@ fn build_fixtures() -> Vec<Fixture> {
         artifact_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value,
             previous_request_base_b64: credential_b64(&prev_base),
@@ -823,6 +855,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h35 — content-type present when the named set says it must be absent.
@@ -840,6 +873,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h36 — content injected into a message whose digest commits to empty content.
@@ -857,6 +891,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h37 — the splice: A's acknowledgement presented against notification B.
@@ -880,6 +915,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
@@ -915,6 +951,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h32 — the header rides on the wire but was dropped from the covered set:
@@ -937,6 +974,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h33 — the covered header says tools/list, the covered body says tools/call.
@@ -955,6 +993,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // ----- MCP transport CONTRACT fixtures (#415 rev 2 §4.1, MCPRE-425) -----
@@ -1003,6 +1042,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h39 — a required header absent (no Mcp-Method) under the strict contract.
@@ -1023,6 +1063,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h40 — an unsupported protocol version (a client's claim is not consent).
@@ -1043,6 +1084,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h41 — Mcp-Name disagreeing with params.name (the routing header naming a
@@ -1068,7 +1110,11 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
+
+    // ----- delegated bodyless-202 fixtures (#424, owner ruling 2026-07-17) -----
+    fixtures.extend(delegated_202_fixtures());
 
     // ----- admission fixtures (#414 §4.3/§5, #415 §7, MCPRE-433) -----
     // Each freezes the assertion JWS, the call's binding, and the authoritative
@@ -1110,6 +1156,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // ----- retained-chain fixtures (#416 rev 2 §9/§13, MCPRE-430/431) -----
@@ -1152,6 +1199,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h19 — unbound valid: no request context, signed response-only.
@@ -1177,6 +1225,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h20 — body tamper: an edited human message breaks Content-Digest.
@@ -1196,6 +1245,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h21 — splice: a rejection bound to `req` presented against a different
@@ -1223,6 +1273,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     // h22 — unsigned: a bare JSON-RPC error with no signature is untrusted.
@@ -1243,6 +1294,7 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
         chain_check: None,
         admission_check: None,
+        delegated_202_check: None,
     });
 
     fixtures
@@ -1365,6 +1417,7 @@ fn chain_fixture(name: &str, hops: &[RetainedHop], label: &str) -> Fixture {
             expected_label: label.into(),
         }),
         admission_check: None,
+        delegated_202_check: None,
     }
 }
 
@@ -1501,6 +1554,149 @@ fn label_token(label: &ChainLabel) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Delegated bodyless-202 fixtures (#424).
+// ---------------------------------------------------------------------------
+
+const D202_ROOT_KID: &str = "root-kid";
+const D202_DELEGATED_KID: &str = "delegated-kid-1";
+const D202_AUD: &str = "verifier-1";
+const D202_AUD_HASH: &str = "aud-scope-1";
+const D202_EPOCH: &str = "epoch-1";
+
+fn d202_root() -> SigningKey {
+    SigningKey::from_seed_bytes(&[33u8; 32])
+}
+fn d202_delegated() -> SigningKey {
+    SigningKey::from_seed_bytes(&[55u8; 32])
+}
+
+fn d202_credential() -> String {
+    let d = d202_delegated();
+    let header = mcp_re_http_profile::DelegationHeader {
+        typ: mcp_re_http_profile::DELEGATION_TYP.into(),
+        alg: mcp_re_http_profile::DELEGATION_ALG.into(),
+        kid: D202_ROOT_KID.into(),
+    };
+    let server_signer = ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: D202_DELEGATED_KID.into(),
+    };
+    let claims = mcp_re_http_profile::DelegationClaims {
+        iss: "did:example:server".into(),
+        iat: CREATED,
+        nbf: CREATED,
+        exp: EXPIRES,
+        jti: "evt-202".into(),
+        aud: mcp_re_http_profile::Audience::One(D202_AUD.into()),
+        mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        mcp_re_audience_hash: D202_AUD_HASH.into(),
+        mcp_re_server_signer: server_signer.actor_id(),
+        mcp_re_key_use: mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING.into(),
+        delegated_kid: D202_DELEGATED_KID.into(),
+        issuer_kid: D202_ROOT_KID.into(),
+        trust_epoch: D202_EPOCH.into(),
+        cnf: mcp_re_http_profile::Cnf {
+            jwk: mcp_re_http_profile::DelegatedJwk {
+                kty: mcp_re_http_profile::JWK_KTY_OKP.into(),
+                crv: mcp_re_http_profile::JWK_CRV_ED25519.into(),
+                kid: D202_DELEGATED_KID.into(),
+                x: d.public_key().to_b64url(),
+            },
+        },
+    };
+    mcp_re_http_profile::issue_delegation_credential(&d202_root(), &header, &claims)
+}
+
+fn d202_notification() -> HttpRequest {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-d202")
+        .expect("notification signs");
+    r
+}
+
+fn d202_check(response: &HttpResponse, note: &HttpRequest, revoked: bool) -> Delegated202Check {
+    Delegated202Check {
+        request: to_wire_request(note),
+        response: to_wire_response(response),
+        root_public_key_b64url: d202_root().public_key().to_b64url(),
+        root_kid: D202_ROOT_KID.into(),
+        verifier_audience: D202_AUD.into(),
+        audience_hash: D202_AUD_HASH.into(),
+        epoch: D202_EPOCH.into(),
+        revoked,
+    }
+}
+
+fn d202_fixture(name: &str, check: Delegated202Check, expected: &str) -> Fixture {
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "delegated_202".into(),
+        expected: expected.into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: Some(check),
+    }
+}
+
+fn delegated_202_fixtures() -> Vec<Fixture> {
+    let note = d202_notification();
+    let ack = mcp_re_http_profile::sign_delegated_accepted_202(
+        &note,
+        &d202_credential(),
+        &d202_delegated(),
+        D202_DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("PEP delegated-signs the 202");
+
+    let mut out = Vec::new();
+    // h47 — positive: a delegated 202 verifying via the credential→root chain.
+    out.push(d202_fixture(
+        "h47_delegated_202_valid",
+        d202_check(&ack, &note, false),
+        "verify_ok",
+    ));
+
+    // h48 — the credential header stripped from the COVERED set (still on the
+    //       wire). An uncovered credential is unprotected — the load-bearing
+    //       negative for the whole design.
+    let mut uncovered = ack.clone();
+    for h in uncovered.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace(" \"mcp-re-delegation\"", "");
+        }
+    }
+    out.push(d202_fixture(
+        "h48_delegated_202_credential_uncovered",
+        d202_check(&uncovered, &note, false),
+        "mcp-re.missing_envelope",
+    ));
+
+    // h49 — revoked delegated key: the revocation seam is live.
+    out.push(d202_fixture(
+        "h49_delegated_202_revoked",
+        d202_check(&ack, &note, true),
+        "mcp-re.delegation_revoked",
+    ));
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Admission fixtures (#414 §4.3/§5, #415 §7).
 // ---------------------------------------------------------------------------
 
@@ -1561,6 +1757,7 @@ fn admission_fixture(
             allow_degraded_mode: degraded.is_some(),
             degraded_propagation_bound: degraded.unwrap_or(0),
         }),
+        delegated_202_check: None,
     }
 }
 
@@ -1755,6 +1952,49 @@ fn frozen_http_profile_corpus_verifies() {
                     &request,
                     &resolver(),
                     &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "delegated_202" => {
+                let check = fixture.delegated_202_check.as_ref().expect("delegated_202_check");
+                let request = from_wire_request(&check.request);
+                let response = from_wire_response(&check.response);
+                let root_key =
+                    mcp_re_core::VerificationKey::from_b64url(&check.root_public_key_b64url)
+                        .expect("root key parses");
+                let root_kid = check.root_kid.clone();
+                let resolve = move |kid: &str, slot: SignerSlot| {
+                    (kid == root_kid && slot == SignerSlot::Response).then(|| ResolvedActor {
+                        identity: ActorIdentity {
+                            role: "server".into(),
+                            trust_domain: "example.com".into(),
+                            subject: "did:example:server".into(),
+                            keyid: kid.into(),
+                        },
+                        verification_key: root_key.clone(),
+                        slot,
+                    })
+                };
+                let auds = [check.verifier_audience.as_str()];
+                let epochs = [check.epoch.as_str()];
+                let expect = mcp_re_http_profile::DelegationExpectations {
+                    policy: VerifierPolicy::default(),
+                    verifier_audiences: &auds,
+                    expected_audience_hash: &check.audience_hash,
+                    accepted_epochs: &epochs,
+                    max_clock_skew: 60,
+                };
+                let revoked_kid = check.revoked;
+                let is_revoked = move |id: &str| revoked_kid && id == D202_DELEGATED_KID;
+                match mcp_re_http_profile::verify_delegated_accepted_202(
+                    &response,
+                    &request,
+                    &resolve,
+                    &expect,
+                    &is_revoked,
                     manifest.verify_at_unix,
                 ) {
                     Ok(_) => "verify_ok".to_owned(),

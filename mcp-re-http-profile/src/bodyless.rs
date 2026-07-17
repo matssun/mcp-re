@@ -248,6 +248,208 @@ pub fn verify_accepted_202(
     Ok(actor)
 }
 
+/// Sign a DELEGATED bodyless `202 Accepted` (§3.4/§424, owner ruling 2026-07-17).
+///
+/// Same bodyless shape as [`sign_accepted_202`], but signed by a DELEGATED key and
+/// carrying the compact-JWS delegation credential in the `mcp-re-delegation`
+/// header. The header is a COVERED component of the response signature, so the
+/// credential is exactly as protected as a body-carried one — it just cannot ride
+/// in a body that, by MCP's rule, must not exist.
+///
+/// This preserves the three constraints the ruling required jointly: MCP's
+/// bodyless 202, delegated-only response signing, and self-contained verification.
+pub fn sign_delegated_accepted_202(
+    request: &HttpRequest,
+    server_delegation: &str,
+    delegated_key: &mcp_re_core::SigningKey,
+    delegated_kid: &str,
+    created: i64,
+    expires: i64,
+) -> Result<HttpResponse, HttpProfileError> {
+    if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
+        return Err(HttpProfileError::MalformedEvidence("delegation header too large"));
+    }
+    let mut response = HttpResponse {
+        status: STATUS_ACCEPTED,
+        headers: vec![
+            ("Content-Digest".to_owned(), content_digest_sha256(&[])),
+            (
+                crate::ids::MCP_RE_DELEGATION_HEADER.to_owned(),
+                server_delegation.to_owned(),
+            ),
+        ],
+        body: Vec::new(),
+    };
+    // The bodyless DELEGATED response set: @status, content-digest, AND the
+    // delegation header — then the `;req` binding to the notification.
+    let mut components: Vec<CoveredComponent> = crate::ids::BODYLESS_DELEGATED_RESPONSE_COMPONENTS
+        .iter()
+        .map(|n| CoveredComponent::new(n))
+        .collect();
+    components.extend(
+        REQUIRED_RESPONSE_REQ_COMPONENTS
+            .iter()
+            .map(|n| CoveredComponent::req(n)),
+    );
+    let params = params_for(delegated_kid, created, expires, None);
+    let base = signature_base(
+        &components,
+        &params,
+        &SourceMessage::Response {
+            response: &response,
+            request,
+        },
+    )?;
+    emit(
+        &mut response.headers,
+        RESPONSE_LABEL,
+        &components,
+        &params,
+        &base,
+        delegated_key,
+    )?;
+    Ok(response)
+}
+
+/// Verify a DELEGATED bodyless `202 Accepted` (§3.4/§424, owner ruling 2026-07-17).
+///
+/// Delegation is REQUIRED and self-contained: the `mcp-re-delegation` header
+/// carries a compact-JWS credential that chains to a trusted root, and the 202 is
+/// signed by the delegated key that credential attests. Fail-closed on:
+///   - the header absent, DUPLICATED, or over [`MAX_DELEGATION_HEADER_LEN`];
+///   - the header NOT covered by the response signature (an uncovered credential
+///     is one an intermediary could swap — the whole reason it must be covered);
+///   - any credential-chain failure (issuer→root, audience-scope, profile,
+///     key-use, trust-epoch, expiry, revocation) via [`verify_delegation_credential`];
+///   - the response `keyid` ≠ the credential's `delegated_kid`;
+///   - the response signature not verifying under the delegated `cnf.jwk`.
+///
+/// There is no body-declared `server_signer` to cross-check (there is no body); the
+/// credential's own root-signed `mcp_re_server_signer` is authoritative, and the
+/// load-bearing scope binding is the credential's `audience_hash`.
+///
+/// On success the caller learns: a delegated key trusted for THIS service accepted
+/// this notification. Nothing about what happened next.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_delegated_accepted_202(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    expect: &crate::verify::DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
+    reject_content_encoding(&response.headers)?;
+    require_bodyless(&response.headers, &response.body)?;
+    if response.status != STATUS_ACCEPTED {
+        return Err(HttpProfileError::MalformedEvidence(
+            "bodyless acknowledgement status",
+        ));
+    }
+
+    let digest_header = required_header(&response.headers, "content-digest")
+        .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
+    verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // The delegation credential: present EXACTLY once and size-bounded. `single_header`
+    // fails closed on a duplicate; the bound is checked before any parsing.
+    let credential = single_header(&response.headers, crate::ids::MCP_RE_DELEGATION_HEADER)?
+        .ok_or(HttpProfileError::DelegationCredentialMissing)?;
+    if credential.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
+        return Err(HttpProfileError::MalformedEvidence("delegation header too large"));
+    }
+    let credential = credential.to_owned();
+
+    let parsed = crate::verify::parse_signature_input_for(
+        &response.headers,
+        RESPONSE_LABEL,
+        "response signature-input",
+    )?;
+    // The DELEGATED bodyless set, enforced exactly: the credential header MUST be
+    // covered (an uncovered credential is unprotected evidence).
+    crate::verify::require_components_for(
+        &parsed.components,
+        &crate::ids::BODYLESS_DELEGATED_RESPONSE_COMPONENTS,
+        &REQUIRED_RESPONSE_REQ_COMPONENTS,
+    )?;
+    if parsed.components.iter().any(|c| !c.req && c.name == "content-type") {
+        return Err(HttpProfileError::MalformedEvidence(
+            "content-type covered on a bodyless message",
+        ));
+    }
+    let (_c, _e, _n, key_id, algorithm) =
+        crate::verify::check_params_for(&parsed.params, &expect.policy, now, false)?;
+
+    // The credential's own root-signed server_signer is authoritative here (no body
+    // to declare a competing one). Read it, then verify the whole chain against it.
+    let server_signer = credential_server_signer(&credential)?;
+    let params = crate::delegation::DelegationVerifyParams {
+        now,
+        max_clock_skew: expect.max_clock_skew,
+        verifier_audiences: expect.verifier_audiences,
+        expected_profile: PROFILE_TAG,
+        expected_audience_hash: expect.expected_audience_hash,
+        expected_server_signer: &server_signer,
+        accepted_epochs: expect.accepted_epochs,
+    };
+    let verified = crate::delegation::verify_delegation_credential(
+        &credential,
+        &params,
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |id| is_revoked(id),
+    )?;
+
+    // The response keyid is the delegated key, and the response signature verifies
+    // under cnf.jwk over the base that COVERS the credential header.
+    if key_id != verified.delegated_kid {
+        return Err(HttpProfileError::DelegationKeyMismatch);
+    }
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::Response { response, request },
+    )?;
+    let sig = crate::verify::signature_value_for(&response.headers, RESPONSE_LABEL)?;
+    crate::verify::verify_under(
+        algorithm,
+        &base,
+        &sig,
+        &verified.delegated_key,
+        McpReError::ResponseSigInvalid,
+    )
+    .map_err(|_| HttpProfileError::DelegationKeyMismatch)?;
+
+    Ok(ResolvedActor {
+        identity: crate::block::ActorIdentity {
+            role: "server".to_owned(),
+            trust_domain: String::new(),
+            subject: verified.server_signer.clone(),
+            keyid: verified.delegated_kid.clone(),
+        },
+        verification_key: verified.delegated_key,
+        slot: SignerSlot::Response,
+    })
+}
+
+/// Read the `mcp_re_server_signer` claim from a compact-JWS credential's payload
+/// WITHOUT verifying it — the value is used only as the `expected_server_signer`
+/// the full verification then re-derives and roots. Reading it here does not trust
+/// it; `verify_delegation_credential` proves the whole payload against the root.
+fn credential_server_signer(compact_jws: &str) -> Result<String, HttpProfileError> {
+    let payload_seg = compact_jws
+        .split('.')
+        .nth(1)
+        .ok_or(HttpProfileError::DelegationCredentialInvalid)?;
+    let bytes = mcp_re_core::b64url_decode(payload_seg)
+        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    v.get("mcp_re_server_signer")
+        .and_then(|s| s.as_str())
+        .map(str::to_owned)
+        .ok_or(HttpProfileError::DelegationCredentialInvalid)
+}
+
 /// Sign a bodyless REQUEST (§8.1): `@method`, `@target-uri`, and a
 /// `content-digest` over empty content. No `content-type`.
 pub fn sign_bodyless_request(

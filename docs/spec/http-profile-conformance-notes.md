@@ -457,133 +457,60 @@ inner application observed the notification, not that any action was taken (#418
 `the_bodied_request_set_still_requires_content_type` — the new sets must not have
 weakened the old one).
 
-### OPEN — the signed 202 cannot carry a delegation credential (needs an owner ruling)
+### RESOLVED — the delegated 202 carries its credential in a covered header (#424 ruling, 2026-07-17)
 
-The profile-crate component sets above are complete and tested. The **proxy serving
-path is NOT wired to emit a signed 202**, because doing so would require breaking
-one of three currently-ratified rules:
+The owner ruled: **carry the compact-JWS delegation credential in a dedicated
+`mcp-re-delegation` header, and require that header to be covered by the RFC 9421
+response signature.** This is the ONE narrow exception to E-3 (no new MCP-RE header
+fields), specifically for evidence that cannot reside in a body because MCP requires
+the accepted-notification 202 to be bodyless. It keeps all three constraints that
+were in tension:
 
-1. **§3.4 (published)** — the 202 is bodyless: no body, no `content-type`.
-2. **Delegated-required (governing, 2026-07-13)** — delegated signing is the ONLY
-   response-signing mode; direct-root response signing was deleted from the runtime
-   surface and survives only as negative-test fixtures.
-3. **ADR-MCPRE-052 §2** — the inline delegation credential (`server_delegation`)
-   rides in the response evidence block, i.e. **in the response body**, protected
-   because `content-digest` covers it.
+- **§3.4 bodyless 202** — the response still has no body and no `content-type`;
+- **delegated-only signing** — the 202 is signed by the delegated key, not the root;
+- **self-contained verification** — the credential travels with the message and
+  chains to the root offline.
 
-A bodyless 202 has no body, so it cannot carry the credential that
-delegated-required obliges it to carry. The three rules are jointly unsatisfiable
-for this message shape. The options, none of them free:
+**The rule.** A delegated bodyless 202 MUST:
 
-| Option | Cost |
+| Requirement | Enforcement |
 |---|---|
-| (a) Give the 202 a minimal body carrying only the response evidence block | Contradicts §3.4's bodyless set — the published profile would need amending |
-| (b) Carry the credential in a header | Violates E-3 (no new MCP-RE header fields); also unprotected unless covered |
-| (c) Resolve the credential out of band / from cache | New trust seam and freshness surface; the client must obtain it somehow |
-| (d) Exempt the 202 from delegated-required, resolving its key through the trust seam | Violates the governing delegated-required rule; reintroduces a direct-root signing path |
+| Exactly one `mcp-re-delegation` header | duplicate ⇒ `missing_envelope` (`DuplicateHeader`) |
+| Header size ≤ `MAX_DELEGATION_HEADER_LEN` (8 KiB) | over-bound ⇒ `malformed_envelope`, before parsing |
+| Header COVERED by the response signature | uncovered ⇒ `missing_envelope` (`MissingCoveredComponent`) |
+| Credential present | absent ⇒ `delegation_credential_missing` |
+| Full credential chain: issuer→root, audience-scope, profile, key-use, epoch, expiry, revocation | via `verify_delegation_credential` |
+| Response `keyid` = credential `delegated_kid`; response signature verifies under `cnf.jwk` | mismatch ⇒ `delegation_key_mismatch` |
+| `;req` binding to the notification | a spliced ack fails the signature |
 
-This is a signing-authority decision, so it is deliberately NOT taken here.
-`sign_accepted_202` / `verify_accepted_202` implement the §3.4 shape faithfully and
-are usable by a deployment whose response keys resolve through the trust seam
-directly; wiring them into the delegated-required serving path awaits the ruling on
-#418. Recorded there rather than resolved by implementation.
+**Why coverage is load-bearing.** An uncovered credential header is one an
+intermediary could swap for a credential of its choosing; requiring it in the signed
+component set makes it exactly as protected as a body-carried credential. The
+strip-from-covered-set negative (vector `h48`) is the central test of the design.
 
----
+**No body-declared `server_signer`.** The bodied delegated path cross-checks the
+body's declared `server_signer` against the credential; a bodyless 202 has no body,
+so the credential's own root-signed `mcp_re_server_signer` is authoritative and the
+`audience_hash` scope is the load-bearing binding. There is no independent identity
+to disagree, so no splice vector is lost.
 
-## §12.2 — the vector corpus is content-pinned
+**Binding granularity.** `;req` binds the request's covered CONTENT
+(`@method`/`@target-uri`/`content-digest`/`content-type`), not its nonce. Two
+byte-identical notifications differing only in nonce share one ack — correctly, since
+they are indistinguishable messages; a bodyless 202 has no body to carry a full
+request-evidence handle, so instance-level binding is not expressible, and
+content-level binding is what a splice across DISTINCT messages needs.
 
-**Rule.** Every corpus manifest carries a per-file SHA-256 and a `corpus_digest`
-over the sorted `<path>:<sha256>` list. Loaders verify each fixture's bytes
-**before running it** and fail closed on mismatch. CI publishes both digests.
+**What a delegated 202 claims.** A delegated key trusted for THIS service
+authenticated and accepted this notification — NOT that any action completed (#418).
 
-§12.2: "a tag or branch name alone is insufficient to prove that two reviewers used
-the same corpus." A filename list — which is what the manifests were — has the same
-weakness one level down: it proves which files were *meant* to be there, not what
-was in them. Two reviewers on the same tag, one with a locally-edited vector, would
-both report "corpus green" and mean different things.
+**Wired through the proxy.** The serving path detects a JSON-RPC notification (a
+`method` with no `id`), forwards it to the inner backend for side effects, and emits
+a delegated-signed bodyless 202 instead of a bodied reply. The root is touched only
+at credential issuance, never on the 202 path.
 
-**Sorted, so the digest tracks content and not emission order.** Otherwise
-reshuffling the fixture builder would churn the published digest while every vector
-stayed byte-identical, and reviewers would learn to ignore it.
-
-**Verified before running, not after.** A fixture whose bytes do not match the
-manifest is not a vector — it is an unknown file with a familiar name, and running
-it would report a verdict about something nobody pinned. The corpus digest is
-checked first, so a corpus cannot be edited into agreeing with itself.
-
-**The external KATs are pinned too**, and they mattered most. `external_kat.json`
-and `external_delegation_kat.json` are third-party artifacts — signatures produced
-by python-cryptography, independently of ed25519-dalek — and they anchor the
-independent cross-verification claim. Both were sitting in the corpus directories
-**unpinned and unnamed by any manifest** until the no-unlisted-vectors check found
-them. Silent drift there would have changed what "independently cross-verified"
-means while every test still passed. They are hashed in place; the writer never
-rewrites them.
-
-**Published digests** (regenerate with the golden writers; CI emits these to the
-job summary):
-
-| Corpus | manifest SHA-256 | corpus digest |
-|---|---|---|
-| `http-profile` | `9e0080ec0dfe7def529f0e47bd12c43f4316fa2ca9f305a8f023e75adc535dc9` | `d8af1242831ce3be953ce2ec98a1a62e53e42e05f982b6fe734c1adeae1413ef` |
-| `delegation-profile` | `82ff7b2b98b74f7d60af3d99f8fae52227c67852cfb954613cc6ae20f090a40c` | `899462fa9da4596bfc04c755d07cd6e0cc85abee7c3d5696396ecd13840311be` |
-
-These pin the corpus AFTER the byte-changing work (#430 domain separation, #432
-keyid migration), per the epic's sequencing note — so the corpus is pinned once,
-against final bytes, rather than twice.
-
-**Proven by.** `corpus_pinning_test` (5 tests): every fixture matches its published
-hash AND no vector on disk is absent from the manifest; the digest commits to the
-entries; a one-byte edit breaks the hash (the pin bites — a manifest carrying
-hashes nobody checks is worse than no hashes, because it reads as a guarantee);
-adding or removing a vector moves the digest; the digest is order-independent.
-
----
-
-## §10 — the verified-context carrier and the reserved-field guard
-
-**Rule.** The PEP may hand its verified conclusion to the inner server in a
-RESERVED `_meta` block, `se.syncom/mcp-re.verified-context`, but ONLY under an
-explicit trust configuration. Caller-supplied content at that key is stripped at
-the boundary — always, whether or not the carrier is enabled.
-
-**The carrier is not evidence, and that is the whole design.** Every other block in
-this vocabulary is signed and digest-bound: anyone with a key can check it. This
-one is the opposite — the PEP's *conclusion*, on the PEP's authority alone, with no
-signature over it. That is deliberate. A signature would imply the inner server
-could evaluate trust independently, which is exactly the job the PEP exists to have
-already done.
-
-**So the channel IS the trust.** The PEP → inner-server channel MUST be one only
-the PEP can write to: loopback, a same-pod sidecar, a UNIX socket. If anything else
-can reach the inner server, it can assert any verified context it likes and the
-inner server has no way to tell. There is no cryptographic fallback here. That is
-why `VerifiedContextPolicy` defaults to `Disabled` and enabling it is an explicit
-operator act (`with_verified_context_carrier`) asserting something the code cannot
-check.
-
-**What it carries.** Trust-resolution OUTPUTS: the resolved `actor_id` to authorize
-on, the verified audience, the request-evidence handle as the audit correlation key.
-The presented `key_id` is included and explicitly labelled audit-only — a keyid is a
-selector the caller chose, and handing it to the inner server unlabelled would
-invite authorizing on the one value the attacker controls.
-
-**The guard, and why it is unconditional.** A caller that could seed the reserved
-key would be asserting its OWN verified context to a server that believes the block
-implicitly — an authentication bypass, not a spoofing nuisance. The strip therefore
-runs on every request regardless of policy: a deployment with the carrier disabled
-must not be one config flip (or one reserved-key rename) away from forwarding
-attacker-authored context. Strip first, write second, so what the inner server reads
-is always the PEP's conclusion and never the caller's assertion.
-
-**Proven by.** `verified_context_carrier_test` — in particular
-`a_caller_seeded_verified_context_never_reaches_the_inner_server`, where the client
-LEGITIMATELY SIGNS a body containing a forged admin context. The request verifies;
-the forged block still never reaches the inner server, under both policies. A
-signature proves who wrote the bytes; it never proves the bytes are true.
-Also `context.rs` unit tests (the strip is idempotent and preserves unrelated
-`_meta` keys).
-
-**ADR-MCPS-008** recorded the propagation intent; this is its realization. The
-carrier is additive and defaults off, so nothing about the existing serving path
-changes for a deployment that does not opt in.
+**Proven by.** `bodyless_202_test` (the non-delegated 202 shape),
+`delegated_202_test` (8 tests: valid, uncovered/missing/duplicated/oversized
+credential, revoked, epoch-stale, splice across distinct notifications),
+`delegated_serving_test::a_notification_is_served_a_verifiable_delegated_202` (the
+proxy end-to-end), and frozen vectors `h47`–`h49`.

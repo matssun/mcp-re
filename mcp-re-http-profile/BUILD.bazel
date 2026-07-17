@@ -232,3 +232,15 @@ nt_rust_test(
         "@crates_mcp_re//:sha2",
     ],
 )
+
+nt_rust_test(
+    name = "delegated_202_test",
+    srcs = ["tests/delegated_202_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_http_profile",
+        "//mcp-re-core:mcp_re_core",
+    ],
+)
