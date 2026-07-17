@@ -42,7 +42,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:TXM/ieIeetXuVJBCSM5sHfr4qcYl06A2v4/CuQSF730=:"
+        "sha-256=:ZwQ4CfvYZVYNRyEzPGbRGjYSkSg5v4khc/haDkToeOs=:"
       ],
       [
         "Signature-Input",
@@ -50,10 +50,10 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:QW4SnMf6szY2DrdLKV3PHTRrljF6rdXRbkLJvxLoibs0vMebJqCt8QkbmQsRiAu1yerMvV3zmEW1AvPDTAe9Dw==:"
+        "mcp-re-response=:RW7E6erCndWIKnWvH9Tsj8kLgQtuHkO0M3lwKJtVBYaUaxSl8YVdagptrt43h76+whoP40FWy+L6XnmwZpBrAA==:"
       ]
     ],
-    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"EBKPx6iyLDnay5v_pWkh9wBk05TQw0Pzt3YVtgpyWII\"},\"server_signer\":{\"keyid\":\"root-kid\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
+    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"uJyy8hs7WKIicvrs4ifwhDXJ17SC7r__TOXBftyHO7Q\"},\"server_signer\":{\"keyid\":\"root-kid\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
   },
   "check": {
     "verifier_audiences": [

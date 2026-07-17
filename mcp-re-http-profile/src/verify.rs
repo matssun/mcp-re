@@ -608,7 +608,7 @@ pub fn verify_response_with_policy(
     .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
     Ok(VerifiedHttpResponseEvidence {
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
@@ -884,7 +884,7 @@ pub fn verify_delegated_response_bound_full(
             verification_key: verified.delegated_key,
             slot: SignerSlot::Response,
         },
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: Some(bound.clone()),
         body_request_evidence: Some(RequestEvidence {
             digest_alg: block.request_evidence.digest_alg.clone(),
@@ -991,7 +991,7 @@ pub fn verify_delegated_response_unbound(
             verification_key: verified.delegated_key,
             slot: SignerSlot::Response,
         },
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: Some(server_signer),
@@ -1050,7 +1050,7 @@ pub fn verify_response_unbound_with_policy(
     .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
     Ok(VerifiedHttpResponseEvidence {
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,

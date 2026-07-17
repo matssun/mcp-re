@@ -27,7 +27,11 @@ use sha2::Digest;
 use sha2::Sha256;
 
 use crate::error::HttpProfileError;
+use crate::evidence::labeled_digest_value;
 use crate::ids::EVIDENCE_DIGEST_ALG;
+use crate::ids::EVIDENCE_LABEL_REQUEST;
+use crate::ids::EVIDENCE_LABEL_REQUEST_STATE;
+use crate::ids::EVIDENCE_LABEL_RESPONSE;
 
 /// The resolved signing-actor identity. Built by the verifier from what the
 /// TrustResolver returned for the presented keyid — role and trusted key
@@ -286,19 +290,23 @@ pub struct RequestEvidenceDigest {
 }
 
 impl RequestEvidenceDigest {
-    /// Derive the handle as `base64url-no-pad(SHA-256(bytes))` over the mandated
-    /// input (a signature base, or the opaque `requestState`).
-    pub fn over(bytes: &[u8]) -> Self {
+    /// Derive the handle over the mandated input under its ROLE label
+    /// (#416 rev 2 §7.1/§7.3): `base64url-no-pad(SHA-256(label || 0x00 || bytes))`.
+    ///
+    /// There is no unlabeled derivation: every handle states which role it is,
+    /// so a caller cannot accidentally mint one that is valid in two fields.
+    pub fn over_labeled(label: &str, bytes: &[u8]) -> Self {
         RequestEvidenceDigest {
             digest_alg: EVIDENCE_DIGEST_ALG.to_owned(),
-            digest_value: b64url_encode(&Sha256::digest(bytes)),
+            digest_value: labeled_digest_value(label, bytes),
         }
     }
 
-    /// Constant-shape check that this handle commits to `bytes`.
-    pub fn matches(&self, bytes: &[u8]) -> bool {
+    /// Constant-shape check that this handle commits to `bytes` IN ROLE `label`.
+    /// A handle that commits to the same bytes in a different role does not match.
+    pub fn matches_labeled(&self, label: &str, bytes: &[u8]) -> bool {
         self.digest_alg == EVIDENCE_DIGEST_ALG
-            && self.digest_value == b64url_encode(&Sha256::digest(bytes))
+            && self.digest_value == labeled_digest_value(label, bytes)
     }
 }
 
@@ -318,11 +326,18 @@ impl HttpContinuation {
     ) -> Self {
         HttpContinuation {
             continuation_type: CONTINUATION_TYPE_MCP_MRT.to_owned(),
-            previous_request_evidence: RequestEvidenceDigest::over(previous_request_base),
-            input_required_response_evidence: RequestEvidenceDigest::over(
+            previous_request_evidence: RequestEvidenceDigest::over_labeled(
+                EVIDENCE_LABEL_REQUEST,
+                previous_request_base,
+            ),
+            input_required_response_evidence: RequestEvidenceDigest::over_labeled(
+                EVIDENCE_LABEL_RESPONSE,
                 input_required_response_base,
             ),
-            request_state_digest: RequestEvidenceDigest::over(request_state),
+            request_state_digest: RequestEvidenceDigest::over_labeled(
+                EVIDENCE_LABEL_REQUEST_STATE,
+                request_state,
+            ),
         }
     }
 
@@ -344,7 +359,10 @@ impl HttpContinuation {
             continuation_type: CONTINUATION_TYPE_MCP_MRT.to_owned(),
             previous_request_evidence,
             input_required_response_evidence,
-            request_state_digest: RequestEvidenceDigest::over(request_state),
+            request_state_digest: RequestEvidenceDigest::over_labeled(
+                EVIDENCE_LABEL_REQUEST_STATE,
+                request_state,
+            ),
         }
     }
 
@@ -361,13 +379,18 @@ impl HttpContinuation {
         if self.continuation_type != CONTINUATION_TYPE_MCP_MRT {
             return Err(HttpProfileError::MalformedEvidence("continuation type"));
         }
+        // Each handle is checked IN ITS ROLE: a previous-request handle presented
+        // as the response handle (or vice versa) fails here even if the bytes
+        // behind it are otherwise legitimate evidence.
         if !self
             .previous_request_evidence
-            .matches(previous_request_base)
+            .matches_labeled(EVIDENCE_LABEL_REQUEST, previous_request_base)
             || !self
                 .input_required_response_evidence
-                .matches(input_required_response_base)
-            || !self.request_state_digest.matches(request_state)
+                .matches_labeled(EVIDENCE_LABEL_RESPONSE, input_required_response_base)
+            || !self
+                .request_state_digest
+                .matches_labeled(EVIDENCE_LABEL_REQUEST_STATE, request_state)
         {
             return Err(HttpProfileError::ContinuationBindingFailed);
         }

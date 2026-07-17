@@ -26,6 +26,38 @@ pub const ALG_ED25519: &str = "ed25519";
 /// `digest_value`, no prefix form — v0.11 grill E-5).
 pub const EVIDENCE_DIGEST_ALG: &str = "sha256";
 
+// --- evidence-handle domain separation (#416 rev 2 §7.1/§7.3, MCPRE-430) -----
+//
+// Every evidence handle is a SHA-256 over a role-labeled preimage:
+//
+//     SHA-256(<role label> || 0x00 || <mandated input bytes>)
+//
+// Before this, all three continuation handles and both evidence handles shared
+// one derivation, so a handle's ROLE was carried only by which field it sat in.
+// §7.3 requires role distinction robust against substitution — a positional
+// convention is not that: it holds only as long as every consumer reads the
+// right field, which is exactly the assumption an attacker attacks.
+//
+// With a label per role, a request-role handle and a response-role handle over
+// identical bytes are DIFFERENT values, so a handle lifted into the wrong field
+// cannot verify — the separation is cryptographic rather than clerical. The
+// labels are profile-scoped, so they also separate this profile's handles from
+// any future one's.
+//
+// `0x00` separates label from input unambiguously: the labels are ASCII and can
+// never contain a NUL, so no (label, input) pair can collide with another.
+
+/// Role label for a handle over a REQUEST's RFC 9421 signature base.
+pub const EVIDENCE_LABEL_REQUEST: &str = "mcp-re-http-v1/request-evidence";
+
+/// Role label for a handle over a RESPONSE's RFC 9421 signature base.
+pub const EVIDENCE_LABEL_RESPONSE: &str = "mcp-re-http-v1/response-evidence";
+
+/// Role label for a handle over the opaque MRTR `requestState` bytes. Distinct
+/// from both signature-base roles: `requestState` is opaque server data, never a
+/// signature base, and must not be substitutable for one.
+pub const EVIDENCE_LABEL_REQUEST_STATE: &str = "mcp-re-http-v1/request-state";
+
 /// `_meta` key of the request-side body evidence block (E-3: no new HTTP
 /// header fields; MCP evidence rides in the JSON-RPC body, protected because
 /// `content-digest` is a covered component). MCPRE-93.
