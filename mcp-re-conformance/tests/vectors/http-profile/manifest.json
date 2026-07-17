@@ -20,6 +20,7 @@
     "h15_continuation_valid.json",
     "h16_continuation_splice.json",
     "h17_continuation_request_state_tamper.json",
+    "h30_response_sse_on_covered_exchange.json",
     "h24_chain_multi_hop_complete.json",
     "h25_chain_missing_middle_hop_incomplete.json",
     "h26_chain_truncated_incomplete.json",

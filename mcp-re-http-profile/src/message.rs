@@ -51,6 +51,38 @@ pub fn required_header<'a>(
     single_header(headers, name)?.ok_or(HttpProfileError::MissingEvidence(name))
 }
 
+/// The only media type a covered exchange may carry (#415 rev 2 §3.4).
+pub const JSON_MEDIA_TYPE: &str = "application/json";
+
+/// Fail closed unless the covered `Content-Type` is JSON (#415 rev 2 §3.4).
+///
+/// §3.4 restricts covered exchanges to JSON mode: a `text/event-stream` response
+/// to a covered request is a profile violation and MUST fail verification.
+/// Per-event SSE evidence is explicitly deferred to a future companion profile,
+/// so there is no way to make a per-event statement here — which is exactly why
+/// this fails rather than degrades. A stream admitted on a covered exchange would
+/// carry a signature over the response as a whole while the events inside it went
+/// individually unattested: the evidence would look complete and cover nothing
+/// that mattered.
+///
+/// The media type is compared case-insensitively and parameters are allowed
+/// (`application/json; charset=utf-8` is JSON). The full header value is a covered
+/// component either way, so the signature binds whatever was actually sent —
+/// this gate constrains the VALUE, which coverage alone never did.
+pub fn require_json_media_type(
+    headers: &[(String, String)],
+    what: &'static str,
+) -> Result<(), HttpProfileError> {
+    let value = required_header(headers, "content-type")
+        .map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    let media_type = value.split(';').next().unwrap_or("").trim();
+    if media_type.eq_ignore_ascii_case(JSON_MEDIA_TYPE) {
+        Ok(())
+    } else {
+        Err(HttpProfileError::NonJsonMediaType)
+    }
+}
+
 /// Fail closed if the message carries any `Content-Encoding` other than
 /// `identity`: the profile signs and digests unencoded content bytes only
 /// (v0.11 grill B.1; RFC 9530 warns representation metadata must be protected).

@@ -31,6 +31,14 @@ pub enum HttpProfileError {
     /// `Content-Encoding` present on a signed MCP message (forbidden — the
     /// profile signs unencoded content bytes; v0.11 grill B.1).
     ContentEncodingPresent,
+    /// The covered `Content-Type` on a covered exchange is not
+    /// `application/json` — most consequentially, a `text/event-stream` response
+    /// (#415 rev 2 §3.4: covered exchanges are JSON-mode only; per-event SSE
+    /// evidence is deferred to a future companion profile). Same content-model
+    /// family as [`HttpProfileError::ContentEncodingPresent`], so it maps to the
+    /// same frozen `mcp-re.serialization_failed` token — the protected message is
+    /// not in the value domain the profile can make statements about.
+    NonJsonMediaType,
     /// The message content does not match the signed `Content-Digest`.
     ContentDigestMismatch,
     /// A covered component required by the profile is not covered.
@@ -118,8 +126,11 @@ impl HttpProfileError {
             // digest member. Grouped away from "absent" so a rejection reason
             // distinguishes tampering from omission.
             HttpProfileError::MalformedEvidence(_) => "mcp-re.malformed_envelope",
-            // Content-model / value-domain violation of the protected message.
-            HttpProfileError::ContentEncodingPresent => "mcp-re.serialization_failed",
+            // Content-model / value-domain violation of the protected message:
+            // an encoded body, or a media type outside JSON mode (§3.4).
+            HttpProfileError::ContentEncodingPresent | HttpProfileError::NonJsonMediaType => {
+                "mcp-re.serialization_failed"
+            }
             // The content commitment itself is wrong — precise digest code
             // (MCPRE-92), no longer folded onto invalid_signature.
             HttpProfileError::ContentDigestMismatch => "mcp-re.digest_mismatch",
@@ -197,6 +208,7 @@ mod tests {
             HttpProfileError::MalformedEvidence("x"),
             HttpProfileError::DuplicateHeader("x"),
             HttpProfileError::ContentEncodingPresent,
+            HttpProfileError::NonJsonMediaType,
             HttpProfileError::ContentDigestMismatch,
             HttpProfileError::MissingCoveredComponent("x"),
             HttpProfileError::UnknownProfileTag,

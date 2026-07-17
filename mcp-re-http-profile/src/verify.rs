@@ -36,6 +36,7 @@ use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
+use crate::message::require_json_media_type;
 use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
@@ -395,6 +396,10 @@ pub fn verify_request_with_policy(
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
+    // JSON mode (§3.4): a covered exchange carries JSON. Checked before the
+    // content binding — there is no point digesting a body the profile could not
+    // make an evidence statement about anyway.
+    require_json_media_type(&request.headers, "request content-type")?;
 
     // 1. Content binding first: the body must match its digest before any
     //    signature statement about that digest is even considered.
@@ -575,6 +580,9 @@ pub fn verify_response_with_policy(
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): an SSE response to a covered request is a profile
+    // violation, not a streaming opt-in.
+    require_json_media_type(&response.headers, "response content-type")?;
 
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
@@ -796,6 +804,9 @@ pub fn verify_delegated_response_bound_full(
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // Content-digest floor (same as verify_response).
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): the delegated path gets the same gate — a credential
+    // chain to the root does not make a stream evidenceable.
+    require_json_media_type(&response.headers, "response content-type")?;
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
@@ -914,6 +925,9 @@ pub fn verify_delegated_response_unbound(
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // Content-digest floor.
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): the delegated path gets the same gate — a credential
+    // chain to the root does not make a stream evidenceable.
+    require_json_media_type(&response.headers, "response content-type")?;
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
@@ -1018,6 +1032,9 @@ pub fn verify_response_unbound_with_policy(
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): an SSE response to a covered request is a profile
+    // violation, not a streaming opt-in.
+    require_json_media_type(&response.headers, "response content-type")?;
 
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;

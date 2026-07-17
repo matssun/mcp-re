@@ -52,6 +52,46 @@ thumbprint.
 
 ---
 
+## §3.4 — covered exchanges are JSON mode
+
+**Rule.** A covered request or response MUST carry `Content-Type: application/json`.
+Anything else — most consequentially a `text/event-stream` response — is a profile
+violation and fails verification with `mcp-re.serialization_failed`. Media types are
+compared case-insensitively; parameters are allowed (`application/json; charset=utf-8`
+is JSON mode); a `+json` structured suffix is NOT (`application/problem+json` fails).
+
+**Why it fails rather than degrades.** Per-event SSE evidence is explicitly deferred
+to a future companion profile, so there is no way to make a per-event statement
+today. A stream admitted on a covered exchange would carry a signature over the
+response as a whole while every event inside it went individually unattested — the
+evidence would look complete and cover nothing that mattered. Failing closed is the
+only honest option until that companion profile exists.
+
+`content-type` was already a covered component, so the signature always bound
+whatever was sent. Coverage is not constraint: this gate constrains the VALUE, which
+nothing previously did.
+
+**Wire code.** Reuses the frozen `mcp-re.serialization_failed` that
+`ContentEncodingPresent` maps to — both are content-model/value-domain violations of
+the protected message. No new token (E-11: no parallel namespace).
+
+**The backend `Accept` decision.** The proxy's inner-backend client KEEPS
+`Accept: application/json, text/event-stream`. MCP Streamable HTTP requires a client
+POST to accept both, and a conformant backend (FastMCP) answers a json-only Accept
+with 406 — narrowing it would turn a profile rule into an interop failure. The rule
+is enforced where it belongs, on the response: the backend client refuses a
+non-JSON response explicitly (rather than incidentally, when SSE framing fails to
+parse as JSON), and the verifier gates all five covered paths — request, response,
+response-unbound, and both delegated response paths. A credential chain to the root
+does not make a stream evidenceable.
+
+**Proven by.** `json_mode_test` (7 tests, incl. `the_rejected_sse_response_was_genuinely_signed`,
+which pins that the rejected stream carried a VALID signature — JSON mode is enforced
+as its own rule, not as a side effect of a crypto check happening to fail), and the
+frozen vector `h30_response_sse_on_covered_exchange` (a genuinely-signed SSE response).
+
+---
+
 ## §13.1 — the algorithm allowlist is the agility mechanism
 
 **Rule.** Algorithm acceptance is a verifier-local allowlist, defaulting to

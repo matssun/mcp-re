@@ -720,6 +720,40 @@ fn build_fixtures() -> Vec<Fixture> {
         }),
     });
 
+    // h30 — SSE response on a covered exchange (#415 rev 2 §3.4, MCPRE-423).
+    //       The server GENUINELY signs it: the signature is valid and the digest
+    //       matches its body. It is rejected purely because a covered exchange is
+    //       JSON-mode only — per-event SSE evidence is deferred to a future
+    //       companion profile, so a stream here would be signed as a whole while
+    //       every event inside went unattested.
+    let mut sse_rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "text/event-stream".into())],
+        body: b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n"
+            .to_vec(),
+    };
+    sign_response(
+        &mut sse_rsp,
+        &req,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the server really does sign the stream");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h30_response_sse_on_covered_exchange".into(),
+        kind: "response".into(),
+        expected: "mcp-re.serialization_failed".into(),
+        request: Some(to_wire_request(&req)),
+        response: Some(to_wire_response(&sse_rsp)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
     // ----- retained-chain fixtures (#416 rev 2 §9/§13, MCPRE-430/431) -----
     // The continuation fixtures above check ONE handle set in isolation. These
     // check what §9 actually requires: that a whole chain re-links. Each freezes
