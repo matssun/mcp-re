@@ -130,6 +130,18 @@ pub enum HttpProfileError {
     /// `mcp-re.actor_binding_failed`.
     AdmissionStateUnavailable,
 
+    // SCITT audit receipts (Layer 5, MCPRE-434).
+    /// A receipt's Signed Statement or tree-head signature does not verify. Maps to
+    /// `mcp-re.invalid_signature`.
+    ReceiptInvalid,
+    /// The receipt's inclusion proof does not re-derive the signed root. Maps to
+    /// `mcp-re.request_binding_mismatch` — the statement is not bound into the log
+    /// the receipt claims.
+    ReceiptInclusionInvalid,
+    /// The Signed Statement issuer or transparency service key is not trusted. Maps
+    /// to `mcp-re.actor_binding_failed`.
+    ReceiptIssuerUntrusted,
+
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
     /// A delegated-key response carried no valid delegation credential (in
@@ -189,7 +201,9 @@ impl HttpProfileError {
             // (MCPRE-92), no longer folded onto invalid_signature.
             HttpProfileError::ContentDigestMismatch => "mcp-re.digest_mismatch",
             // The signature does not authenticate the bytes.
-            HttpProfileError::InvalidSignature => "mcp-re.invalid_signature",
+            HttpProfileError::InvalidSignature | HttpProfileError::ReceiptInvalid => {
+                "mcp-re.invalid_signature"
+            }
             // Profile-selection failure: cannot select this profile.
             HttpProfileError::UnknownProfileTag
             | HttpProfileError::UnsupportedAlgorithm
@@ -204,14 +218,16 @@ impl HttpProfileError {
             | HttpProfileError::AdmissionAssertionInvalid
             | HttpProfileError::AdmissionIssuerUntrusted
             | HttpProfileError::AdmissionNotCurrent
-            | HttpProfileError::AdmissionStateUnavailable => "mcp-re.actor_binding_failed",
+            | HttpProfileError::AdmissionStateUnavailable
+            | HttpProfileError::ReceiptIssuerUntrusted => "mcp-re.actor_binding_failed",
             HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             HttpProfileError::AudienceMismatch => "mcp-re.invalid_audience",
             // A response bound to a different request is a request-binding
             // splice — precise code (MCPRE-92), not the native response_hash
             // field name.
             HttpProfileError::ResponseBindingMismatch
-            | HttpProfileError::AdmissionBindingMismatch => "mcp-re.request_binding_mismatch",
+            | HttpProfileError::AdmissionBindingMismatch
+            | HttpProfileError::ReceiptInclusionInvalid => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
@@ -292,6 +308,9 @@ mod tests {
             HttpProfileError::AdmissionBindingMismatch,
             HttpProfileError::AdmissionNotCurrent,
             HttpProfileError::AdmissionStateUnavailable,
+            HttpProfileError::ReceiptInvalid,
+            HttpProfileError::ReceiptInclusionInvalid,
+            HttpProfileError::ReceiptIssuerUntrusted,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,
