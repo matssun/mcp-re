@@ -481,3 +481,53 @@ hash AND no vector on disk is absent from the manifest; the digest commits to th
 entries; a one-byte edit breaks the hash (the pin bites — a manifest carrying
 hashes nobody checks is worse than no hashes, because it reads as a guarantee);
 adding or removing a vector moves the digest; the digest is order-independent.
+
+---
+
+## §10 — the verified-context carrier and the reserved-field guard
+
+**Rule.** The PEP may hand its verified conclusion to the inner server in a
+RESERVED `_meta` block, `se.syncom/mcp-re.verified-context`, but ONLY under an
+explicit trust configuration. Caller-supplied content at that key is stripped at
+the boundary — always, whether or not the carrier is enabled.
+
+**The carrier is not evidence, and that is the whole design.** Every other block in
+this vocabulary is signed and digest-bound: anyone with a key can check it. This
+one is the opposite — the PEP's *conclusion*, on the PEP's authority alone, with no
+signature over it. That is deliberate. A signature would imply the inner server
+could evaluate trust independently, which is exactly the job the PEP exists to have
+already done.
+
+**So the channel IS the trust.** The PEP → inner-server channel MUST be one only
+the PEP can write to: loopback, a same-pod sidecar, a UNIX socket. If anything else
+can reach the inner server, it can assert any verified context it likes and the
+inner server has no way to tell. There is no cryptographic fallback here. That is
+why `VerifiedContextPolicy` defaults to `Disabled` and enabling it is an explicit
+operator act (`with_verified_context_carrier`) asserting something the code cannot
+check.
+
+**What it carries.** Trust-resolution OUTPUTS: the resolved `actor_id` to authorize
+on, the verified audience, the request-evidence handle as the audit correlation key.
+The presented `key_id` is included and explicitly labelled audit-only — a keyid is a
+selector the caller chose, and handing it to the inner server unlabelled would
+invite authorizing on the one value the attacker controls.
+
+**The guard, and why it is unconditional.** A caller that could seed the reserved
+key would be asserting its OWN verified context to a server that believes the block
+implicitly — an authentication bypass, not a spoofing nuisance. The strip therefore
+runs on every request regardless of policy: a deployment with the carrier disabled
+must not be one config flip (or one reserved-key rename) away from forwarding
+attacker-authored context. Strip first, write second, so what the inner server reads
+is always the PEP's conclusion and never the caller's assertion.
+
+**Proven by.** `verified_context_carrier_test` — in particular
+`a_caller_seeded_verified_context_never_reaches_the_inner_server`, where the client
+LEGITIMATELY SIGNS a body containing a forged admin context. The request verifies;
+the forged block still never reaches the inner server, under both policies. A
+signature proves who wrote the bytes; it never proves the bytes are true.
+Also `context.rs` unit tests (the strip is idempotent and preserves unrelated
+`_meta` keys).
+
+**ADR-MCPS-008** recorded the propagation intent; this is its realization. The
+carrier is additive and defaults off, so nothing about the existing serving path
+changes for a deployment that does not opt in.

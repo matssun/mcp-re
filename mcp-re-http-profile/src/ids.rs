@@ -63,6 +63,16 @@ pub const EVIDENCE_LABEL_REQUEST_STATE: &str = "mcp-re-http-v1/request-state";
 /// `content-digest` is a covered component). MCPRE-93.
 pub const REQUEST_EVIDENCE_BLOCK_KEY: &str = "se.syncom/mcp-re.http.request";
 
+/// `_meta` key of the RESERVED verified-context carrier (#415 rev 2 §10,
+/// MCPRE-429): the PEP's verified conclusion handed to the inner server.
+///
+/// Reserved means exactly that: caller-supplied content at this key is stripped at
+/// the enforcement boundary and never forwarded. Unlike every other block in this
+/// vocabulary it is NOT evidence — it carries no signature, because the inner
+/// server is not meant to evaluate trust independently. It is therefore only
+/// meaningful over a channel that the PEP alone can write to.
+pub const VERIFIED_CONTEXT_BLOCK_KEY: &str = "se.syncom/mcp-re.verified-context";
+
 /// `_meta` key of the response-side body evidence block (`server_signer`,
 /// `request_evidence`). MCPRE-93.
 pub const RESPONSE_EVIDENCE_BLOCK_KEY: &str = "se.syncom/mcp-re.http.response";

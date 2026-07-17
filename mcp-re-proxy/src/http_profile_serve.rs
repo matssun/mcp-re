@@ -28,7 +28,11 @@ use mcp_re_core::McpReError;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
 use mcp_re_http_profile::sign_delegated_response_full;
+use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::verify_request_full;
+use mcp_re_http_profile::VerifiedContext;
+use mcp_re_http_profile::VerifiedContextPolicy;
+use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
@@ -98,6 +102,11 @@ pub struct HttpProfileProxy {
     /// Lifetime of a recorded continuation (seconds); see
     /// [`DEFAULT_CONTINUATION_TTL_SECS`].
     continuation_ttl_secs: i64,
+    /// Whether to carry verified context to the inner server (#415 rev 2 §10).
+    /// Default `Disabled`: the context is the PEP's conclusion, unsigned by
+    /// design, so it is only meaningful over a channel the PEP alone can write to
+    /// — an operator asserts that, and nothing here can check it.
+    verified_context_policy: VerifiedContextPolicy,
 }
 
 impl HttpProfileProxy {
@@ -129,7 +138,25 @@ impl HttpProfileProxy {
             sig_ttl_secs,
             continuation_store: None,
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
+            verified_context_policy: VerifiedContextPolicy::default(),
         }
+    }
+
+    /// Carry verified context to the inner server over an EXPLICITLY TRUSTED
+    /// channel (#415 rev 2 §10, MCPRE-429).
+    ///
+    /// Calling this asserts that only this PEP can write to the inner server —
+    /// loopback, a same-pod sidecar, a UNIX socket. The carrier has no signature
+    /// (the inner server is not meant to re-evaluate trust), so if anything else
+    /// can reach that server, it can assert any context it likes and the inner
+    /// server cannot tell. There is no cryptographic fallback: the channel IS the
+    /// trust, which is why this is an explicit call and never a default.
+    ///
+    /// The reserved-field guard runs regardless of this setting — caller-seeded
+    /// context is stripped whether or not the carrier is on.
+    pub fn with_verified_context_carrier(mut self, policy: VerifiedContextPolicy) -> Self {
+        self.verified_context_policy = policy;
+        self
     }
 
     /// Bind the verified request actor to the mTLS peer identity (Mode A, ADR-MCPS-014).
@@ -260,7 +287,12 @@ impl HttpProfileProxy {
 
         // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
-        let forwarded = strip_top_level_meta(&http_req.body);
+        let forwarded = forwarded_body(
+            &http_req.body,
+            &verified,
+            self.verified_context_policy,
+            now,
+        );
         let inner_bytes = self.inner_async.dispatch(&forwarded).await;
 
         // Step 7 — sign the backend reply, bound to THIS request, with the active
@@ -430,6 +462,14 @@ fn input_required_state(body: &[u8]) -> Option<String> {
 
 /// Remove the top-level `_meta` object (the proxy-owned request evidence block) so
 /// the forwarded body is clean MCP JSON-RPC. Non-object bodies pass through.
+///
+/// This is also the reserved-field guard (#415 rev 2 §10, MCPRE-429): removing the
+/// whole top-level `_meta` removes any caller-seeded verified-context block along
+/// with it, unconditionally and regardless of whether the carrier is enabled. A
+/// caller that could seed that key would be asserting its OWN verified context to
+/// an inner server that trusts the block implicitly — an authentication bypass, not
+/// a spoofing nuisance — so the strip happens before the PEP writes anything and is
+/// not contingent on configuration.
 fn strip_top_level_meta(body: &[u8]) -> Vec<u8> {
     match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(mut v) => {
@@ -439,6 +479,31 @@ fn strip_top_level_meta(body: &[u8]) -> Vec<u8> {
             serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
         }
         Err(_) => body.to_vec(),
+    }
+}
+
+/// Compose the forwarded body: strip caller `_meta` (the guard above), then — only
+/// under an explicitly trusted channel — write the PEP's verified context (§10).
+///
+/// Order is the point. Strip first, write second, so the block the inner server
+/// reads is the PEP's conclusion and can never be the caller's assertion.
+fn forwarded_body(
+    body: &[u8],
+    verified: &VerifiedHttpRequestEvidence,
+    policy: VerifiedContextPolicy,
+    now: i64,
+) -> Vec<u8> {
+    let stripped = strip_top_level_meta(body);
+    match policy {
+        // The inner server sees clean MCP and nothing else.
+        VerifiedContextPolicy::Disabled => stripped,
+        // The operator asserts only this PEP can reach the inner server. The
+        // context carries no signature by design — the inner server is not meant
+        // to re-evaluate trust — so the channel IS the trust.
+        VerifiedContextPolicy::Trusted => {
+            let ctx = VerifiedContext::from_verified(verified, now);
+            insert_verified_context(&stripped, &ctx).unwrap_or(stripped)
+        }
     }
 }
 
