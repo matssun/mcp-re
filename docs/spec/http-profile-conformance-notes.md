@@ -279,3 +279,86 @@ What MCP-RE claims today, and what it does not:
 Claims deliberately NOT made: per-event SSE evidence (deferred to a future
 companion profile, §3.4); tasks and elicitation models (#416 §1.4); portable
 audit receipts (Layer 5 — roadmap, see #434).
+
+---
+
+## §4.1 — MCP transport headers are covered when present
+
+**Rule.** `Mcp-Method`, `Mcp-Name`, and `Mcp-Protocol-Version` are coverable
+components, and each is **conditionally mandatory on exactly the
+`authorization`/`dpop` pattern: present means covered**. Additionally, a covered
+`Mcp-Method` MUST agree with the JSON-RPC `method` in the covered body; a
+disagreement is `mcp-re.malformed_envelope`.
+
+**The gap this closes.** `Mcp-Method` states in the clear which method a request
+carries. Uncovered, that claim can diverge from the signed body — an intermediary
+reads `tools/list` off the header and routes, logs, or authorizes on it while the
+signed body says `tools/call`. The proxy never routes on these headers
+(ADR-MCPS-025: untrusted hints, the body is authoritative) and that does not
+change. What changes is that the header can no longer *lie* about a signed body,
+which is worth more than a header nobody is permitted to believe.
+
+**Presence, not configured version, is the condition.** §4.1 frames the rule as
+version-conditional. Presence is the operative test because it is the question the
+verifier can answer from the message in front of it: if the sender put the header
+on the wire, the signature covers it or the request is rejected. A deployment
+whose version does not define these simply never sends them, and nothing fires —
+so the rule is version-conditional in effect without the signer or verifier being
+configured with a version they would then have to be trusted to state honestly.
+
+**Divergence is checked AFTER the signature.** Before it, both sides of the
+comparison are unauthenticated and two attacker-chosen strings agreeing proves
+nothing. After it, both are protected — so a disagreement is the *signer* stating
+two different methods, and the verifier refuses rather than picking a winner.
+
+**`mcp-session-id` is scoped OUT — not deferred, excluded.** Protocol sessions are
+a 2025-11-25 concept that MCP 2026-07-28 removes, and MCP-RE never adopted them:
+its serving path is stateless per-request by design (ADR-MCPRE-051). There is no
+session for a session id to identify, and covering a header whose referent does not
+exist would manufacture the appearance of a binding over nothing. It is therefore
+absent from the coverable set, and a sender that hand-crafts it into the covered
+set is rejected as an unknown covered component. That is the intended answer, not
+an omission.
+
+**Proven by.** `mcp_transport_headers_test` (9 tests, incl.
+`mcp_session_id_is_not_a_coverable_component` and
+`the_component_allowlist_is_still_closed` — widening the allowlist for these three
+must not have opened it generally), and vectors `h31_mcp_headers_covered_valid`,
+`h32_mcp_method_present_but_uncovered`, `h33_mcp_method_body_divergence`.
+
+---
+
+## MCP protocol version: applicability and the 2026-07-28 target
+
+**MCP-RE performs no protocol-version negotiation.** This is the finding that
+matters for #426, whose headline task was "bump the backend handshake /
+protocol-version handling to 2026-07-28". There is no handshake to bump:
+
+- the serving path is stateless per-request by design (ADR-MCPRE-051);
+- the proxy forwards single request/response exchanges and holds no session state;
+- the only `2025-06-18` in the Rust tree is a **comment** citing which spec
+  revision mandates the dual `Accept` header — not a negotiated version.
+
+The audit read that comment as a pinned protocol version. It is not. So "pinned to
+2025-06-18" overstates the coupling: MCP-RE is version-agnostic where versions are
+negotiated, and the features 2026-07-28 removes — protocol sessions, the GET
+stream, SSE resumability — are ones MCP-RE never adopted. Its stateless direction
+is already the 2026-07-28 direction.
+
+**Applicability, stated honestly.** MCP-RE's HTTP profile applies to any MCP
+version that carries JSON-RPC over Streamable HTTP POST in JSON mode. It covers
+the MCP transport headers when a sender sends them (§4.1 above), which spans
+2025-11-25 and 2026-07-28 without a version switch. It makes no conformance claim
+for tasks or elicitation models (#416 §1.4), and none for protocol sessions.
+
+**What is genuinely blocked.** The 2026-07-28 spec is final on 2026-07-28; the
+RC-shape guards below are prep, not a conformance claim:
+
+| Prep item | Status |
+|---|---|
+| `-32003` non-collision with MCP-reserved `-32020..=-32099` | **Verified + tested** — also inside JSON-RPC's implementation-defined `-32000..=-32099`, where an application code belongs |
+| SEP-2322 `resultType: "input_required"` snake_case discriminator | **Matches the RC + drift-guarded** — a rename in the final text fails a test rather than silently classifying continuations as terminal, which would end a call record at hop 1 and look like success |
+| Handshake bump | **N/A** — no negotiation exists to target |
+| Final-text confirmation | **Blocked until 2026-07-28** |
+
+**Proven by.** `mcp_2026_07_28_alignment_test`.

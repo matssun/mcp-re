@@ -720,6 +720,78 @@ fn build_fixtures() -> Vec<Fixture> {
         }),
     });
 
+    // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
+    // h31 covered-and-matching positive; h32 present-but-uncovered negative;
+    // h33 header/body method mismatch negative.
+    let mcp_headers = |method_header: &str| -> HttpRequest {
+        let mut r = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Mcp-Method".into(), method_header.into()),
+                ("Mcp-Name".into(), "read".into()),
+            ],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
+        };
+        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-mcp")
+            .expect("signing succeeds");
+        r
+    };
+
+    let mcp_ok = mcp_headers("tools/call");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h31_mcp_headers_covered_valid".into(),
+        kind: "request".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&mcp_ok)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h32 — the header rides on the wire but was dropped from the covered set:
+    //       an unsigned method claim attached to a signed request.
+    let mut mcp_uncovered = mcp_ok.clone();
+    for h in mcp_uncovered.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace(" \"mcp-method\"", "");
+        }
+    }
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h32_mcp_method_present_but_uncovered".into(),
+        kind: "request".into(),
+        expected: "mcp-re.missing_envelope".into(),
+        request: Some(to_wire_request(&mcp_uncovered)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h33 — the covered header says tools/list, the covered body says tools/call.
+    //       The signature is VALID: this is the signer stating two different
+    //       methods, and the verifier refuses rather than picking one.
+    let mcp_diverged = mcp_headers("tools/list");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h33_mcp_method_body_divergence".into(),
+        kind: "request".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&mcp_diverged)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
     // h30 — SSE response on a covered exchange (#415 rev 2 §3.4, MCPRE-423).
     //       The server GENUINELY signs it: the signature is valid and the digest
     //       matches its body. It is rejected purely because a covered exchange is

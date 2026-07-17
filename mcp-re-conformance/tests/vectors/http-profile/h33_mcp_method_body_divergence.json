@@ -1,0 +1,38 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h33_mcp_method_body_divergence",
+  "kind": "request",
+  "expected": "mcp-re.malformed_envelope",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Mcp-Method",
+        "tools/list"
+      ],
+      [
+        "Mcp-Name",
+        "read"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-method\" \"mcp-name\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-mcp\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:9vJ2EgEgvRvw4c3dOzClBLMAkeMjTo4CZkEvIr3Zgc/9vJiMI9BGNuVOzb+a34G5eZJfPzHlk/K6cOHFfgXgAQ==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
+  }
+}

@@ -17,6 +17,9 @@ use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::ALG_ED25519;
+use crate::ids::MCP_METHOD_HEADER;
+use crate::ids::MCP_NAME_HEADER;
+use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
@@ -94,6 +97,20 @@ fn request_components(request: &HttpRequest) -> Result<Vec<CoveredComponent>, Ht
     }
     if single_header(&request.headers, "dpop")?.is_some() {
         components.push(CoveredComponent::new("dpop"));
+    }
+    // MCP transport headers (#415 rev 2 §4.1): cover them when the sender put
+    // them on the wire. The signer covers exactly what is present, so a
+    // deployment on a protocol version that does not define these signs exactly
+    // what it did before — the rule is version-conditional without the signer
+    // needing to be told which version it is on.
+    for header in [
+        MCP_METHOD_HEADER,
+        MCP_NAME_HEADER,
+        MCP_PROTOCOL_VERSION_HEADER,
+    ] {
+        if single_header(&request.headers, header)?.is_some() {
+            components.push(CoveredComponent::new(header));
+        }
     }
     Ok(components)
 }

@@ -73,6 +73,31 @@ pub const RESPONSE_EVIDENCE_BLOCK_KEY: &str = "se.syncom/mcp-re.http.response";
 pub const REQUIRED_REQUEST_COMPONENTS: [&str; 4] =
     ["@method", "@target-uri", "content-digest", "content-type"];
 
+// --- MCP transport headers (#415 rev 2 §4.1, MCPRE-425) ---------------------
+//
+// These are MCP's own transport headers, not MCP-RE inventions (E-3 forbids
+// minting new header fields, and this mints none). §4.1 requires covering them
+// when the protocol version defines them.
+//
+// The gap they close is concrete: `Mcp-Method` states, in the clear, which
+// JSON-RPC method a request carries. Uncovered, that claim can diverge from the
+// signed body — an intermediary reads `tools/list` off the header and routes,
+// logs, or authorizes against it while the signed body says `tools/call`. The
+// proxy itself never routes on these (ADR-MCPS-025: they are untrusted hints,
+// the body is authoritative), but a covered header cannot lie about a signed
+// body, which is worth more than a header nobody is allowed to believe.
+
+/// The SEP-2243 routing header naming the JSON-RPC method. Required on every
+/// POST from MCP 2026-07-28.
+pub const MCP_METHOD_HEADER: &str = "mcp-method";
+
+/// The SEP-2243 routing header naming the tool/resource. Required on every POST
+/// from MCP 2026-07-28.
+pub const MCP_NAME_HEADER: &str = "mcp-name";
+
+/// The MCP protocol-version header, when the deployment's version defines it.
+pub const MCP_PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+
 /// Response components REQUIRED on every conforming response signature
 /// (v0.11 grill C.1, Codex-tightened set including `content-type;req`).
 pub const REQUIRED_RESPONSE_COMPONENTS: [&str; 3] = ["@status", "content-digest", "content-type"];

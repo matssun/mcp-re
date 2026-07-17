@@ -81,6 +81,12 @@ pub enum HttpProfileError {
     /// An MRTR continuation handle does not match its mandated signature-base
     /// digest (MCPRE-97). Maps to `mcp-re.continuation_binding_failed`.
     ContinuationBindingFailed,
+    /// The covered `Mcp-Method` transport header disagrees with the JSON-RPC
+    /// `method` in the covered body (#415 rev 2 §4.1, MCPRE-425). Both are
+    /// protected, so this is the signer stating two different methods — evidence
+    /// that is present, self-contradictory, and therefore not interpretable.
+    /// Maps to `mcp-re.malformed_envelope`.
+    McpMethodDivergence,
 
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
@@ -125,7 +131,12 @@ impl HttpProfileError {
             // component/parameter, an unparseable inner list, a wrong-shaped
             // digest member. Grouped away from "absent" so a rejection reason
             // distinguishes tampering from omission.
-            HttpProfileError::MalformedEvidence(_) => "mcp-re.malformed_envelope",
+            // Self-contradictory evidence is malformed evidence: the covered
+            // header and the covered body state different methods (§4.1), so
+            // there is nothing coherent to act on.
+            HttpProfileError::MalformedEvidence(_) | HttpProfileError::McpMethodDivergence => {
+                "mcp-re.malformed_envelope"
+            }
             // Content-model / value-domain violation of the protected message:
             // an encoded body, or a media type outside JSON mode (§3.4).
             HttpProfileError::ContentEncodingPresent | HttpProfileError::NonJsonMediaType => {
@@ -222,6 +233,7 @@ mod tests {
             HttpProfileError::ResponseBindingMismatch,
             HttpProfileError::ResponseSignatureInvalid,
             HttpProfileError::ContinuationBindingFailed,
+            HttpProfileError::McpMethodDivergence,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,

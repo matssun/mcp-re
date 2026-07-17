@@ -1,0 +1,38 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h32_mcp_method_present_but_uncovered",
+  "kind": "request",
+  "expected": "mcp-re.missing_envelope",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Mcp-Method",
+        "tools/call"
+      ],
+      [
+        "Mcp-Name",
+        "read"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:qXDbbSbAIAqtTp/paFTD5GK3FpDPUyMfdw3M+BeWpWw=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-name\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-mcp\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:x4QApkl2NKWSbj8HZsBymyNDpYaBLNFKHnrAparA85JYBC2lSlBxTeSwUaEOgzYNa0BINhbyx7YPZQTQpc1xCg==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read\"}}"
+  }
+}

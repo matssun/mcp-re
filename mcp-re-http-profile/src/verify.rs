@@ -27,6 +27,9 @@ use crate::delegation::DelegationVerifyParams;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
+use crate::ids::MCP_METHOD_HEADER;
+use crate::ids::MCP_NAME_HEADER;
+use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
@@ -220,6 +223,12 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             "content-length" => "content-length",
             "authorization" => "authorization",
             "dpop" => "dpop",
+            // MCP transport headers (§4.1). Coverable so a deployment whose
+            // protocol version defines them can bind them; still fail-closed for
+            // everything outside this set.
+            "mcp-method" => "mcp-method",
+            "mcp-name" => "mcp-name",
+            "mcp-protocol-version" => "mcp-protocol-version",
             _ => {
                 return Err(HttpProfileError::MalformedEvidence(
                     "unknown covered component",
@@ -356,6 +365,51 @@ fn signature_value_b64url(
     Ok(mcp_re_core::b64url_encode(&bytes))
 }
 
+/// The MCP transport headers this profile can cover (§4.1).
+///
+/// `mcp-session-id` is deliberately ABSENT. Protocol sessions are a 2025-11-25
+/// concept that MCP 2026-07-28 removes, and MCP-RE never adopted them: its
+/// serving path is stateless per-request by design (ADR-MCPRE-051), so there is
+/// no session for a session id to identify. Covering a header whose referent does
+/// not exist would manufacture the appearance of a binding over nothing. If a
+/// deployment sends one anyway it is simply not coverable, and the closed
+/// allowlist rejects it as an unknown covered component — which is the correct
+/// answer, not an oversight.
+const MCP_COVERABLE_TRANSPORT_HEADERS: [&str; 3] = [
+    MCP_METHOD_HEADER,
+    MCP_NAME_HEADER,
+    MCP_PROTOCOL_VERSION_HEADER,
+];
+
+/// Reject a request whose covered `Mcp-Method` header disagrees with the JSON-RPC
+/// `method` in its covered body (§4.1).
+///
+/// Both values are protected by the signature by the time this runs, so a
+/// disagreement is not tampering — it is the signer making two contradictory
+/// statements about what it is asking for. The verifier refuses rather than
+/// choosing a winner: the whole point of the transport header is that
+/// intermediaries may read it, and an intermediary reading `tools/list` while the
+/// server executes `tools/call` is precisely the divergence §4.1 closes.
+///
+/// The body is authoritative wherever this profile acts (ADR-MCPS-025); this does
+/// not change that. It ensures the header cannot CLAIM otherwise.
+fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), HttpProfileError> {
+    let Some(header_method) = single_header(&request.headers, MCP_METHOD_HEADER)? else {
+        return Ok(());
+    };
+    let body: serde_json::Value = serde_json::from_slice(&request.body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+    // A body with no `method` is a response/notification shape; there is nothing
+    // to diverge from, and the request-shape rules are not this function's job.
+    let Some(body_method) = body.get("method").and_then(|m| m.as_str()) else {
+        return Ok(());
+    };
+    if header_method.trim() != body_method {
+        return Err(HttpProfileError::McpMethodDivergence);
+    }
+    Ok(())
+}
+
 fn require_components(
     covered: &[CoveredComponent],
     required_plain: &[&'static str],
@@ -427,6 +481,20 @@ pub fn verify_request_with_policy(
     {
         return Err(HttpProfileError::MissingCoveredComponent("dpop"));
     }
+    // MCP transport headers (§4.1): conditionally mandatory on exactly the
+    // `authorization`/`dpop` pattern above — present means covered. Presence is
+    // the condition rather than a configured protocol version because that is the
+    // question the verifier can actually answer from the message in front of it:
+    // if the sender put the header on the wire, the signature covers it or the
+    // request is rejected. A deployment whose version does not define these
+    // simply never sends them, and nothing here fires.
+    for header in MCP_COVERABLE_TRANSPORT_HEADERS {
+        if single_header(&request.headers, header)?.is_some()
+            && !parsed.components.iter().any(|c| c.name == header)
+        {
+            return Err(HttpProfileError::MissingCoveredComponent(header));
+        }
+    }
     let (created, expires, nonce, key_id) = check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
@@ -447,7 +515,15 @@ pub fn verify_request_with_policy(
     )
     .map_err(|_| HttpProfileError::InvalidSignature)?;
 
-    // 5. Derive the handle from the exact verified base and return the full
+    // 5. Header/body agreement (§4.1). Deliberately AFTER the signature: before
+    //    it, both sides of this comparison are unauthenticated, and two attacker-
+    //    chosen strings agreeing with each other proves nothing. Once the
+    //    signature verifies, `mcp-method` is covered (enforced above) and the body
+    //    is covered via `content-digest` — so a disagreement means the signer
+    //    itself stated two different methods, and the verifier must not pick one.
+    reject_mcp_method_divergence(request)?;
+
+    // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.
     Ok(VerifiedHttpRequestEvidence {
         profile_id: PROFILE_TAG.to_owned(),
