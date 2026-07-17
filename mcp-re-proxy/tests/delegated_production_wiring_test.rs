@@ -231,6 +231,7 @@ fn http_response(served: ServedHttpResponse) -> HttpResponse {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[AUDIENCE],
         expected_audience_hash: AUDIENCE,
         accepted_epochs: epochs,
@@ -250,6 +251,7 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     rotor.rotate(NOW).expect("startup: initial delegated key issued");
 
     // --- success: a delegated-signed response verifies via the attestation chain ---
+    let mut first_delegated_kid: Option<String> = None;
     for i in 0..5 {
         let (req, _ev, verified_req) = signed_request(&format!("nonce-ok-{i}"), NOW);
         let served = proxy.handle(served_of(&req), NOW).await;
@@ -270,12 +272,17 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
             NOW,
         )
         .expect("delegated response verifies via the credential→root chain");
-        assert_eq!(
+        // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so
+        // the property asserted here is the one that matters — the signer is a
+        // delegated key, NOT the root — rather than a kid literal.
+        first_delegated_kid = Some(verified.server_signer.as_ref().unwrap().keyid.clone());
+        assert_ne!(
             verified.server_signer.as_ref().unwrap().keyid,
-            format!("{ROOT_KID}/delegated/1"),
+            ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
+    let first_delegated_kid = first_delegated_kid.expect("the success loop ran");
     // Zero root ops on the request path: the root was touched ONLY at issuance.
     assert_eq!(rotor.root_invocations(), 1, "root issuer off the request path");
 
@@ -321,10 +328,18 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         rot,
     )
     .expect("successor delegated response verifies");
-    assert_eq!(
+    // The successor is a DIFFERENT delegated key: distinct key material yields a
+    // distinct RFC 7638 thumbprint, so the kid changing is itself the proof that
+    // rotation minted a new key rather than re-serving the old one.
+    assert_ne!(
         verified.server_signer.as_ref().unwrap().keyid,
-        format!("{ROOT_KID}/delegated/2"),
-        "signed by the SUCCESSOR delegated key"
+        first_delegated_kid,
+        "signed by the SUCCESSOR delegated key, not the predecessor"
+    );
+    assert_ne!(
+        verified.server_signer.as_ref().unwrap().keyid,
+        ROOT_KID,
+        "and still not the root"
     );
 
     // --- fail closed: past the successor's expiry with no further rotation ---------

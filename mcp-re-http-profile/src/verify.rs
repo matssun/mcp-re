@@ -27,7 +27,6 @@ use crate::delegation::DelegationVerifyParams;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
-use crate::ids::ALG_ED25519;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
@@ -41,6 +40,7 @@ use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
+use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
@@ -291,8 +291,13 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
 }
 
 /// Shared parameter gate: tag, algorithm, freshness window, keyid presence.
+///
+/// Algorithm acceptance and clock-skew tolerance are read from `policy`, never
+/// from the message (§13.1 / §5.1): the signature parameters state what the
+/// signer did, the policy states what this verifier accepts.
 fn check_params(
     params: &SignatureParams,
+    policy: &VerifierPolicy<'_>,
     now: i64,
     require_nonce: bool,
 ) -> Result<(i64, i64, String, String), HttpProfileError> {
@@ -301,12 +306,21 @@ fn check_params(
         _ => return Err(HttpProfileError::UnknownProfileTag),
     }
     match params.alg.as_deref() {
-        Some(ALG_ED25519) => {}
+        Some(alg) if policy.allows_algorithm(alg) => {}
         _ => return Err(HttpProfileError::UnsupportedAlgorithm),
     }
     let created = params.created.ok_or(HttpProfileError::StaleWindow)?;
     let expires = params.expires.ok_or(HttpProfileError::StaleWindow)?;
-    if created > now || expires <= now || expires <= created {
+    // Freshness with a bounded, symmetric skew tolerance (§5.1): a `created`
+    // slightly in the future and an `expires` slightly in the past are honest
+    // clock disagreement, not evidence of staleness. `expires <= created` is
+    // skew-free — a degenerate window is a property of the message itself, and
+    // no amount of clock disagreement makes it well-formed.
+    let skew = policy.max_clock_skew();
+    if created.saturating_sub(skew) > now
+        || expires.saturating_add(skew) <= now
+        || expires <= created
+    {
         return Err(HttpProfileError::StaleWindow);
     }
     let nonce = match (&params.nonce, require_nonce) {
@@ -368,6 +382,18 @@ pub fn verify_request(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+    verify_request_with_policy(request, resolve_actor, &VerifierPolicy::default(), now)
+}
+
+/// [`verify_request`] under an explicit verifier-local [`VerifierPolicy`] —
+/// the algorithm allowlist (§13.1) and the bounded clock-skew tolerance (§5.1).
+/// [`verify_request`] is this function at [`VerifierPolicy::default`].
+pub fn verify_request_with_policy(
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
 
     // 1. Content binding first: the body must match its digest before any
@@ -396,7 +422,7 @@ pub fn verify_request(
     {
         return Err(HttpProfileError::MissingCoveredComponent("dpop"));
     }
-    let (created, expires, nonce, key_id) = check_params(&parsed.params, now, true)?;
+    let (created, expires, nonce, key_id) = check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
     //    and a key not trusted to sign requests fails actor_binding_failed.
@@ -455,8 +481,27 @@ pub fn verify_request_full(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+    verify_request_full_with_policy(
+        request,
+        expected_audience,
+        artifact_material,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_request_full`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_request_full_with_policy(
+    request: &HttpRequest,
+    expected_audience: &AudienceTuple,
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     // 1. Cryptographic floor: content digest, evidence, trust, signature.
-    let mut verified = verify_request(request, resolve_actor, now)?;
+    let mut verified = verify_request_with_policy(request, resolve_actor, policy, now)?;
 
     // 2. Parse the request evidence block — protected because content-digest is a
     //    covered component of the signature just verified.
@@ -512,6 +557,23 @@ pub fn verify_response(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_with_policy(
+        response,
+        request,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_response`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_with_policy(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
 
     let digest_header = required_header(&response.headers, "content-digest")
@@ -526,7 +588,7 @@ pub fn verify_response(
         &REQUIRED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, policy, now, false)?;
 
     // Trust resolution for the RESPONSE slot: a request-signer key presented on
     // a response fails actor_binding_failed.
@@ -598,8 +660,27 @@ pub fn verify_response_bound_full(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_bound_full_with_policy(
+        response,
+        request,
+        bound_request_evidence,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_response_bound_full`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_bound_full_with_policy(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    bound_request_evidence: &RequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // 1. Cryptographic floor incl. the ;req binding to `request`.
-    let mut evidence = verify_response(response, request, resolve_actor, now)?;
+    let mut evidence = verify_response_with_policy(response, request, resolve_actor, policy, now)?;
 
     // 2. Parse the response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -637,6 +718,10 @@ pub fn verify_response_bound_full(
 /// (ADR-MCPRE-052 §3). Supplied by the integration layer from the active profile,
 /// the verified request context, and the deployment's epoch/audience policy.
 pub struct DelegationExpectations<'a> {
+    /// The verifier-local acceptance policy for the RFC 9421 response signature
+    /// itself — the algorithm allowlist (§13.1) and bounded skew (§5.1). Distinct
+    /// from `max_clock_skew` below, which governs the CREDENTIAL's own window.
+    pub policy: VerifierPolicy<'a>,
     /// This verifier's own audience identifier(s); the credential's `aud` must
     /// name one (§3 step 5).
     pub verifier_audiences: &'a [&'a str],
@@ -724,7 +809,8 @@ pub fn verify_delegated_response_bound_full(
         &REQUIRED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id) =
+        check_params(&parsed.params, &expect.policy, now, false)?;
 
     // Response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -842,7 +928,8 @@ pub fn verify_delegated_response_unbound(
             "req component without request context",
         ));
     }
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id) =
+        check_params(&parsed.params, &expect.policy, now, false)?;
 
     // Response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -920,6 +1007,16 @@ pub fn verify_response_unbound(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_unbound_with_policy(response, resolve_actor, &VerifierPolicy::default(), now)
+}
+
+/// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_unbound_with_policy(
+    response: &HttpResponse,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
 
     let digest_header = required_header(&response.headers, "content-digest")
@@ -935,7 +1032,7 @@ pub fn verify_response_unbound(
             "req component without request context",
         ));
     }
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, policy, now, false)?;
 
     let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(

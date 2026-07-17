@@ -630,6 +630,7 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
     let auds: Vec<&str> = fixture.check.verifier_audiences.iter().map(String::as_str).collect();
     let epochs: Vec<&str> = fixture.check.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &auds,
         expected_audience_hash: &fixture.check.expected_audience_hash,
         accepted_epochs: &epochs,

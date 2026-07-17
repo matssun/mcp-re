@@ -6,6 +6,7 @@
     "h02_request_body_tamper.json",
     "h03_request_missing_covered_component.json",
     "h04_request_foreign_tag.json",
+    "h23_request_alg_not_allowlisted.json",
     "h05_request_stale_window.json",
     "h06_request_wrong_keyid.json",
     "h07_response_valid.json",

@@ -199,6 +199,7 @@ fn resolver(root_pub: VerificationKey) -> impl Fn(&str, SignerSlot) -> Option<Re
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: VERIFIER_AUD,
         accepted_epochs: epochs,

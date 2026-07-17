@@ -238,6 +238,7 @@ fn custody_cfg() -> CustodyConfig {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,

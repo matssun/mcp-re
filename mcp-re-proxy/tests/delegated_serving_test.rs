@@ -244,6 +244,7 @@ fn http_response(served: mcp_re_proxy::async_serve::ServedHttpResponse) -> HttpR
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -298,9 +299,11 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
             NOW,
         )
         .expect("delegated success response verifies via the attestation chain");
-        assert_eq!(
+        // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
+        // property under test is that a DELEGATED key signed, never the root.
+        assert_ne!(
             verified.server_signer.as_ref().unwrap().keyid,
-            format!("{ROOT_KID}/delegated/1"),
+            ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }

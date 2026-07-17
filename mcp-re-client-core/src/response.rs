@@ -426,6 +426,7 @@ pub fn verify_delegated_response(
     let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
@@ -643,9 +644,13 @@ mod delegated_tests {
         )
         .expect("client verifies delegated success");
         assert_eq!(out.outcome, DelegatedOutcome::Success);
+        // The delegated key is profile-issued, so its keyid is the RFC 7638 JWK
+        // thumbprint of the key that actually signed (#415 rev 2 §1.5) — derived
+        // from the key material, not from an issuer-private counter.
+        let snap = custody.active_snapshot().expect("a key is active");
         assert_eq!(
             out.verified.server_signer.as_ref().unwrap().keyid,
-            format!("{ROOT_KID}/delegated/1")
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
         );
     }
 

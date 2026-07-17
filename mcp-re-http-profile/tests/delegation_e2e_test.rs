@@ -190,6 +190,7 @@ fn valid_credential() -> String {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -487,8 +488,15 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         NOW,
     )
     .expect("custody-signed response verifies");
-    // First delegated key id is issuer_kid/delegated/1.
-    assert_eq!(rv.server_signer.as_ref().unwrap().keyid, DELEGATED_KID);
+    // A custody-issued key is profile-issued, so its kid is the RFC 7638 JWK
+    // thumbprint of the key itself (#415 rev 2 §1.5). The key factory above hands
+    // out seed [101; 32] first, so the kid is that key's thumbprint — derived from
+    // the key material, not from an issuance counter.
+    let first_issued = SigningKey::from_seed_bytes(&[101u8; 32]);
+    assert_eq!(
+        rv.server_signer.as_ref().unwrap().keyid,
+        mcp_re_http_profile::jwk_thumbprint_ed25519(&first_issued.public_key().to_b64url()),
+    );
     assert_eq!(custody.root_invocations(), 1, "root touched only at issuance");
 }
 

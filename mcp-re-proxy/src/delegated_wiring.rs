@@ -209,8 +209,14 @@ mod tests {
         assert!(wiring.signer.current(NOW).is_none());
         wiring.rotor.rotate(NOW).expect("initial issuance");
         let snap = wiring.signer.current(NOW).expect("a key is published");
-        // The delegated kid chains to the configured issuer (root) kid.
-        assert_eq!(snap.delegated_kid, "root-kid/delegated/1");
+        // The delegated kid is the RFC 7638 JWK thumbprint of the published key
+        // itself (#415 rev 2 §1.5) — self-describing, so it is checkable against
+        // the key without knowing the issuer's minting order. Chaining to the root
+        // is asserted by the credential's `issuer_kid`, not by the kid string.
+        assert_eq!(
+            snap.delegated_kid,
+            mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
+        );
         // The root issuer was touched exactly once (issuance), never per read.
         assert_eq!(wiring.rotor.root_invocations(), 1);
     }

@@ -170,13 +170,90 @@ fn authorization_artifact_binding_is_bound_and_verified() {
 }
 
 // ---- §A: Freshness -----------------------------------------------------------
+/// The freshness window is widened by the verifier policy's bounded clock-skew
+/// tolerance (#415 rev 2 §5.1), so "expired" means past `expires` + that bound —
+/// not past `expires` alone. Both edges are pinned below.
+const SKEW: i64 = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+
 #[test]
 fn expired_request_is_rejected() {
     let (req, _) = signed("n-fresh", CALL);
-    // Verify at a time PAST `expires` → stale-window rejection.
+    // Verify past `expires` AND past the tolerated skew → stale-window rejection.
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), EXPIRES + 10).is_err(),
-        "a request past its freshness window must be rejected"
+        verify_request_full(
+            &req,
+            &audience(),
+            &no_material(),
+            &resolver(),
+            EXPIRES + SKEW + 10
+        )
+        .is_err(),
+        "a request beyond its freshness window plus the skew bound must be rejected"
+    );
+}
+
+/// Skew is a bounded tolerance for honest clock disagreement, not a policy
+/// escape: just inside the bound is accepted, just outside is not. This pins the
+/// tolerance as a real, tested edge rather than an unexercised default.
+#[test]
+fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
+    let (req, _) = signed("n-skew", CALL);
+    assert!(
+        verify_request_full(
+            &req,
+            &audience(),
+            &no_material(),
+            &resolver(),
+            EXPIRES + SKEW - 1
+        )
+        .is_ok(),
+        "within the declared skew bound, a just-expired request is honest clock drift"
+    );
+    assert!(
+        verify_request_full(
+            &req,
+            &audience(),
+            &no_material(),
+            &resolver(),
+            EXPIRES + SKEW + 1
+        )
+        .is_err(),
+        "one second past the bound, the tolerance is exhausted and it fails closed"
+    );
+}
+
+/// The symmetric edge: a `created` slightly in the FUTURE is the same honest
+/// clock disagreement and gets the same bounded tolerance.
+#[test]
+fn future_dated_request_within_the_skew_bound_is_accepted() {
+    let (req, _) = signed("n-future", CALL);
+    assert!(
+        verify_request_full(&req, &audience(), &no_material(), &resolver(), CREATED - SKEW + 1)
+            .is_ok(),
+        "a slightly future-dated request is tolerated within the bound"
+    );
+    assert!(
+        verify_request_full(&req, &audience(), &no_material(), &resolver(), CREATED - SKEW - 1)
+            .is_err(),
+        "beyond the bound, a future-dated request fails closed"
+    );
+}
+
+/// The strict-production tier (skew = 0) restores exact-time semantics through
+/// the same seam — the policy is the only thing that moved.
+#[test]
+fn strict_tier_policy_restores_exact_freshness() {
+    use mcp_re_http_profile::verify_request_with_policy;
+    use mcp_re_http_profile::VerifierPolicy;
+    let (req, _) = signed("n-strict", CALL);
+    let strict = VerifierPolicy::new(&["ed25519"], 0).expect("strict tier is a valid bound");
+    assert!(
+        verify_request_with_policy(&req, &resolver(), &strict, EXPIRES).is_err(),
+        "at skew 0 the window closes exactly at `expires`"
+    );
+    assert!(
+        verify_request_with_policy(&req, &resolver(), &strict, EXPIRES - 1).is_ok(),
+        "and remains open right up to it"
     );
 }
 

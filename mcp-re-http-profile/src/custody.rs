@@ -29,6 +29,8 @@ use std::sync::Arc;
 use mcp_re_core::audit::event_type;
 use mcp_re_core::SigningKey;
 
+use crate::keyid::jwk_thumbprint_ed25519;
+
 use crate::block::ActorIdentity;
 use crate::delegation::Audience;
 use crate::delegation::Cnf;
@@ -322,7 +324,13 @@ where
         now: i64,
         key: &SigningKey,
     ) -> (String, ActorIdentity, DelegationHeader, DelegationClaims) {
-        let delegated_kid = format!("{}/delegated/{}", self.cfg.issuer_kid, self.counter);
+        // The delegated key is profile-issued, so its kid is the RFC 7638 JWK
+        // thumbprint of the key itself (#415 rev 2 §1.5) — self-describing and
+        // collision-resistant, rather than a counter only this issuer can
+        // interpret. It remains a SELECTOR: the credential chain, not the kid,
+        // is what authorizes the key.
+        let public_key_b64url = key.public_key().to_b64url();
+        let delegated_kid = jwk_thumbprint_ed25519(&public_key_b64url);
         let server_signer = ActorIdentity {
             role: self.cfg.server_role.clone(),
             trust_domain: self.cfg.server_trust_domain.clone(),
@@ -353,7 +361,7 @@ where
                     kty: JWK_KTY_OKP.to_owned(),
                     crv: JWK_CRV_ED25519.to_owned(),
                     kid: delegated_kid.clone(),
-                    x: key.public_key().to_b64url(),
+                    x: public_key_b64url,
                 },
             },
         };

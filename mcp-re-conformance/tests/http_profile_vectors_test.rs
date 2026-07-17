@@ -388,6 +388,30 @@ fn build_fixtures() -> Vec<Fixture> {
         continuation_check: None,
     });
 
+    // 4b. h23_request_alg_not_allowlisted — a signature naming an algorithm that
+    //     IS in the IANA HTTP Signature Algorithms registry but is NOT in this
+    //     verifier's local allowlist (#415 rev 2 §13.1). Registration is not
+    //     deployment consent: the allowlist is the agility mechanism, so this is
+    //     rejected on POLICY, before any key resolution or crypto — the same
+    //     `unsupported_version` a foreign tag earns.
+    let mut foreign_alg = req.clone();
+    for h in foreign_alg.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace("alg=\"ed25519\"", "alg=\"ml-dsa-65\"");
+        }
+    }
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h23_request_alg_not_allowlisted".into(),
+        kind: "request".into(),
+        expected: "mcp-re.unsupported_version".into(),
+        request: Some(to_wire_request(&foreign_alg)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+    });
+
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
     let mut stale = base_request();
     sign_request(

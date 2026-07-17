@@ -247,13 +247,28 @@ fn missing_covered_component_fails_closed() {
 #[test]
 fn stale_window_fails_closed() {
     let req = signed_request();
-    let after_expiry = EXPIRES + 1;
+    // Both edges are widened by the policy's bounded skew tolerance (§5.1), so a
+    // stale message is one past `expires` PLUS that bound.
+    let skew = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+
+    let after_expiry = EXPIRES + skew + 1;
     let err = verify_request(&req, &resolver(), after_expiry).unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
     assert_eq!(err.wire_code(), "mcp-re.expired_request");
 
-    let before_created = CREATED - 1;
+    let before_created = CREATED - skew - 1;
     let err = verify_request(&req, &resolver(), before_created).unwrap_err();
+    assert_eq!(err, HttpProfileError::StaleWindow);
+}
+
+/// A degenerate window (`expires <= created`) is a property of the message, not
+/// a clock disagreement — no skew tolerance rescues it.
+#[test]
+fn degenerate_window_fails_closed_regardless_of_skew() {
+    let mut req = request();
+    sign_request(&mut req, &client_key(), "client-key-1", CREATED, CREATED, "n-degen")
+        .expect("signing succeeds");
+    let err = verify_request(&req, &resolver(), CREATED).unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
 }
 
