@@ -67,6 +67,8 @@ Every ADR discussion carries the `adr` label plus one status label. Filter:
 | [ADR-MCPRE-050](https://github.com/matssun/mcp-re/discussions/398) | Standards-Aligned HTTP Profile — RFC 9421 + RFC 9530 as the Cryptographic Carrier for HTTP Transports | ✅ Implemented |
 | [ADR-MCPRE-051](https://github.com/matssun/mcp-re/discussions/399) | High-Throughput Serving Architecture — Per-Core Async Data Plane, Stateless Streamable-HTTP Inner Plane, Authoritative Replay Tier, Delegated Signing Custody | ✅ Implemented |
 | [ADR-MCPRE-052](https://github.com/matssun/mcp-re/discussions/400) | Delegated Signing-Key Attestation — a JOSE/JWS Delegation Credential Carried in the RFC 9421 HTTP Evidence | ✅ Implemented |
+| [ADR-MCPRE-053](https://github.com/matssun/mcp-re/discussions/437) | Admission Assertion + §7 Admission-State Binding | 🟡 Proposed |
+| [ADR-MCPRE-054](https://github.com/matssun/mcp-re/discussions/438) | Portable Audit Receipts on SCITT (RFC 9943) + COSE Receipts (RFC 9942) | 🟡 Proposed |
 
 ## Active vs Legacy
 
