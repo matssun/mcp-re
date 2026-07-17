@@ -92,6 +92,28 @@ jobs:
       - name: Test (workspace, incl. conformance suite + drift guard)
         run: cargo test --workspace
 
+      # MCPRE-427 (#415 rev 2 §12.2). The hash/digest checks themselves run inside
+      # `cargo test --workspace` above (corpus_pinning_test + the frozen runners,
+      # which fail closed before running a vector whose bytes drifted). This step
+      # PUBLISHES the resulting digests into the job summary so a release packet —
+      # and any reviewer — can quote the exact corpus that was tested, rather than
+      # a tag, which §12.2 says is insufficient to prove two parties read the same
+      # bytes.
+      - name: Publish conformance corpus digests
+        run: |
+          {
+            echo "## Conformance corpus digests (§12.2)"
+            echo
+            echo '| Corpus | manifest SHA-256 | corpus digest |'
+            echo '|---|---|---|'
+            for c in http-profile delegation-profile; do
+              m="mcp-re-conformance/tests/vectors/$c/manifest.json"
+              manifest_sha="$(shasum -a 256 "$m" | cut -d' ' -f1)"
+              corpus_dig="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['corpus_digest'])" "$m")"
+              echo "| \`$c\` | \`$manifest_sha\` | \`$corpus_dig\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Format check (advisory)
         run: cargo fmt --all -- --check
         continue-on-error: true

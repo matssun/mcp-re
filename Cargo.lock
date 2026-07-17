@@ -780,6 +780,7 @@ dependencies = [
  "mcp-re-test-paths",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

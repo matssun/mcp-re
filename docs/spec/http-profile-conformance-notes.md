@@ -431,3 +431,53 @@ This is a signing-authority decision, so it is deliberately NOT taken here.
 are usable by a deployment whose response keys resolve through the trust seam
 directly; wiring them into the delegated-required serving path awaits the ruling on
 #418. Recorded there rather than resolved by implementation.
+
+---
+
+## §12.2 — the vector corpus is content-pinned
+
+**Rule.** Every corpus manifest carries a per-file SHA-256 and a `corpus_digest`
+over the sorted `<path>:<sha256>` list. Loaders verify each fixture's bytes
+**before running it** and fail closed on mismatch. CI publishes both digests.
+
+§12.2: "a tag or branch name alone is insufficient to prove that two reviewers used
+the same corpus." A filename list — which is what the manifests were — has the same
+weakness one level down: it proves which files were *meant* to be there, not what
+was in them. Two reviewers on the same tag, one with a locally-edited vector, would
+both report "corpus green" and mean different things.
+
+**Sorted, so the digest tracks content and not emission order.** Otherwise
+reshuffling the fixture builder would churn the published digest while every vector
+stayed byte-identical, and reviewers would learn to ignore it.
+
+**Verified before running, not after.** A fixture whose bytes do not match the
+manifest is not a vector — it is an unknown file with a familiar name, and running
+it would report a verdict about something nobody pinned. The corpus digest is
+checked first, so a corpus cannot be edited into agreeing with itself.
+
+**The external KATs are pinned too**, and they mattered most. `external_kat.json`
+and `external_delegation_kat.json` are third-party artifacts — signatures produced
+by python-cryptography, independently of ed25519-dalek — and they anchor the
+independent cross-verification claim. Both were sitting in the corpus directories
+**unpinned and unnamed by any manifest** until the no-unlisted-vectors check found
+them. Silent drift there would have changed what "independently cross-verified"
+means while every test still passed. They are hashed in place; the writer never
+rewrites them.
+
+**Published digests** (regenerate with the golden writers; CI emits these to the
+job summary):
+
+| Corpus | manifest SHA-256 | corpus digest |
+|---|---|---|
+| `http-profile` | `9e0080ec0dfe7def529f0e47bd12c43f4316fa2ca9f305a8f023e75adc535dc9` | `d8af1242831ce3be953ce2ec98a1a62e53e42e05f982b6fe734c1adeae1413ef` |
+| `delegation-profile` | `82ff7b2b98b74f7d60af3d99f8fae52227c67852cfb954613cc6ae20f090a40c` | `899462fa9da4596bfc04c755d07cd6e0cc85abee7c3d5696396ecd13840311be` |
+
+These pin the corpus AFTER the byte-changing work (#430 domain separation, #432
+keyid migration), per the epic's sequencing note — so the corpus is pinned once,
+against final bytes, rather than twice.
+
+**Proven by.** `corpus_pinning_test` (5 tests): every fixture matches its published
+hash AND no vector on disk is absent from the manifest; the digest commits to the
+entries; a one-byte edit breaks the hash (the pin bites — a manifest carrying
+hashes nobody checks is worse than no hashes, because it reads as a guarantee);
+adding or removing a vector moves the digest; the digest is order-independent.
