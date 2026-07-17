@@ -30,6 +30,7 @@
 
 pub mod artifact;
 pub mod block;
+pub mod bodyless;
 pub mod body;
 pub mod chain;
 pub mod custody;
@@ -72,6 +73,13 @@ pub use chain::HopEvidence;
 pub use chain::HopOutcome;
 pub use chain::IncompleteReason;
 pub use chain::RetainedHop;
+pub use bodyless::sign_accepted_202;
+pub use bodyless::sign_bodyless_request;
+pub use bodyless::verify_accepted_202;
+pub use bodyless::verify_bodyless_request;
+pub use ids::BODYLESS_REQUEST_COMPONENTS;
+pub use ids::BODYLESS_RESPONSE_COMPONENTS;
+pub use ids::STATUS_ACCEPTED;
 pub use body::authorization_bearer_bytes;
 pub use body::extract_meta_block;
 pub use body::insert_meta_block;

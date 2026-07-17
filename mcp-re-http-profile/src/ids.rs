@@ -106,3 +106,35 @@ pub const REQUIRED_RESPONSE_COMPONENTS: [&str; 3] = ["@status", "content-digest"
 /// RFC 9421 `req` parameter.
 pub const REQUIRED_RESPONSE_REQ_COMPONENTS: [&str; 4] =
     ["@method", "@target-uri", "content-digest", "content-type"];
+
+// --- bodyless component sets (#415 rev 2 §3.4/§8.1, MCPRE-424) --------------
+//
+// NAMED sets, not silent relaxations of the bodied ones. A verifier is told which
+// set it is checking and enforces that set exactly; it never "notices" a body is
+// absent and drops a requirement. The distinction matters because "no
+// content-type because there is no content" and "content-type stripped by an
+// attacker" must not be the same observation — under a named set, a bodied
+// message missing its content-type still fails, and a bodyless message CARRYING
+// one also fails.
+//
+// `content-digest` is present and REQUIRED on both, computed over empty content.
+// A digest of nothing is not ceremony: it is what makes "this message has no
+// body" a signed statement rather than an absence. Without it, a stripped body
+// and an intentionally empty one would be indistinguishable.
+
+/// Covered components of a bodyless REQUEST (§8.1): no `content-type`, because
+/// there is no content to describe.
+pub const BODYLESS_REQUEST_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "content-digest"];
+
+/// Covered components of a bodyless RESPONSE (§3.4) — the signed `202 Accepted`
+/// acknowledging a client-posted notification or response.
+pub const BODYLESS_RESPONSE_COMPONENTS: [&str; 2] = ["@status", "content-digest"];
+
+/// The HTTP status of an accepted one-way notification/response (#418, §3.4).
+///
+/// A signed 202 states exactly one thing: THE ENFORCEMENT BOUNDARY AUTHENTICATED
+/// AND ACCEPTED THIS MESSAGE. It does not state that a requested cancellation
+/// completed, that the inner application observed the notification, or that any
+/// action was taken. Describing it as more would be precisely the overclaim this
+/// protocol exists to avoid.
+pub const STATUS_ACCEPTED: u16 = 202;

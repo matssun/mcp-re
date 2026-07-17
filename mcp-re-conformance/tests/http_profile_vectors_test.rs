@@ -25,6 +25,8 @@ use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::build_signed_rejection;
 use mcp_re_http_profile::reconstruct_chain;
+use mcp_re_http_profile::sign_accepted_202;
+use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
@@ -720,6 +722,89 @@ fn build_fixtures() -> Vec<Fixture> {
         }),
     });
 
+    // ----- bodyless / signed-202 fixtures (#415 rev 2 §3.4/§8.1, MCPRE-424) -----
+    // The 202 acknowledges a signed one-way notification POST. Its `;req` binding
+    // is the ONLY binding it has (no body ⇒ no restated request_evidence), so the
+    // negatives below target exactly that and the named-set boundaries.
+    let mut note = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(&mut note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note")
+        .expect("a notification signs like any request");
+    let ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("the PEP signs its acceptance");
+
+    // h34 — positive: a signed 202 bound to its notification.
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h34_bodyless_202_valid".into(),
+        kind: "bodyless_202".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h35 — content-type present when the named set says it must be absent.
+    let mut ack_ct = ack.clone();
+    ack_ct.headers.push(("Content-Type".into(), "application/json".into()));
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h35_bodyless_202_content_type_present".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack_ct)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h36 — content injected into a message whose digest commits to empty content.
+    let mut ack_body = ack.clone();
+    ack_body.body = br#"{"cancelled":true}"#.to_vec();
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h36_bodyless_202_content_injected".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack_body)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
+    // h37 — the splice: A's acknowledgement presented against notification B.
+    let mut note_b = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#.to_vec(),
+    };
+    sign_request(&mut note_b, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note-b")
+        .expect("signing succeeds");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h37_bodyless_202_splice".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.response_sig_invalid".into(),
+        request: Some(to_wire_request(&note_b)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+    });
+
     // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
     // h31 covered-and-matching positive; h32 present-but-uncovered negative;
     // h33 header/body method mismatch negative.
@@ -1330,6 +1415,20 @@ fn frozen_http_profile_corpus_verifies() {
                     &base64_std_decode(&check.request_state_b64),
                 ) {
                     Ok(()) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "bodyless_202" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
+                let response = from_wire_response(fixture.response.as_ref().expect("response"));
+                match verify_accepted_202(
+                    &response,
+                    &request,
+                    &resolver(),
+                    &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
             }

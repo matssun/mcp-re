@@ -127,7 +127,7 @@ pub struct VerifiedHttpResponseEvidence {
 /// and fails `actor_binding_failed`. The verifier additionally asserts the
 /// returned actor is vouched for the slot it asked for — never a role-string
 /// comparison — so a resolver that hands back a wrong-slot actor is also caught.
-fn resolve_actor_for(
+pub(crate) fn resolve_actor_for_slot(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     key_id: &str,
     slot: SignerSlot,
@@ -140,9 +140,9 @@ fn resolve_actor_for(
 }
 
 /// One parsed `Signature-Input` dictionary member.
-struct ParsedSignatureInput {
-    components: Vec<CoveredComponent>,
-    params: SignatureParams,
+pub(crate) struct ParsedSignatureInput {
+    pub(crate) components: Vec<CoveredComponent>,
+    pub(crate) params: SignatureParams,
 }
 
 /// Split a Structured Fields dictionary into members at top-level commas
@@ -410,6 +410,48 @@ fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), HttpProfile
     Ok(())
 }
 
+/// Parse the `Signature-Input` member for `label`. Shared with the bodyless
+/// component sets (`crate::bodyless`) so both read one grammar: a second parser
+/// would be a second place for the closed allowlist to drift.
+pub(crate) fn parse_signature_input_for(
+    headers: &[(String, String)],
+    label: &str,
+    what: &'static str,
+) -> Result<ParsedSignatureInput, HttpProfileError> {
+    let input_header =
+        required_header(headers, "signature-input").map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    parse_signature_input(member_value(input_header, label)?)
+}
+
+/// [`require_components`] for the bodyless sets — same enforcement, invoked with
+/// a different NAMED set.
+pub(crate) fn require_components_for(
+    covered: &[CoveredComponent],
+    required_plain: &[&'static str],
+    required_req: &[&'static str],
+) -> Result<(), HttpProfileError> {
+    require_components(covered, required_plain, required_req)
+}
+
+/// [`check_params`] shared with the bodyless sets: tag, allowlisted algorithm,
+/// bounded-skew freshness, keyid.
+pub(crate) fn check_params_for(
+    params: &SignatureParams,
+    policy: &VerifierPolicy<'_>,
+    now: i64,
+    require_nonce: bool,
+) -> Result<(i64, i64, String, String), HttpProfileError> {
+    check_params(params, policy, now, require_nonce)
+}
+
+/// The `Signature` byte sequence for `label`, base64url-transcoded.
+pub(crate) fn signature_value_for(
+    headers: &[(String, String)],
+    label: &str,
+) -> Result<String, HttpProfileError> {
+    signature_value_b64url(headers, "signature", label)
+}
+
 fn require_components(
     covered: &[CoveredComponent],
     required_plain: &[&'static str],
@@ -499,7 +541,7 @@ pub fn verify_request_with_policy(
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
     //    and a key not trusted to sign requests fails actor_binding_failed.
-    let resolved_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Request)?;
+    let resolved_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
     // 4. Signature over the reconstructed base.
     let base = signature_base(
         &parsed.components,
@@ -676,7 +718,7 @@ pub fn verify_response_with_policy(
 
     // Trust resolution for the RESPONSE slot: a request-signer key presented on
     // a response fails actor_binding_failed.
-    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
@@ -1127,7 +1169,7 @@ pub fn verify_response_unbound_with_policy(
     }
     let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, policy, now, false)?;
 
-    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,

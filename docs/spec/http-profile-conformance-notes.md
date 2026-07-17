@@ -362,3 +362,72 @@ RC-shape guards below are prep, not a conformance claim:
 | Final-text confirmation | **Blocked until 2026-07-28** |
 
 **Proven by.** `mcp_2026_07_28_alignment_test`.
+
+---
+
+## §3.4/§8.1 — bodyless component sets and the signed 202
+
+**Rule.** Two NAMED bodyless sets, enforced exactly — not relaxations of the
+bodied ones:
+
+| Set | Covered components |
+|---|---|
+| Bodyless request (§8.1) | `@method`, `@target-uri`, `content-digest` (over empty content). No `content-type`. |
+| Bodyless response (§3.4) — the signed `202 Accepted` | `@status`, `content-digest` (over empty content), plus the full `;req` binding to the originating request. No `content-type`. |
+
+**Named, not relaxed.** The verifier is told which set it is checking and enforces
+that set exactly; it never *notices* a body is absent and drops a requirement.
+Otherwise "no content-type because there is no content" and "content-type stripped
+in flight" would be the same observation. Under named sets, a bodied message
+missing its content-type still fails AND a bodyless message carrying one also
+fails — both directions are enforced.
+
+**Why `content-digest` over empty content.** A digest of nothing is not ceremony:
+it makes "this message has no body" a *signed statement* rather than an absence.
+Without it, a body stripped in flight and an intentionally empty one would be
+indistinguishable.
+
+**Why the `;req` binding is mandatory on the 202.** A bodyless response has no body,
+so it cannot restate its `request_evidence` the way a bodied response does. The
+`;req` components are therefore the ONLY binding — an acknowledgement that could be
+lifted onto another notification would acknowledge nothing.
+
+**What a signed 202 claims — exactly.** THE ENFORCEMENT BOUNDARY AUTHENTICATED AND
+ACCEPTED THIS MESSAGE. Not that a requested cancellation completed, not that the
+inner application observed the notification, not that any action was taken (#418).
+
+**Proven by.** `bodyless_202_test` (11 tests, incl.
+`signed_202_binds_only_to_its_own_notification` and
+`the_bodied_request_set_still_requires_content_type` — the new sets must not have
+weakened the old one).
+
+### OPEN — the signed 202 cannot carry a delegation credential (needs an owner ruling)
+
+The profile-crate component sets above are complete and tested. The **proxy serving
+path is NOT wired to emit a signed 202**, because doing so would require breaking
+one of three currently-ratified rules:
+
+1. **§3.4 (published)** — the 202 is bodyless: no body, no `content-type`.
+2. **Delegated-required (governing, 2026-07-13)** — delegated signing is the ONLY
+   response-signing mode; direct-root response signing was deleted from the runtime
+   surface and survives only as negative-test fixtures.
+3. **ADR-MCPRE-052 §2** — the inline delegation credential (`server_delegation`)
+   rides in the response evidence block, i.e. **in the response body**, protected
+   because `content-digest` covers it.
+
+A bodyless 202 has no body, so it cannot carry the credential that
+delegated-required obliges it to carry. The three rules are jointly unsatisfiable
+for this message shape. The options, none of them free:
+
+| Option | Cost |
+|---|---|
+| (a) Give the 202 a minimal body carrying only the response evidence block | Contradicts §3.4's bodyless set — the published profile would need amending |
+| (b) Carry the credential in a header | Violates E-3 (no new MCP-RE header fields); also unprotected unless covered |
+| (c) Resolve the credential out of band / from cache | New trust seam and freshness surface; the client must obtain it somehow |
+| (d) Exempt the 202 from delegated-required, resolving its key through the trust seam | Violates the governing delegated-required rule; reintroduces a direct-root signing path |
+
+This is a signing-authority decision, so it is deliberately NOT taken here.
+`sign_accepted_202` / `verify_accepted_202` implement the §3.4 shape faithfully and
+are usable by a deployment whose response keys resolve through the trust seam
+directly; wiring them into the delegated-required serving path awaits the ruling on
+#418. Recorded there rather than resolved by implementation.
