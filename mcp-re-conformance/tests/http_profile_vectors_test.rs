@@ -22,22 +22,36 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::build_signed_rejection;
+use mcp_re_http_profile::reconstruct_chain;
+use mcp_re_http_profile::sign_accepted_202;
+use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::sign_request;
+use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
+use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
+use mcp_re_http_profile::verify_response_bound_full;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::ChainLabel;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
+use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
+use mcp_re_http_profile::IncompleteReason;
 use mcp_re_http_profile::RejectionReason;
+use mcp_re_http_profile::RequestEvidence;
+use mcp_re_http_profile::RequestEvidenceDigest;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::RetainedHop;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::VerifierPolicy;
 
 /// Credentials in artifact fixtures are base64url-no-pad (reusing the core
 /// codec so the corpus needs no extra base64 dependency).
@@ -114,6 +128,63 @@ struct ContinuationCheck {
     request_state_b64: String,
 }
 
+/// A frozen retained-CHAIN reconstruction check (#416 rev 2 §9/§13, MCPRE-431).
+/// Each hop freezes the complete signed request and response; the runner replays
+/// them through `reconstruct_chain` and compares the label. `outcomes` classifies
+/// each hop's response terminal / input_required — MCP-level semantics the
+/// standards profile is deliberately not in the business of reading from a body.
+///
+/// `expected_label` is `complete`, or `incomplete:<hop>:<reason>` — an incomplete
+/// record must name WHICH hop broke it, so the frozen expectation names it too.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChainCheck {
+    hops: Vec<ChainHop>,
+    expected_label: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChainHop {
+    request: WireMessage,
+    response: WireMessage,
+}
+
+/// A frozen admission check (#414 §4.3/§5, #415 §7, MCPRE-433). The assertion JWS,
+/// the call's binding, and the authoritative admission snapshot are all frozen, so
+/// the §7 currency verdict is a deterministic function a third party replays. A
+/// `null` authoritative state models the unreachable-authority (degraded) fork.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdmissionCheck {
+    assertion_jws: String,
+    binding: serde_json::Value,
+    /// `[generation, status]` — the PEP's authoritative state, or absent for the
+    /// unreachable-authority case.
+    authoritative_generation: Option<u64>,
+    authoritative_status: Option<String>,
+    issuer_public_key_b64url: String,
+    allow_degraded_mode: bool,
+    degraded_propagation_bound: i64,
+}
+
+/// A frozen DELEGATED bodyless-202 check (#424, owner ruling 2026-07-17). Freezes
+/// the notification request and the signed 202 (credential in the covered
+/// `mcp-re-delegation` header), plus the root key + scope so the delegated
+/// verification is deterministic for a third party.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Delegated202Check {
+    request: WireMessage,
+    response: WireMessage,
+    root_public_key_b64url: String,
+    root_kid: String,
+    verifier_audience: String,
+    audience_hash: String,
+    epoch: String,
+    revoked: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fixture {
@@ -121,7 +192,8 @@ struct Fixture {
     name: String,
     /// `request` fixtures verify `request`; `response` fixtures verify
     /// `response` against `request` (the ;req binding source); `artifact`
-    /// fixtures verify `artifact_check`.
+    /// fixtures verify `artifact_check`; `chain` fixtures reconstruct
+    /// `chain_check`.
     kind: String,
     /// `verify_ok` or the exact frozen `mcp-re.*` wire code observed.
     expected: String,
@@ -135,13 +207,61 @@ struct Fixture {
     artifact_check: Option<ArtifactCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation_check: Option<ContinuationCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chain_check: Option<ChainCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admission_check: Option<AdmissionCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delegated_202_check: Option<Delegated202Check>,
 }
 
+/// One manifest entry: the fixture path and the SHA-256 of its exact bytes
+/// (#415 rev 2 §12.2).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestEntry {
+    file: String,
+    /// Lowercase hex SHA-256 over the fixture file's bytes.
+    sha256: String,
+}
+
+/// The committed corpus index (#415 rev 2 §12.2).
+///
+/// §12.2: "a tag or branch name alone is insufficient to prove that two reviewers
+/// used the same corpus." A filename list is the same problem one level down — it
+/// proves which files were MEANT to be there, not what was in them. So every entry
+/// carries the SHA-256 of its bytes, and `corpus_digest` commits to the whole set
+/// at once.
 #[derive(Debug, Serialize, Deserialize)]
 struct Manifest {
     schema: String,
     verify_at_unix: i64,
-    fixtures: Vec<String>,
+    /// SHA-256 over the sorted `path:hash` list — one value that names this exact
+    /// corpus. Two reviewers comparing this string are comparing every byte of
+    /// every vector, not a tag that can be moved.
+    corpus_digest: String,
+    fixtures: Vec<ManifestEntry>,
+}
+
+/// The §12.2 corpus digest: SHA-256 over the SORTED `<path>:<sha256>\n` list.
+///
+/// Sorted so the digest is a property of the corpus CONTENT, not of the order the
+/// writer happened to emit fixtures in — otherwise reordering the builder would
+/// change the published digest while every vector stayed byte-identical, and the
+/// digest would be reporting churn instead of drift.
+fn corpus_digest(entries: &[ManifestEntry]) -> String {
+    let mut lines: Vec<String> = entries
+        .iter()
+        .map(|e| format!("{}:{}\n", e.file, e.sha256))
+        .collect();
+    lines.sort();
+    hex_sha256(lines.concat().as_bytes())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let d = sha2::Sha256::digest(bytes);
+    d.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +449,9 @@ fn build_fixtures() -> Vec<Fixture> {
         }),
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 2. h02_request_body_tamper — frozen post-tamper message. The body no
@@ -347,6 +470,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 3. h03_request_missing_covered_component — content-digest stripped from
@@ -367,6 +493,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 4. h04_request_foreign_tag — same evidence under a foreign profile tag.
@@ -386,6 +515,36 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // 4b. h23_request_alg_not_allowlisted — a signature naming an algorithm that
+    //     IS in the IANA HTTP Signature Algorithms registry but is NOT in this
+    //     verifier's local allowlist (#415 rev 2 §13.1). Registration is not
+    //     deployment consent: the allowlist is the agility mechanism, so this is
+    //     rejected on POLICY, before any key resolution or crypto — the same
+    //     `unsupported_version` a foreign tag earns.
+    let mut foreign_alg = req.clone();
+    for h in foreign_alg.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace("alg=\"ed25519\"", "alg=\"ml-dsa-65\"");
+        }
+    }
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h23_request_alg_not_allowlisted".into(),
+        kind: "request".into(),
+        expected: "mcp-re.unsupported_version".into(),
+        request: Some(to_wire_request(&foreign_alg)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 5. h05_request_stale_window — expired relative to the frozen NOW.
@@ -409,6 +568,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 6. h06_request_wrong_keyid — untrusted keyid, trust must fail first.
@@ -432,6 +594,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 7. h07_response_valid — full signed exchange.
@@ -460,6 +625,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // 8. h08_response_splice — a response signed for request B presented as
@@ -500,6 +668,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // ----- artifact-binding fixtures (MCPRE-95) -----
@@ -577,6 +748,9 @@ fn build_fixtures() -> Vec<Fixture> {
                 credential_b64: credential_b64(&presented),
             }),
             continuation_check: None,
+            chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
         });
     }
 
@@ -600,6 +774,9 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(&prev_base),
@@ -618,6 +795,9 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value.clone(),
             previous_request_base_b64: credential_b64(b"a-different-previous-request-base"),
@@ -636,6 +816,9 @@ fn build_fixtures() -> Vec<Fixture> {
         response: None,
         oracle: None,
         artifact_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
         continuation_check: Some(ContinuationCheck {
             continuation: continuation_value,
             previous_request_base_b64: credential_b64(&prev_base),
@@ -643,6 +826,345 @@ fn build_fixtures() -> Vec<Fixture> {
             request_state_b64: credential_b64(b"opaque-request-state-blob-TAMPERED"),
         }),
     });
+
+    // ----- bodyless / signed-202 fixtures (#415 rev 2 §3.4/§8.1, MCPRE-424) -----
+    // The 202 acknowledges a signed one-way notification POST. Its `;req` binding
+    // is the ONLY binding it has (no body ⇒ no restated request_evidence), so the
+    // negatives below target exactly that and the named-set boundaries.
+    let mut note = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(&mut note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note")
+        .expect("a notification signs like any request");
+    let ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("the PEP signs its acceptance");
+
+    // h34 — positive: a signed 202 bound to its notification.
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h34_bodyless_202_valid".into(),
+        kind: "bodyless_202".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h35 — content-type present when the named set says it must be absent.
+    let mut ack_ct = ack.clone();
+    ack_ct.headers.push(("Content-Type".into(), "application/json".into()));
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h35_bodyless_202_content_type_present".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack_ct)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h36 — content injected into a message whose digest commits to empty content.
+    let mut ack_body = ack.clone();
+    ack_body.body = br#"{"cancelled":true}"#.to_vec();
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h36_bodyless_202_content_injected".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&note)),
+        response: Some(to_wire_response(&ack_body)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h37 — the splice: A's acknowledgement presented against notification B.
+    let mut note_b = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#.to_vec(),
+    };
+    sign_request(&mut note_b, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note-b")
+        .expect("signing succeeds");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h37_bodyless_202_splice".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.response_sig_invalid".into(),
+        request: Some(to_wire_request(&note_b)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
+    // h31 covered-and-matching positive; h32 present-but-uncovered negative;
+    // h33 header/body method mismatch negative.
+    let mcp_headers = |method_header: &str| -> HttpRequest {
+        let mut r = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![
+                ("Content-Type".into(), "application/json".into()),
+                ("Mcp-Method".into(), method_header.into()),
+                ("Mcp-Name".into(), "read".into()),
+            ],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+                .to_vec(),
+        };
+        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-mcp")
+            .expect("signing succeeds");
+        r
+    };
+
+    let mcp_ok = mcp_headers("tools/call");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h31_mcp_headers_covered_valid".into(),
+        kind: "request".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&mcp_ok)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h32 — the header rides on the wire but was dropped from the covered set:
+    //       an unsigned method claim attached to a signed request.
+    let mut mcp_uncovered = mcp_ok.clone();
+    for h in mcp_uncovered.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace(" \"mcp-method\"", "");
+        }
+    }
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h32_mcp_method_present_but_uncovered".into(),
+        kind: "request".into(),
+        expected: "mcp-re.missing_envelope".into(),
+        request: Some(to_wire_request(&mcp_uncovered)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h33 — the covered header says tools/list, the covered body says tools/call.
+    //       The signature is VALID: this is the signer stating two different
+    //       methods, and the verifier refuses rather than picking one.
+    let mcp_diverged = mcp_headers("tools/list");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h33_mcp_method_body_divergence".into(),
+        kind: "request".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&mcp_diverged)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // ----- MCP transport CONTRACT fixtures (#415 rev 2 §4.1, MCPRE-425) -----
+    // h31-h33 above check header integrity under the default policy. These check
+    // the full §4.1 contract — required-header presence, supported-version policy,
+    // and header/body agreement — under a strict 2026-07-28 transport policy. The
+    // runner replays them with that policy attached.
+    let tx_body =
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    let tx_sign = |headers: Vec<(&str, &str)>, body: &[u8], nonce: &str| -> HttpRequest {
+        let mut hs: Vec<(String, String)> =
+            vec![("Content-Type".into(), "application/json".into())];
+        for (k, v) in headers {
+            hs.push((k.into(), v.into()));
+        }
+        let mut r = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: hs,
+            body: body.to_vec(),
+        };
+        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
+            .expect("signing succeeds");
+        r
+    };
+
+    // h38 — fully conforming under the strict contract.
+    let tx_ok = tx_sign(
+        vec![
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "read"),
+            ("MCP-Protocol-Version", "2026-07-28"),
+        ],
+        &tx_body,
+        "vec-nonce-tx-ok",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h38_transport_contract_valid".into(),
+        kind: "transport_request".into(),
+        expected: "verify_ok".into(),
+        request: Some(to_wire_request(&tx_ok)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h39 — a required header absent (no Mcp-Method) under the strict contract.
+    let tx_missing = tx_sign(
+        vec![("MCP-Protocol-Version", "2026-07-28")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "vec-nonce-tx-miss",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h39_transport_required_header_absent".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.missing_envelope".into(),
+        request: Some(to_wire_request(&tx_missing)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h40 — an unsupported protocol version (a client's claim is not consent).
+    let tx_badver = tx_sign(
+        vec![("Mcp-Method", "initialize"), ("MCP-Protocol-Version", "1999-01-01")],
+        br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "vec-nonce-tx-ver",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h40_transport_unsupported_version".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.unsupported_version".into(),
+        request: Some(to_wire_request(&tx_badver)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h41 — Mcp-Name disagreeing with params.name (the routing header naming a
+    //       different tool than the signed body invokes).
+    let tx_name = tx_sign(
+        vec![
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "delete"),
+            ("MCP-Protocol-Version", "2026-07-28"),
+        ],
+        &tx_body,
+        "vec-nonce-tx-name",
+    );
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h41_transport_mcp_name_divergence".into(),
+        kind: "transport_request".into(),
+        expected: "mcp-re.malformed_envelope".into(),
+        request: Some(to_wire_request(&tx_name)),
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // ----- delegated bodyless-202 fixtures (#424, owner ruling 2026-07-17) -----
+    fixtures.extend(delegated_202_fixtures());
+
+    // ----- admission fixtures (#414 §4.3/§5, #415 §7, MCPRE-433) -----
+    // Each freezes the assertion JWS, the call's binding, and the authoritative
+    // snapshot, so the §7 currency verdict is deterministic. The load-bearing one
+    // (h43) freezes a signed, fresh, "admitted" assertion that is STILL refused
+    // because the authoritative generation moved on — a snapshot is not currency.
+    fixtures.extend(admission_fixtures());
+
+    // h30 — SSE response on a covered exchange (#415 rev 2 §3.4, MCPRE-423).
+    //       The server GENUINELY signs it: the signature is valid and the digest
+    //       matches its body. It is rejected purely because a covered exchange is
+    //       JSON-mode only — per-event SSE evidence is deferred to a future
+    //       companion profile, so a stream here would be signed as a whole while
+    //       every event inside went unattested.
+    let mut sse_rsp = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "text/event-stream".into())],
+        body: b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n"
+            .to_vec(),
+    };
+    sign_response(
+        &mut sse_rsp,
+        &req,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the server really does sign the stream");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h30_response_sse_on_covered_exchange".into(),
+        kind: "response".into(),
+        expected: "mcp-re.serialization_failed".into(),
+        request: Some(to_wire_request(&req)),
+        response: Some(to_wire_response(&sse_rsp)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // ----- retained-chain fixtures (#416 rev 2 §9/§13, MCPRE-430/431) -----
+    // The continuation fixtures above check ONE handle set in isolation. These
+    // check what §9 actually requires: that a whole chain re-links. Each freezes
+    // complete signed messages per hop, so a third party replays real evidence
+    // rather than this project's opinion of a handle.
+    fixtures.extend(chain_fixtures());
 
     // ----- signed-rejection fixtures (MCPRE-96) -----
     // A rejection is a signed response carrying error.data.mcp_re_error.wire_code.
@@ -675,6 +1197,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // h19 — unbound valid: no request context, signed response-only.
@@ -698,6 +1223,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // h20 — body tamper: an edited human message breaks Content-Digest.
@@ -715,6 +1243,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // h21 — splice: a rejection bound to `req` presented against a different
@@ -740,6 +1271,9 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     // h22 — unsigned: a bare JSON-RPC error with no signature is untrusted.
@@ -758,9 +1292,490 @@ fn build_fixtures() -> Vec<Fixture> {
         oracle: None,
         artifact_check: None,
         continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
     });
 
     fixtures
+}
+
+// ---------------------------------------------------------------------------
+// Retained-chain fixtures (#416 rev 2 §9/§13).
+// ---------------------------------------------------------------------------
+
+/// Third-party KATs committed in this corpus but NOT generated by the writer.
+/// Pinned by hash like every other file; replayed by their own harnesses
+/// (`rfc9421_cross_verification_test`, `full_profile_parity_test`), not by the
+/// fixture runner, because they are not `Fixture`-shaped.
+const EXTERNAL_KATS: [&str; 1] = ["external_kat.json"];
+
+const CHAIN_TARGET: &str = "https://mcp.example.com/mcp";
+const AWAITING: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#;
+const DONE: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+
+fn chain_audience() -> AudienceTuple {
+    AudienceTuple {
+        audience_id: "mcp.example.com".into(),
+        target_uri: CHAIN_TARGET.into(),
+        route: Some("tools/call".into()),
+    }
+}
+
+fn chain_server_signer() -> ActorIdentity {
+    ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: SERVER_KEY_ID.into(),
+    }
+}
+
+fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
+    HttpRequestEvidenceBlock {
+        profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        audience: chain_audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        continuation,
+        admission: None,
+    }
+}
+
+fn to_digest(e: &RequestEvidence) -> RequestEvidenceDigest {
+    RequestEvidenceDigest {
+        digest_alg: e.digest_alg.clone(),
+        digest_value: e.digest_value.clone(),
+    }
+}
+
+/// Sign one hop and return it with the two role-labeled handles the next hop's
+/// continuation must name.
+fn chain_hop(
+    nonce: &str,
+    continuation: Option<HttpContinuation>,
+    body: &str,
+) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+    let mut request = HttpRequest {
+        method: "POST".into(),
+        target_uri: CHAIN_TARGET.into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let req_evidence = sign_request_full(
+        &mut request,
+        &chain_block(continuation),
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("request signs");
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    sign_response_full(
+        &mut response,
+        &request,
+        &req_evidence,
+        &chain_server_signer(),
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signs");
+    let rsp_evidence =
+        verify_response_bound_full(&response, &request, &req_evidence, &resolver(), NOW)
+            .expect("response verifies")
+            .response_signature_base_digest;
+    (RetainedHop { request, response }, req_evidence, rsp_evidence)
+}
+
+fn to_chain_hop(h: &RetainedHop) -> ChainHop {
+    ChainHop {
+        request: to_wire_request(&h.request),
+        response: to_wire_response(&h.response),
+    }
+}
+
+fn chain_fixture(name: &str, hops: &[RetainedHop], label: &str) -> Fixture {
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "chain".into(),
+        expected: "verify_ok".into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: Some(ChainCheck {
+            hops: hops.iter().map(to_chain_hop).collect(),
+            expected_label: label.into(),
+        }),
+        admission_check: None,
+        delegated_202_check: None,
+    }
+}
+
+/// The full three-hop chain R0→S0→R1→S1→R2→S2 the chain fixtures are cut from.
+fn three_hop() -> Vec<RetainedHop> {
+    let (h0, r0, s0) = chain_hop("chain-n0", None, AWAITING);
+    let (h1, r1, s1) = chain_hop(
+        "chain-n1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-0",
+        )),
+        AWAITING,
+    );
+    let (h2, _, _) = chain_hop(
+        "chain-n2",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r1),
+            to_digest(&s1),
+            b"state-1",
+        )),
+        DONE,
+    );
+    vec![h0, h1, h2]
+}
+
+fn chain_fixtures() -> Vec<Fixture> {
+    let full = three_hop();
+    let mut out = Vec::new();
+
+    // h24 — multi-hop positive (§13.4 "multi-hop" claim): two consecutive
+    // non-terminal turns followed by a terminal one, every hop re-linking.
+    out.push(chain_fixture(
+        "h24_chain_multi_hop_complete",
+        &full,
+        
+        "complete",
+    ));
+
+    // h25 — the missing MIDDLE hop (§9.1/§9.3). Every retained message verifies
+    // on its own and S2 is a genuine terminal result; the record is still
+    // incomplete, and says so naming hop 1. This is the case §9 exists for.
+    out.push(chain_fixture(
+        "h25_chain_missing_middle_hop_incomplete",
+        &[full[0].clone(), full[2].clone()],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h26 — truncated chain (§13.2): the record stops on a turn still awaiting
+    // input. Every hop verifies; the call has no ending.
+    out.push(chain_fixture(
+        "h26_chain_truncated_incomplete",
+        &[full[0].clone(), full[1].clone()],
+        "incomplete:1:terminal_expected",
+    ));
+
+    // h27 — a continuation naming ANOTHER chain's evidence (§13.2 "response from
+    // another chain"): well-formed handles that do not describe this record.
+    let (o0, _, _) = chain_hop("chain-other0", None, AWAITING);
+    let (_, other_r, other_s) = chain_hop("chain-other-src", None, AWAITING);
+    let (o1, _, _) = chain_hop(
+        "chain-other1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&other_r),
+            to_digest(&other_s),
+            b"state-o",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h27_chain_foreign_continuation_incomplete",
+        &[o0, o1],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h28 — role substitution (§7.3): the previous RESPONSE handle presented as
+    // the previous-REQUEST handle and vice versa. Domain separation makes the
+    // lifted handles different values in the wrong role, so re-linking rejects.
+    let (s0h, sr0, ss0) = chain_hop("chain-swap0", None, AWAITING);
+    let (s1h, _, _) = chain_hop(
+        "chain-swap1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&ss0),
+            to_digest(&sr0),
+            b"state-s",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h28_chain_role_swapped_handles_incomplete",
+        &[s0h, s1h],
+        "incomplete:1:continuation_does_not_link",
+    ));
+
+    // h29 — terminal spliced onto a continuation request (§13.2): the chain
+    // claims to continue past a turn that already answered terminally.
+    let (t0, tr0, ts0) = chain_hop("chain-term0", None, DONE);
+    let (t1, _, _) = chain_hop(
+        "chain-term1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&tr0),
+            to_digest(&ts0),
+            b"state-t",
+        )),
+        DONE,
+    );
+    out.push(chain_fixture(
+        "h29_chain_terminal_spliced_incomplete",
+        &[t0, t1],
+        "incomplete:0:non_terminal_expected",
+    ));
+
+    out
+}
+
+/// The runner's label encoding, mirroring `expected_label` in the fixture.
+fn label_token(label: &ChainLabel) -> String {
+    match label {
+        ChainLabel::Complete => "complete".to_owned(),
+        ChainLabel::Incomplete { hop, reason } => {
+            let r = match reason {
+                IncompleteReason::RequestUnverifiable(_) => "request_unverifiable",
+                IncompleteReason::ResponseUnverifiable(_) => "response_unverifiable",
+                IncompleteReason::MissingContinuation => "missing_continuation",
+                IncompleteReason::ContinuationDoesNotLink => "continuation_does_not_link",
+                IncompleteReason::NonTerminalExpected => "non_terminal_expected",
+                IncompleteReason::TerminalExpected => "terminal_expected",
+                IncompleteReason::EmptyChain => "empty_chain",
+            };
+            format!("incomplete:{hop}:{r}")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Delegated bodyless-202 fixtures (#424).
+// ---------------------------------------------------------------------------
+
+const D202_ROOT_KID: &str = "root-kid";
+const D202_DELEGATED_KID: &str = "delegated-kid-1";
+const D202_AUD: &str = "verifier-1";
+const D202_AUD_HASH: &str = "aud-scope-1";
+const D202_EPOCH: &str = "epoch-1";
+
+fn d202_root() -> SigningKey {
+    SigningKey::from_seed_bytes(&[33u8; 32])
+}
+fn d202_delegated() -> SigningKey {
+    SigningKey::from_seed_bytes(&[55u8; 32])
+}
+
+fn d202_credential() -> String {
+    let d = d202_delegated();
+    let header = mcp_re_http_profile::DelegationHeader {
+        typ: mcp_re_http_profile::DELEGATION_TYP.into(),
+        alg: mcp_re_http_profile::DELEGATION_ALG.into(),
+        kid: D202_ROOT_KID.into(),
+    };
+    let server_signer = ActorIdentity {
+        role: "server".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:server".into(),
+        keyid: D202_DELEGATED_KID.into(),
+    };
+    let claims = mcp_re_http_profile::DelegationClaims {
+        iss: "did:example:server".into(),
+        iat: CREATED,
+        nbf: CREATED,
+        exp: EXPIRES,
+        jti: "evt-202".into(),
+        aud: mcp_re_http_profile::Audience::One(D202_AUD.into()),
+        mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        mcp_re_audience_hash: D202_AUD_HASH.into(),
+        mcp_re_server_signer: server_signer.actor_id(),
+        mcp_re_key_use: mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING.into(),
+        delegated_kid: D202_DELEGATED_KID.into(),
+        issuer_kid: D202_ROOT_KID.into(),
+        trust_epoch: D202_EPOCH.into(),
+        cnf: mcp_re_http_profile::Cnf {
+            jwk: mcp_re_http_profile::DelegatedJwk {
+                kty: mcp_re_http_profile::JWK_KTY_OKP.into(),
+                crv: mcp_re_http_profile::JWK_CRV_ED25519.into(),
+                kid: D202_DELEGATED_KID.into(),
+                x: d.public_key().to_b64url(),
+            },
+        },
+    };
+    mcp_re_http_profile::issue_delegation_credential(&d202_root(), &header, &claims)
+}
+
+fn d202_notification() -> HttpRequest {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-d202")
+        .expect("notification signs");
+    r
+}
+
+fn d202_check(response: &HttpResponse, note: &HttpRequest, revoked: bool) -> Delegated202Check {
+    Delegated202Check {
+        request: to_wire_request(note),
+        response: to_wire_response(response),
+        root_public_key_b64url: d202_root().public_key().to_b64url(),
+        root_kid: D202_ROOT_KID.into(),
+        verifier_audience: D202_AUD.into(),
+        audience_hash: D202_AUD_HASH.into(),
+        epoch: D202_EPOCH.into(),
+        revoked,
+    }
+}
+
+fn d202_fixture(name: &str, check: Delegated202Check, expected: &str) -> Fixture {
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "delegated_202".into(),
+        expected: expected.into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: Some(check),
+    }
+}
+
+fn delegated_202_fixtures() -> Vec<Fixture> {
+    let note = d202_notification();
+    let ack = mcp_re_http_profile::sign_delegated_accepted_202(
+        &note,
+        &d202_credential(),
+        &d202_delegated(),
+        D202_DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("PEP delegated-signs the 202");
+
+    let mut out = Vec::new();
+    // h47 — positive: a delegated 202 verifying via the credential→root chain.
+    out.push(d202_fixture(
+        "h47_delegated_202_valid",
+        d202_check(&ack, &note, false),
+        "verify_ok",
+    ));
+
+    // h48 — the credential header stripped from the COVERED set (still on the
+    //       wire). An uncovered credential is unprotected — the load-bearing
+    //       negative for the whole design.
+    let mut uncovered = ack.clone();
+    for h in uncovered.headers.iter_mut() {
+        if h.0.eq_ignore_ascii_case("signature-input") {
+            h.1 = h.1.replace(" \"mcp-re-delegation\"", "");
+        }
+    }
+    out.push(d202_fixture(
+        "h48_delegated_202_credential_uncovered",
+        d202_check(&uncovered, &note, false),
+        "mcp-re.missing_envelope",
+    ));
+
+    // h49 — revoked delegated key: the revocation seam is live.
+    out.push(d202_fixture(
+        "h49_delegated_202_revoked",
+        d202_check(&ack, &note, true),
+        "mcp-re.delegation_revoked",
+    ));
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Admission fixtures (#414 §4.3/§5, #415 §7).
+// ---------------------------------------------------------------------------
+
+const ADMISSION_ISSUER_KID: &str = "admission-root-1";
+
+fn admission_root() -> SigningKey {
+    SigningKey::from_seed_bytes(&[44u8; 32])
+}
+
+fn admission_claims(generation: u64, status: mcp_re_http_profile::AdmissionStatus) -> mcp_re_http_profile::AdmissionClaims {
+    use sha2::Digest;
+    mcp_re_http_profile::AdmissionClaims {
+        iss: "did:example:admission".into(),
+        iat: NOW - 10,
+        nbf: NOW - 10,
+        exp: NOW + 300,
+        jti: format!("adm#{generation}"),
+        aud: mcp_re_http_profile::Audience::One("mcp.example.com".into()),
+        mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        mcp_re_admission_id: "workload-7".into(),
+        mcp_re_admission_generation: generation,
+        mcp_re_admitted_state_digest: mcp_re_core::b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
+        mcp_re_admission_status: status,
+        issuer_kid: ADMISSION_ISSUER_KID.into(),
+    }
+}
+
+fn admission_fixture(
+    name: &str,
+    claims: &mcp_re_http_profile::AdmissionClaims,
+    authoritative: Option<(u64, &str)>,
+    degraded: Option<i64>,
+    expected: &str,
+) -> Fixture {
+    let jws = mcp_re_http_profile::issue_admission_assertion(claims, |input| {
+        mcp_re_core::b64url_decode(&admission_root().sign(input))
+            .map_err(|_| mcp_re_http_profile::HttpProfileError::InvalidSignature)
+    })
+    .expect("issue");
+    let binding = mcp_re_http_profile::AdmissionBinding::opaque_from(claims);
+    Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: name.into(),
+        kind: "admission".into(),
+        expected: expected.into(),
+        request: None,
+        response: None,
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: Some(AdmissionCheck {
+            assertion_jws: jws,
+            binding: serde_json::to_value(&binding).expect("binding serializes"),
+            authoritative_generation: authoritative.map(|(g, _)| g),
+            authoritative_status: authoritative.map(|(_, s)| s.to_owned()),
+            issuer_public_key_b64url: admission_root().public_key().to_b64url(),
+            allow_degraded_mode: degraded.is_some(),
+            degraded_propagation_bound: degraded.unwrap_or(0),
+        }),
+        delegated_202_check: None,
+    }
+}
+
+fn admission_fixtures() -> Vec<Fixture> {
+    use mcp_re_http_profile::AdmissionStatus::*;
+    vec![
+        // h42 — current admitted workload: served.
+        admission_fixture("h42_admission_current_admitted", &admission_claims(5, Admitted), Some((5, "admitted")), None, "verify_ok"),
+        // h43 — the load-bearing case: a valid, fresh, admitted assertion refused
+        //       because the authoritative generation advanced. A snapshot is not currency.
+        admission_fixture("h43_admission_stale_generation", &admission_claims(5, Admitted), Some((6, "admitted")), None, "mcp-re.actor_binding_failed"),
+        // h44 — revoked after issuance.
+        admission_fixture("h44_admission_revoked_after_issuance", &admission_claims(5, Admitted), Some((5, "revoked")), None, "mcp-re.actor_binding_failed"),
+        // h45 — authoritative state unreachable, degraded disabled: fail closed.
+        admission_fixture("h45_admission_state_unreachable_failclosed", &admission_claims(5, Admitted), None, None, "mcp-re.actor_binding_failed"),
+        // h46 — unreachable state within the P bound with degraded enabled: served.
+        admission_fixture("h46_admission_degraded_within_bound", &admission_claims(5, Admitted), None, Some(600), "verify_ok"),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -773,20 +1788,38 @@ fn write_http_profile_fixtures() {
     let root = vectors_root();
     std::fs::create_dir_all(&root).expect("corpus dir");
     let fixtures = build_fixtures();
-    let mut names = Vec::new();
+    let mut entries = Vec::new();
     for f in &fixtures {
-        let path = root.join(format!("{}.json", f.name));
-        std::fs::write(
-            &path,
-            serde_json::to_string_pretty(f).expect("serialize") + "\n",
-        )
-        .expect("write fixture");
-        names.push(format!("{}.json", f.name));
+        let file = format!("{}.json", f.name);
+        let bytes = serde_json::to_string_pretty(f).expect("serialize") + "\n";
+        std::fs::write(root.join(&file), &bytes).expect("write fixture");
+        // Hash the bytes actually written — the artifact a third party will read,
+        // not the in-memory struct they cannot see.
+        entries.push(ManifestEntry {
+            sha256: hex_sha256(bytes.as_bytes()),
+            file,
+        });
     }
+    // Pin the external KAT too (#415 rev 2 §12.2 names external KATs explicitly).
+    // It is NOT generated here — it is a third-party artifact, a signature produced
+    // by python-cryptography independently of ed25519-dalek — which is exactly why
+    // it must be pinned: it is the anchor of the cross-verification claim, and if
+    // it drifted, that claim would silently change meaning while still passing. The
+    // writer hashes it in place and never rewrites it.
+    for external in EXTERNAL_KATS {
+        let bytes = std::fs::read(root.join(external))
+            .unwrap_or_else(|_| panic!("{external}: external KAT must be committed"));
+        entries.push(ManifestEntry {
+            file: (*external).to_owned(),
+            sha256: hex_sha256(&bytes),
+        });
+    }
+
     let manifest = Manifest {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         verify_at_unix: NOW,
-        fixtures: names,
+        corpus_digest: corpus_digest(&entries),
+        fixtures: entries,
     };
     std::fs::write(
         root.join("manifest.json"),
@@ -810,10 +1843,32 @@ fn frozen_http_profile_corpus_verifies() {
     assert_eq!(manifest.schema, "mcp-re-http-profile-conformance/v1");
     assert!(!manifest.fixtures.is_empty(), "corpus must not be empty");
 
-    for name in &manifest.fixtures {
-        let fixture: Fixture =
-            serde_json::from_slice(&std::fs::read(root.join(name)).expect("fixture file"))
-                .expect("fixture parses");
+    // §12.2 content pin: the corpus digest must commit to the manifest's own
+    // entries. A tampered entry (or an entry added/removed) breaks this before any
+    // vector runs — the digest is checked first precisely so a corpus cannot be
+    // edited into agreeing with itself.
+    assert_eq!(
+        corpus_digest(&manifest.fixtures),
+        manifest.corpus_digest,
+        "corpus digest does not commit to the manifest entries"
+    );
+
+    for entry in &manifest.fixtures {
+        let name = &entry.file;
+        let bytes = std::fs::read(root.join(name)).expect("fixture file");
+        // Fail closed BEFORE running: a vector whose bytes do not match the
+        // manifest is not a vector, it is an unknown file with a familiar name.
+        // Running it would report a verdict about something nobody pinned.
+        assert_eq!(
+            hex_sha256(&bytes),
+            entry.sha256,
+            "{name}: fixture bytes do not match the manifest SHA-256"
+        );
+        // An external KAT is pinned by hash but replayed by its own harness.
+        if EXTERNAL_KATS.contains(&name.as_str()) {
+            continue;
+        }
+        let fixture: Fixture = serde_json::from_slice(&bytes).expect("fixture parses");
         let observed = match fixture.kind.as_str() {
             "request" => {
                 let request = from_wire_request(fixture.request.as_ref().expect("request"));
@@ -888,6 +1943,143 @@ fn frozen_http_profile_corpus_verifies() {
                     Ok(()) => "verify_ok".to_owned(),
                     Err(e) => e.wire_code().to_owned(),
                 }
+            }
+            "bodyless_202" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
+                let response = from_wire_response(fixture.response.as_ref().expect("response"));
+                match verify_accepted_202(
+                    &response,
+                    &request,
+                    &resolver(),
+                    &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "delegated_202" => {
+                let check = fixture.delegated_202_check.as_ref().expect("delegated_202_check");
+                let request = from_wire_request(&check.request);
+                let response = from_wire_response(&check.response);
+                let root_key =
+                    mcp_re_core::VerificationKey::from_b64url(&check.root_public_key_b64url)
+                        .expect("root key parses");
+                let root_kid = check.root_kid.clone();
+                let resolve = move |kid: &str, slot: SignerSlot| {
+                    (kid == root_kid && slot == SignerSlot::Response).then(|| ResolvedActor {
+                        identity: ActorIdentity {
+                            role: "server".into(),
+                            trust_domain: "example.com".into(),
+                            subject: "did:example:server".into(),
+                            keyid: kid.into(),
+                        },
+                        verification_key: root_key.clone(),
+                        slot,
+                    })
+                };
+                let auds = [check.verifier_audience.as_str()];
+                let epochs = [check.epoch.as_str()];
+                let expect = mcp_re_http_profile::DelegationExpectations {
+                    policy: VerifierPolicy::default(),
+                    verifier_audiences: &auds,
+                    expected_audience_hash: &check.audience_hash,
+                    accepted_epochs: &epochs,
+                    max_clock_skew: 60,
+                };
+                let revoked_kid = check.revoked;
+                let is_revoked = move |id: &str| revoked_kid && id == D202_DELEGATED_KID;
+                match mcp_re_http_profile::verify_delegated_accepted_202(
+                    &response,
+                    &request,
+                    &resolve,
+                    &expect,
+                    &is_revoked,
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "admission" => {
+                let check = fixture.admission_check.as_ref().expect("admission_check");
+                let binding: mcp_re_http_profile::AdmissionBinding =
+                    serde_json::from_value(check.binding.clone()).expect("binding parses");
+                let issuer_key = mcp_re_core::VerificationKey::from_b64url(
+                    &check.issuer_public_key_b64url,
+                )
+                .expect("issuer key parses");
+                let authoritative = match (&check.authoritative_generation, &check.authoritative_status) {
+                    (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
+                        generation: *g,
+                        status: match s.as_str() {
+                            "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
+                            "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
+                            "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
+                            other => panic!("{name}: unknown status {other}"),
+                        },
+                    }),
+                    _ => None,
+                };
+                let policy = mcp_re_http_profile::AdmissionPolicy {
+                    allow_degraded_mode: check.allow_degraded_mode,
+                    degraded_propagation_bound: check.degraded_propagation_bound,
+                    ..mcp_re_http_profile::AdmissionPolicy::default()
+                };
+                match mcp_re_http_profile::check_admission(
+                    &binding,
+                    &check.assertion_jws,
+                    authoritative.as_ref(),
+                    mcp_re_http_profile::PROFILE_TAG,
+                    &["mcp.example.com"],
+                    &policy,
+                    manifest.verify_at_unix,
+                    |kid: &str| (kid == ADMISSION_ISSUER_KID).then(|| issuer_key.clone()),
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "transport_request" => {
+                let request = from_wire_request(fixture.request.as_ref().expect("request"));
+                // The strict 2026-07-28 contract these fixtures were built under.
+                let policy = VerifierPolicy::default().with_mcp_transport(
+                    mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
+                );
+                match mcp_re_http_profile::verify_request_with_policy(
+                    &request,
+                    &resolver(),
+                    &policy,
+                    manifest.verify_at_unix,
+                ) {
+                    Ok(_) => "verify_ok".to_owned(),
+                    Err(e) => e.wire_code().to_owned(),
+                }
+            }
+            "chain" => {
+                let check = fixture.chain_check.as_ref().expect("chain_check");
+                let hops: Vec<RetainedHop> = check
+                    .hops
+                    .iter()
+                    .map(|h| RetainedHop {
+                        request: from_wire_request(&h.request),
+                        response: from_wire_response(&h.response),
+                    })
+                    .collect();
+                let out = reconstruct_chain(
+                    &hops,
+                    &resolver(),
+                    &VerifierPolicy::default(),
+                    manifest.verify_at_unix,
+                );
+                // The label IS the frozen verdict: an incomplete record must name
+                // the hop that broke it, so the comparison covers WHICH hop too.
+                assert_eq!(
+                    label_token(&out.label),
+                    check.expected_label,
+                    "{name}: chain label drifted from the frozen expectation"
+                );
+                "verify_ok".to_owned()
             }
             "rejection" => {
                 // A rejection carries request context only when bound.

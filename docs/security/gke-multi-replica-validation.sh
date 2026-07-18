@@ -246,11 +246,12 @@ kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis --timeout=300s
 # (ADR-MCPS-049 guardrail), so a green rollout already proves the shared tier is
 # wired. TLS/trust material must be provided as the `mcp-re-tls` Secret.
 log "Deploy fleet ($REPLICAS replicas) — always-maximal-security posture; fleet topology"
-# Canonical inner endpoint is `/mcp` WITHOUT a trailing slash: FastMCP 307-redirects
-# `/mcp/` -> `/mcp`, and the proxy's raw hyper inner client does NOT follow redirects
-# (it maps the 307 to a fail-closed "inner unavailable"). Match http_inner.rs's own
-# convention (`http://host:port/mcp`).
-INNER_URL="http://mcp-re-inner-fastmcp:$(port_of mcp_re_inner_backend)/mcp"
+# Canonical inner endpoint is `/mcp/` WITH a trailing slash: FastMCP mounts Streamable
+# HTTP at `/mcp/` and 307-redirects `/mcp` -> `/mcp/`. The proxy's raw hyper inner
+# client does NOT follow redirects (it maps a non-2xx, the 307 included, to a
+# fail-closed "inner unavailable"), so it must POST straight to `/mcp/`. Matches the
+# helm example in deploy/k8s/inner-fastmcp.yaml.
+INNER_URL="http://mcp-re-inner-fastmcp:$(port_of mcp_re_inner_backend)/mcp/"
 
 # Signing-key custody (ADR-MCPRE-052 delegated-required ROOT ISSUER, off the request
 # path). Default gcpKms — the branch's subject. The custody CODE is identical on both

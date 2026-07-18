@@ -1176,9 +1176,11 @@ fn load_harness_smoke() {
         )
         .expect("delegated signed response verifies and binds to the request");
         assert_eq!(verified.outcome, DelegatedOutcome::Success);
-        assert_eq!(
+        // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
+        // under test is that a DELEGATED key signed, not the root directly.
+        assert_ne!(
             verified.verified.server_signer.as_ref().expect("delegated signer").keyid,
-            format!("{SERVER_KEY_ID}/delegated/1"),
+            SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );
     }

@@ -42,7 +42,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:FpMw2+CHUDI6jpL5MlmlHXnrVUW2e8+aPJupke21lHA=:"
+        "sha-256=:nf7HganqzCF7kYUfedo0yckDHsp+TIGL+ZT1/pTm36U=:"
       ],
       [
         "Signature-Input",
@@ -50,10 +50,10 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:+R+R7hwSZo0EWdBuGXWdwt77kp6t8JU9pcgM1CQFZGlBr25Vfj/BzoOoGkwWRidFHSH8jmE9MPk1AGw2HZ2BAg==:"
+        "mcp-re-response=:kpAJs+DbasMzu2Gnd82nyf4uBujJwObY4DZWvWiKS5xzYrdW/d+RmNZ1zMJHB2sbvnVTZwWUrUoSmhQMJOGuCQ==:"
       ]
     ],
-    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"EBKPx6iyLDnay5v_pWkh9wBk05TQw0Pzt3YVtgpyWII\"},\"server_delegation\":\"eyJ0eXAiOiJtY3AtcmUtZGVsZWdhdGlvbitqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6InJvb3Qta2lkIn0.eyJpc3MiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXIiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAxMDEwMCwiZXhwIjoxNzAwMDIwMTAwLCJqdGkiOiJldnQtMSIsImF1ZCI6InZlcmlmaWVyLTEiLCJtY3BfcmVfcHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwibWNwX3JlX2F1ZGllbmNlX2hhc2giOiJhdWQtc2NvcGUtMSIsIm1jcF9yZV9zZXJ2ZXJfc2lnbmVyIjoic2VydmVyOmV4YW1wbGUuY29tOmRpZCUzQWV4YW1wbGUlM0FzZXJ2ZXI6cm9vdC1raWQvZGVsZWdhdGVkLzEiLCJtY3BfcmVfa2V5X3VzZSI6InJlc3BvbnNlLXNpZ25pbmciLCJkZWxlZ2F0ZWRfa2lkIjoicm9vdC1raWQvZGVsZWdhdGVkLzEiLCJpc3N1ZXJfa2lkIjoicm9vdC1raWQiLCJ0cnVzdF9lcG9jaCI6ImVwb2NoLTEiLCJjbmYiOnsiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJyb290LWtpZC9kZWxlZ2F0ZWQvMSIsIngiOiJsSFhHenc3YU5BVjFLTmhwUjRIc3lTcldPZGZpdlNkMkh0UHZkSkpMNndjIn19fQ.blJ4U-yQvKXDXa9q3EOB1ymrtwwO9WnP3xfL8p2CIxXUk_NwsiaoTVfmCjX1DJCGms10S7CPgA9mx3X5-9owDw\",\"server_signer\":{\"keyid\":\"root-kid/delegated/1\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
+    "body_utf8": "{\"_meta\":{\"se.syncom/mcp-re.http.response\":{\"profile\":\"mcp-re-http-v1\",\"request_evidence\":{\"digest_alg\":\"sha256\",\"digest_value\":\"uJyy8hs7WKIicvrs4ifwhDXJ17SC7r__TOXBftyHO7Q\"},\"server_delegation\":\"eyJ0eXAiOiJtY3AtcmUtZGVsZWdhdGlvbitqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6InJvb3Qta2lkIn0.eyJpc3MiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXIiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAxMDEwMCwiZXhwIjoxNzAwMDIwMTAwLCJqdGkiOiJldnQtMSIsImF1ZCI6InZlcmlmaWVyLTEiLCJtY3BfcmVfcHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwibWNwX3JlX2F1ZGllbmNlX2hhc2giOiJhdWQtc2NvcGUtMSIsIm1jcF9yZV9zZXJ2ZXJfc2lnbmVyIjoic2VydmVyOmV4YW1wbGUuY29tOmRpZCUzQWV4YW1wbGUlM0FzZXJ2ZXI6cm9vdC1raWQvZGVsZWdhdGVkLzEiLCJtY3BfcmVfa2V5X3VzZSI6InJlc3BvbnNlLXNpZ25pbmciLCJkZWxlZ2F0ZWRfa2lkIjoicm9vdC1raWQvZGVsZWdhdGVkLzEiLCJpc3N1ZXJfa2lkIjoicm9vdC1raWQiLCJ0cnVzdF9lcG9jaCI6ImVwb2NoLTEiLCJjbmYiOnsiandrIjp7Imt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJyb290LWtpZC9kZWxlZ2F0ZWQvMSIsIngiOiJsSFhHenc3YU5BVjFLTmhwUjRIc3lTcldPZGZpdlNkMkh0UHZkSkpMNndjIn19fQ.blJ4U-yQvKXDXa9q3EOB1ymrtwwO9WnP3xfL8p2CIxXUk_NwsiaoTVfmCjX1DJCGms10S7CPgA9mx3X5-9owDw\",\"server_signer\":{\"keyid\":\"root-kid/delegated/1\",\"role\":\"server\",\"subject\":\"did:example:server\",\"trust_domain\":\"example.com\"}}},\"id\":1,\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true}}"
   },
   "check": {
     "verifier_audiences": [

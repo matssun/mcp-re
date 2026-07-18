@@ -1,0 +1,62 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h49_delegated_202_revoked",
+  "kind": "delegated_202",
+  "expected": "mcp-re.delegation_revoked",
+  "delegated_202_check": {
+    "request": {
+      "method": "POST",
+      "target_uri": "https://mcp.example.com/mcp",
+      "status": null,
+      "headers": [
+        [
+          "Content-Type",
+          "application/json"
+        ],
+        [
+          "Content-Digest",
+          "sha-256=:WZUcoLISsQOHb6I6nli8u8j7zAEg4/XuchRGHivRzV4=:"
+        ],
+        [
+          "Signature-Input",
+          "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-d202\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        ],
+        [
+          "Signature",
+          "mcp-re=:SM5rRzz7o6BbnuNq7OwYQ9tnGPPIoTO8oDvCwJCgiuyTn7EywdoZRy5mjnBAoRAQulg5oVLYzLlAksxu7HhEAg==:"
+        ]
+      ],
+      "body_utf8": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"
+    },
+    "response": {
+      "method": null,
+      "target_uri": null,
+      "status": 202,
+      "headers": [
+        [
+          "Content-Digest",
+          "sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:"
+        ],
+        [
+          "mcp-re-delegation",
+          "eyJ0eXAiOiJtY3AtcmUtZGVsZWdhdGlvbitqd3QiLCJhbGciOiJFZERTQSIsImtpZCI6InJvb3Qta2lkIn0.eyJpc3MiOiJkaWQ6ZXhhbXBsZTpzZXJ2ZXIiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMzAwLCJqdGkiOiJldnQtMjAyIiwiYXVkIjoidmVyaWZpZXItMSIsIm1jcF9yZV9wcm9maWxlIjoibWNwLXJlLWh0dHAtdjEiLCJtY3BfcmVfYXVkaWVuY2VfaGFzaCI6ImF1ZC1zY29wZS0xIiwibWNwX3JlX3NlcnZlcl9zaWduZXIiOiJzZXJ2ZXI6ZXhhbXBsZS5jb206ZGlkJTNBZXhhbXBsZSUzQXNlcnZlcjpkZWxlZ2F0ZWQta2lkLTEiLCJtY3BfcmVfa2V5X3VzZSI6InJlc3BvbnNlLXNpZ25pbmciLCJkZWxlZ2F0ZWRfa2lkIjoiZGVsZWdhdGVkLWtpZC0xIiwiaXNzdWVyX2tpZCI6InJvb3Qta2lkIiwidHJ1c3RfZXBvY2giOiJlcG9jaC0xIiwiY25mIjp7Imp3ayI6eyJrdHkiOiJPS1AiLCJjcnYiOiJFZDI1NTE5Iiwia2lkIjoiZGVsZWdhdGVkLWtpZC0xIiwieCI6IkxJU0syR1pPNWxIa2lXd1RxRXFKb3BaS3lsNjNlb3VJSG1EZTFjZ2JUcDAifX19.0wFxj27yUtGLS-oCJTsn1qvfHCE4WByhMg2FsbO3-hokWBi-p5HWbOomhNX9GqRvBvS_P_0z5g1I_ilTOifKAQ"
+        ],
+        [
+          "Signature-Input",
+          "mcp-re-response=(\"@status\" \"content-digest\" \"mcp-re-delegation\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"delegated-kid-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        ],
+        [
+          "Signature",
+          "mcp-re-response=:siV41E/pPTymmZlvJlK50dqOhfkbsfMzvNW2ceLEcSXUt3NGNihkUnyt6RvWhFtzhxcD8sYIKMx6eYVxljjtCQ==:"
+        ]
+      ],
+      "body_utf8": ""
+    },
+    "root_public_key_b64url": "iEuIV_TqoWE8YVBNs01L6vNGUXoOMd483dTZtCAdnQs",
+    "root_kid": "root-kid",
+    "verifier_audience": "verifier-1",
+    "audience_hash": "aud-scope-1",
+    "epoch": "epoch-1",
+    "revoked": true
+  }
+}

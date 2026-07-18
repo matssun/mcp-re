@@ -185,6 +185,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidenc
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let ev = sign_request_full(
         &mut req,
@@ -238,6 +239,7 @@ fn custody_cfg() -> CustodyConfig {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,

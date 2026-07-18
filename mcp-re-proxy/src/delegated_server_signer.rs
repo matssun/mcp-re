@@ -336,7 +336,14 @@ mod tests {
         let (mut rotor, signer) = rotor();
         rotor.rotate(NOW).expect("issue");
         let snap = signer.current(NOW).expect("a key is published");
-        assert_eq!(snap.delegated_kid, format!("{ROOT_KID}/delegated/1"));
+        // Profile-issued keys carry the RFC 7638 thumbprint of their own key as
+        // their kid (#415 rev 2 §1.5); the rotor's factory mints seed [101; 32] first.
+        assert_eq!(
+            snap.delegated_kid,
+            mcp_re_http_profile::jwk_thumbprint_ed25519(
+                &SigningKey::from_seed_bytes(&[101u8; 32]).public_key().to_b64url()
+            )
+        );
         assert_eq!(rotor.root_invocations(), 1);
     }
 
@@ -410,7 +417,12 @@ mod tests {
         // K1 issues and serves.
         rotor.rotate(NOW).expect("K1 issues");
         let k1 = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
-        assert_eq!(k1, format!("{ROOT_KID}/delegated/1"));
+        assert_eq!(
+            k1,
+            mcp_re_http_profile::jwk_thumbprint_ed25519(
+                &SigningKey::from_seed_bytes(&[101u8; 32]).public_key().to_b64url()
+            )
+        );
 
         // Inside the overlap window the successor cannot be minted. The rotor keeps K1
         // (rotate stays Ok) instead of retiring — serving does not gap while K1 is

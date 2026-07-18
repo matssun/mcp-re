@@ -107,6 +107,7 @@ impl RequestSigningInputs {
             audience: self.audience.clone(),
             artifact_bindings: self.artifact_bindings.clone(),
             continuation: self.continuation.clone(),
+            admission: None,
         }
     }
 }

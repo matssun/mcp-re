@@ -129,6 +129,7 @@ fn full_block() -> HttpRequestEvidenceBlock {
             ArtifactBinding::opaque_digest(ArtifactType::OauthRar, RAR_DETAILS),
         ],
         continuation: Some(HttpContinuation::build(PREV_BASE, IRR_BASE, REQ_STATE)),
+        admission: None,
     }
 }
 

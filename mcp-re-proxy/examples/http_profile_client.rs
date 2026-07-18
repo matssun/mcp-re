@@ -55,6 +55,7 @@ fn main() {
     let verifier_audiences = [hpp_common::AUDIENCE_ID];
     let accepted_epochs = [hpp_common::EPOCH];
     let expect = DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &verifier_audiences,
         expected_audience_hash: hpp_common::AUD_SCOPE,
         accepted_epochs: &accepted_epochs,
@@ -85,6 +86,7 @@ fn main() {
             hpp_common::ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let nonce = format!("nonce-{now}");
     let mut request = HttpRequest {

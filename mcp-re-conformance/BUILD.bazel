@@ -240,6 +240,7 @@ nt_rust_test(
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
     ],
 )
 
@@ -285,6 +286,7 @@ nt_rust_test(
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
     ],
 )
 
@@ -344,5 +346,39 @@ nt_rust_test(
     deps = [
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
+    ],
+)
+
+nt_rust_test(
+    name = "corpus_pinning_test",
+    srcs = ["tests/corpus_pinning_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob([
+        "tests/vectors/http-profile/**",
+        "tests/vectors/delegation-profile/**",
+    ]),
+    edition = "2021",
+    env = {
+        "MCP_RE_HTTP_PROFILE_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/http-profile/manifest.json)",
+        "MCP_RE_DELEGATION_VECTORS_MANIFEST": "$(rlocationpath tests/vectors/delegation-profile/manifest.json)",
+    },
+    deps = [
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
+    ],
+)
+
+nt_rust_test(
+    name = "mcp_2026_07_28_alignment_test",
+    srcs = ["tests/mcp_2026_07_28_alignment_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
     ],
 )

@@ -56,6 +56,7 @@ fn block() -> HttpRequestEvidenceBlock {
         audience: audience(),
         artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, TOKEN.as_bytes())],
         continuation: None,
+            admission: None,
     }
 }
 

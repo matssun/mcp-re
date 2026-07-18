@@ -6,7 +6,7 @@
 # in-process echo backend over mTLS) on a DECLARED GKE machine class, and prints
 # the machine-readable report between markers so a K8s Job can surface it via logs.
 #
-#   docker build -f deploy/docker/Dockerfile.bench -t mcp-re-slo-bench:0.12.1 .
+#   docker build -f deploy/docker/Dockerfile.bench -t mcp-re-slo-bench:0.13.0 .
 #
 # Drive per run with env: MCP_RE_LOADGEN_HW_CLASS (the machine class label),
 # MCP_RE_LOADGEN_CORES (1 then N for the scaling curve). Envelope defaults

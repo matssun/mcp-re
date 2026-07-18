@@ -145,6 +145,7 @@ fn build_proxy() -> HttpProfileProxy {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: VERIFIER_AUD,
         accepted_epochs: epochs,
@@ -163,6 +164,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -256,9 +258,12 @@ async fn rfc9421_round_trip_zero_object_evidence() {
         NOW,
     )
     .expect("client verifies the delegated RFC 9421 response bound to its request");
-    assert_eq!(
+    // The chain to the trusted root is what `verify_delegated_response_full` above
+    // just established; the kid is an RFC 7638 thumbprint (#415 rev 2 §1.5), so what
+    // it asserts here is that a delegated key — not the root — signed.
+    assert_ne!(
         verified.server_signer.as_ref().unwrap().keyid,
-        format!("{ROOT_KID}/delegated/1"),
+        ROOT_KID,
         "response signed by the delegated key (chaining to the trusted root)"
     );
 }

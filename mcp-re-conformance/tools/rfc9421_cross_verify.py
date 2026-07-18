@@ -26,6 +26,7 @@ Exit code 0 == gate passes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -202,9 +203,22 @@ def main() -> int:
     manifest = json.loads((corpus / "manifest.json").read_text())
 
     checked = 0
-    for name in manifest["fixtures"]:
-        fx = json.loads((corpus / name).read_text())
-        if fx["name"] not in POSITIVE:
+    for entry in manifest["fixtures"]:
+        # Manifest entries are content-pinned (#415 rev 2 §12.2, MCPRE-427): each is
+        # {file, sha256}. As the third-party verifier, check the pin before reading —
+        # the whole point of §12.2 is that a reviewer proves it read the same bytes.
+        name = entry["file"]
+        raw = (corpus / name).read_bytes()
+        want_hash = entry["sha256"]
+        got_hash = hashlib.sha256(raw).hexdigest()
+        if got_hash != want_hash:
+            print(f"FAIL {name}: manifest sha256 mismatch\n  file={got_hash}\n  manifest={want_hash}")
+            return 1
+        fx = json.loads(raw)
+        # The manifest also pins the external KAT (a third-party artifact with no
+        # Fixture `name`); its hash is checked above, and it is replayed by its own
+        # harness, not this positive-fixture loop.
+        if fx.get("name") not in POSITIVE:
             continue
         base = verify_fixture(fx)
         # Byte-compare h01's reconstructed base against the frozen oracle.

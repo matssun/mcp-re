@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-conformance"
-version = "0.12.1"
+version = "0.13.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -27,6 +27,9 @@ mcp-re-client-core = { path = "../mcp-re-client-core" }
 # owning the conformance runner), generated and frozen via the http-profile
 # proof-path implementation.
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+# MCPRE-427 (#415 rev 2 §12.2): the corpus manifests carry a per-file SHA-256 and
+# a corpus digest, so the vector loaders hash fixture bytes before running them.
+sha2 = { workspace = true }
 
 [lib]
 name = "mcp_re_conformance"

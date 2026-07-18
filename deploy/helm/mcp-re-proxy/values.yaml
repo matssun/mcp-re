@@ -10,7 +10,7 @@ replicaCount: 3
 image:
   repository: mcp-re-proxy
   # Pin to a digest in production; a tag is shown here for readability.
-  tag: "0.12.1"
+  tag: "0.13.0"
   pullPolicy: IfNotPresent
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket

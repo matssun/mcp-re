@@ -1,0 +1,34 @@
+{
+  "schema": "mcp-re-http-profile-conformance/v1",
+  "name": "h39_transport_required_header_absent",
+  "kind": "transport_request",
+  "expected": "mcp-re.missing_envelope",
+  "request": {
+    "method": "POST",
+    "target_uri": "https://mcp.example.com/mcp",
+    "status": null,
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "MCP-Protocol-Version",
+        "2026-07-28"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:5pIPUWpE6SDON1D+oiovQdHgCrt3/57s81sDpeShrXQ=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"mcp-protocol-version\");created=1700000000;expires=1700000300;nonce=\"vec-nonce-tx-miss\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:h21jmpGR+j6oBfV/NBE6U+hn5m4GELzyfrtNgjhQJKC48abciW00p7hMalC3LmRwpZ0WfZBm+8HUU7C7OvrtAg==:"
+      ]
+    ],
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"
+  }
+}

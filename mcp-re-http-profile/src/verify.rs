@@ -27,7 +27,9 @@ use crate::delegation::DelegationVerifyParams;
 use crate::digest::verify_content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
-use crate::ids::ALG_ED25519;
+use crate::ids::MCP_METHOD_HEADER;
+use crate::ids::MCP_NAME_HEADER;
+use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
@@ -37,10 +39,13 @@ use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
+use crate::message::require_json_media_type;
 use crate::message::required_header;
 use crate::message::single_header;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
+use crate::policy::ProfileAlgorithm;
+use crate::policy::VerifierPolicy;
 use crate::sigbase::signature_base;
 use crate::sigbase::CoveredComponent;
 use crate::sigbase::SignatureParams;
@@ -123,7 +128,7 @@ pub struct VerifiedHttpResponseEvidence {
 /// and fails `actor_binding_failed`. The verifier additionally asserts the
 /// returned actor is vouched for the slot it asked for — never a role-string
 /// comparison — so a resolver that hands back a wrong-slot actor is also caught.
-fn resolve_actor_for(
+pub(crate) fn resolve_actor_for_slot(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     key_id: &str,
     slot: SignerSlot,
@@ -136,9 +141,9 @@ fn resolve_actor_for(
 }
 
 /// One parsed `Signature-Input` dictionary member.
-struct ParsedSignatureInput {
-    components: Vec<CoveredComponent>,
-    params: SignatureParams,
+pub(crate) struct ParsedSignatureInput {
+    pub(crate) components: Vec<CoveredComponent>,
+    pub(crate) params: SignatureParams,
 }
 
 /// Split a Structured Fields dictionary into members at top-level commas
@@ -219,6 +224,16 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             "content-length" => "content-length",
             "authorization" => "authorization",
             "dpop" => "dpop",
+            // MCP transport headers (§4.1). Coverable so a deployment whose
+            // protocol version defines them can bind them; still fail-closed for
+            // everything outside this set.
+            "mcp-method" => "mcp-method",
+            "mcp-name" => "mcp-name",
+            "mcp-protocol-version" => "mcp-protocol-version",
+            // The delegation-credential header on a delegated bodyless 202
+            // (#424): coverable so the credential it carries is protected by the
+            // response signature. Only the bodyless-202 path requires it.
+            "mcp-re-delegation" => "mcp-re-delegation",
             _ => {
                 return Err(HttpProfileError::MalformedEvidence(
                     "unknown covered component",
@@ -291,22 +306,40 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
 }
 
 /// Shared parameter gate: tag, algorithm, freshness window, keyid presence.
+///
+/// Algorithm acceptance and clock-skew tolerance are read from `policy`, never
+/// from the message (§13.1 / §5.1): the signature parameters state what the
+/// signer did, the policy states what this verifier accepts.
 fn check_params(
     params: &SignatureParams,
+    policy: &VerifierPolicy,
     now: i64,
     require_nonce: bool,
-) -> Result<(i64, i64, String, String), HttpProfileError> {
+) -> Result<(i64, i64, String, String, ProfileAlgorithm), HttpProfileError> {
     match params.tag.as_deref() {
         Some(PROFILE_TAG) => {}
         _ => return Err(HttpProfileError::UnknownProfileTag),
     }
-    match params.alg.as_deref() {
-        Some(ALG_ED25519) => {}
-        _ => return Err(HttpProfileError::UnsupportedAlgorithm),
-    }
+    // Resolve the DECLARED algorithm to one this verifier both accepts and can
+    // check. The resolved value is returned, not discarded, so every caller must
+    // dispatch on it — "is it allowed" and "what verifies it" are one answer.
+    let algorithm = params
+        .alg
+        .as_deref()
+        .and_then(|alg| policy.accepted_algorithm(alg))
+        .ok_or(HttpProfileError::UnsupportedAlgorithm)?;
     let created = params.created.ok_or(HttpProfileError::StaleWindow)?;
     let expires = params.expires.ok_or(HttpProfileError::StaleWindow)?;
-    if created > now || expires <= now || expires <= created {
+    // Freshness with a bounded, symmetric skew tolerance (§5.1): a `created`
+    // slightly in the future and an `expires` slightly in the past are honest
+    // clock disagreement, not evidence of staleness. `expires <= created` is
+    // skew-free — a degenerate window is a property of the message itself, and
+    // no amount of clock disagreement makes it well-formed.
+    let skew = policy.max_clock_skew();
+    if created.saturating_sub(skew) > now
+        || expires.saturating_add(skew) <= now
+        || expires <= created
+    {
         return Err(HttpProfileError::StaleWindow);
     }
     let nonce = match (&params.nonce, require_nonce) {
@@ -318,7 +351,7 @@ fn check_params(
         .keyid
         .clone()
         .ok_or(HttpProfileError::MissingEvidence("keyid"))?;
-    Ok((created, expires, nonce, key_id))
+    Ok((created, expires, nonce, key_id, algorithm))
 }
 
 /// The `Signature` header's byte sequence for `label`, transcoded to the
@@ -339,6 +372,120 @@ fn signature_value_b64url(
         ))?;
     let bytes = base64_standard_decode(b64)?;
     Ok(mcp_re_core::b64url_encode(&bytes))
+}
+
+/// The MCP transport headers this profile can cover (§4.1).
+///
+/// `mcp-session-id` is deliberately ABSENT. Protocol sessions are a 2025-11-25
+/// concept that MCP 2026-07-28 removes, and MCP-RE never adopted them: its
+/// serving path is stateless per-request by design (ADR-MCPRE-051), so there is
+/// no session for a session id to identify. Covering a header whose referent does
+/// not exist would manufacture the appearance of a binding over nothing. If a
+/// deployment sends one anyway it is simply not coverable, and the closed
+/// allowlist rejects it as an unknown covered component — which is the correct
+/// answer, not an oversight.
+const MCP_COVERABLE_TRANSPORT_HEADERS: [&str; 3] = [
+    MCP_METHOD_HEADER,
+    MCP_NAME_HEADER,
+    MCP_PROTOCOL_VERSION_HEADER,
+];
+
+/// Reject a request whose covered `Mcp-Method` header disagrees with the JSON-RPC
+/// `method` in its covered body (§4.1).
+///
+/// Both values are protected by the signature by the time this runs, so a
+/// disagreement is not tampering — it is the signer making two contradictory
+/// statements about what it is asking for. The verifier refuses rather than
+/// choosing a winner: the whole point of the transport header is that
+/// intermediaries may read it, and an intermediary reading `tools/list` while the
+/// server executes `tools/call` is precisely the divergence §4.1 closes.
+///
+/// The body is authoritative wherever this profile acts (ADR-MCPS-025); this does
+/// not change that. It ensures the header cannot CLAIM otherwise.
+fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), HttpProfileError> {
+    let Some(header_method) = single_header(&request.headers, MCP_METHOD_HEADER)? else {
+        return Ok(());
+    };
+    let body: serde_json::Value = serde_json::from_slice(&request.body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+    // A body with no `method` is a response/notification shape; there is nothing
+    // to diverge from, and the request-shape rules are not this function's job.
+    let Some(body_method) = body.get("method").and_then(|m| m.as_str()) else {
+        return Ok(());
+    };
+    if header_method.trim() != body_method {
+        return Err(HttpProfileError::McpMethodDivergence);
+    }
+    Ok(())
+}
+
+/// Verify `sig` over `base` under the RESOLVED algorithm.
+///
+/// The match is exhaustive over [`ProfileAlgorithm`], which is the point: a new
+/// algorithm variant does not compile until its verifier is wired here. Before
+/// this existed, every path called the Ed25519 verifier unconditionally, so a
+/// policy that allowlisted an unimplemented algorithm accepted a message
+/// declaring it while Ed25519 was what actually ran — algorithm confusion. The
+/// policy now makes such a set unconstructible AND this dispatch makes the
+/// verifier-per-algorithm coupling explicit rather than assumed.
+pub(crate) fn verify_under(
+    algorithm: ProfileAlgorithm,
+    base: &[u8],
+    sig: &str,
+    key: &mcp_re_core::VerificationKey,
+    on_fail: McpReError,
+) -> Result<(), HttpProfileError> {
+    let failure = match on_fail {
+        McpReError::ResponseSigInvalid => HttpProfileError::ResponseSignatureInvalid,
+        _ => HttpProfileError::InvalidSignature,
+    };
+    match algorithm {
+        ProfileAlgorithm::Ed25519 => {
+            verify_ed25519_with(base, sig, key, on_fail).map_err(|_| failure)
+        }
+    }
+}
+
+/// Parse the `Signature-Input` member for `label`. Shared with the bodyless
+/// component sets (`crate::bodyless`) so both read one grammar: a second parser
+/// would be a second place for the closed allowlist to drift.
+pub(crate) fn parse_signature_input_for(
+    headers: &[(String, String)],
+    label: &str,
+    what: &'static str,
+) -> Result<ParsedSignatureInput, HttpProfileError> {
+    let input_header =
+        required_header(headers, "signature-input").map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    parse_signature_input(member_value(input_header, label)?)
+}
+
+/// [`require_components`] for the bodyless sets — same enforcement, invoked with
+/// a different NAMED set.
+pub(crate) fn require_components_for(
+    covered: &[CoveredComponent],
+    required_plain: &[&'static str],
+    required_req: &[&'static str],
+) -> Result<(), HttpProfileError> {
+    require_components(covered, required_plain, required_req)
+}
+
+/// [`check_params`] shared with the bodyless sets: tag, allowlisted algorithm,
+/// bounded-skew freshness, keyid.
+pub(crate) fn check_params_for(
+    params: &SignatureParams,
+    policy: &VerifierPolicy,
+    now: i64,
+    require_nonce: bool,
+) -> Result<(i64, i64, String, String, ProfileAlgorithm), HttpProfileError> {
+    check_params(params, policy, now, require_nonce)
+}
+
+/// The `Signature` byte sequence for `label`, base64url-transcoded.
+pub(crate) fn signature_value_for(
+    headers: &[(String, String)],
+    label: &str,
+) -> Result<String, HttpProfileError> {
+    signature_value_b64url(headers, "signature", label)
 }
 
 fn require_components(
@@ -368,7 +515,23 @@ pub fn verify_request(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+    verify_request_with_policy(request, resolve_actor, &VerifierPolicy::default(), now)
+}
+
+/// [`verify_request`] under an explicit verifier-local [`VerifierPolicy`] —
+/// the algorithm allowlist (§13.1) and the bounded clock-skew tolerance (§5.1).
+/// [`verify_request`] is this function at [`VerifierPolicy::default`].
+pub fn verify_request_with_policy(
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     reject_content_encoding(&request.headers)?;
+    // JSON mode (§3.4): a covered exchange carries JSON. Checked before the
+    // content binding — there is no point digesting a body the profile could not
+    // make an evidence statement about anyway.
+    require_json_media_type(&request.headers, "request content-type")?;
 
     // 1. Content binding first: the body must match its digest before any
     //    signature statement about that digest is even considered.
@@ -396,11 +559,25 @@ pub fn verify_request(
     {
         return Err(HttpProfileError::MissingCoveredComponent("dpop"));
     }
-    let (created, expires, nonce, key_id) = check_params(&parsed.params, now, true)?;
+    // MCP transport headers (§4.1): conditionally mandatory on exactly the
+    // `authorization`/`dpop` pattern above — present means covered. Presence is
+    // the condition rather than a configured protocol version because that is the
+    // question the verifier can actually answer from the message in front of it:
+    // if the sender put the header on the wire, the signature covers it or the
+    // request is rejected. A deployment whose version does not define these
+    // simply never sends them, and nothing here fires.
+    for header in MCP_COVERABLE_TRANSPORT_HEADERS {
+        if single_header(&request.headers, header)?.is_some()
+            && !parsed.components.iter().any(|c| c.name == header)
+        {
+            return Err(HttpProfileError::MissingCoveredComponent(header));
+        }
+    }
+    let (created, expires, nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
     //    and a key not trusted to sign requests fails actor_binding_failed.
-    let resolved_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Request)?;
+    let resolved_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
     // 4. Signature over the reconstructed base.
     let base = signature_base(
         &parsed.components,
@@ -408,15 +585,31 @@ pub fn verify_request(
         &SourceMessage::Request(request),
     )?;
     let sig = signature_value_b64url(&request.headers, "signature", REQUEST_LABEL)?;
-    verify_ed25519_with(
+    verify_under(
+        algorithm,
         &base,
         &sig,
         &resolved_actor.verification_key,
         McpReError::InvalidSignature,
-    )
-    .map_err(|_| HttpProfileError::InvalidSignature)?;
+    )?;
 
-    // 5. Derive the handle from the exact verified base and return the full
+    // 5. MCP transport contract (§4.1). Deliberately AFTER the signature: before
+    //    it, both sides of every comparison are unauthenticated, and two attacker-
+    //    chosen strings agreeing proves nothing. Once the signature verifies, a
+    //    present `mcp-*` header is covered (the closed-allowlist gate enforced
+    //    present ⇒ covered) and the body is covered via `content-digest`.
+    //
+    //    The `mcp-method`/body agreement is ALWAYS checked — a covered header must
+    //    never lie about the signed body, regardless of policy. Required-header
+    //    presence, the supported-version set, and `mcp-name` agreement are the
+    //    configurable part, enforced only when the deployment attached a transport
+    //    policy.
+    reject_mcp_method_divergence(request)?;
+    if let Some(transport) = policy.mcp_transport() {
+        transport.enforce(request)?;
+    }
+
+    // 6. Derive the handle from the exact verified base and return the full
     //    verified evidence context.
     Ok(VerifiedHttpRequestEvidence {
         profile_id: PROFILE_TAG.to_owned(),
@@ -455,8 +648,27 @@ pub fn verify_request_full(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
+    verify_request_full_with_policy(
+        request,
+        expected_audience,
+        artifact_material,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_request_full`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_request_full_with_policy(
+    request: &HttpRequest,
+    expected_audience: &AudienceTuple,
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     // 1. Cryptographic floor: content digest, evidence, trust, signature.
-    let mut verified = verify_request(request, resolve_actor, now)?;
+    let mut verified = verify_request_with_policy(request, resolve_actor, policy, now)?;
 
     // 2. Parse the request evidence block — protected because content-digest is a
     //    covered component of the signature just verified.
@@ -512,7 +724,27 @@ pub fn verify_response(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_with_policy(
+        response,
+        request,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_response`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_with_policy(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): an SSE response to a covered request is a profile
+    // violation, not a streaming opt-in.
+    require_json_media_type(&response.headers, "response content-type")?;
 
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
@@ -526,27 +758,27 @@ pub fn verify_response(
         &REQUIRED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, false)?;
 
     // Trust resolution for the RESPONSE slot: a request-signer key presented on
     // a response fails actor_binding_failed.
-    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::Response { response, request },
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(
+    verify_under(
+        algorithm,
         &base,
         &sig,
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
-    )
-    .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    )?;
     Ok(VerifiedHttpResponseEvidence {
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
@@ -598,8 +830,27 @@ pub fn verify_response_bound_full(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_bound_full_with_policy(
+        response,
+        request,
+        bound_request_evidence,
+        resolve_actor,
+        &VerifierPolicy::default(),
+        now,
+    )
+}
+
+/// [`verify_response_bound_full`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_bound_full_with_policy(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    bound_request_evidence: &RequestEvidence,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // 1. Cryptographic floor incl. the ;req binding to `request`.
-    let mut evidence = verify_response(response, request, resolve_actor, now)?;
+    let mut evidence = verify_response_with_policy(response, request, resolve_actor, policy, now)?;
 
     // 2. Parse the response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -637,6 +888,10 @@ pub fn verify_response_bound_full(
 /// (ADR-MCPRE-052 §3). Supplied by the integration layer from the active profile,
 /// the verified request context, and the deployment's epoch/audience policy.
 pub struct DelegationExpectations<'a> {
+    /// The verifier-local acceptance policy for the RFC 9421 response signature
+    /// itself — the algorithm allowlist (§13.1) and bounded skew (§5.1). Distinct
+    /// from `max_clock_skew` below, which governs the CREDENTIAL's own window.
+    pub policy: VerifierPolicy,
     /// This verifier's own audience identifier(s); the credential's `aud` must
     /// name one (§3 step 5).
     pub verifier_audiences: &'a [&'a str],
@@ -711,6 +966,9 @@ pub fn verify_delegated_response_bound_full(
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // Content-digest floor (same as verify_response).
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): the delegated path gets the same gate — a credential
+    // chain to the root does not make a stream evidenceable.
+    require_json_media_type(&response.headers, "response content-type")?;
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
@@ -724,7 +982,8 @@ pub fn verify_delegated_response_bound_full(
         &REQUIRED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, &expect.policy, now, false)?;
 
     // Response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -772,7 +1031,8 @@ pub fn verify_delegated_response_bound_full(
         &SourceMessage::Response { response, request },
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(
+    verify_under(
+        algorithm,
         &base,
         &sig,
         &verified.delegated_key,
@@ -798,7 +1058,7 @@ pub fn verify_delegated_response_bound_full(
             verification_key: verified.delegated_key,
             slot: SignerSlot::Response,
         },
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: Some(bound.clone()),
         body_request_evidence: Some(RequestEvidence {
             digest_alg: block.request_evidence.digest_alg.clone(),
@@ -828,6 +1088,9 @@ pub fn verify_delegated_response_unbound(
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     // Content-digest floor.
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): the delegated path gets the same gate — a credential
+    // chain to the root does not make a stream evidenceable.
+    require_json_media_type(&response.headers, "response content-type")?;
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
@@ -842,7 +1105,8 @@ pub fn verify_delegated_response_unbound(
             "req component without request context",
         ));
     }
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, &expect.policy, now, false)?;
 
     // Response evidence block (protected by content-digest).
     let block: HttpResponseEvidenceBlock = extract_meta_block(
@@ -889,7 +1153,8 @@ pub fn verify_delegated_response_unbound(
         &SourceMessage::ResponseOnly(response),
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(
+    verify_under(
+        algorithm,
         &base,
         &sig,
         &verified.delegated_key,
@@ -904,7 +1169,7 @@ pub fn verify_delegated_response_unbound(
             verification_key: verified.delegated_key,
             slot: SignerSlot::Response,
         },
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: Some(server_signer),
@@ -920,7 +1185,20 @@ pub fn verify_response_unbound(
     resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
+    verify_response_unbound_with_policy(response, resolve_actor, &VerifierPolicy::default(), now)
+}
+
+/// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
+pub fn verify_response_unbound_with_policy(
+    response: &HttpResponse,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     reject_content_encoding(&response.headers)?;
+    // JSON mode (§3.4): an SSE response to a covered request is a profile
+    // violation, not a streaming opt-in.
+    require_json_media_type(&response.headers, "response content-type")?;
 
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
@@ -935,25 +1213,25 @@ pub fn verify_response_unbound(
             "req component without request context",
         ));
     }
-    let (_created, _expires, _nonce, key_id) = check_params(&parsed.params, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, false)?;
 
-    let resolved_server_actor = resolve_actor_for(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
         &SourceMessage::ResponseOnly(response),
     )?;
     let sig = signature_value_b64url(&response.headers, "response signature", RESPONSE_LABEL)?;
-    verify_ed25519_with(
+    verify_under(
+        algorithm,
         &base,
         &sig,
         &resolved_server_actor.verification_key,
         McpReError::ResponseSigInvalid,
-    )
-    .map_err(|_| HttpProfileError::ResponseSignatureInvalid)?;
+    )?;
     Ok(VerifiedHttpResponseEvidence {
         resolved_server_actor,
-        response_signature_base_digest: RequestEvidence::from_signature_base(&base),
+        response_signature_base_digest: RequestEvidence::from_response_signature_base(&base),
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,

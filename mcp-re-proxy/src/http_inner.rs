@@ -376,6 +376,13 @@ impl HttpInnerPool {
             // backend (e.g. FastMCP) rejects a json-only Accept with 406. We forward
             // stateless single request/response, so a JSON body is what we parse; the
             // dual Accept is the required handshake, not an opt-in to streaming.
+            //
+            // #415 rev 2 §3.4 (MCPRE-423) asked whether to drop text/event-stream
+            // here. It stays: narrowing the Accept would break the mandated
+            // handshake and earn a 406 from a conformant backend, turning a profile
+            // rule into an interop failure. The rule is enforced where it belongs —
+            // on the RESPONSE, below and in the profile verifier — so we advertise
+            // what the transport requires and accept only what we can evidence.
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
             .body(Full::new(body))
@@ -390,6 +397,28 @@ impl HttpInnerPool {
         // A non-2xx inner status is not a valid JSON-RPC response; treat as failure
         // (the proxy signs the synthesized error) rather than sign backend HTML.
         if !resp.status().is_success() {
+            return Err(());
+        }
+
+        // JSON mode (#415 rev 2 §3.4): if the backend answered with a stream, refuse
+        // it HERE rather than let it fail later as a JSON parse error. The outcome
+        // is the same fail-closed synthesized response either way, but a backend
+        // that streams is a deployment/profile problem, and it should be refused as
+        // a stated rule rather than incidentally because SSE framing happens not to
+        // parse as JSON.
+        let is_json = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| {
+                v.split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .eq_ignore_ascii_case("application/json")
+            })
+            .unwrap_or(false);
+        if !is_json {
             return Err(());
         }
 

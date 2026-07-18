@@ -147,17 +147,31 @@ fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
 /// Build the real delegated-required server proxy with an in-memory root, first key
 /// issued (as the binary does before serving).
 fn build_server() -> HttpProfileProxy {
+    build_server_with_kid().0
+}
+
+/// Build the server AND report the delegated kid it actually issued. Profile-issued
+/// kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5), so a test that needs to name
+/// the server's key — revocation, for instance — must ask which key was minted rather
+/// than assume a kid it can spell.
+fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let config = server_config();
     let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
         .expect("build delegated signing wiring");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("server issues the first delegated key");
+    let issued_kid = wiring
+        .signer
+        .current(NOW)
+        .expect("the first delegated key is published")
+        .delegated_kid
+        .clone();
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
         route: config.route.clone(),
     };
-    HttpProfileProxy::new_delegated(
+    let proxy = HttpProfileProxy::new_delegated(
         server_resolver(),
         expected_audience,
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
@@ -165,7 +179,8 @@ fn build_server() -> HttpProfileProxy {
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
-    )
+    );
+    (proxy, issued_kid)
 }
 
 // ---- the in-process "network" ---------------------------------------------
@@ -338,11 +353,12 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
 
 #[test]
 fn revoked_server_delegated_key_is_refused_by_client() {
-    // The server's first delegated key is `<issuer_kid>/delegated/1`. The client's
-    // revocation source names it, so an otherwise-valid delegated success fails closed
-    // — proving the revocation seam is live, not a hardcoded never-revoked.
-    let revoked = StaticRevocationList::new().revoke(format!("{ROOT_KID}/delegated/1"));
-    let proxy = client_proxy_with_revocation(build_server(), Box::new(revoked));
+    // The client's revocation source names the delegated key the server actually
+    // issued, so an otherwise-valid delegated success fails closed — proving the
+    // revocation seam is live, not a hardcoded never-revoked.
+    let (server, issued_kid) = build_server_with_kid();
+    let revoked = StaticRevocationList::new().revoke(issued_kid);
+    let proxy = client_proxy_with_revocation(server, Box::new(revoked));
     let err = proxy
         .handle("r1", &plain_request(), &params("nonce-e2e-revoked"))
         .expect_err("delegated-required client refuses a revoked delegated key");

@@ -203,6 +203,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
+            admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -244,6 +245,7 @@ fn http_response(served: mcp_re_proxy::async_serve::ServedHttpResponse) -> HttpR
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -298,9 +300,11 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
             NOW,
         )
         .expect("delegated success response verifies via the attestation chain");
-        assert_eq!(
+        // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5); the
+        // property under test is that a DELEGATED key signed, never the root.
+        assert_ne!(
             verified.server_signer.as_ref().unwrap().keyid,
-            format!("{ROOT_KID}/delegated/1"),
+            ROOT_KID,
             "signed by the delegated key, not the root"
         );
     }
@@ -449,4 +453,70 @@ fn direct_root_response_rejected_in_delegated_required_mode() {
     )
     .unwrap_err();
     assert_eq!(err, HttpProfileError::DelegationCredentialMissing);
+}
+
+/// Sign a one-way NOTIFICATION (JSON-RPC message with no `id`) as a client would.
+fn signed_notification(nonce: &str) -> HttpRequest {
+    let block = HttpRequestEvidenceBlock {
+        profile: PROFILE_TAG.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        continuation: None,
+        admission: None,
+    };
+    let mut req = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
+        ],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
+        .expect("client signs the notification");
+    req
+}
+
+/// #424 owner ruling: the serving PEP emits a signed bodyless 202 for an accepted
+/// notification, with the delegation credential in the covered `mcp-re-delegation`
+/// header. The client verifies it via the credential→root chain — proving the
+/// signed-202 path reaches production, not just the profile crate's unit tests.
+#[tokio::test]
+async fn a_notification_is_served_a_verifiable_delegated_202() {
+    use mcp_re_http_profile::verify_delegated_accepted_202;
+
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue first delegated key");
+    let proxy = delegated_proxy(Arc::clone(&signer));
+
+    let note = signed_notification("nonce-note-1");
+    let served = proxy.handle(served_of(&note), NOW).await;
+    assert_eq!(served.status, 202, "an accepted notification gets a bodyless 202");
+    let ack = http_response(served);
+    assert!(ack.body.is_empty(), "the 202 is bodyless");
+    assert!(
+        ack.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("mcp-re-delegation")),
+        "the credential rides in the header"
+    );
+
+    // The client verifies the delegated 202 via the credential→root chain.
+    let r = resolver();
+    let actor = verify_delegated_accepted_202(
+        &ack,
+        &note,
+        &move |k: &str, s| r(k, s),
+        &expectations(&[EPOCH]),
+        &|_| false,
+        NOW,
+    )
+    .expect("the client verifies the delegated 202");
+    assert_ne!(actor.identity.keyid, ROOT_KID, "signed by the delegated key, not the root");
+
+    // The root issuer was touched only at issuance — the 202 path is delegated too.
+    assert_eq!(rotor.root_invocations(), 1, "root never touched on the request/202 path");
 }

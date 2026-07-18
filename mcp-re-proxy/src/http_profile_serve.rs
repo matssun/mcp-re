@@ -20,15 +20,27 @@
 //!      the stateless Streamable-HTTP inner backend via the async inner pool;
 //!   6. `sign_delegated_response_full` — sign the reply with the active delegated
 //!      key + inline credential, bound to THIS request (ADR-MCPRE-052).
-//! Any fail-closed step emits a delegated-signed rejection receipt instead.
+//!
+//! Any fail-closed step emits a delegated-signed rejection receipt instead. A
+//! one-way notification (a `method` with no `id`) is answered with a delegated
+//! bodyless 202 whose credential rides in the covered `mcp-re-delegation` header
+//! (#424).
 
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::verify_request_full;
+use mcp_re_http_profile::insert_verified_context;
+use mcp_re_http_profile::strip_proxy_owned_meta;
+use mcp_re_http_profile::HttpProfileError;
+use mcp_re_http_profile::verify_request_full_with_policy;
+use mcp_re_http_profile::VerifierPolicy;
+use mcp_re_http_profile::VerifiedContext;
+use mcp_re_http_profile::VerifiedContextPolicy;
+use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpRequest;
@@ -98,6 +110,16 @@ pub struct HttpProfileProxy {
     /// Lifetime of a recorded continuation (seconds); see
     /// [`DEFAULT_CONTINUATION_TTL_SECS`].
     continuation_ttl_secs: i64,
+    /// Whether to carry verified context to the inner server (#415 rev 2 §10).
+    /// Default `Disabled`: the context is the PEP's conclusion, unsigned by
+    /// design, so it is only meaningful over a channel the PEP alone can write to
+    /// — an operator asserts that, and nothing here can check it.
+    verified_context_policy: VerifiedContextPolicy,
+    /// The verifier-local acceptance policy: algorithm registry, bounded skew, and
+    /// the optional MCP transport/version contract (§4.1, §5.1, §13.1). Default is
+    /// `VerifierPolicy::default()` — Ed25519, 30s skew, no transport contract — so
+    /// serving behaves as before unless a deployment attaches a stricter policy.
+    verifier_policy: VerifierPolicy,
 }
 
 impl HttpProfileProxy {
@@ -129,7 +151,35 @@ impl HttpProfileProxy {
             sig_ttl_secs,
             continuation_store: None,
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
+            verified_context_policy: VerifiedContextPolicy::default(),
+            verifier_policy: VerifierPolicy::default(),
         }
+    }
+
+    /// Attach a verifier-local acceptance policy (§4.1 MCP transport contract,
+    /// §5.1 clock skew, §13.1 algorithm registry). A deployment on MCP 2026-07-28
+    /// passes `VerifierPolicy::default().with_mcp_transport(McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]))`
+    /// to enforce required-header presence and version policy on the served path.
+    pub fn with_verifier_policy(mut self, policy: VerifierPolicy) -> Self {
+        self.verifier_policy = policy;
+        self
+    }
+
+    /// Carry verified context to the inner server over an EXPLICITLY TRUSTED
+    /// channel (#415 rev 2 §10, MCPRE-429).
+    ///
+    /// Calling this asserts that only this PEP can write to the inner server —
+    /// loopback, a same-pod sidecar, a UNIX socket. The carrier has no signature
+    /// (the inner server is not meant to re-evaluate trust), so if anything else
+    /// can reach that server, it can assert any context it likes and the inner
+    /// server cannot tell. There is no cryptographic fallback: the channel IS the
+    /// trust, which is why this is an explicit call and never a default.
+    ///
+    /// The reserved-field guard runs regardless of this setting — caller-seeded
+    /// context is stripped whether or not the carrier is on.
+    pub fn with_verified_context_carrier(mut self, policy: VerifiedContextPolicy) -> Self {
+        self.verified_context_policy = policy;
+        self
     }
 
     /// Bind the verified request actor to the mTLS peer identity (Mode A, ADR-MCPS-014).
@@ -172,11 +222,12 @@ impl HttpProfileProxy {
         // no external material is supplied here; any binding lacking a credential
         // still fails closed.
         let no_material = |_b: &ArtifactBinding| None;
-        let verified = match verify_request_full(
+        let verified = match verify_request_full_with_policy(
             &http_req,
             &self.expected_audience,
             &no_material,
             self.resolve_actor.as_ref(),
+            &self.verifier_policy,
             now,
         ) {
             Ok(v) => v,
@@ -260,7 +311,21 @@ impl HttpProfileProxy {
 
         // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
-        let forwarded = strip_top_level_meta(&http_req.body);
+        let forwarded = match forwarded_body(
+            &http_req.body,
+            &verified,
+            self.verified_context_policy,
+            now,
+        ) {
+            Ok(b) => b,
+            // The trusted carrier is on but the context could not be written. The
+            // inner server would otherwise receive an ordinary-looking request
+            // carrying no verified context at all — fail closed rather than
+            // degrade into an unauthenticated call.
+            Err(e) => {
+                return self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
+            }
+        };
         let inner_bytes = self.inner_async.dispatch(&forwarded).await;
 
         // Step 7 — sign the backend reply, bound to THIS request, with the active
@@ -287,6 +352,28 @@ impl HttpProfileProxy {
                 )
             }
         };
+        // Step 7a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
+        // signed bodyless 202, not a bodied reply (#424 / #418). The backend already
+        // received it above (its side effects run); the 202 states only that the
+        // enforcement boundary authenticated and accepted the message — NOT that any
+        // action completed. The credential rides in the covered `mcp-re-delegation`
+        // header, since a bodyless 202 has no body to carry it.
+        if is_notification(&http_req.body) {
+            return match sign_delegated_accepted_202(
+                &http_req,
+                &a.credential,
+                a.key.as_ref(),
+                &a.delegated_kid,
+                now,
+                expires,
+            ) {
+                Ok(ack) => served(ack),
+                Err(e) => {
+                    self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
+                }
+            };
+        }
+
         let response_base = match sign_delegated_response_full(
             &mut response,
             &http_req,
@@ -416,6 +503,16 @@ fn extract_request_state(body: &[u8]) -> Option<String> {
 }
 
 /// Read `result.requestState` from a JSON-RPC RESPONSE body IFF the reply is an
+/// A JSON-RPC NOTIFICATION: a message with a `method` and NO `id` (JSON-RPC 2.0
+/// §4.1). A notification has no response, so an accepted one earns a signed
+/// bodyless 202 rather than a bodied reply (#424 / #418).
+fn is_notification(body: &[u8]) -> bool {
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(v) => v.get("method").is_some() && v.get("id").is_none(),
+        Err(_) => false,
+    }
+}
+
 /// `InputRequiredResult` (`result.resultType == "input_required"`) — the opaque MRTR
 /// state the OPEN leg minted (ADR-MCPS-047). `None` for a terminal reply, a
 /// non-JSON body, or a missing/non-string state.
@@ -428,17 +525,51 @@ fn input_required_state(body: &[u8]) -> Option<String> {
     result.get("requestState")?.as_str().map(str::to_owned)
 }
 
-/// Remove the top-level `_meta` object (the proxy-owned request evidence block) so
-/// the forwarded body is clean MCP JSON-RPC. Non-object bodies pass through.
-fn strip_top_level_meta(body: &[u8]) -> Vec<u8> {
-    match serde_json::from_slice::<serde_json::Value>(body) {
+/// Compose the body forwarded to the inner server (#415 rev 2 §10, MCPRE-429).
+///
+/// Two steps, in this order:
+///
+/// 1. **Strip the PEP-owned `_meta` keys** — the request-evidence block the PEP
+///    just consumed, and the reserved verified-context key. This is the §10 guard
+///    and it runs on EVERY request regardless of policy: a caller that could seed
+///    the reserved key would be asserting its own verified context to a server
+///    that trusts the block implicitly, which is an authentication bypass rather
+///    than a spoofing nuisance. A deployment with the carrier disabled must not be
+///    one config flip away from forwarding attacker-authored context.
+///
+///    Only PEP-owned keys are removed. Application and MCP `_meta` entries are
+///    none of the enforcement boundary's business — deleting the whole `_meta`
+///    would not be caution, it would be destroying data the PEP was asked to pass
+///    through.
+///
+/// 2. **Write the PEP's own context**, only under an explicitly trusted channel.
+///
+/// Returns `Err` if the trusted carrier is enabled and the context could not be
+/// written. That is deliberate: under `Trusted` the inner server is entitled to
+/// assume the PEP speaks, and silently forwarding a request WITHOUT the context it
+/// expects would degrade into an unauthenticated call that looks ordinary. Fail
+/// closed instead.
+fn forwarded_body(
+    body: &[u8],
+    verified: &VerifiedHttpRequestEvidence,
+    policy: VerifiedContextPolicy,
+    now: i64,
+) -> Result<Vec<u8>, HttpProfileError> {
+    let stripped = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(mut v) => {
-            if let Some(obj) = v.as_object_mut() {
-                obj.remove("_meta");
-            }
-            serde_json::to_vec(&v).unwrap_or_else(|_| body.to_vec())
+            strip_proxy_owned_meta(&mut v);
+            serde_json::to_vec(&v).map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))?
         }
+        // A non-object body never verified as a full-profile request, so this is
+        // unreachable on the served path; pass it through rather than invent bytes.
         Err(_) => body.to_vec(),
+    };
+    match policy {
+        VerifiedContextPolicy::Disabled => Ok(stripped),
+        VerifiedContextPolicy::Trusted => {
+            let ctx = VerifiedContext::from_verified(verified, now);
+            insert_verified_context(&stripped, &ctx)
+        }
     }
 }
 

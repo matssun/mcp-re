@@ -6,7 +6,7 @@
 # HTTP-profile only — the proxy forwards each verified request to this backend
 # over `--inner-http-url`. This replaces the removed stdio-bridge sidecar.
 #
-#   docker build -f deploy/docker/Dockerfile.inner -t mcp-re-inner-fastmcp:0.12.1 .
+#   docker build -f deploy/docker/Dockerfile.inner -t mcp-re-inner-fastmcp:0.13.0 .
 #
 # The port comes from config/ports.toml ([services.mcp_re_inner_backend].port);
 # override with MCP_RE_INNER_BACKEND_PORT. FASTMCP_JSON_RESPONSE=true makes the

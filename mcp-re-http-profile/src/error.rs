@@ -31,6 +31,14 @@ pub enum HttpProfileError {
     /// `Content-Encoding` present on a signed MCP message (forbidden — the
     /// profile signs unencoded content bytes; v0.11 grill B.1).
     ContentEncodingPresent,
+    /// The covered `Content-Type` on a covered exchange is not
+    /// `application/json` — most consequentially, a `text/event-stream` response
+    /// (#415 rev 2 §3.4: covered exchanges are JSON-mode only; per-event SSE
+    /// evidence is deferred to a future companion profile). Same content-model
+    /// family as [`HttpProfileError::ContentEncodingPresent`], so it maps to the
+    /// same frozen `mcp-re.serialization_failed` token — the protected message is
+    /// not in the value domain the profile can make statements about.
+    NonJsonMediaType,
     /// The message content does not match the signed `Content-Digest`.
     ContentDigestMismatch,
     /// A covered component required by the profile is not covered.
@@ -73,6 +81,66 @@ pub enum HttpProfileError {
     /// An MRTR continuation handle does not match its mandated signature-base
     /// digest (MCPRE-97). Maps to `mcp-re.continuation_binding_failed`.
     ContinuationBindingFailed,
+    /// The covered `Mcp-Method` transport header disagrees with the JSON-RPC
+    /// `method` in the covered body (#415 rev 2 §4.1, MCPRE-425). Both are
+    /// protected, so this is the signer stating two different methods — evidence
+    /// that is present, self-contradictory, and therefore not interpretable.
+    /// Maps to `mcp-re.malformed_envelope`.
+    McpMethodDivergence,
+    /// A transport header the deployment's MCP protocol version REQUIRES on every
+    /// POST is absent (#415 rev 2 §4.1, MCPRE-425): the named `mcp-*` header is
+    /// mandatory under the active [`McpTransportPolicy`] and the request omitted
+    /// it. Maps to `mcp-re.missing_envelope`.
+    ///
+    /// [`McpTransportPolicy`]: crate::mcp_transport::McpTransportPolicy
+    McpTransportHeaderMissing(&'static str),
+    /// The `MCP-Protocol-Version` header names a version outside the deployment's
+    /// accepted set (§4.1). Registration or a client's claim is not consent; the
+    /// verifier's supported set is. Maps to `mcp-re.unsupported_version`.
+    McpProtocolVersionUnsupported,
+    /// A covered transport header (`MCP-Protocol-Version` or `Mcp-Name`) disagrees
+    /// with the covered body it must match — the signer contradicting itself, as
+    /// with [`HttpProfileError::McpMethodDivergence`]. Names the header. Maps to
+    /// `mcp-re.malformed_envelope`.
+    McpTransportDivergence(&'static str),
+
+    // Admission assertion + §7 binding (Layer 1 → Layer 4, MCPRE-433).
+    /// The admission assertion is malformed, has the wrong `typ`/`alg`, an
+    /// inconsistent `kid`, a bad root signature, or a profile/audience mismatch.
+    /// Maps to `mcp-re.actor_binding_failed` — the workload's admission identity
+    /// did not authenticate.
+    AdmissionAssertionInvalid,
+    /// The admission assertion's `issuer_kid` is not a trusted admission authority.
+    /// Maps to `mcp-re.actor_binding_failed`.
+    AdmissionIssuerUntrusted,
+    /// The admission assertion is outside its `[nbf, exp]` window or older than the
+    /// declared freshness budget N. Maps to `mcp-re.expired_request`.
+    AdmissionAssertionExpired,
+    /// The call's admission binding does not describe the presented assertion
+    /// (wrong id/generation, or it commits to a different admitted state). Maps to
+    /// `mcp-re.request_binding_mismatch`.
+    AdmissionBindingMismatch,
+    /// The bound admission generation is not the authoritative current one, or the
+    /// workload's status is not `Admitted` — a call from a superseded or
+    /// revoked/suspended admission (§7 currency). Maps to
+    /// `mcp-re.actor_binding_failed`.
+    AdmissionNotCurrent,
+    /// The authoritative admission state was unreachable and degraded mode was
+    /// disabled or its bound exhausted — fail closed. Maps to
+    /// `mcp-re.actor_binding_failed`.
+    AdmissionStateUnavailable,
+
+    // SCITT audit receipts (Layer 5, MCPRE-434).
+    /// A receipt's Signed Statement or tree-head signature does not verify. Maps to
+    /// `mcp-re.invalid_signature`.
+    ReceiptInvalid,
+    /// The receipt's inclusion proof does not re-derive the signed root. Maps to
+    /// `mcp-re.request_binding_mismatch` — the statement is not bound into the log
+    /// the receipt claims.
+    ReceiptInclusionInvalid,
+    /// The Signed Statement issuer or transparency service key is not trusted. Maps
+    /// to `mcp-re.actor_binding_failed`.
+    ReceiptIssuerUntrusted,
 
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
@@ -112,35 +180,54 @@ impl HttpProfileError {
             // both "the evidence you needed is not there".
             HttpProfileError::MissingEvidence(_)
             | HttpProfileError::DuplicateHeader(_)
+            | HttpProfileError::McpTransportHeaderMissing(_)
             | HttpProfileError::MissingCoveredComponent(_) => "mcp-re.missing_envelope",
             // Evidence present but structurally invalid (MCPRE-92): a foreign
             // component/parameter, an unparseable inner list, a wrong-shaped
             // digest member. Grouped away from "absent" so a rejection reason
             // distinguishes tampering from omission.
-            HttpProfileError::MalformedEvidence(_) => "mcp-re.malformed_envelope",
-            // Content-model / value-domain violation of the protected message.
-            HttpProfileError::ContentEncodingPresent => "mcp-re.serialization_failed",
+            // Self-contradictory evidence is malformed evidence: the covered
+            // header and the covered body state different methods (§4.1), so
+            // there is nothing coherent to act on.
+            HttpProfileError::MalformedEvidence(_)
+            | HttpProfileError::McpMethodDivergence
+            | HttpProfileError::McpTransportDivergence(_) => "mcp-re.malformed_envelope",
+            // Content-model / value-domain violation of the protected message:
+            // an encoded body, or a media type outside JSON mode (§3.4).
+            HttpProfileError::ContentEncodingPresent | HttpProfileError::NonJsonMediaType => {
+                "mcp-re.serialization_failed"
+            }
             // The content commitment itself is wrong — precise digest code
             // (MCPRE-92), no longer folded onto invalid_signature.
             HttpProfileError::ContentDigestMismatch => "mcp-re.digest_mismatch",
             // The signature does not authenticate the bytes.
-            HttpProfileError::InvalidSignature => "mcp-re.invalid_signature",
-            // Profile-selection failure: cannot select this profile.
-            HttpProfileError::UnknownProfileTag | HttpProfileError::UnsupportedAlgorithm => {
-                "mcp-re.unsupported_version"
+            HttpProfileError::InvalidSignature | HttpProfileError::ReceiptInvalid => {
+                "mcp-re.invalid_signature"
             }
-            HttpProfileError::StaleWindow => "mcp-re.expired_request",
+            // Profile-selection failure: cannot select this profile.
+            HttpProfileError::UnknownProfileTag
+            | HttpProfileError::UnsupportedAlgorithm
+            | HttpProfileError::McpProtocolVersionUnsupported => "mcp-re.unsupported_version",
+            HttpProfileError::StaleWindow | HttpProfileError::AdmissionAssertionExpired => {
+                "mcp-re.expired_request"
+            }
             // A keyid outside trust is an actor-binding failure, not a broken
             // signature: the crypto may verify under an untrusted key.
-            HttpProfileError::UnresolvedKeyId | HttpProfileError::ActorSlotMismatch => {
-                "mcp-re.actor_binding_failed"
-            }
+            HttpProfileError::UnresolvedKeyId
+            | HttpProfileError::ActorSlotMismatch
+            | HttpProfileError::AdmissionAssertionInvalid
+            | HttpProfileError::AdmissionIssuerUntrusted
+            | HttpProfileError::AdmissionNotCurrent
+            | HttpProfileError::AdmissionStateUnavailable
+            | HttpProfileError::ReceiptIssuerUntrusted => "mcp-re.actor_binding_failed",
             HttpProfileError::ArtifactBindingFailed => "mcp-re.artifact_binding_failed",
             HttpProfileError::AudienceMismatch => "mcp-re.invalid_audience",
             // A response bound to a different request is a request-binding
             // splice — precise code (MCPRE-92), not the native response_hash
             // field name.
-            HttpProfileError::ResponseBindingMismatch => "mcp-re.request_binding_mismatch",
+            HttpProfileError::ResponseBindingMismatch
+            | HttpProfileError::AdmissionBindingMismatch
+            | HttpProfileError::ReceiptInclusionInvalid => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
@@ -197,6 +284,7 @@ mod tests {
             HttpProfileError::MalformedEvidence("x"),
             HttpProfileError::DuplicateHeader("x"),
             HttpProfileError::ContentEncodingPresent,
+            HttpProfileError::NonJsonMediaType,
             HttpProfileError::ContentDigestMismatch,
             HttpProfileError::MissingCoveredComponent("x"),
             HttpProfileError::UnknownProfileTag,
@@ -210,6 +298,19 @@ mod tests {
             HttpProfileError::ResponseBindingMismatch,
             HttpProfileError::ResponseSignatureInvalid,
             HttpProfileError::ContinuationBindingFailed,
+            HttpProfileError::McpMethodDivergence,
+            HttpProfileError::McpTransportHeaderMissing("x"),
+            HttpProfileError::McpProtocolVersionUnsupported,
+            HttpProfileError::McpTransportDivergence("x"),
+            HttpProfileError::AdmissionAssertionInvalid,
+            HttpProfileError::AdmissionIssuerUntrusted,
+            HttpProfileError::AdmissionAssertionExpired,
+            HttpProfileError::AdmissionBindingMismatch,
+            HttpProfileError::AdmissionNotCurrent,
+            HttpProfileError::AdmissionStateUnavailable,
+            HttpProfileError::ReceiptInvalid,
+            HttpProfileError::ReceiptInclusionInvalid,
+            HttpProfileError::ReceiptIssuerUntrusted,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,

@@ -1,28 +1,99 @@
 {
   "schema": "mcp-re-delegation-conformance/v1",
   "verify_at_unix": 1700000100,
+  "corpus_digest": "899462fa9da4596bfc04c755d07cd6e0cc85abee7c3d5696396ecd13840311be",
   "fixtures": [
-    "d01_valid.json",
-    "d02_credential_expired.json",
-    "d03_not_yet_valid.json",
-    "d04_key_use_invalid.json",
-    "d05_profile_mismatch.json",
-    "d06_verifier_not_in_aud.json",
-    "d07_audience_scope_mismatch.json",
-    "d08_trust_epoch_stale.json",
-    "d09_bounded_rollout_previous_epoch.json",
-    "d10_required_rejects_direct_root.json",
-    "d11_revoked_delegated_key.json",
-    "d12_keyid_not_delegated_kid.json",
-    "d13_signed_by_non_cnf_key.json",
-    "d14_credential_stripped.json",
-    "d15_credential_lifted_wrong_server_signer.json",
-    "d16_issuer_untrusted.json",
-    "d17_wrong_alg.json",
-    "d18_forged_root_signature.json",
-    "d19_rotation_overlap_key_a.json",
-    "d20_rotation_overlap_key_b.json",
-    "d21_body_tamper.json",
-    "d22_response_signature_tamper.json"
+    {
+      "file": "d01_valid.json",
+      "sha256": "ffab1f03c9e0e578a75799dc4a8fc1240f86bf84d972c0476bd6adb146e7c275"
+    },
+    {
+      "file": "d02_credential_expired.json",
+      "sha256": "eaed518330721241f6d7be85914a52acb5333fe8fc8ff0b9c4349c29ea75bf3a"
+    },
+    {
+      "file": "d03_not_yet_valid.json",
+      "sha256": "3153ff3e119093ccfe1542a7b7ca70e0e811424f3cedf7f3e6c103d301c88cc2"
+    },
+    {
+      "file": "d04_key_use_invalid.json",
+      "sha256": "b356e0dc8f05ac0e3ccc29ab37bb2fbc520b96f8d97c1bc528193c542666cde0"
+    },
+    {
+      "file": "d05_profile_mismatch.json",
+      "sha256": "fd331e35bcb09c333c37ef76e5b5df236a5d86469c1c2dd63df738819621f049"
+    },
+    {
+      "file": "d06_verifier_not_in_aud.json",
+      "sha256": "5c60a69052909ea966a75049548718904a3d43b1147673a0358254a405dcabc9"
+    },
+    {
+      "file": "d07_audience_scope_mismatch.json",
+      "sha256": "9ded008a18c9bb64ac141ee5609e99eed46667d8346ca401b307007f8d29e5ae"
+    },
+    {
+      "file": "d08_trust_epoch_stale.json",
+      "sha256": "3bf84c42c45a5da357dcd17685166cc508e46192eab82045247a53c7aa8baa4f"
+    },
+    {
+      "file": "d09_bounded_rollout_previous_epoch.json",
+      "sha256": "ceebe194a3ba2b12f2a0a6a1414551987b0910858e48acd2220477ac0069db3b"
+    },
+    {
+      "file": "d10_required_rejects_direct_root.json",
+      "sha256": "d651dc8ae1f0a8b48e8af3d11ac119b813517dc03efbe878b133e54e38dd4e96"
+    },
+    {
+      "file": "d11_revoked_delegated_key.json",
+      "sha256": "72925fbdbf178552cf043692bb6b349d165490d31921d0b9049714b633892030"
+    },
+    {
+      "file": "d12_keyid_not_delegated_kid.json",
+      "sha256": "8447ef510c6457dfcf346d2ba9b93ba97a1b197b59f3df1e1473668a7b532d2a"
+    },
+    {
+      "file": "d13_signed_by_non_cnf_key.json",
+      "sha256": "29dd78ecd617131504482db97e92a15558c9e4305f2cac553ef891f165156ae2"
+    },
+    {
+      "file": "d14_credential_stripped.json",
+      "sha256": "07ff20d561f42916228b0a619d77e1f1f773f5c59b82c9902e3f4ab1490ce2cb"
+    },
+    {
+      "file": "d15_credential_lifted_wrong_server_signer.json",
+      "sha256": "a872c8597829ed64ac728db438db0e5d39a80fe76b43810bfc0dd4001ab53da2"
+    },
+    {
+      "file": "d16_issuer_untrusted.json",
+      "sha256": "61e7e85e447d67f314539f04b801bb8b7864a7d192ced4edbe477d52cfa75ce7"
+    },
+    {
+      "file": "d17_wrong_alg.json",
+      "sha256": "211b24a0e607722007a1ed9826770bfa21f4b143dcf7bc85b3a1c4eb07afa0c5"
+    },
+    {
+      "file": "d18_forged_root_signature.json",
+      "sha256": "f09800266d4c157121de2e4f85024956a0c8ea6c0782e471751930fd97e8344e"
+    },
+    {
+      "file": "d19_rotation_overlap_key_a.json",
+      "sha256": "8619c05cf93875911697614e0f8b966be66f471df6dc19a4f4a3b76eb1e41724"
+    },
+    {
+      "file": "d20_rotation_overlap_key_b.json",
+      "sha256": "0fa75e8c9fdfb951869a2d2726556f2de11e655d487295b57efa431f64bd9d87"
+    },
+    {
+      "file": "d21_body_tamper.json",
+      "sha256": "f99a1c0d6af998e1d3d80dc2570799fe55fca71613b50f1eb15811d92ae5ad54"
+    },
+    {
+      "file": "d22_response_signature_tamper.json",
+      "sha256": "e2d9ee1913b9f0586178a86a5a9d34d341c801f7528cb94fe434e55ba7d551e3"
+    },
+    {
+      "file": "external_delegation_kat.json",
+      "sha256": "e7f41d7f1a0d5f2fa133813571cdaf5f46533ca8057259ec7ef062d0596d3427"
+    }
   ]
 }

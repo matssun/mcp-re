@@ -221,6 +221,7 @@ fn as_digest(ev: &RequestEvidence) -> RequestEvidenceDigest {
 
 fn expectations<'a>(epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
     DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &[VERIFIER_AUD],
         expected_audience_hash: AUD_SCOPE,
         accepted_epochs: epochs,
@@ -253,6 +254,7 @@ fn signed_request(
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation,
+        admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
