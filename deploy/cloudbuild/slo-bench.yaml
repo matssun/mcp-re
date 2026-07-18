@@ -8,9 +8,9 @@ substitutions:
   _AR: us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re
 steps:
   - name: gcr.io/cloud-builders/docker
-    args: [build, -f, deploy/docker/Dockerfile.bench, -t, "${_AR}/mcp-re-slo-bench:0.12.1", .]
+    args: [build, -f, deploy/docker/Dockerfile.bench, -t, "${_AR}/mcp-re-slo-bench:0.13.0", .]
 images:
-  - "${_AR}/mcp-re-slo-bench:0.12.1"
+  - "${_AR}/mcp-re-slo-bench:0.13.0"
 options:
   machineType: E2_HIGHCPU_8
 timeout: 2400s

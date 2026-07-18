@@ -12,7 +12,30 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-18
+
 ### Added
+- **v0.13 conformance to the published HTTP-profile set (epic #435; rev-2 profiles in
+  Discussions #414/#415/#416).** The RFC 9421 + RFC 9530 serving path was aligned to the
+  audited profile text across the whole surface: §3.4 JSON-mode enforcement on covered
+  exchanges (`text/event-stream` responses refused, #423); the §4.1 MCP transport + version
+  contract covering `mcp-method` / `mcp-name` / `mcp-protocol-version` and rejecting a
+  covered-header/body method divergence (#425); a typed algorithm registry with thumbprint
+  keyids and bounded, symmetric clock skew (#428, #432); the verified-context carrier with a
+  reserved-field guard that strips caller-seeded context on every request (#429); continuation
+  §9/§13 retained-chain reconstruction with incomplete-chain labelling and a multi-hop
+  conformance corpus with role domain separation (#430, #431); admission-assertion binding to
+  §7 evidence (#433); and a content-pinned vector corpus (per-file SHA-256 + manifest digest,
+  #427). MCP protocol version **2026-07-28** is RC-aligned (#426); the final-text conformance
+  declaration follows its publication.
+- **Delegated bodyless signed-202 acknowledgement (#424; owner ruling for #418).** A one-way
+  notification is answered with a signed HTTP 202 whose compact-JWS delegation credential
+  rides in a covered `mcp-re-delegation` header (the one narrow bodyless exception), bound to
+  the request evidence via `;req`. It states that the enforcement boundary authenticated and
+  accepted the message — never that any action completed.
+- **Layer-5 portable audit receipts on SCITT (RFC 9943), offline-verifiable prototype (#434).**
+  An offline-verifiable receipt mapping; the external transparency-service submission and the
+  CBOR/COSE (RFC 9942) wire interop remain follow-ups.
 - **SDK request/response transport adapter (`McpReHttpTransport`), Python and TypeScript.**
   A standard `mcp.ClientSession` / `Client` now speaks MCP-RE by construction: the adapter
   signs each outgoing request and verifies each incoming delegated response underneath it,
@@ -47,6 +70,13 @@ or wire-format compatibility while the design lines from
   cross-language parity oracle from the primitives to the transport.
 
 ### Fixed
+- **The kind/GKE multi-replica validation harness pointed the proxy at the inner backend
+  without a trailing slash.** FastMCP serves Streamable HTTP at `/mcp/` and 307-redirects
+  `/mcp`; the proxy's raw inner client does not follow redirects, so ordinary `tools/list`
+  calls fail-closed to a signed `-32603`. The four fleet proofs still passed (they assert the
+  security-envelope verdict — replay, trust-epoch, continuation, zero-drop — not the inner
+  result), but the served path never reached the backend. Corrected to `/mcp/` (matching
+  `deploy/k8s/inner-fastmcp.yaml`); the proofs now return real inner results.
 - **TypeScript `Signer.signRequest` dropped authorization bindings.** The
   `bindingsJson` argument was never forwarded to the core, so a provider-supplied artifact
   binding could not reach the evidence from TypeScript. The Python binding was unaffected.
