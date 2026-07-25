@@ -1,6 +1,6 @@
 {
   "name": "@mcp-re/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP-RE TypeScript SDK — runtime-evidence security (signed requests, verified responses) for the MCP TypeScript SDK, via a transport adapter over the audited mcp-re-client-core.",
   "license": "Apache-2.0",
   "author": "Mats Sundvall",
@@ -62,5 +62,9 @@
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.5.0",
     "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.10",
+    "fast-uri": "^3.1.4"
   }
 }
