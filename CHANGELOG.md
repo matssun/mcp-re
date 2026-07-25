@@ -12,6 +12,16 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Security
+- **TypeScript SDK (`@mcp-re/sdk`) → 0.1.1.** Forced the dev/peer-tree `@hono/node-server`
+  to `^2.0.10` via an npm `overrides` entry, clearing GHSA-frvp-7c67-39w9 (moderate; Windows
+  `serve-static` path traversal via encoded backslash). The advisory's only fix is in the 2.x
+  major, which `@modelcontextprotocol/sdk@1.29.0` blocks through its `^1.19.9` pin — the
+  override is the sole resolvable path (Dependabot reported `security_update_not_possible`).
+  Verified compatible: the MCP SDK's single `getRequestListener` usage is unchanged in 2.x,
+  `tsc` clean, 129/129 tests green. Same `overrides` also pins `fast-uri` to `^3.1.4`
+  (GHSA-v2hh-gcrm-f6hx, high). `npm audit` now reports 0 vulnerabilities.
+
 ## [0.13.0] — 2026-07-18
 
 ### Added
