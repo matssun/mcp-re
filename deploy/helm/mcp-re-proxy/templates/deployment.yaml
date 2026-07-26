@@ -25,10 +25,18 @@ spec:
       # in-flight request, exit 0). Give the kubelet headroom over the request
       # deadline so a rollout drains rather than kills.
       terminationGracePeriodSeconds: {{ .Values.drainGracePeriodSeconds }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: mcp-re-proxy
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if and (eq .Values.keySource "gcpKms") (not .Values.gcpKms.useMetadata) .Values.gcpKms.accessTokenSecretName }}
           # Operator-supplied Cloud KMS token path (useMetadata=false): the pod has
           # no Workload-Identity metadata server (e.g. a local kind cluster running

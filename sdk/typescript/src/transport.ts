@@ -382,6 +382,14 @@ export class McpReHttpTransport implements Transport {
     let reply: JSONRPCMessage;
     await this.#slots.acquire();
     try {
+      // Re-check AFTER the queue wait. The state check above happened before this
+      // request waited for a slot, and close() can land during that wait. Without this
+      // the exchange below would still sign and POST — `Promise.race` starts both
+      // arms, so racing `#aborted()` only decides which result the caller sees, not
+      // whether the request reaches the server. A queued request is not
+      // already-dispatched work, so emitting it after close() would hand the server
+      // a valid, fresh, correctly-signed request the caller believes it cancelled.
+      if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
       // Race the exchange against close(): an aborted exchange fails its request with
       // ConnectionClosed rather than waiting out a poster the caller no longer wants.
       reply = await Promise.race([this.#exchange(request), this.#aborted()]);

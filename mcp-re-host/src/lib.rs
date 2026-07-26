@@ -4,8 +4,8 @@
 //! The host is the agent's local key/actor context. It composes and signs the
 //! MCP-RE request evidence ([`HostSigner`], via the `mcp-re-client-core` RFC 9421
 //! seam) and verifies signed server responses (re-exported
-//! [`verify_signed_response`]). The language model never holds private keys or
-//! constructs signatures.
+//! [`verify_delegated_response`] — delegated-required is the only response-signing
+//! mode). The language model never holds private keys or constructs signatures.
 //!
 //! ## Deferred host modules (RFC 9421 rebuild in progress)
 //! The `session` (HostSession), `verified_result`, and `pending`
@@ -31,9 +31,23 @@ pub use clock::FixedClock;
 pub use nonce::SeededNonceSource;
 pub use nonce::NONCE_BYTES;
 
-// RFC 9421 response verification via the shared client-core seam (the client-facing
-// entry point: verify the server's RFC 9421 signature + the request binding).
-pub use mcp_re_client_core::verify_signed_response;
+// RFC 9421 response verification via the shared client-core seam. Delegated-required
+// is the only response-signing mode (ADR-MCPRE-052), so the delegated verifier is the
+// client-facing entry point: it requires an inline delegation credential chaining to a
+// trusted root, consults the revocation seam, and applies the trust-epoch gate.
+//
+// The pre-052 direct-root verifier is deliberately NOT re-exported here. It accepts a
+// response signed directly by any key the injected resolver returns for the Response
+// slot — no credential chain, no revocation seam on that call — which is exactly the
+// downgrade delegated-required forbids. Re-exporting it from the crate advertised as
+// the client-side ambassador handed every integrator that downgrade by default.
+// Integrators who genuinely need it (negative-test fixtures) can still reach it at
+// `mcp_re_client_core::verify_signed_response`.
+pub use mcp_re_client_core::verify_delegated_response;
+pub use mcp_re_client_core::DelegatedOutcome;
+pub use mcp_re_client_core::DelegationPolicy;
 pub use mcp_re_client_core::ResponseExpectation;
+pub use mcp_re_client_core::RevocationSource;
+pub use mcp_re_client_core::StaticRevocationList;
 pub use mcp_re_core::McpReError;
 pub use mcp_re_core::TrustResolver;

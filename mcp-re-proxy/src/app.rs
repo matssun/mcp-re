@@ -22,7 +22,6 @@ use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::transport::TransportBindingPolicy;
 use crate::async_serve::ServedHttpRequest;
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
@@ -56,6 +55,52 @@ const EPOCH_CLOCK_FAULT_THRESHOLD_SECS: i64 = 946_684_800;
 /// system clock so production and the unit-tested helper share one clock type.
 fn trust_clock() -> crate::trust_cache::UnixClock {
     crate::trust_cache::system_clock()
+}
+
+/// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
+/// consults for every signature it verifies (slot discipline, MCPRE-100).
+///
+/// The Response slot answers only for `response_kid`, from the root/issuer public key
+/// held at build time: that key is the deployment's trust anchor, revoked by root
+/// rotation rather than by a trust-store entry.
+///
+/// The Request slot resolves through `request_trust` — the ADR-MCPS-021
+/// revocation-tier resolver — on EVERY request. `client_signers` supplies only the
+/// `kid -> signer` identity coordinate; deliberately not the key, since caching the
+/// key here would re-freeze trust at process start and silently bypass the tier.
+/// Every non-active outcome (`Revoked`, `NotFound`, `MalformedKey`, `Unavailable`)
+/// yields no actor, which the verifier surfaces as `actor_binding_failed`; an
+/// operational failure is never softened into an allow.
+pub fn build_actor_resolver(
+    client_signers: HashMap<String, String>,
+    request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
+    trust_domain: String,
+    response_kid: String,
+    server_identity: ActorIdentity,
+    response_pub: mcp_re_core::VerificationKey,
+) -> crate::ActorResolver {
+    Box::new(move |kid: &str, slot: SignerSlot| match slot {
+        SignerSlot::Response if kid == response_kid => Some(ResolvedActor {
+            identity: server_identity.clone(),
+            verification_key: response_pub.clone(),
+            slot,
+        }),
+        SignerSlot::Request => {
+            let signer = client_signers.get(kid)?;
+            let key = request_trust.resolve(signer, kid).ok()?;
+            Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".to_string(),
+                    trust_domain: trust_domain.clone(),
+                    subject: signer.clone(),
+                    keyid: kid.to_string(),
+                },
+                verification_key: key,
+                slot,
+            })
+        }
+        _ => None,
+    })
 }
 
 /// Enforce the key-file-permission posture for a sensitive key file. The proxy
@@ -238,9 +283,15 @@ pub fn run(
     // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
     // supplies the ActorResolver: each trusted key_id resolves to a structured
     // ResolvedActor — client keys for the Request slot, the server key for the
-    // Response slot (slot discipline, MCPRE-100). `_resolver`/`key_source` stay for
-    // the TLS path; the object response-signer seam is gone.
-    let _ = &resolver;
+    // Response slot (slot discipline, MCPRE-100).
+    //
+    // The Request slot resolves its verification key through the ADR-MCPS-021
+    // revocation-tier resolver built above, so the tier whose guarantee is printed
+    // at startup is the tier the data plane actually runs: a `Revoked`/`NotFound`
+    // binding rejects the request, and an `Unavailable` fails closed rather than
+    // serving a key. The trust file supplies only the kid -> signer identity
+    // coordinate; the KEY comes from the resolver on every request.
+    let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
     let trust_entries = cli::load_trust_entries(&trust_bytes)?;
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
@@ -260,34 +311,22 @@ pub fn run(
         subject: config.server_signer.clone(),
         keyid: response_kid.clone(),
     };
-    let mut client_map: HashMap<String, (String, VerificationKey)> = HashMap::new();
-    for (signer, key_id, key) in trust_entries {
+    // kid -> signer only. The verification key is deliberately NOT captured here:
+    // caching it would re-freeze trust at boot and bypass the revocation tier.
+    let mut client_signers: HashMap<String, String> = HashMap::new();
+    for (signer, key_id, _key) in trust_entries {
         if key_id != response_kid {
-            client_map.insert(key_id, (signer, key));
+            client_signers.insert(key_id, signer);
         }
     }
-    let skid = response_kid.clone();
-    let sident = server_identity.clone();
-    let td = config.trust_domain.clone();
-    let resolve_actor: crate::ActorResolver =
-        Box::new(move |kid: &str, slot: SignerSlot| match slot {
-            SignerSlot::Response if kid == skid => Some(ResolvedActor {
-                identity: sident.clone(),
-                verification_key: response_pub.clone(),
-                slot,
-            }),
-            SignerSlot::Request => client_map.get(kid).map(|(signer, key)| ResolvedActor {
-                identity: ActorIdentity {
-                    role: "client".to_string(),
-                    trust_domain: td.clone(),
-                    subject: signer.clone(),
-                    keyid: kid.to_string(),
-                },
-                verification_key: key.clone(),
-                slot,
-            }),
-            _ => None,
-        });
+    let resolve_actor = build_actor_resolver(
+        client_signers,
+        Arc::clone(&resolver),
+        config.trust_domain.clone(),
+        response_kid.clone(),
+        server_identity.clone(),
+        response_pub,
+    );
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
@@ -774,6 +813,48 @@ pub fn run(
             signer,
         )
     };
+    // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
+    // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
+    // `VerifierPolicy::new` is the validating constructor: a skew outside
+    // `0..=MAX_CLOCK_SKEW_BOUND` refuses to build and startup fails closed rather
+    // than serving a window the operator did not get. One value drives both the
+    // acceptance window and the replay `retain_until`, so an admitted nonce is
+    // retained for exactly as long as its signature can still be accepted.
+    let mut verifier_policy =
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], config.max_clock_skew).map_err(
+            |_| {
+                format!(
+                    "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
+                     0..={} seconds (§5.1 bounded skew)",
+                    config.max_clock_skew,
+                    mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+                )
+            },
+        )?;
+    // §4.1: the MCP transport/version contract is enforced only when the operator
+    // declares the protocol versions this deployment serves. Absent the flag there
+    // is no contract, so required-header presence and `Mcp-Name`/`params.name`
+    // agreement are not asserted — declared explicitly rather than defaulted.
+    if !config.mcp_protocol_versions.is_empty() {
+        let versions: Vec<&str> = config
+            .mcp_protocol_versions
+            .iter()
+            .map(String::as_str)
+            .collect();
+        eprintln!(
+            "mcp-re-proxy: MCP transport contract ENFORCED for protocol version(s) {:?} \
+             (required transport headers covered; Mcp-Name must equal params.name)",
+            config.mcp_protocol_versions
+        );
+        verifier_policy = verifier_policy.with_mcp_transport(
+            mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&versions),
+        );
+    }
+    eprintln!(
+        "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
+        skew = config.max_clock_skew
+    );
+    proxy = proxy.with_verifier_policy(verifier_policy);
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
     }
@@ -853,9 +934,15 @@ fn serve_fleet(
         addr,
         cores: config.cores, // 0 = auto (one worker per core); --cores pins it
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        max_in_flight_total: None,
+        // MCPRE-114: the operator's fleet-global ceiling, divided evenly per core by
+        // `async_fleet::apply_global_admission`. `None` = no global target.
+        max_in_flight_total: config.max_in_flight_total,
     };
-    let server_config = config_snapshot.load();
+    // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
+    // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
+    // observed by the next handshake instead of being written to a config nothing
+    // reads again.
+    let server_config = Arc::clone(&config_snapshot);
     let serve_options = Arc::new(serve_options);
     // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
     // test flips it directly). We hand a clone to the fleet and poll the same flag.

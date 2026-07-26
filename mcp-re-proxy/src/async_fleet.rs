@@ -12,7 +12,7 @@
 //!   * **no contended cross-core hot-path state** — each worker owns its runtime,
 //!     its listener, and its `Proxy` handler; the ONLY state shared across cores is
 //!     the coherent replay/trust store (designed server-side-atomic, ADR-MCPS-020)
-//!     and the immutable `ServerConfig`/`ServerOptions` snapshots (shared read-only
+//!     and the `ServerConfigSnapshot`/`ServerOptions` handles (shared read-only
 //!     behind `Arc`). See the module-level "Cross-core sharing audit" below.
 //!
 //! This supersedes the MCPRE-112 single-shared-runtime scaffolding (which was never a
@@ -27,7 +27,8 @@
 //!   * its own listener fd (per-core, not shared);
 //!   * the per-core `Proxy` handler (`make_handler(core)` returns a distinct handler
 //!     per core; nothing forces cores to share one);
-//!   * read-only `Arc<ServerConfig>` / `Arc<ServerOptions>` (immutable snapshots — an
+//!   * read-only `Arc<ServerConfigSnapshot>` / `Arc<ServerOptions>` (the TLS config is
+//!     re-read per connection so a CRL hot-reload is picked up without a restart; an
 //!     `Arc` clone is a non-blocking refcount bump, never a lock);
 //!   * the shared authoritative replay/trust store, whose cross-core coordination is
 //!     the store's own server-side-atomic contract (Redis/etcd), NOT a process-local
@@ -53,7 +54,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use rustls::ServerConfig;
 
 use crate::async_serve::serve;
 use crate::async_serve::AsyncRequestHandler;
@@ -157,7 +157,7 @@ impl Fleet {
 /// start and no worker is spawned.
 pub fn serve_fleet<H, F>(
     cfg: FleetConfig,
-    config: Arc<ServerConfig>,
+    config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
     options: Arc<ServerOptions>,
     make_handler: F,
     shutdown: Arc<AtomicBool>,

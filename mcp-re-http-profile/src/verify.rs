@@ -342,6 +342,16 @@ fn check_params(
     {
         return Err(HttpProfileError::StaleWindow);
     }
+    // Bound how WIDE the signer may declare its own window (§5.1). Freshness above
+    // decides when a window may be used; it says nothing about its width, so without
+    // this a client can present `created = now, expires = now + 10y` — fresh, and
+    // therefore accepted — and the replay tier then retains that nonce until
+    // `expires + skew`. The retention a single client can pin would be client-chosen
+    // and unbounded. The window is the message's own property, so like the degenerate
+    // `expires <= created` case this is checked skew-free.
+    if expires.saturating_sub(created) > policy.max_signature_validity() {
+        return Err(HttpProfileError::StaleWindow);
+    }
     let nonce = match (&params.nonce, require_nonce) {
         (Some(n), _) => n.clone(),
         (None, false) => String::new(),

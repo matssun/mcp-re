@@ -311,7 +311,9 @@ where
             };
             async_serve::serve(
                 listener,
-                config,
+                // The accept loop reads the serving config per connection from a
+                // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
+                Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(config)),
                 Arc::new(options),
                 Arc::new(async_handler),
                 shutdown_srv,

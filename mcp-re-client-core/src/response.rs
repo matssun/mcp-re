@@ -97,16 +97,53 @@ pub fn verify_signed_response(
         now,
     )?;
 
-    // Unexpected-signer guard (client policy): a signer that verifies but is not
-    // the one policy bound to this route/audience fails closed.
+    enforce_expected_server_signer(expectation, &verified)?;
+
+    Ok(verified)
+}
+
+/// The unexpected-signer guard (client policy): a signer that verifies but is not the
+/// one policy bound to this route/audience fails closed.
+///
+/// Direct-root mode only. `resolved_server_actor.identity.keyid` is the keyid the
+/// response signature was accepted under, which on that path is the stable server
+/// signer the pin names.
+fn enforce_expected_server_signer(
+    expectation: &ResponseExpectation,
+    verified: &VerifiedHttpResponseEvidence,
+) -> Result<(), HttpProfileError> {
     if let Some(expected) = &expectation.expected_server_signer_keyid {
-        let signed_keyid = &verified.resolved_server_actor.identity.keyid;
-        if signed_keyid != expected {
+        if &verified.resolved_server_actor.identity.keyid != expected {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
     }
+    Ok(())
+}
 
-    Ok(verified)
+/// Refuse a pinned server signer on the DELEGATED path rather than ignoring it.
+///
+/// The pin was enforced only in [`verify_signed_response`] (the pre-052 direct-root
+/// mode), so a deployment that called `with_expected_server_signer` and then used the
+/// delegated-required path — every production caller — got no enforcement whatsoever,
+/// while the control read as enabled.
+///
+/// It cannot simply be applied here: under delegation the accepted signer identity is
+/// the credential's `server_signer`, whose keyid is the EPHEMERAL delegated kid (an
+/// RFC 7638 thumbprint that rotates each TTL by design, `verify.rs` builds it at
+/// `resolved_server_actor`). Comparing the pin against that would fail on the first
+/// rotation. The stable coordinate a client actually wants to pin is the credential's
+/// ISSUER (root) kid, which the verified evidence does not currently carry.
+///
+/// Choosing and plumbing that coordinate is an ADR-MCPRE-052 decision, so until it is
+/// made this fails closed: an operator who set the pin learns it is not enforced here
+/// instead of believing a control that never ran.
+fn refuse_pin_on_delegated_path(
+    expectation: &ResponseExpectation,
+) -> Result<(), HttpProfileError> {
+    if expectation.expected_server_signer_keyid.is_some() {
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+    Ok(())
 }
 
 /// A verified response plus its multi-round-trip classification (ADR-MCPS-047),
@@ -423,6 +460,7 @@ pub fn verify_delegated_response(
     revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+    refuse_pin_on_delegated_path(expectation)?;
     let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
@@ -652,6 +690,88 @@ mod delegated_tests {
             out.verified.server_signer.as_ref().unwrap().keyid,
             mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
         );
+    }
+
+    /// ADR-MCPRE-052: the client-policy signer pin was enforced ONLY in
+    /// `verify_signed_response` (pre-052 direct-root mode). Every production caller uses
+    /// the delegated path, so a deployment that set the pin got no enforcement at all
+    /// while the control read as enabled. It now fails closed instead of being ignored;
+    /// see `refuse_pin_on_delegated_path` for why it cannot simply be applied (the
+    /// accepted signer keyid there is the EPHEMERAL delegated kid, which rotates).
+    #[test]
+    fn delegated_success_refuses_a_pinned_signer_instead_of_ignoring_it() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("server delegated-signs the success response");
+
+        // No pin: verifies exactly as before (no behaviour change for the normal path).
+        let ok = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("an unpinned delegated success still verifies");
+        assert_eq!(ok.outcome, DelegatedOutcome::Success);
+
+        // Pin set: fails closed rather than silently doing nothing.
+        for pin in [ROOT_KID, "some-other-root-kid"] {
+            let err = verify_delegated_response(
+                &resp,
+                &resolver(),
+                &expectation(&signed).with_expected_server_signer(pin),
+                &policy(),
+                &StaticRevocationList::new(),
+                NOW,
+            )
+            .expect_err("a pin on the delegated path must fail closed, never be ignored");
+            assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+        }
+    }
+
+    /// The same holds for rejection receipts — a pin must never be silently dropped.
+    #[test]
+    fn delegated_rejection_refuses_a_pinned_signer_instead_of_ignoring_it() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason {
+            wire_code: "mcp-re.replay_detected",
+            message: "replayed".into(),
+        };
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            409,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds bound delegated rejection");
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer(ROOT_KID),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("a pin must fail closed on a rejection receipt too");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
     #[test]

@@ -68,3 +68,41 @@ spec:
     - name: http
       port: 8620
       targetPort: 8620
+---
+# The PEP's central claim is that an unauthorized request never reaches the inner
+# server. Nothing in the inner backend enforces that: it listens on 0.0.0.0 and its
+# ClusterIP Service is reachable by every pod in the cluster, so any workload with
+# pod-network access could POST JSON-RPC straight to it — unsigned, unverified,
+# unreplay-checked — and bypass the proxy entirely. The backend cannot defend itself
+# (it is an unmodified FastMCP server, out of the TCB by design), so the restriction
+# has to be enforced by the network layer.
+#
+# This policy makes the proxy the ONLY admitted ingress. It selects the inner
+# backend and allows ingress solely from pods carrying the proxy chart's selector
+# labels (`mcp-re-proxy.selectorLabels`). Adjust `app.kubernetes.io/instance` to the
+# Helm release name if it is not `mcp-re`.
+#
+# REQUIRES a CNI that enforces NetworkPolicy (Calico, Cilium, GKE Dataplane V2, ...).
+# On a cluster without one this object is accepted and silently enforces nothing —
+# verify with a deny test from an unrelated pod before relying on it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-re-inner-fastmcp-allow-proxy-only
+  labels:
+    app.kubernetes.io/name: mcp-re-inner-fastmcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-re-inner-fastmcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-re-proxy
+              app.kubernetes.io/instance: mcp-re
+      ports:
+        - protocol: TCP
+          port: 8620

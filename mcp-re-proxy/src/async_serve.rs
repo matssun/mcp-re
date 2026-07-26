@@ -53,7 +53,6 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::rt::TokioTimer;
 use hyper_util::server::conn::auto;
-use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -170,12 +169,11 @@ impl Drop for InFlightGuard {
 /// `Proxy: Send + Sync`.
 pub async fn serve<H: AsyncRequestHandler>(
     listener: TcpListener,
-    config: Arc<ServerConfig>,
+    config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let acceptor = TlsAcceptor::from(config);
     let permits = Arc::new(tokio::sync::Semaphore::new(
         options.limits.max_concurrent_connections,
     ));
@@ -216,7 +214,13 @@ pub async fn serve<H: AsyncRequestHandler>(
             continue;
         };
 
-        let acceptor = acceptor.clone();
+        // MCPRE-116: read the CURRENT serving config per connection, so a CRL
+        // hot-reload that atomically swapped a rebuilt `ServerConfig` into the
+        // snapshot is observed by the next handshake — without a restart. Building
+        // the acceptor once outside this loop would pin every core to the config
+        // captured at startup and make `--client-crl-reload-secs` a no-op. An
+        // in-flight handshake keeps serving on the config it captured here.
+        let acceptor = TlsAcceptor::from(config.load());
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let in_flight = in_flight.clone();
@@ -280,6 +284,8 @@ async fn serve_connection<H: AsyncRequestHandler>(
 
     // Capture the header-read deadline before `options` moves into the service.
     let header_read_timeout = options.limits.request_deadline.or(options.limits.read_timeout);
+    // Read before `options` is moved into the service closure below.
+    let stream_ceiling = options.limits.max_in_flight_requests;
 
     let io = TokioIo::new(tls);
     let service = service_fn(move |req: Request<Incoming>| {
@@ -301,6 +307,16 @@ async fn serve_connection<H: AsyncRequestHandler>(
         // `header_read_timeout` needs a `Timer` on the connection or hyper panics
         // when it arms the deadline; supply the tokio timer.
         builder.http1().timer(TokioTimer::new()).header_read_timeout(read_timeout);
+    }
+    // Cap HTTP/2 concurrent streams to the same per-core in-flight ceiling. Without a
+    // cap, ONE connection holding a valid client certificate can open unbounded
+    // concurrent streams; each is a request that buffers up to `max_body_bytes`, so the
+    // in-flight semaphore sheds them with a 503 only AFTER hyper has accepted the
+    // stream. Capping at the connection level applies the same bound one layer earlier,
+    // at the multiplexer. Left unset when no ceiling is configured (unbounded, the
+    // historical behavior).
+    if let Some(ceiling) = stream_ceiling {
+        builder.http2().max_concurrent_streams(ceiling as u32);
     }
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.

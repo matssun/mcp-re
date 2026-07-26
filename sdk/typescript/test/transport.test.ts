@@ -184,6 +184,52 @@ describe("McpReHttpTransport lifecycle", () => {
     expect(events).toEqual(["poster-hit", "onclose"]);
   });
 
+  it("does not sign or POST a request still queued at the semaphore when close() lands", async () => {
+    // The gap the in-flight test above does NOT cover. close() is documented as making
+    // no claim about already-DISPATCHED work — but a request waiting for a concurrency
+    // slot has not been dispatched. Before the fix, the OPEN check ran before the queue
+    // wait and `Promise.race` started the exchange regardless, so every queued request
+    // was signed and POSTed after teardown: the server executed work the caller believed
+    // it had cancelled, with valid signatures and fresh nonces.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const posted: string[] = [];
+    const poster: Poster = async (req) => {
+      posted.push(String(req.headers?.["signature-input"] ?? "signed"));
+      await gate;
+      throw new McpReError("mcp-re.replay_detected");
+    };
+    // One slot, so the second and third sends are stuck in the queue.
+    const transport = new McpReHttpTransport(
+      minimalConfig({ maxConcurrentExchanges: 1 }),
+      poster,
+    );
+    await transport.start();
+
+    const first = transport.send(REQUEST);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted.length, "the first request holds the only slot").toBe(1);
+
+    const queued = [transport.send(REQUEST), transport.send(REQUEST)];
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted.length, "the queued requests are still waiting for a slot").toBe(1);
+
+    await transport.close();
+    release();
+
+    await expect(first).rejects.toThrow(ConnectionClosed);
+    for (const q of queued) {
+      await expect(q, "a queued request must fail closed, not be emitted").rejects.toThrow(
+        ConnectionClosed,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    expect(
+      posted.length,
+      "no request queued at close() may reach the server",
+    ).toBe(1);
+  });
+
   it("clears abandoned correlation state on close", async () => {
     // Correlation entries would otherwise outlive the transport that owns them.
     let release!: () => void;

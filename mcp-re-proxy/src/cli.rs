@@ -128,8 +128,13 @@ pub struct Config {
     pub server_signer: String,
     /// Response-signing key id.
     pub server_key_id: String,
-    /// Symmetric clock skew (seconds).
+    /// Symmetric clock skew (seconds), applied to BOTH the RFC 9421 freshness gate
+    /// and the replay `retain_until`. Bounded `0..=VerifierPolicy::MAX_CLOCK_SKEW_BOUND`
+    /// at parse time.
     pub max_clock_skew: i64,
+    /// Accepted `Mcp-Protocol-Version` values (§4.1). Empty = no MCP transport
+    /// contract is enforced.
+    pub mcp_protocol_versions: Vec<String>,
     /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
     /// (ADR-MCPRE-050); client and server sign it byte-for-byte.
     pub target_uri: String,
@@ -185,6 +190,10 @@ pub struct Config {
     /// per-core linear-scaling benchmark reproducible (drive N=1 then N=cores) and
     /// lets an operator cap workers below the core count.
     pub cores: usize,
+    /// MCPRE-114: fleet-GLOBAL in-flight ceiling, divided evenly across cores by
+    /// `async_fleet`. `None` = no global target (a per-core `limits
+    /// .max_in_flight_requests` may still apply; with neither there is no ceiling).
+    pub max_in_flight_total: Option<usize>,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -369,7 +378,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut audience = None;
     let mut server_signer = None;
     let mut server_key_id = None;
-    let mut max_clock_skew: i64 = 300;
+    // One skew governs BOTH the RFC 9421 freshness gate and the replay `retain_until`,
+    // so an admitted nonce is retained exactly as long as its signature can still be
+    // accepted. The default is the profile's own `DEFAULT_MAX_CLOCK_SKEW` rather than a
+    // locally-chosen number, so proxy and verifier cannot drift apart.
+    let mut max_clock_skew: i64 = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let mut mcp_protocol_versions: Vec<String> = Vec::new();
     // ADR-MCPS-039 (D1): default to the migration posture (admit both wire
     // profiles) so an omitted flag preserves back-compat with draft-01 clients;
     // `--expected-version-policy draft-02-only` tightens it.
@@ -389,6 +403,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut inner_http_urls: Vec<String> = Vec::new();
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
+    let mut max_in_flight_total: Option<usize> = None;
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -500,8 +515,23 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--server-signer" => server_signer = Some(value.clone()),
             "--server-key-id" => server_key_id = Some(value.clone()),
             "--max-clock-skew" => {
-                max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?
+                max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?;
+                // Bounded at parse time, matching `VerifierPolicy::new`: a negative
+                // skew narrows the window asymmetrically and a skew above the bound
+                // stops the freshness gate being a freshness gate. Refused here so the
+                // operator learns at the command line, not from a startup failure.
+                if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+                    .contains(&max_clock_skew)
+                {
+                    return Err(format!(
+                        "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}",
+                        mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND, max_clock_skew
+                    ));
+                }
             }
+            // §4.1 MCP transport contract. Repeatable; each occurrence adds an
+            // accepted `Mcp-Protocol-Version`. Absent = no transport contract.
+            "--mcp-protocol-version" => mcp_protocol_versions.push(value.clone()),
             "--target-uri" => target_uri = Some(value.clone()),
             "--trust-domain" => trust_domain = value.clone(),
             "--route" => route = Some(value.clone()),
@@ -782,6 +812,31 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     return Err("--max-connections must be > 0".to_string());
                 }
                 limits.max_concurrent_connections = n;
+            }
+            // MCPRE-114: bounded per-request ADMISSION control. Without a ceiling the
+            // proxy queues in-flight requests without bound, so one client holding a
+            // valid mTLS certificate can drive unbounded concurrent work (each request
+            // buffering up to --max-body-bytes). `--max-in-flight` sets the per-core
+            // ceiling directly; `--max-in-flight-total` sets a fleet-wide target that
+            // async_fleet divides evenly across cores (lock-free: each core enforces
+            // only its own share). An explicit per-core ceiling wins.
+            "--max-in-flight" => {
+                let n: usize = value.parse().map_err(|_| "invalid --max-in-flight".to_string())?;
+                if n == 0 {
+                    return Err("--max-in-flight must be > 0 (omit the flag for no ceiling)".to_string());
+                }
+                limits.max_in_flight_requests = Some(n);
+            }
+            "--max-in-flight-total" => {
+                let n: usize =
+                    value.parse().map_err(|_| "invalid --max-in-flight-total".to_string())?;
+                if n == 0 {
+                    return Err(
+                        "--max-in-flight-total must be > 0 (omit the flag for no ceiling)"
+                            .to_string(),
+                    );
+                }
+                max_in_flight_total = Some(n);
             }
             "--max-client-cert-lifetime" => {
                 max_client_cert_lifetime = parse_cert_lifetime(value)?
@@ -1159,16 +1214,25 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             );
         }
     }
-    // (b) `--client-ocsp require` demands the verified online OCSP path, which is
-    //     compiled ONLY under the `online_ocsp` feature. In a build without it,
-    //     `require` must FAIL CLOSED at parse time rather than silently skipping
-    //     the revocation check (the proxy must never start believing it enforces
-    //     online revocation when the code to do so is not present).
-    #[cfg(not(feature = "online_ocsp"))]
+    // (b) `--client-ocsp require` is refused unconditionally: the online-OCSP check is
+    //     unreachable on the serving path. `ocsp_rejection` is called only from
+    //     `connection_rejection`, which only the blocking serve loops use; the
+    //     production data plane is the per-core async fleet (ADR-MCPRE-051 §1), which
+    //     calls `connection_rejection_for_leaf` and performs only the cert-lifetime
+    //     check. Accepting `require` would print "ONLINE OCSP client-cert revocation
+    //     enabled" at startup while admitting every revoked client certificate — the
+    //     forbidden-claim shape (security-boundary §2). This holds with OR without the
+    //     `online_ocsp` feature: without it the code is absent, with it the code is
+    //     present but never called. Refused until the async path carries the full peer
+    //     chain and performs the responder round-trip off the runtime worker.
     if client_ocsp == OcspKind::Require {
         return Err(
-            "--client-ocsp require needs the online_ocsp feature, which is \
-             not available in this build (rebuild with --features online_ocsp)"
+            "--client-ocsp require cannot be honored: online OCSP is implemented only on \
+             the blocking serve loop, while the production data plane is the per-core \
+             async fleet, which performs no OCSP revocation check. Accepting it would \
+             announce enforcement that does not happen. Use --client-crl (with \
+             --client-crl-reload-secs for restart-free refresh) for client-certificate \
+             revocation on the async serving path."
                 .to_string(),
         );
     }
@@ -1251,10 +1315,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
-        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). Optional at parse; an
-        // unset value serves nothing (the audience/target check fails closed on every
-        // request), so a deployment MUST set --target-uri to serve.
-        target_uri: target_uri.unwrap_or_default(),
+        mcp_protocol_versions,
+        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). REQUIRED and non-empty:
+        // an empty target makes both sides of the audience/target conjunction the same
+        // empty string, so the dispatch-boundary binding degrades to a tautology and
+        // two deployments sharing an `--audience` become indistinguishable to the
+        // verifier. Refused here rather than served as a binding that binds nothing.
+        target_uri: {
+            let uri = require(target_uri, "--target-uri")?;
+            if uri.trim().is_empty() {
+                return Err(
+                    "--target-uri must not be empty: an empty target makes the audience/target \
+                     binding a tautology (both sides compare equal) instead of binding this \
+                     deployment's dispatch boundary"
+                        .to_string(),
+                );
+            }
+            uri
+        },
         trust_domain,
         route,
         key_source,
@@ -1274,6 +1352,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         client_crl_paths,
         inner_http_urls,
         cores,
+        max_in_flight_total,
         client_crl_reload_secs,
         client_ocsp,
         ocsp_responder_url,
@@ -1332,6 +1411,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
              profile, which is NOT accepted as the production authorization authority \
              (ADR-MCPS-013; Biscuit is the intended production profile). Run --authz off \
              until a production authorization profile is available."
+                .to_string(),
+        );
+    }
+
+    // ADR-MCPS-013: the policy-layer deny-list is consumed by the authorization layer
+    // (`LiveTrustResolver::resolve_with_revocation_id`), which only runs under an authz
+    // profile. `--authz reference` is refused just above and no production profile has
+    // landed, so authz is `Off` in every parseable config and a supplied deny-list
+    // could only be silently ignored — an operator would believe a compromised grant
+    // was revoked while it kept being authorized. Refused rather than accepted-and-
+    // ignored (security-boundary §2: never surface a capability that is not delivered).
+    if !config.revocation_list_paths.is_empty() {
+        return Err(
+            "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
+             consulted only by an authorization profile and no production profile is \
+             available (--authz is always off), so the list would enforce NOTHING. Remove \
+             --revocation-list; use the trust store and --revocation-tier for key \
+             revocation on the request path."
                 .to_string(),
         );
     }
@@ -2266,6 +2363,10 @@ mod tests {
             "--client-ca", "/ca",
             "--trust", "/trust.json",
             "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            // The RFC 9421 @target-uri this deployment binds to. Required and
+            // non-empty: an empty target makes the audience/target conjunction a
+            // tautology, so it is refused at parse.
+            "--target-uri", "https://mcp.example.com/mcp",
             // Delegated-signing is the only response mode; the trust epoch is required
             // for every config (ADR-MCPRE-052 §7).
             "--delegated-trust-epoch", "epoch-min",
@@ -2286,6 +2387,7 @@ mod tests {
             "--tls-key", "/key",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -2308,6 +2410,106 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    // --- §5.1 bounded skew / §4.1 MCP transport contract ----------------------
+
+    #[test]
+    fn max_clock_skew_is_accepted_across_the_whole_bound() {
+        for skew in [0, 1, 30, 299, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+            let mut a = minimal_durable();
+            a.push("--max-clock-skew".into());
+            a.push(skew.to_string());
+            let config = parse_args(&a).unwrap_or_else(|e| panic!("skew {skew} must parse: {e}"));
+            assert_eq!(config.max_clock_skew, skew);
+        }
+    }
+
+    /// A skew the freshness gate would refuse must be refused at the command line —
+    /// not accepted and then silently applied to replay retention alone.
+    #[test]
+    fn out_of_bounds_max_clock_skew_is_refused_at_parse() {
+        for skew in [-1, -30, 301, 3600] {
+            let mut a = minimal_durable();
+            a.push("--max-clock-skew".into());
+            a.push(skew.to_string());
+            let err = parse_args(&a)
+                .err()
+                .unwrap_or_else(|| panic!("skew {skew} must be refused"));
+            assert!(err.contains("--max-clock-skew must be"), "got: {err}");
+        }
+    }
+
+    /// An empty `--target-uri` would make the audience/target conjunction compare
+    /// `"" == ""` on every request. Refused at parse rather than served.
+    #[test]
+    fn empty_or_missing_target_uri_is_refused() {
+        let base: Vec<String> = minimal_durable()
+            .into_iter()
+            .collect::<Vec<_>>();
+        // The helper supplies --target-uri; drop it to prove it is required.
+        let mut without = Vec::new();
+        let mut skip = false;
+        for a in &base {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if a == "--target-uri" {
+                skip = true;
+                continue;
+            }
+            without.push(a.clone());
+        }
+        let err = parse_args(&without).expect_err("--target-uri must be required");
+        assert!(err.contains("--target-uri"), "got: {err}");
+
+        for empty in ["", "   "] {
+            let mut a = without.clone();
+            a.push("--target-uri".into());
+            a.push(empty.into());
+            let err = parse_args(&a).expect_err("an empty --target-uri must be refused");
+            assert!(err.contains("must not be empty"), "got: {err}");
+        }
+    }
+
+    /// MCPRE-114: the bounded-admission ceiling exists in `async_serve`/`async_fleet`
+    /// but had NO CLI flag, so no shipped configuration could enable it — the proxy
+    /// always ran unbounded in-flight. Both knobs must reach the config.
+    #[test]
+    fn admission_ceilings_are_configurable_and_default_to_unbounded() {
+        let config = parse_args(&minimal_durable()).expect("parse");
+        assert_eq!(config.limits.max_in_flight_requests, None, "unbounded by default");
+        assert_eq!(config.max_in_flight_total, None);
+
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.limits.max_in_flight_requests, Some(32));
+        assert_eq!(config.max_in_flight_total, Some(256));
+    }
+
+    /// Zero would silently mean "admit nothing"; refuse it rather than serve a proxy
+    /// that 503s every request.
+    #[test]
+    fn zero_admission_ceiling_is_refused() {
+        for flag in ["--max-in-flight", "--max-in-flight-total"] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&[flag, "0"]));
+            let err = parse_args(&a).expect_err("zero must be refused");
+            assert!(err.contains("must be > 0"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn mcp_protocol_version_is_repeatable_and_absent_by_default() {
+        let mut a = minimal_durable();
+        a.push("--mcp-protocol-version".into());
+        a.push("2026-07-28".into());
+        a.push("--mcp-protocol-version".into());
+        a.push("2025-06-18".into());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28", "2025-06-18"]);
     }
 
     // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
@@ -2364,7 +2566,13 @@ mod tests {
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
         assert_eq!(config.audience, "did:example:server-1");
-        assert_eq!(config.max_clock_skew, 300);
+        // The default skew is the profile's own, so the freshness gate the verifier
+        // runs and the retention the replay tier applies cannot drift apart.
+        assert_eq!(
+            config.max_clock_skew,
+            mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
+        );
+        assert!(config.mcp_protocol_versions.is_empty());
         assert_eq!(config.key_source, KeySourceKind::File);
         assert_eq!(config.replay, ReplayKind::File);
         assert_eq!(config.binding, BindingKind::Exact);
@@ -2915,6 +3123,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -3012,6 +3221,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -3667,15 +3877,16 @@ mod tests {
     // there is no ack to override this (see `authz_reference_is_refused`).
     // `--revocation-list` itself still parses (authz stays off), exercised below.
 
+    /// The deny-list parses into the config, but a config that CARRIES one is refused:
+    /// nothing consults it while authz is off, so accepting it would be a silent
+    /// no-op on a control the operator believes is enforcing.
     #[test]
-    fn parses_comma_separated_revocation_lists() {
+    fn a_supplied_revocation_list_is_refused_because_nothing_consults_it() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--revocation-list", "/a,/b,/c"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.revocation_list_paths,
-            vec!["/a".to_string(), "/b".to_string(), "/c".to_string()]
-        );
+        let err = parse_args(&a).expect_err("a deny-list that enforces nothing must be refused");
+        assert!(err.contains("--revocation-list"), "got: {err}");
+        assert!(err.contains("enforce NOTHING"), "got: {err}");
     }
 
     #[test]
@@ -3804,21 +4015,13 @@ mod tests {
                 "http://ocsp.example.test/r",
             ]),
         );
-        // In a build WITHOUT the online_ocsp feature, `--client-ocsp require`
-        // fails closed at parse time; under the feature it parses fully.
-        match parse_args(&a) {
-            Ok(config) => {
-                assert_eq!(config.client_ocsp, OcspKind::Require);
-                assert_eq!(
-                    config.ocsp_responder_url.as_deref(),
-                    Some("http://ocsp.example.test/r")
-                );
-            }
-            Err(err) => assert!(
-                err.contains("online_ocsp feature"),
-                "without the feature, require must fail closed; got: {err}"
-            ),
-        }
+        // `--client-ocsp require` fails closed at parse time in EVERY build: without
+        // the feature the OCSP code is absent, and with it the code exists but the
+        // async serving fleet never calls it. Announcing enforcement that does not
+        // happen is the defect this refusal removes.
+        let err = parse_args(&a).expect_err("--client-ocsp require must fail closed");
+        assert!(err.contains("cannot be honored"), "got: {err}");
+        assert!(err.contains("--client-crl"), "the error must name the working alternative; got: {err}");
     }
 
     #[test]
@@ -3850,15 +4053,17 @@ mod tests {
         assert!(err.contains("non-empty URL"), "got: {err}");
     }
 
-    #[cfg(not(feature = "online_ocsp"))]
+    /// `--client-ocsp require` fails closed in EVERY build configuration — the check
+    /// is unreachable from the async serving fleet whether or not the `online_ocsp`
+    /// code is compiled in.
     #[test]
-    fn client_ocsp_require_fails_closed_without_feature() {
+    fn client_ocsp_require_fails_closed_in_every_build() {
         let mut a = minimal();
         a.splice(0..0, args(&["--client-ocsp", "require"]));
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("online_ocsp feature") && err.contains("not available in this build"),
-            "require must fail closed without the feature; got: {err}"
+            err.contains("cannot be honored") && err.contains("async fleet"),
+            "require must fail closed in every build; got: {err}"
         );
     }
 
@@ -3877,11 +4082,10 @@ mod tests {
                 "none",
             ]),
         );
+        // Refused — now for the stronger reason that the serving path performs no OCSP
+        // check at all, which subsumes the reverse-proxy-mode objection.
         let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("reverse-proxy mode"),
-            "OCSP checks the local client cert, absent in reverse-proxy mode; got: {err}"
-        );
+        assert!(err.contains("cannot be honored"), "got: {err}");
     }
 
     #[test]
@@ -4366,6 +4570,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }

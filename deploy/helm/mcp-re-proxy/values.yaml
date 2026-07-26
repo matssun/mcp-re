@@ -154,3 +154,27 @@ podAnnotations: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Pod / container hardening.
+#
+# The proxy mounts the response-signing seed and the TLS private key from a Secret,
+# so a container escape is a key-compromise event. These defaults drop every
+# capability, forbid privilege escalation, and pin the runtime's default seccomp
+# profile — none of which changes the uid the process runs as.
+#
+# runAsNonRoot is deliberately NOT set here, and that is a known gap rather than an
+# oversight: the proxy refuses to start on a key file with ANY group or other
+# permission bit (`key_file_mode_is_insecure` is `mode & 0o077 != 0`), while a
+# Kubernetes Secret mounted for a non-root uid needs fsGroup + mode 0440 — which
+# that predicate rejects. Running non-root therefore requires deciding how the
+# key-file check should treat an fsGroup-owned mount; see the audit's C053b.
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
