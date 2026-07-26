@@ -170,10 +170,18 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# TLS + trust material, mounted from a Secret. The Secret MUST provide these keys:
-#   tls.crt, tls.key, client-ca.pem, trust.json, signing-seed — minus tls.key when
-#   gcpKms.tlsKeyVersion is set. signing-seed is required even under keySource=gcpKms
-#   (the CLI mandates --signing-key-seed; in KMS mode it is accepted but UNUSED).
+# TLS + trust material, mounted from a Secret. The Secret MUST provide:
+#   tls.crt, client-ca.pem, trust.json
+#   tls.key      — unless gcpKms.tlsKeyVersion custodies it (then it must be ABSENT;
+#                  the proxy refuses an exported TLS key alongside a delegated one)
+#   signing-seed — ONLY under keySource: fileSeed. Under gcpKms the response key never
+#                  leaves KMS, the chart does not pass --signing-key-seed, and the
+#                  proxy never reads one, so provisioning a seed there would put a
+#                  deployment's most sensitive file in the pod for nothing.
+#
+# Every key file this Secret does provide is mounted 0400: the proxy refuses to start
+# on a group/world-readable key file, and that refusal now covers tls.key under EVERY
+# custody mode (it used to be skipped for anything but fileSeed).
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"

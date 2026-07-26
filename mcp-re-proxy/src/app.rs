@@ -123,8 +123,37 @@ fn check_key_file_perms(path: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// Every private-key file this config causes the proxy to READ from disk.
+///
+/// Pure, so the decision is testable on its own — the defect this replaces was not in
+/// the permission predicate but in which files it was pointed at.
+///
+/// The rule follows the files, not the key-source name. The signing seed is read only
+/// under `file` custody; a PKCS#11/KMS source never surrenders it, and those sources
+/// thread the path only into the `FileKeySource` they use for TLS material. The TLS
+/// server private key, by contrast, is read under EVERY custody mode unless TLS signing
+/// is itself delegated — and `cli::parse_args` leaves `tls_key` empty in exactly that
+/// delegated case, which is why emptiness is the right test rather than the mode.
+///
+/// Gating the whole check on `key_source == File` therefore skipped the one private key
+/// that DOES land in the pod in precisely the modes advertised as "no key material ever
+/// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
+fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
+    let mut paths = Vec::new();
+    if config.key_source == KeySourceKind::File && !config.signing_key_seed.is_empty() {
+        paths.push(config.signing_key_seed.as_str());
+    }
+    if !config.tls_key.is_empty() {
+        paths.push(config.tls_key.as_str());
+    }
+    paths
+}
+
+/// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
+/// the unix signature above — it had drifted to a second `strict` parameter no caller
+/// passes, so this arm could not have compiled.
 #[cfg(not(unix))]
-fn check_key_file_perms(_path: &str, _strict: bool) -> Result<(), String> {
+fn check_key_file_perms(_path: &str) -> Result<(), String> {
     Ok(())
 }
 
@@ -191,12 +220,11 @@ pub fn run(
             config.bind,
         );
     }
-    if config.key_source == KeySourceKind::File {
-        // A group/world-readable key file is a HARD error (refuse startup). The other
-        // guards are parse-time and already enforced inside `cli::parse_args`; this
-        // one is filesystem-dependent so it lives here.
-        check_key_file_perms(&config.signing_key_seed)?;
-        check_key_file_perms(&config.tls_key)?;
+    // A group/world-readable key file is a HARD error (refuse startup). The other
+    // guards are parse-time and already enforced inside `cli::parse_args`; this one is
+    // filesystem-dependent so it lives here.
+    for path in key_files_read_from_disk(&config) {
+        check_key_file_perms(path)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
@@ -1457,6 +1485,173 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(_config: &cli::Config, _base_label: String) -> Option<DelegatedEpochWatch> {
     None
+}
+
+#[cfg(all(test, unix))]
+mod key_file_perm_tests {
+    use super::check_key_file_perms;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A key file at `mode`, named per-process so concurrent test binaries do not
+    /// collide. Mirrors the temp-file idiom the rest of this crate's tests use
+    /// (`std::env::temp_dir()` + pid) rather than adding a dev-dependency.
+    struct KeyFile(String);
+
+    impl KeyFile {
+        fn at(mode: u32, name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("mcp_re_perm_{}_{name}", std::process::id()));
+            let mut f = std::fs::File::create(&path).expect("create");
+            f.write_all(b"key-material").expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .expect("chmod");
+            KeyFile(path.to_string_lossy().into_owned())
+        }
+        fn path(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl Drop for KeyFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// A parsed `Config` for `source`, built through the REAL parser so the test cannot
+    /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
+    /// represents delegated TLS, so it is passed through rather than defaulted.
+    fn config_with(
+        source: crate::cli::KeySourceKind,
+        seed: &str,
+        tls_key: &str,
+    ) -> crate::cli::Config {
+        use crate::cli::KeySourceKind;
+        let (name, mut extra): (&str, Vec<&str>) = match source {
+            KeySourceKind::File => ("file", vec![]),
+            KeySourceKind::Env => ("env", vec![]), // unreachable outside dev_env_key_source
+            KeySourceKind::Pkcs11 => (
+                "pkcs11",
+                vec![
+                    "--pkcs11-module", "/m.so", "--pkcs11-token-label", "t",
+                    "--pkcs11-key-label", "k", "--pkcs11-pin", "p",
+                ],
+            ),
+            KeySourceKind::AwsKms => (
+                "aws-kms",
+                vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"],
+            ),
+            KeySourceKind::GcpKms => (
+                "gcp-kms",
+                vec![
+                    "--gcp-kms-key-version",
+                    "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+                ],
+            ),
+        };
+        let mut argv: Vec<&str> = vec![
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--tls-cert", "/cert",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            "--target-uri", "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch", "epoch-min",
+            "--replay-cache", "file",
+            "--replay-path", "/replay",
+            "--key-source", name,
+        ];
+        argv.append(&mut extra);
+        if !seed.is_empty() {
+            argv.extend_from_slice(&["--signing-key-seed", seed]);
+        }
+        // An empty `tls_key` means delegated TLS; the parser only leaves it empty when a
+        // delegated TLS custody is configured, so express that rather than omitting it.
+        if tls_key.is_empty() {
+            argv.extend_from_slice(&[
+                "--gcp-kms-tls-key-version",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/tls/cryptoKeyVersions/1",
+            ]);
+        } else {
+            argv.extend_from_slice(&["--tls-key", tls_key]);
+        }
+        let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
+        crate::cli::parse_args(&owned)
+            .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
+    }
+
+    #[test]
+    fn a_group_readable_key_file_is_refused() {
+        let f = KeyFile::at(0o644, "group.key");
+        let err = check_key_file_perms(f.path()).expect_err("0644 must be refused");
+        assert!(err.contains("group/world-accessible"), "got: {err}");
+    }
+
+    #[test]
+    fn an_owner_only_key_file_is_accepted() {
+        let f = KeyFile::at(0o600, "owner.key");
+        check_key_file_perms(f.path()).expect("0600 is the required posture");
+    }
+
+    /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
+    /// server key is read from disk under EVERY custody mode unless TLS signing is
+    /// itself delegated — including the KMS modes advertised as "no key material ever
+    /// lands in the pod" — so it must always be among the files checked.
+    #[test]
+    fn the_tls_key_is_checked_under_every_custody_mode() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        // `Env` is omitted: it is rejected by the parser outside a
+        // `dev_env_key_source` build, so it cannot be constructed here.
+        for source in [
+            KeySourceKind::File,
+            KeySourceKind::Pkcs11,
+            KeySourceKind::AwsKms,
+            KeySourceKind::GcpKms,
+        ] {
+            let config = config_with(source, "/seed", "/tls.key");
+            let checked = key_files_read_from_disk(&config);
+            assert!(
+                checked.contains(&"/tls.key"),
+                "{source:?}: the TLS key lands on disk and must be permission-checked"
+            );
+            // The SEED is read only where custody is file-based.
+            assert_eq!(
+                checked.contains(&"/seed"),
+                source == KeySourceKind::File,
+                "{source:?}: the seed is checked iff it is actually read"
+            );
+        }
+    }
+
+    /// Delegated TLS leaves `tls_key` empty — that emptiness is how the wiring says "no
+    /// key file is read", so nothing must be checked for it.
+    #[test]
+    fn a_delegated_tls_key_contributes_no_file_to_check() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        let config = config_with(KeySourceKind::GcpKms, "", "");
+        assert!(
+            key_files_read_from_disk(&config).is_empty(),
+            "delegated TLS + KMS custody reads no private key from disk"
+        );
+    }
+
+    /// Delegated TLS leaves `tls_key` EMPTY (see `cli::parse_args`), which is how the
+    /// wiring expresses "no key file is read" — and an empty path must not be treated as
+    /// a key file to check.
+    #[test]
+    fn an_absent_key_file_is_not_an_error() {
+        check_key_file_perms("").expect("no file configured is not a violation");
+        check_key_file_perms("/nonexistent/path/tls.key")
+            .expect("a missing file is reported by the loader, not by this guard");
+    }
 }
 
 #[cfg(test)]

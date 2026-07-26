@@ -1336,7 +1336,22 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         trust_domain,
         route,
         key_source,
-        signing_key_seed: require(signing_key_seed, "--signing-key-seed")?,
+        // Required only where the seed is actually READ. Under a non-exporting
+        // custody (PKCS#11 / AWS KMS / GCP KMS) the response-signing key never leaves
+        // the device, and those sources thread this path only into the FileKeySource
+        // they use for TLS material — the seed accessor is never called. Requiring it
+        // there made every operator provision an Ed25519 root seed into every pod in
+        // exactly the mode chosen because no key should land in the pod, so a
+        // deployment's most sensitive file existed only to satisfy an argument parser.
+        // An explicitly-supplied path is still accepted and still permission-checked.
+        signing_key_seed: match key_source {
+            KeySourceKind::File | KeySourceKind::Env => {
+                require(signing_key_seed, "--signing-key-seed")?
+            }
+            KeySourceKind::Pkcs11 | KeySourceKind::AwsKms | KeySourceKind::GcpKms => {
+                signing_key_seed.unwrap_or_default()
+            }
+        },
         tls_cert: require(tls_cert, "--tls-cert")?,
         // #59: on the DELEGATED TLS path the TLS key is token-resident and never
         // read from disk, so an exported `--tls-key` is not merely optional — it is
@@ -3410,6 +3425,43 @@ mod tests {
                 "the refusal must say what control is being disabled; got: {err}"
             );
         }
+    }
+
+    /// Under a non-exporting custody the response key never leaves the device, so the
+    /// seed is never read — requiring it made operators put an Ed25519 root seed in
+    /// every pod in exactly the mode chosen because no key should land there.
+    #[test]
+    fn a_non_exporting_custody_does_not_require_a_signing_key_seed() {
+        for (source, extra) in [
+            ("gcp-kms", vec!["--gcp-kms-key-version", "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"]),
+            ("aws-kms", vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"]),
+        ] {
+            let mut a: Vec<String> = minimal_durable()
+                .into_iter()
+                .collect::<Vec<_>>();
+            // Drop `--signing-key-seed /seed` from the baseline args.
+            let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+            a.drain(i..i + 2);
+            a.splice(0..0, args(&["--key-source", source]));
+            a.splice(0..0, args(&extra));
+
+            let config = parse_args(&a)
+                .unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
+            assert_eq!(
+                config.signing_key_seed, "",
+                "{source}: an unsupplied seed stays empty rather than naming a phantom file"
+            );
+        }
+    }
+
+    #[test]
+    fn file_custody_still_requires_a_signing_key_seed() {
+        // Where the seed IS read, omitting it must still fail closed at parse.
+        let mut a = minimal_durable();
+        let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+        a.drain(i..i + 2);
+        let err = parse_args(&a).expect_err("file custody reads the seed, so it is required");
+        assert!(err.contains("--signing-key-seed"), "got: {err}");
     }
 
     #[test]

@@ -124,11 +124,15 @@ spec:
             - "--key-source"
             - "file"
             {{- end }}
-            # The CLI REQUIRES --signing-key-seed even in a KMS key-source (where it is
-            # accepted but UNUSED — the response key lives in KMS). So always mount +
-            # pass it; the Secret always provides signing-seed.
+            {{- if ne .Values.keySource "gcpKms" }}
+            # Passed ONLY under file custody, where the proxy actually reads it. Under
+            # gcpKms the response key never leaves KMS and the seed is never read, so
+            # passing it would put a deployment's most sensitive file in the pod for no
+            # reason — in exactly the mode chosen because no key material should be
+            # there. (The CLI used to require it unconditionally; it no longer does.)
             - "--signing-key-seed"
             - "{{ .Values.tls.mountPath }}/signing-seed"
+            {{- end }}
             - "--tls-cert"
             - "{{ .Values.tls.mountPath }}/tls.crt"
             {{- if not (and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion) }}
