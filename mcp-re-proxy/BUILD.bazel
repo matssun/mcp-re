@@ -457,6 +457,45 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# MCPRE-116 (ADR-MCPRE-051 §6): the serving fleet reads its TLS config PER CONNECTION
+# from the ServerConfigSnapshot, so the CRL hot-reload task's atomic swap takes effect
+# without a restart. Without this the reload is a dead wire — the fleet would keep
+# serving the config it captured at boot.
+nt_rust_test(
+    name = "config_snapshot_hot_reload_test",
+    srcs = ["tests/config_snapshot_hot_reload_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
+        # resolves it transitively while Bazel needs the edge stated.
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPS-021: the revocation tier the proxy ANNOUNCES at startup must be the tier the
+# data plane actually runs — the resolver was previously built, its guarantee printed,
+# and then discarded, so the serving path used a frozen boot-time snapshot.
+# No `async_serve`: unlike its siblings this file carries no `#![cfg(feature = ...)]`,
+# so cargo builds it under DEFAULT features and Bazel must match — the resolver seam it
+# drives is in the default build.
+nt_rust_test(
+    name = "revocation_serving_wiring_test",
+    srcs = ["tests/revocation_serving_wiring_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+    ],
+)
 # ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
 # HttpProfileProxy delegated path end-to-end (success + bound/preflight rejection +
 # fail-closed + direct-root-rejected).
@@ -469,6 +508,10 @@ nt_rust_test(
     edition = "2021",
     deps = [
         ":mcp_re_proxy_async",  # keep
+        # The client-FACING crate, not just the http-profile primitives: one case
+        # verifies the server's bodyless 202 through the entry point an SDK actually
+        # binds (mcp_re_client_core::verify_delegated_accepted_202).
+        "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
@@ -761,6 +804,29 @@ nt_rust_test(
         # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
         # inserted, to confirm the bounded-window TTL (not the now=0 epoch TTL).
         "@crates_mcp_re//:redis",
+    ],
+)
+# ADR-MCPS-047: the MRTR continuation store's REDIS backing. The store's safety
+# properties are properties of its raw commands — peek must be a non-destructive GET
+# (or an about-to-be-rejected request destroys a live approval leg) and consume must
+# report DEL's own count (that count, not the read, is what makes a continuation
+# answerable at most once across replicas). Neither is observable from the in-memory
+# store the serving tests use. Self-skips without MCP_RE_TEST_REDIS_URL.
+nt_rust_test(
+    name = "redis_continuation_e2e_test",
+    srcs = ["tests/redis_continuation_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    env_inherit = [
+        "MCP_RE_TEST_REDIS_URL",
+        # CI opt-in: when set, a missing-infra SKIP HARD-FAILS instead of passing.
+        "MCP_RE_REQUIRE_LIVE_INFRA",
+    ],
+    deps = [
+        ":mcp_re_proxy_ext",  # keep
+        "@crates_mcp_re//:tokio",
     ],
 )
 # MCPS-84 (ADR-MCPS-049 W2): live Redis trust-epoch source — an INCR on another

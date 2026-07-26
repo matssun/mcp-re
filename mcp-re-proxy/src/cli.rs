@@ -1522,6 +1522,29 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
         )),
         Some(_) => {}
     }
+    // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
+    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
+    // by `request_deadline`, and with either gone a handful of connections pin serve
+    // slots up to `max_concurrent_connections` with nothing to drop them.
+    //
+    // An out-of-range value was already rejected LOUDLY, with the stated reason that
+    // "the control can never be turned off by out-of-range input". `0` turned the same
+    // control off silently, which left the binary asserting a maximal-security posture
+    // while its own defense was disabled. Each default is `Some(30s)`, so `None` here
+    // only ever comes from an operator explicitly passing `0`.
+    for (value, flag) in [
+        (config.limits.read_timeout, "--read-timeout-secs"),
+        (config.limits.write_timeout, "--write-timeout-secs"),
+        (config.limits.request_deadline, "--request-deadline-secs"),
+    ] {
+        if value.is_none() {
+            violations.push(format!(
+                "{flag} 0 disables a slow-loris defense: a peer that trickles bytes then \
+                 holds a serve slot indefinitely, up to --max-connections, with no \
+                 fail-closed drop. Set a bounded value (default 30s)"
+            ));
+        }
+    }
     if config.identity_source == IdentityPolicy::CnLegacy {
         violations.push(
             "--transport-identity-source cn_legacy is a deprecated, insecure identity binding; \
@@ -3344,14 +3367,18 @@ mod tests {
             args(&[
                 "--max-body-bytes", "1024",
                 "--max-connections", "8",
-                "--read-timeout-secs", "0",
+                "--read-timeout-secs", "45",
                 "--request-deadline-secs", "12",
             ]),
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_body_bytes, 1024);
         assert_eq!(config.limits.max_concurrent_connections, 8);
-        assert_eq!(config.limits.read_timeout, None, "0 disables the timeout");
+        assert_eq!(
+            config.limits.read_timeout,
+            Some(std::time::Duration::from_secs(45)),
+            "--read-timeout-secs sets the per-socket read timeout"
+        );
         assert_eq!(
             config.limits.request_deadline,
             Some(std::time::Duration::from_secs(12)),
@@ -3359,15 +3386,40 @@ mod tests {
         );
     }
 
+    /// A `0` timeout is what `parse_timeout` maps to "disabled", and disabling any of
+    /// these removes the slow-loris defense. The proxy documents itself as refusing every
+    /// unsafe configuration, and an OUT-OF-RANGE value was already rejected for exactly
+    /// this reason ("the control can never be turned off by out-of-range input") — `0`
+    /// was the hole in that argument.
     #[test]
-    fn request_deadline_secs_zero_disables() {
-        let mut a = minimal_durable();
-        a.splice(0..0, args(&["--request-deadline-secs", "0"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.limits.request_deadline, None,
-            "0 disables the aggregate read-phase deadline (like --read-timeout-secs)"
-        );
+    fn a_zero_timeout_is_refused_because_it_disables_the_slow_loris_defense() {
+        for flag in [
+            "--read-timeout-secs",
+            "--write-timeout-secs",
+            "--request-deadline-secs",
+        ] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&[flag, "0"]));
+            let err = parse_args(&a).expect_err("a disabled timeout must be refused");
+            assert!(
+                err.contains("refuses unsafe configuration") && err.contains(flag),
+                "{flag} 0 must be named in the refusal; got: {err}"
+            );
+            assert!(
+                err.contains("slow-loris"),
+                "the refusal must say what control is being disabled; got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_timeouts_are_bounded_so_the_refusal_never_fires_by_default() {
+        // The guard above is only safe because every default is Some(30s): it must be
+        // impossible to trip by omitting the flags.
+        let config = parse_args(&minimal_durable()).expect("the default config parses");
+        assert!(config.limits.read_timeout.is_some());
+        assert!(config.limits.write_timeout.is_some());
+        assert!(config.limits.request_deadline.is_some());
     }
 
     #[test]
