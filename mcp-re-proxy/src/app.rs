@@ -1139,7 +1139,35 @@ fn spawn_delegated_rotation_task(
                     }
                 }
             }
+            // The delegated kid BEFORE the attempt, so silent no-progress is detectable.
+            // `ensure_active` returns Ok when successor issuance FAILED but the current
+            // key is still valid (custody.rs: the `!current_valid` guard is skipped and
+            // the fallthrough `Some(a) if now < a.exp => Ok(())` wins). That is the
+            // PRIMARY failure mode — a root outage during the overlap window, exactly
+            // what the overlap exists to absorb — and taking it as success would reset
+            // `consecutive_failures`, collapse `wake_at` to now (we are already past
+            // `exp - overlap`), and re-enter this arm immediately: a tight retry loop
+            // against the root KMS/HSM, minting a fresh keypair every pass, for the
+            // whole overlap window. The backoff below must cover it.
+            let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
             match rotor.rotate(now_unix()) {
+                Ok(()) if !rotation_made_progress(&signer, &before_kid, overlap) => {
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: delegated successor issuance FAILED (root issuer \
+                         unavailable) but the current key is still valid; consecutive_failures {}, \
+                         time-to-expiry {}s. Serving continues on the current key until its exp, \
+                         then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                }
                 Ok(()) => {
                     consecutive_failures = 0;
                     signer.metrics().record_success(now_unix());
@@ -1182,6 +1210,35 @@ fn spawn_delegated_rotation_task(
             }
         }
     });
+}
+
+/// Did the rotation attempt actually mint a successor?
+///
+/// `DelegatedSigningCustody::ensure_active` reports `Ok(())` in two very different
+/// situations: a successor was issued, or issuance failed while the current key is
+/// still valid (so the fleet keeps signing and the caller is expected to retry).
+/// Only the first is progress. Without this distinction the retry loop treats a root
+/// outage during the overlap window as steady state and spins on the root issuer.
+///
+/// Progress means the published delegated kid changed. When nothing is published at
+/// all there is nothing to keep serving on, and the `Err` arm already handles that;
+/// when the attempt was not yet due (we are outside the overlap window) an unchanged
+/// kid is expected and not a failure.
+fn rotation_made_progress(
+    signer: &crate::delegated_server_signer::DelegatedServerSigner,
+    before_kid: &Option<String>,
+    overlap: i64,
+) -> bool {
+    let now = now_unix();
+    let Some(active) = signer.current(now) else {
+        // Nothing published: not progress, but also nothing to back off protecting.
+        return false;
+    };
+    if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
+        return true;
+    }
+    // Same kid. Only a rotation that was DUE and did not happen is a failure.
+    now < active.exp - overlap
 }
 
 /// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
@@ -1307,7 +1364,19 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
             })
         }
         Err(e) => {
-            eprintln!("mcp-re-proxy: NOTE: delegated trust-epoch watch unavailable ({}); cross-replica delegated revocation is inert until it recovers.", e.0);
+            // "until it recovers" would be false: `connect` is attempted exactly once,
+            // at startup, and nothing retries it. A transient Redis outage during a
+            // rolling restart therefore leaves THIS replica with the operator's
+            // cross-replica kill switch wired to nothing for its entire lifetime, while
+            // every other replica has it. Say so plainly and name the remedy.
+            eprintln!(
+                "mcp-re-proxy: WARNING: --trust-epoch-redis-url was configured but the \
+                 trust-epoch watch could NOT be established ({}). It is NOT retried: this \
+                 replica has no cross-replica delegated-revocation kill switch for its \
+                 entire lifetime, and an operator `INCR` will not revoke its delegated \
+                 keys. Restart this replica once the epoch store is reachable.",
+                e.0
+            );
             None
         }
     }
@@ -1316,4 +1385,78 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(_config: &cli::Config, _base_label: String) -> Option<DelegatedEpochWatch> {
     None
+}
+
+#[cfg(test)]
+mod rotation_progress_tests {
+    use super::rotation_made_progress;
+    use crate::delegated_server_signer::DelegatedServerSigner;
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::ActorIdentity;
+    use std::sync::Arc;
+
+    const OVERLAP: i64 = 60;
+
+    fn key(kid: &str, exp: i64) -> ActiveDelegatedKey {
+        ActiveDelegatedKey {
+            key: Arc::new(SigningKey::from_seed_bytes(&[7u8; 32])),
+            delegated_kid: kid.to_string(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: kid.to_string(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp,
+        }
+    }
+
+    /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
+    /// was minted AND when issuance failed while the current key is still valid. Taking
+    /// the second as success reset `consecutive_failures`, collapsed the steady-state
+    /// wake time to now (we are already past `exp - overlap`), and re-entered the
+    /// rotate arm immediately — a tight loop against the root KMS/HSM, minting a fresh
+    /// keypair each pass, for the entire overlap window.
+    #[test]
+    fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        // Published key is inside its overlap window: a rotation is DUE.
+        signer.publish(key("K1", now + OVERLAP - 1));
+        let before = Some("K1".to_string());
+        assert!(
+            !rotation_made_progress(&signer, &before, OVERLAP),
+            "a due rotation that did not change the kid means issuance failed"
+        );
+    }
+
+    #[test]
+    fn a_new_kid_is_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        signer.publish(key("K2", now + 300));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Outside the overlap window an unchanged kid is expected, not a failure — the
+    /// backoff must not engage in steady state.
+    #[test]
+    fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        signer.publish(key("K1", now + 10 * OVERLAP));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Nothing published: the `Err` arm owns that case; report no progress.
+    #[test]
+    fn nothing_published_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        assert!(!rotation_made_progress(&signer, &None, OVERLAP));
+    }
 }
