@@ -123,7 +123,11 @@ const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 #[cfg(feature = "redis_replay")]
 pub struct RedisEpochReader {
     client: redis::Client,
-    conn: Mutex<redis::Connection>,
+    /// `None` until the first successful connection. Deferring it lets a replica start
+    /// (and keep retrying) while the epoch store is briefly unreachable, instead of the
+    /// one-shot startup connect that used to leave a replica with no cross-replica
+    /// kill switch for its entire lifetime.
+    conn: Mutex<Option<redis::Connection>>,
     epoch_key: String,
 }
 
@@ -132,12 +136,24 @@ impl RedisEpochReader {
     /// Connect to `url` and read epoch key `epoch_key` (e.g.
     /// [`DEFAULT_TRUST_EPOCH_KEY`]). Fails closed on an unreachable backend.
     pub fn connect(url: &str, epoch_key: impl Into<String>) -> Result<Self, EpochReadError> {
+        let reader = Self::connect_lazy(url, epoch_key)?;
+        // Eager callers want the connection proven now.
+        reader.read_epoch()?;
+        Ok(reader)
+    }
+
+    /// Build a reader WITHOUT contacting the store. `redis::Client::open` only parses
+    /// the URL, so this cannot fail on an unreachable backend; the connection is
+    /// established on the first [`read_epoch`](EpochReader::read_epoch) and re-established
+    /// after any failure. A read while the store is down still returns
+    /// [`EpochReadError`] — lazy connectivity changes WHEN we try, never whether an
+    /// unreadable epoch is treated as fail-closed.
+    pub fn connect_lazy(url: &str, epoch_key: impl Into<String>) -> Result<Self, EpochReadError> {
         let client = redis::Client::open(url)
             .map_err(|e| EpochReadError(format!("open redis {url}: {e}")))?;
-        let conn = Self::fresh_conn(&client)?;
         Ok(RedisEpochReader {
             client,
-            conn: Mutex::new(conn),
+            conn: Mutex::new(None),
             epoch_key: epoch_key.into(),
         })
     }
@@ -171,20 +187,26 @@ impl EpochReader for RedisEpochReader {
             .conn
             .lock()
             .map_err(|_| EpochReadError("trust-epoch connection lock poisoned".into()))?;
-        match redis::cmd("GET")
-            .arg(&self.epoch_key)
-            .query::<Option<i64>>(&mut *guard)
-        {
+        // Not connected yet (first read, or a previous failure dropped the socket):
+        // establish now. A failure here is an ordinary fail-closed read error.
+        if guard.is_none() {
+            *guard = Some(Self::fresh_conn(&self.client)?);
+        }
+        let conn = guard.as_mut().expect("connection established above");
+        match redis::cmd("GET").arg(&self.epoch_key).query::<Option<i64>>(conn) {
             Ok(v) => Ok(v.unwrap_or(0)),
             Err(e) if is_transient(&e) => {
                 // One reconnect-and-retry: a broken socket is replaced, then the
-                // read is attempted once more; a second failure fails closed.
+                // read is attempted once more; a second failure fails closed. The
+                // socket is dropped on failure so the NEXT read reconnects rather
+                // than reusing a known-broken connection.
+                *guard = None;
                 let mut fresh = Self::fresh_conn(&self.client)?;
                 let v = redis::cmd("GET")
                     .arg(&self.epoch_key)
                     .query::<Option<i64>>(&mut fresh)
                     .map_err(|e| EpochReadError(format!("GET after reconnect: {e}")))?;
-                *guard = fresh;
+                *guard = Some(fresh);
                 Ok(v.unwrap_or(0))
             }
             Err(e) => Err(EpochReadError(format!("GET {}: {e}", self.epoch_key))),

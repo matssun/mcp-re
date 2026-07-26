@@ -372,13 +372,14 @@ CLIENT_COMMON=(
   --key-id           "${MCP_RE_KEY_ID:?set MCP_RE_KEY_ID}"
   --signing-key-seed "${MCP_RE_SIGNING_KEY_SEED:?set MCP_RE_SIGNING_KEY_SEED to a b64url seed or @file}"
   # ADR-MCPRE-052 delegated-required: the server-* trio is the ROOT ISSUER anchor the
-  # delegation credential chains to (NOT a per-response key). --trust-epoch is the
-  # accepted trust-epoch set and MUST equal the proxy's --delegated-trust-epoch (§7),
-  # or every response fails closed on a stale-epoch credential.
+  # delegation credential chains to (NOT a per-response key). --trust-epoch is NOT in
+  # this array: with a trust-epoch source wired the proxy mints "<base>#<counter>", so
+  # the accepted epoch has to be resolved from the shared counter at CALL time (see
+  # `epoch_label` / `client`). It advances whenever an operator INCRs, and the counter
+  # is monotonic — it is never rolled back.
   --server-signer    "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
   --server-key-id    "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
   --server-pubkey    "${MCP_RE_SERVER_PUBKEY:?set MCP_RE_SERVER_PUBKEY to a b64url key or @file}"
-  --trust-epoch      "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch}"
   --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
   # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
   # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.
@@ -388,6 +389,21 @@ CLIENT_COMMON=(
   --tls-key          "${MCP_RE_TLS_KEY:?set MCP_RE_TLS_KEY to the client key PEM path}"
   --server-ca        "${MCP_RE_SERVER_CA:?set MCP_RE_SERVER_CA to the server CA PEM path}"
 )
+
+# The epoch the proxy is currently minting: "<base>#<counter>", where <counter> is the
+# shared Redis key (unset reads as 0). Resolved per call because an INCR moves it and a
+# restarted replica resolves the SAME value — that is the property Proof 2 exercises.
+epoch_label() {
+  local c
+  c="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+        redis-cli GET mcp-re:trust:epoch 2>/dev/null | tr -d '\r')"
+  printf '%s#%s' "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch base label}" "${c:-0}"
+}
+
+# Every client invocation goes through this so the accepted epoch is always current.
+client() {
+  $CLIENT "${CLIENT_COMMON[@]}" --trust-epoch "$(epoch_label)" "$@"
+}
 # A minimal plain-MCP request the non-MRT proofs send. Override MCP_RE_REQ for your inner.
 REQ="${MCP_RE_REQ:-}"
 [[ -n "$REQ" ]] || REQ='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -449,53 +465,52 @@ log "Proof 1 — cross-replica replay coherence"
 # A proper 128-bit b64url nonce, PINNED so both replicas see the identical
 # (signer, audience, nonce) triple — the whole point of the coherence proof.
 NONCE="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+printf '%s\n' "$REQ" | client \
   --remote-addr "$REPLICA_A" --nonce "$NONCE" --expect accepted \
   || fail "replica A did not accept a fresh pinned nonce"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+printf '%s\n' "$REQ" | client \
   --remote-addr "$REPLICA_B" --nonce "$NONCE" --expect replay \
   || fail "replica B accepted a nonce already spent on A (replay coherence broken)"
 echo "  OK: nonce Fresh on A, Replay on B."
 
 # --- Proof 2: cross-replica trust revocation ---------------------------------
 log "Proof 2 — cross-replica trust-epoch revocation"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
+printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted \
   || fail "baseline request rejected before revocation"
-# Capture the PRE-BUMP epoch value: the shared counter is monotonic AND persistent, so
-# its absolute value carries across runs — the replicas' startup baseline is this value,
-# not 0. We restore exactly this after the proof so serving recovers (see the reset).
-EPOCH_BEFORE="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli GET mcp-re:trust:epoch | tr -d '\r')"
+# The shared counter is MONOTONIC and is never rolled back: minting under a lower epoch
+# would resurrect credentials the fleet's verifiers have already stopped accepting, so a
+# replica REFUSES a regressed counter rather than rebasing to it (that refusal is the
+# C007 invariant). Revocation is therefore undone the way it is in production — by
+# pointing verifiers at the NEW epoch — not by rewinding the store.
+EPOCH_BEFORE="$(epoch_label)"
 kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
   redis-cli INCR mcp-re:trust:epoch >/dev/null
 sleep 2  # bounded propagation window
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect revoked \
-  || fail "sibling B still trusted a credential revoked by the epoch bump"
-echo "  OK: epoch bump on the shared tier revoked across replicas."
 
-# Proof 2 ADVANCED the shared epoch to prove revocation; that revocation is real and
-# fleet-wide, so EVERY subsequent request now fails closed until the trust generation
-# is restored. Reset the epoch to the startup baseline so the later, independent proofs
-# serve again: each replica's delegated-epoch watch re-issues under the base epoch once
-# the counter returns to baseline, and verifiers pinned to it accept once more. (This
-# is test isolation between independent proofs — NOT relaxing the revocation just shown.)
-log "Reset trust epoch to baseline (restore serving for the remaining proofs)"
-if [[ -n "$EPOCH_BEFORE" ]]; then
-  kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli SET mcp-re:trust:epoch "$EPOCH_BEFORE" >/dev/null
-else
-  # No prior value: the key was unset at startup, so unset it again (reads as 0 = baseline).
-  kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli DEL mcp-re:trust:epoch >/dev/null
-fi
-# Wait (bounded) for every replica to re-issue the base epoch before continuing.
+# Sibling B must reject a credential minted under the PRE-bump epoch. Pin the old label
+# explicitly: `client` would resolve the new one and (correctly) accept.
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --trust-epoch "$EPOCH_BEFORE" \
+  --remote-addr "$REPLICA_B" --expect revoked \
+  || fail "sibling B still trusted a credential revoked by the epoch bump"
+echo "  OK: epoch bump on the shared tier revoked across replicas (old epoch $EPOCH_BEFORE rejected)."
+
+# Serving continues immediately under the ADVANCED epoch — no rollback, no restart. This
+# is also the restart invariant in situ: `epoch_label` re-derives from shared state, so
+# any replica (fresh or long-lived) resolves the same post-INCR label.
+log "Confirm serving under the advanced epoch (no rollback, no restart)"
+EPOCH_AFTER="$(epoch_label)"
+[[ "$EPOCH_AFTER" != "$EPOCH_BEFORE" ]] \
+  || fail "the INCR did not change the resolved epoch label ($EPOCH_AFTER)"
 restored=""
 for _ in $(seq 1 30); do
-  if printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
-     && printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect accepted >/dev/null 2>&1; then
+  if printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
+     && printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_B" --expect accepted >/dev/null 2>&1; then
     restored=1; break
   fi
   sleep 1
 done
-[[ -n "$restored" ]] || fail "serving did not recover after resetting the trust epoch to baseline"
-echo "  OK: base epoch re-issued across replicas; serving restored."
+[[ -n "$restored" ]] || fail "replicas did not re-issue under the advanced epoch $EPOCH_AFTER"
+echo "  OK: every replica re-issued under $EPOCH_AFTER; serving continues without a rollback."
 
 # --- Proof 3: MRT continuation survives a replica switch ---------------------
 # Open an InputRequired elicitation on A (persisting the continuation), read the
@@ -511,14 +526,14 @@ else
   MRT_OPEN_REQ="${MCP_RE_MRT_OPEN_REQ:-}"
   [[ -n "$MRT_OPEN_REQ" ]] || MRT_OPEN_REQ="$(jq -nc --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:$t,arguments:{}}}')"
-  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | client \
     --remote-addr "$REPLICA_A" --save-cont "$CONT_FILE")" \
     || fail "could not open a multi-round-trip continuation on A"
   STATE="$(printf '%s' "$OPEN_RESP" | jq -r '.result.requestState // empty')"
   [[ -n "$STATE" ]] || fail "A's response carried no requestState (tool did not elicit input)"
   ANSWER_REQ="$(jq -nc --arg s "$STATE" --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:$t,arguments:{},inputResponses:{confirm:true},requestState:$s}}')"
-  printf '%s\n' "$ANSWER_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+  printf '%s\n' "$ANSWER_REQ" | client \
     --remote-addr "$REPLICA_B" --load-cont "$CONT_FILE" --expect accepted \
     || fail "continuation opened on A was not honoured on B"
   rm -f "$CONT_FILE"
@@ -543,7 +558,9 @@ else
   LG="--server-name $MCP_RE_SERVER_NAME --signer-id $MCP_RE_SIGNER_ID --key-id $MCP_RE_KEY_ID"
   LG="$LG --signing-key-seed @/etc/mcp-re-client/client-signing-seed"
   LG="$LG --server-signer $MCP_RE_SERVER_SIGNER --server-key-id $MCP_RE_SERVER_KEY_ID"
-  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $MCP_RE_TRUST_EPOCH"
+  # The in-cluster load generator needs the SAME resolved "<base>#<counter>" label the
+  # proxy is minting; the bare base is never minted when a trust-epoch source is wired.
+  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $(epoch_label)"
   LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain ${MCP_RE_TRUST_DOMAIN:-example.com}"
   LG="$LG --tls-cert /etc/mcp-re-client/client-cert --tls-key /etc/mcp-re-client/client-key --server-ca /etc/mcp-re-client/server-ca"
   # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish

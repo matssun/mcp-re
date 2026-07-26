@@ -776,6 +776,31 @@ pub fn run(
             mut rotor,
             overlap,
         } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
+        // Resolve the shared trust epoch BEFORE the first key is minted, so the very
+        // first credential carries the globally comparable `<base>#<counter>` label
+        // rather than the bare base. Minting under the bare label is what let a
+        // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
+        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
+        if let Some(watch) = epoch_watch.as_ref() {
+            // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
+            // read means we cannot produce an epoch verifiers can compare, so we must
+            // not issue at all. Refusing to start is the honest outcome — the previous
+            // behaviour was to start anyway with the switch wired to nothing.
+            let label = watch.current_label().ok_or_else(|| {
+                "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
+                 epoch could NOT be read at startup, so no credential can carry a comparable \
+                 epoch. Refusing to start rather than minting keys the operator's kill switch \
+                 cannot revoke (fail closed, ADR-MCPRE-052 §7)."
+                    .to_string()
+            })?;
+            eprintln!(
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
+                 operator INCR moves every replica to the next label, so verifiers pinned to the \
+                 prior accepted-epoch set reject fleet-wide — and a restarted replica resolves \
+                 the SAME label as its peers."
+            );
+            rotor.set_trust_epoch_before_first_issue(label);
+        }
         // Initial issuance MUST succeed before serving: the proxy never serves without
         // an active delegated key (fail closed, ADR-MCPRE-052 §6).
         rotor.rotate(startup_now_unix).map_err(|e| {
@@ -795,7 +820,6 @@ pub fn run(
         // watches the shared trust-epoch counter and re-issues under a new epoch on an
         // advance, so an operator `INCR` revokes the outstanding delegated keys across
         // the fleet (ADR-MCPRE-052 §7).
-        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
         spawn_delegated_rotation_task(
             rotor,
             Arc::clone(&signer),
@@ -1105,7 +1129,32 @@ fn spawn_delegated_rotation_task(
             // reject on the next request (cross-replica, since every replica reads the
             // same counter). ADR-MCPRE-052 §7.
             if let Some(watch) = epoch_watch.as_ref() {
-                if let Some(label) = watch.current_label() {
+                let resolved = watch.current_label();
+                if resolved.is_none() {
+                    // FAIL CLOSED FOR MINTING: the shared epoch is unreadable (outage)
+                    // or went backwards (refused, never rebased). Either way we cannot
+                    // produce a comparable epoch, so we must not issue. The current key
+                    // keeps serving until its `exp`, after which the hot path fails
+                    // closed on its own — no stale-epoch minting, no rebase. Back off
+                    // and retry; the reader reconnects on the next read.
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed; \
+                         NOT minting (a credential without a comparable epoch is unrevokable). \
+                         Current key serves until exp then fails closed. \
+                         consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                    continue;
+                }
+                if let Some(label) = resolved {
                     if label != last_label {
                         match rotor.advance_trust_epoch(label.clone(), now_unix()) {
                             Ok(()) => {
@@ -1317,29 +1366,60 @@ fn build_trust_epoch_channel(
 /// equals the value seen at startup the node mints the configured `--delegated-trust-epoch`
 /// (so verifiers pinned to it accept); once it advances, the node mints a DISTINCT
 /// label (`<base>#<counter>`) that those verifiers reject as a stale epoch.
+/// The shared-trust-epoch watcher for delegated-key minting (ADR-MCPRE-052 §7).
+///
+/// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
+/// what makes an operator `INCR` survive a replica restart: the label is derived purely
+/// from shared state, so every replica at counter `N` mints `<base>#N` regardless of
+/// when it started. The previous design compared the counter against a baseline read at
+/// *this process's* startup and emitted the bare base label while they matched, so a
+/// replica restarting after an `INCR` adopted the advanced value as its own baseline,
+/// never observed an advance, and kept minting an epoch verifiers still accepted — the
+/// kill switch was process-relative rather than durable.
+///
+/// `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
+/// backwards (store reset, failover to a stale replica, a reconnect landing on the
+/// wrong instance) is refused rather than rebased, so reconnection can never re-mint
+/// under an epoch a verifier has already stopped accepting. Across a restart the shared
+/// counter is the only authority, by construction — a store that loses its counter is a
+/// trust-store failure, not something a replica can detect locally.
 struct DelegatedEpochWatch {
     reader: Box<dyn crate::trust_epoch::EpochReader>,
-    baseline: i64,
     base_label: String,
+    high_water: std::sync::Mutex<Option<i64>>,
 }
 
 impl DelegatedEpochWatch {
-    /// The trust-epoch label for the current shared counter, or `None` on a read
-    /// error (the caller then leaves the minted epoch unchanged — fail safe: a Redis
-    /// blip must never spuriously revoke a healthy fleet).
+    /// The label to mint under, or `None` when the shared epoch cannot be established.
+    ///
+    /// `None` is FAIL CLOSED FOR MINTING: the caller must not issue a credential,
+    /// because it cannot produce an epoch verifiers can compare. It does not retire the
+    /// current key — the fleet keeps signing off it until its `exp` and the hot path
+    /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
+    /// as "no change": a blip must never be read as an advance, nor as permission to
+    /// mint under a stale label.
     fn current_label(&self) -> Option<String> {
-        match self.reader.read_epoch() {
-            Ok(c) if c == self.baseline => Some(self.base_label.clone()),
-            Ok(c) => Some(format!("{}#{}", self.base_label, c)),
-            Err(_) => None,
+        let counter = self.reader.read_epoch().ok()?;
+        let mut hw = self.high_water.lock().ok()?;
+        if matches!(*hw, Some(prev) if counter < prev) {
+            // Regression. Refuse rather than rebase: minting under the lower epoch
+            // would resurrect credentials the fleet's verifiers already reject.
+            return None;
         }
+        *hw = Some(counter);
+        Some(format!("{}#{}", self.base_label, counter))
     }
 }
 
 /// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
-/// `None` when no source is configured (no cross-replica revocation signal — the
-/// epoch is then whatever `--delegated-trust-epoch` fixed it to, the honest bounded
-/// behavior). `base_label` is the configured `--delegated-trust-epoch`.
+/// `None` when no source is configured — the epoch is then whatever
+/// `--delegated-trust-epoch` fixed it to, with no cross-replica revocation signal (the
+/// honest bounded behaviour for a single-node deployment).
+///
+/// When a URL IS configured the watcher is always returned: the reader connects lazily
+/// and re-establishes after any failure, so a store that is briefly unreachable at boot
+/// no longer leaves this replica permanently without the operator's kill switch. The
+/// caller resolves the initial label and fails closed if it cannot.
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Option<DelegatedEpochWatch> {
     let url = config.trust_epoch_redis_url.as_ref()?;
@@ -1347,34 +1427,18 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
         .trust_epoch_key
         .as_deref()
         .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
-    use crate::trust_epoch::EpochReader as _;
-    match crate::trust_epoch::RedisEpochReader::connect(url, key) {
-        Ok(reader) => {
-            // The value at startup is this node's baseline; an unset key reads as 0.
-            let baseline = reader.read_epoch().unwrap_or(0);
-            eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE (redis, key {key:?}, baseline \
-                 {baseline}); an epoch advance re-issues delegated keys under a stale label so \
-                 verifiers pinned to the prior epoch reject across replicas."
-            );
-            Some(DelegatedEpochWatch {
-                reader: Box::new(reader),
-                baseline,
-                base_label,
-            })
-        }
+    match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
+        Ok(reader) => Some(DelegatedEpochWatch {
+            reader: Box::new(reader),
+            base_label,
+            high_water: std::sync::Mutex::new(None),
+        }),
         Err(e) => {
-            // "until it recovers" would be false: `connect` is attempted exactly once,
-            // at startup, and nothing retries it. A transient Redis outage during a
-            // rolling restart therefore leaves THIS replica with the operator's
-            // cross-replica kill switch wired to nothing for its entire lifetime, while
-            // every other replica has it. Say so plainly and name the remedy.
+            // Only a malformed URL reaches here (`Client::open` parses, it does not
+            // connect), so this is a configuration error, not an outage.
             eprintln!(
-                "mcp-re-proxy: WARNING: --trust-epoch-redis-url was configured but the \
-                 trust-epoch watch could NOT be established ({}). It is NOT retried: this \
-                 replica has no cross-replica delegated-revocation kill switch for its \
-                 entire lifetime, and an operator `INCR` will not revoke its delegated \
-                 keys. Restart this replica once the epoch store is reachable.",
+                "mcp-re-proxy: --trust-epoch-redis-url is not a usable Redis URL ({}); \
+                 delegated trust-epoch revocation cannot be wired.",
                 e.0
             );
             None
@@ -1458,5 +1522,221 @@ mod rotation_progress_tests {
     fn nothing_published_is_not_progress() {
         let signer = DelegatedServerSigner::new();
         assert!(!rotation_made_progress(&signer, &None, OVERLAP));
+    }
+}
+
+#[cfg(test)]
+mod trust_epoch_watch_tests {
+    use super::DelegatedEpochWatch;
+    use crate::trust_epoch::EpochReader;
+    use crate::trust_epoch::EpochReadError;
+    use std::sync::atomic::AtomicI64;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    const BASE: &str = "epoch-min";
+
+    /// A shared counter standing in for the Redis key, plus a switch that makes reads
+    /// fail so an outage can be simulated deterministically.
+    struct SharedCounter {
+        value: AtomicI64,
+        down: Mutex<bool>,
+        reads: AtomicUsize,
+    }
+
+    impl SharedCounter {
+        fn new(v: i64) -> Arc<Self> {
+            Arc::new(SharedCounter {
+                value: AtomicI64::new(v),
+                down: Mutex::new(false),
+                reads: AtomicUsize::new(0),
+            })
+        }
+        fn incr(&self) {
+            self.value.fetch_add(1, Ordering::SeqCst);
+        }
+        fn set(&self, v: i64) {
+            self.value.store(v, Ordering::SeqCst);
+        }
+        fn set_down(&self, down: bool) {
+            *self.down.lock().expect("down lock") = down;
+        }
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+    }
+
+    struct CounterReader(Arc<SharedCounter>);
+
+    impl EpochReader for CounterReader {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            self.0.reads.fetch_add(1, Ordering::SeqCst);
+            if *self.0.down.lock().expect("down lock") {
+                return Err(EpochReadError("epoch store unreachable".into()));
+            }
+            Ok(self.0.value.load(Ordering::SeqCst))
+        }
+    }
+
+    /// Start a replica's watch over the shared counter. Constructing a NEW watch over
+    /// the SAME counter is exactly what a restart looks like: no carried-over state.
+    fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
+        DelegatedEpochWatch {
+            reader: Box::new(CounterReader(Arc::clone(counter))),
+            base_label: BASE.to_string(),
+            high_water: Mutex::new(None),
+        }
+    }
+
+    /// The label is derived purely from shared state, so it is globally comparable.
+    #[test]
+    fn label_is_always_base_hash_counter_never_the_bare_base() {
+        let counter = SharedCounter::new(0);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#0"));
+        counter.incr();
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
+    }
+
+    /// Every replica at the same counter mints the same label, whenever it started.
+    #[test]
+    fn all_replicas_agree_regardless_of_start_time() {
+        let counter = SharedCounter::new(4);
+        let a = replica(&counter);
+        assert_eq!(a.current_label().as_deref(), Some("epoch-min#4"));
+        // B joins the fleet later.
+        let b = replica(&counter);
+        assert_eq!(b.current_label(), a.current_label());
+    }
+
+    /// THE INVARIANT (C007). An operator INCR must stay effective across a restart: the
+    /// restarted replica must NOT reinterpret the current counter as a fresh local
+    /// baseline and resume minting a label verifiers treat as unrevoked.
+    #[test]
+    fn an_increment_survives_a_replica_restart() {
+        let counter = SharedCounter::new(7);
+        let long_lived = replica(&counter);
+        let before = long_lived.current_label().expect("readable");
+        assert_eq!(before, "epoch-min#7");
+
+        // Operator revokes the fleet.
+        counter.incr();
+        let after_incr = long_lived.current_label().expect("readable");
+        assert_eq!(after_incr, "epoch-min#8");
+        assert_ne!(after_incr, before, "the INCR must change the minted label");
+
+        // A replica restarts: brand-new watch, no memory of the pre-INCR value.
+        let restarted = replica(&counter);
+        let after_restart = restarted.current_label().expect("readable");
+
+        assert_eq!(
+            after_restart, after_incr,
+            "a restarted replica must resolve the SAME post-INCR label as its peers"
+        );
+        assert_ne!(
+            after_restart, before,
+            "a restart must NOT resurrect the pre-INCR epoch — that is the revocation \
+             being defeated by a restart"
+        );
+    }
+
+    /// An outage is fail-closed FOR MINTING: no label, so the caller must not issue.
+    /// It is not silently treated as "unchanged", which would keep minting blind.
+    #[test]
+    fn an_outage_yields_no_label_so_minting_stops() {
+        let counter = SharedCounter::new(3);
+        let w = replica(&counter);
+        assert!(w.current_label().is_some());
+        counter.set_down(true);
+        assert!(
+            w.current_label().is_none(),
+            "an unreadable epoch must fail closed for minting"
+        );
+    }
+
+    /// Reconnect after an outage resumes at the CURRENT shared value — including an
+    /// INCR that happened while this replica could not read.
+    #[test]
+    fn reconnect_after_an_outage_resumes_and_sees_missed_increments() {
+        let counter = SharedCounter::new(1);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
+
+        counter.set_down(true);
+        assert!(w.current_label().is_none());
+        // The operator revokes DURING the outage.
+        counter.incr();
+        counter.incr();
+        assert!(w.current_label().is_none(), "still down");
+
+        counter.set_down(false);
+        assert_eq!(
+            w.current_label().as_deref(),
+            Some("epoch-min#3"),
+            "a reconnect must observe increments missed during the outage"
+        );
+        assert!(counter.reads() >= 4, "each attempt re-reads; no cached verdict");
+    }
+
+    /// Reconnection must not reset, rebase or otherwise weaken an already-issued
+    /// revocation: a counter that goes BACKWARDS (store reset, failover to a stale
+    /// replica, reconnect to the wrong instance) is refused, never adopted.
+    #[test]
+    fn a_regressed_counter_is_refused_not_rebased() {
+        let counter = SharedCounter::new(9);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
+
+        counter.set(2); // store rolled back
+        assert!(
+            w.current_label().is_none(),
+            "minting under a lower epoch would resurrect credentials verifiers reject"
+        );
+        // Still refused on retry — it is not a transient blip that clears itself.
+        assert!(w.current_label().is_none());
+
+        // Recovery to at-or-above the high-water mark resumes minting.
+        counter.set(9);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
+        counter.set(11);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#11"));
+    }
+
+    /// Issuance continues normally across the whole sequence the operator cares about:
+    /// steady state -> INCR -> outage -> reconnect -> restart.
+    #[test]
+    fn full_sequence_increment_outage_restart_reconnect_continued_issuance() {
+        let counter = SharedCounter::new(0);
+        let mut minted: Vec<String> = Vec::new();
+        let w = replica(&counter);
+
+        minted.push(w.current_label().expect("steady state"));
+        counter.incr();
+        minted.push(w.current_label().expect("after incr"));
+
+        counter.set_down(true);
+        assert!(w.current_label().is_none(), "no minting during the outage");
+        counter.set_down(false);
+        minted.push(w.current_label().expect("after reconnect"));
+
+        // Restart: fresh watch, same shared counter.
+        let w2 = replica(&counter);
+        minted.push(w2.current_label().expect("after restart"));
+        counter.incr();
+        minted.push(w2.current_label().expect("issuance continues after restart"));
+
+        assert_eq!(
+            minted,
+            vec![
+                "epoch-min#0".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#2".to_string(),
+            ],
+            "labels track the shared counter only — never a per-process baseline"
+        );
     }
 }
