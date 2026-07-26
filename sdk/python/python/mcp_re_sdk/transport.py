@@ -31,11 +31,13 @@ a ``poster`` so this layer stays transport-agnostic and testable; ``connect_mtls
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import secrets
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional, Sequence
 
 import anyio
@@ -162,6 +164,16 @@ class McpReConfig:
     expected_audience_hash: str = ""
     accepted_epochs: Sequence[str] = ()
     max_clock_skew: int = 60
+
+    #: This client's static denylist of delegated key ids, issuer key ids, and credential
+    #: `jti` values. Any hit fails the response closed.
+    #:
+    #: **Empty is the TTL-only posture, and it is the default.** With no denylist the
+    #: client relies entirely on short delegated-key lifetimes and on the accepted-epoch
+    #: set to retire a compromised key: a credential stays acceptable until it expires or
+    #: its epoch leaves `accepted_epochs`. That is a legitimate deployment choice — it is
+    #: what the audited core calls the explicit TTL-only posture — but stating it here
+    #: makes it a choice rather than something that happened by omission.
     revoked_identifiers: Sequence[str] = ()
 
     # --- authorization bindings (bind-not-interpret) ---
@@ -208,8 +220,6 @@ class McpReConfig:
     #: handles its answer leg must sign over. The open leg stays outstanding.
     on_input_required: Optional[Callable[[ContinuationHandles], None]] = None
 
-    _correlation: CorrelationStore = field(default_factory=CorrelationStore, init=False)
-
     def __post_init__(self) -> None:
         # Validated where the value first enters SDK-owned code. A bound of 0 is not a
         # degenerate case that merely throttles: every sender waits for a slot that can
@@ -232,6 +242,36 @@ class McpReConfig:
                 f"max_clock_skew must be an integer in 0..={MAX_CLOCK_SKEW_BOUND} "
                 f"seconds, got {s!r}"
             )
+        # The delegated-verification anchor. Every field below is compared against the
+        # credential the server presents, and an empty value cannot match anything: an
+        # empty `accepted_epochs` fails every response as a stale trust epoch, an empty
+        # `verifier_audiences` as an audience mismatch, an empty issuer key as an invalid
+        # key. The client is therefore not *unsafe* with them unset — it is unusable —
+        # but it does not discover that until the first response comes back looking like
+        # a server fault. TypeScript makes these required interface fields; this is where
+        # Python states the same requirement, at construction, naming what is missing.
+        missing = [
+            name
+            for name in (
+                "issuer_key_id",
+                "issuer_pubkey_b64url",
+                "issuer_trust_domain",
+                "issuer_subject",
+                "expected_audience_hash",
+            )
+            if not getattr(self, name)
+        ] + [
+            name
+            for name in ("verifier_audiences", "accepted_epochs")
+            if not list(getattr(self, name))
+        ]
+        if missing:
+            raise McpReSdkError(
+                "the delegated-verification trust anchor is incomplete: "
+                f"{', '.join(sorted(missing))} must be set. Every response is verified "
+                "against these, so an empty value rejects every response the server "
+                "sends rather than relaxing the check."
+            )
 
 
 def _binding_context(config: McpReConfig, method: str) -> BindingRequestContext:
@@ -248,6 +288,21 @@ def _bindings_json(config: McpReConfig, method: str) -> Optional[str]:
         return None
     ctx = _binding_context(config, method)
     return json.dumps([p.spec(ctx) for p in config.authorization])
+
+
+def _authz_binding_digest(bindings_json: Optional[str]) -> Optional[str]:
+    """``sha-256:<b64url>`` over the exact authorization-binding bytes that were signed.
+
+    ADR-MCPS-044 enumerates this among the fields a conforming client keeps per
+    outstanding request. It is retained for audit only and never re-interpreted
+    (bind-not-interpret): it records WHICH authorization artefacts this request was bound
+    to, so an audit trail can be reconciled against the signed bytes without the
+    transport ever parsing them. ``None`` when the request carried no bindings.
+    """
+    if bindings_json is None:
+        return None
+    digest = hashlib.sha256(bindings_json.encode()).digest()
+    return "sha-256:" + base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 def _strip_response_evidence(body: bytes) -> bytes:
@@ -277,7 +332,12 @@ def _error_message(request_id, wire_code: str) -> SessionMessage:
     )
 
 
-async def _exchange(config: McpReConfig, poster: Poster, request: JSONRPCRequest) -> SessionMessage:
+async def _exchange(
+    config: McpReConfig,
+    poster: Poster,
+    request: JSONRPCRequest,
+    correlation: CorrelationStore,
+) -> SessionMessage:
     """Sign one request, POST it, verify the reply, and correlate it back.
 
     Returns the plain-MCP message to hand the session — a result on success, or a
@@ -286,6 +346,7 @@ async def _exchange(config: McpReConfig, poster: Poster, request: JSONRPCRequest
     params = request.params if request.params is not None else {}
     created = config.clock()
     expires = created + config.request_ttl
+    bindings_json = _bindings_json(config, request.method)
 
     signed = config.signer.sign_request(
         id_json=json.dumps(request.id),
@@ -298,9 +359,9 @@ async def _exchange(config: McpReConfig, poster: Poster, request: JSONRPCRequest
         nonce=config.nonce_factory(),
         created=created,
         expires=expires,
-        bindings_json=_bindings_json(config, request.method),
+        bindings_json=bindings_json,
     )
-    correlation_id = config._correlation.record(
+    correlation_id = correlation.record(
         signed,
         request_id=str(request.id),
         nonce="",  # the nonce rode into the signature; the handle is the evidence digest
@@ -309,59 +370,71 @@ async def _exchange(config: McpReConfig, poster: Poster, request: JSONRPCRequest
         created=created,
         expires=expires,
         route=config.route,
+        authz_binding_digest=_authz_binding_digest(bindings_json),
     )
 
-    reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+    try:
+        reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
 
-    verified = _core.verify_response(
-        reply.status,
-        list(reply.headers),
-        reply.body,
-        signed.method,
-        signed.target_uri,
-        list(signed.headers),
-        signed.body(),
-        signed.evidence_digest_alg,
-        signed.evidence_digest_value,
-        config.issuer_key_id,
-        config.issuer_pubkey_b64url,
-        config.issuer_role,
-        config.issuer_trust_domain,
-        config.issuer_subject,
-        list(config.verifier_audiences),
-        config.expected_audience_hash,
-        list(config.accepted_epochs),
-        config.max_clock_skew,
-        list(config.revoked_identifiers),
-        config.clock(),
-    )
-
-    # A verified rejection receipt is genuine evidence, but it is NOT an acceptance: it
-    # must reach the app as an error, never as a result.
-    if verified.outcome != "success":
-        config._correlation.take(correlation_id, now=config.clock())
-        return _error_message(request.id, verified.wire_code or "mcp-re.response_sig_invalid")
-
-    if verified.request_state is not None:
-        # ADR-MCPS-047: an elicitation does not end the exchange, so the open leg stays
-        # outstanding (associate, do not consume) until its answer leg terminates it.
-        handles = config._correlation.record_input_required(
-            correlation_id,
-            response_digest_alg=verified.resp_evidence_digest_alg,
-            response_digest_value=verified.resp_evidence_digest_value,
-            request_state=verified.request_state,
-            now=config.clock(),
+        verified = _core.verify_response(
+            reply.status,
+            list(reply.headers),
+            reply.body,
+            signed.method,
+            signed.target_uri,
+            list(signed.headers),
+            signed.body(),
+            signed.evidence_digest_alg,
+            signed.evidence_digest_value,
+            config.issuer_key_id,
+            config.issuer_pubkey_b64url,
+            config.issuer_role,
+            config.issuer_trust_domain,
+            config.issuer_subject,
+            list(config.verifier_audiences),
+            config.expected_audience_hash,
+            list(config.accepted_epochs),
+            config.max_clock_skew,
+            list(config.revoked_identifiers),
+            config.clock(),
         )
-        if config.on_input_required is not None:
-            config.on_input_required(handles)
-    else:
-        config._correlation.take(correlation_id, now=config.clock())
+
+        # A verified rejection receipt is genuine evidence, but it is NOT an acceptance:
+        # it must reach the app as an error, never as a result.
+        if verified.outcome != "success":
+            correlation.take(correlation_id, now=config.clock())
+            return _error_message(request.id, verified.wire_code or "mcp-re.response_sig_invalid")
+
+        if verified.request_state is not None:
+            # ADR-MCPS-047: an elicitation does not end the exchange, so the open leg
+            # stays outstanding (associate, do not consume) until its answer leg
+            # terminates it.
+            handles = correlation.record_input_required(
+                correlation_id,
+                response_digest_alg=verified.resp_evidence_digest_alg,
+                response_digest_value=verified.resp_evidence_digest_value,
+                request_state=verified.request_state,
+                now=config.clock(),
+            )
+            if config.on_input_required is not None:
+                config.on_input_required(handles)
+        else:
+            correlation.take(correlation_id, now=config.clock())
+    except BaseException:
+        # This exchange produced no answer, so nothing will ever bind this entry.
+        # Everything that lands here is remotely triggerable — a reset connection, a
+        # reply that fails verification, a rejection whose own bookkeeping raised — so
+        # leaving the entry outstanding would let a peer grow the store one failed
+        # request at a time, for the life of the session. Retiring it is not a security
+        # decision: a response that arrives for it afterwards is refused either way.
+        correlation.abandon(correlation_id)
+        raise
 
     return SessionMessage(JSONRPCMessage.model_validate_json(_strip_response_evidence(reply.body)))
 
 
 async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, read_writer,
-               limiter) -> None:
+               limiter, correlation: CorrelationStore) -> None:
     """Run one exchange to completion and deliver its outcome to the session.
 
     Every failure becomes a message. The session is awaiting this id, so returning
@@ -369,7 +442,7 @@ async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, rea
     """
     async with limiter:
         try:
-            message = await _exchange(config, poster, request)
+            message = await _exchange(config, poster, request, correlation)
         except McpReError as e:
             message = _error_message(request.id, e.wire_code)
         except McpReSdkError as e:
@@ -379,10 +452,28 @@ async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, rea
             # The core's own fail-closed errors arrive as ValueError carrying the
             # frozen token; deliver it rather than letting the caller hang.
             message = _error_message(request.id, str(e))
+        except Exception as e:
+            # Anything else — and in practice that is dominated by the caller's `poster`
+            # doing real I/O: a reset connection, a TLS error, a timeout. Exchanges run
+            # concurrently in one task group, so letting these escape would cancel every
+            # OTHER in-flight exchange and tear down the session; one flaky connection
+            # would take out seven unrelated requests, and a peer that can cause a reset
+            # could end the session at will.
+            #
+            # It is delivered under the `mcp-re-sdk:` prefix and tagged with its type,
+            # never as a bare `mcp-re.*` token, so it can never be read as something the
+            # peer said. A genuine defect stays fully visible — it arrives named, as
+            # `mcp-re-sdk: TypeError: ...`, correlated to the request that hit it —
+            # rather than as an ExceptionGroup with the session gone.
+            #
+            # BaseException is deliberately NOT caught: cancellation must propagate, or
+            # `close()` could not abort an in-flight exchange.
+            message = _error_message(request.id, f"mcp-re-sdk: {type(e).__name__}: {e}")
     await read_writer.send(message)
 
 
-async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer) -> None:
+async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
+                correlation: Optional[CorrelationStore] = None) -> None:
     """Drive every outbound session message through the MCP-RE obligation.
 
     Exchanges run concurrently, up to ``max_concurrent_exchanges``: awaiting each one
@@ -390,6 +481,8 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer) 
     request on the session.
     """
     limiter = anyio.CapacityLimiter(config.max_concurrent_exchanges)
+    if correlation is None:
+        correlation = CorrelationStore()
     async with write_reader, read_writer:
         # The task group closes INSIDE the streams: it waits for every in-flight exchange
         # before the streams are closed, so a slow exchange can still deliver its reply
@@ -412,11 +505,16 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer) 
                     if config.on_dropped_notification is not None:
                         config.on_dropped_notification(method)
                     continue
-                tg.start_soon(_one, config, poster, root, read_writer, limiter)
+                tg.start_soon(_one, config, poster, root, read_writer, limiter, correlation)
 
 
 @asynccontextmanager
-async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
+async def mcp_re_http_transport(
+    config: McpReConfig,
+    poster: Poster,
+    *,
+    correlation: Optional[CorrelationStore] = None,
+):
     """An MCP client transport that signs requests and verifies responses.
 
     Yields the ``(read_stream, write_stream)`` pair ``mcp.ClientSession`` expects::
@@ -428,7 +526,15 @@ async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
 
     The signer is checked against the route's policy before anything is signed, so a
     custody violation fails the connection rather than a request.
+
+    In-flight correlation state belongs to ONE transport, not to the config: the config
+    is a value object a caller may reasonably reuse, and two transports sharing a store
+    would let either one clear the other's outstanding requests on close. A store is
+    created per invocation; pass ``correlation`` only to observe it (the TypeScript
+    transport exposes the same state as ``pendingCorrelations``).
     """
+    if correlation is None:
+        correlation = CorrelationStore()
     if config.policy is not None:
         config.policy.check(config.signer)
         if config.policy.require_non_exporting and config.unsafe_drop_notifications:
@@ -446,7 +552,7 @@ async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
     write_stream, write_reader = anyio.create_memory_object_stream(0)
 
     async with anyio.create_task_group() as tg:
-        tg.start_soon(_pump, config, poster, write_reader, read_writer)
+        tg.start_soon(_pump, config, poster, write_reader, read_writer, correlation)
         try:
             yield read_stream, write_stream
         finally:
@@ -460,4 +566,4 @@ async def mcp_re_http_transport(config: McpReConfig, poster: Poster):
             # will not process an answer.
             tg.cancel_scope.cancel()
             # Abandoned entries would otherwise outlive the transport that owns them.
-            config._correlation.expire_before(_FAR_FUTURE)
+            correlation.expire_before(_FAR_FUTURE)

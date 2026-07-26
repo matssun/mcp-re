@@ -161,6 +161,58 @@ class TestReaping:
         assert CorrelationStore().expire_before(LATE) == []
 
 
+class TestTheStoreIsBounded:
+    """Neither half may grow for the life of the session.
+
+    The pending half is reaped by ``expire_before``. The consumed half is what remembers
+    "already answered", and it gains an entry on every single request — so without its own
+    retention rule it is an unbounded set a peer can grow one request at a time.
+    """
+
+    def test_consumed_ids_are_dropped_once_they_can_no_longer_answer_anything(self):
+        store = CorrelationStore()
+        cid = _record(store, _sign())
+        store.take(cid, now=IN_WINDOW)
+
+        # Still remembered while a late response could plausibly still arrive.
+        with pytest.raises(McpReError) as ei:
+            store.take(cid, now=LATE)
+        assert ei.value.wire_code == "mcp-re.replay_detected"
+
+        # Past the retention grace it is dropped, and the refusal degrades from
+        # "duplicate" to "unbound" — less precise, never an acceptance.
+        assert store.prune_consumed(EXPIRES + 301) == 1
+        with pytest.raises(McpReError) as ei:
+            store.take(cid, now=EXPIRES + 301)
+        assert ei.value.wire_code == "mcp-re.request_binding_mismatch"
+
+    def test_pruning_keeps_ids_that_can_still_be_answered(self):
+        store = CorrelationStore()
+        cid = _record(store, _sign())
+        store.take(cid, now=IN_WINDOW)
+        assert store.prune_consumed(EXPIRES) == 0
+        assert cid in store._consumed
+
+    def test_a_long_session_of_failed_exchanges_does_not_grow_the_store(self):
+        # `abandon` is the failure path's retirement, and it must feed the same retention
+        # rule — otherwise the leak simply moves from the pending half to the consumed one.
+        store = CorrelationStore()
+        for i in range(50):
+            cid = _record(store, _sign(f"n-{i}"), nonce=f"n-{i}")
+            store.abandon(cid)
+        assert len(store) == 0
+        assert store.prune_consumed(EXPIRES + 301) == 50
+        assert store._consumed == {}
+
+    def test_abandon_is_idempotent_and_never_raises(self):
+        store = CorrelationStore()
+        cid = _record(store, _sign())
+        store.abandon(cid)
+        store.abandon(cid)  # the failure path may run after the entry was consumed
+        store.abandon("never-recorded")
+        assert len(store) == 0
+
+
 class TestInputRequiredAssociatesWithoutConsuming:
     def test_an_elicitation_leaves_the_open_leg_outstanding(self):
         store, signed = CorrelationStore(), _sign()

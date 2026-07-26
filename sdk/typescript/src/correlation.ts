@@ -87,6 +87,27 @@ export class ContinuationHandles {
 const isExpired = (p: PendingRequest, now: number): boolean => now > p.expires;
 
 /**
+ * How many consumed ids may accumulate before the store scans them for eviction.
+ *
+ * The scan is O(consumed), so amortising it over this many requests keeps the cost per
+ * request constant. It is a scan trigger, not a ceiling: nothing is dropped before its
+ * retention deadline, so the map can legitimately hold more than this while a burst of
+ * requests is still inside its freshness window.
+ */
+const CONSUMED_SCAN_AT = 1024;
+
+/**
+ * How long past a request's own expiry its correlation id stays remembered, in seconds.
+ *
+ * The consumed set exists to answer "was this id already answered?", which only matters
+ * for a response that arrives LATE — so retention has to outlast the request window, not
+ * end with it. 300s is the profile's own widest skew tolerance: past it a response is so
+ * late that calling it a duplicate says nothing more than calling it unbound, and both
+ * refuse it.
+ */
+const CONSUMED_GRACE = 300;
+
+/**
  * Tracks outstanding requests and binds responses back to them, fail-closed.
  *
  * Hold one store per client session: the request/response cycle that drives it is
@@ -94,10 +115,17 @@ const isExpired = (p: PendingRequest, now: number): boolean => now > p.expires;
  */
 export class CorrelationStore {
   readonly #pending = new Map<string, PendingRequest>();
-  // Consumed correlation ids, so a second response for the same request is a replay
-  // rather than an unknown-request mismatch. The distinction matters: one is a
-  // duplicate, the other is an unrelated message.
-  readonly #consumed = new Set<string>();
+  // Consumed correlation ids mapped to the deadline past which the id may be dropped, so
+  // a second response for the same request is a replay rather than an unknown-request
+  // mismatch. The distinction matters: one is a duplicate, the other is an unrelated
+  // message.
+  //
+  // Retention runs to the request's expiry plus `CONSUMED_GRACE`. Past that the id is
+  // dropped, and a duplicate arriving later fails as `mcp-re.request_binding_mismatch`
+  // instead of `mcp-re.replay_detected` — a less precise refusal, never an acceptance.
+  // Keeping every id forever would be the alternative, and a set that grows once per
+  // request for the life of the session is not one.
+  readonly #consumed = new Map<string, number>();
 
   /** How many requests are outstanding. */
   get size(): number {
@@ -112,6 +140,8 @@ export class CorrelationStore {
   /** Register a signed request as outstanding; returns its correlation id. */
   record(signed: SignedRequestJs, a: RecordArgs): string {
     const correlationId = signed.evidenceDigestValue;
+    // Amortised here because `record` is the one call every request makes.
+    if (this.#consumed.size >= CONSUMED_SCAN_AT) this.pruneConsumed(a.created);
     if (this.#pending.has(correlationId)) {
       // The evidence digest is unique per request; a collision means the same request
       // was recorded twice, which would let one response consume the wrong entry.
@@ -199,7 +229,41 @@ export class CorrelationStore {
   expireBefore(now: number): PendingRequest[] {
     const dead = this.pending().filter((p) => isExpired(p, now));
     for (const p of dead) this.#retire(p.correlationId);
+    this.pruneConsumed(now);
     return dead;
+  }
+
+  /**
+   * Retire an outstanding request whose exchange failed. Does not throw.
+   *
+   * A failed exchange never produces a response to bind, so its entry can never be taken
+   * — and anything that can make an exchange fail (a reset connection, an unverifiable
+   * reply, a rejected signature) is remotely triggerable, so leaving the entry
+   * outstanding lets a peer grow the store for the life of the session.
+   *
+   * Idempotent by design: it is called on the failure path, where the entry may already
+   * have been consumed by whichever step threw.
+   */
+  abandon(correlationId: string): void {
+    this.#retire(correlationId);
+  }
+
+  /**
+   * Drop consumed ids past their retention deadline; returns how many went.
+   *
+   * Safe by construction: an evicted id can no longer be recognised as a duplicate, so a
+   * late second response for it fails as `mcp-re.request_binding_mismatch` rather than
+   * `mcp-re.replay_detected`. Both refuse it.
+   */
+  pruneConsumed(now: number): number {
+    let dropped = 0;
+    for (const [id, retainUntil] of this.#consumed) {
+      if (now > retainUntil) {
+        this.#consumed.delete(id);
+        dropped += 1;
+      }
+    }
+    return dropped;
   }
 
   #missOrPending(correlationId: string, what: string): PendingRequest {
@@ -218,7 +282,9 @@ export class CorrelationStore {
   }
 
   #retire(correlationId: string): void {
+    const pending = this.#pending.get(correlationId);
+    if (pending === undefined) return; // already retired; abandon() relies on this
     this.#pending.delete(correlationId);
-    this.#consumed.add(correlationId);
+    this.#consumed.set(correlationId, pending.expires + CONSUMED_GRACE);
   }
 }

@@ -75,7 +75,54 @@ Where that is true it is recorded here rather than papered over:
 | --- | --- | --- | --- |
 | Bound validation point | `McpReConfig.__post_init__` | `McpReHttpTransport` constructor | Each validates where the value first enters SDK-owned code. Python's config is an SDK dataclass; TypeScript's is a caller-owned object literal, so the transport constructor is the earliest point the SDK controls. |
 | Notification refusal surfaces as | the pump raises, tearing down the session | `send()` rejects | Python's transport is a stream pair with no per-message reply channel; TypeScript's `Transport.send` is a method call that can reject. Both fail closed; both are visible. |
-| Unexpected-exception shape | `ExceptionGroup` (task group) | the thrown value | anyio task groups always wrap. Callers already saw this — `mcp_re_http_transport` runs the pump in a task group. |
+| Correlation state observable as | a `CorrelationStore` the caller may pass in | `transport.pendingCorrelations` / `pendingRequests()` | Python's transport is a context-manager function with no object to hang a getter on. Both own **one store per transport**; see below. |
+| Non-`Error` thrown value | n/a — Python has no analogue | re-thrown | Throwing a non-`Error` is a JavaScript defect with no Python counterpart. |
+
+### Failure delivery — one contract, decided (round 5)
+
+Both SDKs now deliver **every** failed exchange as a JSON-RPC error correlated to its
+request id. Nothing escapes to end the session.
+
+Python previously let anything that was not `McpReError` / `McpReSdkError` / `ValueError`
+escape `_one`. Exchanges share one anyio task group, so a `ConnectionResetError` on one
+request cancelled every other in-flight exchange and tore down the session — remotely
+triggerable, and a contradiction of the module's own documented contract. TypeScript
+already delivered it per request.
+
+The message format is the shared half of the contract: **a bare `mcp-re.*` token means the
+peer said it; anything else is prefixed `mcp-re-sdk:` and named.** Python distinguishes by
+type (the core raises `ValueError` carrying the token); TypeScript cannot — the napi
+binding and `fetch` both throw plain `Error` — so it matches the message against
+`/^mcp-re\.[a-z0-9_]+$/` instead. Same guarantee, different discriminator.
+
+| Thrown | Python delivers | TypeScript delivers |
+| --- | --- | --- |
+| core fail-closed error | `mcp-re.response_sig_invalid` | `mcp-re.response_sig_invalid` |
+| wire rejection (`McpReError`) | its `wire_code` | its `wireCode` |
+| local SDK/device failure | `mcp-re-sdk: <detail>` | `mcp-re-sdk: <detail>` |
+| network / unexpected | `mcp-re-sdk: ConnectionResetError: …` | `mcp-re-sdk: Error: …` |
+
+Cancellation is deliberately **not** caught in either: Python re-raises `BaseException`,
+TypeScript re-throws `ConnectionClosed`. `close()` could not abort an in-flight exchange
+otherwise.
+
+### Correlation state — owned by the transport, and bounded
+
+Both stores hold **two** halves, and both are bounded:
+
+| Half | Bounded by |
+| --- | --- |
+| outstanding requests | consumed on answer, retired on failure (`abandon` / `abandon`), reaped by `expire_before` / `expireBefore` |
+| consumed ids (the "already answered" memory) | dropped at `expires + 300s`, scanned amortised every 1024 records |
+
+Retention outlasts the request window because the consumed set only ever matters for a
+*late* response. Past the grace an evicted id fails a duplicate as
+`mcp-re.request_binding_mismatch` rather than `mcp-re.replay_detected` — less precise,
+never an acceptance.
+
+The store belongs to the transport in both, not to the config. Python's used to hang off
+`McpReConfig`, which a caller may reasonably reuse for a second session; closing either
+transport then reaped the other's outstanding requests.
 
 ### Shutdown — decided and covered (#421)
 

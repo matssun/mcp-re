@@ -176,6 +176,56 @@ describe("reaping", () => {
   });
 });
 
+describe("the store is bounded", () => {
+  // Neither half may grow for the life of the session. The pending half is reaped by
+  // `expireBefore`. The consumed half is what remembers "already answered", and it gains
+  // an entry on every single request — so without its own retention rule it is an
+  // unbounded set a peer can grow one request at a time.
+
+  it("drops consumed ids once they can no longer answer anything", () => {
+    const store = new CorrelationStore();
+    const cid = store.record(sign(), ARGS());
+    store.take(cid, IN_WINDOW);
+
+    // Still remembered while a late response could plausibly still arrive.
+    expectWireCode(() => store.take(cid, LATE), "mcp-re.replay_detected");
+
+    // Past the retention grace it is dropped, and the refusal degrades from "duplicate"
+    // to "unbound" — less precise, never an acceptance.
+    expect(store.pruneConsumed(EXPIRES + 301)).toBe(1);
+    expectWireCode(() => store.take(cid, EXPIRES + 301), "mcp-re.request_binding_mismatch");
+  });
+
+  it("keeps ids that can still be answered", () => {
+    const store = new CorrelationStore();
+    const cid = store.record(sign(), ARGS());
+    store.take(cid, IN_WINDOW);
+    expect(store.pruneConsumed(EXPIRES)).toBe(0);
+  });
+
+  it("does not grow across a long session of failed exchanges", () => {
+    // `abandon` is the failure path's retirement, and it must feed the same retention
+    // rule — otherwise the leak simply moves from the pending half to the consumed one.
+    const store = new CorrelationStore();
+    for (let i = 0; i < 50; i += 1) {
+      const cid = store.record(sign(`n-${i}`), ARGS({ nonce: `n-${i}` }));
+      store.abandon(cid);
+    }
+    expect(store.size).toBe(0);
+    expect(store.pruneConsumed(EXPIRES + 301)).toBe(50);
+    expect(store.pruneConsumed(EXPIRES + 301)).toBe(0);
+  });
+
+  it("abandon is idempotent and never throws", () => {
+    const store = new CorrelationStore();
+    const cid = store.record(sign(), ARGS());
+    store.abandon(cid);
+    store.abandon(cid); // the failure path may run after the entry was consumed
+    store.abandon("never-recorded");
+    expect(store.size).toBe(0);
+  });
+});
+
 describe("an input-required result associates without consuming", () => {
   const irr = { responseDigestAlg: "sha-256", responseDigestValue: "aXJyLWhhbmRsZQ", requestState: "opaque-state-xyz" };
 

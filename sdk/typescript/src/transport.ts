@@ -30,20 +30,20 @@
  * a `poster` so this layer stays transport-agnostic and testable; `connectMtlsHttp` (the
  * mTLS construction helper) builds on top of it.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { verifyResponse, type HttpHeader } from "../native/binding.js";
+import { verifyResponse, type HttpHeader, type SignedRequestJs } from "../native/binding.js";
 import {
   bindingsJson as serializeBindings,
   type AuthorizationBindingPolicy,
   type AuthorizationBindingProvider,
   type BindingRequestContext,
 } from "./authorization.js";
-import { ContinuationHandles, CorrelationStore } from "./correlation.js";
+import { ContinuationHandles, CorrelationStore, type PendingRequest } from "./correlation.js";
 import { McpReError, McpReSdkError, type Signer, type SignerPolicy } from "./custody.js";
 
 /**
@@ -243,6 +243,20 @@ function stripResponseEvidence(body: Buffer): unknown {
   return doc;
 }
 
+/**
+ * `sha-256:<b64url>` over the exact authorization-binding bytes that were signed.
+ *
+ * ADR-MCPS-044 enumerates this among the fields a conforming client keeps per outstanding
+ * request. It is retained for audit only and never re-interpreted (bind-not-interpret): it
+ * records WHICH authorization artefacts this request was bound to, so an audit trail can
+ * be reconciled against the signed bytes without the transport ever parsing them. `null`
+ * when the request carried no bindings.
+ */
+function authzBindingDigest(bindingsJson: string | null): string | null {
+  if (bindingsJson === null) return null;
+  return `sha-256:${createHash("sha256").update(bindingsJson, "utf8").digest("base64url")}`;
+}
+
 /** A JSON-RPC error correlated to the request, so the awaiting call rejects. */
 const errorMessage = (id: RequestId, wireCode: string): JSONRPCMessage => ({
   jsonrpc: "2.0",
@@ -335,6 +349,35 @@ export class McpReHttpTransport implements Transport {
         )}`,
       );
     }
+    // The delegated-verification anchor. TypeScript's type system makes these fields
+    // required but cannot make them non-empty, and an empty value cannot match anything
+    // it is compared against: empty `acceptedEpochs` fails every response as a stale
+    // trust epoch, empty `verifierAudiences` as an audience mismatch, an empty issuer key
+    // as an invalid key. The client is therefore not *unsafe* with them blank — it is
+    // unusable — but it does not discover that until the first response comes back
+    // looking like a server fault.
+    const missing = (
+      [
+        ["issuerKeyId", config.issuerKeyId],
+        ["issuerPubkeyB64Url", config.issuerPubkeyB64Url],
+        ["issuerTrustDomain", config.issuerTrustDomain],
+        ["issuerSubject", config.issuerSubject],
+        ["expectedAudienceHash", config.expectedAudienceHash],
+        ["verifierAudiences", config.verifierAudiences?.length ? "set" : ""],
+        ["acceptedEpochs", config.acceptedEpochs?.length ? "set" : ""],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new McpReSdkError(
+        `the delegated-verification trust anchor is incomplete: ${missing
+          .slice()
+          .sort()
+          .join(", ")} must be set. Every response is verified against these, so an ` +
+          `empty value rejects every response the server sends rather than relaxing the check.`,
+      );
+    }
     this.#config = config;
     this.#poster = poster;
     this.#slots = new Semaphore(bound);
@@ -352,6 +395,17 @@ export class McpReHttpTransport implements Transport {
   /** Outstanding correlation entries. Observable so "close clears it" is testable. */
   get pendingCorrelations(): number {
     return this.#correlation.size;
+  }
+
+  /**
+   * The outstanding requests, in issue order — the ADR-MCPS-044 in-flight correlation
+   * state this transport holds, including each request's authorization-binding digest.
+   *
+   * Read-only: the entries are what the store already recorded, and consuming one is the
+   * response path's business.
+   */
+  pendingRequests(): PendingRequest[] {
+    return this.#correlation.pending();
   }
 
   async start(): Promise<void> {
@@ -404,6 +458,11 @@ export class McpReHttpTransport implements Transport {
     const request = message;
     let reply: JSONRPCMessage;
     await this.#slots.acquire();
+    // Registered per request and removed in the finally below. An AbortSignal outlives
+    // every request raced against it, so a listener left behind is retained — with its
+    // captured promise — until the transport itself is collected; a long session would
+    // accumulate one per request it ever sent.
+    let releaseAbortListener: () => void = () => {};
     try {
       // Re-check AFTER the queue wait. The state check above happened before this
       // request waited for a slot, and close() can land during that wait. Without this
@@ -415,7 +474,9 @@ export class McpReHttpTransport implements Transport {
       if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
       // Race the exchange against close(): an aborted exchange fails its request with
       // ConnectionClosed rather than waiting out a poster the caller no longer wants.
-      reply = await Promise.race([this.#exchange(request), this.#aborted()]);
+      const aborted = this.#aborted();
+      releaseAbortListener = aborted.release;
+      reply = await Promise.race([this.#exchange(request), aborted.promise]);
     } catch (e) {
       if (e instanceof ConnectionClosed) {
         // Not a wire outcome: the local transport went away. The upstream Client already
@@ -430,9 +491,19 @@ export class McpReHttpTransport implements Transport {
         // A local failure (e.g. the signing device). No wire code describes it.
         reply = errorMessage(request.id, `mcp-re-sdk: ${e.message}`);
       } else if (e instanceof Error) {
-        // The core's own fail-closed errors arrive as plain Errors carrying the frozen
-        // token; deliver it rather than letting the caller hang.
-        reply = errorMessage(request.id, e.message);
+        // Two unrelated things arrive here as plain Errors: the core's own fail-closed
+        // errors, which carry a frozen `mcp-re.*` token, and whatever the caller's
+        // `poster` throws while doing real I/O — a reset connection, a TLS error, a
+        // timeout. Delivering both verbatim would put "socket hang up" in the same field
+        // that otherwise only ever holds something the peer said, so only a message that
+        // IS a frozen token is passed through as one. Everything else is delivered under
+        // the prefix that means "local condition", named, exactly as Python does it.
+        reply = errorMessage(
+          request.id,
+          /^mcp-re\.[a-z0-9_]+$/.test(e.message)
+            ? e.message
+            : `mcp-re-sdk: ${e.name}: ${e.message}`,
+        );
       } else {
         throw e;
       }
@@ -440,19 +511,36 @@ export class McpReHttpTransport implements Transport {
       // In a finally because the non-Error branch above re-throws: leaking a slot there
       // would shrink the pool permanently, and enough of them would deadlock the session.
       this.#slots.release();
+      releaseAbortListener();
     }
     // No message callback after the close callback: delivering to an application that
     // believes it has disconnected is worse than dropping (#421).
     if (this.#state === TransportState.Open) this.onmessage?.(reply);
   }
 
-  /** Rejects with ConnectionClosed as soon as close() begins. */
-  #aborted(): Promise<never> {
-    return new Promise((_resolve, reject) => {
-      const signal = this.#abort.signal;
+  /**
+   * A promise that rejects with ConnectionClosed as soon as close() begins, paired with
+   * the `release` that unregisters it.
+   *
+   * The caller MUST call `release` once the race it feeds has settled. `{ once: true }`
+   * only removes the listener when it actually fires, which is the rare case: the common
+   * one is an exchange that completes normally, leaving the listener registered on a
+   * signal that lives as long as the transport.
+   */
+  #aborted(): { promise: Promise<never>; release: () => void } {
+    const signal = this.#abort.signal;
+    let release = () => {};
+    const promise = new Promise<never>((_resolve, reject) => {
       if (signal.aborted) return reject(signal.reason);
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      release = () => signal.removeEventListener("abort", onAbort);
     });
+    // An already-aborted signal rejects synchronously above and registers nothing, so the
+    // no-op release is correct there. Attach a catch so a promise that loses the race
+    // cannot surface as an unhandled rejection when it is abandoned.
+    promise.catch(() => {});
+    return { promise, release: () => release() };
   }
 
   /**
@@ -494,6 +582,7 @@ export class McpReHttpTransport implements Transport {
     const created = now();
     const expires = created + (config.requestTtl ?? 300);
     const params = "params" in request && request.params !== undefined ? request.params : {};
+    const bindingsJson = this.#bindingsJson(request.method);
 
     const signed = config.signer.signRequest({
       idJson: JSON.stringify(request.id),
@@ -506,7 +595,7 @@ export class McpReHttpTransport implements Transport {
       nonce: (config.nonceFactory ?? defaultNonce)(),
       created,
       expires,
-      bindingsJson: this.#bindingsJson(request.method),
+      bindingsJson,
     });
 
     const correlationId = this.#correlation.record(signed, {
@@ -518,7 +607,31 @@ export class McpReHttpTransport implements Transport {
       created,
       expires,
       route: config.route ?? null,
+      authzBindingDigest: authzBindingDigest(bindingsJson),
     });
+
+    try {
+      return await this.#exchangeBound(request, signed, correlationId);
+    } catch (e) {
+      // This exchange produced no answer, so nothing will ever bind this entry.
+      // Everything that lands here is remotely triggerable — a reset connection, a reply
+      // that fails verification, a rejection whose own bookkeeping threw — so leaving the
+      // entry outstanding would let a peer grow the store one failed request at a time,
+      // for the life of the session. Retiring it is not a security decision: a response
+      // that arrives for it afterwards is refused either way.
+      this.#correlation.abandon(correlationId);
+      throw e;
+    }
+  }
+
+  /** The part of an exchange that runs with the correlation entry already recorded. */
+  async #exchangeBound(
+    request: JSONRPCMessage & { method: string; id: RequestId },
+    signed: SignedRequestJs,
+    correlationId: string,
+  ): Promise<JSONRPCMessage> {
+    const config = this.#config;
+    const now = this.#clock;
 
     const httpReply = await this.#poster(signed.method, signed.targetUri, signed.headers, signed.body);
 
