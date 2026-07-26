@@ -77,6 +77,16 @@ jobs:
       - name: Port-registry gate (single-source ports, no drift)
         run: python3 scripts/check_port_registry.py
 
+      # Tracked-file leak guard: key material, credential documents, and personal
+      # or concrete service-account identifiers must never land in a tracked file
+      # (a commit is public history even after a later commit deletes it). The
+      # selftest runs first — a detector that silently matches nothing looks
+      # exactly like a clean tree. Fast, python-only.
+      - name: Tracked-secrets gate (no committed credentials or personal identifiers)
+        run: |
+          python3 scripts/tracked_secrets_gate.py --selftest
+          python3 scripts/tracked_secrets_gate.py
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.

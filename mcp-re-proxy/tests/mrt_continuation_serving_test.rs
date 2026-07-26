@@ -59,6 +59,7 @@ use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
+const CLIENT_SEED_2: [u8; 32] = [12u8; 32];
 const ROOT_SEED: [u8; 32] = [33u8; 32];
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
@@ -66,6 +67,7 @@ const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const ACCESS_TOKEN: &str = "access-token-xyz";
 const CLIENT_KEY_ID: &str = "client-key-1";
+const CLIENT_KEY_ID_2: &str = "client-key-2";
 const ROOT_KID: &str = "root-kid";
 const VERIFIER_AUD: &str = "verifier-1";
 const AUD_SCOPE: &str = "aud-scope-1";
@@ -75,6 +77,11 @@ const OVERLAP: i64 = 60;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
+}
+/// A SECOND legitimate client: a distinct actor the resolver trusts for the Request
+/// slot, so "verified" and "the actor that opened the leg" can be told apart.
+fn second_client_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&CLIENT_SEED_2)
 }
 fn root_key() -> SigningKey {
     SigningKey::from_seed_bytes(&ROOT_SEED)
@@ -89,16 +96,23 @@ fn audience() -> AudienceTuple {
 
 fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync + Clone {
     move |key_id: &str, slot: SignerSlot| {
-        let (role, key) = match (key_id, slot) {
-            (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key().public_key()),
-            (ROOT_KID, SignerSlot::Response) => ("server", root_key().public_key()),
+        let (role, subject, key) = match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => {
+                ("client", "did:example:host-a", client_key().public_key())
+            }
+            // A second trusted client — same role, different subject and keyid, so it
+            // resolves to a DIFFERENT actor id.
+            (CLIENT_KEY_ID_2, SignerSlot::Request) => {
+                ("client", "did:example:host-b", second_client_key().public_key())
+            }
+            (ROOT_KID, SignerSlot::Response) => ("server", "did:example:server", root_key().public_key()),
             _ => return None,
         };
         Some(ResolvedActor {
             identity: ActorIdentity {
                 role: role.into(),
                 trust_domain: "example.com".into(),
-                subject: format!("did:example:{role}"),
+                subject: subject.into(),
                 keyid: key_id.into(),
             },
             verification_key: key,
@@ -240,8 +254,20 @@ fn wire_code_of(body: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-/// Sign an RFC 9421 request with an optional MRTR continuation in the evidence block.
+/// Sign an RFC 9421 request as the default client.
 fn signed_request(
+    nonce: &str,
+    body: &[u8],
+    continuation: Option<HttpContinuation>,
+) -> (HttpRequest, RequestEvidence) {
+    signed_request_as(CLIENT_KEY_ID, &client_key(), nonce, body, continuation)
+}
+
+/// Sign an RFC 9421 request AS a named actor, with an optional MRTR continuation in
+/// the evidence block.
+fn signed_request_as(
+    key_id: &str,
+    key: &SigningKey,
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
@@ -265,9 +291,8 @@ fn signed_request(
         ],
         body: body.to_vec(),
     };
-    let evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-            .expect("client signs RFC 9421 request");
+    let evidence = sign_request_full(&mut req, &block, key, key_id, CREATED, EXPIRES, nonce)
+        .expect("client signs RFC 9421 request");
     (req, evidence)
 }
 
@@ -378,7 +403,8 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     assert!(String::from_utf8_lossy(&resp.body).contains("\"confirmed\":true"));
 
     // One-shot: a second answer for the same requestState finds no store entry (the
-    // first answer's `take` removed it), so it fails closed regardless of the handles.
+    // first answer's `consume` removed it once it was ADMITTED), so it fails closed
+    // regardless of the handles.
     let (p2, i2, _s2) = handles_of(STATE);
     let continuation2 = HttpContinuation::from_handles(p2, i2, state.as_bytes());
     let (replay_req, _e) = signed_request("nonce-answer-2", &answer_body(&state), Some(continuation2));
@@ -417,6 +443,79 @@ async fn answer_without_a_shared_store_entry_fails_closed() {
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "no retained bases → fail closed");
     assert_eq!(wire_code_of(&served.body), "mcp-re.continuation_binding_failed");
+}
+
+// --- a rejected answer leg must not destroy a live continuation --------------
+
+#[tokio::test]
+async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
+    // Reading the retained bases is not a side effect, so a request that is about to be
+    // refused cannot take a live continuation down with it. This is what makes the
+    // failure recoverable: an approval round trip cannot be re-opened, so destroying it
+    // on a rejected request would be permanent.
+    const STATE: &str = "state-token-D1";
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&store), STATE);
+    let b = replica(ready_signer(), Arc::clone(&store), STATE);
+
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // A well-formed answer for the RIGHT state whose continuation digests are wrong —
+    // the same shape a client hits after losing track of which response it is answering.
+    let wrong = HttpContinuation::from_handles(d_prev.clone(), d_prev.clone(), state.as_bytes());
+    let (bad_req, _e) = signed_request("nonce-bad-answer", &answer_body(&state), Some(wrong));
+    let served_bad = b.handle(served_of(&bad_req), NOW).await;
+    assert_eq!(served_bad.status, 409, "a mismatched continuation is refused");
+    assert_eq!(wire_code_of(&served_bad.body), "mcp-re.continuation_binding_failed");
+
+    // The genuine answer still binds: the refusal cost the client one request, not its
+    // continuation.
+    let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
+    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let served_good = b.handle(served_of(&good_req), NOW).await;
+    assert_eq!(
+        served_good.status, 200,
+        "the refused answer must not have consumed the continuation (got {})",
+        wire_code_of(&served_good.body)
+    );
+}
+
+// --- one actor cannot reach another's continuation ---------------------------
+
+#[tokio::test]
+async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
+    // `requestState` is minted by the inner application and MCP-RE treats it as opaque
+    // — nothing in the profile makes it unguessable. So a peer that verifies must not be
+    // able to reach another actor's continuation merely by naming its state, whether or
+    // not its own request then succeeds.
+    const STATE: &str = "state-token-E1";
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&store), STATE);
+    let b = replica(ready_signer(), Arc::clone(&store), STATE);
+
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // A DIFFERENT verified actor names the first actor's requestState. It holds valid
+    // trust-file credentials; it simply is not the actor that opened the leg.
+    let intruder = HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
+    let (intruder_req, _e) =
+        signed_request_as(CLIENT_KEY_ID_2, &second_client_key(), "nonce-intruder", &answer_body(&state), Some(intruder));
+    let served_intruder = b.handle(served_of(&intruder_req), NOW).await;
+    assert_eq!(served_intruder.status, 409, "another actor's answer is refused");
+    assert_eq!(
+        wire_code_of(&served_intruder.body),
+        "mcp-re.continuation_binding_failed"
+    );
+
+    // And the first actor's open leg is untouched.
+    let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
+    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let served_good = b.handle(served_of(&good_req), NOW).await;
+    assert_eq!(
+        served_good.status, 200,
+        "the intruder must not have destroyed the victim's continuation (got {})",
+        wire_code_of(&served_good.body)
+    );
 }
 
 // --- fail closed: a tampered requestState breaks the binding -----------------

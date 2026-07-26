@@ -110,11 +110,17 @@ malformed seed never appears in an error's `Display`/`Debug`).
 - **`EnvKeySource` — development / CI ONLY.** It is gated behind the non-default
   `dev_env_key_source` cargo feature and is NOT compiled into a production build;
   `--key-source env` still parses but fails closed at construction in a default
-  build. Even in a dev build, the seed value is held in `Zeroizing` and the env var
-  is REMOVED (`std::env::remove_var`) immediately after it is read (defense in
-  depth). Environment variables are visible to the whole process tree and may leak
-  via crash dumps, `ps e`, `/proc/<pid>/environ`, and orchestrator inspection —
-  never use this source in production.
+  build. In a dev build the seed value is held in `Zeroizing`, so it is scrubbed
+  from the heap when dropped — but **the environment variable itself is NOT
+  removed, and stays readable in `/proc/<pid>/environ` for the life of the
+  process.** `std::env::remove_var` is unsound in a multi-threaded program (the
+  standard library documents it as `unsafe` for that reason: a concurrent
+  `getenv`/`setenv` in another thread is a data race), so it is deliberately not
+  called. Nothing depended on it: the inner server is launched inheriting NO
+  environment and receives only an explicit allowlist, so the seed is never
+  forwarded to a child regardless. Environment variables are visible to the whole
+  process tree and may leak via crash dumps, `ps e`, `/proc/<pid>/environ`, and
+  orchestrator inspection — never use this source in production.
 - **Future / high-assurance roadmap (NOT implemented here).**
   - stdin/fd injection of the seed (e.g. systemd `LoadCredential`, a Kubernetes
     projected secret), so the seed never lands in a file or environment variable;

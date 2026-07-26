@@ -14,12 +14,24 @@
 //!      request evidence block (audience / artifact bindings), fail-closed;
 //!   3. Mode-A transport binding — bind the verified request actor to the mTLS peer
 //!      identity (when a binding policy is configured);
-//!   4. `dispatch_request_with_async_tier` — the authoritative async §4 replay
-//!      admission, awaited (fail-closed on replay / store outage);
-//!   5. strip the proxy-owned top-level `_meta` and forward the clean JSON-RPC to
-//!      the stateless Streamable-HTTP inner backend via the async inner pool;
-//!   6. `sign_delegated_response_full` — sign the reply with the active delegated
-//!      key + inline credential, bound to THIS request (ADR-MCPRE-052).
+//!   4. recover the MRTR continuation bases for an answer leg — a non-destructive
+//!      read, keyed by the RESOLVED ACTOR and the presented `requestState`;
+//!   5. `dispatch_request_with_async_tier` — the authoritative async §4 replay
+//!      admission + continuation binding, awaited (fail-closed on replay / store
+//!      outage / binding mismatch);
+//!   6. take the delegated key snapshot — can this request be answered at all?
+//!   7. retire the continuation (one-shot), strip the proxy-owned top-level `_meta`,
+//!      and forward the clean JSON-RPC to the stateless Streamable-HTTP inner backend
+//!      via the async inner pool;
+//!   8. `sign_delegated_response_full` — sign the reply with that snapshot, bound to
+//!      THIS request (ADR-MCPRE-052).
+//!
+//! **Nothing irreversible happens on a request's behalf until it is both admitted and
+//! answerable.** Steps 4 and 6 are ordered the way they are for that reason: a
+//! destructive continuation read at step 4 let an about-to-be-rejected request destroy
+//! a live approval leg, and discovering a missing delegated key only at step 8 meant
+//! the backend had already run — and 503 is a status clients retry, so the action ran
+//! twice.
 //!
 //! Any fail-closed step emits a delegated-signed rejection receipt instead. A
 //! one-way notification (a `method` with no `id`) is answered with a delegated
@@ -271,15 +283,21 @@ impl HttpProfileProxy {
         } else {
             None
         };
-        let retained = match (&self.continuation_store, &answer_state) {
-            // `take` is get-and-delete (one-shot). A store outage flattens to `None`
-            // — the dispatcher then fails closed on the continuation binding rather
-            // than admit an unbindable answer leg.
-            (Some(store), Some(state)) => store
-                .take(&continuation_key(state.as_bytes()))
-                .await
-                .ok()
-                .flatten(),
+        // Keyed by the actor the VERIFIER resolved, never by anything the request
+        // asserts, so one peer cannot name another's continuation at all.
+        let answer_key = answer_state.as_ref().map(|state| {
+            continuation_key(
+                &verified.resolved_actor.actor_id(),
+                state.as_bytes(),
+            )
+        });
+        let retained = match (&self.continuation_store, &answer_key) {
+            // `peek` has NO side effect: the entry is still there while the binding is
+            // checked below, so a request that fails the binding cannot destroy a live
+            // continuation on its way out. A store outage flattens to `None` — the
+            // dispatcher then fails closed on the continuation binding rather than
+            // admit an unbindable answer leg.
+            (Some(store), Some(key)) => store.peek(key).await.ok().flatten(),
             _ => None,
         };
         let continuation_ctx = match (&retained, &answer_state) {
@@ -309,6 +327,54 @@ impl HttpProfileProxy {
             return self.rejection(&http_req, e.wire_code(), 409, now, Some(&verified.evidence));
         }
 
+        // Step 5a — can this request be ANSWERED at all? The delegated key is what makes
+        // a reply signable, and no reply can be produced without one (ADR-MCPRE-052 §6:
+        // fail-closed issuance past expiry). Asked here, before anything is done on the
+        // request's behalf, because the two steps below are irreversible: retiring the
+        // continuation and running the inner backend. Discovering the missing key only
+        // at signing time meant the tool call had already executed and the client got a
+        // 503 — a transient-looking status it will retry, so the action runs twice.
+        //
+        // The snapshot is taken ONCE and signs the reply below: `now` is fixed for the
+        // whole request, so a key valid here is valid there.
+        let expires = now + self.sig_ttl_secs;
+        let a = match self.signer.current(now) {
+            Some(a) => a,
+            // The frozen signer-side availability token (never a client verification
+            // verdict).
+            None => {
+                return self.rejection(
+                    &http_req,
+                    McpReError::DelegatedSigningUnavailable.wire_code(),
+                    503,
+                    now,
+                    Some(&verified.evidence),
+                )
+            }
+        };
+
+        // Step 5b — the answer leg is admitted, so NOW retire its continuation. This is
+        // where one-shot is enforced: `consume` reports whether this call removed the
+        // live entry, so of two concurrent answer legs that both bound successfully,
+        // exactly one proceeds and the other is refused as already-answered. A store
+        // error is also refused — the entry may or may not be gone, and admitting an
+        // answer we cannot retire would make the continuation answerable twice. The
+        // request is refused before the inner backend runs, so nothing takes effect.
+        if let (Some(store), Some(key)) = (&self.continuation_store, &answer_key) {
+            match store.consume(key).await {
+                Ok(true) => {}
+                Ok(false) | Err(_) => {
+                    return self.rejection(
+                        &http_req,
+                        McpReError::ContinuationBindingFailed.wire_code(),
+                        409,
+                        now,
+                        Some(&verified.evidence),
+                    )
+                }
+            }
+        }
+
         // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
         let forwarded = match forwarded_body(
@@ -328,29 +394,12 @@ impl HttpProfileProxy {
         };
         let inner_bytes = self.inner_async.dispatch(&forwarded).await;
 
-        // Step 7 — sign the backend reply, bound to THIS request, with the active
-        // delegated key + inline credential (ADR-MCPRE-052), failing closed if no
-        // valid key is available.
+        // Step 7 — sign the backend reply, bound to THIS request, with the delegated key
+        // + inline credential taken at step 5a (ADR-MCPRE-052).
         let mut response = HttpResponse {
             status: 200,
             headers: vec![("content-type".into(), "application/json".into())],
             body: inner_bytes,
-        };
-        let expires = now + self.sig_ttl_secs;
-        let a = match self.signer.current(now) {
-            Some(a) => a,
-            // Fail-closed issuance past expiry (ADR-MCPRE-052 §6): no valid delegated
-            // key, so no signed response can be produced. The frozen signer-side
-            // availability token (never a client verification verdict).
-            None => {
-                return self.rejection(
-                    &http_req,
-                    McpReError::DelegatedSigningUnavailable.wire_code(),
-                    503,
-                    now,
-                    Some(&verified.evidence),
-                )
-            }
         };
         // Step 7a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
         // signed bodyless 202, not a bodied reply (#424 / #418). The backend already
@@ -406,7 +455,10 @@ impl HttpProfileProxy {
                 };
                 if store
                     .store(
-                        &continuation_key(state.as_bytes()),
+                        &continuation_key(
+                            &verified.resolved_actor.actor_id(),
+                            state.as_bytes(),
+                        ),
                         &bases,
                         self.continuation_ttl_secs,
                     )

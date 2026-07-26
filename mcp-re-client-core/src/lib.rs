@@ -31,6 +31,7 @@ pub use request::RequestSigningInputs;
 pub use request::SignedRequest;
 pub use response::classify_result;
 pub use response::verify_and_classify_response;
+pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;
 pub use response::verify_signed_response;
 pub use response::ClassifiedResponse;

@@ -150,7 +150,27 @@ pub struct BoundedTrustCache {
     negative_ttl_secs: i64,
     clock: UnixClock,
     cache: Mutex<HashMap<String, CacheEntry>>,
+    /// Writes since the last eviction sweep; drives [`PRUNE_EVERY_N_WRITES`].
+    writes_since_prune: Mutex<u64>,
+    /// Ceiling on cached entries; see [`MAX_CACHE_ENTRIES`].
+    max_entries: usize,
 }
+
+/// How often (in cache writes) an expired-entry sweep runs.
+///
+/// An expired entry is ignored on read but was never REMOVED there, and nothing in
+/// the tree called `prune`. The keyid gate precedes trust resolution, so every
+/// distinct `keyid` an unauthenticated peer presents produced one permanent entry:
+/// steady, remotely-driven growth for the process lifetime. Sweeping on every write
+/// would be O(n); a cadence amortises it.
+const PRUNE_EVERY_N_WRITES: u64 = 64;
+
+/// Ceiling on cached entries. Past it the cache stops CACHING (it never stops
+/// answering): the resolution still happens and the request still gets its answer,
+/// it is simply resolved live next time. That direction is always safe — more live
+/// resolution can only tighten trust, never widen it — which is why this is a skipped
+/// write rather than the fail-closed refusal a replay store must give.
+const MAX_CACHE_ENTRIES: usize = 100_000;
 
 impl BoundedTrustCache {
     /// Wrap `inner` with a propagation window of `t_secs` for active/revoked state
@@ -171,7 +191,25 @@ impl BoundedTrustCache {
             negative_ttl_secs: negative_ttl_secs.max(0),
             clock,
             cache: Mutex::new(HashMap::new()),
+            writes_since_prune: Mutex::new(0),
+            max_entries: MAX_CACHE_ENTRIES,
         }
+    }
+
+    /// Override the cache-entry ceiling (tests, and memory-constrained deployments).
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Number of cached entries, expired ones included (test/inspection aid).
+    pub fn len(&self) -> usize {
+        self.cache.lock().map(|c| c.len()).unwrap_or(0)
+    }
+
+    /// Whether the cache holds no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Compose a COLLISION-SAFE cache key for a `(signer, key_id)` pair.
@@ -220,6 +258,22 @@ impl BoundedTrustCache {
     /// drops the write (the request still gets its answer; only caching is lost).
     fn store(&self, key: String, outcome: CachedOutcome, now: i64, ttl: i64) {
         if let Ok(mut cache) = self.cache.lock() {
+            // Opportunistic sweep. Correctness never depended on eviction — an expired
+            // entry is ignored on read — but memory did, and nothing called `prune`.
+            if let Ok(mut writes) = self.writes_since_prune.lock() {
+                *writes = writes.saturating_add(1);
+                if *writes >= PRUNE_EVERY_N_WRITES {
+                    *writes = 0;
+                    cache.retain(|_, e| e.expires_at > now);
+                }
+            }
+            // Past the ceiling, stop caching rather than grow. Skipping the write costs
+            // a live resolution next time, which can only tighten trust — so unlike a
+            // replay store, refusing to remember here is not a reason to refuse the
+            // request.
+            if cache.len() >= self.max_entries && !cache.contains_key(&key) {
+                return;
+            }
             cache.insert(
                 key,
                 CacheEntry {
@@ -400,6 +454,60 @@ mod tests {
             }
         }
         BoundedTrustCache::new(Box::new(Shared(inner)), T, NEG_TTL, clock)
+    }
+
+    #[test]
+    fn expired_entries_are_swept_rather_than_merely_ignored() {
+        // An expired entry was ignored on read but never removed, and nothing called
+        // `prune`. The keyid gate runs BEFORE trust resolution, so every distinct keyid
+        // an unauthenticated peer presents left one permanent entry behind.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock);
+
+        for i in 0..(super::PRUNE_EVERY_N_WRITES - 1) {
+            let _ = cache.resolve("did:host", &format!("key-{i}"));
+        }
+        assert_eq!(cache.len() as u64, super::PRUNE_EVERY_N_WRITES - 1);
+
+        // Past T every one of those is dead. The next write triggers the sweep.
+        now.store(1000 + T + 1, Ordering::SeqCst);
+        let _ = cache.resolve("did:host", "key-live");
+        assert_eq!(cache.len(), 1, "only the entry written after the sweep survives");
+    }
+
+    #[test]
+    fn past_the_ceiling_the_cache_stops_caching_but_keeps_answering() {
+        // Refusing to REMEMBER is safe here in a way refusing to remember a nonce is
+        // not: the resolution still happens, the caller still gets its answer, and the
+        // next lookup resolves live — which can only tighten trust, never widen it.
+        let inner = Arc::new(ScriptedResolver::new(Ok(key_from(&SEED_A))));
+        let (clock, _now) = controllable_clock(1000);
+        let cache = cache_over(inner.clone(), clock).with_max_entries(3);
+
+        for i in 0..3 {
+            assert!(cache.resolve("did:host", &format!("key-{i}")).is_ok());
+        }
+        assert_eq!(cache.len(), 3);
+
+        // Over the ceiling: still answered, just not remembered.
+        let before = inner.calls();
+        assert!(
+            cache.resolve("did:host", "key-over").is_ok(),
+            "the request must still get its answer"
+        );
+        assert_eq!(cache.len(), 3, "and the cache must not have grown");
+        assert!(cache.resolve("did:host", "key-over").is_ok());
+        assert_eq!(
+            inner.calls(),
+            before + 2,
+            "an uncached key is re-resolved live each time — tighter, never looser"
+        );
+
+        // An ALREADY-cached key is still refreshed at the ceiling: the ceiling bounds
+        // distinct keys, it must not freeze the entries already held.
+        assert!(cache.resolve("did:host", "key-0").is_ok());
+        assert_eq!(cache.len(), 3);
     }
 
     #[test]

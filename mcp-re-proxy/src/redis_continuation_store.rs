@@ -94,16 +94,17 @@ impl AsyncContinuationStore for RedisContinuationStore {
         })
     }
 
-    fn take<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
+    fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
         let key = key.to_string();
         let mut conn = self.conn.clone();
         Box::pin(async move {
-            // GETDEL is atomic read-and-remove (Redis 6.2+): one-shot without a
-            // read-then-delete race across replicas.
+            // A plain GET: reading the bases the binding is checked against must not
+            // remove them, or a request that is about to fail the binding would destroy
+            // a live entry on its way out.
             let raw: Result<Option<String>, redis::RedisError> =
-                redis::cmd("GETDEL").arg(&key).query_async(&mut conn).await;
+                redis::cmd("GET").arg(&key).query_async(&mut conn).await;
             let raw = raw.map_err(|e| ContinuationStoreError::Unavailable {
-                details: format!("redis GETDEL continuation failed: {e}"),
+                details: format!("redis GET continuation failed: {e}"),
             })?;
             let Some(value) = raw else {
                 return Ok(None);
@@ -112,6 +113,23 @@ impl AsyncContinuationStore for RedisContinuationStore {
                 .map(Some)
                 .ok_or_else(|| ContinuationStoreError::Unavailable {
                     details: "malformed continuation value in shared store".to_string(),
+                })
+        })
+    }
+
+    fn consume<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, bool> {
+        let key = key.to_string();
+        let mut conn = self.conn.clone();
+        Box::pin(async move {
+            // DEL returns the number of keys it actually removed, and Redis executes it
+            // atomically — so across replicas exactly one concurrent answer leg is told
+            // it removed the entry. That count IS the one-shot decision.
+            let removed: Result<i64, redis::RedisError> =
+                redis::cmd("DEL").arg(&key).query_async(&mut conn).await;
+            removed
+                .map(|n| n > 0)
+                .map_err(|e| ContinuationStoreError::Unavailable {
+                    details: format!("redis DEL continuation failed: {e}"),
                 })
         })
     }

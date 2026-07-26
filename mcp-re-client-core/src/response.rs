@@ -544,6 +544,57 @@ fn rejection_wire_code(body: &[u8]) -> Option<String> {
     })
 }
 
+/// Verify the delegated-signed bodyless **202** a server returns for a one-way
+/// message (#424), on the client. Returns the resolved server actor.
+///
+/// The serving path emits these in production for any JSON-RPC message with no `id`,
+/// and until this existed nothing on the client side of the tree could check one — a
+/// client had a signed acknowledgement it could only take on faith, which is the
+/// posture MCP-RE exists to remove.
+///
+/// **What a verified 202 means: the enforcement boundary authenticated and accepted
+/// the message.** It does NOT mean the action completed, or even started — a
+/// `notifications/cancelled` that verifies here has been accepted for delivery, not
+/// carried out. Treating it as completion is the misreading this doc exists to
+/// prevent.
+///
+/// **Its binding is CONTENT-level, not instance-level** (see
+/// `docs/spec/http-profile-conformance-notes.md` §3.4): the acknowledgement binds to
+/// the notification's content digest, so a byte-identical retransmission of the same
+/// notification verifies against the same 202. A client that needs to distinguish two
+/// sends of an identical notification cannot get that from the acknowledgement alone.
+///
+/// Same trust inputs as [`verify_delegated_response`]: the ROOT ISSUER anchor comes
+/// through `resolve_actor` for the `Response` slot, and the credential must satisfy
+/// `policy` (audience scope, accepted epochs, skew) and clear `revocation`.
+pub fn verify_delegated_accepted_202(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    policy: &DelegationPolicy,
+    revocation: &dyn RevocationSource,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
+    let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
+    let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
+    let expect = DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
+        verifier_audiences: &audiences,
+        expected_audience_hash: policy.expected_audience_hash.as_str(),
+        accepted_epochs: &epochs,
+        max_clock_skew: policy.max_clock_skew,
+    };
+    let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
+    mcp_re_http_profile::verify_delegated_accepted_202(
+        response,
+        request,
+        resolve_actor,
+        &expect,
+        &is_revoked,
+        now,
+    )
+}
+
 #[cfg(test)]
 mod delegated_tests {
     use super::*;

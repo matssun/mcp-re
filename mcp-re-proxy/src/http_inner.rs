@@ -446,17 +446,17 @@ impl AsyncInnerServer for HttpInnerPool {
             // held for the whole round-trip and released on completion.
             let _permit = match in_flight.try_acquire_owned() {
                 Ok(permit) => permit,
-                Err(_) => return inner_unavailable_response(),
+                Err(_) => return inner_unavailable_response(&body),
             };
             let now = self.now_nanos();
             // Health-aware selection. All backends ejected ⇒ fail closed WITHOUT
             // dispatching and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3).
             let Some((idx, is_probe)) = self.select_backend(now) else {
-                return inner_unavailable_response();
+                return inner_unavailable_response(&body);
             };
             let uri = self.backends[idx].uri.clone();
 
-            let outcome = Self::round_trip(&client, uri, body, timeout).await;
+            let outcome = Self::round_trip(&client, uri, body.clone(), timeout).await;
             let done = self.now_nanos();
             match outcome {
                 Ok(bytes) => {
@@ -465,7 +465,7 @@ impl AsyncInnerServer for HttpInnerPool {
                 }
                 Err(()) => {
                     self.record_outcome(idx, is_probe, false, done);
-                    inner_unavailable_response()
+                    inner_unavailable_response(&body)
                 }
             }
         })

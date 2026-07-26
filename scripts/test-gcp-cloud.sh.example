@@ -10,10 +10,17 @@ set -euo pipefail
 #     # edit the placeholders below, then:
 #     ./work/test-gcp-cloud.sh
 #
-# DO NOT commit a filled-in copy. The real account/project identifiers are
-# personal; keep them only in the gitignored work/ copy. A tracked-file leak
-# guard (cargo test -p mcp-re-walkthrough --test no_tracked_secrets) asserts none of
-# the real identifiers ever land in a tracked file.
+# DO NOT commit a filled-in copy. The real account identifiers are personal; keep
+# them only in the gitignored work/ copy. A tracked-file leak guard
+# (python3 scripts/tracked_secrets_gate.py, run in CI) fails the build if key
+# material, a credential document, or a personal/service-account identifier lands
+# in a tracked file.
+#
+# It does NOT forbid every GCP identifier, and deliberately so: the disposable
+# test project id is tracked on purpose, because docs/security/gcp-kms-root-rotation.sh
+# uses it as an ALLOWED_PROJECTS fence — a destructive KMS rotation refuses to run
+# against any project not on that list, so the id has to be in the file to bound
+# the blast radius.
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Required GCP setup (placeholders — replace ALL of them):

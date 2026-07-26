@@ -61,6 +61,81 @@ where
 /// `inner_error` envelope: the client receives signed, fail-closed bytes, never an
 /// unsigned pass-through and never a silent allow (ADR-MCPS response-signing +
 /// ADR-MCPRE-051 §4 fail-closed posture).
-pub(crate) fn inner_unavailable_response() -> Vec<u8> {
-    br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"inner server unavailable"}}"#.to_vec()
+///
+/// The `id` is echoed from `request`, because the client correlates on it: JSON-RPC
+/// 2.0 §5 requires an error response to carry the request's id, and reserves `null`
+/// for the case where it could not be determined. Here it always can be — the
+/// forwarded request is right there — and omitting it left the client holding signed,
+/// fail-closed bytes it could not attribute to any call it made. `null` is emitted
+/// only for a request whose id is genuinely absent or unreadable (a notification, or
+/// a body that did not parse), which is the case the spec reserves it for.
+pub(crate) fn inner_unavailable_response(request: &[u8]) -> Vec<u8> {
+    // Re-serialised from the parsed value rather than spliced from the request bytes:
+    // the id is attacker-influenced, and copying a raw fragment into a JSON document
+    // is how injection happens. serde_json emits only well-formed JSON.
+    let id = serde_json::from_slice::<serde_json::Value>(request)
+        .ok()
+        .and_then(|v| v.get("id").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": -32603, "message": "inner server unavailable" },
+    });
+    serde_json::to_vec(&body).unwrap_or_else(|_| {
+        br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"inner server unavailable"}}"#
+            .to_vec()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(bytes: &[u8]) -> serde_json::Value {
+        serde_json::from_slice(bytes).expect("synthesized response is valid JSON")
+    }
+
+    #[test]
+    fn the_synthesized_error_carries_the_requests_id() {
+        // Without it the client cannot attribute the signed failure to the call it made.
+        let out = parse(&inner_unavailable_response(
+            br#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#,
+        ));
+        assert_eq!(out["id"], serde_json::json!(7));
+        assert_eq!(out["error"]["code"], serde_json::json!(-32603));
+        assert!(out.get("result").is_none(), "an error response carries no result");
+    }
+
+    #[test]
+    fn a_string_id_survives_as_a_string() {
+        let out = parse(&inner_unavailable_response(
+            br#"{"jsonrpc":"2.0","id":"req-abc","method":"tools/call"}"#,
+        ));
+        assert_eq!(out["id"], serde_json::json!("req-abc"));
+    }
+
+    #[test]
+    fn an_absent_or_unreadable_id_becomes_null() {
+        // JSON-RPC 2.0 reserves null for exactly this: the id could not be determined.
+        for request in [
+            &br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#[..],
+            &b"not json at all"[..],
+            &b""[..],
+        ] {
+            assert_eq!(parse(&inner_unavailable_response(request))["id"], serde_json::Value::Null);
+        }
+    }
+
+    #[test]
+    fn a_hostile_id_cannot_break_out_of_the_document() {
+        // The id is attacker-influenced. Re-serialising rather than splicing is what
+        // keeps it a value instead of syntax.
+        let out = parse(&inner_unavailable_response(
+            br#"{"jsonrpc":"2.0","id":"\",\"error\":{\"code\":0,\"message\":\"ok\"},\"result\":{\"ok\":true},\"x\":\"","method":"tools/call"}"#,
+        ));
+        assert!(out.get("result").is_none(), "no result may appear");
+        assert_eq!(out["error"]["code"], serde_json::json!(-32603));
+        assert!(out["id"].is_string());
+    }
 }
