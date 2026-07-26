@@ -586,39 +586,53 @@ pub fn build_server_config_delegated_validated(
 /// Extract the verified client identity from a leaf certificate (DER) using the
 /// authoritative field named by `policy`. There is NO fallback: the configured
 /// field is read and nothing else. Returns `None` if the certificate cannot be
-/// parsed or does not carry the selected field — the caller (transport binding)
-/// then fails closed rather than accepting a weaker identity.
+/// parsed, does not carry the selected field, or carries a value that fails the
+/// strict identity-value rules — the caller (transport binding) then fails closed
+/// rather than accepting a weaker identity.
+///
+/// The extracted value is held to the SAME rules as an asserted trusted-ingress
+/// identity ([`validate_asserted_identity_value`]): non-empty, length-bounded, and
+/// free of control characters. A certificate field is not self-validating — an
+/// issuer can mint a SAN or CN holding a CR/LF or a megabyte of padding, and this
+/// value is carried into the transport binding and the logs, so the two identity
+/// provenances must not disagree about what a well-formed identity is. Only the
+/// FIRST matching field is considered, and a malformed first value is a rejection
+/// rather than a reason to look at the next one — searching on would be exactly
+/// the fallback this function disclaims.
 pub fn extract_identity(leaf_der: &[u8], policy: IdentityPolicy) -> Option<TransportIdentity> {
     let (_, cert) = X509Certificate::from_der(leaf_der).ok()?;
 
-    match policy {
+    // Bind to an owned String so the borrow of `cert` ends before return.
+    let (raw, source): (String, IdentitySource) = match policy {
         IdentityPolicy::UriSan => {
             let san = cert.subject_alternative_name().ok().flatten()?;
-            san.value.general_names.iter().find_map(|name| match name {
-                GeneralName::URI(uri) => Some(TransportIdentity::new(*uri, IdentitySource::UriSan)),
+            let uri = san.value.general_names.iter().find_map(|name| match name {
+                GeneralName::URI(uri) => Some((*uri).to_string()),
                 _ => None,
-            })
+            })?;
+            (uri, IdentitySource::UriSan)
         }
         IdentityPolicy::DnsSan => {
             let san = cert.subject_alternative_name().ok().flatten()?;
-            san.value.general_names.iter().find_map(|name| match name {
-                GeneralName::DNSName(dns) => {
-                    Some(TransportIdentity::new(*dns, IdentitySource::DnsSan))
-                }
+            let dns = san.value.general_names.iter().find_map(|name| match name {
+                GeneralName::DNSName(dns) => Some((*dns).to_string()),
                 _ => None,
-            })
+            })?;
+            (dns, IdentitySource::DnsSan)
         }
         IdentityPolicy::CnLegacy => {
-            // Bind to an owned String so the borrow of `cert` ends before return.
-            let common_name: Option<String> = cert
+            let common_name = cert
                 .subject()
                 .iter_common_name()
                 .next()
                 .and_then(|cn| cn.as_str().ok())
-                .map(str::to_string);
-            common_name.map(|cn| TransportIdentity::new(cn, IdentitySource::CommonName))
+                .map(str::to_string)?;
+            (common_name, IdentitySource::CommonName)
         }
-    }
+    };
+
+    let validated = crate::transport::validate_asserted_identity_value(&raw).ok()?;
+    Some(TransportIdentity::new(validated, source))
 }
 
 /// The verified client identity for an established server connection (the leaf of
@@ -743,8 +757,9 @@ fn leaf_cert_lifetime_secs(leaf_der: &[u8]) -> Option<i64> {
 /// Enforce the configured maximum client-certificate lifetime (the v1 revocation
 /// posture). Returns `Some(error_bytes)` — a `mcp-re.transport_binding_failed`
 /// JSON-RPC error bound to the request id — when a limit is set and the verified
-/// client cert's validity span exceeds it (or cannot be parsed); `None` when the
-/// cert is within the limit or no limit is configured. Emitting the
+/// client cert's validity span exceeds it (or the cert is absent or cannot be
+/// parsed); `None` when the cert is within the limit or no limit is configured.
+/// Emitting the
 /// transport-layer error here is consistent with the proxy being the sole holder
 /// of the connection (see `transport` module docs).
 fn cert_lifetime_rejection(
@@ -752,8 +767,14 @@ fn cert_lifetime_rejection(
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    let leaf = conn.peer_certificates()?.first()?;
-    cert_lifetime_rejection_for_leaf(Some(leaf.as_ref()), options, request)
+    // An absent peer certificate is passed THROUGH as `None` rather than
+    // short-circuiting here, so the decision (including the no-leaf case) is made
+    // in one place by the fail-closed core.
+    let leaf = conn
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .map(|leaf| leaf.as_ref());
+    cert_lifetime_rejection_for_leaf(leaf, options, request)
 }
 
 /// Leaf-DER core of [`cert_lifetime_rejection`], shared by the blocking serve loop
@@ -769,14 +790,20 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
     request: &[u8],
 ) -> Option<Vec<u8>> {
     let max = options.max_client_cert_lifetime?;
-    let leaf = leaf_der?;
-    let within_limit = leaf_cert_lifetime_secs(leaf)
+    // An ABSENT leaf is treated exactly like an unparseable one. Only a leaf that
+    // parses AND measures within the ceiling is admitted; every other case —
+    // no peer certificate, unparseable DER, inverted validity window, over-long
+    // span — falls through to the rejection below. Returning `None` for a missing
+    // leaf would waive the very check the ceiling exists to perform, and would do
+    // it one line before an unparseable cert fails closed.
+    let within_limit = leaf_der
+        .and_then(leaf_cert_lifetime_secs)
         .is_some_and(|lifetime| lifetime <= max.as_secs() as i64);
     if within_limit {
         return None;
     }
-    // Over-long (or unparseable) cert → fail closed with the transport error,
-    // bound to the request id when we can read it.
+    // Absent, unparseable, or over-long cert → fail closed with the transport
+    // error, bound to the request id when we can read it.
     let id = serde_json::from_slice::<serde_json::Value>(request)
         .ok()
         .and_then(|value| value.get("id").cloned())
@@ -1382,6 +1409,70 @@ mod lifetime_tests {
 
         let malformed = RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
         assert!(super::routing_header_rejection(&malformed, req).is_some());
+    }
+
+    #[test]
+    fn absent_leaf_is_rejected_when_a_lifetime_ceiling_is_configured() {
+        // C095: the ceiling is a check on the peer certificate, so "there is no peer
+        // certificate to check" must not be an admission. This is the ONE case that
+        // used to short-circuit to `None` (= admit) one line before an unparseable
+        // cert failed closed. Negative control: restore `let leaf = leaf_der?;` and
+        // this asserts `Some(..)` on a `None`.
+        let req = br#"{"jsonrpc":"2.0","id":"req-7","method":"tools/call"}"#;
+        let options = super::ServerOptions {
+            max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        };
+        let rejected = super::cert_lifetime_rejection_for_leaf(None, &options, req)
+            .expect("an absent leaf must be rejected when a ceiling is configured");
+        let value: serde_json::Value =
+            serde_json::from_slice(&rejected).expect("json error object");
+        assert_eq!(value["error"]["message"], "mcp-re.transport_binding_failed");
+        assert_eq!(value["id"], "req-7", "the rejection binds the request id");
+    }
+
+    #[test]
+    fn absent_leaf_is_admitted_only_when_no_ceiling_is_configured() {
+        // The converse, so the fix above cannot be read as "always reject a missing
+        // leaf": with the check DISABLED there is nothing to enforce, and this
+        // function is not the mandatory-client-auth gate (rustls' verifier is).
+        let req = br#"{"jsonrpc":"2.0","id":"req-8","method":"tools/call"}"#;
+        let options = super::ServerOptions {
+            max_client_cert_lifetime: None,
+            ..Default::default()
+        };
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(None, &options, req).is_none(),
+            "with no ceiling configured there is no lifetime decision to make"
+        );
+    }
+
+    #[test]
+    fn within_limit_leaf_is_admitted_and_over_long_leaf_is_rejected() {
+        // Pins the two ordinary outcomes THROUGH the same entry point the absent-leaf
+        // cases use, so the fail-closed rewrite is shown not to have broken admission.
+        let req = br#"{"jsonrpc":"2.0","id":"req-9","method":"tools/call"}"#;
+        let options = super::ServerOptions {
+            max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        };
+        // ~1 year span — far over a 1h ceiling.
+        let long = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(Some(&long), &options, req).is_some(),
+            "a 1-year cert must be rejected under a 1-hour ceiling"
+        );
+        // Day granularity is the coarsest this fixture mints, so admit-side coverage
+        // uses a ceiling wide enough for a 1-day span.
+        let generous = super::ServerOptions {
+            max_client_cert_lifetime: Some(std::time::Duration::from_secs(48 * 3600)),
+            ..Default::default()
+        };
+        let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(Some(&short), &generous, req).is_none(),
+            "a 1-day cert must be admitted under a 2-day ceiling"
+        );
     }
 
     #[test]

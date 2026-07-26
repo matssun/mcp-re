@@ -45,6 +45,7 @@ use mcp_re_proxy::HttpProfileProxy;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::ManifestVersionFloor;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_proxy::transport::RemoteTransport;
@@ -274,8 +275,11 @@ fn client_proxy_with_revocation(
         )],
         extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
         expected_server_keyid: None,
-        resolve_actor: client_resolver(),
-        verification: ClientVerification::DelegatedRequired(delegation_policy(), revocation),
+        verification: ClientVerification::DelegatedRequired(
+            delegation_policy(),
+            client_resolver(),
+            revocation,
+        ),
     };
     let registry = RouteRegistry::new().register(route);
     ClientProxy::new(
@@ -284,6 +288,98 @@ fn client_proxy_with_revocation(
         CLIENT_KEY_ID,
         Box::new(InProcessServer::new(server, NOW)),
     )
+}
+
+/// The same client, but with its trust anchors loaded from a SIGNED trust-anchor
+/// manifest against a durable rollback floor — the production path for
+/// `ClientVerification::DelegatedAnchored`.
+fn client_proxy_anchored(
+    server: HttpProfileProxy,
+    issuers: mcp_re_client_core::TrustedIssuerSet,
+) -> ClientProxy {
+    let route = Route {
+        route_id: "r1".into(),
+        target_uri: TARGET.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
+        expected_server_keyid: None,
+        verification: ClientVerification::DelegatedAnchored(delegation_policy(), issuers),
+    };
+    ClientProxy::new(
+        RouteRegistry::new().register(route),
+        client_key(),
+        CLIENT_KEY_ID,
+        Box::new(InProcessServer::new(server, NOW)),
+    )
+}
+
+/// Publish a signed trust-anchor manifest listing the server's root, load it through a
+/// FILE-BACKED rollback floor, and return the resulting anchor set. This is the whole
+/// distribution chain the manifest exists for: org key signs → verifier pins the org
+/// key → floor records the version → anchors feed response verification.
+fn issuers_from_signed_manifest(
+    floor_path: &std::path::Path,
+    manifest_version: u64,
+    revoke_root: bool,
+) -> mcp_re_client_core::TrustedIssuerSet {
+    let org = SigningKey::from_seed_bytes(&[91u8; 32]);
+    let org_kid = "org-admin-1";
+    let manifest = mcp_re_client_core::TrustAnchorManifest {
+        profile: MANIFEST_PROFILE.into(),
+        manifest_version,
+        current_issuers: vec![mcp_re_client_core::ManifestIssuer {
+            issuer_kid: ROOT_KID.into(),
+            public_key: root_key().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:server".into(),
+        }],
+        retiring_issuers: vec![],
+        revoked_issuers: if revoke_root {
+            vec![ROOT_KID.to_string()]
+        } else {
+            vec![]
+        },
+        issued_at: NOW - 100,
+        expires_at: NOW + 100_000,
+    };
+    let signed = mcp_re_client_core::sign_manifest(&manifest, &org, org_kid);
+    let mut floor = mcp_re_client_proxy::FileManifestFloor::open(floor_path).expect("open floor");
+    let org_public = org.public_key();
+    mcp_re_client_core::load_signed_manifest_with_floor(
+        &signed,
+        |kid| (kid == org_kid).then(|| org_public.clone()),
+        MANIFEST_PROFILE,
+        &mut floor,
+        NOW,
+    )
+    .expect("manifest loads")
+    .issuer_set
+}
+
+const MANIFEST_PROFILE: &str = "mcp-re-http-v1";
+
+/// A unique floor path per test, cleaned up on drop.
+struct FloorPath(std::path::PathBuf);
+
+impl FloorPath {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir()
+            .join(format!("mcp-re-e2e-floor-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        FloorPath(path)
+    }
+}
+
+impl Drop for FloorPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("tmp"));
+    }
 }
 
 fn plain_request() -> serde_json::Value {
@@ -382,4 +478,106 @@ fn non_revoked_client_still_round_trips() {
         .expect("a non-matching denylist does not block a valid delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
+}
+
+// --- Trust anchors from a SIGNED MANIFEST (C039/C075/C076) --------------------
+//
+// The signed trust-anchor manifest, the four-state TrustedIssuerSet, and the rollback
+// floor were all built and all unreachable: nothing in the serving or client path ever
+// loaded a manifest, and the accepted `manifest_version` was handed back for a caller
+// to record with no caller and nowhere to record it. These drive the whole chain
+// end-to-end through the real two-proxy round trip.
+
+#[test]
+fn a_manifest_published_root_verifies_a_real_round_trip() {
+    // Publish → pin the org key → record the version → verify a response. The client's
+    // trust anchors come from the signed document, not from a hand-written resolver.
+    let floor = FloorPath::new("accept");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-manifest-ok"))
+        .expect("a manifest-published root verifies the delegated response");
+    assert_eq!(out.kind, ResponseKind::Success);
+    assert_eq!(out.plain_response["result"]["ok"], json!(true));
+}
+
+#[test]
+fn a_manifest_revoked_root_fails_the_round_trip_closed() {
+    // The decisive action: the manifest lists the server's root as REVOKED, so every
+    // descendant delegated credential is invalid at once — no per-key denylist entry,
+    // and the client never had to be told the delegated kid. This is also the anchored
+    // variant proving both seams are wired from the ONE set (C064/C065): the reason is
+    // delegation_revoked, which only the revocation seam can produce.
+    let floor = FloorPath::new("revoke");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let err = proxy
+        .handle("r1", &plain_request(), &params("nonce-manifest-revoked"))
+        .expect_err("a manifest-revoked root must fail closed");
+    assert_eq!(
+        err.wire_code(),
+        Some("mcp-re.delegation_revoked"),
+        "revoking the ROOT in the manifest invalidates the delegated credential under it"
+    );
+}
+
+#[test]
+fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
+    // The rollback attack the floor exists to stop, driven all the way to a round trip.
+    // v2 revokes the root; an attacker then re-serves v1, which does not. With a durable
+    // floor the old manifest is refused, so the revocation cannot be walked back — and
+    // the floor is read from disk, so this holds across a restart rather than only
+    // within one process.
+    let floor = FloorPath::new("rollback");
+
+    // v2: the root is revoked. Loading it raises the floor to 2.
+    let revoked_issuers = issuers_from_signed_manifest(&floor.0, 2, true);
+    let proxy = client_proxy_anchored(build_server(), revoked_issuers);
+    assert_eq!(
+        proxy
+            .handle("r1", &plain_request(), &params("nonce-rollback-1"))
+            .expect_err("v2 revoked the root")
+            .wire_code(),
+        Some("mcp-re.delegation_revoked"),
+    );
+
+    // The replay: v1 (root not revoked), offered to a FRESH floor handle reading the
+    // same file — i.e. the state a restarted verifier would see.
+    let org = SigningKey::from_seed_bytes(&[91u8; 32]);
+    let manifest = mcp_re_client_core::TrustAnchorManifest {
+        profile: MANIFEST_PROFILE.into(),
+        manifest_version: 1,
+        current_issuers: vec![mcp_re_client_core::ManifestIssuer {
+            issuer_kid: ROOT_KID.into(),
+            public_key: root_key().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:server".into(),
+        }],
+        retiring_issuers: vec![],
+        revoked_issuers: vec![],
+        issued_at: NOW - 100,
+        expires_at: NOW + 100_000,
+    };
+    let signed = mcp_re_client_core::sign_manifest(&manifest, &org, "org-admin-1");
+    let mut reopened = mcp_re_client_proxy::FileManifestFloor::open(&floor.0).expect("reopen");
+    assert_eq!(
+        reopened.min_version().expect("floor readable"),
+        2,
+        "the floor survived in the file, not just in the process that wrote it"
+    );
+    let org_public = org.public_key();
+    let replayed = mcp_re_client_core::load_signed_manifest_with_floor(
+        &signed,
+        |kid| (kid == "org-admin-1").then(|| org_public.clone()),
+        MANIFEST_PROFILE,
+        &mut reopened,
+        NOW,
+    );
+    assert_eq!(
+        replayed.err(),
+        Some(mcp_re_client_core::TrustManifestError::Stale { version: 1, min_version: 2 }),
+        "the superseded manifest is refused, so the root stays revoked"
+    );
 }

@@ -97,4 +97,24 @@ are refused at boot on the RFC 9421 carrier. Fail at render rather than CrashLoo
 {{- if not (or (eq .Values.transportBinding "") (eq .Values.transportBinding "exact")) -}}
 {{- fail (printf "transportBinding=%q cannot start on the RFC 9421 serving path. Use \"\" (omit the flag; the proxy defaults to exact) or \"exact\". `none` is rejected at argument parse; `lb-assertion` and `attested-ingress` parse but are refused at boot (owner-signed ingress rebinding pending)." .Values.transportBinding) -}}
 {{- end -}}
+{{/*
+Admission ceilings (MCPRE-114). Two render-time refusals, because both bad inputs
+would otherwise produce a chart that looks bounded and is not:
+
+  * 0 — Helm treats it as falsy, so the `if` in deployment.yaml would omit the flag
+    and the proxy would run UNBOUNDED after the operator wrote a ceiling of zero.
+    The CLI rejects `--max-in-flight 0` for the same reason.
+  * both set — the CLI's precedence silently discards the fleet-wide total in favour
+    of the per-core value; the rendered args would show one flag while values.yaml
+    shows two intents.
+*/}}
+{{- range $key, $value := .Values.admission -}}
+{{- $text := toString $value -}}
+{{- if and (ne $text "") (not (regexMatch "^[1-9][0-9]*$" $text)) -}}
+{{- fail (printf "admission.%s=%q must be a positive integer, or \"\" to omit the flag (UNBOUNDED). 0 is refused rather than read as unset: it looks like a tightening but would mean no ceiling at all." $key $text) -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.admission.maxInFlight .Values.admission.maxInFlightTotal -}}
+{{- fail "set admission.maxInFlight OR admission.maxInFlightTotal, not both: the per-core value takes precedence and the fleet-wide total would be silently discarded. Use maxInFlightTotal to size against the fleet (divided evenly across cores) or maxInFlight to pin each core directly." -}}
+{{- end -}}
 {{- end -}}

@@ -77,6 +77,17 @@ spec:
             {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
+            # MCPRE-114 admission ceiling. Omitted when unset, which the proxy reads
+            # as unbounded — so an existing release keeps its behaviour on upgrade.
+            # An explicit per-core ceiling wins over the fleet-wide total, so only one
+            # flag is ever emitted.
+            {{- if .Values.admission.maxInFlight }}
+            - "--max-in-flight"
+            - "{{ .Values.admission.maxInFlight }}"
+            {{- else if .Values.admission.maxInFlightTotal }}
+            - "--max-in-flight-total"
+            - "{{ .Values.admission.maxInFlightTotal }}"
+            {{- end }}
             - "--audience"
             - {{ .Values.identity.audience | quote }}
             # RFC 9421 audience tuple (ADR-MCPRE-050): the signed request's audience

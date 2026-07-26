@@ -11,10 +11,12 @@
 //! The transport is abstracted behind [`RemoteTransport`] so the security pipeline
 //! is testable without real I/O; a binary supplies a concrete stdio/HTTP transport.
 
+pub mod manifest_floor;
 pub mod proxy;
 pub mod route;
 pub mod transport;
 
+pub use manifest_floor::FileManifestFloor;
 pub use proxy::CallParams;
 pub use proxy::ClientProxy;
 pub use proxy::ProxyResponse;

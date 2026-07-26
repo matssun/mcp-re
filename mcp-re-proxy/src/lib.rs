@@ -281,6 +281,7 @@ pub use transport::AssertedIdentityRejection;
 pub use transport::RoutingHeaderRejection;
 pub use transport::MCP_METHOD_HEADER;
 pub use transport::MCP_NAME_HEADER;
+pub use transport::MAX_ASSERTED_IDENTITY_LEN;
 pub use transport::ExactMatchBinding;
 pub use transport::IdentityPolicy;
 pub use transport::IdentitySource;

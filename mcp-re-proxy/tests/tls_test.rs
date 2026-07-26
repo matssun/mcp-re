@@ -323,25 +323,85 @@ fn multiple_dns_sans_select_first_deterministically() {
 }
 
 #[test]
-fn uri_san_with_nul_control_char_is_returned_verbatim() {
+fn uri_san_with_nul_control_char_fails_closed() {
     // A NUL (0x00) and other C0 control chars are valid IA5 (ASCII 0x00-0x7F), so
-    // `SanType::URI`'s `try_into` ACCEPTS them and the cert mints. The parser must
-    // return the value VERBATIM — NOT truncated at the NUL — and must not panic.
+    // `SanType::URI`'s `try_into` ACCEPTS them and the cert mints. C096: the value
+    // then reaches the transport binding and the logs, so it is held to the same
+    // strict rules as an asserted trusted-ingress identity — a control character is
+    // a rejection, not a value.
     let ca = make_ca();
     let hostile = "spiffe://example.org/agent\u{0000}injected";
     // Confirm the byte is IA5-representable (the premise of this test).
     let san: SanType = SanType::URI(hostile.try_into().expect("NUL/C0 is valid IA5"));
     let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
+    assert!(
+        extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).is_none(),
+        "a URI SAN carrying a control character must fail closed"
+    );
+    // The original anti-truncation requirement still holds, and holds STRICTLY
+    // better: the outcome is no identity at all, so there is no way for the prefix
+    // before the NUL to be mistaken for the verified identity.
+}
+
+#[test]
+fn crlf_in_dns_san_and_cn_fails_closed_like_the_header_path() {
+    // The log-injection/smuggling shape the header path already rejects, asserted
+    // for BOTH remaining policies so the fix is not URI-SAN-specific.
+    let ca = make_ca();
+    let smuggle = "host.example.org\r\nX-Spoof: evil";
+    let san: SanType = SanType::DnsName(smuggle.try_into().expect("CRLF is valid IA5"));
+    let (leaf, _key) = make_leaf(&ca, vec![san], Some("cn\r\ninjected"), true);
+    assert!(
+        extract_identity(leaf.as_ref(), IdentityPolicy::DnsSan).is_none(),
+        "a DNS SAN carrying CRLF must fail closed"
+    );
+    assert!(
+        extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).is_none(),
+        "a CN carrying CRLF must fail closed"
+    );
+}
+
+#[test]
+fn oversized_uri_san_fails_closed_at_the_same_bound_as_the_header_path() {
+    // Length is bounded by MAX_ASSERTED_IDENTITY_LEN for BOTH identity provenances:
+    // an issuer-minted SAN is no more trustworthy as to size than a forwarded
+    // header. At the bound it is admitted; one byte over, it is not.
+    let ca = make_ca();
+    let prefix = "spiffe://example.org/";
+    let pad = mcp_re_proxy::MAX_ASSERTED_IDENTITY_LEN - prefix.len();
+
+    let at_bound = format!("{prefix}{}", "a".repeat(pad));
+    assert_eq!(at_bound.len(), mcp_re_proxy::MAX_ASSERTED_IDENTITY_LEN);
+    let san: SanType = SanType::URI(at_bound.as_str().try_into().expect("ascii is IA5"));
+    let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
+    let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan)
+        .expect("a value AT the bound must be admitted");
+    assert_eq!(id.value, at_bound);
+
+    let over = format!("{prefix}{}", "a".repeat(pad + 1));
+    let san: SanType = SanType::URI(over.as_str().try_into().expect("ascii is IA5"));
+    let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
+    assert!(
+        extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).is_none(),
+        "one byte over the bound must fail closed"
+    );
+}
+
+#[test]
+fn padded_uri_san_is_trimmed_to_the_same_value_as_the_header_path() {
+    // Canonicalization parity: the header path trims before comparing, so the cert
+    // path must too — otherwise " spiffe://…/agent-1 " and "spiffe://…/agent-1" are
+    // two different identities depending on which transport terminated mTLS, and one
+    // signer mapping cannot admit both (the same class of split the
+    // `identity_parity_tests` module exists to prevent).
+    let ca = make_ca();
+    let padded = "  spiffe://example.org/agent-1  ";
+    let san: SanType = SanType::URI(padded.try_into().expect("ascii is IA5"));
+    let (leaf, _key) = make_leaf(&ca, vec![san], None, true);
     let id = extract_identity(leaf.as_ref(), IdentityPolicy::UriSan).expect("identity");
     assert_eq!(
-        id.value, hostile,
-        "the URI SAN must be returned verbatim, not truncated at the NUL"
-    );
-    assert_eq!(id.source, IdentitySource::UriSan);
-    // Verbatim implies the embedded NUL survives round-trip.
-    assert!(
-        id.value.contains('\u{0000}'),
-        "the embedded NUL must be preserved, proving no C-string truncation"
+        id.value, "spiffe://example.org/agent-1",
+        "the extracted identity must be the trimmed value"
     );
 }
 
@@ -381,7 +441,7 @@ fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
     // `self_signed`/`signed_by` inject a default CN ("rcgen self signed cert")
     // when no DN is supplied, so CnLegacy would read THAT, not None. That is a
     // fixture artifact (rcgen always emits a subject), not a fault in
-    // `extract_identity`, which faithfully returns whatever CN the cert carries.
+    // `extract_identity`, which returns whatever well-formed CN the cert carries.
     // The fail-closed contract for CnLegacy is therefore exercised by the
     // genuinely-absent SAN policies above (UriSan/DnsSan → None).
 }

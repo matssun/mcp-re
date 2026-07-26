@@ -355,10 +355,36 @@ impl TrustedIssuerSet {
     /// RESPONSE slot in this set at `now`. The Request slot is never resolved on the
     /// response-verification path, so it returns `None`. Rebuild it per verification
     /// with the current `now` so the overlap window is honoured.
+    ///
+    /// This resolver REFUSES a revoked issuer (`None` → `delegation_issuer_untrusted`)
+    /// even though [`resolve_root`](Self::resolve_root) resolves one. A resolver handed
+    /// to the verifier alone cannot know whether the caller ALSO wired this set in as
+    /// the `revocation` argument, and if they did not, resolving a revoked root would
+    /// verify its descendant credentials — revocation silently not applying because a
+    /// value had to be passed twice to take effect. Refusing here makes the raw seam
+    /// safe standing on its own.
+    ///
+    /// Prefer [`verify_delegated_response_anchored`], which takes the set ONCE, wires
+    /// both seams itself, and can therefore afford to resolve a revoked root so the
+    /// rejection carries the honest `delegation_revoked` reason instead of
+    /// `delegation_issuer_untrusted`.
     pub fn response_resolver(
         &self,
         now: i64,
     ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
+        move |kid: &str, slot: SignerSlot| match slot {
+            SignerSlot::Response if !self.is_revoked(kid) => self.resolve_root(kid, now),
+            _ => None,
+        }
+    }
+
+    /// The resolver used by [`verify_delegated_response_anchored`], which pairs it with
+    /// this same set as the revocation source. It DOES resolve a revoked root, so the
+    /// credential's signature is checked and the revocation seam produces
+    /// `delegation_revoked` — the honest reason — rather than masking a revocation as
+    /// an untrusted issuer. Private: it is only safe because the caller is this
+    /// module, which wires both seams together by construction.
+    fn anchored_resolver(&self, now: i64) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
         move |kid: &str, slot: SignerSlot| match slot {
             SignerSlot::Response => self.resolve_root(kid, now),
             _ => None,
@@ -534,6 +560,36 @@ pub fn verify_delegated_response(
     }
 }
 
+/// Verify a DELEGATED-required response anchored in a [`TrustedIssuerSet`] — the same
+/// verification as [`verify_delegated_response`], with the trust-anchor set supplied
+/// ONCE.
+///
+/// The set feeds two seams the verifier treats as independent: the root RESOLVER
+/// (current + in-window retired) and the REVOCATION source (revoked issuers). Passing
+/// it through [`verify_delegated_response`] means passing the same value in two
+/// argument positions, and getting that wrong fails in the permissive direction — a
+/// caller who builds the resolver from the set but passes an empty revocation list
+/// verifies credentials under a root they have marked REVOKED, with nothing to
+/// indicate the revocation is inert. Revocation of a trust anchor is the one decisive
+/// action that invalidates every descendant delegated credential at once, so it must
+/// not depend on remembering to say it twice.
+///
+/// Use this whenever the trust anchors come from a [`TrustedIssuerSet`] (including one
+/// loaded from a signed trust-anchor manifest). Reach for
+/// [`verify_delegated_response`] only when the resolver and the revocation source are
+/// genuinely different objects — e.g. a resolver backed by a live directory plus a
+/// separately-fed denylist.
+pub fn verify_delegated_response_anchored(
+    response: &HttpResponse,
+    expectation: &ResponseExpectation,
+    policy: &DelegationPolicy,
+    issuers: &TrustedIssuerSet,
+    now: i64,
+) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+    let resolver = issuers.anchored_resolver(now);
+    verify_delegated_response(response, &resolver, expectation, policy, issuers, now)
+}
+
 /// The server's frozen wire code from a (verified) rejection-receipt body
 /// (`error.data.mcp_re_error.wire_code`), if present. Read ONLY after verification.
 fn rejection_wire_code(body: &[u8]) -> Option<String> {
@@ -640,6 +696,16 @@ mod delegated_tests {
             route: Some("a".into()),
         }
     }
+    /// A real, structurally valid artifact binding. `artifact_bindings` is required
+    /// and non-empty — `build_signed_request` refuses to sign an empty set, since the
+    /// verifier would reject it as `malformed_evidence` — so these tests supply one
+    /// rather than relying on a request no server could accept.
+    fn bindings() -> Vec<crate::ArtifactBinding> {
+        vec![crate::ArtifactBinding::opaque_digest(
+            crate::ArtifactType::OauthDpop,
+            b"access-token-under-test",
+        )]
+    }
     /// The client's trust seam: the ROOT issuer key (by its issuer kid) for the
     /// Response slot. The delegated key is authorized by the credential alone.
     fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
@@ -694,7 +760,7 @@ mod delegated_tests {
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
             audience(),
-            Vec::new(),
+            bindings(),
             "nonce-1",
             CREATED,
             EXPIRES,
@@ -1180,7 +1246,7 @@ mod delegated_tests {
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
             audience(),
-            Vec::new(),
+            bindings(),
             "nonce-rot",
             CREATED,
             NOW + 600,

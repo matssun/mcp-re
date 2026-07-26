@@ -87,6 +87,22 @@ jobs:
           python3 scripts/tracked_secrets_gate.py --selftest
           python3 scripts/tracked_secrets_gate.py
 
+      # Helm chart render gate: every fail-closed guard in the chart
+      # (`templates/_helpers.tpl`) is a render-time `fail`, and several of them key
+      # on values Helm treats as FALSY — so an inverted condition does not error, it
+      # omits a flag, and an omitted flag is the permissive default. This renders
+      # the chart under a matrix and asserts which value sets MUST be refused, that
+      # each refusal names the value at fault, and that the rendered argv omits the
+      # flags it must omit (no --signing-key-seed under KMS custody, no
+      # --max-in-flight when unset). Fast, python + helm.
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Helm chart render gate (fail-closed guards must refuse)
+        run: python3 scripts/helm_render_gate.py
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.

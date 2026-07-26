@@ -157,6 +157,68 @@ pub enum TrustManifestError {
     ProfileMismatch,
     /// A structurally malformed manifest (e.g. an undecodable public key).
     Malformed(&'static str),
+    /// The rollback floor could not be READ, so the version this verifier has already
+    /// accepted is unknown. Fails closed: loading against a floor of 0 would accept any
+    /// version, which is precisely the rollback the floor exists to prevent.
+    FloorUnreadable(&'static str),
+    /// The manifest verified but the new floor could not be PERSISTED, so the anchors
+    /// are not returned. Using them would leave the accepted version recorded nowhere:
+    /// the next start would read the old floor and re-accept the superseded manifest.
+    FloorNotPersisted(&'static str),
+}
+
+/// The durable rollback floor: the highest `manifest_version` this verifier has already
+/// accepted (ADR-MCPRE-052 root-authority lifecycle).
+///
+/// `load_signed_manifest` takes `min_version` as an argument and hands the accepted
+/// version back for the caller "to record" — which means the rollback protection is
+/// only as good as a caller remembering to persist it. Nothing did, so the floor reset
+/// to 0 on every start and an old manifest could be replayed to un-revoke a root or
+/// re-widen an overlap window. This trait is where the floor lives; implement it over
+/// whatever storage the deployment already trusts, and use
+/// [`load_signed_manifest_with_floor`] so the read → verify → persist order is not the
+/// caller's to get right.
+///
+/// `record` MUST be monotonic (never lower the floor) and MUST be durable before it
+/// returns `Ok` — the load treats `Ok` as "this version can never be accepted again".
+pub trait ManifestVersionFloor {
+    /// The highest version already accepted, or 0 if none ever was.
+    fn min_version(&self) -> Result<u64, TrustManifestError>;
+    /// Durably raise the floor to `version`. A lower `version` MUST leave the floor
+    /// unchanged rather than error — a concurrent writer may already have raised it.
+    fn record(&mut self, version: u64) -> Result<(), TrustManifestError>;
+}
+
+/// A floor held only in memory — the EXPLICIT no-durability posture, for an ephemeral
+/// verifier or a test. It protects against rollback within one process lifetime and
+/// says nothing about the next one, which is the whole reason it has to be named:
+/// choosing it is a decision, not what you get by forgetting to choose.
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryVersionFloor {
+    floor: u64,
+}
+
+impl InMemoryVersionFloor {
+    /// A floor starting at 0 — any first manifest version is accepted.
+    pub fn new() -> Self {
+        InMemoryVersionFloor::default()
+    }
+
+    /// A floor starting at a known version (e.g. one read from config at boot).
+    pub fn starting_at(floor: u64) -> Self {
+        InMemoryVersionFloor { floor }
+    }
+}
+
+impl ManifestVersionFloor for InMemoryVersionFloor {
+    fn min_version(&self) -> Result<u64, TrustManifestError> {
+        Ok(self.floor)
+    }
+
+    fn record(&mut self, version: u64) -> Result<(), TrustManifestError> {
+        self.floor = self.floor.max(version);
+        Ok(())
+    }
 }
 
 /// Sign a manifest with the org/admin key, producing the distributable envelope.
@@ -241,6 +303,39 @@ pub fn load_signed_manifest(
         issuer_set: set,
         version: signed.manifest.manifest_version,
     })
+}
+
+/// Verify + load a signed manifest against a DURABLE rollback floor, raising the floor
+/// before the anchors are handed back.
+///
+/// The order is the point, and it is enforced here so no caller has to reproduce it:
+///
+///   1. READ the floor. An unreadable floor fails closed ([`TrustManifestError::FloorUnreadable`]) —
+///      it is not treated as 0, because "we do not know what we have accepted" and
+///      "we have accepted nothing" are opposite statements and only one of them is safe.
+///   2. VERIFY + load against that floor (signature, pin, profile, expiry, rollback).
+///   3. PERSIST the accepted version, and only then return the anchors. A persist
+///      failure discards the load ([`TrustManifestError::FloorNotPersisted`]) rather
+///      than using anchors whose version was recorded nowhere — otherwise a crash
+///      between using them and writing the floor re-opens the rollback window on the
+///      next start, which is the failure this whole mechanism exists to close.
+pub fn load_signed_manifest_with_floor(
+    signed: &SignedTrustAnchorManifest,
+    resolve_manifest_signer: impl Fn(&str) -> Option<VerificationKey>,
+    expected_profile: &str,
+    floor: &mut impl ManifestVersionFloor,
+    now: i64,
+) -> Result<LoadedTrustAnchors, TrustManifestError> {
+    let min_version = floor.min_version()?;
+    let loaded = load_signed_manifest(
+        signed,
+        resolve_manifest_signer,
+        expected_profile,
+        min_version,
+        now,
+    )?;
+    floor.record(loaded.version)?;
+    Ok(loaded)
 }
 
 /// Build the ROOT [`ResolvedActor`] (Response slot) a manifest issuer describes.
@@ -383,6 +478,111 @@ mod tests {
         assert!(loaded.issuer_set.resolve_root("root-A", 5_500).is_some(), "A in window");
         assert!(loaded.issuer_set.resolve_root("root-A", 6_001).is_none(), "A past valid_until");
         assert!(mcp_re_client_core_is_revoked(&loaded.issuer_set, "root-X"));
+    }
+
+    /// A floor whose read or write fails on demand, so the fail-closed ordering in
+    /// `load_signed_manifest_with_floor` can be asserted rather than reasoned about.
+    struct BrittleFloor {
+        floor: u64,
+        read_fails: bool,
+        write_fails: bool,
+        recorded: Vec<u64>,
+    }
+
+    impl ManifestVersionFloor for BrittleFloor {
+        fn min_version(&self) -> Result<u64, TrustManifestError> {
+            if self.read_fails {
+                return Err(TrustManifestError::FloorUnreadable("test"));
+            }
+            Ok(self.floor)
+        }
+        fn record(&mut self, version: u64) -> Result<(), TrustManifestError> {
+            self.recorded.push(version);
+            if self.write_fails {
+                return Err(TrustManifestError::FloorNotPersisted("test"));
+            }
+            self.floor = self.floor.max(version);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_floor_rises_on_load_and_then_rejects_the_superseded_manifest() {
+        // C076: the version has to be REMEMBERED, or every load starts at 0 and an old
+        // manifest can be replayed to un-revoke a root. Load v3, then re-offer v2: the
+        // same call that accepted v3 now rejects v2 as a rollback, with no min_version
+        // threaded by the caller.
+        let mut floor = InMemoryVersionFloor::new();
+        let v3 = sign_manifest(
+            &manifest(3, vec![issuer("root-A", &root_a())], vec![], vec![]),
+            &org_key(),
+            ORG_KID,
+        );
+        let loaded =
+            load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000)
+                .expect("v3 loads");
+        assert_eq!(loaded.version, 3);
+        assert_eq!(floor.min_version().unwrap(), 3, "the floor rose to the accepted version");
+
+        // The rollback: v2 revokes root-A. Accepting it would un-revoke nothing here, but
+        // the reverse manifest (an OLD one that has not yet revoked a compromised root) is
+        // the real attack, and it is the same replay.
+        let v2 = sign_manifest(
+            &manifest(2, vec![issuer("root-A", &root_a())], vec![], vec![]),
+            &org_key(),
+            ORG_KID,
+        );
+        assert_eq!(
+            load_signed_manifest_with_floor(&v2, org_resolver, PROFILE, &mut floor, 5_000).err(),
+            Some(TrustManifestError::Stale { version: 2, min_version: 3 }),
+        );
+        // Re-offering v3 is fine (idempotent), and so is moving forward.
+        assert!(load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000).is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_floor_fails_closed_rather_than_defaulting_to_zero() {
+        // "We do not know what we have accepted" must not collapse into "we have
+        // accepted nothing" — the latter accepts any version.
+        let mut floor = BrittleFloor { floor: 9, read_fails: true, write_fails: false, recorded: vec![] };
+        let v1 = sign_manifest(
+            &manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]),
+            &org_key(),
+            ORG_KID,
+        );
+        assert_eq!(
+            load_signed_manifest_with_floor(&v1, org_resolver, PROFILE, &mut floor, 5_000).err(),
+            Some(TrustManifestError::FloorUnreadable("test")),
+        );
+        assert!(floor.recorded.is_empty(), "nothing was recorded, because nothing was loaded");
+    }
+
+    #[test]
+    fn anchors_are_withheld_when_the_floor_cannot_be_persisted() {
+        // The anchors verified, but the version could not be written down. Returning them
+        // would mean using a trust picture whose version is recorded nowhere: a crash
+        // before the next write leaves the old floor, and the superseded manifest is
+        // accepted again. So the load fails, and the caller keeps whatever it had.
+        let mut floor = BrittleFloor { floor: 0, read_fails: false, write_fails: true, recorded: vec![] };
+        let v4 = sign_manifest(
+            &manifest(4, vec![issuer("root-A", &root_a())], vec![], vec![]),
+            &org_key(),
+            ORG_KID,
+        );
+        assert_eq!(
+            load_signed_manifest_with_floor(&v4, org_resolver, PROFILE, &mut floor, 5_000).err(),
+            Some(TrustManifestError::FloorNotPersisted("test")),
+        );
+        assert_eq!(floor.recorded, vec![4], "the persist WAS attempted before giving up");
+    }
+
+    #[test]
+    fn the_in_memory_floor_is_monotonic() {
+        let mut floor = InMemoryVersionFloor::starting_at(5);
+        floor.record(2).expect("a lower version is a no-op, not an error");
+        assert_eq!(floor.min_version().unwrap(), 5);
+        floor.record(6).expect("record");
+        assert_eq!(floor.min_version().unwrap(), 6);
     }
 
     fn mcp_re_client_core_is_revoked(set: &TrustedIssuerSet, kid: &str) -> bool {

@@ -16,6 +16,7 @@
 
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::verify_delegated_response;
+use mcp_re_client_core::verify_delegated_response_anchored;
 use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::RequestSigningInputs;
 use mcp_re_client_core::ResponseExpectation;
@@ -153,43 +154,57 @@ impl ClientProxy {
         // Verify the signed response bound to THIS request under the route's required
         // profile (configured profile = required profile). Fail closed on any failure;
         // no cross-profile fallback.
-        match &route.verification {
-            // ADR-MCPRE-052 delegated-signing (the only mode): a delegated-signed
-            // success OR rejection receipt carrying the inline credential. No
-            // direct-root / unsigned / object downgrade is accepted
-            // (verify_delegated_response fails closed).
-            ClientVerification::DelegatedRequired(policy, revocation) => {
-                let expectation =
-                    ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
-                // The route's REQUIRED revocation source (§3 step 7). Consulted with the
-                // credential's delegated_kid / issuer_kid / jti; an empty static list is
-                // the explicit TTL-only posture, never a silent default.
-                let verified = verify_delegated_response(
+        //
+        // ADR-MCPRE-052 delegated-signing (the only mode): a delegated-signed success OR
+        // rejection receipt carrying the inline credential. No direct-root / unsigned /
+        // object downgrade is accepted (both verify functions fail closed). The two
+        // variants differ ONLY in where the trust anchors come from; the outcome
+        // handling below is shared, so neither can drift into a laxer mapping.
+        let expectation =
+            ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+        let verified = match &route.verification {
+            // The route's REQUIRED revocation source (§3 step 7). Consulted with the
+            // credential's delegated_kid / issuer_kid / jti; an empty static list is
+            // the explicit TTL-only posture, never a silent default.
+            ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
+                verify_delegated_response(
                     &response,
-                    route.resolve_actor.as_ref(),
+                    resolve_actor.as_ref(),
                     &expectation,
                     policy,
                     revocation.as_ref(),
                     params.now_unix,
-                )?;
-                match verified.outcome {
-                    DelegatedOutcome::Success => {
-                        let plain = plain_response_from_verified(&response.body)?;
-                        Ok(ProxyResponse {
-                            plain_response: plain,
-                            kind: ResponseKind::Success,
-                        })
-                    }
-                    // A VERIFIED rejection receipt: the request was provably denied.
-                    // Convert the signed receipt to a plain JSON-RPC error for the
-                    // local client and report the classification (fail closed — this
-                    // is never returned as a success result).
-                    DelegatedOutcome::Rejection { bound, wire_code } => Ok(ProxyResponse {
-                        plain_response: plain_error_from_rejection(&id),
-                        kind: ResponseKind::VerifiedRejection { wire_code, bound },
-                    }),
-                }
+                )?
             }
+            // Trust-anchor lifecycle: the set is BOTH the root resolver and the
+            // revocation source, evaluated at THIS request's `now` so a retiring root's
+            // overlap window closes on time rather than at route-construction time.
+            ClientVerification::DelegatedAnchored(policy, issuers) => {
+                verify_delegated_response_anchored(
+                    &response,
+                    &expectation,
+                    policy,
+                    issuers,
+                    params.now_unix,
+                )?
+            }
+        };
+
+        match verified.outcome {
+            DelegatedOutcome::Success => {
+                let plain = plain_response_from_verified(&response.body)?;
+                Ok(ProxyResponse {
+                    plain_response: plain,
+                    kind: ResponseKind::Success,
+                })
+            }
+            // A VERIFIED rejection receipt: the request was provably denied. Convert the
+            // signed receipt to a plain JSON-RPC error for the local client and report
+            // the classification (fail closed — never returned as a success result).
+            DelegatedOutcome::Rejection { bound, wire_code } => Ok(ProxyResponse {
+                plain_response: plain_error_from_rejection(&id),
+                kind: ResponseKind::VerifiedRejection { wire_code, bound },
+            }),
         }
     }
 }

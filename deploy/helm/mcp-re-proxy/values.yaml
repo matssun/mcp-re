@@ -73,6 +73,29 @@ revocation:
 # Client-certificate lifetime ceiling (short-lived-cert revocation posture).
 maxClientCertLifetimeSeconds: 3600
 
+# Per-request ADMISSION control (MCPRE-114). With no ceiling the proxy accepts
+# in-flight requests without bound, so ONE client holding a valid mTLS certificate
+# can drive unbounded concurrent work — each admitted request buffering up to
+# --max-body-bytes. Over the ceiling the proxy answers 503 BEFORE the handler, so
+# the inner plane is never reached.
+#
+# Both are empty by default and the flags are then omitted, which means UNBOUNDED.
+# That is the proxy's own default and is deliberately preserved here so upgrading
+# the chart cannot start shedding load on an existing release — but it is not a
+# defensible production posture. Set one of these.
+#
+#   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
+#   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
+#                     cores; each core then enforces only its own share (lock-free)
+#
+# Size maxInFlightTotal against the inner plane's own concurrency, not the pod's
+# memory: the point is to shed at the boundary rather than queue in front of a
+# backend that is already saturated. A value of 0 is refused at render — the CLI
+# rejects it too, since "0" reads like a tightening but means "no ceiling".
+admission:
+  maxInFlight: ""
+  maxInFlightTotal: ""
+
 # mTLS channel binding (ADR-MCPS-023). The ONLY two values this chart can render
 # into a pod that starts:
 #

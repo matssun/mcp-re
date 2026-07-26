@@ -222,6 +222,16 @@ pub(crate) fn build_signed_request_with(
         body,
     };
     let block = inputs.evidence_block();
+    // Hold the block to the SAME structural rules the verifier applies, before signing
+    // it. `artifact_bindings` is documented as required and non-empty, and the server
+    // rejects an empty (or structurally invalid) set as `malformed_evidence` — but the
+    // client would compose it, sign it, and spend a round trip discovering that, then
+    // report it as a server-side evidence fault rather than the local misconfiguration
+    // it is. This is the same fail-fast the `@target-uri` / audience cross-check above
+    // already performs: never emit evidence that can never verify. Reusing
+    // `HttpRequestEvidenceBlock::validate` rather than re-spelling the rules keeps the
+    // two ends from drifting apart.
+    block.validate(PROFILE_TAG)?;
     let evidence = sign(&mut request, &block)?;
     Ok(SignedRequest { request, evidence })
 }
@@ -265,4 +275,75 @@ pub fn build_signed_tool_call(
     params.insert("name".to_string(), Value::String(tool_name.to_string()));
     params.insert("arguments".to_string(), arguments);
     build_signed_request(id, "tools/call", params, target_uri, inputs, signing_key)
+}
+
+#[cfg(test)]
+mod evidence_precondition_tests {
+    //! C090: the client must not sign a request whose evidence block the verifier is
+    //! guaranteed to reject. `artifact_bindings` is documented as required and
+    //! non-empty and the server enforces exactly that
+    //! (`HttpRequestEvidenceBlock::validate` → `malformed_evidence`), but the client
+    //! composed, signed, and sent an empty set — spending a round trip to be told, and
+    //! reporting a local misconfiguration as a server-side evidence fault.
+
+    use super::*;
+    use mcp_re_http_profile::ArtifactType;
+
+    const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+
+    fn audience() -> AudienceTuple {
+        AudienceTuple {
+            audience_id: "verifier-1".into(),
+            target_uri: TARGET.into(),
+            route: Some("a".into()),
+        }
+    }
+
+    fn inputs(bindings: Vec<ArtifactBinding>) -> RequestSigningInputs {
+        RequestSigningInputs::new("client-key-1", audience(), bindings, "nonce-1", 1_000, 1_300)
+    }
+
+    fn sign(bindings: Vec<ArtifactBinding>) -> Result<SignedRequest, HttpProfileError> {
+        let params: Map<String, Value> =
+            serde_json::json!({ "name": "read" }).as_object().cloned().unwrap();
+        build_signed_request(
+            &Value::from(1),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs(bindings),
+            &SigningKey::from_seed_bytes(&[11u8; 32]),
+        )
+    }
+
+    #[test]
+    fn signing_with_no_artifact_binding_is_refused_locally() {
+        assert_eq!(
+            sign(Vec::new()).err(),
+            Some(HttpProfileError::MalformedEvidence("empty artifact_bindings")),
+            "the client refuses to sign what the verifier must reject, and reports the \
+             SAME reason the verifier would — so the two ends cannot drift"
+        );
+    }
+
+    #[test]
+    fn signing_with_a_structurally_invalid_binding_is_refused_locally() {
+        // Not just emptiness: the client reuses the verifier's whole predicate, so a
+        // present-but-malformed binding is caught here too. An empty digest value can
+        // never satisfy the binding's own validation.
+        let mut broken = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"token");
+        broken.digest_value = String::new();
+        assert!(
+            sign(vec![broken]).is_err(),
+            "a structurally invalid binding is refused before signing"
+        );
+    }
+
+    #[test]
+    fn a_valid_binding_still_signs() {
+        // The converse, so the precondition cannot be read as "bindings are broken".
+        let ok = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token");
+        let signed = sign(vec![ok]).expect("a well-formed request signs");
+        assert!(!signed.headers().is_empty(), "the signed request carries RFC 9421 headers");
+    }
 }
