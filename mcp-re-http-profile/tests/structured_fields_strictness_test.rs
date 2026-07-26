@@ -184,6 +184,54 @@ fn foreign_tag_fails_closed() {
     assert_eq!(verify_err(&req), HttpProfileError::UnknownProfileTag);
 }
 
+/// RFC 9421 §2.5 requires an error when a component identifier is added to the
+/// signature base twice. Beyond conformance: `signature_base` emits one line per
+/// occurrence, so admitting duplicates would give ONE message many valid bases and
+/// therefore many distinct evidence handles for the same bytes — the handle would
+/// stop being a function of the message, which is what MRTR continuation re-linking
+/// and audit correlation rely on.
+#[test]
+fn a_duplicated_covered_component_fails_closed() {
+    let mut req = signed_request();
+    edit_signature_input(&mut req, |v| {
+        v.replace("(\"@method\"", "(\"@method\" \"@method\"")
+    });
+    let err = verify_err(&req);
+    assert_eq!(
+        err,
+        HttpProfileError::MalformedEvidence("duplicate covered component")
+    );
+    assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
+}
+
+/// RFC 8941 §3.3.1 admits exactly one spelling of an integer: optional `-`, then
+/// digits with no leading zero. Rust's `i64::from_str` also takes `+1700000000` and
+/// `0017`, and the verifier rebuilds `@signature-params` from the PARSED values —
+/// so every accepted spelling would collapse to one signature base. An intermediary
+/// could then rewrite `created` in flight and the signature would still verify,
+/// leaving anything that reads the raw header looking at bytes other than the signed
+/// ones. Both alternate spellings must be refused structurally.
+#[test]
+fn non_canonical_integer_parameter_forms_fail_closed() {
+    for mutate in [
+        // A leading `+` on created.
+        |v: &str| v.replace(";created=1700000000", ";created=+1700000000"),
+        // Leading zeros on created.
+        |v: &str| v.replace(";created=1700000000", ";created=01700000000"),
+        // Leading zeros on expires.
+        |v: &str| v.replace(";expires=1700000300", ";expires=01700000300"),
+    ] {
+        let mut req = signed_request();
+        edit_signature_input(&mut req, mutate);
+        let err = verify_err(&req);
+        assert_eq!(
+            err,
+            HttpProfileError::MalformedEvidence("integer signature parameter"),
+            "an RFC 8941-illegal integer spelling must be refused, not normalized"
+        );
+    }
+}
+
 #[test]
 fn canonical_order_still_verifies() {
     // Guard against over-tightening: the untouched, canonically-ordered message

@@ -105,7 +105,13 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 # the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
 cryptoki-sys = "0.1.8"
 # Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
-redis = { version = "0.27", default-features = false }
+# `tls-rustls` is what makes a `rediss://` URL usable at all: the replay tier and the
+# trust-epoch counter carry admitted nonces and the epoch that drives response
+# signing, so an operator must be able to encrypt and authenticate that hop. It
+# resolves to rustls/std + rustls/ring + rustls-native-certs — the SAME rustls-ring
+# stack already in the closure (TLS termination, ureq), reading the pod's own trust
+# store, so no second TLS implementation enters the build.
+redis = { version = "0.27", default-features = false, features = ["tls-rustls"] }
 # Online OCSP/CRL revocation: x509-ocsp = pure-Rust ASN.1 OCSP req/resp
 # (`builder` for CertId/request construction); ureq = blocking HTTP client (OCSP
 # nominal transport is HTTP), no tokio. der/spki/x509-cert/sha2 are the codec +

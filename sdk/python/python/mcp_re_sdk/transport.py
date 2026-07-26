@@ -105,6 +105,13 @@ _MCP_RE_ERROR_CODE = -32001
 #: merely-expired ones.
 _FAR_FUTURE = 2**63 - 1
 
+#: Widest delegation clock skew a caller may configure, in seconds.
+#:
+#: Mirrors the RFC 9421 verifier's own ceiling (`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`)
+#: so one deployment does not run two different notions of "close enough" — beyond this
+#: the credential's nbf/exp window stops bounding anything.
+MAX_CLOCK_SKEW_BOUND = 300
+
 
 @dataclass(frozen=True)
 class HttpReply:
@@ -211,6 +218,19 @@ class McpReConfig:
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
             raise McpReSdkError(
                 f"max_concurrent_exchanges must be a positive integer, got {n!r}"
+            )
+        # The delegation credential's nbf/exp window is only as strong as the skew
+        # allowed around it: `now + skew < nbf` and `now - skew > exp` are how it is
+        # applied, so a large value accepts a credential arbitrarily far outside its
+        # validity window and a negative one distorts the comparison rather than
+        # tightening it. Nothing downstream bounds this — DelegationPolicy stores it
+        # verbatim — so it is checked where it enters SDK-owned code, mirroring the
+        # RFC 9421 skew, which is capped at 300s by VerifierPolicy.
+        s = self.max_clock_skew
+        if isinstance(s, bool) or not isinstance(s, int) or not 0 <= s <= MAX_CLOCK_SKEW_BOUND:
+            raise McpReSdkError(
+                f"max_clock_skew must be an integer in 0..={MAX_CLOCK_SKEW_BOUND} "
+                f"seconds, got {s!r}"
             )
 
 

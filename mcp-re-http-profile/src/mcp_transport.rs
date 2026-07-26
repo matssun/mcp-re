@@ -160,6 +160,11 @@ impl McpTransportPolicy {
                 if !self.supported_protocol_versions.iter().any(|s| s == v) {
                     return Err(HttpProfileError::McpProtocolVersionUnsupported);
                 }
+                // Unlike `Mcp-Method`/`Mcp-Name`, an absent body value is the norm
+                // rather than a gap: the body declares a protocol version only in
+                // `_meta`, which most messages omit. The header is not unconstrained
+                // in that case — it was just checked against the supported set above —
+                // so there is nothing to fail closed on.
                 if let Some(body_version) = self.body_protocol_version(&body, params) {
                     if body_version != v {
                         // The covered header and the covered body name different
@@ -186,13 +191,22 @@ impl McpTransportPolicy {
                     Some(h) => {
                         // Agreement is checked whenever the header is present, even
                         // under legacy omission — the flag never licenses a lie.
-                        let expected = params.and_then(|p| source.extract(p));
-                        if let Some(expected) = expected {
-                            if h.trim() != expected {
-                                return Err(HttpProfileError::McpTransportDivergence(
-                                    MCP_NAME_HEADER,
-                                ));
-                            }
+                        //
+                        // The method is one that REQUIRES this header, so the params
+                        // value it mirrors must exist. When it does not, there is
+                        // nothing for the signed header to agree with and its value
+                        // would be unconstrained; fail closed rather than let an
+                        // absent `params.name`/`params.uri` license an arbitrary
+                        // covered name.
+                        let Some(expected) = params.and_then(|p| source.extract(p)) else {
+                            return Err(HttpProfileError::McpTransportDivergence(
+                                MCP_NAME_HEADER,
+                            ));
+                        };
+                        if h.trim() != expected {
+                            return Err(HttpProfileError::McpTransportDivergence(
+                                MCP_NAME_HEADER,
+                            ));
                         }
                     }
                     None => {

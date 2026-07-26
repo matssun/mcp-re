@@ -39,6 +39,21 @@ fn expires_soon() -> i64 {
 }
 const SKEW: i64 = 30;
 
+/// A per-run suffix for signer/nonce values, so each run of these tests targets a
+/// key space of its own.
+///
+/// An admitted nonce stays in Redis for its whole `retain_until` window (600s–1h
+/// here), and these tests assert a first insert is `Fresh`. A value fixed at compile
+/// time therefore only holds against a pristine Redis: the next run inside the window
+/// sees its own predecessor's key and gets `Replay`. Anchoring on the process clock
+/// keeps every run independent, and the lane can be re-run against a long-lived Redis.
+fn run_id() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_nanos()
+}
+
 /// The composite key `SharedReplayCache` derives, recomputed here so the PTTL
 /// test can probe the SAME Redis key the cache inserts. Mirrors
 /// `SharedReplayCache::composite_key`: length-prefixed `(signer, audience, nonce)`
@@ -99,10 +114,9 @@ fn cross_node_insert_via_a_is_replay_via_b() {
         return;
     };
 
-    // A fixed, unique-per-test signer/nonce (derived from the test name, NOT from
-    // a clock or RNG) so reruns target a distinct key space and never collide with
-    // a prior run's still-live entry.
-    let signer = "did:example:host#cross_node_insert_via_a_is_replay_via_b";
+    // Test-name-derived signer plus a per-run suffix, so this test owns its key space
+    // and never collides with a prior run's still-live entry (see `run_id`).
+    let signer = &format!("did:example:host#cross_node_insert_via_a_is_replay_via_b-{}", run_id());
     let nonce = "nonce-4028-cross-node-insert-via-a-is-replay-via-b";
 
     let node_a = node(&url);
@@ -132,7 +146,7 @@ fn single_node_fresh_then_replay() {
         return;
     };
 
-    let signer = "did:example:host#single_node_fresh_then_replay";
+    let signer = &format!("did:example:host#single_node_fresh_then_replay-{}", run_id());
     let nonce = "nonce-4028-single-node-fresh-then-replay";
 
     let cache = node(&url);
@@ -169,7 +183,10 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
         return;
     };
 
-    let signer = "did:example:host#live_pttl_is_bounded_window_not_absolute_epoch";
+    let signer = &format!(
+        "did:example:host#live_pttl_is_bounded_window_not_absolute_epoch-{}",
+        run_id()
+    );
     let nonce = "nonce-4028-live-pttl-bounded-window";
 
     // A window of ~600s from the REAL clock: expires_at = now + 600.
@@ -249,6 +266,13 @@ fn replica_admin_url() -> Option<String> {
 /// enough not to flake under CI load (a shortfall costs exactly this once).
 const WAIT_TIMEOUT_MS: u64 = 1_500;
 
+/// Serializes the tests that drive `REPLICAOF` on the SHARED replica. libtest runs
+/// tests on parallel threads, so without this the sync and async WAIT-quorum proofs
+/// would detach and reattach the same replica concurrently and each would observe
+/// the other's topology. Poisoning is irrelevant here: a panicking holder has
+/// already failed the run.
+static REPLICA_TOPOLOGY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// A `WAIT 1`-quorum node over a fresh primary connection: a fresh insert must be
 /// acknowledged by at least one replica within `WAIT_TIMEOUT_MS` or it fails closed.
 fn wait_quorum_node(primary_url: &str) -> SharedReplayCache {
@@ -326,6 +350,10 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         return;
     };
 
+    let _topology = REPLICA_TOPOLOGY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let mut primary = raw_conn(&primary_url);
     let mut replica = raw_conn(&replica_url);
     let (master_host, master_port) = host_port(&primary_url);
@@ -358,8 +386,12 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
 
     // A future expiry so the inserted key carries a real multi-second TTL window
     // and persists across the phases below (a past expiry would clamp to ~1ms and
-    // vanish between calls). Test-name-derived signer for a unique key space.
-    let signer = "did:example:host#wait_quorum_shortfall_and_recovery";
+    // vanish between calls). Test-name-derived signer plus a per-run suffix for a key
+    // space of this run's own (see `run_id`).
+    let signer = &format!(
+        "did:example:host#wait_quorum_shortfall_and_recovery-{}",
+        run_id()
+    );
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock after epoch")
@@ -435,4 +467,112 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
     );
 
     // Cleanup: leave the topology attached for any subsequent test in the lane.
+}
+
+/// The same WAIT-quorum contract on the ASYNC store — the one the serving path
+/// actually uses (`app.rs` builds `RedisAsyncAtomicReplayStore`; the sync store has
+/// no production caller on the async data plane). Proves (1) a replica-acked insert
+/// is `Fresh`, and (2) detaching the replica makes the WAIT unsatisfiable so the
+/// insert fails closed as `Unavailable` and never `Fresh`.
+///
+/// Without this the stronger tier could be declared, audited at startup, and still
+/// run plain `SET NX PX` on the path that serves traffic.
+#[cfg(feature = "async_serve")]
+#[test]
+fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
+    use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_proxy::shared_replay::ReplayStoreError;
+    use mcp_re_proxy::RedisAsyncAtomicReplayStore;
+
+    let (Some(primary_url), Some(replica_url)) = (redis_url(), replica_admin_url()) else {
+        eprintln!(
+            "SKIP async_wait_quorum_shortfall_fails_closed_against_a_replica: \
+             MCP_RE_TEST_REDIS_URL / MCP_RE_TEST_REDIS_REPLICA_URL unset (no replica topology)"
+        );
+        return;
+    };
+
+    let _topology = REPLICA_TOPOLOGY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let mut primary = raw_conn(&primary_url);
+    let mut replica = raw_conn(&replica_url);
+    let (master_host, master_port) = host_port(&primary_url);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+
+    let store = rt
+        .block_on(RedisAsyncAtomicReplayStore::connect(&primary_url))
+        .expect("connect the async store to the primary")
+        .with_wait_quorum(1, WAIT_TIMEOUT_MS);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after epoch")
+        .as_secs() as i64;
+    let expires_at = now + 600;
+    // Per-run key space (see `run_id`), so the healthy leg observes a genuine `Fresh`
+    // on every run rather than only the first against a given Redis.
+    let signer = format!("did:example:host#async_wait_quorum_shortfall-{}", run_id());
+    let key_of = |nonce: &str| composite_key(&signer, AUD, nonce);
+
+    // Clean starting topology: replica attached, link up, visible on the primary.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg(&master_host)
+        .arg(master_port)
+        .query(&mut replica)
+        .expect("attach replica to primary");
+    poll_until("replica master_link_status:up", || replica_link_up(&mut replica));
+    poll_until("primary connected_slaves>=1", || {
+        primary_connected_slaves(&mut primary) >= 1
+    });
+
+    // (1) Healthy: the attached replica satisfies WAIT 1 → Fresh.
+    let healthy = rt.block_on(store.atomic_insert_if_absent(
+        &key_of("async-nonce-healthy"),
+        expires_at,
+        0,
+    ));
+    assert_eq!(
+        healthy,
+        Ok(ReplayDecision::Fresh),
+        "a replica-acked async WAIT-quorum insert must be Fresh, got {healthy:?}"
+    );
+
+    // (2) Shortfall: with no replica attached, WAIT 1 cannot be met → fail closed.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg("NO")
+        .arg("ONE")
+        .query(&mut replica)
+        .expect("detach replica (REPLICAOF NO ONE)");
+    poll_until("primary connected_slaves==0", || {
+        primary_connected_slaves(&mut primary) == 0
+    });
+
+    let shortfall = rt.block_on(store.atomic_insert_if_absent(
+        &key_of("async-nonce-shortfall"),
+        expires_at,
+        0,
+    ));
+    assert!(
+        matches!(shortfall, Err(ReplayStoreError::Unavailable { .. })),
+        "an async WAIT-quorum shortfall must fail closed as Unavailable, got {shortfall:?}"
+    );
+    assert_ne!(
+        shortfall,
+        Ok(ReplayDecision::Fresh),
+        "an async WAIT-quorum shortfall must NEVER be reported as Fresh"
+    );
+
+    // Restore the topology for any subsequent test in the lane.
+    let _: () = redis::cmd("REPLICAOF")
+        .arg(&master_host)
+        .arg(master_port)
+        .query(&mut replica)
+        .expect("reattach replica to primary");
+    poll_until("replica link up after reattach", || replica_link_up(&mut replica));
 }

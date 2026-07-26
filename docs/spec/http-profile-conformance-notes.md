@@ -453,7 +453,7 @@ ACCEPTED THIS MESSAGE. Not that a requested cancellation completed, not that the
 inner application observed the notification, not that any action was taken (#418).
 
 **Proven by.** `bodyless_202_test` (11 tests, incl.
-`signed_202_binds_only_to_its_own_notification` and
+`signed_202_shape_binds_content_not_instance` and
 `the_bodied_request_set_still_requires_content_type` — the new sets must not have
 weakened the old one).
 
@@ -494,12 +494,32 @@ so the credential's own root-signed `mcp_re_server_signer` is authoritative and 
 `audience_hash` scope is the load-bearing binding. There is no independent identity
 to disagree, so no splice vector is lost.
 
-**Binding granularity.** `;req` binds the request's covered CONTENT
-(`@method`/`@target-uri`/`content-digest`/`content-type`), not its nonce. Two
-byte-identical notifications differing only in nonce share one ack — correctly, since
-they are indistinguishable messages; a bodyless 202 has no body to carry a full
-request-evidence handle, so instance-level binding is not expressible, and
-content-level binding is what a splice across DISTINCT messages needs.
+**Binding granularity — CONTENT-level, not instance-level.** `;req` binds the
+request's covered CONTENT (`@method`/`@target-uri`/`content-digest`/`content-type`),
+not its nonce. Content-level binding is what a splice across DISTINCT messages needs,
+and it is enforced. Two byte-identical notifications differing only in nonce share one
+ack: the ack for the first verifies as the ack for the second.
+
+The consequence is explicit, because byte-identical notifications are the ORDINARY
+case (`notifications/initialized`, a retried `notifications/cancelled`): an on-path
+attacker who captures a signed 202 can drop a later byte-identical notification and
+replay the captured ack for it, bounded only by response freshness. A verified 202
+therefore proves *this message content was authenticated and accepted*, NOT that this
+particular transmission reached the boundary. A client must not treat it as delivery
+proof for an individual retry. Pinned by
+`bodyless_202_test::signed_202_shape_binds_content_not_instance`, which asserts BOTH
+directions.
+
+Instance-level binding is expressible, at a cost — the two candidate mechanisms are
+not equivalent:
+
+| Mechanism | Verdict |
+|---|---|
+| Cover the request's `Signature`/`Signature-Input` via `;req` | **Ruled out.** RFC 9421 §7.3.7 makes this NOT RECOMMENDED: signatures of signatures do not give transitive coverage of covered components and the practice carries its own attacks. |
+| Carry a per-instance value in the request evidence block, so `content-digest;req` binds the instance for free | Viable, RFC-clean, needs no new covered component and no new header. Costs a wire change: `HttpRequestEvidenceBlock` is `deny_unknown_fields`, so it breaks existing verifiers, both SDKs, and the frozen vectors. |
+
+The standing ruling is content-level binding. Because #418 is unreleased, the second
+row remains open for the owner to take before the profile freezes.
 
 **What a delegated 202 claims.** A delegated key trusted for THIS service
 authenticated and accepted this notification — NOT that any action completed (#418).

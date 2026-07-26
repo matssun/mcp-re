@@ -295,6 +295,30 @@ case "$KEY_SOURCE" in
   *) fail "MCP_RE_KEY_SOURCE must be gcpKms|fileSeed" ;;
 esac
 
+# The trust domain both sides sign/verify under. ONE variable, used for the chart AND
+# every client invocation, so the two cannot drift.
+#
+# It defaults to `example.com` because `emit_mtls_fixtures` bakes that value into
+# trust.json as part of the resolved actor id (role:trust_domain:subject:keyid), and
+# this harness is driven by those fixtures — signing under any other domain would not
+# resolve. That is also why the install below sets identity.allowExampleFixtures.
+TRUST_DOMAIN="${MCP_RE_TRUST_DOMAIN:-example.com}"
+
+# The identity the chart now needs at RENDER time. These are also required further down
+# for the client flags, but that is after the install — demand them here so a missing
+# one fails before anything is deployed, rather than rendering a blank --audience.
+: "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
+: "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
+: "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
+: "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
+: "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch base label}"
+
+# Pass this run's identity to the chart so the proxy verifies exactly what the client
+# signs. Previously NOTHING was passed: the proxy took the chart's own placeholder
+# values while the client signed from these variables, and the proofs passed only
+# because the two happened to coincide. `identity.allowExampleFixtures` then tells the
+# chart's placeholder guard that this is a fenced validation run whose identity is
+# pinned by emit_mtls_fixtures, not an unconfigured production install.
 helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set replicaCount="$REPLICAS" \
   --set fleet=true \
@@ -302,8 +326,16 @@ helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set image.repository="${PROXY_IMAGE%:*}" \
   --set image.tag="${PROXY_IMAGE##*:}" \
   --set-string "inner.httpUrls={$INNER_URL}" \
+  --set identity.audience="$MCP_RE_AUDIENCE" \
+  --set identity.serverSigner="$MCP_RE_SERVER_SIGNER" \
+  --set identity.serverKeyId="$MCP_RE_SERVER_KEY_ID" \
+  --set identity.targetUri="$MCP_RE_TARGET_URI" \
+  --set identity.trustDomain="$TRUST_DOMAIN" \
+  --set identity.delegatedTrustEpoch="$MCP_RE_TRUST_EPOCH" \
+  --set identity.allowExampleFixtures=true `# identity is pinned by emit_mtls_fixtures (did:example:server-1 / example.com), which trust.json encodes in the actor id` \
   --set replay.redisUrl="redis://mcp-re-redis:6379" \
   --set revocation.trustEpochRedisUrl="redis://mcp-re-redis:6379" \
+  --set replay.allowPlaintextRedis=true `# the in-cluster redis:7 this harness brings up serves no TLS; the opt-out is explicit because the chart refuses plaintext under fleet by default` \
   "${KMS_SETS[@]}" \
   --wait --timeout 8m
 # The chart's deployment name is its fullname (<release>-<chart>), NOT the bare
@@ -384,7 +416,7 @@ CLIENT_COMMON=(
   # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
   # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.
   --target-uri       "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
-  --trust-domain     "${MCP_RE_TRUST_DOMAIN:-example.com}"
+  --trust-domain     "$TRUST_DOMAIN"
   --tls-cert         "${MCP_RE_TLS_CERT:?set MCP_RE_TLS_CERT to the client cert PEM path}"
   --tls-key          "${MCP_RE_TLS_KEY:?set MCP_RE_TLS_KEY to the client key PEM path}"
   --server-ca        "${MCP_RE_SERVER_CA:?set MCP_RE_SERVER_CA to the server CA PEM path}"
@@ -561,7 +593,7 @@ else
   # The in-cluster load generator needs the SAME resolved "<base>#<counter>" label the
   # proxy is minting; the bare base is never minted when a trust-epoch source is wired.
   LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $(epoch_label)"
-  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain ${MCP_RE_TRUST_DOMAIN:-example.com}"
+  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain $TRUST_DOMAIN"
   LG="$LG --tls-cert /etc/mcp-re-client/client-cert --tls-key /etc/mcp-re-client/client-key --server-ca /etc/mcp-re-client/server-ca"
   # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish
   # before the roll does and miss the tail). Counts drops over the window.

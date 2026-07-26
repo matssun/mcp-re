@@ -32,10 +32,26 @@
 //! **Where the request binding lives.** A bodyless 202 has no body, so it cannot
 //! carry the response evidence block that a bodied response uses to restate its
 //! `request_evidence`. The binding is therefore purely cryptographic: the `;req`
-//! covered components resolve against the originating request, so a 202 signed
-//! for notification A cannot be replayed as the acknowledgement of notification B.
-//! There is no body-level defense-in-depth here because there is no body — which
-//! is precisely why the `;req` set is mandatory rather than optional.
+//! covered components resolve against the originating request. There is no
+//! body-level defense-in-depth here because there is no body — which is precisely
+//! why the `;req` set is mandatory rather than optional.
+//!
+//! **The binding is CONTENT-level, not INSTANCE-level.** The `;req` components are
+//! `@method`, `@target-uri`, `content-digest` and `content-type` — every one a
+//! function of the request's method, URI, media type and body bytes. A 202 signed
+//! for notification A therefore cannot be lifted onto a DIFFERENT notification B
+//! (that is what [`crate::verify`]'s signature check refuses, and what the
+//! `signed_202_shape_binds_content_not_instance` test pins), but two byte-identical
+//! notifications to the same URI share one acknowledgement: the ack for the first
+//! verifies as the ack for the second. Nothing unique to a request instance is
+//! covered — the request's `nonce` lives in its own `@signature-params`, which is
+//! not a coverable component, and the request evidence block carries no instance
+//! field. Byte-identical notifications are the ordinary case for
+//! `notifications/initialized` and a retried `notifications/cancelled`, so a client
+//! must NOT read a verified 202 as proof that this particular transmission reached
+//! the boundary. See "Binding granularity" in
+//! `docs/spec/http-profile-conformance-notes.md` §3.4 for the standing ruling and
+//! what closing the gap would cost.
 
 use mcp_re_core::McpReError;
 

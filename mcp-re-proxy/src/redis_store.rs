@@ -252,9 +252,9 @@ struct ConnectParams {
 /// `timeout_ms` before reporting `Fresh`, else fail closed (the nonce is not
 /// durably replicated, so a failover could lose it → replay window).
 #[derive(Clone, Copy)]
-struct WaitQuorum {
-    quorum: u32,
-    timeout_ms: u64,
+pub(crate) struct WaitQuorum {
+    pub(crate) quorum: u32,
+    pub(crate) timeout_ms: u64,
 }
 
 pub struct RedisAtomicReplayStore {
@@ -485,10 +485,27 @@ fn classify_fresh_insert_wait(
     quorum: u32,
     timeout_ms: u64,
 ) -> OpAttempt<ReplayDecision> {
+    match classify_wait_acks(acked, quorum, timeout_ms) {
+        Ok(decision) => OpAttempt::Done(decision),
+        Err(e) => OpAttempt::Fatal(e),
+    }
+}
+
+/// The tier decision itself, shared verbatim by the sync store and the async store
+/// ([`crate::async_redis_store::RedisAsyncAtomicReplayStore`]) so both serving paths
+/// apply ONE `REDIS_WAIT_QUORUM` threshold and emit ONE diagnostic. The sync store
+/// additionally maps the shortfall to `OpAttempt::Fatal` (see
+/// [`classify_fresh_insert_wait`]) because it has a reconnect-and-retry loop the
+/// async store deliberately does not.
+pub(crate) fn classify_wait_acks(
+    acked: i64,
+    quorum: u32,
+    timeout_ms: u64,
+) -> Result<ReplayDecision, ReplayStoreError> {
     if wait_quorum_satisfied(acked, quorum) {
-        OpAttempt::Done(ReplayDecision::Fresh)
+        Ok(ReplayDecision::Fresh)
     } else {
-        OpAttempt::Fatal(ReplayStoreError::Unavailable {
+        Err(ReplayStoreError::Unavailable {
             details: format!(
                 "redis WAIT got {acked} replica ack(s), need {quorum} within {timeout_ms}ms \
                  (fail closed; nonce not durably replicated; retry with a FRESH nonce — the \
@@ -721,6 +738,21 @@ mod tests {
     use super::INFLIGHT_CONNECTS;
     use super::MAX_INFLIGHT_CONNECTS;
     use std::sync::atomic::Ordering;
+
+    /// A BUILD-capability assertion, no Redis needed: this binary can open a
+    /// `rediss://` endpoint, so an operator can encrypt and authenticate the hop that
+    /// carries admitted replay nonces and the trust-epoch counter. Without a TLS
+    /// feature on the redis crate the scheme is rejected before any connection is
+    /// attempted, and no configuration can encrypt that traffic. `Client::open` only
+    /// parses, so this proves the capability without a server.
+    #[test]
+    fn the_build_can_open_a_tls_redis_endpoint() {
+        assert!(
+            redis::Client::open("rediss://mcp-re-redis:6379").is_ok(),
+            "the redis crate must be built with a TLS feature or `rediss://` is \
+             unusable and the replay/trust-epoch hop cannot be encrypted"
+        );
+    }
 
     /// PURE, no-Redis proof of the REDIS_WAIT_QUORUM fail-closed boundary
     /// (ADR-MCPS-020): the configured `quorum` is met only when at least that many

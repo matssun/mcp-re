@@ -430,10 +430,18 @@ pub fn run(
                         .enable_all()
                         .build()
                         .map_err(|e| format!("build replay control runtime: {e}"))?;
-                    let store = Arc::new(
-                        rt.block_on(crate::RedisAsyncAtomicReplayStore::connect(&url))
-                            .map_err(|e| format!("connect redis async replay store: {e:?}"))?,
-                    );
+                    let mut store = rt
+                        .block_on(crate::RedisAsyncAtomicReplayStore::connect(&url))
+                        .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
+                    // Apply the DECLARED durability tier to the store that actually
+                    // serves. `startup_audit_line` above promises "WAIT timeout or
+                    // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
+                    // this the store would run plain SET NX PX and the promise would
+                    // be audited but unenforced.
+                    if let Some((quorum, timeout_ms)) = tier_kind.wait_quorum_params() {
+                        store = store.with_wait_quorum(quorum, timeout_ms);
+                    }
+                    let store = Arc::new(store);
                     replay_async = crate::async_replay::AsyncReplayTier::new(
                         store,
                         config.max_clock_skew,

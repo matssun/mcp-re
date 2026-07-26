@@ -5,9 +5,9 @@
 //! A signed 202 states exactly one thing: the enforcement boundary
 //! authenticated and accepted the message. Not that a cancellation completed,
 //! not that the inner application saw it, not that anything was done. These
-//! tests pin the mechanics; `signed_202_binds_only_to_its_own_notification` pins
-//! the property that makes the claim meaningful at all — an acknowledgement that
-//! could be lifted onto another message would acknowledge nothing.
+//! tests pin the mechanics; `signed_202_shape_binds_content_not_instance` pins the
+//! exact reach of the acknowledgement — it cannot be lifted onto a DIFFERENT
+//! message, but it is shared by byte-identical ones.
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_accepted_202;
@@ -95,14 +95,28 @@ fn signed_202_verifies_against_its_notification() {
     assert_eq!(actor.identity.keyid, SERVER_KEY_ID);
 }
 
-/// The property that makes the 202 mean anything: it binds to the exact
-/// notification it acknowledges, via the mandatory `;req` components. A bodyless
-/// response has no body, so it cannot restate its `request_evidence` the way a
-/// bodied response does — the `;req` binding is the ONLY binding, which is why
-/// it is mandatory rather than optional. An acknowledgement that could be lifted
-/// onto another message would acknowledge nothing.
+/// The exact reach of the acknowledgement, both directions, in one test.
+///
+/// The `;req` components (`@method`, `@target-uri`, `content-digest`,
+/// `content-type`) are the ONLY binding a bodyless 202 has — it has no body in which
+/// to restate its `request_evidence` — and every one of them is a function of the
+/// request's CONTENT:
+///
+/// * a 202 for notification A does NOT verify against a different notification B —
+///   an acknowledgement liftable onto another message would acknowledge nothing;
+/// * a 202 for notification A DOES verify against a byte-identical notification A',
+///   because nothing unique to a request instance is covered. The request `nonce`
+///   lives in its own `@signature-params` (not a coverable component) and the request
+///   evidence block carries no instance field.
+///
+/// The second assertion is the standing "Binding granularity" ruling
+/// (`docs/spec/http-profile-conformance-notes.md` §3.4), pinned so the contract is
+/// visible rather than implied: byte-identical notifications are the ordinary case
+/// (`notifications/initialized`, a retried `notifications/cancelled`), so a verified
+/// 202 does not prove that THIS transmission reached the boundary. If the ruling
+/// changes, this test is the one that must change with it.
 #[test]
-fn signed_202_binds_only_to_its_own_notification() {
+fn signed_202_shape_binds_content_not_instance() {
     let note_a = notification("n-a", "notifications/initialized");
     let note_b = notification("n-b", "notifications/cancelled");
     let ack_a = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
@@ -112,8 +126,32 @@ fn signed_202_binds_only_to_its_own_notification() {
     assert_eq!(
         verify_accepted_202(&ack_a, &note_b, &resolver(), &policy(), NOW).unwrap_err(),
         HttpProfileError::ResponseSignatureInvalid,
-        "A's acknowledgement must not acknowledge B"
+        "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
+
+    // Same method, same URI, same body — a distinct transmission that differs only
+    // in the request signature's own nonce, which no covered component reaches.
+    let note_a_again = notification("n-a-again", "notifications/initialized");
+    assert_ne!(
+        signature_input_of(&note_a),
+        signature_input_of(&note_a_again),
+        "the two transmissions must genuinely be distinct request instances"
+    );
+    verify_accepted_202(&ack_a, &note_a_again, &resolver(), &policy(), NOW).expect(
+        "content-level binding: A's ack also verifies against a byte-identical \
+         retransmission — instance-level binding is NOT claimed",
+    );
+}
+
+/// The `Signature-Input` header value, used to show two notifications are distinct
+/// request instances even when their covered content is identical.
+fn signature_input_of(request: &HttpRequest) -> String {
+    request
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+        .map(|(_, v)| v.clone())
+        .expect("a signed request carries signature-input")
 }
 
 /// The digest of empty content is a signed STATEMENT that there is no body — not

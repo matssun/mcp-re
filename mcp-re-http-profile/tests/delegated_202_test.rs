@@ -283,14 +283,15 @@ fn a_revoked_delegated_key_is_rejected() {
 /// covers `@method`/`@target-uri`/`content-digest`/`content-type`, so B's
 /// different body (different `content-digest`) makes the signature refuse it.
 ///
-/// Note the binding granularity: `;req` binds the request's COVERED CONTENT, not
-/// its nonce. Two byte-identical notifications differing only in nonce share one
-/// ack — correctly, since they are indistinguishable messages. A bodyless 202 has
-/// no body to carry a full request-evidence handle, so instance-level (nonce)
-/// binding is not expressible here; content-level binding is, and that is what a
-/// splice across DISTINCT messages needs.
+/// The granularity is CONTENT-level, not instance-level: `;req` binds the request's
+/// covered content, not its nonce, so two byte-identical notifications share one ack.
+/// That is the standing "Binding granularity" ruling
+/// (`docs/spec/http-profile-conformance-notes.md` §3.4), pinned for the non-delegated
+/// shape by `bodyless_202_test::signed_202_shape_binds_content_not_instance`. This
+/// test covers the delegated shape's half of it — the content-DISTINCT refusal, which
+/// is what a splice across different messages needs.
 #[test]
-fn a_delegated_202_binds_only_to_its_own_notification() {
+fn a_delegated_202_refuses_a_content_distinct_notification() {
     let note_a = notification_method("n-a", "notifications/initialized");
     let note_b = notification_method("n-b", "notifications/cancelled");
     let ack_a = sign_ack(&note_a);

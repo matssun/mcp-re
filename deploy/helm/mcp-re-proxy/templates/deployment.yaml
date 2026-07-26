@@ -140,12 +140,11 @@ spec:
             - "--trust"
             - "{{ .Values.tls.mountPath }}/trust.json"
             {{- if .Values.transportBinding }}
-            # mTLS channel binding (ADR-MCPS-023). `exact` (the proxy default and
-            # the fail-safe) binds each signed request to the verified client-cert
-            # identity. `none` decouples them — only for a reference deploy driven
-            # by an HTTP-profile client that carries no channel-binding claim (the
-            # shipped mcp_re_gke_client / SDK e2e). lb-assertion / attested-ingress
-            # need their own ingress key/anchor values.
+            # mTLS channel binding (ADR-MCPS-023). `exact` — the proxy default, the
+            # fail-safe, and the only value this flag can carry on the RFC 9421
+            # serving path — binds each signed request to the verified client-cert
+            # identity. The render-time guard rejects everything else, so this line
+            # only ever emits `exact`.
             - "--transport-binding"
             - {{ .Values.transportBinding | quote }}
             {{- end }}

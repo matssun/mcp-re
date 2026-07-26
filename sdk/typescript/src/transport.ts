@@ -59,6 +59,15 @@ const RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response";
 const MCP_RE_ERROR_CODE = -32001;
 
 /**
+ * Widest delegation clock skew a caller may configure, in seconds.
+ *
+ * Mirrors the RFC 9421 verifier's own ceiling (`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`)
+ * so one deployment does not run two different notions of "close enough" — beyond this
+ * the credential's nbf/exp window stops bounding anything.
+ */
+const MAX_CLOCK_SKEW_BOUND = 300;
+
+/**
  * A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
  *
  * **Not** an inherent limitation: a notification is its own POST under MCP Streamable
@@ -312,6 +321,20 @@ export class McpReHttpTransport implements Transport {
         )}`,
       );
     }
+    // The delegation credential's nbf/exp window is only as strong as the skew allowed
+    // around it: `now + skew < nbf` and `now - skew > exp` are how it is applied, so a
+    // large value accepts a credential arbitrarily far outside its validity window and
+    // a negative one distorts the comparison rather than tightening it. Nothing
+    // downstream bounds it — DelegationPolicy stores it verbatim — so it is checked
+    // here, against the same ceiling the RFC 9421 verifier uses for its own skew.
+    const skew = config.maxClockSkew ?? 60;
+    if (!Number.isInteger(skew) || skew < 0 || skew > MAX_CLOCK_SKEW_BOUND) {
+      throw new McpReSdkError(
+        `maxClockSkew must be an integer in 0..=${MAX_CLOCK_SKEW_BOUND} seconds, got ${JSON.stringify(
+          config.maxClockSkew,
+        )}`,
+      );
+    }
     this.#config = config;
     this.#poster = poster;
     this.#slots = new Semaphore(bound);
@@ -526,7 +549,15 @@ export class McpReHttpTransport implements Transport {
     // must reach the app as an error, never as a result.
     if (verified.outcome !== "success") {
       this.#correlation.take(correlationId, now());
-      return errorMessage(request.id, verified.wireCode ?? "mcp-re.response_sig_invalid");
+      // An EMPTY wire code is substituted too, not just a missing one. A rejection
+      // receipt whose `error.data` carries no usable token yields `Some("")` from the
+      // core reader, and `??` would let that through as a JSON-RPC error with an empty
+      // message — an error the application cannot act on or log meaningfully. Python's
+      // truthiness check already substituted here; this is the side that diverged.
+      return errorMessage(
+        request.id,
+        verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+      );
     }
 
     if (verified.requestState !== undefined && verified.requestState !== null) {

@@ -40,27 +40,51 @@ service:
 
 # Shared replay store (ADR-MCPS-020). MUST be a shared tier at >= REDIS_WAIT_QUORUM
 # under --fleet, or the proxy refuses to start.
+#
+# The URL scheme is security-relevant, so the default is the safe one. This hop
+# carries the admitted replay nonces: anyone who can reach it unauthenticated can
+# DEL/FLUSHDB the keyspace and re-open the replay window fleet-wide. Use `rediss://`
+# (TLS) and a credentialed URL — `rediss://:<password>@host:6379`, or an ACL user as
+# `rediss://<user>:<password>@host:6379`. Supply the credential by overriding this
+# value from a Secret; do not commit it.
 replay:
-  redisUrl: "redis://mcp-re-redis:6379"
+  redisUrl: "rediss://mcp-re-redis:6379"
   durabilityTier: "redis-wait-quorum:2:2000"
+  # Escape hatch for a plaintext `redis://` endpoint. The render-time guard refuses
+  # a plaintext URL under fleet=true unless this is explicitly true, so running
+  # unencrypted is a decision someone wrote down rather than a default. Only
+  # defensible where the hop is confined by other means (a fenced validation
+  # namespace, a service mesh terminating TLS transparently).
+  allowPlaintextRedis: false
 
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
 # source gives near-zero cross-replica revocation lag (bounded T on outage). Set
 # trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
+#
+# Same scheme rule as replay.redisUrl, and the stakes are higher: the epoch value
+# read from this key drives credential minting, so an attacker who can write it
+# forces every replica to re-mint under an epoch verifiers reject — a fleet-wide
+# response-signing outage. `replay.allowPlaintextRedis` governs both URLs.
 revocation:
   tier: "push:60"
-  trustEpochRedisUrl: "redis://mcp-re-redis:6379"
+  trustEpochRedisUrl: "rediss://mcp-re-redis:6379"
   trustEpochKey: "mcp-re:trust:epoch"
 
 # Client-certificate lifetime ceiling (short-lived-cert revocation posture).
 maxClientCertLifetimeSeconds: 3600
 
-# mTLS channel binding (ADR-MCPS-023). Empty = omit the flag, so the proxy uses
-# its own fail-safe default (`exact`: bind each signed request to the verified
-# client-cert identity). Set "none" ONLY for a reference deploy driven by an
-# HTTP-profile client that carries no channel-binding claim (the shipped
-# mcp_re_gke_client / SDK e2e). "lb-assertion"/"attested-ingress" additionally
-# require the ingress key/anchor inputs the proxy documents.
+# mTLS channel binding (ADR-MCPS-023). The ONLY two values this chart can render
+# into a pod that starts:
+#
+#   ""       omit the flag; the proxy applies its own fail-safe default, `exact`
+#   "exact"  the same thing, stated explicitly
+#
+# `exact` binds each signed request to the verified client-cert identity. There is
+# no "none": the proxy rejects it at argument parse. "lb-assertion" and
+# "attested-ingress" parse but are refused at boot on the RFC 9421 serving path
+# (rebinding an owner-signed ingress assertion to the request-evidence digest is
+# pending owner authorization), so setting either CrashLoops the pods. The
+# render-time guard rejects all three rather than letting the chart produce them.
 transportBinding: ""
 
 # The proxy's server identity (response signing + expected audience).
@@ -70,6 +94,14 @@ transportBinding: ""
 # targetUri/trustDomain/route MUST agree with what mcp_re_gke_client.py signs
 # (--target-uri / --trust-domain / --route). An empty route omits the flag (route
 # = None on both sides).
+# Every value below is deployment-specific and MUST be overridden. They are the
+# identity of one dispatch boundary: the audience tuple is what makes a signed
+# request valid HERE and nowhere else (RE-15). Two installs that both keep a shipped
+# default would share one audience tuple and one trust epoch, so a request signed for
+# either verifies at the other whenever they share a trust anchor, and advancing the
+# epoch on one advances it on both. The render-time guard therefore rejects the
+# `did:example:` / `example.com` / `epoch-1` placeholders rather than rendering a
+# chart whose security properties depend on nobody else using the defaults.
 identity:
   audience: "did:example:server-1"
   serverSigner: "did:example:server-1"
@@ -81,6 +113,13 @@ identity:
   # minted into every delegation credential (required; MUST be coordinated with the
   # verifiers' accepted-epoch set — §7). Advance it to invalidate an epoch of keys.
   delegatedTrustEpoch: "epoch-1"
+  # Escape hatch for the demo/validation identity above. `emit_mtls_fixtures` bakes
+  # `did:example:server-1` and `example.com` into trust.json as part of the resolved
+  # actor id, so a harness driven by those fixtures MUST deploy with the matching
+  # identity — the placeholder guard would otherwise make the fixtures unusable.
+  # Setting this true is a statement that the deployment is a fenced validation run,
+  # not a production boundary; leave it false everywhere else.
+  allowExampleFixtures: false
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
 # it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`.

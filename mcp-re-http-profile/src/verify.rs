@@ -185,10 +185,30 @@ fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpP
     found.ok_or(HttpProfileError::MissingEvidence("signature label"))
 }
 
-/// Leak-free integer parse for created/expires.
+/// Leak-free integer parse for created/expires, restricted to the ONE spelling
+/// RFC 8941 §3.3.1 allows: optional `-`, then digits with no leading zero (except
+/// `0` itself).
+///
+/// Rust's `i64::from_str` also accepts `+1700000000` and `0017`, which this profile
+/// must not: the verifier rebuilds `@signature-params` from the PARSED values and
+/// re-serializes them canonically ([`crate::sigbase`]), so every accepted spelling of
+/// the same number collapses to one signature base. An intermediary could then
+/// rewrite `created=1700000000` to `created=+1700000000` and the signature would
+/// still verify, leaving any consumer that reads the raw header looking at bytes
+/// other than the ones that were signed. Rejecting the alternate spellings keeps the
+/// on-wire form pinned, the same reason parameter reordering is rejected structurally
+/// rather than normalized away.
 fn parse_i64(s: &str) -> Result<i64, HttpProfileError> {
-    s.parse::<i64>()
-        .map_err(|_| HttpProfileError::MalformedEvidence("integer signature parameter"))
+    let malformed = || HttpProfileError::MalformedEvidence("integer signature parameter");
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(malformed());
+    }
+    // No leading zeros: "0" is fine, "00" / "0017" / "-01" are not.
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err(malformed());
+    }
+    s.parse::<i64>().map_err(|_| malformed())
 }
 
 /// Parse one `("a" "b";req ...);k=v;...` signature-input member value.
@@ -240,11 +260,29 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
                 ))
             }
         };
-        components.push(if req {
+        let component = if req {
             CoveredComponent::req(known)
         } else {
             CoveredComponent::new(known)
-        });
+        };
+        // RFC 9421 §2.5 requires an error when an identifier is added to the base
+        // twice. Beyond conformance, admitting duplicates would mean one message has
+        // many valid signature bases — `signature_base` emits a line per occurrence —
+        // and therefore many distinct evidence handles for the same bytes, so the
+        // handle would stop being a function of the message. `;req` makes an
+        // identifier distinct: "content-digest" and "content-digest";req name
+        // different values, so only an exact (name, req) repeat is a duplicate. This
+        // is the same exactly-once discipline already applied to duplicated header
+        // FIELDS in `sigbase`.
+        if components
+            .iter()
+            .any(|c: &CoveredComponent| c.name == component.name && c.req == component.req)
+        {
+            return Err(HttpProfileError::MalformedEvidence(
+                "duplicate covered component",
+            ));
+        }
+        components.push(component);
     }
 
     let mut params = SignatureParams::default();
@@ -418,10 +456,15 @@ fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), HttpProfile
     };
     let body: serde_json::Value = serde_json::from_slice(&request.body)
         .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
-    // A body with no `method` is a response/notification shape; there is nothing
-    // to diverge from, and the request-shape rules are not this function's job.
+    // A body with no `method` gives the header nothing to agree with, so the signed
+    // value would be constrained by nothing at all — and an intermediary that routes,
+    // rate-limits or audits on `Mcp-Method` (the stated reason §4.1 covers it) would
+    // act on an arbitrary signer-chosen string carrying full authenticity. Skipping
+    // the check here would make "the header always mirrors the body" true only for
+    // the shapes that happen to have a body method. A message that sends this header
+    // must therefore carry the `method` it mirrors.
     let Some(body_method) = body.get("method").and_then(|m| m.as_str()) else {
-        return Ok(());
+        return Err(HttpProfileError::McpMethodDivergence);
     };
     if header_method.trim() != body_method {
         return Err(HttpProfileError::McpMethodDivergence);

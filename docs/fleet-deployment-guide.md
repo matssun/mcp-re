@@ -43,6 +43,15 @@ and cannot see a peer's nonces).
    - the shared replay store (`--replay-cache shared`, ADR-MCPS-020), and
    - the trust-epoch revocation source (`--trust-epoch-redis-url`, MCPS-84).
    One Redis serves both; there is no second dependency.
+
+   It must be reachable over **TLS with credentials** (`rediss://`). This is not
+   incidental: the replay keyspace holds the admitted nonces, so a peer who can
+   `DEL`/`FLUSHDB` it re-opens the replay window across the whole fleet; and the
+   trust-epoch key drives credential minting, so a peer who can write it forces every
+   replica to mint under an epoch verifiers reject — a fleet-wide response-signing
+   outage. The chart defaults to `rediss://` and its guard refuses a plaintext
+   `redis://` URL under `fleet=true` unless you set
+   `replay.allowPlaintextRedis=true` deliberately.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
 3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.
@@ -52,13 +61,25 @@ and cannot see a peer's nonces).
 ```sh
 helm install my-fleet deploy/helm/mcp-re-proxy \
   --set replicaCount=3 \
-  --set replay.redisUrl=redis://mcp-re-redis:6379 \
+  --set replay.redisUrl="rediss://:$REDIS_PASSWORD@mcp-re-redis:6379" \
   --set replay.durabilityTier=redis-wait-quorum:2:2000 \
   --set revocation.tier=push:60 \
-  --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
+  --set revocation.trustEpochRedisUrl="rediss://:$REDIS_PASSWORD@mcp-re-redis:6379" \
   --set tls.secretName=mcp-re-proxy-material \
+  --set identity.audience=did:web:my-boundary \
+  --set identity.serverSigner=did:web:my-boundary \
+  --set identity.targetUri=https://my-boundary.internal:8600/mcp \
+  --set identity.trustDomain=my-boundary.internal \
+  --set identity.delegatedTrustEpoch=ep-2026-07 \
   --set-json 'inner.httpUrls=["http://inner-mcp.default.svc.cluster.local:8080/mcp"]'
 ```
+
+The `identity.*` values are required: they are the identity of ONE dispatch boundary,
+and the chart refuses to render its own `did:example:` / `epoch-1` placeholders. Two
+installs that both kept the defaults would share one audience tuple, so a request
+signed for either would verify at the other under a shared trust anchor, and advancing
+the epoch on one would advance it on both. Source the Redis credential from a Secret
+rather than a shell literal in anything you keep.
 
 MCP-RE is HTTP-profile only: the inner plane is one or more Streamable-HTTP MCP
 backends (`inner.httpUrls`). A **stdio-only** inner server is out of scope for
@@ -67,9 +88,12 @@ proxy) that exposes HTTP, run that adapter as your own sidecar/deployment, and
 point `inner.httpUrls` at it.
 
 The chart renders `--fleet` by default (the maximal-security posture is always on,
-with no flag) and includes a **fail-closed guardrail**: `helm template`/`install`
-errors out if `fleet=true` is paired with a non-shared or sub-quorum replay tier,
-so an unsafe fleet manifest cannot be produced.
+with no flag) and includes **fail-closed guardrails**: `helm template`/`install`
+errors out if `fleet=true` is paired with a non-shared or sub-quorum replay tier, if
+either Redis URL is plaintext without the explicit opt-out, if any `identity.*`
+placeholder survives, or if `transportBinding` is set to a value the proxy would
+refuse at parse or boot. An unsafe — or non-starting — fleet manifest cannot be
+produced.
 
 ## Cloud KMS custody on GKE (Workload Identity)
 

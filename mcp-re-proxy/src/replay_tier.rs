@@ -190,6 +190,25 @@ impl ReplayDurabilityTier {
             ReplayDurabilityTier::RedisWaitQuorum { .. } | ReplayDurabilityTier::Linearizable
         )
     }
+
+    /// The `WAIT <quorum> <timeout_ms>` parameters a Redis replay store must apply to
+    /// deliver this tier's [`guarantee`](Self::guarantee), or `None` for the tiers
+    /// whose guarantee needs no replica acknowledgement.
+    ///
+    /// This is the seam between the DECLARED tier and the store that serves: a store
+    /// built without these parameters runs plain `SET NX PX`, which is the
+    /// `REDIS_ASYNC` guarantee, while the startup audit line would still quote
+    /// "WAIT timeout or insufficient acks fail closed".
+    pub fn wait_quorum_params(&self) -> Option<(u32, u64)> {
+        match self {
+            ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
+                Some((*quorum, *timeout_ms))
+            }
+            ReplayDurabilityTier::RedisAsyncBounded
+            | ReplayDurabilityTier::Linearizable
+            | ReplayDurabilityTier::SingleStoreFailClosed => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +286,50 @@ mod tests {
             ReplayDurabilityTier::SingleStoreFailClosed.wire_name(),
             "SINGLE_STORE_FAIL_CLOSED"
         );
+    }
+
+    /// The declared tier must hand the store the exact parameters it parsed, so a
+    /// `redis-wait-quorum:<q>:<t>` deployment cannot silently serve on plain
+    /// `SET NX PX`.
+    #[test]
+    fn wait_quorum_params_carry_the_parsed_quorum_and_timeout() {
+        assert_eq!(
+            ReplayDurabilityTier::parse("redis-wait-quorum:3:750")
+                .expect("valid tier")
+                .wait_quorum_params(),
+            Some((3, 750))
+        );
+        for tier in [
+            ReplayDurabilityTier::RedisAsyncBounded,
+            ReplayDurabilityTier::Linearizable,
+            ReplayDurabilityTier::SingleStoreFailClosed,
+        ] {
+            assert_eq!(
+                tier.wait_quorum_params(),
+                None,
+                "{} requires no replica wait",
+                tier.wire_name()
+            );
+        }
+    }
+
+    /// The tier-claim ceiling applied to WAIT: a tier whose guarantee promises acks
+    /// fail closed MUST supply the parameters that make that true, and a tier that
+    /// supplies them must promise it. Catches a new tier being added on one side only.
+    #[test]
+    fn a_tier_promising_wait_supplies_wait_params() {
+        for tier in all_tiers() {
+            let promises_wait = tier.guarantee().contains("WAIT");
+            assert_eq!(
+                promises_wait,
+                tier.wait_quorum_params().is_some(),
+                "{} promises WAIT in its guarantee ({promises_wait}) but supplies \
+                 wait params ({:?}) — the audited claim and the enforced behaviour \
+                 must agree",
+                tier.wire_name(),
+                tier.wait_quorum_params()
+            );
+        }
     }
 
     #[test]
