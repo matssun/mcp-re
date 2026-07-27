@@ -120,6 +120,15 @@ pub struct VerifiedHttpResponseEvidence {
     /// to match the keyid the response signature was accepted under. `None` on
     /// the seam-only path.
     pub server_signer: Option<ActorIdentity>,
+    /// The ROOT issuer kid the delegation credential chained to (C004b).
+    ///
+    /// The STABLE server-identity coordinate under ADR-MCPRE-052: the keyid the
+    /// response signature verified under is the DELEGATED kid, which is ephemeral and
+    /// rotates every TTL, so pinning it is meaningless. The issuer kid is the anchor
+    /// the credential proves a chain to and is what an operator means by "this
+    /// server". `None` on the non-delegated and seam-only paths, where no credential
+    /// was verified.
+    pub delegation_issuer_kid: Option<String>,
 }
 
 /// Resolve a keyid through the trust seam for a specific signing slot and apply
@@ -914,6 +923,8 @@ pub fn verify_response_with_policy(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
+        // No credential on this path, so there is no issuer to report.
+        delegation_issuer_kid: None,
     })
 }
 
@@ -1197,6 +1208,9 @@ pub fn verify_delegated_response_bound_full(
             digest_value: block.request_evidence.digest_value.clone(),
         }),
         server_signer: Some(server_signer),
+        // C004b: the ROOT anchor the credential chained to — the stable
+        // coordinate, unlike the ephemeral delegated kid.
+        delegation_issuer_kid: Some(verified.issuer_kid.clone()),
     })
 }
 
@@ -1305,6 +1319,9 @@ pub fn verify_delegated_response_unbound(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: Some(server_signer),
+        // C004b: the ROOT anchor the credential chained to — the stable
+        // coordinate, unlike the ephemeral delegated kid.
+        delegation_issuer_kid: Some(verified.issuer_kid.clone()),
     })
 }
 
@@ -1367,5 +1384,7 @@ pub fn verify_response_unbound_with_policy(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
+        // No credential on this path, so there is no issuer to report.
+        delegation_issuer_kid: None,
     })
 }

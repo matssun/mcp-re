@@ -42,6 +42,9 @@ use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 
+use mcp_re_client_core::verify_delegated_response;
+use mcp_re_client_core::DelegatedOutcome;
+use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::DelegationPolicy;
@@ -68,6 +71,9 @@ const ROOT_KID: &str = "root-kid";
 const AUD: &str = "verifier-1";
 const EPOCH: &str = "epoch-1";
 const ACCESS_TOKEN: &str = "access-token-xyz";
+/// Inside the rotation-overlap window (ttl 300, overlap 60): the rotor mints a
+/// successor only from `exp - overlap` onward, so an earlier `rotate` is a no-op.
+const ROTATED_AT: i64 = NOW + 250;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -440,6 +446,193 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     // success result).
     assert!(second.plain_response.get("error").is_some());
     assert!(second.plain_response.get("result").is_none());
+}
+
+// ---- C004b: the server-signer pin under delegation --------------------------
+
+/// Build the expectation the client verifies under, with an optional signer pin.
+fn expectation_with_pin(
+    signed: &mcp_re_client_core::SignedRequest,
+    pin: Option<&str>,
+) -> ResponseExpectation {
+    let base = ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+    match pin {
+        Some(kid) => base.with_expected_server_signer(kid),
+        None => base,
+    }
+}
+
+/// Drive one signed exchange against the real delegated server and return the raw
+/// response plus what the client signed, so a test can verify it under its own
+/// expectation.
+fn one_exchange(
+    server: &HttpProfileProxy,
+    rt: &tokio::runtime::Runtime,
+    nonce: &str,
+    at: i64,
+) -> (mcp_re_client_core::SignedRequest, mcp_re_http_profile::HttpResponse) {
+    let inputs = mcp_re_client_core::RequestSigningInputs::new(
+        CLIENT_KEY_ID,
+        audience(),
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        nonce,
+        at,
+        at + 60,
+    )
+    .with_headers(vec![(
+        "Authorization".into(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = mcp_re_client_core::build_signed_request(
+        &json!(1),
+        "tools/call",
+        json!({"name": "read"}).as_object().cloned().unwrap(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("client signs");
+    let served = ServedHttpRequest {
+        method: signed.request().method.clone(),
+        target_uri: signed.request().target_uri.clone(),
+        headers: signed.request().headers.clone(),
+        body: signed.request().body.clone(),
+        identity: None,
+        assertion: None,
+    };
+    let resp = rt.block_on(async { server.handle(served, at).await });
+    (
+        signed,
+        mcp_re_http_profile::HttpResponse {
+            status: resp.status,
+            headers: resp.headers,
+            body: resp.body,
+        },
+    )
+}
+
+/// The pin binds to the credential's ROOT ISSUER kid. Before C004b any set pin was
+/// refused outright on this path, so the control could not be used at all.
+#[test]
+fn a_pin_on_the_root_issuer_kid_verifies() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let server = build_server();
+    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-ok", NOW);
+    let verified = verify_delegated_response(
+        &response,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect("a pin on the issuer kid is the coordinate that verifies");
+    assert!(matches!(verified.outcome, DelegatedOutcome::Success));
+    assert_eq!(
+        verified.verified.delegation_issuer_kid.as_deref(),
+        Some(ROOT_KID),
+        "the verified evidence reports the anchor the credential chained to"
+    );
+}
+
+/// Pinning the wrong issuer fails closed — the control is load-bearing, not decorative.
+#[test]
+fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let server = build_server();
+    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-wrong", NOW);
+    let err = verify_delegated_response(
+        &response,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed, Some("some-other-root")),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect_err("a pin naming a different root must fail closed");
+    assert_eq!(err, mcp_re_client_core::HttpProfileError::ResponseBindingMismatch);
+}
+
+/// THE REASON the pin binds to the issuer and not to the accepted keyid: the delegated
+/// kid is an RFC 7638 thumbprint that rotates every TTL. A pin on it would break on the
+/// first rotation. Rotate the server's key and the SAME issuer pin still verifies.
+#[test]
+fn the_issuer_pin_survives_a_delegated_key_rotation() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let config = server_config();
+    let wiring =
+        mcp_re_proxy::build_delegated_signing(&config, root_key()).expect("wiring");
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first key");
+    let first_kid = wiring
+        .signer
+        .current(NOW)
+        .expect("published")
+        .delegated_kid
+        .clone();
+    let server = HttpProfileProxy::new_delegated(
+        server_resolver(),
+        AudienceTuple {
+            audience_id: config.audience.clone(),
+            target_uri: config.target_uri.clone(),
+            route: config.route.clone(),
+        },
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        canned_inner(),
+        300,
+        Arc::clone(&wiring.signer),
+    );
+
+    let (signed_a, response_a) = one_exchange(&server, &rt, "nonce-pin-rot-1", NOW);
+    verify_delegated_response(
+        &response_a,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed_a, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect("verifies before rotation");
+
+    // Rotate: a NEW delegated key, a new ephemeral kid, the SAME root issuer. The
+    // rotor only mints inside the overlap window (ttl 300, overlap 60), so rotating
+    // earlier is correctly a no-op — hence ROTATED_AT rather than NOW + 1.
+    rotor.rotate(ROTATED_AT).expect("rotates");
+    let second_kid = wiring
+        .signer
+        .current(ROTATED_AT)
+        .expect("published")
+        .delegated_kid
+        .clone();
+    assert_ne!(first_kid, second_kid, "the delegated kid must actually rotate");
+
+    let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
+    let verified = verify_delegated_response(
+        &response_b,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed_b, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        ROTATED_AT,
+    )
+    .expect("the SAME issuer pin still verifies after rotation — this is why it is the coordinate");
+    assert_eq!(
+        verified.verified.delegation_issuer_kid.as_deref(),
+        Some(ROOT_KID)
+    );
 }
 
 // ---- ADR-MCPS-035 audit emission (C086) ------------------------------------
