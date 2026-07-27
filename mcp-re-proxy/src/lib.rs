@@ -73,6 +73,7 @@ pub mod durable_replay;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
 pub mod key_source;
+pub mod audit_sink;
 pub mod log_sink;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the
@@ -217,6 +218,11 @@ pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
+pub use audit_sink::AuditRecord;
+pub use audit_sink::AuditSink;
+pub use audit_sink::CollectingAuditSink;
+pub use audit_sink::NoAuditSink;
+pub use audit_sink::StderrAuditSink;
 pub use log_sink::InnerLogEvent;
 pub use log_sink::InnerLogSink;
 pub use log_sink::StderrLogSink;

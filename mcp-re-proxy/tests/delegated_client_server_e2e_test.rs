@@ -442,6 +442,85 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     assert!(second.plain_response.get("result").is_none());
 }
 
+// ---- ADR-MCPS-035 audit emission (C086) ------------------------------------
+
+/// `security-boundary.md` S9 presents `mcp-re.request.accepted` /
+/// `.rejected` and `mcp-re.response.signed` as a delivered surface. Until this was
+/// wired, `HttpProfileProxy::handle` emitted NOTHING on any exit, so a deployment
+/// relying on that surface for post-incident attribution got no record of which actor
+/// was admitted or which wire code caused a rejection.
+#[test]
+fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-audit-1"))
+        .expect("round trip succeeds");
+    assert_eq!(out.kind, ResponseKind::Success);
+
+    let records = sink.records();
+    let types: Vec<&str> = records.iter().map(|r| r.event.event_type).collect();
+    assert_eq!(
+        types,
+        vec!["mcp-re.request.accepted", "mcp-re.response.signed"],
+        "an admitted request records exactly accept-then-sign, in order"
+    );
+    // Attribution is the point of the surface: the actor is the VERIFIER-RESOLVED one.
+    for record in &records {
+        assert!(
+            record.actor_id.is_some(),
+            "an admitted request's records must carry the resolved actor"
+        );
+        assert_eq!(
+            record.event.reason, None,
+            "a success event carries no rejection reason"
+        );
+    }
+}
+
+/// A rejection records the EXACT frozen wire code, and never also claims acceptance —
+/// `accepted` and `rejected` are mutually exclusive per request, which is what makes
+/// the surface usable for attribution.
+#[test]
+fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let p = params("nonce-audit-replay");
+    proxy.handle("r1", &plain_request(), &p).expect("first ok");
+    let before = sink.records().len();
+
+    proxy
+        .handle("r1", &plain_request(), &p)
+        .expect("the rejection receipt verifies");
+
+    let replay_records: Vec<_> = sink.records().into_iter().skip(before).collect();
+    assert_eq!(
+        replay_records.len(),
+        1,
+        "the replayed request records ONE decision, got {replay_records:?}"
+    );
+    let record = &replay_records[0];
+    assert_eq!(record.event.event_type, "mcp-re.request.rejected");
+    assert_eq!(
+        record.event.reason,
+        Some("mcp-re.replay_detected"),
+        "the reason is the exact frozen wire code, never a parallel sub-name"
+    );
+    // 409 Conflict is the replay status; the record carries the status actually
+    // returned, so a reader can correlate the audit line with the HTTP response.
+    assert_eq!(record.status, 409);
+}
+
+/// No sink installed is the explicit no-emission posture and must not disturb serving.
+#[test]
+fn serving_without_an_audit_sink_still_round_trips() {
+    let proxy = client_proxy(build_server());
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-audit-none"))
+        .expect("round trip succeeds with no sink installed");
+    assert_eq!(out.kind, ResponseKind::Success);
+}
+
 // Downgrade resistance (a delegated-required verifier refusing a pre-052 direct-root
 // response) is proven at the serving, client-core, http-profile, and conformance (d10)
 // altitudes. It is not re-driven through the two-proxy round trip here because a

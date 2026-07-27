@@ -301,6 +301,29 @@ fn no_authorization_hash_mismatch_audit_reason() {
 /// cannot masquerade as "no drift". The frozen taxonomy has 20 variants today,
 /// so we expect a healthy lower bound; the audit module mentions at least the
 /// four event_types.
+/// C086: the guard used to check only that `audit.rs`'s own literals are frozen wire
+/// codes — a closed loop, since nothing emitted them. The serving path now DOES emit,
+/// carrying `HttpProfileError::wire_code()` straight into
+/// `AuditEvent::request_rejected_code`, so the reasons that actually reach an audit log
+/// are this taxonomy. Assert it is contained in the frozen one, which is what makes
+/// "a rejection reason is always a frozen wire code" true of the real producer rather
+/// than of a vocabulary in isolation.
+#[test]
+fn every_serving_path_wire_code_is_a_frozen_wire_code() {
+    let frozen = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));
+    let profile = frozen_wire_codes(&read("MCP_RE_PROFILE_SRC_ERROR"));
+    assert!(
+        !profile.is_empty(),
+        "no wire codes parsed from the http-profile error taxonomy — did `fn wire_code` move?"
+    );
+    let strays: Vec<&String> = profile.difference(&frozen).collect();
+    assert!(
+        strays.is_empty(),
+        "these HttpProfileError wire codes are emitted as audit reasons but are NOT \
+         members of the frozen McpReError taxonomy: {strays:?}"
+    );
+}
+
 #[test]
 fn guard_inputs_are_non_empty() {
     let codes = frozen_wire_codes(&read("MCP_RE_CORE_SRC_ERROR"));

@@ -1,14 +1,22 @@
 //! Inner-server lifecycle logging seam (MCPS-036) — the proxy's OWN diagnostic
 //! channel for inner-server events.
 //!
-//! These types are transport-agnostic and belong to the PEP, not to any
-//! particular inner transport. The async serving path (ADR-MCPRE-051) emits
-//! [`InnerLogEvent::RequestForwarded`] / [`InnerLogEvent::ResponseSigned`] through
-//! an [`InnerLogSink`] on every dispatch, so the sink seam stays in `mcp-re-proxy`
-//! even though the stdio subprocess machinery (which also logged spawn/exit/stderr
-//! events) has been relocated OUT of the PEP's trust boundary to
-//! `mcp-re-stdio-bridge`. Emissions go to the proxy's diagnostic channel only —
-//! never onto an inner server's stdout protocol stream and never as MCP content.
+//! These types are transport-agnostic and belong to the PEP, not to any particular
+//! inner transport. The sink seam stays in `mcp-re-proxy` even though the stdio
+//! subprocess machinery (which logged the spawn/exit/stderr events) has been relocated
+//! OUT of the PEP's trust boundary to `mcp-re-stdio-bridge`. Emissions go to the
+//! proxy's diagnostic channel only — never onto an inner server's stdout protocol
+//! stream and never as MCP content.
+//!
+//! **What emits these today: nothing in this crate.** This doc used to claim the async
+//! serving path emitted [`InnerLogEvent::RequestForwarded`] /
+//! [`InnerLogEvent::ResponseSigned`] "on every dispatch"; it never did, and those two
+//! variants have no construction site. The per-request record IS delivered, by a
+//! different and normative surface — [`crate::audit_sink`], carrying the frozen
+//! ADR-MCPS-035 `mcp-re.request.accepted` / `.rejected` / `mcp-re.response.signed`
+//! vocabulary. Emitting both would write two records per request saying the same thing
+//! with two vocabularies, so this enum keeps the two variants for an EMBEDDING that
+//! wants an inner-plane view, and the security record has one home.
 
 /// A structured inner-server lifecycle / hygiene event (MCPS-036).
 ///

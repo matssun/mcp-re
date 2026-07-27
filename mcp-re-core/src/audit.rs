@@ -211,6 +211,38 @@ impl AuditEvent {
             reason_label: Some(reason_label(error)),
         }
     }
+
+    /// A `mcp-re.request.rejected` event from an ALREADY-FROZEN wire code.
+    ///
+    /// The RFC 9421 serving path reaches its verdict as an `HttpProfileError` and
+    /// carries the `&'static str` wire code, not an [`McpReError`] — every rejection
+    /// exit funnels the code into one choke point. This constructor lets that producer
+    /// emit without reconstructing an error value it no longer holds.
+    ///
+    /// `reason` MUST be a member of the frozen `McpReError::wire_code()` taxonomy;
+    /// there is no parallel sub-name. That containment is not a convention here — the
+    /// conformance guard asserts every `HttpProfileError::wire_code()` token is a
+    /// frozen wire code, so the real producer's whole reason set is checked.
+    pub fn request_rejected_code(reason: &'static str) -> Self {
+        AuditEvent {
+            event_type: event_type::REQUEST_REJECTED,
+            decision: Decision::Rejected,
+            reason: Some(reason),
+            reason_label: None,
+        }
+    }
+
+    /// A `mcp-re.response.rejected` event from an already-frozen wire code. The
+    /// response-side sibling of [`request_rejected_code`](Self::request_rejected_code);
+    /// the same containment requirement applies.
+    pub fn response_rejected_code(reason: &'static str) -> Self {
+        AuditEvent {
+            event_type: event_type::RESPONSE_REJECTED,
+            decision: Decision::Rejected,
+            reason: Some(reason),
+            reason_label: None,
+        }
+    }
 }
 
 #[cfg(test)]

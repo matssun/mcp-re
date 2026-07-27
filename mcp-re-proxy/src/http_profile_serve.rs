@@ -132,9 +132,38 @@ pub struct HttpProfileProxy {
     /// `VerifierPolicy::default()` — Ed25519, 30s skew, no transport contract — so
     /// serving behaves as before unless a deployment attaches a stricter policy.
     verifier_policy: VerifierPolicy,
+    /// The ADR-MCPS-035 security-audit sink. `None` is the explicit no-emission
+    /// posture; a sink failure never fails a request (see [`crate::audit_sink`]).
+    audit: crate::audit_sink::MaybeAuditSink,
 }
 
 impl HttpProfileProxy {
+    /// Install the ADR-MCPS-035 audit sink. Without one the serving path emits no
+    /// security record — which is what `docs/spec/security-boundary.md` S9 describes as
+    /// delivered, so a deployment relying on that surface must install one.
+    pub fn with_audit_sink(mut self, sink: std::sync::Arc<dyn crate::audit_sink::AuditSink>) -> Self {
+        self.audit = Some(sink);
+        self
+    }
+
+    /// Emit one audit record, if a sink is installed.
+    fn audit(
+        &self,
+        event: mcp_re_core::audit::AuditEvent,
+        actor_id: Option<String>,
+        status: u16,
+        now: i64,
+    ) {
+        if let Some(sink) = &self.audit {
+            sink.record(&crate::audit_sink::AuditRecord {
+                event,
+                actor_id,
+                status,
+                at_unix: now,
+            });
+        }
+    }
+
     /// Construct the serving PEP (ADR-MCPRE-052 delegated-signing — the only response-
     /// signing mode). `resolve_actor` is the trust seam; `expected_audience` the
     /// verifier audience; `dispatch_cfg`/`inner_async` the replay/inner planes. There
@@ -165,6 +194,7 @@ impl HttpProfileProxy {
             continuation_ttl_secs: DEFAULT_CONTINUATION_TTL_SECS,
             verified_context_policy: VerifiedContextPolicy::default(),
             verifier_policy: VerifierPolicy::default(),
+            audit: None,
         }
     }
 
@@ -375,6 +405,20 @@ impl HttpProfileProxy {
             }
         }
 
+        // ADR-MCPS-035: the request is now ADMITTED — it verified, cleared the transport
+        // binding, won replay admission, and has a delegated key to answer with. Emitted
+        // here rather than straight after signature verification so `accepted` and
+        // `rejected` are MUTUALLY EXCLUSIVE per request: a signature-valid request that
+        // then loses replay admission is a rejection, and a record claiming both would
+        // make the surface useless for the attribution it exists to provide. This is
+        // also the first point at which the actor id is verifier-resolved.
+        self.audit(
+            mcp_re_core::audit::AuditEvent::request_accepted(),
+            Some(verified.resolved_actor.actor_id()),
+            200,
+            now,
+        );
+
         // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
         let forwarded = match forwarded_body(
@@ -416,7 +460,16 @@ impl HttpProfileProxy {
                 now,
                 expires,
             ) {
-                Ok(ack) => served(ack),
+                Ok(ack) => {
+                    // The signed bodyless 202 IS the signed response for a notification.
+                    self.audit(
+                        mcp_re_core::audit::AuditEvent::response_signed(),
+                        Some(verified.resolved_actor.actor_id()),
+                        202,
+                        now,
+                    );
+                    served(ack)
+                }
                 Err(e) => {
                     self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
                 }
@@ -434,7 +487,15 @@ impl HttpProfileProxy {
             now,
             expires,
         ) {
-            Ok(base) => base,
+            Ok(base) => {
+                self.audit(
+                    mcp_re_core::audit::AuditEvent::response_signed(),
+                    Some(verified.resolved_actor.actor_id()),
+                    response.status,
+                    now,
+                );
+                base
+            }
             Err(e) => {
                 return self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
             }
@@ -506,6 +567,17 @@ impl HttpProfileProxy {
         now: i64,
         bound: Option<&RequestEvidence>,
     ) -> ServedHttpResponse {
+        // ADR-MCPS-035: EVERY rejection exit in `handle` funnels through here, so this
+        // is the one site that makes the documented `mcp-re.request.rejected` surface
+        // complete. `wire_code` is already the frozen token — the record carries it
+        // verbatim, never a parallel sub-name. No actor id: a rejection can happen
+        // before one is resolved, and the conformance guard forbids inventing one.
+        self.audit(
+            mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
+            None,
+            status,
+            now,
+        );
         let reason = RejectionReason {
             wire_code,
             message: format!("mcp-re http-profile proxy rejected: {wire_code}"),

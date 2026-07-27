@@ -2,6 +2,12 @@ load("//bazel:defs.bzl", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# ADR-MCPS-035: the profile's error taxonomy, exposed so the conformance audit
+# vocabulary guard can read `wire_code()` from DISK. The serving path hands these
+# tokens straight to the audit sink as rejection reasons, so the guard checks THIS
+# taxonomy is contained in the frozen `McpReError` one.
+exports_files(["src/error.rs"])
+
 # ADR-MCPRE-050 (seed Work Item 3): the HTTP standards profile — RFC 9421 HTTP
 # Message Signatures + RFC 9530 Content-Digest carrier, minimal proof path.
 # Pure library beside the native profile: depends only on mcp-re-core's crypto
