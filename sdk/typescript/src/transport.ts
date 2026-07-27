@@ -154,6 +154,35 @@ export type Poster = (
  * requirement here is that a collision is not reachable in practice. */
 const defaultNonce = (): string => randomBytes(16).toString("base64url");
 
+/**
+ * Minimum characters in an anti-replay nonce. 128 bits base64url-encodes to 22, which
+ * is what {@link defaultNonce} produces — so this floor never constrains the default
+ * path. It constrains an OVERRIDE: `nonceFactory` is caller-supplied and was accepted
+ * unchecked, so a factory returning a counter, a timestamp, or a truncated value
+ * silently weakened replay protection for every request while every signature still
+ * verified.
+ */
+const MIN_NONCE_CHARS = 22;
+
+/**
+ * Draw a nonce and refuse a sub-floor one, at SIGN time.
+ *
+ * Fails closed rather than signing: a request signed under a guessable nonce is
+ * accepted by the verifier, which is precisely what the replay window cannot save you
+ * from. Enforced only where a nonce is EMITTED, so the accepted wire language is
+ * unchanged — no cross-implementation coordination, no fixture regeneration.
+ */
+const checkedNonce = (factory: () => string): string => {
+  const nonce = factory();
+  if (typeof nonce !== "string" || nonce.length < MIN_NONCE_CHARS) {
+    const got = typeof nonce === "string" ? `${nonce.length} characters` : typeof nonce;
+    throw new Error(
+      `mcp-re-sdk: nonceFactory returned ${got}; a nonce must be at least ${MIN_NONCE_CHARS} (128 bits base64url)`,
+    );
+  }
+  return nonce;
+};
+
 const defaultClock = (): number => Math.floor(Date.now() / 1000);
 
 /**
@@ -595,7 +624,7 @@ export class McpReHttpTransport implements Transport {
       audienceId: config.audienceId,
       route: config.route ?? null,
       dpopToken: config.dpopToken,
-      nonce: (config.nonceFactory ?? defaultNonce)(),
+      nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
       created,
       expires,
       bindingsJson,
@@ -705,3 +734,10 @@ export class McpReHttpTransport implements Transport {
     return serializeBindings(providers, context);
   }
 }
+
+/**
+ * Internals exposed for this package's own tests only. Not part of the public API and
+ * not re-exported from the package entry point; the security check itself runs on the
+ * ordinary signing path, not through this seam.
+ */
+export const __testing = { checkedNonce, defaultNonce, MIN_NONCE_CHARS };
