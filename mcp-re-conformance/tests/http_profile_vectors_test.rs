@@ -1547,6 +1547,7 @@ fn label_token(label: &ChainLabel) -> String {
                 IncompleteReason::NonTerminalExpected => "non_terminal_expected",
                 IncompleteReason::TerminalExpected => "terminal_expected",
                 IncompleteReason::EmptyChain => "empty_chain",
+                IncompleteReason::HopAfterAuditInstant => "hop_after_audit_instant",
             };
             format!("incomplete:{hop}:{r}")
         }

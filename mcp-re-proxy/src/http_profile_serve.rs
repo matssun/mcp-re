@@ -448,7 +448,19 @@ impl HttpProfileProxy {
         // cannot record it, the reply cannot be honoured cross-replica — fail closed on
         // the shared-tier-outage token rather than return an unanswerable continuation.
         if let Some(store) = &self.continuation_store {
-            if let Some(state) = input_required_state(&response.body) {
+            let open_leg_state = match input_required_state(&response.body) {
+                Ok(s) => s,
+                Err(e) => {
+                    return self.rejection(
+                        &http_req,
+                        e.wire_code(),
+                        502,
+                        now,
+                        Some(&verified.evidence),
+                    )
+                }
+            };
+            if let Some(state) = open_leg_state {
                 let bases = RetainedBases {
                     previous_request_base: verified.request_signature_base.clone(),
                     input_required_response_base: response_base,
@@ -565,16 +577,17 @@ fn is_notification(body: &[u8]) -> bool {
     }
 }
 
-/// `InputRequiredResult` (`result.resultType == "input_required"`) — the opaque MRTR
-/// state the OPEN leg minted (ADR-MCPS-047). `None` for a terminal reply, a
-/// non-JSON body, or a missing/non-string state.
-fn input_required_state(body: &[u8]) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let result = v.get("result")?;
-    if result.get("resultType").and_then(|t| t.as_str()) != Some("input_required") {
-        return None;
-    }
-    result.get("requestState")?.as_str().map(str::to_owned)
+/// The opaque MRTR state the OPEN leg minted (ADR-MCPS-047), through the profile's
+/// single discriminator. `Ok(None)` for a terminal reply; an ERROR for a reply that
+/// declares itself `input_required` and then carries no usable `requestState`.
+///
+/// The error case used to be `None`, which reads here as "terminal": the proxy
+/// signed and returned a non-terminal leg while recording no continuation for it,
+/// so no answer leg could ever be honoured on any replica and the client was handed
+/// an unanswerable elicitation with a success status. Failing closed turns that into
+/// a signed rejection naming the malformed body.
+fn input_required_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
+    mcp_re_http_profile::result_class::input_required_state(body)
 }
 
 /// Compose the body forwarded to the inner server (#415 rev 2 §10, MCPRE-429).

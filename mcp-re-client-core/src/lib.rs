@@ -30,6 +30,7 @@ pub use request::build_signed_tool_call;
 pub use request::RequestSigningInputs;
 pub use request::SignedRequest;
 pub use response::classify_result;
+pub use response::continuation_state;
 pub use response::verify_and_classify_response;
 pub use response::verify_delegated_accepted_202;
 pub use response::verify_delegated_response;

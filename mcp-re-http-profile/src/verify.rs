@@ -512,8 +512,6 @@ pub(crate) fn parse_signature_input_for(
     parse_signature_input(member_value(input_header, label)?)
 }
 
-/// [`require_components`] for the bodyless sets — same enforcement, invoked with
-/// a different NAMED set.
 /// Enforce PRESENT ⇒ COVERED for every conditionally-mandatory request header
 /// (§4.1): `authorization`, `dpop`, and the MCP transport headers.
 ///

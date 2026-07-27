@@ -172,14 +172,37 @@ pub fn verify_and_classify_response(
     Ok(ClassifiedResponse { verified, class })
 }
 
-/// Classify a (verified) `result` body as terminal or `InputRequiredResult`. The
-/// `InputRequiredResult` marker is the `resultType == "input_required"` discriminator
-/// (ADR-MCPS-047). Absent/other results are terminal.
+/// Classify a (verified) `result` body as terminal or `InputRequiredResult`,
+/// through the profile's single discriminator
+/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). Absent/other results are
+/// terminal.
+///
+/// This is the typed client-side face of that one classifier, not a second copy of
+/// it: the discriminator string lives in the lower crate every reader shares, so
+/// the SEP-2322 drift guard that pins this function covers the proxy, chain
+/// reconstruction and both SDK bindings too.
 pub fn classify_result(result: Option<&Value>) -> ResultClass {
-    match result.and_then(|r| r.get("resultType")).and_then(|t| t.as_str()) {
-        Some("input_required") => ResultClass::InputRequired,
-        _ => ResultClass::Terminal,
+    if mcp_re_http_profile::result_class::is_input_required(result) {
+        ResultClass::InputRequired
+    } else {
+        ResultClass::Terminal
     }
+}
+
+/// The continuation state a VERIFIED response carries, for callers that must act
+/// on a live exchange rather than reconstruct a record: `Some(state)` for an
+/// `InputRequiredResult`, `None` for a terminal reply, and an ERROR for a reply
+/// that announces itself non-terminal without a usable `requestState`.
+///
+/// This is what the SDK bindings call. Each of them used to open-code the JSON walk
+/// and collapse the malformed case to `None`, which their transports read as
+/// terminal: the open leg's correlation entry was consumed, the input-required
+/// callback never fired, no answer leg was ever signed, and an elicitation was
+/// handed to the application as a completed tool result. See
+/// [`mcp_re_http_profile::result_class::input_required_state`] for the three-way
+/// contract.
+pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
+    mcp_re_http_profile::result_class::input_required_state(body)
 }
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------

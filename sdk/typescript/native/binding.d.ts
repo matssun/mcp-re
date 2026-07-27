@@ -75,10 +75,15 @@ export interface VerifyResultJs {
   /** The verified response's evidence-handle digest value (base64url, no pad). */
   respEvidenceDigestValue: string
   /**
-   * `result.requestState` (a string) from the verified response body IFF it is an
-   * `InputRequiredResult` (`result.resultType == "input_required"`); else absent.
-   * The opaque MRTR state the answer leg re-presents. Read only after the response
+   * `result.requestState` (a string) from the verified response body IFF the
+   * audited classifier reads it as an `InputRequiredResult`; else absent. The
+   * opaque MRTR state the answer leg re-presents. Read only after the response
    * verified as genuine evidence.
+   *
+   * The discriminator itself is deliberately not restated here — it lives in
+   * `mcp_re_http_profile::result_class`, and a doc comment repeating it is one
+   * more copy to drift. A verified reply that declares itself non-terminal
+   * without a usable state is an ERROR, never an absent state.
    */
   requestState?: string
 }

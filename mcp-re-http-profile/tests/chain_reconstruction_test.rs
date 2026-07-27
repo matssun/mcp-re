@@ -101,6 +101,59 @@ fn hop(
     continuation: Option<HttpContinuation>,
     body: &str,
 ) -> (RetainedHop, RequestEvidence, RequestEvidence) {
+    hop_at(CREATED, EXPIRES, nonce, continuation, body)
+}
+
+/// A hop signed over a window no verifier will accept, so the handle derivation
+/// [`hop_at`] performs is skipped — it would fail on the very window under test.
+/// Returns only the retained messages, which is all a malformed-window case needs.
+fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
+    let mut request = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let req_evidence = sign_request_full(
+        &mut request,
+        &block(None),
+        &client_key(),
+        CLIENT_KEY_ID,
+        created,
+        expires,
+        nonce,
+    )
+    .expect("signing does not police the window; verification does");
+
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: DONE.as_bytes().to_vec(),
+    };
+    sign_response_full(
+        &mut response,
+        &request,
+        &req_evidence,
+        &server_signer(),
+        &server_key(),
+        SERVER_KEY_ID,
+        created,
+        expires,
+    )
+    .expect("response signs");
+
+    RetainedHop { request, response }
+}
+
+/// [`hop`] with the signing window given explicitly, for chains whose turns are
+/// minted at different times — which is every real chain.
+fn hop_at(
+    created: i64,
+    expires: i64,
+    nonce: &str,
+    continuation: Option<HttpContinuation>,
+    body: &str,
+) -> (RetainedHop, RequestEvidence, RequestEvidence) {
     let mut request = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
@@ -112,8 +165,8 @@ fn hop(
         &block(continuation),
         &client_key(),
         CLIENT_KEY_ID,
-        CREATED,
-        EXPIRES,
+        created,
+        expires,
         nonce,
     )
     .expect("request signs");
@@ -130,20 +183,21 @@ fn hop(
         &server_signer(),
         &server_key(),
         SERVER_KEY_ID,
-        CREATED,
-        EXPIRES,
+        created,
+        expires,
     )
     .expect("response signs");
 
     // The response handle the next continuation must name is the response-role
     // digest of this response's signature base — recomputed by verifying, exactly
-    // as the reconstruction will.
+    // as the reconstruction will. Verified at the hop's own `created`, which is
+    // inside its own window whatever that window is.
     let verified_rsp = mcp_re_http_profile::verify_response_bound_full(
         &response,
         &request,
         &req_evidence,
         &resolver(),
-        NOW,
+        created,
     )
     .expect("response verifies");
     let rsp_evidence = verified_rsp.response_signature_base_digest.clone();
@@ -454,4 +508,157 @@ fn terminality_is_derived_from_protected_content() {
             reason: IncompleteReason::TerminalExpected,
         },
     );
+}
+
+// --- the record is verified as a record, not as live traffic (C033) ----------
+
+/// A chain whose turns span more than one freshness window, audited long after
+/// the call ended. This is what a retained record actually looks like: a human
+/// answered an elicitation after lunch, and the archive is read next year.
+///
+/// Every fixture above signs all three hops inside ONE window bracketing `NOW`,
+/// which is why none of them caught this. Reconstruction used to hand the live
+/// clock to every hop's freshness check, so the moment the record aged past a
+/// single window — an hour by default, and less than the gap between hop 0 and
+/// hop 1 here — `Complete` became unreachable for evidence that was entirely
+/// intact. The label decayed with age instead of describing the evidence, and a
+/// SCITT receipt over it would have committed to `Incomplete` for a whole call.
+fn aged_chain() -> Vec<RetainedHop> {
+    // Two hours between turns, so no two hops share a window and none of them
+    // contains the audit instant.
+    const TURN: i64 = 7_200;
+    let (h0, r0, s0) = hop_at(CREATED, CREATED + 300, "a-0", None, AWAITING);
+    let (h1, r1, s1) = hop_at(
+        CREATED + TURN,
+        CREATED + TURN + 300,
+        "a-1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-0",
+        )),
+        AWAITING,
+    );
+    let (h2, _r2, _s2) = hop_at(
+        CREATED + 2 * TURN,
+        CREATED + 2 * TURN + 300,
+        "a-2",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r1),
+            to_digest(&s1),
+            b"state-1",
+        )),
+        DONE,
+    );
+    vec![h0, h1, h2]
+}
+
+/// The audit instant: a year after the last hop closed. Every window in the
+/// chain is long shut.
+const AUDIT_LATER: i64 = CREATED + 31_536_000;
+
+#[test]
+fn an_aged_multi_hop_record_still_reconstructs_complete() {
+    let hops = aged_chain();
+    let out = reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), AUDIT_LATER);
+    assert_eq!(
+        out.label,
+        ChainLabel::Complete,
+        "an intact record does not stop being intact because it got old"
+    );
+    assert_eq!(out.hop_evidence.len(), 3);
+}
+
+/// The precondition that makes the test above meaningful: these hops genuinely
+/// are outside each other's windows and outside the audit instant's. If a future
+/// refactor narrowed the gaps, the test would still pass while proving nothing.
+#[test]
+fn the_aged_chains_hops_really_are_out_of_window_at_audit_time() {
+    for (i, h) in aged_chain().iter().enumerate() {
+        let err = mcp_re_http_profile::verify_request(&h.request, &resolver(), AUDIT_LATER)
+            .expect_err("hop {i}'s window is closed at the audit instant");
+        assert!(
+            matches!(err, mcp_re_http_profile::HttpProfileError::StaleWindow),
+            "hop {i} should be stale against the live clock, got {err:?}"
+        );
+    }
+}
+
+/// Aging must not be the only thing that changed. A record is still refused if a
+/// hop is dated AFTER the audit instant — `now` did not stop mattering, it became
+/// a ceiling rather than a window.
+#[test]
+fn a_hop_created_after_the_audit_instant_is_refused() {
+    let hops = aged_chain();
+    // Audit as of a moment between hop 0 and hop 1: hop 1 has not happened yet.
+    let audit_at = CREATED + 3_600;
+    assert_eq!(
+        reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), audit_at).label,
+        ChainLabel::Incomplete {
+            hop: 1,
+            reason: IncompleteReason::HopAfterAuditInstant,
+        },
+        "a record cannot contain evidence from after the audit"
+    );
+}
+
+/// The ceiling allows the same skew the live path does, so an archivist whose
+/// clock trails the signer's does not reject its own honest records.
+#[test]
+fn the_audit_ceiling_tolerates_the_configured_skew() {
+    let policy = VerifierPolicy::default();
+    let (h0, _, _) = hop_at(CREATED, CREATED + 300, "skew", None, DONE);
+
+    let within = CREATED - policy.max_clock_skew();
+    assert_eq!(
+        reconstruct_chain(&[h0.clone()], &resolver(), &policy, within).label,
+        ChainLabel::Complete,
+        "a hop one skew ahead of the auditor's clock is honest disagreement"
+    );
+
+    let beyond = CREATED - policy.max_clock_skew() - 1;
+    assert_eq!(
+        reconstruct_chain(&[h0], &resolver(), &policy, beyond).label,
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::HopAfterAuditInstant,
+        },
+        "one second past the tolerance is no longer disagreement"
+    );
+}
+
+/// Verifying each hop at its own `created` must not have relaxed the checks that
+/// are properties of the MESSAGE rather than of the clock. An over-wide window is
+/// still refused, at any age — otherwise "verify it at its own created" would be
+/// a way to smuggle a decade-long signature into a retained record.
+#[test]
+fn an_over_wide_window_is_still_refused_in_an_aged_record() {
+    let policy = VerifierPolicy::default();
+    let h0 = hop_with_bad_window(CREATED, CREATED + policy.max_signature_validity() + 1, "wide");
+    match reconstruct_chain(&[h0], &resolver(), &policy, AUDIT_LATER).label {
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::RequestUnverifiable(
+                mcp_re_http_profile::HttpProfileError::StaleWindow,
+            ),
+        } => {}
+        other => panic!("expected the width bound to still fire, got {other:?}"),
+    }
+}
+
+/// And the degenerate window: `expires <= created` leaves no instant at all, so
+/// there is nothing for "its own created" to fall inside. It must not become
+/// self-satisfying.
+#[test]
+fn a_degenerate_window_is_still_refused_in_an_aged_record() {
+    let h0 = hop_with_bad_window(CREATED, CREATED, "degenerate");
+    match reconstruct_chain(&[h0], &resolver(), &VerifierPolicy::default(), AUDIT_LATER).label {
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::RequestUnverifiable(
+                mcp_re_http_profile::HttpProfileError::StaleWindow,
+            ),
+        } => {}
+        other => panic!("expected the degenerate-window check to still fire, got {other:?}"),
+    }
 }

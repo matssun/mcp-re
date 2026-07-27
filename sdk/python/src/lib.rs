@@ -439,10 +439,15 @@ struct PyVerifyResult {
     /// The verified response's evidence-handle digest value (base64url, no pad).
     #[pyo3(get)]
     resp_evidence_digest_value: String,
-    /// `result.requestState` (a string) from the verified response body IFF it is an
-    /// `InputRequiredResult` (`result.resultType == "input_required"`); else `None`.
-    /// The opaque MRTR state the answer leg re-presents. Read only after the response
+    /// `result.requestState` (a string) from the verified response body IFF the
+    /// audited classifier reads it as an `InputRequiredResult`; else `None`. The
+    /// opaque MRTR state the answer leg re-presents. Read only after the response
     /// verified as genuine evidence.
+    ///
+    /// The discriminator itself is deliberately not restated here — it lives in
+    /// `mcp_re_http_profile::result_class`, and a doc comment repeating it is one
+    /// more copy to drift. A verified reply that declares itself non-terminal
+    /// without a usable state is an ERROR, never an absent state.
     #[pyo3(get)]
     request_state: Option<String>,
 }
@@ -540,17 +545,10 @@ fn verify_response(
     // VERIFIED response evidence, never from unverified bytes.
     let resp_digest = verified.verified.response_signature_base_digest.clone();
     // `result.requestState` only if this is an InputRequiredResult — a terminal reply
-    // has none. Read after verification: content-digest covered the body.
-    let request_state = serde_json::from_slice::<Value>(resp_body)
-        .ok()
-        .as_ref()
-        .and_then(|v| v.get("result"))
-        .filter(|r| {
-            r.get("resultType").and_then(|t| t.as_str()) == Some("input_required")
-        })
-        .and_then(|r| r.get("requestState"))
-        .and_then(|s| s.as_str())
-        .map(str::to_owned);
+    // has none. Read after verification: content-digest covered the body. Classified
+    // by the audited core, which REFUSES a reply that declares itself non-terminal
+    // without a usable state rather than reporting it as terminal.
+    let request_state = mcp_re_client_core::continuation_state(resp_body).map_err(err)?;
     Ok(PyVerifyResult {
         ok: true,
         server_keyid: verified.verified.resolved_server_actor.identity.keyid,

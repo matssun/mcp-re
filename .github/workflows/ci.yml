@@ -77,6 +77,18 @@ jobs:
       - name: Port-registry gate (single-source ports, no drift)
         run: python3 scripts/check_port_registry.py
 
+      # SEP-2322 discriminator gate: the conformance suite pins the discriminator's
+      # VALUE, but that only protects readers that classify through the shared
+      # helper. The literal had been open-coded in five places, three of which read a
+      # malformed non-terminal reply as terminal — so a rename would have failed the
+      # value guard while leaving those readers silently wrong. This asserts the
+      # literal appears in exactly one shipped source file, which is the only way to
+      # catch a sixth copy: a type system cannot notice a string nobody imported. It
+      # is a script rather than a test because `sdk/` is not Bazel-addressable.
+      # Fast, python-only.
+      - name: Discriminator gate (one classifier, no open-coded copies)
+        run: python3 scripts/discriminator_gate.py
+
       # Tracked-file leak guard: key material, credential documents, and personal
       # or concrete service-account identifiers must never land in a tracked file
       # (a commit is public history even after a later commit deletes it). The
