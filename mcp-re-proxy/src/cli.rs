@@ -425,6 +425,56 @@ pub struct Config {
 
 /// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
 /// human-readable error string on any missing/invalid argument.
+/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
+///
+/// These overrides carry the ROOT-KEY trust bootstrap: `getPublicKey` fetches the
+/// `spki_der`/verify key that the verify-before-return guardrail is measured against, and
+/// on GCP every request also carries a live workload-identity bearer token. An unvalidated
+/// override therefore hands a replayable credential to whatever host is named and lets a
+/// substituted endpoint supply an attacker-chosen root signing key that every local
+/// fail-closed check then passes self-consistently.
+///
+/// So: `https://` always; `http://` ONLY to loopback, which keeps the LocalStack / KMS
+/// emulator lane working without letting a plaintext credential leave the machine.
+/// Anything else is refused at parse, before a credential is minted.
+fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
+    let rest = if let Some(rest) = value.strip_prefix("https://") {
+        return non_empty_authority(flag, value, rest).map(|()| value.to_string());
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        rest
+    } else {
+        return Err(format!(
+            "{flag} must be an absolute https:// URL (got {value:?}); this endpoint carries the \
+             root-key trust bootstrap and, on GCP, a live bearer token"
+        ));
+    };
+    non_empty_authority(flag, value, rest)?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = match authority.rsplit_once(':') {
+        // Bracketed IPv6 literal: the last colon may belong to the address.
+        Some((h, _)) if !authority.starts_with('[') || h.ends_with(']') => h,
+        _ => authority,
+    };
+    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+        return Ok(value.to_string());
+    }
+    Err(format!(
+        "{flag} may only use http:// for a loopback emulator (localhost, 127.0.0.1, [::1]); \
+         got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
+         substituted host supply the root verify key"
+    ))
+}
+
+/// Reject a URL whose authority is empty (`https://`, `http:///v1`), which would otherwise
+/// produce a request URL with no host.
+fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String> {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(format!("{flag} has no host: {value:?}"));
+    }
+    Ok(())
+}
+
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut bind = None;
     let mut audience = None;
@@ -633,10 +683,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
             "--aws-kms-region" => aws_kms_region = Some(value.clone()),
             "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
-            "--aws-kms-endpoint" => aws_kms_endpoint = Some(value.clone()),
+            "--aws-kms-endpoint" => {
+                aws_kms_endpoint = Some(validated_kms_endpoint("--aws-kms-endpoint", value)?)
+            }
             "--aws-kms-tls-key-id" => aws_kms_tls_key_id = Some(value.clone()),
             "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
-            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(value.clone()),
+            "--gcp-kms-endpoint" => {
+                gcp_kms_endpoint = Some(validated_kms_endpoint("--gcp-kms-endpoint", value)?)
+            }
             "--gcp-kms-tls-key-version" => gcp_kms_tls_key_version = Some(value.clone()),
             "--signing-key-seed" => signing_key_seed = Some(value.clone()),
             "--tls-cert" => tls_cert = Some(value.clone()),
@@ -2504,6 +2558,83 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ---- KMS endpoint override validation (C054) --------------------------
+
+    /// Parse `minimal()` plus one KMS endpoint override.
+    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::Config, String> {
+        let mut a = minimal();
+        // `minimal()` omits --replay-cache, which `unsafe_config_violations` refuses; that
+        // refusal is unrelated to endpoint validation and would mask an accept case.
+        a.extend(args(&[
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/tmp/mcp-re-cli-kms-endpoint-test",
+        ]));
+        a.push(flag.to_string());
+        a.push(endpoint.to_string());
+        parse_args(&a)
+    }
+
+    #[test]
+    fn an_https_kms_endpoint_is_accepted() {
+        for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+            let r = with_kms_endpoint(flag, "https://kms.example.internal");
+            assert!(r.is_ok(), "{flag} must accept https, got {:?}", r.err());
+        }
+    }
+
+    /// The emulator lane (LocalStack et al.) must keep working: plaintext to LOOPBACK
+    /// cannot carry a credential off the machine.
+    #[test]
+    fn a_loopback_http_kms_endpoint_is_accepted_for_emulators() {
+        for endpoint in [
+            "http://localhost:4566",
+            "http://127.0.0.1:4566/",
+            "http://[::1]:4566",
+        ] {
+            assert!(
+                with_kms_endpoint("--aws-kms-endpoint", endpoint).is_ok(),
+                "{endpoint} is a loopback emulator and must be accepted"
+            );
+        }
+    }
+
+    /// The finding: plaintext to a NON-loopback host hands a live GCP workload-identity
+    /// bearer token to that host and lets it serve the root verify key the whole
+    /// verify-before-return guardrail is measured against.
+    #[test]
+    fn a_plaintext_kms_endpoint_to_a_remote_host_is_refused() {
+        for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+            let err = with_kms_endpoint(flag, "http://kms.attacker.test")
+                .expect_err("plaintext to a remote host must be refused");
+            assert!(
+                err.contains("loopback"),
+                "the refusal must name the loopback exception, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_http_kms_endpoint_scheme_is_refused() {
+        for endpoint in ["file:///etc/passwd", "kms.example.internal", "ftp://x.test"] {
+            assert!(
+                with_kms_endpoint("--gcp-kms-endpoint", endpoint).is_err(),
+                "{endpoint} is not an absolute http(s) URL and must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_kms_endpoint_with_no_host_is_refused() {
+        for endpoint in ["https://", "http:///v1", "https:///"] {
+            assert!(
+                with_kms_endpoint("--aws-kms-endpoint", endpoint).is_err(),
+                "{endpoint} has no authority and must be refused"
+            );
+        }
     }
 
     fn minimal() -> Vec<String> {

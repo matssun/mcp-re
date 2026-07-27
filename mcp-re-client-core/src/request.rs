@@ -155,8 +155,11 @@ impl SignedRequest {
 ///
 /// `id`/`method`/`params` are the ordinary MCP request fields. `target_uri` is the
 /// canonical absolute `@target-uri` both sides sign over (must equal
-/// `inputs.audience.target_uri`). Any caller-supplied top-level `_meta` request
-/// evidence block is OVERWRITTEN — the client core is the sole author of the block.
+/// `inputs.audience.target_uri`). The client core is the sole author of the request
+/// evidence block by construction: the body is rebuilt from `id`/`jsonrpc`/`method`/
+/// `params`, so no caller value can reach the body-root `_meta` the block occupies.
+/// `params._meta` is ordinary MCP metadata and is passed through, covered by the
+/// `Content-Digest` like the rest of the body.
 pub fn build_signed_request(
     id: &Value,
     method: &str,
@@ -201,10 +204,11 @@ pub(crate) fn build_signed_request_with(
         return Err(HttpProfileError::AudienceMismatch);
     }
 
-    // Scrub any caller-supplied top-level `_meta` so the client core is the sole
-    // author of the evidence block (sign_request_full composes it in).
-    let mut params = params;
-    params.remove("_meta");
+    // `params._meta` is ORDINARY MCP metadata (`progressToken` and friends) and is
+    // passed through untouched. The request evidence block lives at the body ROOT
+    // `_meta`, which `sign_request_full` composes in and which a caller cannot reach:
+    // the body below is rebuilt from `id`/`jsonrpc`/`method`/`params` alone. It is
+    // covered by `Content-Digest` either way, so caller metadata is signed, not trusted.
     let body = serde_json::to_vec(&json!({
         "id": id.clone(),
         "jsonrpc": "2.0",
@@ -314,6 +318,64 @@ mod evidence_precondition_tests {
             &inputs(bindings),
             &SigningKey::from_seed_bytes(&[11u8; 32]),
         )
+    }
+
+    /// Sign with a caller-supplied `params._meta`, as an MCP client carrying a
+    /// `progressToken` does.
+    fn sign_with_caller_meta() -> SignedRequest {
+        let params: Map<String, Value> = serde_json::json!({
+            "name": "read",
+            "_meta": { "progressToken": "tok-1" },
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        build_signed_request(
+            &Value::from(1),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs(vec![ArtifactBinding::opaque_digest(
+                ArtifactType::OauthDpop,
+                b"access-token",
+            )]),
+            &SigningKey::from_seed_bytes(&[11u8; 32]),
+        )
+        .expect("a well-formed request signs")
+    }
+
+    /// The client core used to `params.remove("_meta")` here, claiming it had to be the
+    /// sole author of the evidence block. The block lives at the body ROOT, so the strip
+    /// reached only ordinary MCP metadata and silently dropped it after the caller
+    /// believed it was sent — invisibly, because the request still signed and verified.
+    #[test]
+    fn caller_params_meta_survives_signing() {
+        let signed = sign_with_caller_meta();
+        let body: Value = serde_json::from_slice(signed.request().body.as_slice())
+            .expect("the signed body is json");
+        assert_eq!(
+            body["params"]["_meta"]["progressToken"],
+            Value::from("tok-1"),
+            "ordinary MCP params metadata must reach the wire"
+        );
+    }
+
+    /// And it is COVERED, not merely passed through: the evidence block the client
+    /// authors still lands at the body root, where the verifier reads it, so caller
+    /// metadata and evidence occupy different keys and neither can shadow the other.
+    #[test]
+    fn the_evidence_block_still_lands_at_the_body_root() {
+        let signed = sign_with_caller_meta();
+        let body: Value = serde_json::from_slice(signed.request().body.as_slice())
+            .expect("the signed body is json");
+        assert!(
+            body["_meta"].is_object(),
+            "the request evidence block is written to the ROOT _meta, not params._meta"
+        );
+        assert!(
+            body["_meta"].get("progressToken").is_none(),
+            "caller metadata must not be promoted into the evidence block's namespace"
+        );
     }
 
     #[test]

@@ -1125,8 +1125,55 @@ fn spawn_delegated_rotation_task(
     epoch_watch: Option<DelegatedEpochWatch>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    use crate::delegated_server_signer::rotation_backoff;
     std::thread::spawn(move || {
+        // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
+        // its `JoinHandle` is dropped, so nothing joins it. Left bare, a panic on any
+        // reachable `.expect()` (the CSPRNG draw, the two custody invariants) would end all
+        // rotation for the process lifetime while every health surface still read steady
+        // state: `DelegatedRotationMetrics.consecutive_failures` is only written BY this
+        // thread, so a dead thread leaves it at 0 and the replica appears healthy right up
+        // until the current key's `exp`, then 503s with no attributable cause.
+        //
+        // So the loop runs inside `catch_unwind` and a panic is converted into the
+        // strongest honest signal available: RETIRE the snapshot, which makes the hot path
+        // fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than at `exp`,
+        // and record a failure so the metric stops reading healthy. The thread does not
+        // resume — after a panic the rotor's state is not known good, and continuing to
+        // mint from it would be worse than refusing.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rotation_loop(
+                &mut rotor,
+                &signer,
+                overlap,
+                epoch_watch.as_ref(),
+                &shutdown,
+            )
+        }));
+        if outcome.is_err() {
+            signer.retire();
+            signer.metrics().record_failure();
+            eprintln!(
+                "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
+                 rotation has stopped for the lifetime of this process and the current \
+                 snapshot has been retired, so response signing now fails closed \
+                 (delegated_signing_unavailable) immediately rather than at the key's exp. \
+                 This replica cannot recover on its own — restart it."
+            );
+        }
+    });
+}
+
+/// The rotation loop proper. Split out of [`spawn_delegated_rotation_task`] so the
+/// supervisor above can catch a panic from anywhere inside it.
+fn rotation_loop(
+    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
+    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    overlap: i64,
+    epoch_watch: Option<&DelegatedEpochWatch>,
+    shutdown: &Arc<std::sync::atomic::AtomicBool>,
+) {
+    use crate::delegated_server_signer::rotation_backoff;
+    {
         // Failures since the last success drive the backoff schedule; 0 in steady state.
         let mut consecutive_failures: u32 = 0;
         // The epoch this node is currently minting under (starts at the configured
@@ -1207,8 +1254,11 @@ fn spawn_delegated_rotation_task(
                                 signer.metrics().record_success(now_unix());
                                 eprintln!(
                                     "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated \
-                                     keys re-issued under the new epoch; the prior epoch is now \
-                                     rejected (delegation_trust_epoch_stale) across the fleet."
+                                     keys re-issued under the new epoch. This replica no longer \
+                                     mints under the prior epoch. Credentials already issued under \
+                                     it stay VERIFIABLE until verifiers are pointed at the new \
+                                     epoch — update the verifiers' accepted epochs to complete the \
+                                     revocation (delegation_trust_epoch_stale)."
                                 );
                                 continue;
                             }
@@ -1302,7 +1352,7 @@ fn spawn_delegated_rotation_task(
                 }
             }
         }
-    });
+    }
 }
 
 /// Did the rotation attempt actually mint a successor?
@@ -1406,11 +1456,16 @@ fn build_trust_epoch_channel(
 /// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
 /// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
 /// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
-/// transient blip). The minted label is baseline-relative: while the live counter
-/// equals the value seen at startup the node mints the configured `--delegated-trust-epoch`
-/// (so verifiers pinned to it accept); once it advances, the node mints a DISTINCT
-/// label (`<base>#<counter>`) that those verifiers reject as a stale epoch.
-/// The shared-trust-epoch watcher for delegated-key minting (ADR-MCPRE-052 §7).
+/// transient blip).
+///
+/// What an advance does and does not do: it stops this fleet MINTING under the prior
+/// epoch. It does not reach credentials already issued under it — no verifier reads the
+/// counter, so `accepted_epochs` is static verifier configuration and a leaked
+/// credential stays verifiable until the verifiers are pointed at the new epoch
+/// (docs/spec/delegated-required-validation-matrix.md §C.1, "Operational consequence").
+/// The counter is therefore also a fleet availability dependency: anyone who can write
+/// the shared key can advance it and make every replica mint a label the currently
+/// configured verifiers reject.
 ///
 /// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
 /// what makes an operator `INCR` survive a replica restart: the label is derived purely

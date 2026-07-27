@@ -45,6 +45,21 @@ const TARGET_SIGN: &str = "TrentService.Sign";
 /// unbounded body into the blocking signing thread.
 const MAX_KMS_RESPONSE_BYTES: u64 = 256 * 1024;
 
+/// Cap on an HTTP *error* body read for diagnostics. Mirrors the GCP sibling: an
+/// emulator or substituted endpoint could otherwise return an arbitrarily large body
+/// on the error path, which is interpolated into a `KeyError` on every rotation attempt.
+const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
+
+/// Read a bounded, lossy string from an HTTP error response body (diagnostics only).
+fn read_error_body(resp: ureq::Response) -> String {
+    let mut buf = Vec::new();
+    let _ = resp
+        .into_reader()
+        .take(MAX_ERROR_BODY_BYTES)
+        .read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
 /// The single Ed25519 key spec and signing mode this adapter accepts.
 const KEY_SPEC_ED25519: &str = "ECC_NIST_EDWARDS25519";
 const SIGNING_ALGORITHM_ED25519: &str = "ED25519_SHA_512";
@@ -179,7 +194,13 @@ impl KmsHttpClient for UreqKmsClient {
                 Ok(buf)
             }
             Err(ureq::Error::Status(code, resp)) => {
-                let body = resp.into_string().unwrap_or_default();
+                // The SUCCESS path above is capped for a stated reason — a substituted or
+                // operator-overridden endpoint must not be able to drive unbounded memory
+                // growth on the blocking signing thread. That endpoint controls this branch
+                // just as fully, by returning any non-2xx status, so `into_string()`'s
+                // ~10 MiB read left the guard trivially bypassable. Bounded like the GCP
+                // sibling's `read_error_body`.
+                let body = read_error_body(resp);
                 Err(KeyError::NotFound(format!(
                     "aws-kms: {target} returned HTTP {code}: {body}"
                 )))
