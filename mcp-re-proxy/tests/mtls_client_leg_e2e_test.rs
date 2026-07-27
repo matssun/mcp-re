@@ -211,7 +211,7 @@ fn server_resolver() -> ActorResolver {
             slot,
         }),
         _ => None,
-    })
+    }.into())
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -342,7 +342,7 @@ fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
             slot,
         }),
         _ => None,
-    })
+    }.into())
 }
 
 /// The client's mTLS leg: presents a client cert signed by `client_ca` and trusts

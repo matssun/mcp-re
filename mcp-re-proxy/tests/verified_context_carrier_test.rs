@@ -90,7 +90,7 @@ fn actor_resolver() -> mcp_re_proxy::http_profile_serve::ActorResolver {
             slot,
         }),
         _ => None,
-    })
+    }.into())
 }
 
 fn custody_cfg() -> CustodyConfig {

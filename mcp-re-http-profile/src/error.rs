@@ -53,6 +53,13 @@ pub enum HttpProfileError {
     StaleWindow,
     /// The `keyid` does not resolve to a trusted verification key.
     UnresolvedKeyId,
+    /// The trust resolver could not ANSWER — a transient/operational failure such as
+    /// an unreachable backing store (C079). Distinct from [`UnresolvedKeyId`], which
+    /// is a definitive negative from a healthy resolver: a store outage and an unknown
+    /// keyid are different facts, and collapsing them told an operator "untrusted key"
+    /// during an outage. Never falls back to allow. Wire code
+    /// `mcp-re.trust_resolver_unavailable`.
+    TrustResolverUnavailable,
     /// Defense-in-depth (MCPRE-100): the trust seam returned a [`ResolvedActor`]
     /// whose vouched slot does not match the slot the verifier requested — a
     /// misbehaving resolver caught by the verifier's typed cross-check. Public
@@ -213,6 +220,10 @@ impl HttpProfileError {
             }
             // A keyid outside trust is an actor-binding failure, not a broken
             // signature: the crypto may verify under an untrusted key.
+            // An outage is not a binding failure: the resolver never rendered a
+            // verdict, so reporting one would misattribute an availability fault to
+            // the caller's key.
+            HttpProfileError::TrustResolverUnavailable => "mcp-re.trust_resolver_unavailable",
             HttpProfileError::UnresolvedKeyId
             | HttpProfileError::ActorSlotMismatch
             | HttpProfileError::AdmissionAssertionInvalid

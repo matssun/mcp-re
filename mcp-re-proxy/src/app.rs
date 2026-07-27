@@ -25,6 +25,7 @@ use crate::async_serve::ServedHttpRequest;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use std::collections::HashMap;
 use crate::tls;
@@ -80,15 +81,31 @@ pub fn build_actor_resolver(
     response_pub: mcp_re_core::VerificationKey,
 ) -> crate::ActorResolver {
     Box::new(move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == response_kid => Some(ResolvedActor {
-            identity: server_identity.clone(),
-            verification_key: response_pub.clone(),
-            slot,
-        }),
+        SignerSlot::Response if kid == response_kid => {
+            ResolverOutcome::Resolved(ResolvedActor {
+                identity: server_identity.clone(),
+                verification_key: response_pub.clone(),
+                slot,
+            })
+        }
         SignerSlot::Request => {
-            let signer = client_signers.get(kid)?;
-            let key = request_trust.resolve(signer, kid).ok()?;
-            Some(ResolvedActor {
+            // An unknown kid is a definitive negative from a healthy resolver.
+            let Some(signer) = client_signers.get(kid) else {
+                return ResolverOutcome::NotTrusted;
+            };
+            // C079: `.ok()?` used to throw this error away, so a store OUTAGE and an
+            // unknown keyid became the same observation and the outage was reported as
+            // `actor_binding_failed`. `mcp-re-core` has always modelled the difference
+            // (`TrustResolverError::Unavailable`); it simply could not cross the seam.
+            // Both still fail closed — only the reported reason changes.
+            let key = match request_trust.resolve(signer, kid) {
+                Ok(key) => key,
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {
+                    return ResolverOutcome::Unavailable
+                }
+                Err(_) => return ResolverOutcome::NotTrusted,
+            };
+            ResolverOutcome::Resolved(ResolvedActor {
                 identity: ActorIdentity {
                     role: "client".to_string(),
                     trust_domain: trust_domain.clone(),
@@ -99,7 +116,7 @@ pub fn build_actor_resolver(
                 slot,
             })
         }
-        _ => None,
+        _ => ResolverOutcome::NotTrusted,
     })
 }
 

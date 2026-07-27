@@ -72,5 +72,6 @@ pub use mcp_re_http_profile::HttpResponse;
 pub use mcp_re_http_profile::RequestEvidence;
 pub use mcp_re_http_profile::PROFILE_TAG;
 pub use mcp_re_http_profile::ResolvedActor;
+pub use mcp_re_http_profile::ResolverOutcome;
 pub use mcp_re_http_profile::SignerSlot;
 pub use mcp_re_http_profile::VerifiedHttpResponseEvidence;

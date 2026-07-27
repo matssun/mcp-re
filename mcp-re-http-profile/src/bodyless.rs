@@ -56,6 +56,7 @@
 use mcp_re_core::McpReError;
 
 use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::digest::verify_content_digest_sha256;
@@ -262,10 +263,10 @@ pub fn sign_accepted_202(
 ///
 /// On success the caller learns EXACTLY this: the enforcement boundary
 /// authenticated and accepted that request. Nothing about what happened next.
-pub fn verify_accepted_202(
+pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
@@ -414,10 +415,10 @@ pub fn sign_delegated_accepted_202(
 /// On success the caller learns: a delegated key trusted for THIS service accepted
 /// this notification. Nothing about what happened next.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_accepted_202(
+pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &crate::verify::DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -481,7 +482,7 @@ pub fn verify_delegated_accepted_202(
     let verified = crate::delegation::verify_delegation_credential(
         &credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
         |id| is_revoked(id),
     )?;
 
@@ -579,9 +580,9 @@ pub fn sign_bodyless_request(
 }
 
 /// Verify a bodyless REQUEST (§8.1) under the named bodyless request set.
-pub fn verify_bodyless_request(
+pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<(ResolvedActor, RequestEvidence), HttpProfileError> {

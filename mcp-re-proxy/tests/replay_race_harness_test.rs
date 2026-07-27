@@ -501,6 +501,7 @@ mod http_profile_full_stack {
     use mcp_re_http_profile::HttpRequest;
     use mcp_re_http_profile::HttpRequestEvidenceBlock;
     use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResolverOutcome;
     use mcp_re_http_profile::SignerSlot;
     use mcp_re_http_profile::PROFILE_TAG;
 
@@ -563,9 +564,9 @@ mod http_profile_full_stack {
             let (role, key) = match (key_id, slot) {
                 (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key().public_key()),
                 (ROOT_KID, SignerSlot::Response) => ("server", root_key().public_key()),
-                _ => return None,
+                _ => return ResolverOutcome::NotTrusted,
             };
-            Some(ResolvedActor {
+            ResolverOutcome::Resolved(ResolvedActor {
                 identity: ActorIdentity {
                     role: role.into(),
                     trust_domain: "example.com".into(),

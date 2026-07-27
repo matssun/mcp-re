@@ -19,6 +19,7 @@ use crate::block::AudienceTuple;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::authorization_bearer_bytes;
 use crate::body::extract_meta_block;
@@ -137,12 +138,23 @@ pub struct VerifiedHttpResponseEvidence {
 /// and fails `actor_binding_failed`. The verifier additionally asserts the
 /// returned actor is vouched for the slot it asked for — never a role-string
 /// comparison — so a resolver that hands back a wrong-slot actor is also caught.
-pub(crate) fn resolve_actor_for_slot(
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     key_id: &str,
     slot: SignerSlot,
 ) -> Result<ResolvedActor, HttpProfileError> {
-    let actor = resolve_actor(key_id, slot).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    let actor = match resolve_actor(key_id, slot).into() {
+        ResolverOutcome::Resolved(actor) => actor,
+        // A definitive negative from a healthy resolver.
+        ResolverOutcome::NotTrusted => return Err(HttpProfileError::UnresolvedKeyId),
+        // The resolver could not answer. Fail closed, but say WHICH failure it was
+        // (C079): during a store outage the previous seam reported "untrusted key",
+        // which sends an operator to look at the caller's credentials instead of at
+        // their trust store.
+        ResolverOutcome::Unavailable => {
+            return Err(HttpProfileError::TrustResolverUnavailable)
+        }
+    };
     if actor.slot != slot {
         return Err(HttpProfileError::ActorSlotMismatch);
     }
@@ -675,9 +687,9 @@ fn require_components(
 /// maps a keyid to a verification key ONLY if local policy trusts that key for
 /// this route/audience — a keyid never introduces trust (CONTEXT.md anchor
 /// rule; v0.11 grill B.1).
-pub fn verify_request(
+pub fn verify_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     verify_request_with_policy(request, resolve_actor, &VerifierPolicy::default(), now)
@@ -686,9 +698,9 @@ pub fn verify_request(
 /// [`verify_request`] under an explicit verifier-local [`VerifierPolicy`] —
 /// the algorithm allowlist (§13.1) and the bounded clock-skew tolerance (§5.1).
 /// [`verify_request`] is this function at [`VerifierPolicy::default`].
-pub fn verify_request_with_policy(
+pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
@@ -782,11 +794,11 @@ pub fn verify_request_with_policy(
 /// etc.); DPoP is derived from the covered `Authorization` header. A binding with
 /// no obtainable credential fails `artifact_binding_failed` — full profile never
 /// silently accepts an unverifiable binding.
-pub fn verify_request_full(
+pub fn verify_request_full<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     expected_audience: &AudienceTuple,
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     verify_request_full_with_policy(
@@ -800,11 +812,11 @@ pub fn verify_request_full(
 }
 
 /// [`verify_request_full`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_request_full_with_policy(
+pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     expected_audience: &AudienceTuple,
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
@@ -859,10 +871,10 @@ fn resolve_artifact_credential(
 /// Verify a signed MCP-RE/HTTP response against the exact request the caller
 /// sent. The `;req` components are resolved from `request`, so a spliced
 /// response (signed for a different request) fails the signature.
-pub fn verify_response(
+pub fn verify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_with_policy(
@@ -875,10 +887,10 @@ pub fn verify_response(
 }
 
 /// [`verify_response`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_with_policy(
+pub fn verify_response_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -942,11 +954,11 @@ pub fn verify_response_with_policy(
 /// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
 /// `verify_request_full`; its `evidence` handle is the recomputed request
 /// signature-base digest compared here — no re-parse of the request.
-pub fn verify_response_full(
+pub fn verify_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_bound_full(
@@ -966,11 +978,11 @@ pub fn verify_response_full(
 /// server-style verified-request context. Semantics are otherwise identical to
 /// [`verify_response_full`] — the `;req` cryptographic floor plus the response
 /// evidence block's `profile` / `server_signer.keyid` / `request_evidence` checks.
-pub fn verify_response_bound_full(
+pub fn verify_response_bound_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_bound_full_with_policy(
@@ -984,11 +996,11 @@ pub fn verify_response_bound_full(
 }
 
 /// [`verify_response_bound_full`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_bound_full_with_policy(
+pub fn verify_response_bound_full_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -1067,11 +1079,11 @@ pub struct DelegationExpectations<'a> {
 /// [`verify_delegated_response_bound_full`] directly (the delegated analogue of
 /// [`verify_response_bound_full`]).
 #[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_response_full(
+pub fn verify_delegated_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -1098,11 +1110,11 @@ pub fn verify_delegated_response_full(
 /// `cnf.jwk`. The only difference is that the request-evidence binding is compared
 /// against the passed `bound_request_evidence` handle the client kept from signing.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_response_bound_full(
+pub fn verify_delegated_response_bound_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -1159,7 +1171,7 @@ pub fn verify_delegated_response_bound_full(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
         |kid| is_revoked(kid),
     )?;
 
@@ -1225,9 +1237,9 @@ pub fn verify_delegated_response_bound_full(
 /// diagnostic and is NOT treated as a binding here. Delegation remains REQUIRED: a
 /// response with no inline credential — including a directly root-signed one — is
 /// rejected `delegation_credential_missing`.
-pub fn verify_delegated_response_unbound(
+pub fn verify_delegated_response_unbound<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -1284,7 +1296,7 @@ pub fn verify_delegated_response_unbound(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
         |kid| is_revoked(kid),
     )?;
 
@@ -1329,18 +1341,18 @@ pub fn verify_delegated_response_unbound(
 /// rejection emitted before a request could be parsed. Covers only the response
 /// components; any `;req` component is malformed here (there is no request to
 /// resolve it against).
-pub fn verify_response_unbound(
+pub fn verify_response_unbound<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_unbound_with_policy(response, resolve_actor, &VerifierPolicy::default(), now)
 }
 
 /// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_unbound_with_policy(
+pub fn verify_response_unbound_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {

@@ -9,6 +9,7 @@ use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::ResolvedActor;
+use mcp_re_client_core::ResolverOutcome;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::TrustedIssuerSet;
@@ -16,7 +17,10 @@ use std::collections::HashMap;
 
 /// The per-route trust seam: resolve the response signer keyid to a structured
 /// actor for RFC 9421 response verification.
-pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync>;
+/// The client route's trust seam. Returns a [`ResolverOutcome`] so a resolver outage is
+/// distinguishable from an unknown keyid (C079); both fail closed.
+pub type RouteActorResolver =
+    Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
 
 /// How the proxy verifies the server's response for a route. Delegated-signing is the
 /// ONLY response mode (ADR-MCPRE-052, MCPRE-122): the client enforces the same

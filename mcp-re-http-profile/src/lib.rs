@@ -69,6 +69,7 @@ pub use block::HttpRequestEvidenceBlock;
 pub use block::HttpResponseEvidenceBlock;
 pub use block::RequestEvidenceDigest;
 pub use block::ResolvedActor;
+pub use block::ResolverOutcome;
 pub use block::SignerSlot;
 pub use block::CONTINUATION_TYPE_MCP_MRT;
 pub use admission::check_admission;

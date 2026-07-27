@@ -60,6 +60,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 
@@ -83,7 +84,10 @@ pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
 /// The trust seam: resolve a presented keyid FOR a signing slot to a structured
 /// actor (identity + verification key). A key not trusted for `slot` resolves to
 /// `None` (fail closed). `Send + Sync` so one `HttpProfileProxy` serves every core.
-pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync>;
+/// The proxy's trust seam. Returns a [`ResolverOutcome`] rather than an `Option` so a
+/// store OUTAGE is distinguishable from an UNKNOWN KEYID (C079): both fail closed, but
+/// only one of them is a statement about the caller's key.
+pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
 ///

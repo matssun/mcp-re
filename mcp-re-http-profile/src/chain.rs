@@ -38,6 +38,7 @@
 use crate::block::HttpContinuation;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::error::HttpProfileError;
@@ -197,9 +198,9 @@ fn classify_verified_response(body: &[u8]) -> HopOutcome {
 /// broken hop: past that point the record is already not complete, and continuing
 /// would invite reporting later hops as "fine" when nothing links them to a
 /// beginning.
-pub fn reconstruct_chain(
+pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     hops: &[RetainedHop],
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> ChainReconstruction {

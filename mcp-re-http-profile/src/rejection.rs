@@ -27,6 +27,7 @@ use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
 use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
@@ -208,10 +209,10 @@ pub fn build_delegated_rejection_preflight(
 /// `request` is `Some`, the `;req` binding to that request is checked (a spliced
 /// rejection fails). Fails closed on any signature/digest/binding problem — a
 /// client under `require_mcp_re` treats that failure as an untrusted rejection.
-pub fn verify_signed_rejection(
+pub fn verify_signed_rejection<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: Option<&HttpRequest>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<SignedRejection, HttpProfileError> {
     // A rejection is a server-signed response: resolve for the RESPONSE slot.

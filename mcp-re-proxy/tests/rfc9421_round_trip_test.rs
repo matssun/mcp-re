@@ -98,7 +98,7 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Syn
 
 fn actor_resolver() -> ActorResolver {
     let r = resolver();
-    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot))
+    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot).into())
 }
 
 fn custody_cfg() -> CustodyConfig {

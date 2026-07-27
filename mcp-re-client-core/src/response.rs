@@ -27,6 +27,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::VerifiedHttpResponseEvidence;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -83,9 +84,9 @@ impl ResponseExpectation {
 /// trust + OCSP live behind it, so this pure module performs no I/O). On success
 /// returns the [`VerifiedHttpResponseEvidence`]; on any failure the precise frozen
 /// [`HttpProfileError`], fail-closed.
-pub fn verify_signed_response(
+pub fn verify_signed_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -162,9 +163,9 @@ pub struct ClassifiedResponse {
 /// Verify a signed RFC 9421 response AND classify its result body for the
 /// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
 /// the class is never trusted from unverified bytes.
-pub fn verify_and_classify_response(
+pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     now: i64,
 ) -> Result<ClassifiedResponse, HttpProfileError> {
@@ -504,9 +505,9 @@ pub struct VerifiedDelegatedResponse {
 /// [`RevocationSource`] consulted with the credential's `delegated_kid`, `issuer_kid`,
 /// and `jti` (an empty [`StaticRevocationList`] is the explicit TTL-only posture — the
 /// deployment relies on short delegated-key TTLs alone).
-pub fn verify_delegated_response(
+pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     policy: &DelegationPolicy,
     revocation: &dyn RevocationSource,
@@ -655,10 +656,10 @@ fn rejection_wire_code(body: &[u8]) -> Option<String> {
 /// Same trust inputs as [`verify_delegated_response`]: the ROOT ISSUER anchor comes
 /// through `resolve_actor` for the `Response` slot, and the credential must satisfy
 /// `policy` (audience scope, accepted epochs, skew) and clear `revocation`.
-pub fn verify_delegated_accepted_202(
+pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &DelegationPolicy,
     revocation: &dyn RevocationSource,
     now: i64,
