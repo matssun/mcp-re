@@ -16,6 +16,14 @@ rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 thiserror = { workspace = true }
 
+# ADR-MCPRE-050: the RFC 9421 / RFC 9530 evidence rides in HTTP headers and the
+# status line, so the client leg must carry a whole HTTP message in BOTH
+# directions. `remote::MtlsRemoteTransport` implements `mcp-re-client-proxy`'s
+# `RemoteTransport` seam over this crate's verifying mTLS client — the implementor
+# depends on the trait owner, so the pure client-proxy library never links rustls.
+mcp-re-client-proxy = { path = "../mcp-re-client-proxy" }
+mcp-re-client-core = { path = "../mcp-re-client-core" }
+
 # MCPS-071 ("test of the tests" / fault injection). The `fault_accept_any_server`
 # feature is a DELIBERATE BREAK of the server-authentication control, used ONLY by
 # the periodic/pre-release fault-injection harness to prove the server-auth guard

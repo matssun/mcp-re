@@ -27,8 +27,11 @@
  * inherent limit, and `unsafeDropNotifications` for the interim escape hatch.
  *
  * MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
- * a `poster` so this layer stays transport-agnostic and testable; `connectMtlsHttp` (the
- * mTLS construction helper) builds on top of it.
+ * a `poster` so this layer stays transport-agnostic and testable, which also means
+ * establishing and hardening the connection (mTLS, pooling, timeouts) is the caller's.
+ * There is no mTLS construction helper in this SDK — see
+ * {@link https://github.com/matssun/mcp-re/issues/413 | #413}. The Rust client leg ships
+ * one (`mcp_re_transport::remote::MtlsRemoteTransport`).
  */
 import { createHash, randomBytes } from "node:crypto";
 

@@ -918,6 +918,8 @@ version = "0.13.0"
 name = "mcp-re-transport"
 version = "0.13.0"
 dependencies = [
+ "mcp-re-client-core",
+ "mcp-re-client-proxy",
  "mcp-re-proxy",
  "rcgen",
  "rustls",

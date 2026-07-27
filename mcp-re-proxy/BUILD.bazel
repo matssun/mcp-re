@@ -621,6 +621,32 @@ nt_rust_test(
         "@crates_mcp_re//:tokio",
     ],
 )
+# The CLIENT LEG of Mode A end-to-end mTLS over a REAL network hop: the real
+# ClientProxy signs, mcp_re_transport's shipped MtlsRemoteTransport carries the
+# exchange over a verifying mTLS socket, and the real async serving path answers.
+# The in-process sibling above never serialises an HTTP byte; this target proves the
+# RFC 9421/9530 evidence survives real framing in BOTH directions and that a signed
+# rejection stays distinguishable from a success.
+nt_rust_test(
+    name = "mtls_client_leg_e2e_test",
+    srcs = ["tests/mtls_client_leg_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
 # ADR-MCPRE-051 §7 load/SLO harness. `manual`: it stands up a primary+2-replica
 # Redis fleet via Docker (or an external MCP_RE_LOADGEN_REDIS_URL), which the Bazel
 # test sandbox cannot provide — so it is excluded from `bazel test //...` and driven

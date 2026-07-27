@@ -338,7 +338,7 @@ MODULE.bazel               Bazel module definition.
 
 mcp-re-core/                 Pure verification crate (no networking/async/fs).
 mcp-re-host/                 Client-side ambassador (signing + bound verify).
-mcp-re-transport/            Verifying mTLS client.
+mcp-re-transport/            Verifying mTLS client + the RemoteTransport it implements (the client leg).
 mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcp-re-policy/               Delegated-authorization profiles (Phase 5).
 mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).

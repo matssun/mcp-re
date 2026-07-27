@@ -13,6 +13,28 @@ nt_rust_library(
     crate_name = "mcp_re_transport",
     edition = "2021",
     deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        "@crates_mcp_re//:thiserror",
+    ],
+)
+
+# Inline crate unit tests: the HTTP/1.1 framing table (`framing_tests`) and the
+# origin-form conversion in `remote`. The framing tests are the fail-closed contract
+# for the ADR-MCPRE-050 carrier — request-splitting refusal, transport-owned headers,
+# and every malformed-response shape — so they must run under `bazel test //...`, not
+# only under cargo. This crate had no lib-test target while it had no inline tests.
+nt_rust_test(
+    name = "mcp_re_transport_test",
+    crate = ":mcp_re_transport",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:thiserror",
@@ -100,6 +122,8 @@ nt_rust_library(
     crate_name = "mcp_re_transport",
     edition = "2021",
     deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
         "@crates_mcp_re//:thiserror",

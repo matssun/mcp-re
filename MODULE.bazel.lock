@@ -1071,7 +1071,7 @@
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
-          "FILE:@@//Cargo.lock a5e5de5dfcbda4a9cd8bf7272157c3e20de769231ff51092afa5831b0cf71c60",
+          "FILE:@@//Cargo.lock f406ccb625dd0a08ac8b98c4e10f032837de67eeb4f57298f895ce4169ec3e47",
           "FILE:@@//Cargo.toml 45150c48060b6af3a0eab115d64e4e895fafac8dd4b39b7f52ed7f833996bb70",
           "FILE:@@//mcp-re-core/Cargo.toml 0ca456c214df50bcf4abb01111bee64098a9dd6bf80e580305cd3d71ac31b05a",
           "FILE:@@//mcp-re-conformance/Cargo.toml 903c70f08adadd94e6c7e33260f72ee27b70024c2a7ef3ae56ac7ca2fd0946f8",
@@ -1082,7 +1082,7 @@
           "FILE:@@//mcp-re-client-core/Cargo.toml 32aaa59e6f6ae7aac402a50beb7a95048e05cd760bc8183645fd7e0178d59db9",
           "FILE:@@//mcp-re-client-proxy/Cargo.toml 351c14aa539d11a018954d92a72d72773967319ff417e8743479d91a265ae223",
           "FILE:@@//mcp-re-test-paths/Cargo.toml 157f5c9030c3784b61ae67e84cfa4e517086de5bd74f669d3114aa73e771c8d8",
-          "FILE:@@//mcp-re-transport/Cargo.toml dc212cbec3e1dd165a1519c750727307350d7822ae2f8eb66da2e3de15f473a0",
+          "FILE:@@//mcp-re-transport/Cargo.toml 9072eff6d1c10bb4431610882382a41eba302f02d7f889b84f327a6a10fb26a2",
           "FILE:@@//mcp-re-demo/Cargo.toml 6922af8f73799fd6f7e1c580d9922b915472510a263c08d64d0cf679eb9dd227",
           "FILE:@@gazelle_rust+//Cargo.lock 0f5ccb0b0c90eaf9ca15866694cd30b7d7d6c16eed0c58a82f5cbdcf1aa65765",
           "FILE:@@gazelle_rust+//Cargo.toml c882cf0e33f7108e7672a9ea15baef710100b07295c920dbea10d47d43f75866"
