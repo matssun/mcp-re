@@ -357,11 +357,17 @@ async fn handle_request<H: AsyncRequestHandler>(
     // count fall to zero exactly when the last request finishes.
     let _in_flight_guard = InFlightGuard::new(&in_flight_requests);
 
+    // A header value that is not valid UTF-8 has no lossy rendering this profile can
+    // safely use, so the request is refused here — before any view of it is built.
+    // See [`malformed_header_response`].
+    if req.headers().values().any(|value| value.to_str().is_err()) {
+        return Ok(malformed_header_response());
+    }
+
     // A header view with the SAME case-insensitive lookup + duplicate-count
     // semantics the blocking path's `RequestHeaders::parse` produces (used by the
     // reverse-proxy identity provider, the Tier-3 assertion extractor, and the
-    // routing-header hygiene guard). Non-UTF-8 header values become empty — treated
-    // as absent, i.e. fail closed.
+    // routing-header hygiene guard).
     let headers = RequestHeaders::from_pairs(
         req.headers()
             .iter()
@@ -441,6 +447,28 @@ fn served_to_hyper(resp: ServedHttpResponse) -> Response<Full<Bytes>> {
                 .body(Full::new(Bytes::new()))
                 .expect("static response builds")
         })
+}
+
+/// Fail-closed reply when a header value is not valid UTF-8: an empty `400`, the
+/// handler never reached.
+///
+/// The profile has no lossy rendering of such a value that is safe. Substituting
+/// `""` makes a COVERED component resolve to an empty line in the signature base —
+/// exactly the "never a blank line, always an error" case `sigbase` refuses to
+/// produce — and omitting the header instead hides a duplicate from the
+/// exactly-once rules that `sigbase::component_value` and
+/// [`crate::transport::RequestHeaders::count`] rely on to fail closed on a
+/// duplicated covered field or trust header. One direction fabricates a signable
+/// value, the other conceals a duplicate, so the message is refused at the boundary
+/// rather than rendered into a view that cannot represent it.
+///
+/// Nothing conformant is lost: a covered component's value must be an RFC 8941
+/// string, and this profile's signature base is UTF-8 by construction.
+fn malformed_header_response() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(400)
+        .body(Full::new(Bytes::new()))
+        .expect("static response builds")
 }
 
 /// Fail-closed reply when the body exceeds `max_body_bytes` or the read deadline

@@ -54,11 +54,49 @@ pub struct SignatureParams {
     pub tag: Option<String>,
 }
 
+/// Refuse a string signature parameter that RFC 8941 §3.3.3 cannot carry verbatim.
+///
+/// An `sf-string` is printable ASCII (0x20–0x7E) in which `"` and `\` may appear
+/// only as the two-character escapes `\"` and `\\`. This profile refuses those two
+/// characters outright rather than escaping them, for the same reason it refuses
+/// `created=+1` and `created=0017` (see `verify::parse_i64`): the signature base is
+/// rebuilt from PARSED values and re-serialized canonically, so any two wire
+/// spellings that parse to one value collapse to one base. With escaping admitted,
+/// an intermediary could rewrite the header between equivalent spellings and the
+/// signature would still verify, leaving anyone who reads the raw bytes looking at
+/// something other than what was signed. Refusing keeps the on-wire form pinned,
+/// which is the property this profile actually needs.
+///
+/// Nothing legitimate is lost: `alg` and `tag` come from closed sets, `keyid` from
+/// deployment configuration, and `nonce` is base64url. None of them can contain a
+/// quote or a backslash without being malformed already.
+pub(crate) fn validate_sf_string(
+    value: &str,
+    what: &'static str,
+) -> Result<(), HttpProfileError> {
+    let ok = value
+        .bytes()
+        .all(|b| (0x20..=0x7E).contains(&b) && b != b'"' && b != b'\\');
+    if ok {
+        Ok(())
+    } else {
+        Err(HttpProfileError::MalformedEvidence(what))
+    }
+}
+
 impl SignatureParams {
     /// Serialize the inner list `("a" "b" ...);created=...;keyid="..."` — the
     /// value of the `@signature-params` line and of the `Signature-Input`
     /// dictionary member.
-    pub fn serialize_with(&self, components: &[CoveredComponent]) -> String {
+    ///
+    /// Fallible because a string parameter that RFC 8941 cannot carry verbatim must
+    /// not be EMITTED, not merely rejected on the way back in: a signer that wrote
+    /// one would produce a header no conforming parser reads the way this profile
+    /// does. See [`validate_sf_string`].
+    pub fn serialize_with(
+        &self,
+        components: &[CoveredComponent],
+    ) -> Result<String, HttpProfileError> {
         let list = components
             .iter()
             .map(CoveredComponent::identifier)
@@ -72,18 +110,22 @@ impl SignatureParams {
             out.push_str(&format!(";expires={expires}"));
         }
         if let Some(nonce) = &self.nonce {
+            validate_sf_string(nonce, "nonce signature parameter")?;
             out.push_str(&format!(";nonce=\"{nonce}\""));
         }
         if let Some(keyid) = &self.keyid {
+            validate_sf_string(keyid, "keyid signature parameter")?;
             out.push_str(&format!(";keyid=\"{keyid}\""));
         }
         if let Some(alg) = &self.alg {
+            validate_sf_string(alg, "alg signature parameter")?;
             out.push_str(&format!(";alg=\"{alg}\""));
         }
         if let Some(tag) = &self.tag {
+            validate_sf_string(tag, "tag signature parameter")?;
             out.push_str(&format!(";tag=\"{tag}\""));
         }
-        out
+        Ok(out)
     }
 }
 
@@ -209,7 +251,7 @@ pub fn signature_base(
     }
     lines.push(format!(
         "\"@signature-params\": {}",
-        params.serialize_with(components)
+        params.serialize_with(components)?
     ));
     Ok(lines.join("\n").into_bytes())
 }

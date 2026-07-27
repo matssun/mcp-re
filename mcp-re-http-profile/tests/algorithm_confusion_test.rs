@@ -75,7 +75,7 @@ fn signed_declaring(alg: &str) -> HttpRequest {
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(&sig);
     r.headers.push((
         "Signature-Input".into(),
-        format!("mcp-re={}", params.serialize_with(&comps)),
+        format!("mcp-re={}", params.serialize_with(&comps).expect("the test params are RFC 8941 strings")),
     ));
     r.headers.push(("Signature".into(), format!("mcp-re=:{sig_b64}:")));
     r

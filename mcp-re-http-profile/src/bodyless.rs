@@ -134,7 +134,7 @@ fn emit(
     set_header(
         headers,
         "Signature-Input",
-        format!("{label}={}", params.serialize_with(components)),
+        format!("{label}={}", params.serialize_with(components)?),
     );
     set_header(
         headers,

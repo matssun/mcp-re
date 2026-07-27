@@ -486,3 +486,123 @@ fn stuck_request_cannot_delay_exit_past_grace() {
         "exit must be bounded by the grace window even with a stuck in-flight request, took {join_time:?}",
     );
 }
+
+// --- non-UTF-8 header values fail closed at the boundary (C082) ---------------
+
+/// Send a request whose named header carries raw bytes, and return the status.
+///
+/// Written at the byte level on purpose: no typed HTTP client will let a caller
+/// construct this, which is exactly why the boundary has to handle it.
+fn request_status_with_raw_header(
+    addr: SocketAddr,
+    config: &ClientConfig,
+    header_line: &[u8],
+) -> std::io::Result<u16> {
+    let mut stream = tls_connect(addr, config)?;
+    let mut head =
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n".to_vec();
+    head.extend_from_slice(header_line);
+    head.extend_from_slice(b"\r\n\r\n");
+    stream.write_all(&head)?;
+    stream.write_all(b"{}")?;
+    stream.flush()?;
+    read_status(&mut stream)
+}
+
+/// THE regression. The boundary rendered a non-UTF-8 header value as `""` in the
+/// header block the RFC 9421 signature base is computed from. For a COVERED
+/// component that is not "absent": `sigbase` resolves it to an empty value and emits
+/// `"<name>": ` as a base line — the blank line it fails closed to avoid producing
+/// everywhere else.
+///
+/// Omitting the header instead would be worse, not better: the exactly-once rules in
+/// `sigbase::component_value` and `RequestHeaders::count` fail closed on a DUPLICATE
+/// covered field or trust header, and a dropped header takes the duplicate with it.
+/// One lossy direction fabricates a signable value, the other conceals a duplicate,
+/// so the request is refused instead.
+#[test]
+fn a_non_utf8_header_value_is_refused_at_the_boundary() {
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let reached = Arc::new(AtomicUsize::new(0));
+    let reached_h = Arc::clone(&reached);
+    let server = spawn_server(
+        config,
+        options_with_drain(Duration::from_secs(5), Duration::from_secs(10)),
+        move |req, _id, _a| {
+            reached_h.fetch_add(1, Ordering::SeqCst);
+            req.to_vec()
+        },
+    );
+
+    let client = client_config(&client_ca);
+    // A lone 0xFF is not valid UTF-8 in any position.
+    let mut line = b"X-Covered-Ish: ".to_vec();
+    line.push(0xFF);
+    let status = request_status_with_raw_header(server.addr, &client, &line)
+        .expect("the server answers rather than dropping the connection");
+
+    assert_eq!(status, 400, "a non-UTF-8 header value must fail closed");
+    assert_eq!(
+        reached.load(Ordering::SeqCst),
+        0,
+        "the handler must never see a request the profile cannot represent"
+    );
+}
+
+/// The same value duplicated: the case that makes OMITTING the wrong repair. Both
+/// copies must be accounted for, and the only way to do that without a lossy
+/// rendering is to refuse the message.
+#[test]
+fn a_duplicated_non_utf8_header_is_refused_rather_than_silently_deduplicated() {
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let reached = Arc::new(AtomicUsize::new(0));
+    let reached_h = Arc::clone(&reached);
+    let server = spawn_server(
+        config,
+        options_with_drain(Duration::from_secs(5), Duration::from_secs(10)),
+        move |req, _id, _a| {
+            reached_h.fetch_add(1, Ordering::SeqCst);
+            req.to_vec()
+        },
+    );
+
+    let client = client_config(&client_ca);
+    let mut line = b"X-Trusty: legitimate\r\nX-Trusty: ".to_vec();
+    line.push(0x80); // a bare continuation byte — never valid on its own
+    let status = request_status_with_raw_header(server.addr, &client, &line)
+        .expect("the server answers");
+
+    assert_eq!(status, 400);
+    assert_eq!(reached.load(Ordering::SeqCst), 0);
+}
+
+/// The mirror: ordinary ASCII headers, including a duplicate, still reach the
+/// handler. The guard must reject unrepresentable values, not merely reject.
+#[test]
+fn ordinary_header_values_still_reach_the_handler() {
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let reached = Arc::new(AtomicUsize::new(0));
+    let reached_h = Arc::clone(&reached);
+    let server = spawn_server(
+        config,
+        options_with_drain(Duration::from_secs(5), Duration::from_secs(10)),
+        move |req, _id, _a| {
+            reached_h.fetch_add(1, Ordering::SeqCst);
+            req.to_vec()
+        },
+    );
+
+    let client = client_config(&client_ca);
+    let status = request_status_with_raw_header(
+        server.addr,
+        &client,
+        b"X-Plain: one\r\nX-Plain: two",
+    )
+    .expect("the server answers");
+
+    assert_eq!(status, 200);
+    assert_eq!(reached.load(Ordering::SeqCst), 1);
+}

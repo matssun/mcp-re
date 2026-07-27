@@ -148,12 +148,29 @@ pub(crate) struct ParsedSignatureInput {
 
 /// Split a Structured Fields dictionary into members at top-level commas
 /// (commas inside quoted strings do not split).
+///
+/// The quote state honours RFC 8941 `\` escapes. Without that, a `\"` inside a
+/// member's string value toggled the state and left it odd, so the next top-level
+/// comma was swallowed and TWO dictionary members merged into one — and this runs
+/// BEFORE any value is validated, so the profile would be reading the merged text
+/// as a single member's parameters before anything could reject the value that
+/// caused it. Every construction traced from there still failed closed downstream,
+/// but "the parser recovers by erroring" is not the same as splitting the
+/// dictionary the way every other RFC 8941 implementation does.
 fn split_dictionary(value: &str) -> Vec<&str> {
     let mut members = Vec::new();
     let mut start = 0usize;
     let mut in_quotes = false;
+    let mut escaped = false;
     for (i, c) in value.char_indices() {
+        if escaped {
+            // Inside a string, `\` escapes exactly one following character; it never
+            // ends the string.
+            escaped = false;
+            continue;
+        }
         match c {
+            '\\' if in_quotes => escaped = true,
             '"' => in_quotes = !in_quotes,
             ',' if !in_quotes => {
                 members.push(value[start..i].trim());
@@ -164,6 +181,37 @@ fn split_dictionary(value: &str) -> Vec<&str> {
     }
     members.push(value[start..].trim());
     members
+}
+
+/// Split a signature-input's parameter section at top-level `;` — semicolons inside
+/// a quoted string are part of the value, not separators.
+///
+/// Same reasoning as [`split_dictionary`]: a `;` inside a `nonce` used to cut the
+/// value in half and produce a parameter list that was never on the wire. The halves
+/// then failed to unquote, so this was fail-closed too, but the parse disagreed with
+/// a conforming one before it got there.
+fn split_parameters(value: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (i, c) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            ';' if !in_quotes => {
+                parts.push(value[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(value[start..].trim());
+    parts
 }
 
 /// Find the member value for `label` in a `Signature-Input`/`Signature`
@@ -287,7 +335,7 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
 
     let mut params = SignatureParams::default();
     let mut last_param_rank: i32 = -1;
-    for p in value[close + 1..].split(';') {
+    for p in split_parameters(&value[close + 1..]) {
         let p = p.trim();
         if p.is_empty() {
             continue;
@@ -295,13 +343,24 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         let (k, v) = p
             .split_once('=')
             .ok_or(HttpProfileError::MalformedEvidence("signature parameter"))?;
+        // A quoted string parameter, held to exactly what this profile will EMIT
+        // (`sigbase::validate_sf_string`): printable ASCII with no `"` and no `\`.
+        //
+        // The escape forms RFC 8941 permits are refused rather than decoded. The
+        // verifier rebuilds `@signature-params` from these parsed values and
+        // re-serializes them canonically, so decoding `\"` would make two wire
+        // spellings collapse to one signature base — the same defect the profile
+        // already refuses for `created=+1` (see `parse_i64`). Refusing keeps the
+        // received bytes and the signed bytes in one-to-one correspondence.
         let unquote = |v: &str| -> Result<String, HttpProfileError> {
-            v.strip_prefix('"')
+            let inner = v
+                .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
-                .map(str::to_owned)
                 .ok_or(HttpProfileError::MalformedEvidence(
                     "quoted signature parameter",
-                ))
+                ))?;
+            crate::sigbase::validate_sf_string(inner, "quoted signature parameter")?;
+            Ok(inner.to_owned())
         };
         // Strict Structured Fields (MCPRE-98): the profile's parameter set is
         // closed AND ordered. The verifier normalizes to a canonical order when
