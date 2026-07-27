@@ -26,7 +26,6 @@ package(default_visibility = ["//visibility:public"])
 _PROXY_LIB_SRCS = [
     # ADR-MCPS-022: explicit authorized server key-set + per-audience response-
     # signing identity mode (per_node_keyset / shared_remote_signer).
-    "src/authorized_keyset.rs",
     # ADR-MCPS-028 §B: native AWS KMS Ed25519 response signer (blocking ureq HTTPS +
     # minimal audited SigV4; behind #[cfg(feature = "aws_kms_keysource")], cfg'd out
     # of the default build). No async aws-sdk-kms/tokio (ADR-MCPS-018 lean-sync).

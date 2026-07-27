@@ -35,7 +35,6 @@
 // ADR-MCPS-022: explicit authorized server key set + per-audience response-signing
 // identity mode (per_node_keyset default | shared_remote_signer). The verifier-side
 // admission anchor; composes with `trust_cache::BoundedTrustCache` (ADR-MCPS-021).
-pub mod authorized_keyset;
 // ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
 // snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
 // pure std (RwLock<Arc<ServerConfig>>), no new dependency.
@@ -190,12 +189,6 @@ pub mod trust_epoch;
 // the bounded-`T` window + negative-cache classification + fail-closed rules.
 pub mod trust_cache;
 
-pub use authorized_keyset::AuthorizedKeyEntry;
-pub use authorized_keyset::AuthorizedKeySet;
-pub use authorized_keyset::KeySetError;
-pub use authorized_keyset::KeySetTrustResolver;
-pub use authorized_keyset::KeyStatus;
-pub use authorized_keyset::ResponseSigningIdentityMode;
 // ADR-MCPS-028 §B: the AWS KMS Ed25519 backend (feature-gated). Drives the
 // `KmsResponseSigner` core via the `KmsEd25519Backend` seam.
 #[cfg(feature = "aws_kms_keysource")]

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# MCP-RE supply-chain gate — enforces the policy in //deny.toml (audit gap G-4,
+# MCPS-077, issue #3980).
+#
+# Why this is a workflow and not a Bazel test: cargo-deny needs network at check
+# time (it fetches the RustSec advisory DB from GitHub) and a prebuilt binary, so
+# it cannot run hermetically under Bazel. That was the documented G-4 remediation
+# decision (Option 1) — the policy is CI-enforced by design.
+#
+# Coverage: this repository has FOUR independent Cargo lockfiles, and a crate is
+# only assessed if the manifest that reaches it is checked. The root workspace is
+# the shipped proxy; the two SDK workspaces are separate crate universes with
+# their own transitive trees (pyo3, napi); mock-pkcs11 is a test-only provider
+# that is still compiled and linked by the proxy's PKCS#11 suite. All four are
+# checked against the SAME //deny.toml, so one policy governs the whole repo.
+#
+# The `schedule` trigger is the point of an advisory gate: the RustSec DB moves
+# independently of this repository, so a tree that passed on merge day can carry
+# a published vulnerability a week later with no commit to trigger a re-check.
+name: supply chain (cargo-deny)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # Policy, lockfiles, and the workflow itself. A dependency change lands in a
+    # Cargo.lock, so that is the file that has to re-trigger the gate.
+    paths:
+      - "deny.toml"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/mcp-re-supply-chain.yml"
+  schedule:
+    # Daily, 04:17 UTC — off the hour to avoid GitHub's scheduling stampede.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the version documented in deny.toml's local-validation recipe, so a
+  # green CI run and a green local run mean the same thing. Bump both together.
+  CARGO_DENY_VERSION: "0.19.8"
+  # SHA-256 of cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz
+  # from the upstream GitHub release. Verified before the binary is executed: a
+  # supply-chain gate that installs an unverified binary is theatre. Re-compute
+  # with `shasum -a 256` when CARGO_DENY_VERSION changes.
+  CARGO_DENY_SHA256: "70e769ae3872e34d45132b17040859175e11401dc12dddb0303e0b8c7d088f3f"
+
+jobs:
+  cargo-deny:
+    name: cargo deny (advisories, licenses, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fetched as a pinned release artifact rather than via a third-party
+      # action: it keeps the set of actions this repo trusts unchanged, and the
+      # checksum below is the actual integrity control either way.
+      - name: Install cargo-deny ${{ env.CARGO_DENY_VERSION }} (checksum-verified)
+        run: |
+          set -euo pipefail
+          dir="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          url="https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${dir}.tar.gz"
+          curl -fsSL --retry 3 -o cargo-deny.tar.gz "$url"
+          echo "${CARGO_DENY_SHA256}  cargo-deny.tar.gz" | sha256sum --check --strict
+          tar -xzf cargo-deny.tar.gz
+          install -m 0755 "${dir}/cargo-deny" /usr/local/bin/cargo-deny
+          cargo-deny --version
+
+      # One policy, every lockfile. Each manifest is checked in its own step so a
+      # failure names the workspace at fault instead of one merged wall of output.
+      - name: Root workspace (shipped proxy + conformance)
+        run: cargo deny --manifest-path Cargo.toml check advisories licenses bans sources
+
+      - name: sdk/python (pyo3 crate universe)
+        run: cargo deny --manifest-path sdk/python/Cargo.toml check advisories licenses bans sources
+
+      - name: sdk/typescript (napi crate universe)
+        run: cargo deny --manifest-path sdk/typescript/Cargo.toml check advisories licenses bans sources
+
+      - name: mcp-re-proxy/tests/mock-pkcs11 (in-tree mock provider)
+        run: cargo deny --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml check advisories licenses bans sources

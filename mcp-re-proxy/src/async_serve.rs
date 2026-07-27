@@ -249,6 +249,40 @@ pub async fn serve<H: AsyncRequestHandler>(
     }
 }
 
+/// Is the received request-target inconsistent with the configured `@target-uri`?
+///
+/// Returns `Some(received_origin_form)` on a mismatch, `None` when consistent. Compares
+/// the ORIGIN FORM (path + query) only: the scheme and authority of the external target
+/// are exactly the parts a TLS-terminating proxy cannot observe, which is why the
+/// operator asserts the whole URI in the first place. The path is what the ingress
+/// routes on and what this process CAN see, so it is the part whose assertion is
+/// checkable.
+///
+/// An empty configured target is not checked here — `--target-uri` is already required
+/// and non-empty at parse, and the verifier fails closed on a blank covered value.
+fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
+    if configured.is_empty() {
+        return None;
+    }
+    let configured_origin = origin_form_of(configured)?;
+    let received_origin = received
+        .path_and_query()
+        .map(|pq| pq.as_str().to_owned())
+        .unwrap_or_else(|| "/".to_owned());
+    (configured_origin != received_origin).then_some(received_origin)
+}
+
+/// The path+query of an absolute URI, or `None` when it has no `://` (not absolute —
+/// the parse-time check already rejects that, so there is nothing to compare against).
+fn origin_form_of(absolute: &str) -> Option<String> {
+    let authority_start = absolute.find("://")? + 3;
+    let authority = &absolute[authority_start..];
+    Some(match authority.find('/') {
+        Some(offset) => authority[offset..].to_owned(),
+        None => "/".to_owned(),
+    })
+}
+
 /// Terminate TLS on one accepted socket and serve HTTP/1.1 keep-alive + HTTP/2 over
 /// it. The handshake is bounded by the aggregate `request_deadline` (slow-loris on
 /// the handshake read); the peer leaf certificate is captured once (hyper then owns
@@ -378,6 +412,25 @@ async fn handle_request<H: AsyncRequestHandler>(
     // and the full header block (carrying `Signature`/`Signature-Input`/`Content-Digest`)
     // the handler needs to verify the HTTP evidence carrier (ADR-MCPRE-050).
     let method = req.method().as_str().to_owned();
+    // C008/C045/C046: the covered `@target-uri` is the operator's configured value, not
+    // the received line. That substitution IS the ruled reconstruction mechanism — a
+    // proxy behind TLS termination cannot see the external target URI, so the operator
+    // asserts it (`http-profile-open-questions.md`: "exact reconstruction of the
+    // external @target-uri is mandatory; if it cannot be reconstructed, strict
+    // verification fails"). What was missing is EXACT. Nothing checked the assertion
+    // against reality, so a deployment fanning several ingress paths into one process
+    // silently verified signatures over a target the request did not arrive at, and
+    // the verifier's `expected_audience.target_uri != request.target_uri` check
+    // compared the configured value with itself.
+    //
+    // Compare the received origin-form against the configured target's, and fail
+    // closed on a mismatch. This does not bind the received line INTO the signature
+    // (both ends must still agree on one canonical absolute URI); it refuses to serve
+    // where the operator's assertion is provably not a reconstruction of this request.
+    if let Some(mismatch) = target_uri_mismatch(&options.target_uri, req.uri()) {
+        let _ = mismatch;
+        return Ok(malformed_header_response());
+    }
     let header_pairs: Vec<(String, String)> = req
         .headers()
         .iter()
@@ -490,4 +543,68 @@ fn overloaded_response() -> Response<Full<Bytes>> {
         .status(503)
         .body(Full::new(Bytes::new()))
         .expect("static response builds")
+}
+
+#[cfg(test)]
+mod target_uri_tests {
+    use super::*;
+
+    fn uri(value: &str) -> hyper::Uri {
+        value.parse().expect("test uri")
+    }
+
+    #[test]
+    fn a_matching_origin_form_is_consistent() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=a")),
+            None
+        );
+    }
+
+    /// The finding: an ingress fanning several paths into one process meant the
+    /// operator's asserted target was not a reconstruction of the request that
+    /// arrived, and nothing noticed.
+    #[test]
+    fn a_different_received_path_is_refused() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/other?route=a")),
+            Some("/other?route=a".to_owned())
+        );
+    }
+
+    /// The query is part of the request-target and part of the route coordinate, so a
+    /// differing query is a differing target — not a detail to normalise away.
+    #[test]
+    fn a_different_query_is_refused() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=b")),
+            Some("/mcp?route=b".to_owned())
+        );
+    }
+
+    /// Scheme and authority are exactly what a TLS-terminating proxy cannot observe —
+    /// they are why the operator asserts the URI at all — so they are not compared.
+    #[test]
+    fn the_configured_authority_is_not_compared() {
+        assert_eq!(
+            target_uri_mismatch("https://external.example.com/mcp", &uri("/mcp")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_root_target_matches_a_root_request() {
+        assert_eq!(target_uri_mismatch("https://mcp.example.com", &uri("/")), None);
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/", &uri("/")),
+            None
+        );
+    }
+
+    /// An unset target is not checked here: `--target-uri` is required and non-empty at
+    /// parse, and a blank covered value already fails verification closed.
+    #[test]
+    fn an_empty_configured_target_is_not_checked_here() {
+        assert_eq!(target_uri_mismatch("", &uri("/anything")), None);
+    }
 }
