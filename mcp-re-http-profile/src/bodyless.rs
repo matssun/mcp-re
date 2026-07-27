@@ -486,10 +486,15 @@ pub fn sign_bodyless_request(
         "Content-Digest",
         content_digest_sha256(&[]),
     );
-    let components: Vec<CoveredComponent> = BODYLESS_REQUEST_COMPONENTS
+    let mut components: Vec<CoveredComponent> = BODYLESS_REQUEST_COMPONENTS
         .iter()
         .map(|n| CoveredComponent::new(n))
         .collect();
+    // Cover the mandatory-if-present headers too (§4.1). The base set is closed and
+    // body-shaped; these are properties of the REQUEST, and a bodyless request can carry
+    // an `Authorization` header just as a bodied one can. Without this the signer could
+    // not produce a message its own verifier would now accept.
+    components.extend(crate::sign::conditional_request_components(&request.headers)?);
     let params = params_for(key_id, created, expires, Some(nonce));
     let base = signature_base(&components, &params, &SourceMessage::Request(request))?;
     emit(
@@ -532,6 +537,11 @@ pub fn verify_bodyless_request(
             "content-type covered on a bodyless message",
         ));
     }
+    // PRESENT ⇒ COVERED for the conditionally-mandatory request headers (§4.1), the
+    // same rule and the same code the bodied path uses. Missing here, a bodyless
+    // request could present an `Authorization`/`DPoP` credential or an `Mcp-Method`
+    // routing claim entirely outside its signature.
+    crate::verify::require_conditional_coverage(&request.headers, &parsed.components)?;
     let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, policy, now, true)?;
     let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;

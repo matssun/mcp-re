@@ -306,3 +306,131 @@ fn the_bodied_request_set_still_requires_content_type() {
         "the bodied set is unchanged"
     );
 }
+
+// --- C047: PRESENT ⇒ COVERED on the bodyless request set --------------------
+//
+// The bodied request path enforces that `authorization`, `dpop`, and the MCP transport
+// headers are covered whenever they are present. The bodyless path (§8.1) enforced
+// none of them, and its signer built components from a closed three-element set so it
+// could not have covered them anyway. A bodyless request could therefore present a
+// bearer credential entirely outside its own signature.
+
+/// A bodyless request carrying `Authorization` must have it COVERED — and the signer
+/// must produce exactly that, or the two ends disagree.
+#[test]
+fn a_bodyless_request_covers_a_present_authorization_header() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-auth")
+        .expect("signs");
+    assert!(
+        signature_input_of(&req).contains("\"authorization\""),
+        "the signer must cover a present authorization header: {}",
+        signature_input_of(&req)
+    );
+    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+        .expect("a bodyless request with a covered credential verifies");
+}
+
+/// The attack the gap allowed: swap the presented bearer token. With the credential
+/// covered this breaks the signature; the point of this test is that the header cannot
+/// be left uncovered in the first place — see the sibling test below.
+#[test]
+fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-swap")
+        .expect("signs");
+    for (name, value) in req.headers.iter_mut() {
+        if name.eq_ignore_ascii_case("authorization") {
+            *value = "Bearer token-ATTACKER".into();
+        }
+    }
+    assert!(
+        verify_bodyless_request(&req, &resolver(), &policy(), NOW).is_err(),
+        "a swapped bearer token must invalidate the signature"
+    );
+}
+
+/// The core of C047: a credential ADDED after signing — so it is present but not
+/// covered — must be rejected rather than silently accepted as part of the request.
+/// Before the fix this verified, because the bodyless verifier never asked.
+#[test]
+fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-inject")
+        .expect("signs");
+    // An intermediary attaches a credential the signature says nothing about.
+    req.headers.push(("Authorization".into(), "Bearer token-INJECTED".into()));
+    assert_eq!(
+        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::MissingCoveredComponent("authorization"),
+        "a present-but-uncovered credential must fail closed, not ride along"
+    );
+}
+
+/// Same rule for `dpop` and for the MCP transport headers, so the fix is not
+/// authorization-specific.
+#[test]
+fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected() {
+    for (header, expected) in [
+        ("DPoP", "dpop"),
+        ("Mcp-Method", "mcp-method"),
+        ("Mcp-Name", "mcp-name"),
+        ("Mcp-Protocol-Version", "mcp-protocol-version"),
+    ] {
+        let mut req = HttpRequest {
+            method: "DELETE".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![],
+            body: Vec::new(),
+        };
+        sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-h")
+            .expect("signs");
+        req.headers.push((header.into(), "injected".into()));
+        assert_eq!(
+            verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+            HttpProfileError::MissingCoveredComponent(expected),
+            "an uncovered {header} must fail closed on the bodyless path"
+        );
+    }
+}
+
+/// And the signer covers each of them when present, so a legitimately-signed bodyless
+/// request carrying them still round-trips. Without this half the fix would simply make
+/// those requests unsignable.
+#[test]
+fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Authorization".into(), "Bearer t".into()),
+            ("DPoP".into(), "proof".into()),
+            ("Mcp-Method".into(), "notifications/cancelled".into()),
+            ("Mcp-Name".into(), "tool-a".into()),
+            ("Mcp-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-all")
+        .expect("signs");
+    let input = signature_input_of(&req);
+    for name in ["authorization", "dpop", "mcp-method", "mcp-name", "mcp-protocol-version"] {
+        assert!(input.contains(&format!("\"{name}\"")), "{name} must be covered: {input}");
+    }
+    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
+}

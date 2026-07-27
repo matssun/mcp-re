@@ -192,16 +192,26 @@ The current implementation demonstrates a complete end-to-end **four-hop** path:
 
 ```text
 plain-MCP client (unmodified)
-  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs the RFC 9421 request, binds authz)
+  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs the RFC 9421 request,
+                                                      binds the authorization artifact)
   -> mTLS transport
   -> mcp-re-proxy  (server-side PEP)
   -> Core signature / freshness / replay verification
-  -> delegated authorization (deny-before-dispatch)
   -> verified-context injection
   -> unmodified inner MCP server
   -> signed response
   -> client-side response verification (correlated, bound, stripped to plain MCP)
 ```
+
+The request BINDS its authorization artifact (the artifact bindings are covered by
+the signature, and a request with none fails closed), but the PEP does not yet
+EVALUATE that artifact on this carrier: deny-before-dispatch authorization was
+delivered on the superseded object/JCS carrier and has not been rebuilt on RFC 9421
+(ADR-MCPS-013). This is enforced rather than merely noted — the only non-`off`
+value of `--authz` is the reference/conformance profile, which the proxy refuses at
+startup, so no parseable configuration runs a policy the serving path would ignore.
+Authorization decisions are the deploying system's responsibility until a production
+profile lands.
 
 ## Deployment profiles
 

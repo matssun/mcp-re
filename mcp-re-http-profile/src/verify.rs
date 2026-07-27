@@ -514,6 +514,48 @@ pub(crate) fn parse_signature_input_for(
 
 /// [`require_components`] for the bodyless sets — same enforcement, invoked with
 /// a different NAMED set.
+/// Enforce PRESENT ⇒ COVERED for every conditionally-mandatory request header
+/// (§4.1): `authorization`, `dpop`, and the MCP transport headers.
+///
+/// Presence is the condition rather than a configured protocol version, because that
+/// is the question the verifier can answer from the message in front of it: if the
+/// sender put the header on the wire, the signature covers it or the request is
+/// rejected. A deployment whose version does not define these simply never sends them
+/// and nothing here fires.
+///
+/// Shared by the bodied and BODYLESS request paths. The bodyless path (§8.1) had none
+/// of these checks, which meant a bodyless request could carry an
+/// `Authorization: Bearer <token>` — or an `Mcp-Method` contradicting nothing because
+/// there is no body to contradict — entirely outside its signature. An intermediary
+/// could then add or swap the presented credential without invalidating anything,
+/// which is precisely what covering it prevents on the bodied path. Two copies of a
+/// rule this shape is how one of them ends up missing, so there is one copy.
+pub(crate) fn require_conditional_coverage(
+    headers: &[(String, String)],
+    covered: &[CoveredComponent],
+) -> Result<(), HttpProfileError> {
+    for header in conditionally_covered_request_headers() {
+        // `single_header` also fails closed on a duplicated header, so a smuggled
+        // second `authorization` cannot slip past by being the uncovered one.
+        if single_header(headers, header)?.is_some()
+            && !covered.iter().any(|c| !c.req && c.name == header)
+        {
+            return Err(HttpProfileError::MissingCoveredComponent(header));
+        }
+    }
+    Ok(())
+}
+
+/// Every request header that is mandatory-if-present, in one place so the signer and
+/// the verifier cannot disagree about the set: `authorization`/`dpop` bind the presented
+/// credential surface, and [`MCP_COVERABLE_TRANSPORT_HEADERS`] binds the routing claims
+/// made in the clear (whose rationale lives on that constant).
+pub(crate) fn conditionally_covered_request_headers() -> impl Iterator<Item = &'static str> {
+    ["authorization", "dpop"]
+        .into_iter()
+        .chain(MCP_COVERABLE_TRANSPORT_HEADERS)
+}
+
 pub(crate) fn require_components_for(
     covered: &[CoveredComponent],
     required_plain: &[&'static str],
@@ -601,31 +643,7 @@ pub fn verify_request_with_policy(
             "req component on a request",
         ));
     }
-    // Conditional coverage is mandatory when the header is present.
-    if single_header(&request.headers, "authorization")?.is_some()
-        && !parsed.components.iter().any(|c| c.name == "authorization")
-    {
-        return Err(HttpProfileError::MissingCoveredComponent("authorization"));
-    }
-    if single_header(&request.headers, "dpop")?.is_some()
-        && !parsed.components.iter().any(|c| c.name == "dpop")
-    {
-        return Err(HttpProfileError::MissingCoveredComponent("dpop"));
-    }
-    // MCP transport headers (§4.1): conditionally mandatory on exactly the
-    // `authorization`/`dpop` pattern above — present means covered. Presence is
-    // the condition rather than a configured protocol version because that is the
-    // question the verifier can actually answer from the message in front of it:
-    // if the sender put the header on the wire, the signature covers it or the
-    // request is rejected. A deployment whose version does not define these
-    // simply never sends them, and nothing here fires.
-    for header in MCP_COVERABLE_TRANSPORT_HEADERS {
-        if single_header(&request.headers, header)?.is_some()
-            && !parsed.components.iter().any(|c| c.name == header)
-        {
-            return Err(HttpProfileError::MissingCoveredComponent(header));
-        }
-    }
+    require_conditional_coverage(&request.headers, &parsed.components)?;
     let (created, expires, nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
