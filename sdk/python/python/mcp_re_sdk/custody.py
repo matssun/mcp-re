@@ -172,8 +172,30 @@ class Signer:
         Raises :class:`SignerUnavailable` if a non-exporting device cannot sign, and
         :class:`ValueError` carrying a frozen wire code for a genuine protocol failure.
         """
+        return self._sign(_core.sign_request, _core.sign_request_with_signer, **kwargs)
+
+    def sign_notification(self, **kwargs) -> "_core.PySignedRequest":
+        """Sign a one-way MCP notification, dispatching on custody class.
+
+        Same custody rules and the same failure modes as :meth:`sign_request` — a
+        notification is signed by the ordinary request rules, so custody has nothing
+        different to say about it. Only the JSON-RPC envelope differs (no ``id``), and
+        the answer is a signed bodyless 202 rather than a bodied reply.
+        """
+        return self._sign(
+            _core.sign_notification, _core.sign_notification_with_signer, **kwargs
+        )
+
+    def _sign(self, software, non_exporting, **kwargs) -> "_core.PySignedRequest":
+        """Dispatch one signing operation on custody class.
+
+        Shared by both message shapes on purpose: a notification that took a different
+        route through custody could pick up a different device-failure posture, and two
+        signing paths disagreeing about what a broken device means is exactly the
+        divergence this SDK pair has been bitten by before.
+        """
         if self.custody is CustodyClass.SOFTWARE:
-            return _core.sign_request(self._seed, self.key_id, **kwargs)
+            return software(self._seed, self.key_id, **kwargs)
 
         # The core cannot tell "the device is broken" from "the signature is bad" — it
         # only sees a callback that failed, and maps that to a wire code. Capture what
@@ -200,7 +222,7 @@ class Signer:
             return bytes(sig)
 
         try:
-            return _core.sign_request_with_signer(guarded, self.key_id, **kwargs)
+            return non_exporting(guarded, self.key_id, **kwargs)
         except ValueError:
             cause = failure.get("cause")
             if cause is None:

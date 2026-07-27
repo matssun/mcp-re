@@ -14,9 +14,12 @@ use napi::bindgen_prelude::Buffer;
 use napi::bindgen_prelude::Function;
 use napi_derive::napi;
 
+use mcp_re_client_core::build_signed_notification;
+use mcp_re_client_core::build_signed_notification_with_signer;
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
 use mcp_re_client_core::HttpProfileError;
+use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
@@ -382,6 +385,225 @@ pub fn sign_request_with_signer(
     let signed = build_signed_request_with_signer(&id, &method, params, &target_uri, &inputs, sign_base)
         .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(to_signed_request(signed))
+}
+
+/// The signing inputs for a notification: the request inputs minus the continuation,
+/// which a message that receives no result cannot carry.
+#[allow(clippy::too_many_arguments)]
+fn notification_inputs(
+    key_id: String,
+    audience_id: String,
+    target_uri: &str,
+    route: Option<String>,
+    dpop_token: &str,
+    nonce: String,
+    created: f64,
+    expires: f64,
+    bindings_json: Option<String>,
+) -> napi::Result<RequestSigningInputs> {
+    Ok(signing_inputs(
+        key_id,
+        audience_id,
+        target_uri,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        None,
+        None,
+        None,
+        None,
+        None,
+        match bindings_json.as_deref() {
+            Some(j) => build_bindings(j)?,
+            None => Vec::new(),
+        },
+    ))
+}
+
+/// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
+/// `id` — as an RFC 9421 + RFC 9530 message.
+///
+/// Signed by the ordinary request rules; only the JSON-RPC envelope differs. The answer
+/// is a signed bodyless `202`, checked with `verifyAccepted202`, not a bodied reply.
+/// There are no continuation arguments: a message that receives no result cannot be an
+/// ADR-MCPS-047 answer leg.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn sign_notification(
+    seed: Buffer,
+    key_id: String,
+    method: String,
+    params_json: String,
+    target_uri: String,
+    audience_id: String,
+    route: Option<String>,
+    dpop_token: String,
+    nonce: String,
+    created: f64,
+    expires: f64,
+    bindings_json: Option<String>,
+) -> napi::Result<SignedRequestJs> {
+    let key = seed_to_key(seed.as_ref())?;
+    let params = params_object(&params_json)?;
+    let inputs = notification_inputs(
+        key_id,
+        audience_id,
+        &target_uri,
+        route,
+        &dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    )?;
+    let signed = build_signed_notification(&method, params, &target_uri, &inputs, &key)
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    Ok(to_signed_request(signed))
+}
+
+/// Non-exporting-custody variant of `signNotification`: the private key never enters
+/// the SDK. Wire-identical to the software path.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn sign_notification_with_signer(
+    sign_callback: Function<Buffer, Buffer>,
+    key_id: String,
+    method: String,
+    params_json: String,
+    target_uri: String,
+    audience_id: String,
+    route: Option<String>,
+    dpop_token: String,
+    nonce: String,
+    created: f64,
+    expires: f64,
+    bindings_json: Option<String>,
+) -> napi::Result<SignedRequestJs> {
+    let params = params_object(&params_json)?;
+    let inputs = notification_inputs(
+        key_id,
+        audience_id,
+        &target_uri,
+        route,
+        &dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    )?;
+    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
+        let out = sign_callback
+            .call(Buffer::from(preimage.to_vec()))
+            .map_err(|_| HttpProfileError::InvalidSignature)?;
+        let sig = out.to_vec();
+        if sig.len() != 64 {
+            return Err(HttpProfileError::InvalidSignature);
+        }
+        Ok(sig)
+    };
+    let signed = build_signed_notification_with_signer(&method, params, &target_uri, &inputs, sign_base)
+        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    Ok(to_signed_request(signed))
+}
+
+/// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
+///
+/// `ok` means the acknowledgement VERIFIED: the credential chained to the trusted root
+/// and the delegated signature covered the acknowledgement AND bound it to the exact
+/// notification transmission this client sent.
+///
+/// **What that claims, exactly: the enforcement boundary authenticated and accepted the
+/// message.** NOT that the action completed, that the inner application observed it, or
+/// that anything was done about it — a verified acknowledgement of
+/// `notifications/cancelled` does not mean anything was cancelled.
+#[napi(object)]
+pub struct AcceptedResultJs {
+    pub ok: bool,
+    /// The delegated key id that signed the acknowledgement — never the root, which
+    /// stays off the request path (ADR-MCPRE-052).
+    pub server_keyid: String,
+}
+
+/// Verify the delegated-signed bodyless `202` a server returns for a one-way
+/// notification, bound to the exact transmission this client sent.
+///
+/// The binding is INSTANCE-level (owner ruling C019b): the acknowledgement covers
+/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
+/// includes its nonce. An acknowledgement captured for one transmission therefore does
+/// not verify for a byte-identical retransmission.
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn verify_accepted_202(
+    status: u16,
+    resp_headers: Vec<HttpHeader>,
+    resp_body: Buffer,
+    req_method: String,
+    req_target_uri: String,
+    req_headers: Vec<HttpHeader>,
+    req_body: Buffer,
+    issuer_key_id: String,
+    issuer_pubkey_b64url: String,
+    issuer_role: String,
+    issuer_trust_domain: String,
+    issuer_subject: String,
+    verifier_audiences: Vec<String>,
+    expected_audience_hash: String,
+    accepted_epochs: Vec<String>,
+    max_clock_skew: f64,
+    revoked_identifiers: Vec<String>,
+    now: f64,
+) -> napi::Result<AcceptedResultJs> {
+    let issuer_pub = VerificationKey::from_b64url(&issuer_pubkey_b64url)
+        .map_err(|_| napi::Error::from_reason("invalid issuer public key"))?;
+    let ikid = issuer_key_id.clone();
+    let iident = ActorIdentity {
+        role: issuer_role,
+        trust_domain: issuer_trust_domain,
+        subject: issuer_subject,
+        keyid: issuer_key_id,
+    };
+    let resolve = move |kid: &str, slot: SignerSlot| match slot {
+        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
+            identity: iident.clone(),
+            verification_key: issuer_pub.clone(),
+            slot,
+        }),
+        _ => None,
+    };
+    let to_pairs = |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
+    let response = HttpResponse {
+        status,
+        headers: to_pairs(resp_headers),
+        body: resp_body.to_vec(),
+    };
+    let request = HttpRequest {
+        method: req_method,
+        target_uri: req_target_uri,
+        headers: to_pairs(req_headers),
+        body: req_body.to_vec(),
+    };
+    let policy = DelegationPolicy::new(
+        verifier_audiences,
+        &expected_audience_hash,
+        accepted_epochs,
+        max_clock_skew as i64,
+    );
+    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
+    let actor = verify_delegated_accepted_202(
+        &response,
+        &request,
+        &resolve,
+        &policy,
+        &revocation,
+        now as i64,
+    )
+    .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    Ok(AcceptedResultJs {
+        ok: true,
+        server_keyid: actor.identity.keyid,
+    })
 }
 
 /// The outcome of verifying a delegated-required RFC 9421 response.

@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "e4363632d24559a62320476e43c0ddf2bb71fe68ba6820074389eb658ae73e55",
+  "corpus_digest": "9da400ae737538951dd1e7a606e54b1b9db2b6ca542b16bb117a0fd188e92e4e",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -90,6 +90,10 @@
     {
       "file": "h37_bodyless_202_splice.json",
       "sha256": "8fb759a96d4a3fb7979b1b3b27d76385fcd62889b569ca45b549b865f750154e"
+    },
+    {
+      "file": "h50_bodyless_202_retransmission.json",
+      "sha256": "691db3b1cb7114e211c6bd7d028d9cf62fa069bff25ad8ddcd395060569649d7"
     },
     {
       "file": "h31_mcp_headers_covered_valid.json",

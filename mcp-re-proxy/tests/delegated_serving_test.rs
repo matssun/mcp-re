@@ -617,3 +617,71 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         "a 202 minted under an epoch the client does not accept must not verify"
     );
 }
+
+/// C055: the envelope BOTH SDKs emit, through the real serving path.
+///
+/// The tests above hand-build the notification with `sign_request_full`. That proves the
+/// profile, not the client: what the SDKs actually send comes out of
+/// `mcp_re_client_core::build_signed_notification`, and the serving path classifies a
+/// notification by the ABSENCE of `id` — a client that emitted `"id": null` instead
+/// would be dispatched as a request and answered with a bodied reply nothing awaits.
+/// Nothing else in the tree checks that the two ends agree on that, and the demo proxy
+/// the SDK e2e tests run against had in fact drifted from the serving path here.
+#[tokio::test]
+async fn the_client_cores_own_notification_envelope_earns_a_202() {
+    use mcp_re_client_core::build_signed_notification;
+    use mcp_re_client_core::RequestSigningInputs;
+
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue first delegated key");
+    let proxy = delegated_proxy(Arc::clone(&signer));
+
+    let inputs = RequestSigningInputs::new(
+        CLIENT_KEY_ID,
+        audience(),
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        "nonce-sdk-envelope-1",
+        CREATED,
+        EXPIRES,
+    )
+    .with_headers(vec![(
+        "Authorization".to_owned(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = build_signed_notification(
+        "notifications/initialized",
+        serde_json::Map::new(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("the client core signs its notification");
+
+    let note = signed.into_request();
+    let served = proxy.handle(served_of(&note), NOW).await;
+    assert_eq!(
+        served.status, 202,
+        "the client core's own envelope must be classified as a notification"
+    );
+
+    let ack = http_response(served);
+    let r = resolver();
+    mcp_re_client_core::verify_delegated_accepted_202(
+        &ack,
+        &note,
+        &move |k: &str, s| r(k, s),
+        &mcp_re_client_core::DelegationPolicy::new(
+            vec![VERIFIER_AUD.to_string()],
+            AUD_SCOPE,
+            vec![EPOCH.to_string()],
+            60,
+        ),
+        &mcp_re_client_core::StaticRevocationList::from_identifiers(Vec::<String>::new()),
+        NOW,
+    )
+    .expect("the client core verifies the acknowledgement its own notification earned");
+}

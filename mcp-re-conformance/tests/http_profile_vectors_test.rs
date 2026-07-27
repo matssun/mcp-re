@@ -924,6 +924,44 @@ fn build_fixtures() -> Vec<Fixture> {
         delegated_202_check: None,
     });
 
+    // h50 — the TRANSMISSION-distinct splice (owner ruling C019b). A′ is byte-identical
+    // to A in method, target and body and differs only in the nonce inside its own
+    // `@signature-params` — the ordinary case for a retried `notifications/cancelled`.
+    // A's acknowledgement must not verify for it, or a captured 202 could be presented
+    // as proof of acceptance for a transmission the server in fact refused as a replay.
+    // h37 covers the content-distinct half; this one is what content-level binding could
+    // not express at all.
+    let mut note_a_prime = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(
+        &mut note_a_prime,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-note-retransmission",
+    )
+    .expect("the retransmission signs like any request");
+    assert_eq!(note.body, note_a_prime.body, "the two transmissions are content-identical");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h50_bodyless_202_retransmission".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.request_binding_mismatch".into(),
+        request: Some(to_wire_request(&note_a_prime)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
     // ----- MCP transport-header fixtures (#415 rev 2 §4.1, MCPRE-425) -----
     // h31 covered-and-matching positive; h32 present-but-uncovered negative;
     // h33 header/body method mismatch negative.

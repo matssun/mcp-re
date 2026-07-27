@@ -24,6 +24,8 @@ pub mod request;
 pub mod response;
 pub mod trust_manifest;
 
+pub use request::build_signed_notification;
+pub use request::build_signed_notification_with_signer;
 pub use request::build_signed_request;
 pub use request::build_signed_request_with_signer;
 pub use request::build_signed_tool_call;

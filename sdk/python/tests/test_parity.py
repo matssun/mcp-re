@@ -37,21 +37,46 @@ _META_KEYS = {"seed_b64", "key_id"}
 
 
 def _sign(name: str):
-    """Reproduce a frozen case with this SDK."""
+    """Reproduce a frozen case with this SDK.
+
+    The case name carries the shape: `notification_*` is a one-way message (no `id`),
+    and a name mentioning non-exporting custody goes through a device signer.
+    """
     c = ORACLE["cases"][name]
     inputs = dict(c["inputs"])
     seed = base64.b64decode(inputs.pop("seed_b64"))
     key_id = inputs.pop("key_id")
-    if name.startswith("non_exporting"):
+    notification = name.startswith("notification")
+    device = "non_exporting" in name
+    if device:
         signer = Signer.from_device("did:example:client", key_id, SigningDevice.from_seed(seed))
-        return signer.sign_request(**inputs), c["expected"]
-    return mcp_re_sdk.sign_request(seed, key_id, **inputs), c["expected"]
+        sign = signer.sign_notification if notification else signer.sign_request
+        return sign(**inputs), c["expected"]
+    sign = mcp_re_sdk.sign_notification if notification else mcp_re_sdk.sign_request
+    return sign(seed, key_id, **inputs), c["expected"]
 
 
 def test_the_oracle_covers_the_binding_forms():
     """Both authorization-binding forms must be pinned, not just DPoP."""
     assert "binding_opaque_bytes" in CASES
     assert "binding_authz_system_reference" in CASES
+
+
+def test_the_oracle_covers_the_notification_envelope():
+    """The one-way shape is pinned in both custody classes.
+
+    It is the shape most able to drift invisibly: a binding that emitted `"id": null`
+    would still sign and verify, but the serving path would dispatch it as a request.
+    """
+    assert "notification_initialized" in CASES
+    assert "notification_non_exporting" in CASES
+
+
+@pytest.mark.parametrize("name", ["notification_initialized", "notification_non_exporting"])
+def test_the_frozen_notification_body_carries_no_id(name):
+    body = json.loads(base64.b64decode(ORACLE["cases"][name]["expected"]["body_b64"]))
+    assert "id" not in body, "an absent id is what makes it a notification"
+    assert body["method"] == "notifications/initialized"
 
 
 def test_oracle_is_the_expected_schema():

@@ -539,7 +539,9 @@ new MCP-RE header fields" rule (E-3), for the same structural reason as
 in its evidence block. Frozen vectors `h34`–`h37` and `h47`–`h49` were regenerated;
 `h37` (the splice) now expects `mcp-re.request_binding_mismatch` rather than
 `mcp-re.response_sig_invalid`, because the coordinate check fires before signature
-verification and names why the pairing is wrong.
+verification and names why the pairing is wrong. `h50` pins the transmission-distinct
+splice itself — two notifications identical in method, target and body, differing only in
+nonce — which is the case content-level binding could not express at all.
 
 **Pinned by** `bodyless_202_test::an_acknowledgement_binds_to_one_transmission_not_to_content`
 (which asserts a distinct transmission is REFUSED), plus
@@ -555,7 +557,18 @@ a delegated-signed bodyless 202 instead of a bodied reply. The root is touched o
 at credential issuance, never on the 202 path.
 
 **Proven by.** `bodyless_202_test` (the non-delegated 202 shape),
-`delegated_202_test` (8 tests: valid, uncovered/missing/duplicated/oversized
-credential, revoked, epoch-stale, splice across distinct notifications),
+`delegated_202_test` (9 tests: valid, uncovered/missing/duplicated/oversized
+credential, revoked, epoch-stale, splice across distinct notifications, and the
+retransmission of an identical one),
 `delegated_serving_test::a_notification_is_served_a_verifiable_delegated_202` (the
 proxy end-to-end), and frozen vectors `h47`–`h49`.
+
+**Carried by both SDKs (C055).** A notification is signed through
+`mcp_re_client_core::build_signed_notification` — the ordinary request rules, with the
+JSON-RPC `id` key OMITTED rather than sent as `null`, because the serving path classifies
+on its absence — and the 202 is verified through `verify_delegated_accepted_202`, exposed
+as `sign_notification`/`verify_accepted_202` (Python) and
+`signNotification`/`verifyAccepted202` (TypeScript). Neither SDK treats a notification as
+delivered until its acknowledgement verifies. Proven live against the real proxy in both
+languages, offline through the recorded replay fixture, and against the serving path by
+`delegated_serving_test::the_client_cores_own_notification_envelope_earns_a_202`.

@@ -19,6 +19,7 @@ Prerequisites, from the repo root::
 """
 import base64
 import os
+import secrets
 import shutil
 import socket
 import subprocess
@@ -131,11 +132,6 @@ def _config(target: str, **over) -> McpReConfig:
         target_uri=target,
         route="a",
         dpop_token="access-token-xyz",
-        # A standard ClientSession cannot complete its lifecycle without
-        # `notifications/initialized`, and MCP-RE has no ratified one-way notification
-        # profile yet (#418) — so every live session today needs this unsafe opt-in.
-        # That it is required here is the point: the hole is visible, not papered over.
-        unsafe_drop_notifications=True,
         # The trusted ROOT anchor only: the delegated key is learned from the credential
         # the response carries, never enrolled here.
         issuer_key_id="server-key-1",
@@ -162,9 +158,9 @@ def _poster(client: httpx.AsyncClient):
 
 @pytest.mark.anyio
 async def test_a_real_session_calls_a_tool_with_no_sign_verify_in_app_code(harness):
-    dropped = []
+    acknowledged = []
     async with httpx.AsyncClient(timeout=15) as http:
-        config = _config(harness, on_dropped_notification=dropped.append)
+        config = _config(harness, on_notification_acknowledged=lambda m, k: acknowledged.append((m, k)))
         async with mcp_re_http_transport(config, _poster(http)) as (read, write):
             async with ClientSession(read, write) as session:
                 init = await session.initialize()
@@ -178,9 +174,16 @@ async def test_a_real_session_calls_a_tool_with_no_sign_verify_in_app_code(harne
                 # The app never saw MCP-RE's own evidence block.
                 assert "_meta" not in (result.structuredContent or {})
 
-    # A client->server notification has no reply, so it carries no evidence and cannot be
-    # verified. Dropping it is the honest behaviour — but it must be observable.
-    assert "notifications/initialized" in dropped
+    # C055: the lifecycle notification went over the wire as a signed POST and the proxy's
+    # signed bodyless 202 verified against the real credential chain — the acknowledgement
+    # half of the contract, which nothing on the client side used to check.
+    methods = [m for m, _ in acknowledged]
+    assert "notifications/initialized" in methods
+    signer_kids = {k for _, k in acknowledged}
+    assert signer_kids and "server-key-1" not in signer_kids, (
+        "the acknowledgement is signed by a DELEGATED key; the root stays off the "
+        "request path (ADR-MCPRE-052)"
+    )
 
 
 @pytest.mark.anyio
@@ -192,8 +195,25 @@ async def test_a_signed_rejection_raises_correlated_rather_than_hanging(harness)
     failure would hang the session forever, which is a worse failure than an error.
     """
     async with httpx.AsyncClient(timeout=15) as http:
-        # Freeze the nonce so the second call is a byte-identical replay.
-        config = _config(harness, nonce_factory=lambda: "nonce-adapter-replay-fixed")
+        # A session now emits three signed messages — `initialize`, the lifecycle
+        # notification, and the tool call — so a single frozen nonce would make the
+        # NOTIFICATION the replay and tear the transport down before the call under
+        # test ran. The first two draws are unique; the third re-uses the first, which
+        # puts the replay exactly where this test means to put it.
+        # The prefix is unique per run so the test does not depend on a freshly-started
+        # proxy: the replay it proves is the one it creates, not a leftover from an
+        # earlier run whose nonces this proxy still remembers.
+        run = secrets.token_urlsafe(8)
+        drawn = []
+
+        def replaying_nonce() -> str:
+            drawn.append(None)
+            draw = len(drawn) - 1
+            # Draw 0 (`initialize`) and draw 2 (the tool call) share a nonce; draw 1
+            # (the notification) gets its own.
+            return f"nonce-adapter-replay-{run}-{0 if draw == 2 else draw}"
+
+        config = _config(harness, nonce_factory=replaying_nonce)
         async with mcp_re_http_transport(config, _poster(http)) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()

@@ -37,7 +37,6 @@
 
 use crate::block::HttpContinuation;
 use crate::block::HttpRequestEvidenceBlock;
-use crate::block::ResolvedActor;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;

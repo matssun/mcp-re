@@ -12,6 +12,54 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added
+- **Both SDKs carry and verify one-way notifications (#418, C055).** A `notifications/*`
+  message is now its own signed POST — the ordinary request rules, no new signing — and the
+  signed bodyless `202` it earns is verified before the message counts as delivered:
+  `signNotification` / `sign_notification` and `verifyAccepted202` / `verify_accepted_202`
+  in both bindings, over `mcp_re_client_core::build_signed_notification` and
+  `verify_delegated_accepted_202`. The acknowledgement was emitted in production and checked
+  by nothing on the client side; an intermediary could strip, forge, or substitute it and no
+  SDK would notice.
+
+  The envelope omits `id` entirely rather than sending `null`, because the serving path
+  classifies a notification by the ABSENCE of the key; a present-but-null id would be
+  dispatched as a request and answered with a bodied reply nothing awaits. A verified
+  acknowledgement claims exactly that the enforcement boundary authenticated and accepted
+  the message — never that any action completed.
+
+  Proved live against the real `http_profile_proxy` + FastMCP in both languages, and
+  offline through the re-recorded replay fixture, which now carries the notification
+  exchange and its real 202. The demo proxy that both e2e proofs run against had itself
+  drifted from the production serving path here — it had no notification branch, so the
+  message fell through to the bodied signer — which is why a serving-path test now drives
+  `build_signed_notification`'s own envelope end to end.
+
+### Changed
+- **BREAKING (SDKs): `unsafe_drop_notifications` / `unsafeDropNotifications` and their
+  observers are removed, along with `NotificationsUnsupported` and (Python)
+  `UnsafeConfigurationRefused`.** They existed only because the notification profile did
+  not; retaining a knob that silently discards `notifications/cancelled` now that it does
+  would keep a superseded weaker mode alive. A notification whose acknowledgement does not
+  verify raises `NotificationNotAcknowledged` and fails the transport closed.
+- **Both SDKs refuse a client→server RESPONSE explicitly (`ClientResponseUnsupported`).**
+  Previously it fell into the same branch as a notification, which was harmless while that
+  branch dropped everything. Now that the branch transmits, a response — which has no
+  `method` — could only be carried by signing a fabricated message and reporting ITS
+  acknowledgement as if the response had been delivered. MCP-RE profiles a signed request
+  and a signed notification; a response is neither, so it fails closed.
+- **Conformance corpus: `h50_bodyless_202_retransmission`.** The transmission-distinct
+  splice — two notifications identical in method, target and body, differing only in nonce —
+  pinned as `mcp-re.request_binding_mismatch`. `h37` covers the content-distinct half; this
+  is the case content-level binding could not express at all (owner ruling C019b).
+
+### Fixed
+- **Python SDK: the nonce floor was defined but never called on the signing path.** The
+  C080/C088 check shipped with its unit tests passing while the production call site still
+  used the unchecked factory, so a caller-supplied sub-floor `nonce_factory` was accepted
+  exactly as before — in Python only, with TypeScript enforcing it. Both SDKs now check at
+  sign time, for requests and notifications alike.
+
 ### Security
 - **TypeScript SDK (`@mcp-re/sdk`) → 0.1.1.** Forced the dev/peer-tree `@hono/node-server`
   to `^2.0.10` via an npm `overrides` entry, clearing GHSA-frvp-7c67-39w9 (moderate; Windows
@@ -58,16 +106,13 @@ or wire-format compatibility while the design lines from
   nor hang it. Exchanges run concurrently, bounded by `max_concurrent_exchanges` /
   `maxConcurrentExchanges` (default 8).
 
-  **It is not a general standard-MCP transport.** Sending a one-way `notifications/*`
-  message fails closed (`NotificationsUnsupported`). This is a missing profile, not an
-  inherent limit: a notification is its own POST under MCP Streamable HTTP, so its RFC 9421
-  request signature and RFC 9530 `Content-Digest` authenticate it like any other request —
-  what MCP-RE has not ratified is the one-way notification **+ acknowledgement** profile
-  (#418, release-blocking; target is a signed notification plus a signed HTTP 202 bound to
-  its request evidence). Until then a standard client cannot complete its mandatory
-  `notifications/initialized`, so `unsafe_drop_notifications` / `unsafeDropNotifications`
-  is an explicitly-named interim opt-in that a hardened `SignerPolicy` refuses outright
-  (`UnsafeConfigurationRefused`). Callers still supply the HTTP leg via an injected
+  **It was not a general standard-MCP transport at this release.** Sending a one-way
+  `notifications/*` message failed closed (`NotificationsUnsupported`) because MCP-RE had
+  not yet ratified the one-way notification **+ acknowledgement** profile (#418); a
+  standard client could not complete its mandatory `notifications/initialized` without the
+  interim `unsafe_drop_notifications` / `unsafeDropNotifications` opt-in, which a hardened
+  `SignerPolicy` refused outright (`UnsafeConfigurationRefused`). Both the profile and the
+  SDK support landed after this release — see Unreleased. Callers still supply the HTTP leg via an injected
   `poster`; `connect_mtls_http` / `connectMtlsHttp` remain unbuilt (#413). The
   ADR-MCPS-047 open leg is implemented (`on_input_required` surfaces the answer leg's
   handles) but the adapter does not drive the answer leg (#419).

@@ -36,22 +36,19 @@
 //! body-level defense-in-depth here because there is no body — which is precisely
 //! why the `;req` set is mandatory rather than optional.
 //!
-//! **The binding is CONTENT-level, not INSTANCE-level.** The `;req` components are
-//! `@method`, `@target-uri`, `content-digest` and `content-type` — every one a
-//! function of the request's method, URI, media type and body bytes. A 202 signed
-//! for notification A therefore cannot be lifted onto a DIFFERENT notification B
-//! (that is what [`crate::verify`]'s signature check refuses, and what the
-//! `signed_202_shape_binds_content_not_instance` test pins), but two byte-identical
-//! notifications to the same URI share one acknowledgement: the ack for the first
-//! verifies as the ack for the second. Nothing unique to a request instance is
-//! covered — the request's `nonce` lives in its own `@signature-params`, which is
-//! not a coverable component, and the request evidence block carries no instance
-//! field. Byte-identical notifications are the ordinary case for
-//! `notifications/initialized` and a retried `notifications/cancelled`, so a client
-//! must NOT read a verified 202 as proof that this particular transmission reached
-//! the boundary. See "Binding granularity" in
-//! `docs/spec/http-profile-conformance-notes.md` §3.4 for the standing ruling and
-//! what closing the gap would cost.
+//! **The binding is INSTANCE-level** (owner ruling C019b, 2026-07-27). The `;req`
+//! components — `@method`, `@target-uri`, `content-digest`, `content-type` — are all
+//! functions of the request's method, URI, media type and body bytes, so on their own
+//! they distinguish notification A from a DIFFERENT notification B but not from a
+//! byte-identical retransmission A′. That is why the 202 additionally covers
+//! `mcp-re-request-evidence`: the digest of the request's own RFC 9421 signature base,
+//! which includes `@signature-params` and therefore the request nonce. A′ carries a
+//! different nonce, so its digest differs, so A's acknowledgement does not verify for
+//! it. The invariant is that a valid acknowledgement for transmission A MUST NOT verify
+//! as the acknowledgement for any distinct transmission A′. Byte-identical
+//! notifications are the ordinary case for `notifications/initialized` and a retried
+//! `notifications/cancelled`, which is exactly why the distinction has to hold. See
+//! "Binding granularity" in `docs/spec/http-profile-conformance-notes.md` §3.4.
 
 use mcp_re_core::McpReError;
 

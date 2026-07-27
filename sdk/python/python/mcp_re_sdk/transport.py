@@ -21,9 +21,10 @@ transport that dropped a failed exchange would leave ``ClientSession`` awaiting 
 that never comes; a hang is a worse failure mode than a raise, and an unverifiable
 response must never reach the application as a result.
 
-**This is a request/response adapter.** One-way notifications fail closed by default —
-see :class:`NotificationsUnsupported` for why that is a missing profile rather than an
-inherent limit, and ``unsafe_drop_notifications`` for the interim escape hatch.
+**One-way notifications are carried, not dropped.** A notification is its own signed
+POST, and the acknowledgement it earns — a signed bodyless 202 bound to that exact
+transmission — is verified before the adapter treats it as delivered. See
+:class:`NotificationNotAcknowledged` for what happens when it is not.
 
 MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
 a ``poster`` so this layer stays transport-agnostic and testable; ``connect_mtls_http``
@@ -42,7 +43,13 @@ from typing import Awaitable, Callable, Optional, Sequence
 
 import anyio
 from mcp.shared.message import SessionMessage
-from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage, JSONRPCRequest
+from mcp.types import (
+    ErrorData,
+    JSONRPCError,
+    JSONRPCMessage,
+    JSONRPCNotification,
+    JSONRPCRequest,
+)
 
 from . import _core
 from .authorization import AuthorizationBindingPolicy, AuthorizationBindingProvider, BindingRequestContext
@@ -50,30 +57,52 @@ from .correlation import ContinuationHandles, CorrelationStore
 from .custody import McpReError, McpReSdkError, Signer, SignerPolicy
 
 __all__ = [
+    "ClientResponseUnsupported",
     "ConnectionClosed",
     "HttpReply",
     "McpReConfig",
-    "NotificationsUnsupported",
-    "UnsafeConfigurationRefused",
+    "NotificationNotAcknowledged",
     "mcp_re_http_transport",
 ]
 
 
-class NotificationsUnsupported(McpReSdkError):
-    """A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
+class ClientResponseUnsupported(McpReSdkError):
+    """The session tried to send a client->server RESPONSE, which has no MCP-RE carrier.
 
-    **Not** an inherent limitation: a notification is its own POST under MCP Streamable
-    HTTP, so its request signature and ``Content-Digest`` authenticate it exactly like any
-    other request. What is missing is the ratified one-way notification + acknowledgement
-    profile (MCP-RE issue #418) — what a verifier returns for a message with no JSON-RPC
-    response, and how that acknowledgement binds to the request evidence.
+    A server-initiated request (sampling, elicitation over the same session) would be
+    answered by a JSON-RPC response travelling client->server. MCP-RE profiles two client
+    message shapes — a request that earns a signed reply, and a notification that earns a
+    signed bodyless 202 — and a response is neither.
 
-    Until that lands the adapter fails closed here rather than passing the message
-    unprotected or discarding it silently. ``unsafe_drop_notifications=True`` opts into
-    dropping instead; a hardened policy refuses that opt-in outright.
-
-    A local condition — nothing was transmitted, so no wire code describes it.
+    Failing closed here is the narrow choice on purpose. The alternative the notification
+    path makes available is worse: a response has no `method`, so carrying it as a
+    notification would mean signing a fabricated message and reporting the acknowledgement
+    of THAT as if the response had been delivered.
     """
+
+
+class NotificationNotAcknowledged(McpReSdkError):
+    """A notification was transmitted and its acknowledgement did not verify.
+
+    The message left this process. What could not be established is that the enforcement
+    boundary authenticated and accepted it: the 202 was absent, unsigned, signed by an
+    untrusted key, or bound to a different transmission.
+
+    **This tears the transport down**, because a notification has no reply for an error
+    to ride back on. There is no request id to correlate a failure to and no application
+    call awaiting an answer, so the only alternatives are to continue a session in which
+    an unverifiable claim of acceptance was accepted, or to say nothing at all. Both
+    reduce to taking the peer's word for it, which is the posture this protocol exists to
+    remove. ``wire_code`` carries the frozen reason when the failure has one.
+    """
+
+    def __init__(self, method: str, wire_code: str) -> None:
+        super().__init__(
+            f"'{method}' was sent but its acknowledgement did not verify ({wire_code}); "
+            f"the transport is failing closed rather than treating it as delivered"
+        )
+        self.method = method
+        self.wire_code = wire_code
 
 
 class ConnectionClosed(McpReSdkError):
@@ -86,14 +115,6 @@ class ConnectionClosed(McpReSdkError):
     only that this client will not process an answer to it.
     """
 
-
-class UnsafeConfigurationRefused(McpReSdkError):
-    """A hardening profile refused an explicitly unsafe option.
-
-    The hardened profile exists to make "this deployment does not accept known-unsafe
-    behaviour" enforceable rather than advisory, so an unsafe opt-in must fail the
-    connection there instead of being honoured.
-    """
 
 #: The response-side body evidence block. Stripped before the result reaches the app:
 #: MCP-RE's own evidence is not part of the MCP result.
@@ -226,22 +247,14 @@ class McpReConfig:
     #: either. Raise it for a client that genuinely wants more parallelism.
     max_concurrent_exchanges: int = 8
 
-    #: Drop client->server notifications instead of failing closed on them. **Unsafe.**
+    #: Called with `(method, server_keyid)` for each client->server notification whose
+    #: signed 202 verified. Observability only — the acceptance claim has already been
+    #: checked by the time this runs, and declining to observe it changes nothing.
     #:
-    #: A standard MCP client cannot complete its lifecycle without
-    #: `notifications/initialized`, so this exists to keep the adapter usable at all until
-    #: the one-way notification + acknowledgement profile is ratified (#418). It is named
-    #: for what it is: the notification leaves the process unprotected in the sense that
-    #: it never leaves the process at all — `notifications/cancelled` silently becomes
-    #: "keep going", which is a safety hole, not a compatibility quirk.
-    #:
-    #: A hardened `SignerPolicy` refuses this outright.
-    unsafe_drop_notifications: bool = False
-
-    #: Called with each client->server notification the adapter drops, when
-    #: `unsafe_drop_notifications` is on. Dropping is never silent by default — the
-    #: default is to fail closed — but a caller who opts in should still be able to see it.
-    on_dropped_notification: Optional[Callable[[str], None]] = None
+    #: What a verified acknowledgement means is exactly: the enforcement boundary
+    #: authenticated and accepted the message. NOT that the action completed — a verified
+    #: ack for `notifications/cancelled` does not mean anything was cancelled.
+    on_notification_acknowledged: Optional[Callable[[str, str], None]] = None
 
     #: Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
     #: handles its answer leg must sign over. The open leg stays outstanding.
@@ -383,7 +396,7 @@ async def _exchange(
         audience_id=config.audience_id,
         route=config.route,
         dpop_token=config.dpop_token,
-        nonce=config.nonce_factory(),
+        nonce=_checked_nonce(config.nonce_factory),
         created=created,
         expires=expires,
         bindings_json=bindings_json,
@@ -460,6 +473,68 @@ async def _exchange(
     return SessionMessage(JSONRPCMessage.model_validate_json(_strip_response_evidence(reply.body)))
 
 
+async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> None:
+    """Sign one notification, POST it, and verify the acknowledgement it earns.
+
+    A notification is signed by the ordinary request rules — same evidence block, same
+    covered components, same freshness triple. What it gets back is a signed bodyless
+    202 whose `;req` components plus `mcp-re-request-evidence` bind it to THIS
+    transmission (owner ruling C019b), so a 202 captured from an earlier send of the
+    same notification does not verify here.
+
+    Raises :class:`NotificationNotAcknowledged` on any failure. There is deliberately no
+    "sent it anyway" path: an unverified acknowledgement establishes nothing, and
+    treating it as delivery is the take-it-on-faith posture the profile removes.
+    """
+    created = config.clock()
+    expires = created + config.request_ttl
+    bindings_json = _bindings_json(config, method)
+
+    signed = config.signer.sign_notification(
+        method=method,
+        params_json=json.dumps(params if params is not None else {}),
+        target_uri=config.target_uri,
+        audience_id=config.audience_id,
+        route=config.route,
+        dpop_token=config.dpop_token,
+        nonce=_checked_nonce(config.nonce_factory),
+        created=created,
+        expires=expires,
+        bindings_json=bindings_json,
+    )
+
+    reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+    try:
+        accepted = _core.verify_accepted_202(
+            reply.status,
+            list(reply.headers),
+            reply.body,
+            signed.method,
+            signed.target_uri,
+            list(signed.headers),
+            signed.body(),
+            config.issuer_key_id,
+            config.issuer_pubkey_b64url,
+            config.issuer_role,
+            config.issuer_trust_domain,
+            config.issuer_subject,
+            list(config.verifier_audiences),
+            config.expected_audience_hash,
+            list(config.accepted_epochs),
+            config.max_clock_skew,
+            list(config.revoked_identifiers),
+            config.clock(),
+        )
+    except McpReError as e:
+        raise NotificationNotAcknowledged(method, e.wire_code) from e
+    except ValueError as e:
+        # The core's fail-closed errors arrive as ValueError carrying the frozen token.
+        raise NotificationNotAcknowledged(method, str(e)) from e
+
+    if config.on_notification_acknowledged is not None:
+        config.on_notification_acknowledged(method, accepted.server_keyid)
+
+
 async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, read_writer,
                limiter, correlation: CorrelationStore) -> None:
     """Run one exchange to completion and deliver its outcome to the session.
@@ -499,6 +574,19 @@ async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, rea
     await read_writer.send(message)
 
 
+async def _one_notification(config: McpReConfig, poster: Poster, method: str, params,
+                            limiter) -> None:
+    """Run one notification to completion under the concurrency bound.
+
+    Unlike :func:`_one`, a failure here is NOT converted into a delivered message: there
+    is no request id to correlate it to and no caller awaiting a reply, so it propagates
+    out of the pump's task group and closes the transport. That asymmetry is the shape of
+    a one-way message, not a difference in how strictly the two are checked.
+    """
+    async with limiter:
+        await _notify(config, poster, method, params)
+
+
 async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
                 correlation: Optional[CorrelationStore] = None) -> None:
     """Drive every outbound session message through the MCP-RE obligation.
@@ -517,21 +605,24 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
         async with anyio.create_task_group() as tg:
             async for outgoing in write_reader:
                 root = outgoing.message.root
-                if not isinstance(root, JSONRPCRequest):
-                    method = getattr(root, "method", "<unknown>")
-                    if not config.unsafe_drop_notifications:
-                        # Fail closed. MCP-RE has no ratified profile for a one-way
-                        # message (#418), and the two ways to proceed without one are
-                        # both worse than stopping: pass it unprotected, or discard a
-                        # `notifications/cancelled` and let the peer keep going.
-                        raise NotificationsUnsupported(
-                            f"'{method}' is a one-way notification; MCP-RE has no ratified "
-                            f"one-way notification profile yet (#418). Set "
-                            f"unsafe_drop_notifications=True to drop notifications instead."
-                        )
-                    if config.on_dropped_notification is not None:
-                        config.on_dropped_notification(method)
+                if isinstance(root, JSONRPCNotification):
+                    # A one-way notification: its own signed POST, answered by a signed
+                    # bodyless 202 rather than a JSON-RPC reply. It runs under the same
+                    # concurrency bound as an exchange because it costs the same
+                    # resources — a connection and a signing operation.
+                    tg.start_soon(
+                        _one_notification, config, poster, root.method, root.params, limiter
+                    )
                     continue
+                if not isinstance(root, JSONRPCRequest):
+                    # A client->server RESPONSE or error. It has no `method`, so the
+                    # notification path above could only carry it by signing a fabricated
+                    # message; refuse it instead of inventing one.
+                    raise ClientResponseUnsupported(
+                        f"{type(root).__name__} is a client->server response; MCP-RE "
+                        f"profiles a signed request and a signed notification, and a "
+                        f"response is neither"
+                    )
                 tg.start_soon(_one, config, poster, root, read_writer, limiter, correlation)
 
 
@@ -564,14 +655,6 @@ async def mcp_re_http_transport(
         correlation = CorrelationStore()
     if config.policy is not None:
         config.policy.check(config.signer)
-        if config.policy.require_non_exporting and config.unsafe_drop_notifications:
-            # The hardening profile is what makes "this deployment does not accept
-            # known-unsafe behaviour" enforceable rather than advisory.
-            raise UnsafeConfigurationRefused(
-                f"profile '{config.policy.profile}' requires non-exporting custody and so "
-                f"refuses unsafe_drop_notifications: silently discarding "
-                f"'notifications/cancelled' is not acceptable under a hardened policy (#418)"
-            )
     if config.authorization_policy is not None:
         config.authorization_policy.check(list(config.authorization))
 

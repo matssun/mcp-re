@@ -25,18 +25,18 @@ from mcp.types import JSONRPCMessage, JSONRPCNotification, JSONRPCRequest  # noq
 
 from mcp_re_sdk import (  # noqa: E402
     AuthorizationBindingPolicy,
+    ClientResponseUnsupported,
     CorrelationStore,
     HttpReply,
     McpReConfig,
     McpReError,
     McpReSdkError,
-    NotificationsUnsupported,
+    NotificationNotAcknowledged,
     OpaqueBytesProvider,
     Signer,
     SignerPolicy,
     SignerUnavailable,
     SigningDevice,
-    UnsafeConfigurationRefused,
     mcp_re_http_transport,
 )
 from mcp_re_sdk.transport import _binding_context, _pump  # noqa: E402
@@ -147,71 +147,116 @@ async def test_a_satisfied_policy_opens_the_transport():
 
 
 @pytest.mark.anyio
-async def test_a_notification_fails_closed_by_default():
-    """The default must not silently discard a standard MCP message.
+async def test_a_notification_is_transmitted_as_a_signed_post():
+    """It goes on the wire, signed by the ordinary request rules.
 
-    MCP-RE has no ratified one-way notification profile (#418). Until it does, the two
-    ways to proceed are both worse than stopping: pass the message unprotected, or
-    discard a `notifications/cancelled` and let the peer keep working.
+    The adapter used to refuse or drop it: MCP-RE had no ratified one-way profile, so a
+    `notifications/cancelled` silently became "keep going". The profile exists now (#418
+    / C019b), so the message is carried and its acknowledgement is checked.
     """
     posted = []
-    with pytest.raises(BaseException) as ei:
+    with pytest.raises(BaseException):
+        # The capturing poster never returns a 202, so the ack check below fails closed;
+        # what this test reads is the request that DID reach the wire.
         await _send(
             _config(),
             _capturing_poster(posted),
             JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
         )
 
+    assert len(posted) == 1, "the notification must reach the wire"
+    names = {k.lower() for k, _ in posted[0]["headers"]}
+    assert {"signature", "signature-input", "content-digest"} <= names
+    body = json.loads(posted[0]["body"])
+    assert body["method"] == "notifications/initialized"
+    # The serving path classifies a notification by an ABSENT id. `null` is a present id
+    # and would be dispatched as a request, answered with a bodied reply nothing awaits.
+    assert "id" not in body
+    assert body["_meta"], "the request evidence block rides along, as on any request"
+
+
+@pytest.mark.anyio
+async def test_an_unsigned_acknowledgement_fails_the_transport_closed():
+    """A 202 with no evidence establishes nothing, so it must not pass as delivery.
+
+    There is no request id to correlate an error to and no caller awaiting a reply, so
+    failing closed means tearing the transport down. The alternative is continuing a
+    session in which an unverifiable claim of acceptance was accepted.
+    """
+    async def unsigned(method, target_uri, headers, body):
+        return HttpReply(status=202, headers=[], body=b"")
+
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(),
+            unsigned,
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+
     leaves = _flatten(ei.value)
-    assert [type(e) for e in leaves] == [NotificationsUnsupported]
-    assert "#418" in str(leaves[0])
-    assert posted == [], "nothing may reach the wire"
+    assert [type(e) for e in leaves] == [NotificationNotAcknowledged]
+    assert leaves[0].method == "notifications/initialized"
+    assert "mcp-re." in leaves[0].wire_code
 
 
 @pytest.mark.anyio
-async def test_dropping_notifications_requires_an_explicit_unsafe_opt_in():
-    dropped, posted = [], []
-    config = _config(unsafe_drop_notifications=True, on_dropped_notification=dropped.append)
-    out = await _send(
-        config,
-        _capturing_poster(posted),
-        JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
-    )
-    assert dropped == ["notifications/initialized"]
-    assert posted == []
-    assert out == []
+async def test_a_non_202_answer_to_a_notification_fails_closed():
+    """The named bodyless set is checked as a set: a bodied 200 is not an
+    acknowledgement, however well-formed it looks."""
+    async def bodied(method, target_uri, headers, body):
+        return HttpReply(
+            status=200,
+            headers=[("Content-Type", "application/json")],
+            body=b'{"jsonrpc":"2.0","id":null,"result":{"ok":true}}',
+        )
+
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(),
+            bodied,
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled"),
+        )
+    assert [type(e) for e in _flatten(ei.value)] == [NotificationNotAcknowledged]
 
 
 @pytest.mark.anyio
-async def test_the_unsafe_opt_in_drops_even_with_no_observer_installed():
-    # Opting in is the decision; the observer is only how you watch it.
+async def test_a_client_side_response_is_refused_rather_than_carried_as_a_notification():
+    """A response has no `method`. Signing one as a notification would fabricate a
+    message and then report ITS acknowledgement as if the response had been delivered."""
+    from mcp.types import JSONRPCResponse
+
     posted = []
-    out = await _send(
-        _config(unsafe_drop_notifications=True),
-        _capturing_poster(posted),
-        JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled"),
-    )
-    assert posted == [] and out == []
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(),
+            _capturing_poster(posted),
+            JSONRPCResponse(jsonrpc="2.0", id=1, result={}),
+        )
+    assert [type(e) for e in _flatten(ei.value)] == [ClientResponseUnsupported]
+    assert posted == [], "nothing fabricated may reach the wire"
 
 
 @pytest.mark.anyio
-async def test_a_hardened_policy_refuses_the_unsafe_notification_opt_in():
-    # The hardening profile makes "no known-unsafe behaviour here" enforceable rather
-    # than advisory, so the opt-in must fail the CONNECTION.
-    config = _config(
-        signer=Signer.from_device(
-            "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
-        ),
-        policy=SignerPolicy.hardened("did:example:host-a"),
-        unsafe_drop_notifications=True,
-    )
-    with pytest.raises(UnsafeConfigurationRefused, match="#418"):
-        async with mcp_re_http_transport(config, _capturing_poster([])):
-            pass
+async def test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_signed():
+    """The nonce floor governs both message shapes.
+
+    A notification signed under a guessable nonce is exactly as replayable as a request
+    signed under one, and a check that covered only requests would be a hole shaped like
+    the message the caller cares least about.
+    """
+    posted = []
+    with pytest.raises(BaseException) as ei:
+        await _send(
+            _config(nonce_factory=lambda: "short"),
+            _capturing_poster(posted),
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+    assert any("at least 22" in str(e) for e in _flatten(ei.value))
+    assert posted == [], "nothing may reach the wire under a sub-floor nonce"
 
 
 @pytest.mark.anyio
-async def test_a_hardened_policy_accepts_the_fail_closed_default():
+async def test_a_hardened_policy_opens_with_a_non_exporting_signer():
     config = _config(
         signer=Signer.from_device(
             "did:example:host-a", "client-key-1", SigningDevice.from_seed(CLIENT_SEED)
@@ -345,6 +390,33 @@ async def test_close_aborts_in_flight_work_rather_than_draining_it():
         await anyio.sleep(0.05)
 
     assert started == [1], "the exchange must have begun"
+    assert completed == [], "in-flight work is aborted, not drained"
+
+
+@pytest.mark.anyio
+async def test_close_aborts_an_in_flight_notification_too():
+    # #421 applies to a notification for the same reason it applies to a request: the
+    # caller has torn the transport down, and an acknowledgement it will never look at
+    # must not hold the close open.
+    started, completed = [], []
+
+    async def slow(method, target_uri, headers, body) -> HttpReply:
+        started.append(1)
+        await anyio.sleep(5)
+        completed.append(1)
+        return HttpReply(status=202, headers=[], body=b"")
+
+    async with mcp_re_http_transport(_config(), slow) as (read, write):
+        await write.send(
+            SessionMessage(
+                JSONRPCMessage(
+                    JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized")
+                )
+            )
+        )
+        await anyio.sleep(0.05)
+
+    assert started == [1], "the notification must have been sent"
     assert completed == [], "in-flight work is aborted, not drained"
 
 

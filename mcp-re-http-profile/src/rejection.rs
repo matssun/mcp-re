@@ -26,7 +26,6 @@ use serde_json::Value;
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
-use crate::block::ResolvedActor;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
@@ -265,14 +264,14 @@ mod tests {
 
     /// Slot-aware trust seam: the server key is trusted only for the Response
     /// slot, the client key only for the Request slot (MCPRE-100).
-    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<crate::block::ResolvedActor> {
         move |key_id: &str, slot: SignerSlot| {
             let (role, key) = match (key_id, slot) {
                 ("server-key-1", SignerSlot::Response) => ("server", server_key()),
                 ("client-key-1", SignerSlot::Request) => ("client", client_key()),
                 _ => return None,
             };
-            Some(ResolvedActor {
+            Some(crate::block::ResolvedActor {
                 identity: crate::block::ActorIdentity {
                     role: role.into(),
                     trust_domain: "example.com".into(),

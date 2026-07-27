@@ -168,7 +168,7 @@ pub fn build_signed_request(
     inputs: &RequestSigningInputs,
     signing_key: &SigningKey,
 ) -> Result<SignedRequest, HttpProfileError> {
-    build_signed_request_with(id, method, params, target_uri, inputs, |request, block| {
+    build_signed_request_with(Some(id), method, params, target_uri, inputs, |request, block| {
         sign_request_full(
             request,
             block,
@@ -187,7 +187,7 @@ pub fn build_signed_request(
 /// [`RequestEvidence`]. This is the single seam every signing mechanism (in-process
 /// key, KMS/HSM via [`sign_request_with_signer`], delegated service) flows through.
 pub(crate) fn build_signed_request_with(
-    id: &Value,
+    id: Option<&Value>,
     method: &str,
     params: Map<String, Value>,
     target_uri: &str,
@@ -209,13 +209,20 @@ pub(crate) fn build_signed_request_with(
     // `_meta`, which `sign_request_full` composes in and which a caller cannot reach:
     // the body below is rebuilt from `id`/`jsonrpc`/`method`/`params` alone. It is
     // covered by `Content-Digest` either way, so caller metadata is signed, not trusted.
-    let body = serde_json::to_vec(&json!({
-        "id": id.clone(),
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": Value::Object(params),
-    }))
-    .map_err(|_| HttpProfileError::MalformedEvidence("request body serialization"))?;
+    // `id` ABSENT is what makes a message a JSON-RPC notification (§4.1), and the
+    // serving path classifies on exactly that: a `method` with no `id` key. `null` is
+    // not the same thing — it is a present id, so a notification signed with one would
+    // be dispatched as a request and answered with a bodied reply the client is not
+    // expecting. The key is therefore omitted, never emitted as null.
+    let mut envelope = Map::new();
+    if let Some(id) = id {
+        envelope.insert("id".to_owned(), id.clone());
+    }
+    envelope.insert("jsonrpc".to_owned(), json!("2.0"));
+    envelope.insert("method".to_owned(), json!(method));
+    envelope.insert("params".to_owned(), Value::Object(params));
+    let body = serde_json::to_vec(&Value::Object(envelope))
+        .map_err(|_| HttpProfileError::MalformedEvidence("request body serialization"))?;
 
     let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
     headers.extend(inputs.extra_headers.iter().cloned());
@@ -253,7 +260,7 @@ pub fn build_signed_request_with_signer(
 ) -> Result<SignedRequest, HttpProfileError> {
     // sign_request_with_signer signs but does NOT compose the evidence block; the
     // full-profile client composes the block first, then signs over it.
-    build_signed_request_with(id, method, params, target_uri, inputs, |request, block| {
+    build_signed_request_with(Some(id), method, params, target_uri, inputs, |request, block| {
         sign_request_full_with_signer(
             request,
             block,
@@ -264,6 +271,75 @@ pub fn build_signed_request_with_signer(
             &inputs.nonce,
         )
     })
+}
+
+/// Construct and sign a one-way MCP **notification** — a JSON-RPC message with a
+/// `method` and no `id` (§4.1) — with a local in-process key.
+///
+/// A notification is signed by the ORDINARY request rules: same evidence block, same
+/// covered components, same freshness triple. Nothing about the signing changes, which
+/// is why this is a thin sibling of [`build_signed_request`] rather than a second
+/// profile. What differs is only the JSON-RPC envelope (no `id`) and therefore the
+/// answer: an accepted notification earns a signed bodyless `202`, verified with
+/// [`crate::verify_delegated_accepted_202`], not a bodied reply.
+///
+/// A notification cannot carry an ADR-MCPS-047 continuation: an answer leg answers an
+/// `InputRequiredResult`, and a message with no `id` can receive no such result. A
+/// continuation on `inputs` is therefore a client construction error and fails closed
+/// here rather than being signed into evidence that describes an exchange that cannot
+/// exist.
+pub fn build_signed_notification(
+    method: &str,
+    params: Map<String, Value>,
+    target_uri: &str,
+    inputs: &RequestSigningInputs,
+    signing_key: &SigningKey,
+) -> Result<SignedRequest, HttpProfileError> {
+    reject_continuation_on_notification(inputs)?;
+    build_signed_request_with(None, method, params, target_uri, inputs, |request, block| {
+        sign_request_full(
+            request,
+            block,
+            signing_key,
+            &inputs.key_id,
+            inputs.created,
+            inputs.expires,
+            &inputs.nonce,
+        )
+    })
+}
+
+/// Non-exporting-custody variant of [`build_signed_notification`]. Wire-identical.
+pub fn build_signed_notification_with_signer(
+    method: &str,
+    params: Map<String, Value>,
+    target_uri: &str,
+    inputs: &RequestSigningInputs,
+    sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
+) -> Result<SignedRequest, HttpProfileError> {
+    reject_continuation_on_notification(inputs)?;
+    build_signed_request_with(None, method, params, target_uri, inputs, |request, block| {
+        sign_request_full_with_signer(
+            request,
+            block,
+            sign_base,
+            &inputs.key_id,
+            inputs.created,
+            inputs.expires,
+            &inputs.nonce,
+        )
+    })
+}
+
+fn reject_continuation_on_notification(
+    inputs: &RequestSigningInputs,
+) -> Result<(), HttpProfileError> {
+    if inputs.continuation.is_some() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "continuation on a notification",
+        ));
+    }
+    Ok(())
 }
 
 /// Convenience for the common `tools/call` case.
@@ -407,5 +483,145 @@ mod evidence_precondition_tests {
         let ok = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token");
         let signed = sign(vec![ok]).expect("a well-formed request signs");
         assert!(!signed.headers().is_empty(), "the signed request carries RFC 9421 headers");
+    }
+}
+
+#[cfg(test)]
+mod notification_tests {
+    //! C055: the client half of the one-way notification profile. The signing rules are
+    //! the ordinary request rules — what has to be exactly right is the JSON-RPC
+    //! envelope, because the serving path classifies a notification by the ABSENCE of
+    //! `id` and answers a misclassified message with a bodied reply the client never
+    //! awaits.
+
+    use super::*;
+    use mcp_re_http_profile::ArtifactType;
+    use mcp_re_http_profile::RequestEvidenceDigest;
+
+    const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+
+    fn inputs() -> RequestSigningInputs {
+        RequestSigningInputs::new(
+            "client-key-1",
+            AudienceTuple {
+                audience_id: "verifier-1".into(),
+                target_uri: TARGET.into(),
+                route: Some("a".into()),
+            },
+            vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token")],
+            "nonce-notification-1",
+            1_000,
+            1_300,
+        )
+    }
+
+    fn key() -> SigningKey {
+        SigningKey::from_seed_bytes(&[11u8; 32])
+    }
+
+    fn signed_notification() -> SignedRequest {
+        build_signed_notification(
+            "notifications/initialized",
+            Map::new(),
+            TARGET,
+            &inputs(),
+            &key(),
+        )
+        .expect("a well-formed notification signs")
+    }
+
+    fn body_of(signed: &SignedRequest) -> Value {
+        serde_json::from_slice(signed.request().body.as_slice()).expect("the signed body is json")
+    }
+
+    /// The classification the serving path performs, restated here so the client's
+    /// envelope is checked against the rule that actually decides its fate.
+    fn reads_as_a_notification(body: &Value) -> bool {
+        body.get("method").is_some() && body.get("id").is_none()
+    }
+
+    #[test]
+    fn a_signed_notification_carries_no_id_at_all() {
+        let body = body_of(&signed_notification());
+        assert!(
+            reads_as_a_notification(&body),
+            "the serving path classifies on an absent id: {body}"
+        );
+        assert_eq!(body["method"], Value::from("notifications/initialized"));
+        assert_eq!(body["jsonrpc"], Value::from("2.0"));
+    }
+
+    /// `"id": null` is a PRESENT id, so it would be dispatched as a request and answered
+    /// with a bodied reply nothing is waiting for. The key is omitted, not nulled.
+    #[test]
+    fn the_id_key_is_absent_rather_than_null() {
+        let body = body_of(&signed_notification());
+        let object = body.as_object().expect("the body is a json object");
+        assert!(!object.contains_key("id"), "no id key may appear: {body}");
+    }
+
+    #[test]
+    fn a_signed_notification_carries_the_ordinary_rfc_9421_evidence() {
+        let signed = signed_notification();
+        let names: Vec<String> = signed
+            .headers()
+            .iter()
+            .map(|(k, _)| k.to_ascii_lowercase())
+            .collect();
+        for required in ["signature", "signature-input", "content-digest"] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "a notification is signed by the ordinary request rules; missing {required}"
+            );
+        }
+        assert!(
+            body_of(&signed)["_meta"].is_object(),
+            "the request evidence block rides in the body root, as on any request"
+        );
+    }
+
+    /// An answer leg answers an `InputRequiredResult`; a message with no `id` can
+    /// receive no result at all, so a continuation here describes an exchange that
+    /// cannot exist. Refused locally rather than signed into evidence.
+    #[test]
+    fn a_continuation_on_a_notification_is_refused_locally() {
+        let digest = || RequestEvidenceDigest {
+            digest_alg: "sha-256".into(),
+            digest_value: "AAAA".into(),
+        };
+        let with_continuation = inputs()
+            .with_continuation(HttpContinuation::from_handles(digest(), digest(), b"state-1"));
+        assert_eq!(
+            build_signed_notification(
+                "notifications/cancelled",
+                Map::new(),
+                TARGET,
+                &with_continuation,
+                &key(),
+            )
+            .err(),
+            Some(HttpProfileError::MalformedEvidence("continuation on a notification")),
+        );
+    }
+
+    /// The two custody classes must produce the same bytes here for the same reason they
+    /// do on the request path: non-exporting custody moves the key behind a device, it
+    /// does not change the signed message.
+    #[test]
+    fn both_custody_classes_emit_identical_notification_bytes() {
+        let software = signed_notification();
+        let delegated = build_signed_notification_with_signer(
+            "notifications/initialized",
+            Map::new(),
+            TARGET,
+            &inputs(),
+            |preimage| {
+                mcp_re_core::b64url_decode(&key().sign(preimage))
+                    .map_err(|_| HttpProfileError::InvalidSignature)
+            },
+        )
+        .expect("the device path signs");
+        assert_eq!(software.request().body, delegated.request().body);
+        assert_eq!(software.headers(), delegated.headers());
     }
 }

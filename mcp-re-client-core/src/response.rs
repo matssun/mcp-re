@@ -647,11 +647,13 @@ fn rejection_wire_code(body: &[u8]) -> Option<String> {
 /// carried out. Treating it as completion is the misreading this doc exists to
 /// prevent.
 ///
-/// **Its binding is CONTENT-level, not instance-level** (see
-/// `docs/spec/http-profile-conformance-notes.md` §3.4): the acknowledgement binds to
-/// the notification's content digest, so a byte-identical retransmission of the same
-/// notification verifies against the same 202. A client that needs to distinguish two
-/// sends of an identical notification cannot get that from the acknowledgement alone.
+/// **Its binding is INSTANCE-level** (see
+/// `docs/spec/http-profile-conformance-notes.md` §3.4): the acknowledgement covers
+/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
+/// includes the request nonce. A 202 for transmission A therefore does NOT verify for a
+/// distinct transmission A′, even when A and A′ carry identical method, target and body
+/// bytes — so a client may read a verified 202 as proof that THIS transmission reached
+/// the boundary, not merely that identical content did at some unspecified time.
 ///
 /// Same trust inputs as [`verify_delegated_response`]: the ROOT ISSUER anchor comes
 /// through `resolve_actor` for the `Response` slot, and the credential must satisfy

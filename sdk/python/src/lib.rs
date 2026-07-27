@@ -13,8 +13,11 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use mcp_re_client_core::build_signed_notification;
+use mcp_re_client_core::build_signed_notification_with_signer;
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
+use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
@@ -410,6 +413,242 @@ fn sign_request_with_signer(
     Ok(to_signed_request(signed))
 }
 
+/// Sign a one-way MCP **notification** — a JSON-RPC message with a `method` and no
+/// `id` — as an RFC 9421 + RFC 9530 message.
+///
+/// Signed by the ordinary request rules; only the JSON-RPC envelope differs. The
+/// answer is a signed bodyless `202`, checked with [`verify_accepted_202`], not a
+/// bodied reply. There are no continuation arguments: a message that receives no
+/// result cannot be an ADR-MCPS-047 answer leg.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    seed, key_id, method, params_json, target_uri, audience_id, route,
+    dpop_token, nonce, created, expires, bindings_json=None,
+))]
+fn sign_notification(
+    seed: &[u8],
+    key_id: &str,
+    method: &str,
+    params_json: &str,
+    target_uri: &str,
+    audience_id: &str,
+    route: Option<String>,
+    dpop_token: &str,
+    nonce: &str,
+    created: i64,
+    expires: i64,
+    bindings_json: Option<String>,
+) -> PyResult<PySignedRequest> {
+    let key = seed_to_key(seed)?;
+    let params = params_object(params_json)?;
+    let inputs = notification_inputs(
+        key_id,
+        audience_id,
+        target_uri,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    )?;
+    let signed =
+        build_signed_notification(method, params, target_uri, &inputs, &key).map_err(err)?;
+    Ok(to_signed_request(signed))
+}
+
+/// Non-exporting-custody variant of [`sign_notification`]: the private key never
+/// enters the SDK. Wire-identical to the software path.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (
+    sign_callback, key_id, method, params_json, target_uri, audience_id, route,
+    dpop_token, nonce, created, expires, bindings_json=None,
+))]
+fn sign_notification_with_signer(
+    py: Python<'_>,
+    sign_callback: Py<PyAny>,
+    key_id: &str,
+    method: &str,
+    params_json: &str,
+    target_uri: &str,
+    audience_id: &str,
+    route: Option<String>,
+    dpop_token: &str,
+    nonce: &str,
+    created: i64,
+    expires: i64,
+    bindings_json: Option<String>,
+) -> PyResult<PySignedRequest> {
+    let params = params_object(params_json)?;
+    let inputs = notification_inputs(
+        key_id,
+        audience_id,
+        target_uri,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        bindings_json,
+    )?;
+    let sign_base = |preimage: &[u8]| -> Result<Vec<u8>, HttpProfileError> {
+        let out = sign_callback
+            .call1(py, (PyBytes::new(py, preimage),))
+            .map_err(|_| HttpProfileError::InvalidSignature)?;
+        let sig: Vec<u8> = out
+            .extract(py)
+            .map_err(|_| HttpProfileError::InvalidSignature)?;
+        if sig.len() != 64 {
+            return Err(HttpProfileError::InvalidSignature);
+        }
+        Ok(sig)
+    };
+    let signed = build_signed_notification_with_signer(method, params, target_uri, &inputs, sign_base)
+        .map_err(err)?;
+    Ok(to_signed_request(signed))
+}
+
+/// The signing inputs for a notification: the request inputs minus the continuation,
+/// which a message that receives no result cannot carry.
+#[allow(clippy::too_many_arguments)]
+fn notification_inputs(
+    key_id: &str,
+    audience_id: &str,
+    target_uri: &str,
+    route: Option<String>,
+    dpop_token: &str,
+    nonce: &str,
+    created: i64,
+    expires: i64,
+    bindings_json: Option<String>,
+) -> PyResult<RequestSigningInputs> {
+    Ok(signing_inputs(
+        key_id,
+        audience_id,
+        target_uri,
+        route,
+        dpop_token,
+        nonce,
+        created,
+        expires,
+        None,
+        None,
+        None,
+        None,
+        None,
+        match bindings_json.as_deref() {
+            Some(j) => build_bindings(j)?,
+            None => Vec::new(),
+        },
+    ))
+}
+
+/// The outcome of verifying a delegated-signed bodyless `202 Accepted`.
+///
+/// `ok` means the acknowledgement VERIFIED: the credential chained to the trusted root
+/// and the delegated signature covered the acknowledgement AND bound it to the exact
+/// notification transmission this client sent.
+///
+/// **What that claims, exactly: the enforcement boundary authenticated and accepted the
+/// message.** NOT that the action completed, that the inner application observed it, or
+/// that anything was done about it — a verified acknowledgement of
+/// `notifications/cancelled` does not mean anything was cancelled.
+#[pyclass]
+struct PyAcceptedResult {
+    #[pyo3(get)]
+    ok: bool,
+    /// The delegated key id that signed the acknowledgement — never the root, which
+    /// stays off the request path (ADR-MCPRE-052).
+    #[pyo3(get)]
+    server_keyid: String,
+}
+
+/// Verify the delegated-signed bodyless `202` a server returns for a one-way
+/// notification, bound to the exact transmission this client sent.
+///
+/// The binding is INSTANCE-level (owner ruling C019b): the acknowledgement covers
+/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
+/// includes its nonce. An acknowledgement captured for one transmission therefore does
+/// not verify for a byte-identical retransmission.
+///
+/// Same trust inputs as `verify_response`: the ROOT ISSUER anchor, the audience scope,
+/// the accepted trust epochs, and the client's static denylist. Anything unsigned,
+/// direct-root-signed, revoked, stale-epoch, or bound to a different transmission fails
+/// closed as a `ValueError` carrying the frozen wire code.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn verify_accepted_202(
+    status: u16,
+    resp_headers: Vec<(String, String)>,
+    resp_body: &[u8],
+    req_method: &str,
+    req_target_uri: &str,
+    req_headers: Vec<(String, String)>,
+    req_body: &[u8],
+    issuer_key_id: &str,
+    issuer_pubkey_b64url: &str,
+    issuer_role: &str,
+    issuer_trust_domain: &str,
+    issuer_subject: &str,
+    verifier_audiences: Vec<String>,
+    expected_audience_hash: &str,
+    accepted_epochs: Vec<String>,
+    max_clock_skew: i64,
+    revoked_identifiers: Vec<String>,
+    now: i64,
+) -> PyResult<PyAcceptedResult> {
+    let issuer_pub = VerificationKey::from_b64url(issuer_pubkey_b64url)
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err("invalid issuer public key"))?;
+    let ikid = issuer_key_id.to_owned();
+    let iident = ActorIdentity {
+        role: issuer_role.to_owned(),
+        trust_domain: issuer_trust_domain.to_owned(),
+        subject: issuer_subject.to_owned(),
+        keyid: issuer_key_id.to_owned(),
+    };
+    let resolve = move |kid: &str, slot: SignerSlot| match slot {
+        SignerSlot::Response if kid == ikid => Some(ResolvedActor {
+            identity: iident.clone(),
+            verification_key: issuer_pub.clone(),
+            slot,
+        }),
+        _ => None,
+    };
+    let response = HttpResponse {
+        status,
+        headers: resp_headers,
+        body: resp_body.to_vec(),
+    };
+    let request = HttpRequest {
+        method: req_method.to_owned(),
+        target_uri: req_target_uri.to_owned(),
+        headers: req_headers,
+        body: req_body.to_vec(),
+    };
+    let policy = DelegationPolicy::new(
+        verifier_audiences,
+        expected_audience_hash,
+        accepted_epochs,
+        max_clock_skew,
+    );
+    let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
+    let actor = verify_delegated_accepted_202(
+        &response,
+        &request,
+        &resolve,
+        &policy,
+        &revocation,
+        now,
+    )
+    .map_err(err)?;
+    Ok(PyAcceptedResult {
+        ok: true,
+        server_keyid: actor.identity.keyid,
+    })
+}
+
 /// The outcome of verifying a delegated-required RFC 9421 response.
 ///
 /// `ok` means the evidence VERIFIED (the credential chained to the trusted root and
@@ -568,8 +807,12 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sign_preimage, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request, m)?)?;
     m.add_function(wrap_pyfunction!(sign_request_with_signer, m)?)?;
+    m.add_function(wrap_pyfunction!(sign_notification, m)?)?;
+    m.add_function(wrap_pyfunction!(sign_notification_with_signer, m)?)?;
     m.add_function(wrap_pyfunction!(verify_response, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_accepted_202, m)?)?;
     m.add_class::<PySignedRequest>()?;
     m.add_class::<PyVerifyResult>()?;
+    m.add_class::<PyAcceptedResult>()?;
     Ok(())
 }

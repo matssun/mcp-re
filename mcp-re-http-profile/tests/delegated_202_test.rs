@@ -283,13 +283,9 @@ fn a_revoked_delegated_key_is_rejected() {
 /// covers `@method`/`@target-uri`/`content-digest`/`content-type`, so B's
 /// different body (different `content-digest`) makes the signature refuse it.
 ///
-/// The granularity is CONTENT-level, not instance-level: `;req` binds the request's
-/// covered content, not its nonce, so two byte-identical notifications share one ack.
-/// That is the standing "Binding granularity" ruling
-/// (`docs/spec/http-profile-conformance-notes.md` §3.4), pinned for the non-delegated
-/// shape by `bodyless_202_test::signed_202_shape_binds_content_not_instance`. This
-/// test covers the delegated shape's half of it — the content-DISTINCT refusal, which
-/// is what a splice across different messages needs.
+/// This is the content-DISTINCT half of the splice. The transmission-DISTINCT half —
+/// two byte-identical notifications differing only in nonce — is
+/// `a_delegated_202_refuses_a_retransmission_of_the_same_notification` below.
 #[test]
 fn a_delegated_202_refuses_a_content_distinct_notification() {
     let note_a = notification_method("n-a", "notifications/initialized");
@@ -301,6 +297,36 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
         verify_delegated_accepted_202(&ack_a, &note_b, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
             .is_err(),
         "A's acknowledgement must not acknowledge B"
+    );
+}
+
+/// Owner ruling C019b on the shape production actually emits: an acknowledgement names
+/// one TRANSMISSION, not merely content. A′ is byte-identical to A in method, target
+/// and body — it differs only in the nonce inside its own `@signature-params`, which is
+/// the ordinary case for a retried `notifications/cancelled`. A's acknowledgement must
+/// not verify for it, or a captured 202 could be presented as proof of acceptance for a
+/// later transmission the server in fact refused as a replay.
+#[test]
+fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
+    let a = notification("n-transmission-a");
+    let a_prime = notification("n-transmission-a-prime");
+    assert_eq!(a.body, a_prime.body, "the two transmissions are content-identical");
+
+    let ack_a = sign_ack(&a);
+    verify_delegated_accepted_202(&ack_a, &a, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
+        .expect("binds to the transmission it acknowledges");
+    assert_eq!(
+        verify_delegated_accepted_202(
+            &ack_a,
+            &a_prime,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
+        HttpProfileError::ResponseBindingMismatch,
+        "A's acknowledgement must not acknowledge a distinct transmission A′"
     );
 }
 

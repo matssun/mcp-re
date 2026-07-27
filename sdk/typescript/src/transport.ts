@@ -22,9 +22,10 @@
  * never comes; a hang is a worse failure mode than a raise, and an unverifiable response
  * must never reach the application as a result.
  *
- * **This is a request/response adapter.** One-way notifications fail closed by default —
- * see {@link NotificationsUnsupported} for why that is a missing profile rather than an
- * inherent limit, and `unsafeDropNotifications` for the interim escape hatch.
+ * **One-way notifications are carried, not dropped.** A notification is its own signed
+ * POST, and the acknowledgement it earns — a signed bodyless 202 bound to that exact
+ * transmission — is verified before the adapter treats it as delivered. See
+ * {@link NotificationNotAcknowledged} for what happens when it is not.
  *
  * MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
  * a `poster` so this layer stays transport-agnostic and testable, which also means
@@ -39,7 +40,12 @@ import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { verifyResponse, type HttpHeader, type SignedRequestJs } from "../native/binding.js";
+import {
+  verifyAccepted202,
+  verifyResponse,
+  type HttpHeader,
+  type SignedRequestJs,
+} from "../native/binding.js";
 import {
   bindingsJson as serializeBindings,
   type AuthorizationBindingPolicy,
@@ -71,38 +77,50 @@ const MCP_RE_ERROR_CODE = -32001;
 const MAX_CLOCK_SKEW_BOUND = 300;
 
 /**
- * A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
+ * The client tried to send a client->server RESPONSE, which has no MCP-RE carrier.
  *
- * **Not** an inherent limitation: a notification is its own POST under MCP Streamable
- * HTTP, so its request signature and `Content-Digest` authenticate it exactly like any
- * other request. What is missing is the ratified one-way notification + acknowledgement
- * profile (MCP-RE issue #418) — what a verifier returns for a message with no JSON-RPC
- * response, and how that acknowledgement binds to the request evidence.
+ * A server-initiated request (sampling, elicitation over the same session) would be
+ * answered by a JSON-RPC response travelling client->server. MCP-RE profiles two client
+ * message shapes — a request that earns a signed reply, and a notification that earns a
+ * signed bodyless 202 — and a response is neither.
  *
- * Until that lands the adapter fails closed here rather than passing the message
- * unprotected or discarding it silently. `unsafeDropNotifications: true` opts into
- * dropping instead; a hardened policy refuses that opt-in outright.
- *
- * A local condition — nothing was transmitted, so no wire code describes it.
+ * Failing closed here is the narrow choice on purpose. The alternative the notification
+ * path makes available is worse: a response has no `method`, so carrying it as a
+ * notification would mean signing a fabricated message and reporting the acknowledgement
+ * of THAT as if the response had been delivered.
  */
-export class NotificationsUnsupported extends McpReSdkError {
+export class ClientResponseUnsupported extends McpReSdkError {
   constructor(detail: string) {
     super(detail);
-    this.name = "NotificationsUnsupported";
+    this.name = "ClientResponseUnsupported";
   }
 }
 
 /**
- * A hardening profile refused an explicitly unsafe option.
+ * A notification was transmitted and its acknowledgement did not verify.
  *
- * The hardened profile exists to make "this deployment does not accept known-unsafe
- * behaviour" enforceable rather than advisory, so an unsafe opt-in must fail the
- * connection there instead of being honoured.
+ * The message left this process. What could not be established is that the enforcement
+ * boundary authenticated and accepted it: the 202 was absent, unsigned, signed by an
+ * untrusted key, or bound to a different transmission.
+ *
+ * It is thrown from `send()`, so the caller that emitted the notification is the one
+ * that learns it was not acknowledged — there is no reply for a JSON-RPC error to ride
+ * back on, and treating an unverifiable acknowledgement as delivery is the
+ * take-it-on-faith posture this protocol exists to remove. `wireCode` carries the frozen
+ * reason when the failure has one.
  */
-export class UnsafeConfigurationRefused extends McpReSdkError {
-  constructor(detail: string) {
-    super(detail);
-    this.name = "UnsafeConfigurationRefused";
+export class NotificationNotAcknowledged extends McpReSdkError {
+  readonly method: string;
+  readonly wireCode: string;
+
+  constructor(method: string, wireCode: string) {
+    super(
+      `'${method}' was sent but its acknowledgement did not verify (${wireCode}); ` +
+        `it must not be treated as delivered`,
+    );
+    this.name = "NotificationNotAcknowledged";
+    this.method = method;
+    this.wireCode = wireCode;
   }
 }
 
@@ -236,24 +254,15 @@ export interface McpReConfig {
   maxConcurrentExchanges?: number;
 
   /**
-   * Drop client->server notifications instead of failing closed on them. **Unsafe.**
+   * Called with `(method, serverKeyid)` for each client->server notification whose signed
+   * 202 verified. Observability only — the acceptance claim has already been checked by
+   * the time this runs, and declining to observe it changes nothing.
    *
-   * A standard MCP client cannot complete its lifecycle without
-   * `notifications/initialized`, so this exists to keep the adapter usable at all until
-   * the one-way notification + acknowledgement profile is ratified (#418). It is named
-   * for what it is: `notifications/cancelled` silently becomes "keep going", which is a
-   * safety hole, not a compatibility quirk.
-   *
-   * A hardened {@link SignerPolicy} refuses this outright.
+   * What a verified acknowledgement means is exactly: the enforcement boundary
+   * authenticated and accepted the message. NOT that the action completed — a verified
+   * ack for `notifications/cancelled` does not mean anything was cancelled.
    */
-  unsafeDropNotifications?: boolean;
-
-  /**
-   * Called with each client->server notification the adapter drops, when
-   * `unsafeDropNotifications` is on. Dropping is never silent by default — the default is
-   * to fail closed — but a caller who opts in should still be able to see it.
-   */
-  onDroppedNotification?: (method: string) => void;
+  onNotificationAcknowledged?: (method: string, serverKeyid: string) => void;
 
   /**
    * Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
@@ -450,15 +459,6 @@ export class McpReHttpTransport implements Transport {
       );
     }
     this.#config.policy?.check(this.#config.signer);
-    if (this.#config.policy?.requireNonExporting && this.#config.unsafeDropNotifications) {
-      // The hardening profile is what makes "this deployment does not accept known-unsafe
-      // behaviour" enforceable rather than advisory.
-      throw new UnsafeConfigurationRefused(
-        `profile '${this.#config.policy.profile}' requires non-exporting custody and so ` +
-          `refuses unsafeDropNotifications: silently discarding 'notifications/cancelled' ` +
-          `is not acceptable under a hardened policy (#418)`,
-      );
-    }
     this.#config.authorizationPolicy?.check(this.#config.authorization ?? []);
     this.#state = TransportState.Open;
   }
@@ -471,19 +471,38 @@ export class McpReHttpTransport implements Transport {
         `McpReHttpTransport is ${this.#state}, not OPEN; it accepts no work`,
       );
     }
-    if (!("method" in message) || !("id" in message)) {
-      const method = "method" in message ? message.method : "<unknown>";
-      if (!this.#config.unsafeDropNotifications) {
-        // Fail closed. MCP-RE has no ratified profile for a one-way message (#418), and
-        // the two ways to proceed without one are both worse than stopping: pass it
-        // unprotected, or discard a `notifications/cancelled` and let the peer keep going.
-        throw new NotificationsUnsupported(
-          `'${method}' is a one-way notification; MCP-RE has no ratified one-way ` +
-            `notification profile yet (#418). Set unsafeDropNotifications: true to drop ` +
-            `notifications instead.`,
-        );
+    if (!("method" in message)) {
+      // A client->server RESPONSE or error. It has no `method`, so the notification path
+      // below could only carry it by signing a fabricated message; refuse it instead of
+      // inventing one.
+      throw new ClientResponseUnsupported(
+        "a client->server response has no MCP-RE carrier; the profile covers a signed " +
+          "request and a signed notification, and a response is neither",
+      );
+    }
+    if (!("id" in message)) {
+      // A one-way notification: its own signed POST, answered by a signed bodyless 202
+      // rather than a JSON-RPC reply. It runs under the same concurrency bound as an
+      // exchange because it costs the same resources — a connection and a signing
+      // operation. A failure throws from here rather than becoming a delivered message:
+      // there is no request id to correlate one to, and this caller is the only party
+      // that can learn the message was not acknowledged.
+      const params = "params" in message ? message.params : undefined;
+      await this.#slots.acquire();
+      let releaseAbortListener: () => void = () => {};
+      try {
+        // Re-checked AFTER the queue wait, and raced against close(), for the same
+        // reason a request is (#421): a notification that waited for a slot must not
+        // reach the server after the caller tore the transport down, and an aborted one
+        // must fail rather than wait out a poster nobody is listening for.
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+        const aborted = this.#aborted();
+        releaseAbortListener = aborted.release;
+        await Promise.race([this.#notify(message.method, params), aborted.promise]);
+      } finally {
+        this.#slots.release();
+        releaseAbortListener();
       }
-      this.#config.onDroppedNotification?.(method);
       return;
     }
 
@@ -598,6 +617,77 @@ export class McpReHttpTransport implements Transport {
     this.#correlation.expireBefore(Number.MAX_SAFE_INTEGER);
     this.#state = TransportState.Closed;
     this.onclose?.();
+  }
+
+  /**
+   * Sign one notification, POST it, and verify the acknowledgement it earns.
+   *
+   * A notification is signed by the ordinary request rules — same evidence block, same
+   * covered components, same freshness triple. What it gets back is a signed bodyless
+   * 202 whose `;req` components plus `mcp-re-request-evidence` bind it to THIS
+   * transmission (owner ruling C019b), so a 202 captured from an earlier send of the
+   * same notification does not verify here.
+   *
+   * There is deliberately no "sent it anyway" path: an unverified acknowledgement
+   * establishes nothing, and treating it as delivery is what the profile removes.
+   */
+  async #notify(method: string, params: unknown): Promise<void> {
+    const config = this.#config;
+    const now = this.#clock;
+    const created = now();
+    const expires = created + (config.requestTtl ?? 300);
+    const bindingsJson = this.#bindingsJson(method);
+
+    const signed = config.signer.signNotification({
+      method,
+      paramsJson: JSON.stringify(params ?? {}),
+      targetUri: config.targetUri,
+      audienceId: config.audienceId,
+      route: config.route ?? null,
+      dpopToken: config.dpopToken,
+      nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
+      created,
+      expires,
+      bindingsJson,
+    });
+
+    const httpReply = await this.#poster(
+      signed.method,
+      signed.targetUri,
+      signed.headers,
+      signed.body,
+    );
+
+    let accepted;
+    try {
+      accepted = verifyAccepted202(
+        httpReply.status,
+        httpReply.headers,
+        httpReply.body,
+        signed.method,
+        signed.targetUri,
+        signed.headers,
+        signed.body,
+        config.issuerKeyId,
+        config.issuerPubkeyB64Url,
+        config.issuerRole ?? "server",
+        config.issuerTrustDomain,
+        config.issuerSubject,
+        [...config.verifierAudiences],
+        config.expectedAudienceHash,
+        [...config.acceptedEpochs],
+        config.maxClockSkew ?? 60,
+        [...(config.revokedIdentifiers ?? [])],
+        now(),
+      );
+    } catch (e) {
+      throw new NotificationNotAcknowledged(
+        method,
+        e instanceof McpReError ? e.wireCode : e instanceof Error ? e.message : String(e),
+      );
+    }
+
+    config.onNotificationAcknowledged?.(method, accepted.serverKeyid);
   }
 
   /**

@@ -54,8 +54,8 @@ behaviour**, in both languages, mirrored:
 | **Resource bounds** | invalid bounds refused, not silently deadlocking | same — invalid-bound cases |
 | **Error propagation** | which exception type/shape a caller sees; wire code vs local condition | `failure delivery` groups |
 | **Lifecycle** | double-start, close, restart; what is checked at open vs per-request | `lifecycle` groups |
-| **Notification handling** | fail-closed default, unsafe opt-in, hardened refusal | `notification handling` groups |
-| **Shutdown** | in-flight work on close; whether a reply can still be delivered | *partially covered* — see below |
+| **Notification handling** | that the notification reaches the wire signed and id-less; that an unverifiable 202 fails closed; that the nonce floor governs it too | `notification handling` groups |
+| **Shutdown** | in-flight work on close, for a request AND a notification; whether a reply can still be delivered | *partially covered* — see below |
 
 ### The rule
 
@@ -74,7 +74,8 @@ Where that is true it is recorded here rather than papered over:
 | Behaviour | Python | TypeScript | Why |
 | --- | --- | --- | --- |
 | Bound validation point | `McpReConfig.__post_init__` | `McpReHttpTransport` constructor | Each validates where the value first enters SDK-owned code. Python's config is an SDK dataclass; TypeScript's is a caller-owned object literal, so the transport constructor is the earliest point the SDK controls. |
-| Notification refusal surfaces as | the pump raises, tearing down the session | `send()` rejects | Python's transport is a stream pair with no per-message reply channel; TypeScript's `Transport.send` is a method call that can reject. Both fail closed; both are visible. |
+| A client->server response | `ClientResponseUnsupported` from the pump | `ClientResponseUnsupported` from `send()` | Same refusal, same reason: MCP-RE profiles a signed request and a signed notification, and a response is neither. Delivery differs only where every other failure's does. |
+| An unverified notification acknowledgement surfaces as | the pump raises, tearing down the session | `send()` rejects | Python's transport is a stream pair with no per-message reply channel; TypeScript's `Transport.send` is a method call that can reject. Both fail closed; both are visible; neither treats the message as delivered. |
 | Correlation state observable as | a `CorrelationStore` the caller may pass in | `transport.pendingCorrelations` / `pendingRequests()` | Python's transport is a context-manager function with no object to hang a getter on. Both own **one store per transport**; see below. |
 | Non-`Error` thrown value | n/a — Python has no analogue | re-thrown | Throwing a non-`Error` is a JavaScript defect with no Python counterpart. |
 
@@ -136,6 +137,7 @@ received the request and acted on it. Only that this client will not process an 
 | Send before start / after close fails | streams do not exist / are closed → `ClosedResourceError` \| `BrokenResourceError` | `ConnectionClosed` |
 | Close idempotent, refuses new work at once | structural (the block exits once) | `close()` returns early when already CLOSING/CLOSED |
 | In-flight local requests fail connection-closed | cancelled scope | in-flight `send()` rejects `ConnectionClosed` |
+| An in-flight NOTIFICATION is aborted too | cancelled scope (the pump's task group) | the notification `send()` races `#aborted()`, as a request does |
 | Poster work cancelled where possible | anyio cancel scope | `AbortController` raced against the exchange |
 | No message callback after the close callback | streams closed — nothing can be delivered | `onmessage` suppressed unless state is OPEN |
 | Abandoned correlation cleared | `expire_before(_FAR_FUTURE)` on exit | `expireBefore(MAX_SAFE_INTEGER)` in `close()` |

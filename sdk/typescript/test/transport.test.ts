@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
 import { bindingsJson } from "../src/authorization.js";
+import type { HttpHeader } from "../native/binding.js";
 import type { PendingRequest } from "../src/correlation.js";
 
 import {
@@ -26,11 +27,12 @@ import {
   SigningDevice,
 } from "../src/index.js";
 import {
+  ClientResponseUnsupported,
   ConnectionClosed,
   McpReHttpTransport,
-  NotificationsUnsupported,
+  NotificationNotAcknowledged,
   TransportState,
-  UnsafeConfigurationRefused,
+  type HttpReply,
   type McpReConfig,
   type Poster,
 } from "../src/transport.js";
@@ -264,76 +266,115 @@ describe("McpReHttpTransport lifecycle", () => {
 describe("McpReHttpTransport notification handling", () => {
   const NOTIFICATION: JSONRPCMessage = { jsonrpc: "2.0", method: "notifications/initialized" };
 
-  it("fails closed on a notification by default", async () => {
-    // The default must not silently discard a standard MCP message. MCP-RE has no
-    // ratified one-way notification profile (#418); until it does, the two ways to
-    // proceed are both worse than stopping: pass the message unprotected, or discard a
-    // `notifications/cancelled` and let the peer keep working.
+  /** A poster that records what went out and answers with `reply`. */
+  const capturing = (
+    calls: { headers: HttpHeader[]; body: Buffer }[],
+    reply: HttpReply,
+  ): Poster => {
+    return async (_method, _targetUri, headers, body) => {
+      calls.push({ headers, body });
+      return reply;
+    };
+  };
+
+  const unsignedAck: HttpReply = { status: 202, headers: [], body: Buffer.alloc(0) };
+
+  it("transmits a notification as a signed POST", async () => {
+    // The adapter used to refuse or drop it: MCP-RE had no ratified one-way profile, so
+    // a `notifications/cancelled` silently became "keep going". The profile exists now
+    // (#418 / C019b), so the message is carried and its acknowledgement is checked.
+    const calls: { headers: HttpHeader[]; body: Buffer }[] = [];
+    const transport = new McpReHttpTransport(minimalConfig(), capturing(calls, unsignedAck));
+    await transport.start();
+
+    // The unsigned ack fails the check below; what this test reads is what DID go out.
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationNotAcknowledged);
+
+    expect(calls).toHaveLength(1);
+    const names = new Set(calls[0].headers.map((h) => h.key.toLowerCase()));
+    for (const required of ["signature", "signature-input", "content-digest"]) {
+      expect(names).toContain(required);
+    }
+    const body = JSON.parse(calls[0].body.toString("utf8"));
+    expect(body.method).toBe("notifications/initialized");
+    // The serving path classifies a notification by an ABSENT id. `null` is a present id
+    // and would be dispatched as a request, answered with a bodied reply nothing awaits.
+    expect("id" in body).toBe(false);
+    expect(body._meta, "the request evidence block rides along").toBeTruthy();
+  });
+
+  it("fails closed on an unsigned acknowledgement", async () => {
+    // A 202 with no evidence establishes nothing, so it must not pass as delivery. The
+    // caller that sent the notification is the one told, because there is no reply for a
+    // JSON-RPC error to ride back on.
+    const transport = new McpReHttpTransport(minimalConfig(), async () => unsignedAck);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toMatchObject({
+      name: "NotificationNotAcknowledged",
+      method: "notifications/initialized",
+    });
+  });
+
+  it("fails closed on a bodied 200 in place of an acknowledgement", async () => {
+    // The named bodyless set is checked as a set: a bodied 200 is not an
+    // acknowledgement, however well-formed it looks.
+    const transport = new McpReHttpTransport(minimalConfig(), async () => ({
+      status: 200,
+      headers: [{ key: "Content-Type", value: "application/json" }],
+      body: Buffer.from('{"jsonrpc":"2.0","id":null,"result":{"ok":true}}'),
+    }));
+    await transport.start();
+
+    await expect(
+      transport.send({ jsonrpc: "2.0", method: "notifications/cancelled" }),
+    ).rejects.toThrow(NotificationNotAcknowledged);
+  });
+
+  it("aborts an in-flight notification on close rather than waiting out the poster", async () => {
+    // #421 applies to a notification for the same reason it applies to a request: the
+    // caller has torn the transport down, and an acknowledgement it will never look at
+    // must not hold the close open.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const transport = new McpReHttpTransport(minimalConfig(), async () => {
+      await gate;
+      return unsignedAck;
+    });
+    await transport.start();
+    const inflight = transport.send(NOTIFICATION);
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.close();
+    await expect(inflight).rejects.toThrow(ConnectionClosed);
+    release();
+  });
+
+  it("refuses a sub-floor nonce override before a notification is signed", async () => {
+    // A notification signed under a guessable nonce is exactly as replayable as a
+    // request signed under one; a check that covered only requests would be a hole
+    // shaped like the message the caller cares least about.
+    const poster = vi.fn<Poster>();
+    const transport = new McpReHttpTransport(minimalConfig({ nonceFactory: () => "short" }), poster);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/at least 22/);
+    expect(poster, "nothing may reach the wire under a sub-floor nonce").not.toHaveBeenCalled();
+  });
+
+  it("refuses a client-side RESPONSE rather than carrying it as a notification", async () => {
+    // A response has no `method`. Signing one as a notification would fabricate a
+    // message and then report ITS acknowledgement as if the response had been delivered.
     const poster = vi.fn<Poster>();
     const transport = new McpReHttpTransport(minimalConfig(), poster);
     await transport.start();
 
-    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationsUnsupported);
-    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/#418/);
-    expect(poster, "nothing may reach the wire").not.toHaveBeenCalled();
-  });
-
-  it("requires an explicit unsafe opt-in to drop notifications", async () => {
-    const dropped: string[] = [];
-    const poster = vi.fn<Poster>();
-    const seen = await sendAndCapture(
-      minimalConfig({
-        unsafeDropNotifications: true,
-        onDroppedNotification: (m) => dropped.push(m),
-      }),
-      poster,
-      NOTIFICATION,
-    );
-
-    expect(dropped).toEqual(["notifications/initialized"]);
-    expect(poster).not.toHaveBeenCalled();
-    expect(seen).toBeUndefined();
-  });
-
-  it("drops under the opt-in even with no observer installed", async () => {
-    // Opting in is the decision; the observer is only how you watch it.
-    const poster = vi.fn<Poster>();
     await expect(
-      sendAndCapture(minimalConfig({ unsafeDropNotifications: true }), poster, NOTIFICATION),
-    ).resolves.toBeUndefined();
-    expect(poster).not.toHaveBeenCalled();
+      transport.send({ jsonrpc: "2.0", id: 1, result: {} } as JSONRPCMessage),
+    ).rejects.toThrow(ClientResponseUnsupported);
+    expect(poster, "nothing fabricated may reach the wire").not.toHaveBeenCalled();
   });
 
-  it("treats a client-side response the same way — it is not a client-initiated request", async () => {
-    const dropped: string[] = [];
-    const response: JSONRPCMessage = { jsonrpc: "2.0", id: 1, result: {} };
-    await sendAndCapture(
-      minimalConfig({ unsafeDropNotifications: true, onDroppedNotification: (m) => dropped.push(m) }),
-      vi.fn<Poster>(),
-      response,
-    );
-    expect(dropped).toEqual(["<unknown>"]);
-  });
-
-  it("refuses the unsafe opt-in under a hardened policy", async () => {
-    // The hardening profile makes "no known-unsafe behaviour here" enforceable rather
-    // than advisory, so the opt-in must fail the CONNECTION.
-    const transport = new McpReHttpTransport(
-      minimalConfig({
-        signer: Signer.fromDevice(
-          "did:example:host-a",
-          "client-key-1",
-          SigningDevice.fromSeed(CLIENT_SEED),
-        ),
-        policy: SignerPolicy.hardened("did:example:host-a"),
-        unsafeDropNotifications: true,
-      }),
-      vi.fn<Poster>(),
-    );
-    await expect(transport.start()).rejects.toThrow(UnsafeConfigurationRefused);
-  });
-
-  it("accepts the fail-closed default under a hardened policy", async () => {
+  it("opens under a hardened policy with a non-exporting signer", async () => {
     const transport = new McpReHttpTransport(
       minimalConfig({
         signer: Signer.fromDevice(
