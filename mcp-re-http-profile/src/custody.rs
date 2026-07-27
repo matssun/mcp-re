@@ -347,7 +347,22 @@ where
             iat: now,
             nbf: now,
             exp: now + self.cfg.ttl,
-            jti: format!("{}#{}", self.cfg.issuer_kid, self.counter),
+            // The credential id is a REVOCATION identifier: a verifier's
+            // `RevocationSource` is consulted with it, so two distinct credentials
+            // sharing one `jti` cannot be revoked independently. It must therefore be
+            // unique across the whole fleet and across restarts — the same property the
+            // comment above claims for `delegated_kid`, and the reason a bare counter is
+            // wrong here. Every replica runs the same `issuer_kid` and starts its counter
+            // at 0, so `issuer_kid#1` named a different credential on every replica and
+            // again after every restart: revoking one revoked all of them, and a
+            // just-issued credential could be born already on a denylist.
+            //
+            // `delegated_kid` is the RFC 7638 thumbprint of a freshly generated key, so
+            // it carries the fleet-wide uniqueness. The counter stays as a within-process
+            // issuance ordinal, which distinguishes two credentials minted over the SAME
+            // key material (a re-issuance under an advanced trust epoch) rather than
+            // relying on `iat` to differ.
+            jti: format!("{}#{}#{}", self.cfg.issuer_kid, delegated_kid, self.counter),
             aud: Audience::One(self.cfg.aud.clone()),
             mcp_re_profile: self.cfg.profile.clone(),
             mcp_re_audience_hash: self.cfg.audience_hash.clone(),
@@ -442,6 +457,56 @@ mod tests {
             kinds,
             vec!["mcp-re.delegated_key.issued", "mcp-re.delegated_key.rotated"]
         );
+    }
+
+    /// C034: the credential `jti` is a REVOCATION identifier, so two distinct
+    /// credentials must never share one. Every replica in a fleet runs the SAME
+    /// `issuer_kid` and starts its counter at 0, so a bare `issuer_kid#N` named a
+    /// different credential on each replica and again after each restart.
+    #[test]
+    fn two_replicas_never_mint_the_same_credential_id() {
+        // Two independently-started custody instances — a fleet, or one replica before
+        // and after a restart. Same config, same issuer, both from a cold counter.
+        let mut replica_a = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(10));
+        let mut replica_b = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory_seeded(200));
+        replica_a.ensure_active(1_000).expect("A issues");
+        replica_b.ensure_active(1_000).expect("B issues");
+
+        let jti_a = &replica_a.audit()[0].jti;
+        let jti_b = &replica_b.audit()[0].jti;
+        assert_ne!(
+            jti_a, jti_b,
+            "two replicas must not name their first credential identically, or revoking \
+             one revokes both and a fresh key can be born already revoked"
+        );
+        // And the id names the KEY, so it is derivable from what a verifier already sees.
+        assert!(
+            jti_a.contains(replica_a.active_kid().expect("A has a key")),
+            "the credential id carries the delegated kid that makes it fleet-unique"
+        );
+    }
+
+    /// Successive issuances within ONE process must also stay distinct — including a
+    /// re-issuance that mints over the same instant.
+    #[test]
+    fn successive_issuances_in_one_process_have_distinct_credential_ids() {
+        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        c.reissue(1_000).expect("re-issue at the SAME instant");
+        let ids: Vec<&String> = c.audit().iter().map(|e| &e.jti).collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "a same-instant re-issuance still gets its own id");
+    }
+
+    /// A factory that hands out distinct keys from a caller-chosen seed base, so two
+    /// instances in one test can be given genuinely different key material (as two real
+    /// replicas would generate).
+    fn factory_seeded(base: u8) -> impl FnMut() -> SigningKey {
+        let mut n = base;
+        move || {
+            n = n.wrapping_add(1);
+            SigningKey::from_seed_bytes(&[n; 32])
+        }
     }
 
     /// Trust-epoch advance (ADR-MCPRE-052 §7): setting a new epoch and re-issuing

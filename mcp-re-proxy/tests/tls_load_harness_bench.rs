@@ -1313,7 +1313,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     ]))
     .contains("gcp_kms"));
     assert!(app_err(mk(&[
-        "--key-source", "pkcs11", "--pkcs11-module", "/x.so", "--pkcs11-pin", "1",
+        "--key-source", "pkcs11", "--pkcs11-module", "/x.so", "--pkcs11-pin-file", "/etc/pin",
         "--pkcs11-token-label", "t", "--pkcs11-key-label", "k",
     ]))
     .to_lowercase()

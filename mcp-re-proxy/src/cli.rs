@@ -23,6 +23,40 @@ use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
 use crate::transport::ReverseProxyHeaderFormat;
 
+/// A secret string that does not leak through `Debug` and is scrubbed on drop.
+///
+/// [`Config`] derives `Debug`, so any structured log, panic message, or debug print of
+/// the config would otherwise carry the PKCS#11 User PIN verbatim. The PIN is the
+/// credential that unlocks a token holding the response-signing and (optionally) TLS
+/// private keys, so it belongs in the same custody class as the keys themselves.
+///
+/// `Zeroizing` wipes the heap allocation when the value drops. That is a best effort
+/// against a core dump or a freed-page read, not a guarantee: the string was already
+/// copied by whatever read it in, and `Clone` (needed because `Config` is `Clone`)
+/// makes another copy. It removes the copies this code controls.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(zeroize::Zeroizing<String>);
+
+impl SecretString {
+    /// Wrap a secret value.
+    pub fn new(value: impl Into<String>) -> Self {
+        SecretString(zeroize::Zeroizing::new(value.into()))
+    }
+
+    /// Borrow the secret. Every call site is a place the value can escape — keep them
+    /// few and close to the API that consumes it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // No length either: a PIN's length is worth guessing with.
+        f.write_str("SecretString(redacted)")
+    }
+}
+
 /// Where key material is read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySourceKind {
@@ -283,8 +317,26 @@ pub struct Config {
     /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
     /// `key_source == Pkcs11` (issue #4034).
     pub pkcs11_module: Option<String>,
-    /// PKCS#11 token User PIN (SENSITIVE). Required when `key_source == Pkcs11`.
-    pub pkcs11_pin: Option<String>,
+    /// Path the PKCS#11 token User PIN is read from. Required when
+    /// `key_source == Pkcs11`.
+    ///
+    /// The PIN itself is deliberately NOT a field here. Two reasons, and the config
+    /// carrying the path rather than the value answers both:
+    ///
+    /// * There is no way to pass it on argv. A process's command line is world-readable
+    ///   on every platform this runs on (`ps`, `/proc/<pid>/cmdline`), so
+    ///   `--pkcs11-pin <pin>` published the credential that unlocks the token holding
+    ///   the response-signing (and optionally TLS) private keys to every local user for
+    ///   the lifetime of the process.
+    /// * [`Config`] derives `Debug` and is cloned freely, so a PIN stored here would
+    ///   ride along into any structured log, panic message, or debug print. Keeping only
+    ///   the path means there is nothing to redact.
+    ///
+    /// The file is read once, at key-source construction, into a short-lived
+    /// [`SecretString`], and is held to the same permission floor as the other key files
+    /// (`key_file_mode_is_insecure`) — the PIN is protected by the same mechanism as the
+    /// keys it unlocks.
+    pub pkcs11_pin_file: Option<String>,
     /// PKCS#11 token label selecting the slot whose token holds the signing key
     /// (token labels are stable across reboots; slot ids are not). Required when
     /// `key_source == Pkcs11`.
@@ -445,7 +497,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
     let mut pkcs11_module: Option<String> = None;
-    let mut pkcs11_pin: Option<String> = None;
+    let mut pkcs11_pin_file: Option<String> = None;
     let mut pkcs11_token_label: Option<String> = None;
     let mut pkcs11_key_label: Option<String> = None;
     // #59 PKCS#11 delegated TLS: optional SECOND token object holding the Ed25519
@@ -554,10 +606,27 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     }
                 }
             }
-            // #4034 PKCS#11 key source. `--pkcs11-pin` is SENSITIVE: prefer a
-            // mechanism that keeps it off the argv visible via `ps`/`/proc`.
+            // #4034 PKCS#11 key source.
             "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            "--pkcs11-pin" => pkcs11_pin = Some(value.clone()),
+            // The PIN is read from a FILE, never argv. See `Config::pkcs11_pin_file`.
+            "--pkcs11-pin-file" => pkcs11_pin_file = Some(value.clone()),
+            // Still recognised, only to REFUSE it with the reason and the replacement.
+            // Falling through to "unknown flag" would be a worse error for the one
+            // operator who most needs to understand what changed — and worse, it would
+            // report a secret-handling decision as a typo. The PIN has already been
+            // exposed at this point (it is in this process's argv, which is
+            // world-readable): the refusal is about not making it a standing exposure,
+            // and the operator should treat that PIN as compromised and change it.
+            "--pkcs11-pin" => {
+                return Err(
+                    "--pkcs11-pin is refused: a process command line is world-readable \
+                     (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds \
+                     the signing keys would be published to every local user for the \
+                     lifetime of the process. Use --pkcs11-pin-file <path> with a 0600 \
+                     file. Treat any PIN previously passed this way as compromised."
+                        .to_string(),
+                )
+            }
             "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
             "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
             "--pkcs11-tls-key-label" => pkcs11_tls_key_label = Some(value.clone()),
@@ -956,8 +1025,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         if pkcs11_module.is_none() {
             return Err("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
         }
-        if pkcs11_pin.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-pin <pin>".to_string());
+        if pkcs11_pin_file.is_none() {
+            return Err(
+                "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
+                 never accepted on argv, which is world-readable via ps and \
+                 /proc/<pid>/cmdline"
+                    .to_string(),
+            );
         }
         if pkcs11_token_label.is_none() {
             return Err("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
@@ -1392,7 +1466,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         authz,
         revocation_list_paths,
         pkcs11_module,
-        pkcs11_pin,
+        pkcs11_pin_file,
         pkcs11_token_label,
         pkcs11_key_label,
         pkcs11_tls_key_label,
@@ -1687,6 +1761,44 @@ pub fn key_file_mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
 }
 
+/// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
+///
+/// Enforces the key-file permission floor here as well as at startup: `run()` checks it
+/// via `key_files_read_from_disk`, but `build_key_source` is a public entry point a test
+/// or an embedding binary can reach directly, and a secret-reading function that trusts
+/// its caller to have checked is one refactor from not being checked at all.
+///
+/// Trailing whitespace is trimmed — a PIN file written with `echo` ends in a newline, and
+/// a token would reject the PIN with an opaque error that looks like a wrong PIN. Interior
+/// whitespace is preserved: it may be part of the PIN.
+pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path).map_err(|e| {
+            KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
+        })?;
+        let mode = meta.permissions().mode();
+        if key_file_mode_is_insecure(mode) {
+            return Err(KeyError::NotFound(format!(
+                "--pkcs11-pin-file {path} is group/world-accessible (mode {:o}); it unlocks \
+                 the token holding the signing keys, so restrict it to 0600",
+                mode & 0o777
+            )));
+        }
+    }
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
+    })?;
+    let pin = SecretString::new(raw.trim_end());
+    if pin.expose().is_empty() {
+        return Err(KeyError::NotFound(format!(
+            "--pkcs11-pin-file {path} is empty; a blank PIN would be sent to the token"
+        )));
+    }
+    Ok(pin)
+}
+
 /// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
 /// value is CAPPED at [`MAX_INNER_READ_TIMEOUT_SECS`] (1 day) and an over-cap
 /// value is REJECTED loudly. This matters for `--request-deadline-secs`, whose
@@ -1849,7 +1961,12 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
                     .ok_or_else(|| KeyError::NotFound(format!("--key-source pkcs11 requires {flag}")))
             };
             let module = require(&config.pkcs11_module, "--pkcs11-module")?;
-            let pin = require(&config.pkcs11_pin, "--pkcs11-pin")?;
+            // Read the User PIN here, at the one point it is used, so it exists for as
+            // short a window as possible and never lands in `Config` (which is `Debug`
+            // and freely cloned). The file must be no more readable than a key file:
+            // it unlocks the token holding the signing keys.
+            let pin_file = require(&config.pkcs11_pin_file, "--pkcs11-pin-file")?;
+            let pin = read_pkcs11_pin(&pin_file)?;
             let token_label = require(&config.pkcs11_token_label, "--pkcs11-token-label")?;
             let key_label = require(&config.pkcs11_key_label, "--pkcs11-key-label")?;
             // #59: an optional SECOND token object holds the Ed25519 TLS key. When
@@ -1857,7 +1974,7 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
             // reads `--tls-key` from disk (the exclusivity guard already forbade it).
             Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
                 &module,
-                &pin,
+                pin.expose(),
                 &token_label,
                 &key_label,
                 &config.tls_cert,
@@ -3016,7 +3133,7 @@ mod tests {
         args(&[
             "--key-source", "pkcs11",
             "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin", "1234",
+            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
             "--pkcs11-token-label", "mcp-re-test",
             "--pkcs11-key-label", "mcp-re-response-signing",
         ])
@@ -3032,7 +3149,11 @@ mod tests {
             config.pkcs11_module.as_deref(),
             Some("/opt/pkcs11/libmock_pkcs11.so")
         );
-        assert_eq!(config.pkcs11_pin.as_deref(), Some("1234"));
+        assert_eq!(
+            config.pkcs11_pin_file.as_deref(),
+            Some("/etc/mcp-re/pkcs11-pin"),
+            "the config carries the PIN's PATH; the PIN itself is not a Config field"
+        );
         assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcp-re-test"));
         assert_eq!(
             config.pkcs11_key_label.as_deref(),
@@ -3047,7 +3168,7 @@ mod tests {
         // and the TLS paths are supplied by `minimal()`.)
         for missing in [
             "--pkcs11-module",
-            "--pkcs11-pin",
+            "--pkcs11-pin-file",
             "--pkcs11-token-label",
             "--pkcs11-key-label",
         ] {
@@ -3060,6 +3181,90 @@ mod tests {
             let err = parse_args(&a).unwrap_err();
             assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
         }
+    }
+
+    #[test]
+    fn argv_pkcs11_pin_is_refused_with_the_replacement_named() {
+        // C048: argv is world-readable, so a PIN there is a standing exposure. The flag
+        // is still recognised so the refusal explains WHY and what to use instead —
+        // falling through to "unknown flag" would report a secret-handling decision as
+        // a typo.
+        let mut a = minimal_durable();
+        a.splice(0..0, pkcs11_flags());
+        a.extend(args(&["--pkcs11-pin", "1234"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--pkcs11-pin is refused"), "got: {err}");
+        assert!(err.contains("--pkcs11-pin-file"), "the replacement must be named: {err}");
+        assert!(
+            err.contains("compromised"),
+            "the operator must be told the PIN already leaked: {err}"
+        );
+        assert!(
+            !err.contains("1234"),
+            "the refusal must not echo the secret it is refusing: {err}"
+        );
+    }
+
+    #[test]
+    fn a_secret_string_does_not_print_its_value_or_length() {
+        // C049: Config derives Debug and is cloned freely. The PIN is no longer a Config
+        // field at all, but the type that carries it in transit must not leak either.
+        let secret = super::SecretString::new("hunter2");
+        let rendered = format!("{secret:?}");
+        assert!(!rendered.contains("hunter2"), "Debug leaked the value: {rendered}");
+        assert!(!rendered.contains('7'), "Debug leaked the length: {rendered}");
+        assert_eq!(secret.expose(), "hunter2", "the value is still retrievable on purpose");
+    }
+
+    #[test]
+    fn the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file() {
+        // A PIN file written with `echo` ends in a newline; sending that to a token gets
+        // an opaque failure that looks like a wrong PIN. An EMPTY file is refused rather
+        // than sending a blank PIN.
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let ok_path = dir.join(format!("mcp-re-pin-ok-{pid}"));
+        let empty_path = dir.join(format!("mcp-re-pin-empty-{pid}"));
+        std::fs::write(&ok_path, b"1234\n").expect("write pin");
+        std::fs::write(&empty_path, b"  \n").expect("write empty pin");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for p in [&ok_path, &empty_path] {
+                std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))
+                    .expect("chmod 0600");
+            }
+        }
+
+        let pin = super::read_pkcs11_pin(ok_path.to_str().unwrap()).expect("reads");
+        assert_eq!(pin.expose(), "1234", "the trailing newline is not part of the PIN");
+        assert!(
+            super::read_pkcs11_pin(empty_path.to_str().unwrap()).is_err(),
+            "an empty PIN file must not yield a blank PIN"
+        );
+        let _ = std::fs::remove_file(&ok_path);
+        let _ = std::fs::remove_file(&empty_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_readable_pin_file_is_refused() {
+        // The PIN unlocks the token holding the signing keys, so it sits behind the same
+        // permission floor as a key file. Checked in the reader itself, not only at
+        // startup: build_key_source is a public entry point.
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("mcp-re-pin-lax-{}", std::process::id()));
+        std::fs::write(&path, b"1234").expect("write pin");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
+            .expect("chmod 0640");
+        let err = super::read_pkcs11_pin(path.to_str().unwrap()).unwrap_err();
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("group/world-accessible"),
+            "expected a permission refusal, got: {message}"
+        );
+        assert!(!message.contains("1234"), "the refusal must not echo the PIN: {message}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -4667,7 +4872,7 @@ mod tests {
             "--server-key-id", "server-key-1",
             "--key-source", "pkcs11",
             "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin", "1234",
+            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
             "--pkcs11-token-label", "mcp-re-test",
             "--pkcs11-key-label", "mcp-re-response-signing",
             "--signing-key-seed", "/unused-seed",

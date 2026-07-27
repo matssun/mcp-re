@@ -146,6 +146,14 @@ fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
     if !config.tls_key.is_empty() {
         paths.push(config.tls_key.as_str());
     }
+    // The PKCS#11 User PIN file is not a key, but it is the credential that unlocks the
+    // token holding the signing and (optionally) TLS keys — so a group/world-readable PIN
+    // file is as good as a readable key file, and belongs behind the same floor.
+    if let Some(pin_file) = config.pkcs11_pin_file.as_deref() {
+        if !pin_file.is_empty() {
+            paths.push(pin_file);
+        }
+    }
     paths
 }
 
@@ -1535,7 +1543,7 @@ mod key_file_perm_tests {
                 "pkcs11",
                 vec![
                     "--pkcs11-module", "/m.so", "--pkcs11-token-label", "t",
-                    "--pkcs11-key-label", "k", "--pkcs11-pin", "p",
+                    "--pkcs11-key-label", "k", "--pkcs11-pin-file", "/etc/mcp-re/pin",
                 ],
             ),
             KeySourceKind::AwsKms => (
@@ -1582,6 +1590,30 @@ mod key_file_perm_tests {
         let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
         crate::cli::parse_args(&owned)
             .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
+    }
+
+    /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
+    /// be among the files the startup permission check covers — otherwise the credential
+    /// protecting the keys sits behind a weaker floor than the keys themselves.
+    #[test]
+    fn the_pkcs11_pin_file_is_permission_checked() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
+        let files = key_files_read_from_disk(&config);
+        assert!(
+            files.contains(&"/etc/mcp-re/pin"),
+            "the PIN file must be checked; got {files:?}"
+        );
+        // And it is NOT claimed for a source that reads no PIN.
+        let file_custody = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        assert!(
+            !key_files_read_from_disk(&file_custody)
+                .iter()
+                .any(|p| p.contains("pin")),
+            "file custody reads no PIN file"
+        );
     }
 
     #[test]
