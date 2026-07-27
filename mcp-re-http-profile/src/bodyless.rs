@@ -64,6 +64,7 @@ use crate::evidence::RequestEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
 use crate::ids::BODYLESS_RESPONSE_COMPONENTS;
 use crate::ids::PROFILE_TAG;
+use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
@@ -144,6 +145,64 @@ fn emit(
     Ok(())
 }
 
+
+/// Derive the REQUEST-role evidence handle from the request itself.
+///
+/// This is the per-instance coordinate a bodyless 202 covers (C019b). It is the SAME
+/// derivation the bodied path binds through — a labeled SHA-256 over the request's own
+/// RFC 9421 signature base — so the two response shapes carry identical binding
+/// strength rather than the 202 being silently weaker.
+///
+/// It is canonical and independently recomputable: the verifier rebuilds the base from
+/// the request's own `Signature-Input` (its covered components and its
+/// `@signature-params`, which carry the nonce) and re-derives the digest. Nothing is
+/// taken from the acknowledgement's own claims, and nothing couples to the TEXTUAL
+/// `Signature-Input` value — RFC 9421 §7.3.7 makes covering the request's `Signature`
+/// NOT RECOMMENDED, and this reaches the same instance identity without doing so.
+fn request_evidence_of(request: &HttpRequest) -> Result<RequestEvidence, HttpProfileError> {
+    let parsed = crate::verify::parse_signature_input_for(
+        &request.headers,
+        REQUEST_LABEL,
+        "request signature-input",
+    )?;
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::Request(request),
+    )?;
+    Ok(RequestEvidence::from_signature_base(&base))
+}
+
+/// The covered request-evidence header value for `request`.
+fn request_evidence_header(request: &HttpRequest) -> Result<(String, String), HttpProfileError> {
+    Ok((
+        MCP_RE_REQUEST_EVIDENCE_HEADER.to_owned(),
+        request_evidence_of(request)?.digest_value,
+    ))
+}
+
+/// Fail closed unless the acknowledgement's covered request-evidence header is the
+/// digest the verifier itself derives from `request`.
+///
+/// This is what makes the acknowledgement transmission-bound. A byte-identical
+/// retransmission A′ carries a different nonce in its `@signature-params`, so its
+/// signature base differs, so this digest differs, so A's acknowledgement no longer
+/// matches — which is precisely the invariant the owner ruling requires.
+fn check_request_evidence(
+    response_headers: &[(String, String)],
+    request: &HttpRequest,
+) -> Result<(), HttpProfileError> {
+    let claimed = required_header(response_headers, MCP_RE_REQUEST_EVIDENCE_HEADER)
+        .map_err(|_| HttpProfileError::MissingEvidence("response request-evidence"))?;
+    let derived = request_evidence_of(request)?;
+    if claimed != derived.digest_value {
+        // The existing "this response does not bind to that request" verdict — no new
+        // wire token for what is the same class of failure.
+        return Err(HttpProfileError::ResponseBindingMismatch);
+    }
+    Ok(())
+}
+
 /// Sign a bodyless `202 Accepted` acknowledging `request` (§3.4, #418).
 ///
 /// `request` is the originating notification/response POST — an ordinary bodied,
@@ -161,10 +220,12 @@ pub fn sign_accepted_202(
 ) -> Result<HttpResponse, HttpProfileError> {
     let mut response = HttpResponse {
         status: STATUS_ACCEPTED,
-        headers: vec![(
-            "Content-Digest".to_owned(),
-            content_digest_sha256(&[]),
-        )],
+        headers: vec![
+            ("Content-Digest".to_owned(), content_digest_sha256(&[])),
+            // C019b: the per-instance coordinate. Covered below, so the
+            // acknowledgement binds to THIS transmission.
+            request_evidence_header(request)?,
+        ],
         body: Vec::new(),
     };
     let mut components: Vec<CoveredComponent> = BODYLESS_RESPONSE_COMPONENTS
@@ -221,6 +282,10 @@ pub fn verify_accepted_202(
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // C019b: the acknowledgement names the exact request TRANSMISSION it answers, and
+    // the verifier re-derives that name from the request rather than trusting it.
+    check_request_evidence(&response.headers, request)?;
 
     let parsed = crate::verify::parse_signature_input_for(
         &response.headers,
@@ -293,6 +358,8 @@ pub fn sign_delegated_accepted_202(
                 crate::ids::MCP_RE_DELEGATION_HEADER.to_owned(),
                 server_delegation.to_owned(),
             ),
+            // C019b: the per-instance coordinate, covered exactly like the credential.
+            request_evidence_header(request)?,
         ],
         body: Vec::new(),
     };
@@ -366,6 +433,9 @@ pub fn verify_delegated_accepted_202(
     let digest_header = required_header(&response.headers, "content-digest")
         .map_err(|_| HttpProfileError::MissingEvidence("response content-digest"))?;
     verify_content_digest_sha256(digest_header, &response.body)?;
+
+    // C019b: same transmission-level binding as the non-delegated acknowledgement.
+    check_request_evidence(&response.headers, request)?;
 
     // The delegation credential: present EXACTLY once and size-bounded. `single_header`
     // fails closed on a duplicate; the bound is checked before any parsing.

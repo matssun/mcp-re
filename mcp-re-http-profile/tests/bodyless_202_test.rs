@@ -5,9 +5,9 @@
 //! A signed 202 states exactly one thing: the enforcement boundary
 //! authenticated and accepted the message. Not that a cancellation completed,
 //! not that the inner application saw it, not that anything was done. These
-//! tests pin the mechanics; `signed_202_shape_binds_content_not_instance` pins the
-//! exact reach of the acknowledgement — it cannot be lifted onto a DIFFERENT
-//! message, but it is shared by byte-identical ones.
+//! tests pin the mechanics; `an_acknowledgement_binds_to_one_transmission_not_to_content`
+//! pins the exact reach of the acknowledgement — it names ONE transmission and cannot
+//! be lifted onto any other, including a byte-identical resend (C019b).
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_accepted_202;
@@ -116,7 +116,7 @@ fn signed_202_verifies_against_its_notification() {
 /// 202 does not prove that THIS transmission reached the boundary. If the ruling
 /// changes, this test is the one that must change with it.
 #[test]
-fn signed_202_shape_binds_content_not_instance() {
+fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let note_a = notification("n-a", "notifications/initialized");
     let note_b = notification("n-b", "notifications/cancelled");
     let ack_a = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
@@ -125,21 +125,62 @@ fn signed_202_shape_binds_content_not_instance() {
     verify_accepted_202(&ack_a, &note_a, &resolver(), &policy(), NOW).expect("binds to A");
     assert_eq!(
         verify_accepted_202(&ack_a, &note_b, &resolver(), &policy(), NOW).unwrap_err(),
-        HttpProfileError::ResponseSignatureInvalid,
+        HttpProfileError::ResponseBindingMismatch,
         "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
 
-    // Same method, same URI, same body — a distinct transmission that differs only
-    // in the request signature's own nonce, which no covered component reaches.
+    // THE INVARIANT (C019b, owner ruling 2026-07-27). Same method, same target, same
+    // body — a distinct TRANSMISSION differing only in the request signature's own
+    // nonce. Before this ruling the covered set reached nothing that distinguished
+    // them and A's acknowledgement verified against this too, so a captured ack could
+    // be presented as evidence for a later resend that the server had in fact rejected
+    // as a replay. The server could tell the two apart; the client could not.
     let note_a_again = notification("n-a-again", "notifications/initialized");
     assert_ne!(
         signature_input_of(&note_a),
         signature_input_of(&note_a_again),
         "the two transmissions must genuinely be distinct request instances"
     );
-    verify_accepted_202(&ack_a, &note_a_again, &resolver(), &policy(), NOW).expect(
-        "content-level binding: A's ack also verifies against a byte-identical \
-         retransmission — instance-level binding is NOT claimed",
+    assert_eq!(
+        verify_accepted_202(&ack_a, &note_a_again, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::ResponseBindingMismatch,
+        "an acknowledgement for transmission A must NOT verify for a distinct \
+         transmission A', even with identical method, target and body content"
+    );
+}
+
+/// The coordinate is re-derived from the request, never trusted from the response: a
+/// forged header naming some other transmission is refused even though the 202's own
+/// signature is valid over it.
+#[test]
+fn a_forged_request_evidence_header_is_refused() {
+    let note_a = notification("n-a", "notifications/initialized");
+    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("signs");
+    for (name, value) in ack.headers.iter_mut() {
+        if name.eq_ignore_ascii_case("mcp-re-request-evidence") {
+            *value = "0".repeat(value.len());
+        }
+    }
+    assert!(
+        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).is_err(),
+        "a request-evidence value the verifier cannot re-derive must fail closed"
+    );
+}
+
+/// Stripping the coordinate is not a downgrade to content-level binding: the header is
+/// a REQUIRED covered component, so its absence fails closed rather than falling back.
+#[test]
+fn a_missing_request_evidence_header_is_refused() {
+    let note_a = notification("n-a", "notifications/initialized");
+    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("signs");
+    ack.headers
+        .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
+    assert_eq!(
+        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::MissingEvidence("response request-evidence"),
+        "there is no weaker content-level mode to fall back to"
     );
 }
 

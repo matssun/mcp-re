@@ -302,6 +302,10 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             // (#424): coverable so the credential it carries is protected by the
             // response signature. Only the bodyless-202 path requires it.
             "mcp-re-delegation" => "mcp-re-delegation",
+            // The request-evidence header on a bodyless 202 (C019b): coverable so the
+            // per-instance coordinate it carries is protected by the response
+            // signature. Only the bodyless-202 path requires it.
+            "mcp-re-request-evidence" => "mcp-re-request-evidence",
             _ => {
                 return Err(HttpProfileError::MalformedEvidence(
                     "unknown covered component",

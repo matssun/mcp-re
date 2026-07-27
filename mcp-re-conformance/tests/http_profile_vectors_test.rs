@@ -894,7 +894,13 @@ fn build_fixtures() -> Vec<Fixture> {
         delegated_202_check: None,
     });
 
-    // h37 — the splice: A's acknowledgement presented against notification B.
+    // h37 — the splice: A's acknowledgement presented against notification B. Since
+    // C019b the verdict is `request_binding_mismatch`, not `response_sig_invalid`: the
+    // acknowledgement carries the request-evidence coordinate of the transmission it
+    // answers, the verifier re-derives that coordinate from the request in front of it,
+    // and the mismatch is caught BEFORE the signature check. The more precise verdict
+    // is the point — it names why the pairing is wrong rather than only that the bytes
+    // did not verify.
     let mut note_b = HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
@@ -907,7 +913,7 @@ fn build_fixtures() -> Vec<Fixture> {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h37_bodyless_202_splice".into(),
         kind: "bodyless_202".into(),
-        expected: "mcp-re.response_sig_invalid".into(),
+        expected: "mcp-re.request_binding_mismatch".into(),
         request: Some(to_wire_request(&note_b)),
         response: Some(to_wire_response(&ack)),
         oracle: None,

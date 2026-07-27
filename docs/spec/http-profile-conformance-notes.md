@@ -494,32 +494,57 @@ so the credential's own root-signed `mcp_re_server_signer` is authoritative and 
 `audience_hash` scope is the load-bearing binding. There is no independent identity
 to disagree, so no splice vector is lost.
 
-**Binding granularity — CONTENT-level, not instance-level.** `;req` binds the
-request's covered CONTENT (`@method`/`@target-uri`/`content-digest`/`content-type`),
-not its nonce. Content-level binding is what a splice across DISTINCT messages needs,
-and it is enforced. Two byte-identical notifications differing only in nonce share one
-ack: the ack for the first verifies as the ack for the second.
+**Binding granularity — INSTANCE-level (owner ruling, 2026-07-27, C019b).** A signed
+bodyless 202 names the exact request TRANSMISSION it acknowledges. The invariant:
 
-The consequence is explicit, because byte-identical notifications are the ORDINARY
-case (`notifications/initialized`, a retried `notifications/cancelled`): an on-path
-attacker who captures a signed 202 can drop a later byte-identical notification and
-replay the captured ack for it, bounded only by response freshness. A verified 202
-therefore proves *this message content was authenticated and accepted*, NOT that this
-particular transmission reached the boundary. A client must not treat it as delivery
-proof for an individual retry. Pinned by
-`bodyless_202_test::signed_202_shape_binds_content_not_instance`, which asserts BOTH
-directions.
+> A valid acknowledgement for request transmission A MUST NOT verify as the
+> acknowledgement for any distinct transmission A′, even when A and A′ have identical
+> method, target and body content.
 
-Instance-level binding is expressible, at a cost — the two candidate mechanisms are
-not equivalent:
+**Mechanism.** The 202 carries `mcp-re-request-evidence`, a REQUIRED covered component
+whose value is the REQUEST-role evidence digest: a labeled SHA-256 over the request's
+own RFC 9421 signature base. The base includes `@signature-params`, so the digest
+covers the request nonce and every covered request component. The verifier re-derives
+it from the request in front of it and fails closed on a mismatch
+(`mcp-re.request_binding_mismatch`) — nothing is trusted from the acknowledgement's own
+claims. Because the header is covered by the 202's signature, tampering with it also
+breaks the signature; the two checks are independent layers.
+
+This is the SAME derivation the bodied path binds through (`request_evidence` in the
+response evidence block), so the two response shapes now carry identical binding
+strength. The response shape no longer changes the meaning or strength of
+request–response binding.
+
+**Why this mechanism and not the alternatives.**
 
 | Mechanism | Verdict |
 |---|---|
-| Cover the request's `Signature`/`Signature-Input` via `;req` | **Ruled out.** RFC 9421 §7.3.7 makes this NOT RECOMMENDED: signatures of signatures do not give transitive coverage of covered components and the practice carries its own attacks. |
-| Carry a per-instance value in the request evidence block, so `content-digest;req` binds the instance for free | Viable, RFC-clean, needs no new covered component and no new header. Costs a wire change: `HttpRequestEvidenceBlock` is `deny_unknown_fields`, so it breaks existing verifiers, both SDKs, and the frozen vectors. |
+| Cover the request's `Signature`/`Signature-Input` via `;req` | **Ruled out.** RFC 9421 §7.3.7 makes this NOT RECOMMENDED: signatures of signatures do not give transitive coverage of covered components, and the practice carries its own attacks. |
+| Carry a per-instance value INSIDE `HttpRequestEvidenceBlock`, so `content-digest;req` binds the instance for free | **Not taken.** The block is `deny_unknown_fields`, so it breaks existing verifiers and both SDKs, and it requires the CLIENT to author the value — changing the request the backend sees. |
+| Cover a derived request-evidence digest on the RESPONSE (**taken**) | Canonical, includes the nonce and all covered request components, independently recomputable by the verifier, and touches the response side only — the request, client signing, and both SDKs' request paths are unchanged. |
 
-The standing ruling is content-level binding. Because #418 is unreleased, the second
-row remains open for the owner to take before the profile freezes.
+**The superseded ruling.** Until 2026-07-27 this section ruled CONTENT-level binding:
+two byte-identical notifications differing only in nonce shared one acknowledgement.
+That is withdrawn, not retained as an optional weaker mode. Its stated justification —
+that instance-level binding "is not expressible" — was false, and the exposure was
+real: a captured acknowledgement could be presented as evidence for a later
+byte-identical retransmission that the server had in fact rejected as a replay. The
+server could distinguish the two transmissions while the client could not determine
+which one the acknowledgement belonged to, which is precisely the defect. Proof of
+acceptance must not collapse distinct delivery attempts.
+
+**Wire change.** `mcp-re-request-evidence` is the second narrow exception to the "no
+new MCP-RE header fields" rule (E-3), for the same structural reason as
+`mcp-re-delegation`: a bodyless 202 has no body to carry what a bodied response carries
+in its evidence block. Frozen vectors `h34`–`h37` and `h47`–`h49` were regenerated;
+`h37` (the splice) now expects `mcp-re.request_binding_mismatch` rather than
+`mcp-re.response_sig_invalid`, because the coordinate check fires before signature
+verification and names why the pairing is wrong.
+
+**Pinned by** `bodyless_202_test::an_acknowledgement_binds_to_one_transmission_not_to_content`
+(which asserts a distinct transmission is REFUSED), plus
+`a_forged_request_evidence_header_is_refused` and
+`a_missing_request_evidence_header_is_refused` (no fallback to a weaker mode).
 
 **What a delegated 202 claims.** A delegated key trusted for THIS service
 authenticated and accepted this notification — NOT that any action completed (#418).

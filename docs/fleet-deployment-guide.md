@@ -141,8 +141,12 @@ validated live on GKE via Workload Identity (v0.12.1).
 
 A nonce admitted on replica A is replay-rejected on replica B, because the
 `(signer, audience, nonce)` key lives in the shared Redis store. The `--fleet`
-gate enforces the shared tier; the property is proven by
-`fleet_replay_e2e_test.rs`.
+gate enforces the shared tier; the property is proven against a LIVE Redis by
+`replay_race_harness_test.rs` — `two_replicas_share_one_live_redis_admission`
+drives two independent `HttpProfileProxy` replicas over one store (with a
+distinct-nonce control), and `serving_path_admits_exactly_one_over_live_redis`
+races 64 concurrent submissions of one nonce through the serving path for
+exactly one 200 and 63 replay rejections.
 
 ### 2. Trust/revocation coherence (W1 proof b, MCPS-84/85)
 
@@ -158,8 +162,11 @@ replica flushes its trust cache on the next request and re-resolves live. The
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the
 bounds from real config at startup (`FLEET cross-replica revocation-lag bounds`).
-Proven by `fleet_trust_epoch_e2e_test.rs`, which includes a negative control
-(the sibling serves stale trust until the epoch advances).
+Proven by `redis_trust_epoch_e2e_test.rs`:
+`serving_path::revocation_takes_effect_on_a_sibling_replica_when_the_epoch_advances`
+drives a sibling `HttpProfileProxy` wired as `app.rs` wires production (a Tier-3
+push cache over the live Redis epoch source) and includes a negative control —
+the sibling serves stale trust until the epoch advances.
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 

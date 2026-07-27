@@ -138,7 +138,29 @@ pub const BODYLESS_REQUEST_COMPONENTS: [&str; 3] = ["@method", "@target-uri", "c
 
 /// Covered components of a bodyless RESPONSE (§3.4) — the signed `202 Accepted`
 /// acknowledging a client-posted notification or response.
-pub const BODYLESS_RESPONSE_COMPONENTS: [&str; 2] = ["@status", "content-digest"];
+pub const BODYLESS_RESPONSE_COMPONENTS: [&str; 3] =
+    ["@status", "content-digest", MCP_RE_REQUEST_EVIDENCE_HEADER];
+
+/// The request-evidence header on a bodyless 202 (C019b, owner ruling 2026-07-27).
+///
+/// The second narrow exception to the "no new MCP-RE header fields" rule (E-3), for
+/// the same structural reason as [`MCP_RE_DELEGATION_HEADER`]: a bodyless 202 has no
+/// body to carry the `request_evidence` handle a bodied response carries in its
+/// evidence block, and MCP requires the accepted-notification 202 to be bodyless.
+///
+/// It carries the REQUEST-role evidence digest — a labeled SHA-256 over the request's
+/// own signature base, which includes `@signature-params` and therefore the request
+/// nonce. Because the header is a COVERED component of the 202's signature and its
+/// value is independently recomputable by the verifier from the request alone, the
+/// acknowledgement binds to one TRANSMISSION rather than to content:
+///
+/// > A valid acknowledgement for request transmission A must not verify as the
+/// > acknowledgement for any distinct transmission A′, even when A and A′ have
+/// > identical method, target and body content.
+///
+/// This replaces the superseded content-level binding of §3.4; there is no weaker
+/// mode retained.
+pub const MCP_RE_REQUEST_EVIDENCE_HEADER: &str = "mcp-re-request-evidence";
 
 /// The dedicated delegation-credential header on a DELEGATED bodyless 202
 /// (#424 / #418, owner ruling 2026-07-17). This is the ONE narrow exception to the
@@ -160,8 +182,12 @@ pub const MAX_DELEGATION_HEADER_LEN: usize = 8192;
 /// response set PLUS the delegation-credential header, bound to the request via
 /// the `;req` components. The header's presence in this set is what makes the
 /// credential covered by the signature.
-pub const BODYLESS_DELEGATED_RESPONSE_COMPONENTS: [&str; 3] =
-    ["@status", "content-digest", MCP_RE_DELEGATION_HEADER];
+pub const BODYLESS_DELEGATED_RESPONSE_COMPONENTS: [&str; 4] = [
+    "@status",
+    "content-digest",
+    MCP_RE_DELEGATION_HEADER,
+    MCP_RE_REQUEST_EVIDENCE_HEADER,
+];
 
 /// The HTTP status of an accepted one-way notification/response (#418, §3.4).
 ///
