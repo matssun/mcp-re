@@ -109,19 +109,45 @@ pub fn build_actor_resolver(
 /// [`cli::key_file_mode_is_insecure`] predicate so it stays consistent with (and
 /// testable alongside) the parse-time checks.
 #[cfg(unix)]
-fn check_key_file_perms(path: &str) -> Result<(), String> {
+fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(path) {
         let mode = meta.permissions().mode();
-        if cli::key_file_mode_is_insecure(mode) {
+        if let Some(reason) = cli::key_file_posture_violation(
+            mode,
+            meta.gid(),
+            allow_group_read,
+            &process_gids(),
+        ) {
             return Err(format!(
                 "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
-                 is group/world-accessible (mode {:o}); restrict to 0600",
+                 is {reason} (mode {:o}); restrict to 0600",
                 mode & 0o777
             ));
         }
     }
     Ok(())
+}
+
+/// The groups this process belongs to: the effective gid plus its supplementary
+/// groups. Under Kubernetes `fsGroup` the mounted Secret is owned by a supplementary
+/// group, not the effective one, so checking only `getegid()` would refuse the very
+/// mount model the relaxation exists for.
+#[cfg(unix)]
+fn process_gids() -> Vec<u32> {
+    let mut gids = vec![unsafe { libc::getegid() } as u32];
+    // SAFETY: the two-call idiom — ask for the count, then fill a buffer of that size.
+    unsafe {
+        let count = libc::getgroups(0, std::ptr::null_mut());
+        if count > 0 {
+            let mut buf = vec![0 as libc::gid_t; count as usize];
+            if libc::getgroups(count, buf.as_mut_ptr()) >= 0 {
+                gids.extend(buf.into_iter().map(|g| g as u32));
+            }
+        }
+    }
+    gids
 }
 /// Every private-key file this config causes the proxy to READ from disk.
 ///
@@ -161,7 +187,7 @@ fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
 /// the unix signature above — it had drifted to a second `strict` parameter no caller
 /// passes, so this arm could not have compiled.
 #[cfg(not(unix))]
-fn check_key_file_perms(_path: &str) -> Result<(), String> {
+fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -232,7 +258,7 @@ pub fn run(
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
     for path in key_files_read_from_disk(&config) {
-        check_key_file_perms(path)?;
+        check_key_file_perms(path, config.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
@@ -1671,17 +1697,49 @@ mod key_file_perm_tests {
         );
     }
 
+    /// 0644 is world-readable, not merely group-readable — the refusal now says which,
+    /// because "restrict to 0600" is more actionable when it names the actual bit.
     #[test]
-    fn a_group_readable_key_file_is_refused() {
-        let f = KeyFile::at(0o644, "group.key");
-        let err = check_key_file_perms(f.path()).expect_err("0644 must be refused");
-        assert!(err.contains("group/world-accessible"), "got: {err}");
+    fn a_world_readable_key_file_is_refused() {
+        let f = KeyFile::at(0o644, "world.key");
+        let err = check_key_file_perms(f.path(), false).expect_err("0644 must be refused");
+        assert!(err.contains("world-accessible"), "got: {err}");
+    }
+
+    /// C053b: group-readable is refused by DEFAULT — the opt-in is what changes it, and
+    /// the default posture is exactly what it was.
+    #[test]
+    fn a_group_readable_key_file_is_refused_without_the_opt_in() {
+        let f = KeyFile::at(0o640, "group.key");
+        let err = check_key_file_perms(f.path(), false).expect_err("0640 must be refused");
+        assert!(err.contains("group-accessible"), "got: {err}");
+        assert!(
+            err.contains("--allow-group-readable-key-files"),
+            "the refusal must name the opt-in that exists for the fsGroup mount model: {err}"
+        );
+    }
+
+    /// With the opt-in, a group-readable file whose group this process is actually in
+    /// is accepted — the file the test harness creates is owned by our own gid.
+    #[test]
+    fn a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in() {
+        let f = KeyFile::at(0o640, "fsgroup.key");
+        check_key_file_perms(f.path(), true).expect("an fsGroup-shaped mount is accepted");
+    }
+
+    /// The opt-in does not reach group-WRITE: a peer able to replace the signing key is
+    /// never a mount-model requirement.
+    #[test]
+    fn group_write_is_refused_even_with_the_opt_in() {
+        let f = KeyFile::at(0o660, "groupwrite.key");
+        let err = check_key_file_perms(f.path(), true).expect_err("0660 must be refused");
+        assert!(err.contains("group-writable"), "got: {err}");
     }
 
     #[test]
     fn an_owner_only_key_file_is_accepted() {
         let f = KeyFile::at(0o600, "owner.key");
-        check_key_file_perms(f.path()).expect("0600 is the required posture");
+        check_key_file_perms(f.path(), false).expect("0600 is the required posture");
     }
 
     /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
@@ -1735,8 +1793,8 @@ mod key_file_perm_tests {
     /// a key file to check.
     #[test]
     fn an_absent_key_file_is_not_an_error() {
-        check_key_file_perms("").expect("no file configured is not a violation");
-        check_key_file_perms("/nonexistent/path/tls.key")
+        check_key_file_perms("", false).expect("no file configured is not a violation");
+        check_key_file_perms("/nonexistent/path/tls.key", false)
             .expect("a missing file is reported by the loader, not by this guard");
     }
 }

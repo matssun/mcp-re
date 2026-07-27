@@ -54,6 +54,13 @@ spec:
           args:
             - "--bind"
             - "0.0.0.0:{{ .Values.bindPort }}"
+            {{- if .Values.podSecurityContext.fsGroup }}
+            # C053b: the Secret is mounted 0440 and owned by fsGroup, so the key file is
+            # group-readable by construction. Rendered ONLY when fsGroup is set, so a
+            # chart that does not use the fsGroup mount model never relaxes the check.
+            # The proxy still refuses unless the group is one it is actually a member of.
+            - "--allow-group-readable-key-files"
+            {{- end }}
             # There is NO security toggle: the proxy always runs the maximal-security
             # posture and refuses any unsafe config at startup. `--fleet` selects the
             # horizontally-scaled TOPOLOGY (it does not relax security) and additionally
@@ -210,10 +217,13 @@ spec:
         - name: material
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
-            # The proxy refuses to start on a group/world-readable key file
-            # (signing-seed, tls.key). Secret volumes default to 0644; mount
-            # owner-read-only.
-            defaultMode: 0400
+            # The proxy refuses a key file with any world bit or group WRITE bit
+            # (signing-seed, tls.key). Secret volumes default to 0644, so the mode is
+            # pinned. 0440 rather than 0400: under a non-root podSecurityContext the
+            # file is owned by fsGroup, and the process reads it through its group
+            # membership. Paired with --allow-group-readable-key-files below; the
+            # proxy still verifies at startup that the group is one it is in.
+            defaultMode: 0440
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -232,13 +232,24 @@ affinity: {}
 # capability, forbid privilege escalation, and pin the runtime's default seccomp
 # profile — none of which changes the uid the process runs as.
 #
-# runAsNonRoot is deliberately NOT set here, and that is a known gap rather than an
-# oversight: the proxy refuses to start on a key file with ANY group or other
-# permission bit (`key_file_mode_is_insecure` is `mode & 0o077 != 0`), while a
-# Kubernetes Secret mounted for a non-root uid needs fsGroup + mode 0440 — which
-# that predicate rejects. Running non-root therefore requires deciding how the
-# key-file check should treat an fsGroup-owned mount; see the audit's C053b.
+# Runs as a non-root uid (C053b, resolved 2026-07-27). The conflict that blocked this
+# was real: the proxy refuses a key file with ANY group or other permission bit, while
+# a Secret mounted for a non-root uid is owned by fsGroup and delivered mode 0440.
+#
+# Resolved by teaching the key-file check about that mount model rather than by
+# weakening it. Group READ is accepted only when the operator passes
+# --allow-group-readable-key-files (rendered below) AND the file's group is one the
+# process is actually in. Group WRITE and every world bit are still refused outright,
+# with or without the opt-in — a peer able to replace the signing key is never a mount
+# requirement.
+#
+# fsGroup must match the mounted Secret's group, and defaultMode is 0440 for the same
+# reason; the two are a pair, so changing one without the other fails closed at startup.
 podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
   seccompProfile:
     type: RuntimeDefault
 
