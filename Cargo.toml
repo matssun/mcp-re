@@ -81,7 +81,7 @@ rustls-pki-types = "1"
 # already in the closure (rustls' provider), so this barely grows it. The verify
 # CODE ships in the proxy's `online_ocsp` module (it is no longer behind a
 # separate feature); enabling `verify` here makes the API available to it.
-x509-parser = { version = "0.16", features = ["verify"] }
+x509-parser = { version = "0.18", features = ["verify"] }
 # (MCPS-088): asn1-rs BitString type for the OCSP responder-signature verify
 # path (re-exported by x509-parser; same version it resolves).
 asn1-rs = "0.6"
@@ -111,7 +111,7 @@ cryptoki-sys = "0.1.8"
 # resolves to rustls/std + rustls/ring + rustls-native-certs — the SAME rustls-ring
 # stack already in the closure (TLS termination, ureq), reading the pod's own trust
 # store, so no second TLS implementation enters the build.
-redis = { version = "0.32", default-features = false, features = ["tls-rustls"] }
+redis = { version = "1.4", default-features = false, features = ["tls-rustls"] }
 # Online OCSP/CRL revocation: x509-ocsp = pure-Rust ASN.1 OCSP req/resp
 # (`builder` for CertId/request construction); ureq = blocking HTTP client (OCSP
 # nominal transport is HTTP), no tokio. der/spki/x509-cert/sha2 are the codec +
