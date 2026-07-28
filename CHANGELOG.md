@@ -233,6 +233,13 @@ causes over 21 clusters):*
 - **Bazel/cargo parity was broken for three test targets**, two since round 1, so
   every round reported as verified in between had been verified on the cargo lane only.
 
+- **CI installed an upstream `mcp` the package forbids.** The Python wheel job named
+  `"mcp>=1.16"` itself instead of installing the wheel's own `mcp` extra, so it
+  bypassed the `<2.0` cap `pyproject.toml` declares. When upstream published **mcp
+  2.0.0** — in which `JSONRPCMessage` stopped being a RootModel and became a plain
+  union alias, so it is neither callable nor carries `.root` — the job installed it
+  and 33 SDK tests failed on a branch that had not touched the SDK. The constraint now
+  has one source. (Supporting mcp 2.x is separate, deliberately unclaimed work.)
 - **Python SDK: the nonce floor was defined but never called on the signing path.** The
   C080/C088 check shipped with its unit tests passing while the production call site still
   used the unchecked factory, so a caller-supplied sub-floor `nonce_factory` was accepted

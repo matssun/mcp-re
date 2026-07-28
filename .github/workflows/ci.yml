@@ -400,11 +400,19 @@ jobs:
       # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
       # INSTALLED wheel (its native mcp_re_sdk._core), proving the downloader
       # artifact stands on its own.
+      # The upstream SDK is installed as the WHEEL'S OWN `mcp` extra, never as a
+      # restated `"mcp>=…"` on this line. pyproject declares `mcp>=1.16,<2.0`; naming
+      # the package here independently bypassed that cap, and when upstream published
+      # mcp 2.0.0 — where `JSONRPCMessage` stopped being a RootModel and became a
+      # plain union alias, so it is neither callable nor carries `.root` — this job
+      # installed it and 33 SDK tests failed on a branch that had not touched the SDK.
+      # One source for the constraint, the same rule VERSION and config/ports.toml get.
       - name: Clean-env install (wheel only) + smoke import
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
-          /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8" "pytest-cov>=5"
+          WHEEL="$(ls dist/*.whl)"
+          /tmp/venv/bin/pip install "${WHEEL}[mcp]" "pytest>=8" "pytest-cov>=5"
           /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
       # Run the SDK suite against the installed wheel from the repo root so the
