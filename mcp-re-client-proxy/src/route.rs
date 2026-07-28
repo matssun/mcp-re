@@ -8,7 +8,6 @@
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::DelegationPolicy;
-use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResolverOutcome;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::SignerSlot;

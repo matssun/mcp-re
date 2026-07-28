@@ -159,10 +159,29 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _origin_form(target_uri: str) -> str:
+    """The path+query of an absolute URI — the request line this client must send.
+
+    The proxy refuses a request whose received origin-form is not the origin-form of
+    its configured `--target-uri` (the operator asserts the external target a
+    TLS-terminating proxy cannot see; an assertion that does not describe where the
+    request actually arrived is not a reconstruction of it). So the request line has
+    to be DERIVED from `--target-uri` rather than fixed: posting `/` while signing
+    over `https://host:port/mcp` is exactly the mismatch that guard exists to catch.
+    """
+    marker = target_uri.find("://")
+    if marker < 0:
+        return "/"
+    authority = target_uri[marker + 3 :]
+    slash = authority.find("/")
+    return authority[slash:] if slash >= 0 else "/"
+
+
 def _make_post(args: argparse.Namespace):
     """One mTLS HTTP/1.1 POST per call (Connection: close) — the proxy's wire."""
     host, port_s = args.remote_addr.rsplit(":", 1)
     port = int(port_s)
+    request_target = _origin_form(args.target_uri)
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=args.server_ca)
     ctx.load_cert_chain(args.tls_cert, args.tls_key)
 
@@ -177,7 +196,7 @@ def _make_post(args: argparse.Namespace):
         try:
             hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
             head = (
-                f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"
+                f"POST {request_target} HTTP/1.1\r\nHost: {args.server_name}\r\n"
                 f"{hdr_lines}"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()

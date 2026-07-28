@@ -53,7 +53,7 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 ## 1. Build the amd64 images (native, on Cloud Build — no local QEMU)
 
 ```sh
-gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .   # proxy + FastMCP inner
+gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .   # proxy + FastMCP inner + loadgen
 gcloud builds submit --config deploy/cloudbuild/slo-bench.yaml .       # SLO baseline runner
 ```
 
@@ -99,6 +99,10 @@ YAML
 
 ```sh
 AR=us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re
+# The tag comes from VERSION — the same value deploy/cloudbuild/*.yaml pushes under.
+# Never retype it: a stale literal here names a tag Artifact Registry does not hold,
+# and the fleet then ImagePullBackOffs on a cluster that is already billing.
+TAG=$(tr -d '[:space:]' < VERSION)
 # Fresh material bundle, incl. the SHORT-LIVED client cert strict requires (< 3600s).
 rm -rf /tmp/gke_mat && mkdir -p /tmp/gke_mat
 cargo run -q -p mcp-re-demo --example emit_mtls_fixtures -- /tmp/gke_mat
@@ -106,14 +110,19 @@ kubectl -n mcp-re create secret generic mcp-re-proxy-material \
   --from-file=tls.crt=/tmp/gke_mat/server_cert.pem --from-file=tls.key=/tmp/gke_mat/server_key.pem \
   --from-file=client-ca.pem=/tmp/gke_mat/client_ca.pem --from-file=trust.json=/tmp/gke_mat/trust.json \
   --from-file=signing-seed=/tmp/gke_mat/signing_seed --dry-run=client -o yaml | kubectl apply -n mcp-re -f -
-# FastMCP inner (AR image)
-sed "s#image: mcp-re-inner-fastmcp:0.12.1#image: $AR/mcp-re-inner-fastmcp:0.12.1#" \
+# FastMCP inner (AR image). Match the repository, not the tag the manifest happens to
+# carry — a tag-anchored pattern silently no-ops once the two disagree, leaving the bare
+# local name in the applied YAML (unpullable on GKE).
+sed -E "s#image: [^[:space:]/]*mcp-re-inner-fastmcp:[^[:space:]]+#image: $AR/mcp-re-inner-fastmcp:$TAG#" \
   deploy/k8s/inner-fastmcp.yaml | kubectl apply -n mcp-re -f -
 # Proxy fleet (RFC 9421 serving path, ADR-MCPRE-050). The identity tuple
 # {audience, targetUri, trustDomain} comes from the chart defaults, which MATCH what
 # emit_mtls_fixtures + mcp_re_gke_client.py sign (audience did:example:server-1,
-# target-uri https://proxy.internal:8600/mcp, trust-domain example.com). Inner path
-# has NO trailing slash (FastMCP in-cluster 307-redirects /mcp/ -> /mcp).
+# target-uri https://proxy.internal:8600/mcp, trust-domain example.com). The inner path
+# ends WITH a trailing slash: FastMCP mounts Streamable HTTP at `/mcp/` and 307-redirects
+# `/mcp` -> `/mcp/`, and the proxy's inner client does not follow redirects (it maps any
+# non-2xx, the 307 included, to a fail-closed "inner unavailable"). The port is the
+# registry value config/ports.toml [services.mcp_re_inner_backend].port.
 # Transport binding is ALWAYS `exact` — there is no `none` option (a decoupled
 # channel<->signer posture is refused). This requires the SLO load client to present
 # a client cert whose URI SAN is the RESOLVED actor_id (role:trust_domain:signer:
@@ -121,9 +130,9 @@ sed "s#image: mcp-re-inner-fastmcp:0.12.1#image: $AR/mcp-re-inner-fastmcp:0.12.1
 # mcp_re_gke_client.py mint for the multi-replica proof. Validate locally end-to-end
 # (accepted + replay) before this deploy via tools' deploy-config check.
 helm upgrade --install mcp-re-proxy deploy/helm/mcp-re-proxy -n mcp-re \
-  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag=0.12.1 \
+  --set image.repository="$AR/mcp-re-proxy" --set-string image.tag="$TAG" \
   --set replicaCount=3 --set fleet=true \
-  --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp}' \
+  --set 'inner.httpUrls={http://mcp-re-inner-fastmcp:8620/mcp/}' \
   --set replay.redisUrl=redis://mcp-re-redis:6379 \
   --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
   --set drainPreStopSeconds=6 --wait --timeout 4m
@@ -203,8 +212,8 @@ pins it). The 2026-07-10 numbers there are the SUPERSEDED object/JCS run.
 kubectl -n mcp-re delete svc mcp-re-proxy-lb --ignore-not-found   # release the L4 LB forwarding rule cleanly
 gcloud container clusters delete mcp-re-fleet --zone us-central1-a --quiet   # nodes + LB + workloads
 # Optional (zero AR storage; rebuild via step 1 on rerun):
-for i in mcp-re-proxy mcp-re-inner-fastmcp mcp-re-slo-bench; do
-  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:0.12.1" --delete-tags --quiet || true
+for i in mcp-re-proxy mcp-re-inner-fastmcp mcp-re-loadgen mcp-re-slo-bench; do
+  gcloud artifacts docker images delete "us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/$i:$(tr -d '[:space:]' < VERSION)" --delete-tags --quiet || true
 done
 ```
 

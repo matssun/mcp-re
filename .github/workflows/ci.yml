@@ -99,6 +99,18 @@ jobs:
           python3 scripts/tracked_secrets_gate.py --selftest
           python3 scripts/tracked_secrets_gate.py
 
+      # Deploy image-tag gate: Cloud Build pushes the image tags, and the k8s
+      # manifests, chart and live-validation harnesses reference them. Nothing tied
+      # those together, so they drifted a whole release apart — the multi-replica
+      # harness deployed `:0.12.1` while Cloud Build published `:0.13.0`. Every pin
+      # reads correctly in isolation; the mismatch only shows up as ImagePullBackOff
+      # on a cluster that is already billing. Selftest first: a scanner that matches
+      # nothing is indistinguishable from a clean tree. Fast, python-only.
+      - name: Deploy image-tag gate (every deployed tag == VERSION)
+        run: |
+          python3 scripts/deploy_image_tag_gate.py --selftest
+          python3 scripts/deploy_image_tag_gate.py
+
       # Helm chart render gate: every fail-closed guard in the chart
       # (`templates/_helpers.tpl`) is a render-time `fail`, and several of them key
       # on values Helm treats as FALSY — so an inverted condition does not error, it

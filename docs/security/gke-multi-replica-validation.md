@@ -45,6 +45,14 @@ PROJECT_ID=<PROJECT_ID> ./docs/security/gke-multi-replica-validation.sh
 PROJECT_ID=<PROJECT_ID> ./docs/security/gke-multi-replica-validation.sh --teardown
 ```
 
+> **Inner containment is a per-cluster property, not a repo property.** The inner
+> manifest ships a NetworkPolicy making the proxy the only admitted ingress, but a
+> NetworkPolicy is accepted everywhere and enforced only by a CNI that implements it —
+> and the GKE cluster this script creates does NOT pass `--enable-network-policy`. The
+> harness therefore runs a deny test from an unrelated pod and prints whether the
+> containment is actually in force. Do not claim it on a cluster where that line says
+> it is not.
+
 The script is idempotent (create-or-reuse cluster/release), contains no secrets,
 and models the same shape as `gcloud-kms-validation.sh`. It deploys the Helm
 reference (`deploy/helm/mcp-re-proxy`) with `fleet=true` (the proxy always runs the

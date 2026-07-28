@@ -5025,6 +5025,14 @@ mod tests {
     fn key_file_mode_predicate_flags_group_and_world_bits() {
         // The pure file-perm predicate used by main.rs's strict key-file check:
         // owner-only (0600) is safe; any group/world bit is insecure.
+        assert!(!super::key_file_mode_is_insecure(0o600), "0600 owner-only is safe");
+        assert!(!super::key_file_mode_is_insecure(0o400), "0400 owner-read is safe");
+        assert!(super::key_file_mode_is_insecure(0o640), "group-readable is insecure");
+        assert!(super::key_file_mode_is_insecure(0o604), "world-readable is insecure");
+        assert!(super::key_file_mode_is_insecure(0o660), "group-writable is insecure");
+        assert!(super::key_file_mode_is_insecure(0o777), "world-everything is insecure");
+    }
+
     // ---- C053b: the fsGroup-owned mount posture -------------------------------
 
     #[test]
@@ -5072,14 +5080,6 @@ mod tests {
                 "{mode:o} has a world bit and must be refused even with the opt-in"
             );
         }
-    }
-
-        assert!(!super::key_file_mode_is_insecure(0o600), "0600 owner-only is safe");
-        assert!(!super::key_file_mode_is_insecure(0o400), "0400 owner-read is safe");
-        assert!(super::key_file_mode_is_insecure(0o640), "group-readable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o604), "world-readable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o660), "group-writable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o777), "world-everything is insecure");
     }
 
     #[test]

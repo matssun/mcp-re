@@ -85,27 +85,34 @@ GKE_MACHINE="${GKE_MACHINE:-e2-standard-2}"
 NAMESPACE="${NAMESPACE:-mcp-re}"
 RELEASE="${RELEASE:-mcp-re-proxy}"
 REPLICAS="${REPLICAS:-3}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
+PORTS_TOML="$REPO_ROOT/config/ports.toml"
+# Image tag — READ FROM THE REPO'S VERSION file, never restated as a literal. Same rule
+# as the port registry below: the chart's appVersion/image.tag and
+# deploy/k8s/inner-fastmcp.yaml already track VERSION, so a tag restated here goes stale
+# the moment VERSION moves and this harness then deploys an image the manifests do not
+# name — on kind an absent tag, on GKE an unpullable one.
+IMAGE_TAG="${MCP_RE_IMAGE_TAG:-$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")}"
+[[ -n "$IMAGE_TAG" ]] || { printf 'could not read the image tag from %s/VERSION\n' "$REPO_ROOT" >&2; exit 1; }
 # Container images. For gke they are pulled from Artifact Registry (the chart's bare
 # `mcp-re-proxy` name is unpullable on a cluster); for kind they are the locally-built
 # tags that get `kind load`ed below (native arch — the SAME image the GKE build
 # produces, per deploy/docker/Dockerfile). Override with MCP_RE_PROXY_IMAGE / _INNER_.
 if [[ "$PROVIDER" == gke ]]; then
   AR="${MCP_RE_AR:-${REGION}-docker.pkg.dev/${PROJECT_ID}/mcp-re}"
-  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.12.1}"
-  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.12.1}"
-  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${AR}/mcp-re-loadgen:0.12.1}"
+  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:$IMAGE_TAG}"
+  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:$IMAGE_TAG}"
+  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${AR}/mcp-re-loadgen:$IMAGE_TAG}"
 else
-  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-mcp-re-proxy:0.12.1}"
-  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-mcp-re-inner-fastmcp:0.12.1}"
-  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-mcp-re-loadgen:0.12.1}"
+  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-mcp-re-proxy:$IMAGE_TAG}"
+  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-mcp-re-inner-fastmcp:$IMAGE_TAG}"
+  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-mcp-re-loadgen:$IMAGE_TAG}"
 fi
 # The TLS/trust material the fleet Secret is built from (emit_mtls_fixtures output).
 # Required only for the DEPLOY path (enforced at the Secret step below); --teardown
 # must run without it, so don't fail-fast here.
 FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:-}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
-PORTS_TOML="$REPO_ROOT/config/ports.toml"
 
 log() { printf '\n=== %s ===\n' "$*"; }
 fail() { printf 'PROOF FAILED: %s\n' "$*" >&2; exit 1; }
@@ -197,8 +204,16 @@ kubectl -n "$NAMESPACE" create secret generic mcp-re-proxy-material \
 
 # --- 1c. Inner FastMCP backend (the ALLOWED Streamable-HTTP inner plane) ------
 log "Inner FastMCP backend ($INNER_IMAGE)"
-sed "s#image: mcp-re-inner-fastmcp:0.12.1#image: $INNER_IMAGE#" \
-  "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml" | kubectl -n "$NAMESPACE" apply -f -
+# Repoint the manifest's image at THIS run's image. Match the repository and ignore the
+# tag it carries: a tag-anchored pattern no-ops the moment the manifest and this harness
+# disagree, and a no-op here is silent — the fleet would then deploy the manifest's bare
+# local name, which is absent on kind and unpullable on GKE. The applied YAML is checked
+# for the substitution rather than trusted.
+INNER_YAML="$(sed -E "s#image: [^[:space:]/]*mcp-re-inner-fastmcp:[^[:space:]]+#image: $INNER_IMAGE#" \
+  "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml")"
+printf '%s\n' "$INNER_YAML" | grep -q "image: $INNER_IMAGE" \
+  || fail "inner manifest image was not substituted — deploy/k8s/inner-fastmcp.yaml no longer matches the expected 'image: mcp-re-inner-fastmcp:<tag>' line"
+printf '%s\n' "$INNER_YAML" | kubectl -n "$NAMESPACE" apply -f -
 # Force a fresh pod so it runs THIS run's freshly built image. An `apply` with an
 # unchanged spec (same image tag) does NOT restart the pod, so a rebuilt-and-reloaded
 # image under the same tag (e.g. kind load, or a re-pushed registry tag with
@@ -209,7 +224,19 @@ kubectl -n "$NAMESPACE" rollout restart deploy/mcp-re-inner-fastmcp
 kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-inner-fastmcp --timeout=420s
 
 # --- 2. Shared Redis tier (replay + trust epoch) -----------------------------
-log "Shared Redis tier"
+# A PRIMARY plus REDIS_REPLICAS replicas, because the chart declares
+# `replay.durabilityTier: redis-wait-quorum:<quorum>:<timeout_ms>` and the proxy fails
+# an admission CLOSED when `WAIT` returns fewer acks than that quorum. A standalone
+# Redis returns 0 acks forever, so every nonce insert fails and the very first request
+# with a freshly drawn nonce comes back `replay` — a fail-closed store reads exactly
+# like a spent nonce. The replica count is therefore DERIVED from the quorum the chart
+# asks for, not chosen: a topology that cannot satisfy the declared tier is not a
+# shared replay tier, it is an outage.
+REDIS_REPLICAS="${MCP_RE_REDIS_REPLICAS:-$(
+  awk -F'"' '/^  durabilityTier:/{split($2,p,":"); print p[2]}' "$CHART_DIR/values.yaml"
+)}"
+[[ "${REDIS_REPLICAS:-0}" -ge 1 ]] || fail "could not read the wait-quorum replica count from $CHART_DIR/values.yaml"
+log "Shared Redis tier (primary + $REDIS_REPLICAS replicas for the declared wait quorum)"
 kubectl -n "$NAMESPACE" apply -f - <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
@@ -240,6 +267,43 @@ spec:
   ports: [{ port: 6379, targetPort: 6379 }]
 YAML
 kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis --timeout=300s
+
+# The replicas that make `WAIT <quorum>` answerable. Same in-memory settings as the
+# primary; `--replicaof` points them at its Service. They carry no Service of their own —
+# the proxy only ever talks to the primary, and these exist solely to acknowledge writes.
+kubectl -n "$NAMESPACE" apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mcp-re-redis-replica }
+spec:
+  replicas: $REDIS_REPLICAS
+  selector: { matchLabels: { app: mcp-re-redis-replica } }
+  template:
+    metadata: { labels: { app: mcp-re-redis-replica } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          args: ["--save", "", "--appendonly", "no", "--stop-writes-on-bgsave-error", "no",
+                 "--replicaof", "mcp-re-redis", "6379"]
+          ports: [{ containerPort: 6379 }]
+YAML
+kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis-replica --timeout=300s
+
+# Ready is not the same as SYNCED: a replica reports Ready as soon as its port answers,
+# but it does not acknowledge writes until it has attached to the primary. Deploying the
+# fleet before then makes the first proof race the sync and fail closed for a reason that
+# has nothing to do with what it tests. Block until the primary itself reports the acks.
+redis_synced=""
+for _ in $(seq 1 60); do
+  acks="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+          redis-cli WAIT "$REDIS_REPLICAS" 1000 2>/dev/null | tr -d '\r')"
+  if [[ "${acks:-0}" -ge "$REDIS_REPLICAS" ]]; then redis_synced=1; break; fi
+  sleep 2
+done
+[[ -n "$redis_synced" ]] \
+  || fail "only ${acks:-0} of $REDIS_REPLICAS Redis replicas acknowledge writes — the declared wait-quorum tier cannot be satisfied, and every replay insert would fail closed"
+echo "  OK: $REDIS_REPLICAS replica(s) acknowledging writes; the declared wait quorum is satisfiable."
 
 # --- 3. Deploy the fleet (strict + fleet + shared tiers) ---------------------
 # The chart REFUSES to start a --fleet deployment on a node-local replay cache
@@ -490,6 +554,29 @@ YAML
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
     | awk -F'\t' '$2=="True"{print $1}' | tail -1)"
   [[ -n "$LOADGEN_POD" ]] || fail "loadgen pod did not become ready"
+
+  # --- Inner-containment deny test -------------------------------------------
+  # `deploy/k8s/inner-fastmcp.yaml` ships a NetworkPolicy making the proxy the ONLY
+  # admitted ingress to the inner plane. A NetworkPolicy is accepted by every cluster
+  # and enforced only by some, so "applied" says nothing about whether the containment
+  # exists — and an allow-rule whose selector matches no pod does not fail loudly, it
+  # denies everything. The loadgen is a real unrelated pod in the same namespace, so it
+  # is the deny test: it must NOT reach the inner.
+  #
+  # Reported, not asserted. On a non-enforcing CNI (a GKE Standard cluster created
+  # without --enable-network-policy, as this harness does) the reachability is expected
+  # and the containment simply is not in force; failing here would block a run over a
+  # property this cluster never claimed. What must never happen is silence — an
+  # unenforced policy reading as a protected inner plane.
+  if kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- \
+       python -c 'import socket,sys; socket.create_connection(("mcp-re-inner-fastmcp", '"$(port_of mcp_re_inner_backend)"'), timeout=6).close()' \
+       >/dev/null 2>&1; then
+    echo "  NOTE: an unrelated pod REACHED the inner plane — this CNI does not enforce"
+    echo "        NetworkPolicy, so mcp-re-inner-fastmcp-allow-proxy-only is inert here."
+    echo "        Inner containment is NOT in force on this cluster; do not claim it."
+  else
+    echo "  OK: inner containment enforced — an unrelated pod cannot reach the inner plane."
+  fi
 fi
 
 # --- Proof 1: cross-replica replay coherence ---------------------------------

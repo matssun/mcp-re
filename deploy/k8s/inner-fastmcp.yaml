@@ -77,14 +77,23 @@ spec:
 # (it is an unmodified FastMCP server, out of the TCB by design), so the restriction
 # has to be enforced by the network layer.
 #
-# This policy makes the proxy the ONLY admitted ingress. It selects the inner
-# backend and allows ingress solely from pods carrying the proxy chart's selector
-# labels (`mcp-re-proxy.selectorLabels`). Adjust `app.kubernetes.io/instance` to the
-# Helm release name if it is not `mcp-re`.
+# This policy makes the proxy the ONLY admitted ingress. It selects the inner backend
+# and allows ingress solely from the proxy workload.
+#
+# The `from` selector matches on `app.kubernetes.io/name` ALONE — deliberately, not for
+# brevity. It previously also required `app.kubernetes.io/instance: mcp-re`, which is
+# the HELM RELEASE NAME, and the release this repo actually installs is `mcp-re-proxy`.
+# The selector therefore matched no pod at all, and a NetworkPolicy whose allow-rule
+# matches nothing does not degrade to "allow" — it degrades to DENY EVERYTHING. On a
+# CNI that enforces, the proxy could not reach the inner and every request failed with
+# "inner server unavailable"; on one that does not, the same object silently protected
+# nothing. Release names are a deployment choice; the workload identity is not, so the
+# rule keys on the identity.
 #
 # REQUIRES a CNI that enforces NetworkPolicy (Calico, Cilium, GKE Dataplane V2, ...).
-# On a cluster without one this object is accepted and silently enforces nothing —
-# verify with a deny test from an unrelated pod before relying on it.
+# On a cluster without one this object is accepted and silently enforces nothing.
+# `gke-multi-replica-validation.sh` runs the deny test the previous note only advised:
+# it drives an unrelated pod at the inner and reports whether containment is real.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -102,7 +111,6 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mcp-re-proxy
-              app.kubernetes.io/instance: mcp-re
       ports:
         - protocol: TCP
           port: 8620

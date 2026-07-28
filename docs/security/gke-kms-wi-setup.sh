@@ -60,8 +60,11 @@ EOF
 [[ "$KEY_RING"   == mcps-*     ]]        || { echo "KEY_RING not allow-listed: $KEY_RING" >&2; exit 2; }
 [[ "$KEY_NAME"   == mcps-*     ]]        || { echo "KEY_NAME not allow-listed: $KEY_NAME" >&2; exit 2; }
 
+# Every gcloud call below passes --project explicitly, so the ambient active config is
+# never consulted and is deliberately left untouched: this script must not be able to
+# repoint the operator's gcloud at the test project and have a later, unrelated command
+# act on it.
 say "Target project ${PROJECT_ID}"
-gcloud config set project "$PROJECT_ID" >/dev/null
 
 # --- 1. GSA (create if absent) ------------------------------------------------
 say "GSA ${GSA_EMAIL}"
