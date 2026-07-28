@@ -56,8 +56,8 @@
     }
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.16.0",
-    "@napi-rs/cli": "^3.7.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/cli": "^3.8.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.5.0",
