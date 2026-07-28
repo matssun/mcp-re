@@ -17,6 +17,8 @@
  * encapsulates a seed and exposes ONLY `.sign(preimage)`, with no getter for the key.
  */
 import {
+  signNotification,
+  signNotificationWithSigner,
   signPreimage,
   signRequest,
   signRequestWithSigner,
@@ -128,6 +130,23 @@ export interface SignRequestArgs {
   bindingsJson?: string | null;
 }
 
+/** The signing inputs for a one-way notification: {@link SignRequestArgs} minus the
+ * `id` (a notification has none) and minus the continuation handles (a message that
+ * receives no result cannot be an ADR-MCPS-047 answer leg). */
+export interface SignNotificationArgs {
+  method: string;
+  paramsJson: string;
+  targetUri: string;
+  audienceId: string;
+  route?: string | null;
+  dpopToken: string;
+  nonce: string;
+  created: number;
+  expires: number;
+  /** Serialized artifact-binding specs; see `bindingsJson` in ./authorization.js. */
+  bindingsJson?: string | null;
+}
+
 /**
  * A client signer plus the custody class its key is held under.
  *
@@ -214,11 +233,21 @@ export class Signer {
     if (this.custody === CustodyClass.Software) {
       return signRequest(this.#seed!, this.keyId, ...tail);
     }
+    return this.#throughDevice((guarded) => signRequestWithSigner(guarded, this.keyId, ...tail));
+  }
 
-    // The core cannot tell "the device is broken" from "the signature is bad" — it only
-    // sees a callback that failed, and maps that to a wire code. Capture what the device
-    // actually did on this side of the boundary so the local condition is reported as a
-    // local condition.
+  /**
+   * Run one non-exporting signing operation, reporting a device failure as one.
+   *
+   * The core cannot tell "the device is broken" from "the signature is bad" — it only
+   * sees a callback that failed, and maps that to a wire code. What the device actually
+   * did is captured on this side of the boundary so the local condition is reported as a
+   * local condition. Shared by both message shapes on purpose: a notification that took
+   * a different route through custody could pick up a different device-failure posture,
+   * and two signing paths disagreeing about what a broken device means is exactly the
+   * divergence this SDK pair has been bitten by before.
+   */
+  #throughDevice(run: (guarded: (preimage: Buffer) => Buffer) => SignedRequestJs): SignedRequestJs {
     let cause: unknown;
     const guarded = (preimage: Buffer): Buffer => {
       let sig: unknown;
@@ -242,7 +271,7 @@ export class Signer {
     };
 
     try {
-      return signRequestWithSigner(guarded, this.keyId, ...tail);
+      return run(guarded);
     } catch (e) {
       if (cause === undefined) throw e; // a real protocol failure in the core
       throw new SignerUnavailable(
@@ -250,6 +279,35 @@ export class Signer {
         cause,
       );
     }
+  }
+
+  /**
+   * Sign a one-way MCP notification, dispatching on custody class.
+   *
+   * Same custody rules and the same failure modes as {@link Signer.signRequest} — a
+   * notification is signed by the ordinary request rules, so custody has nothing
+   * different to say about it. Only the JSON-RPC envelope differs (no `id`), and the
+   * answer is a signed bodyless 202 rather than a bodied reply.
+   */
+  signNotification(a: SignNotificationArgs): SignedRequestJs {
+    const tail = [
+      a.method,
+      a.paramsJson,
+      a.targetUri,
+      a.audienceId,
+      a.route ?? null,
+      a.dpopToken,
+      a.nonce,
+      a.created,
+      a.expires,
+      a.bindingsJson ?? null,
+    ] as const;
+    if (this.custody === CustodyClass.Software) {
+      return signNotification(this.#seed!, this.keyId, ...tail);
+    }
+    return this.#throughDevice((guarded) =>
+      signNotificationWithSigner(guarded, this.keyId, ...tail),
+    );
   }
 
   /** Never render key material. */

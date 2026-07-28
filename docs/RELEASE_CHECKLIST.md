@@ -4,6 +4,17 @@
 
 Use this checklist before a public release or MCP proposal submission.
 
+## Run the local gate first
+
+- [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine,
+      before any cloud run or baseline declaration
+      ([`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
+- [ ] The ADR-MCPRE-051 §7 local SLO lane (stage 4) passed on a **quiet** box — the
+      loadgen is co-located, so a loaded box produces an environmental FAIL and a
+      meaningless number.
+- [ ] No lane was reported green on a run that selected zero tests (`--ignored` on
+      `tls_load_harness_bench` is the known trap; the lane script refuses it).
+
 ## Licensing
 
 - [ ] `LICENSE` contains Apache License 2.0.

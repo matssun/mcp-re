@@ -12,11 +12,25 @@
 //!      CA), carries the wrong identity (wrong SAN/name), or is expired is
 //!      rejected during the handshake and the request body is never sent.
 //!
-//! It is transport-only: it produces/consumes raw request/response bytes and
-//! does NO signing (that stays in `mcp-re-host`'s `HostSession`/`HostSigner`) and
-//! has NO dependency on `mcp-re-proxy` or `mcp-re-host`. Blocking `std::net` +
-//! `rustls`, NO async runtime — mirroring the proxy's single-request-per-
-//! connection HTTP/1.1 framing (one POST in, one JSON response out).
+//! It is transport-only: it produces/consumes HTTP request/response messages and
+//! does NO signing (that stays in `mcp-re-client-core`) and has NO dependency on
+//! `mcp-re-proxy`. Blocking `std::net` + `rustls`, NO async runtime — mirroring
+//! the proxy's single-request-per-connection HTTP/1.1 framing (one request in,
+//! one response out).
+//!
+//! # Carrying the evidence
+//!
+//! Under ADR-MCPRE-050 the RFC 9421 `Signature`/`Signature-Input` and RFC 9530
+//! `Content-Digest` are the sole evidence carrier, and they live in the HTTP
+//! HEADERS — on the request AND on the response — while the status line
+//! distinguishes a success from a signed rejection receipt. A byte-in/byte-out
+//! transport therefore cannot carry the profile in either direction.
+//! [`MtlsClient::round_trip_http`] is the profile-carrying entry point: it emits
+//! caller-supplied request headers and returns the whole
+//! [`HttpResponseParts`] (status + headers + body).
+//! [`remote::MtlsRemoteTransport`] plugs that into `mcp-re-client-proxy`'s
+//! `RemoteTransport` seam, which is what makes an end-to-end mTLS client leg with
+//! bound response verification a shipped component rather than integrator work.
 //!
 //! ```no_run
 //! use mcp_re_transport::ClientTlsConfig;
@@ -25,11 +39,19 @@
 //! # fn demo(client_cert_pem: &[u8], client_key_pem: &[u8], server_ca_pem: &[u8]) -> Result<(), mcp_re_transport::TransportError> {
 //! let config = ClientTlsConfig::from_pem(client_cert_pem, client_key_pem, server_ca_pem)?;
 //! let client = MtlsClient::new(config, "proxy.internal")?;
-//! let response = client.round_trip("127.0.0.1:8443".parse().unwrap(), b"{\"jsonrpc\":\"2.0\"}")?;
-//! # let _ = response;
+//! let response = client.round_trip_http(
+//!     "127.0.0.1:8443".parse().unwrap(),
+//!     "POST",
+//!     "/mcp",
+//!     &[("signature".to_owned(), "sig1=:AAAA:".to_owned())],
+//!     b"{\"jsonrpc\":\"2.0\"}",
+//! )?;
+//! # let _ = response.status;
 //! # Ok(())
 //! # }
 //! ```
+
+pub mod remote;
 
 use std::io;
 use std::io::Read;
@@ -98,6 +120,36 @@ pub enum TransportError {
         /// The configured ceiling that was exceeded.
         limit: usize,
     },
+    /// The peer's HTTP/1.1 response framing was malformed: no header terminator,
+    /// an unparsable status line, a bad header line, an obs-fold continuation, a
+    /// bare CR/LF inside the header block, or a `Content-Length` that disagrees
+    /// with the bytes received. Fails closed — a response whose framing cannot be
+    /// read unambiguously is never handed on as a body.
+    #[error("malformed HTTP response: {0}")]
+    MalformedResponse(String),
+    /// A caller-supplied request line or header could not be emitted safely: an
+    /// empty or non-token method/header name, a CR/LF in a value (request
+    /// splitting), or an attempt to set a header this transport owns
+    /// (`host`, `content-length`, `connection`, `transfer-encoding`).
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+}
+
+/// A whole HTTP/1.1 response: the status, the header block, and the body.
+///
+/// The status and headers are NOT decoration — under ADR-MCPRE-050 they carry the
+/// RFC 9421 `Signature`/`Signature-Input` and RFC 9530 `Content-Digest` that the
+/// response verifier needs, and the status distinguishes a success from a signed
+/// rejection receipt. Header names are lowercased; the profile matches them
+/// case-insensitively.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpResponseParts {
+    /// The response status code from the status line.
+    pub status: u16,
+    /// The response header block, names lowercased, in wire order.
+    pub headers: Vec<(String, String)>,
+    /// The response body bytes (after the header terminator).
+    pub body: Vec<u8>,
 }
 
 /// Connection resource limits for the client — the symmetric counterpart of the
@@ -285,18 +337,71 @@ impl MtlsClient {
         })
     }
 
-    /// Open one mTLS connection to `addr`, send a single HTTP/1.1 POST carrying
-    /// `request_body`, and return the response BODY bytes.
+    /// Open one mTLS connection to `addr`, POST `request_body` to `/`, and return
+    /// the response BODY bytes.
     ///
-    /// The handshake authenticates the server BEFORE the body is sent: an
-    /// untrusted, wrong-identity, or expired server certificate causes the
-    /// handshake to fail and returns `Err(TransportError::Handshake(..))` — the
-    /// request body never reaches the wire.
+    /// A convenience wrapper over [`round_trip_http`](Self::round_trip_http) for
+    /// callers that carry no evidence and ignore the status. A client on the
+    /// RFC 9421 carrier MUST use `round_trip_http` instead: this signature can
+    /// neither send the request `Signature`/`Signature-Input`/`Content-Digest`
+    /// nor return the response's, and it discards the status that separates a
+    /// success from a signed rejection receipt.
     pub fn round_trip(
         &self,
         addr: SocketAddr,
         request_body: &[u8],
     ) -> Result<Vec<u8>, TransportError> {
+        self.round_trip_http(addr, "POST", "/", &[], request_body)
+            .map(|response| response.body)
+    }
+
+    /// Open one mTLS connection to `addr`, send a single HTTP/1.1 request built
+    /// from `method`, `path`, `headers` and `body`, and return the whole
+    /// [`HttpResponseParts`].
+    ///
+    /// This is the ADR-MCPRE-050 carrier: `headers` go on the wire verbatim (that
+    /// is how `Signature`, `Signature-Input` and `Content-Digest` reach the
+    /// server) and the response's status and headers come back intact (that is how
+    /// the client verifies the bound response and tells a success from a signed
+    /// rejection).
+    ///
+    /// The handshake authenticates the server BEFORE anything is sent: an
+    /// untrusted, wrong-identity, or expired server certificate causes the
+    /// handshake to fail and returns `Err(TransportError::Handshake(..))` — the
+    /// request never reaches the wire.
+    ///
+    /// Fails closed on a caller-supplied method/path/header that cannot be emitted
+    /// unambiguously ([`TransportError::InvalidRequest`]) and on a peer response
+    /// whose framing cannot be read unambiguously
+    /// ([`TransportError::MalformedResponse`]).
+    pub fn round_trip_http(
+        &self,
+        addr: SocketAddr,
+        method: &str,
+        path: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Result<HttpResponseParts, TransportError> {
+        // Build (and validate) the request bytes BEFORE opening the connection: a
+        // caller header that cannot be emitted safely is a local programming error,
+        // not something to discover with a socket already open.
+        let request_head = build_request_head(
+            method,
+            path,
+            &server_name_host(&self.server_name),
+            headers,
+            body.len(),
+        )?;
+        self.exchange(addr, request_head.as_bytes(), body)
+    }
+
+    /// Connect, handshake, write the prepared request, and read + parse the reply.
+    fn exchange(
+        &self,
+        addr: SocketAddr,
+        request_head: &[u8],
+        request_body: &[u8],
+    ) -> Result<HttpResponseParts, TransportError> {
         // Bound the connect (slow-loris at the TCP layer) then bound every
         // subsequent blocking read/write on the socket. This mirrors the proxy's
         // apply_socket_timeouts; the read timeout in particular covers a stalled
@@ -338,12 +443,7 @@ impl MtlsClient {
         let tcp = handshake_io.into_inner();
         let mut stream = StreamOwned::new(conn, tcp);
 
-        let request = format!(
-            "POST / HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            server_name_host(&self.server_name),
-            request_body.len(),
-        );
-        stream.write_all(request.as_bytes()).map_err(write_error)?;
+        stream.write_all(request_head).map_err(write_error)?;
         stream.write_all(request_body).map_err(write_error)?;
         stream.flush().map_err(write_error)?;
 
@@ -365,7 +465,7 @@ impl MtlsClient {
             read_deadline,
             self.limits.read_timeout,
         )?;
-        Ok(extract_body(&response))
+        parse_response(&response)
     }
 }
 
@@ -549,16 +649,193 @@ fn io_or_handshake(e: io::Error) -> TransportError {
     }
 }
 
-/// Split an HTTP/1.1 response and return the body bytes (after the header
-/// terminator). If no terminator is found, returns the whole buffer.
-fn extract_body(response: &[u8]) -> Vec<u8> {
-    let split = b"\r\n\r\n";
-    let pos = response
-        .windows(split.len())
-        .position(|w| w == split)
-        .map(|p| p + split.len())
-        .unwrap_or(0);
-    response[pos..].to_vec()
+/// Headers this transport owns because it owns the framing. A caller that could
+/// set them could desynchronise the message boundary from what the peer parses —
+/// the classic request-smuggling shape — so supplying one fails closed rather
+/// than being silently dropped or duplicated.
+const TRANSPORT_OWNED_HEADERS: [&str; 4] = [
+    "host",
+    "content-length",
+    "connection",
+    "transfer-encoding",
+];
+
+/// RFC 9110 `tchar`: the characters a method or header name may contain.
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_'
+                | b'`' | b'|' | b'~'
+        )
+}
+
+/// Serialize the request line + header block, validating everything the caller
+/// supplied. `Host`, `Content-Length` and `Connection` are set here (single
+/// request per connection, matching the proxy's framing).
+fn build_request_head(
+    method: &str,
+    path: &str,
+    host: &str,
+    headers: &[(String, String)],
+    body_len: usize,
+) -> Result<String, TransportError> {
+    if method.is_empty() || !method.bytes().all(is_token_byte) {
+        return Err(TransportError::InvalidRequest(format!(
+            "method is not an RFC 9110 token: {method:?}"
+        )));
+    }
+    // Origin-form request target: visible ASCII, no space (which would end the
+    // target and let the rest be read as the HTTP version), no CR/LF.
+    if !path.starts_with('/') || path.bytes().any(|b| !(0x21..=0x7E).contains(&b)) {
+        return Err(TransportError::InvalidRequest(format!(
+            "request target is not origin-form visible ASCII: {path:?}"
+        )));
+    }
+
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {body_len}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        if name.is_empty() || !name.bytes().all(is_token_byte) {
+            return Err(TransportError::InvalidRequest(format!(
+                "header name is not an RFC 9110 token: {name:?}"
+            )));
+        }
+        let lower = name.to_ascii_lowercase();
+        if TRANSPORT_OWNED_HEADERS.contains(&lower.as_str()) {
+            return Err(TransportError::InvalidRequest(format!(
+                "{lower} is set by the transport and must not be supplied by the caller"
+            )));
+        }
+        // A CR or LF here would terminate the header block early and let the rest
+        // of the value be read as a second request (request splitting). Reject the
+        // whole exchange; never sanitise and send.
+        if value
+            .bytes()
+            .any(|b| b == b'\r' || b == b'\n' || b == 0 || (b < 0x20 && b != b'\t') || b == 0x7F)
+        {
+            return Err(TransportError::InvalidRequest(format!(
+                "header {name} carries a control character (request splitting)"
+            )));
+        }
+        head.push_str(name);
+        head.push_str(": ");
+        head.push_str(value);
+        head.push_str("\r\n");
+    }
+    head.push_str("\r\n");
+    Ok(head)
+}
+
+/// Parse an HTTP/1.1 response into its status, headers and body, failing closed on
+/// any framing the transport cannot read unambiguously.
+///
+/// The status line and headers are the ADR-MCPRE-050 evidence carrier, so they are
+/// preserved rather than skipped. Everything ambiguous is an error: a missing
+/// header terminator (previously the whole buffer was returned AS the body, so a
+/// malformed reply reached the caller looking like content), a bare CR or LF in
+/// the header block, an obs-fold continuation, a header line with no colon, a
+/// duplicated or unparsable `Content-Length`, a `Content-Length` disagreeing with
+/// the bytes received (truncation), or `Transfer-Encoding` (this transport does
+/// not do chunked framing, and accepting the header while ignoring it is the
+/// request-smuggling shape).
+fn parse_response(raw: &[u8]) -> Result<HttpResponseParts, TransportError> {
+    let terminator = b"\r\n\r\n";
+    let head_end = raw
+        .windows(terminator.len())
+        .position(|w| w == terminator)
+        .ok_or_else(|| {
+            TransportError::MalformedResponse("no CRLFCRLF header terminator".to_string())
+        })?;
+    let head = std::str::from_utf8(&raw[..head_end]).map_err(|_| {
+        TransportError::MalformedResponse("header block is not valid UTF-8".to_string())
+    })?;
+    let body = raw[head_end + terminator.len()..].to_vec();
+
+    let mut lines = head.split("\r\n");
+    let status_line = lines
+        .next()
+        .ok_or_else(|| TransportError::MalformedResponse("empty response".to_string()))?;
+    let status = parse_status_line(status_line)?;
+
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in lines {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return Err(TransportError::MalformedResponse(
+                "obs-fold header continuation".to_string(),
+            ));
+        }
+        // `split("\r\n")` leaves any BARE CR or LF inside a line; either one is a
+        // second framing interpretation the peer's parser may take.
+        if line.bytes().any(|b| b == b'\r' || b == b'\n') {
+            return Err(TransportError::MalformedResponse(
+                "bare CR or LF in the header block".to_string(),
+            ));
+        }
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            TransportError::MalformedResponse("header line without a colon".to_string())
+        })?;
+        if name.is_empty() || !name.bytes().all(is_token_byte) {
+            return Err(TransportError::MalformedResponse(format!(
+                "header name is not an RFC 9110 token: {name:?}"
+            )));
+        }
+        headers.push((name.to_ascii_lowercase(), value.trim().to_string()));
+    }
+
+    if headers.iter().any(|(name, _)| name == "transfer-encoding") {
+        return Err(TransportError::MalformedResponse(
+            "transfer-encoding is not supported by this transport".to_string(),
+        ));
+    }
+    let mut declared = headers.iter().filter(|(name, _)| name == "content-length");
+    if let Some((_, value)) = declared.next() {
+        if declared.next().is_some() {
+            return Err(TransportError::MalformedResponse(
+                "duplicate content-length".to_string(),
+            ));
+        }
+        let declared_len: usize = value.parse().map_err(|_| {
+            TransportError::MalformedResponse(format!("unparsable content-length: {value:?}"))
+        })?;
+        if declared_len != body.len() {
+            return Err(TransportError::MalformedResponse(format!(
+                "content-length {declared_len} disagrees with the {} bytes received",
+                body.len()
+            )));
+        }
+    }
+
+    Ok(HttpResponseParts {
+        status,
+        headers,
+        body,
+    })
+}
+
+/// Parse `HTTP/1.1 200 OK` — version, exactly three status digits, and an optional
+/// space-separated reason phrase.
+fn parse_status_line(line: &str) -> Result<u16, TransportError> {
+    let rest = line
+        .strip_prefix("HTTP/1.1 ")
+        .or_else(|| line.strip_prefix("HTTP/1.0 "))
+        .ok_or_else(|| {
+            TransportError::MalformedResponse(format!("unrecognised status line: {line:?}"))
+        })?;
+    let code = rest.get(..3).filter(|c| c.bytes().all(|b| b.is_ascii_digit()));
+    let code = code.ok_or_else(|| {
+        TransportError::MalformedResponse(format!("status code is not three digits: {line:?}"))
+    })?;
+    match rest.as_bytes().get(3) {
+        None | Some(b' ') => {}
+        Some(_) => {
+            return Err(TransportError::MalformedResponse(format!(
+                "status code is not delimited: {line:?}"
+            )))
+        }
+    }
+    code.parse().map_err(|_| {
+        TransportError::MalformedResponse(format!("unparsable status code: {line:?}"))
+    })
 }
 
 /// MCPS-071 fault-injection module ("test of the tests"). Compiled ONLY under the
@@ -646,5 +923,210 @@ mod fault_accept_any {
                 .signature_verification_algorithms
                 .supported_schemes()
         }
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+
+    fn header(name: &str, value: &str) -> (String, String) {
+        (name.to_string(), value.to_string())
+    }
+
+    // -- response parsing: the evidence carrier survives ---------------------
+
+    #[test]
+    fn status_and_headers_are_preserved() {
+        let raw = b"HTTP/1.1 403 Forbidden\r\nSignature: sig1=:AAAA:\r\nSignature-Input: sig1=(\"@status\")\r\nContent-Length: 2\r\n\r\n{}";
+        let parsed = parse_response(raw).expect("well-framed response");
+        assert_eq!(parsed.status, 403);
+        assert_eq!(
+            parsed.headers,
+            vec![
+                header("signature", "sig1=:AAAA:"),
+                header("signature-input", "sig1=(\"@status\")"),
+                header("content-length", "2"),
+            ]
+        );
+        assert_eq!(parsed.body, b"{}");
+    }
+
+    #[test]
+    fn a_response_with_no_header_terminator_is_rejected() {
+        // The pre-fix behaviour returned this ENTIRE buffer as the "body", so a
+        // reply with no header block reached the caller looking like content.
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_bodyless_202_is_readable() {
+        let raw = b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n";
+        let parsed = parse_response(raw).expect("bodyless 202");
+        assert_eq!(parsed.status, 202);
+        assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn a_truncated_body_is_rejected_not_silently_shortened() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn transfer_encoding_is_rejected() {
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_content_length_is_rejected() {
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn an_obs_fold_continuation_is_rejected() {
+        let raw = b"HTTP/1.1 200 OK\r\nSignature: sig1=:AAAA:\r\n injected\r\nContent-Length: 2\r\n\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_bare_lf_in_the_header_block_is_rejected() {
+        let raw = b"HTTP/1.1 200 OK\r\nSignature: sig1=:AAAA:\ninjected: yes\r\nContent-Length: 2\r\n\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_header_line_without_a_colon_is_rejected() {
+        let raw = b"HTTP/1.1 200 OK\r\nnonsense\r\nContent-Length: 2\r\n\r\n{}";
+        assert!(matches!(
+            parse_response(raw),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_non_http_status_line_is_rejected() {
+        assert!(matches!(
+            parse_response(b"NOT-HTTP 200 OK\r\n\r\n"),
+            Err(TransportError::MalformedResponse(_))
+        ));
+        assert!(matches!(
+            parse_response(b"HTTP/1.1 2xx OK\r\n\r\n"),
+            Err(TransportError::MalformedResponse(_))
+        ));
+        assert!(matches!(
+            parse_response(b"HTTP/1.1 2000 OK\r\n\r\n"),
+            Err(TransportError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn a_reason_phrase_is_optional() {
+        let parsed = parse_response(b"HTTP/1.1 204\r\n\r\n").expect("no reason phrase");
+        assert_eq!(parsed.status, 204);
+    }
+
+    // -- request emission: the evidence reaches the wire ---------------------
+
+    #[test]
+    fn caller_headers_are_emitted_verbatim() {
+        let head = build_request_head(
+            "POST",
+            "/mcp?route=a",
+            "proxy.internal",
+            &[
+                header("signature", "sig1=:AAAA:"),
+                header("content-digest", "sha-256=:BBBB:"),
+            ],
+            17,
+        )
+        .expect("emittable request");
+        assert!(head.starts_with("POST /mcp?route=a HTTP/1.1\r\n"));
+        assert!(head.contains("\r\nHost: proxy.internal\r\n"));
+        assert!(head.contains("\r\nContent-Length: 17\r\n"));
+        assert!(head.contains("\r\nsignature: sig1=:AAAA:\r\n"));
+        assert!(head.contains("\r\ncontent-digest: sha-256=:BBBB:\r\n"));
+        assert!(head.ends_with("\r\n\r\n"));
+    }
+
+    #[test]
+    fn a_crlf_in_a_header_value_is_rejected_not_sanitised() {
+        let split = build_request_head(
+            "POST",
+            "/",
+            "proxy.internal",
+            &[header("signature", "sig1=:AAAA:\r\nX-Injected: yes")],
+            0,
+        );
+        assert!(matches!(split, Err(TransportError::InvalidRequest(_))));
+    }
+
+    #[test]
+    fn a_bare_lf_in_a_header_value_is_rejected() {
+        let split = build_request_head(
+            "POST",
+            "/",
+            "proxy.internal",
+            &[header("signature", "sig1=:AAAA:\nX-Injected: yes")],
+            0,
+        );
+        assert!(matches!(split, Err(TransportError::InvalidRequest(_))));
+    }
+
+    #[test]
+    fn transport_owned_headers_are_refused() {
+        for name in ["Host", "content-length", "Connection", "Transfer-Encoding"] {
+            let result =
+                build_request_head("POST", "/", "proxy.internal", &[header(name, "x")], 0);
+            assert!(
+                matches!(result, Err(TransportError::InvalidRequest(_))),
+                "{name} must not be caller-settable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_token_method_or_header_name_is_rejected() {
+        assert!(matches!(
+            build_request_head("PO ST", "/", "h", &[], 0),
+            Err(TransportError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            build_request_head("POST", "/", "h", &[header("bad name", "x")], 0),
+            Err(TransportError::InvalidRequest(_))
+        ));
+    }
+
+    #[test]
+    fn a_request_target_with_a_space_is_rejected() {
+        assert!(matches!(
+            build_request_head("POST", "/mcp HTTP/1.1", "h", &[], 0),
+            Err(TransportError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            build_request_head("POST", "mcp", "h", &[], 0),
+            Err(TransportError::InvalidRequest(_))
+        ));
     }
 }

@@ -43,6 +43,15 @@ and cannot see a peer's nonces).
    - the shared replay store (`--replay-cache shared`, ADR-MCPS-020), and
    - the trust-epoch revocation source (`--trust-epoch-redis-url`, MCPS-84).
    One Redis serves both; there is no second dependency.
+
+   It must be reachable over **TLS with credentials** (`rediss://`). This is not
+   incidental: the replay keyspace holds the admitted nonces, so a peer who can
+   `DEL`/`FLUSHDB` it re-opens the replay window across the whole fleet; and the
+   trust-epoch key drives credential minting, so a peer who can write it forces every
+   replica to mint under an epoch verifiers reject — a fleet-wide response-signing
+   outage. The chart defaults to `rediss://` and its guard refuses a plaintext
+   `redis://` URL under `fleet=true` unless you set
+   `replay.allowPlaintextRedis=true` deliberately.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
 3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.
@@ -52,13 +61,25 @@ and cannot see a peer's nonces).
 ```sh
 helm install my-fleet deploy/helm/mcp-re-proxy \
   --set replicaCount=3 \
-  --set replay.redisUrl=redis://mcp-re-redis:6379 \
+  --set replay.redisUrl="rediss://:$REDIS_PASSWORD@mcp-re-redis:6379" \
   --set replay.durabilityTier=redis-wait-quorum:2:2000 \
   --set revocation.tier=push:60 \
-  --set revocation.trustEpochRedisUrl=redis://mcp-re-redis:6379 \
+  --set revocation.trustEpochRedisUrl="rediss://:$REDIS_PASSWORD@mcp-re-redis:6379" \
   --set tls.secretName=mcp-re-proxy-material \
+  --set identity.audience=did:web:my-boundary \
+  --set identity.serverSigner=did:web:my-boundary \
+  --set identity.targetUri=https://my-boundary.internal:8600/mcp \
+  --set identity.trustDomain=my-boundary.internal \
+  --set identity.delegatedTrustEpoch=ep-2026-07 \
   --set-json 'inner.httpUrls=["http://inner-mcp.default.svc.cluster.local:8080/mcp"]'
 ```
+
+The `identity.*` values are required: they are the identity of ONE dispatch boundary,
+and the chart refuses to render its own `did:example:` / `epoch-1` placeholders. Two
+installs that both kept the defaults would share one audience tuple, so a request
+signed for either would verify at the other under a shared trust anchor, and advancing
+the epoch on one would advance it on both. Source the Redis credential from a Secret
+rather than a shell literal in anything you keep.
 
 MCP-RE is HTTP-profile only: the inner plane is one or more Streamable-HTTP MCP
 backends (`inner.httpUrls`). A **stdio-only** inner server is out of scope for
@@ -67,9 +88,12 @@ proxy) that exposes HTTP, run that adapter as your own sidecar/deployment, and
 point `inner.httpUrls` at it.
 
 The chart renders `--fleet` by default (the maximal-security posture is always on,
-with no flag) and includes a **fail-closed guardrail**: `helm template`/`install`
-errors out if `fleet=true` is paired with a non-shared or sub-quorum replay tier,
-so an unsafe fleet manifest cannot be produced.
+with no flag) and includes **fail-closed guardrails**: `helm template`/`install`
+errors out if `fleet=true` is paired with a non-shared or sub-quorum replay tier, if
+either Redis URL is plaintext without the explicit opt-out, if any `identity.*`
+placeholder survives, or if `transportBinding` is set to a value the proxy would
+refuse at parse or boot. An unsafe — or non-starting — fleet manifest cannot be
+produced.
 
 ## Cloud KMS custody on GKE (Workload Identity)
 
@@ -117,8 +141,12 @@ validated live on GKE via Workload Identity (v0.12.1).
 
 A nonce admitted on replica A is replay-rejected on replica B, because the
 `(signer, audience, nonce)` key lives in the shared Redis store. The `--fleet`
-gate enforces the shared tier; the property is proven by
-`fleet_replay_e2e_test.rs`.
+gate enforces the shared tier; the property is proven against a LIVE Redis by
+`replay_race_harness_test.rs` — `two_replicas_share_one_live_redis_admission`
+drives two independent `HttpProfileProxy` replicas over one store (with a
+distinct-nonce control), and `serving_path_admits_exactly_one_over_live_redis`
+races 64 concurrent submissions of one nonce through the serving path for
+exactly one 200 and 63 replay rejections.
 
 ### 2. Trust/revocation coherence (W1 proof b, MCPS-84/85)
 
@@ -134,8 +162,11 @@ replica flushes its trust cache on the next request and re-resolves live. The
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the
 bounds from real config at startup (`FLEET cross-replica revocation-lag bounds`).
-Proven by `fleet_trust_epoch_e2e_test.rs`, which includes a negative control
-(the sibling serves stale trust until the epoch advances).
+Proven by `redis_trust_epoch_e2e_test.rs`:
+`serving_path::revocation_takes_effect_on_a_sibling_replica_when_the_epoch_advances`
+drives a sibling `HttpProfileProxy` wired as `app.rs` wires production (a Tier-3
+push cache over the live Redis epoch source) and includes a negative control —
+the sibling serves stale trust until the epoch advances.
 
 ### 3. Inner-session affinity (clause 2, MCPS-83)
 
@@ -178,7 +209,10 @@ The concurrent-TLS-client load harness (`tls_load_harness_bench.rs`,
 ADR-MCPRE-051 §7) drives the real per-core listener over mTLS and reports p50/p99/p999
 added latency and throughput against the declared benchmark envelope
 ([`docs/bench/adr-051-load-harness-envelope.md`](bench/adr-051-load-harness-envelope.md));
-run it against your Redis to size the fleet. The dominant per-request cost at
+run it against your Redis to size the fleet — via `scripts/local_slo_lane.sh`, or
+`MCP_RE_LOADGEN_REDIS_URL=… ` plus the raw invocation in the envelope doc (`--exact`,
+never `--ignored`, which selects zero tests and measures nothing). The dominant
+per-request cost at
 scale is the shared-store round-trip. (The older single-thread
 `fleet_throughput_bench.rs` (MCPS-89) calls `Proxy::handle` directly and cannot
 measure the concurrent serving path.)

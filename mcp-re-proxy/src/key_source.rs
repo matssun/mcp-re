@@ -266,10 +266,13 @@ impl KeySource for FileKeySource {
 /// via crash dumps, `ps e`, `/proc/<pid>/environ`, and container/orchestrator
 /// inspection, and are easy to log accidentally. Production deployments must use
 /// [`FileKeySource`] (read once, scrubbed), or a future stdin/fd-injection or
-/// non-exporting HSM/KMS source. Even in the dev build, the seed value is held in
-/// [`zeroize::Zeroizing`] and the env var is REMOVED immediately after reading
-/// (defense in depth). `KeyError` values carry only the env-var NAME and the parse
-/// failure — never the secret bytes — so they are safe to log.
+/// non-exporting HSM/KMS source. In the dev build the seed value is held in
+/// [`zeroize::Zeroizing`], so it is scrubbed from the heap on drop — but the env
+/// var itself is deliberately NOT removed and stays readable in
+/// `/proc/<pid>/environ` for the process lifetime; see [`EnvKeySource::read`] for
+/// why, and why nothing depended on the removal. `KeyError` values carry only the
+/// env-var NAME and the parse failure — never the secret bytes — so they are safe
+/// to log.
 #[cfg(feature = "dev_env_key_source")]
 #[derive(Debug, Clone)]
 pub struct EnvKeySource {

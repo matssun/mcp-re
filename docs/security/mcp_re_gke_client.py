@@ -8,7 +8,8 @@ it reads ONE plain MCP JSON-RPC request on stdin, signs an RFC 9421 + RFC 9530 r
 audited `mcp-re-client-core` logic (via the `mcp_re_sdk` PyO3 core), forwards it over
 verifying mTLS as one HTTP/1.1 POST to `--remote-addr host:port`, verifies the
 delegated-required server response (ADR-MCPRE-052: the inline credential must chain
-to the trusted root issuer and be scoped to `--audience` at one of `--trust-epoch`),
+to the trusted root issuer and be scoped to `--audience` at one of `--trust-epoch`;
+with a trust-epoch source wired the server mints `<base>#<counter>`, so pass that form),
 prints the plain MCP response JSON on stdout, and reports a verdict token on stderr:
 
     verdict=accepted        the response verified (a signed result came back)
@@ -129,6 +130,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     # The accepted trust-epoch set: the credential's epoch must be one of these. MUST
     # be coordinated with the server's --delegated-trust-epoch (§7). Repeatable to
     # accept {current, previous} during a bounded rollout window.
+    #
+    # WIRE CONTRACT: when the proxy is wired to a networked trust-epoch source
+    # (--trust-epoch-redis-url) it ALWAYS mints "<base>#<counter>" and never the bare
+    # base label, so the epoch is derived purely from shared state and an operator INCR
+    # stays effective across a replica restart. Pass the SUFFIXED value here, e.g.
+    #   --trust-epoch "epoch-1#$(redis-cli GET mcp-re:trust:epoch)"
+    # (an unset key reads as 0, so the first value is "<base>#0"). Pass the bare label
+    # only against a proxy with no trust-epoch source wired.
     p.add_argument("--trust-epoch", required=True, action="append",
                    metavar="EPOCH")
     # Client-side revocation denylist (ADR-MCPRE-052 §3 step 7): any mix of
@@ -150,10 +159,29 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _origin_form(target_uri: str) -> str:
+    """The path+query of an absolute URI — the request line this client must send.
+
+    The proxy refuses a request whose received origin-form is not the origin-form of
+    its configured `--target-uri` (the operator asserts the external target a
+    TLS-terminating proxy cannot see; an assertion that does not describe where the
+    request actually arrived is not a reconstruction of it). So the request line has
+    to be DERIVED from `--target-uri` rather than fixed: posting `/` while signing
+    over `https://host:port/mcp` is exactly the mismatch that guard exists to catch.
+    """
+    marker = target_uri.find("://")
+    if marker < 0:
+        return "/"
+    authority = target_uri[marker + 3 :]
+    slash = authority.find("/")
+    return authority[slash:] if slash >= 0 else "/"
+
+
 def _make_post(args: argparse.Namespace):
     """One mTLS HTTP/1.1 POST per call (Connection: close) — the proxy's wire."""
     host, port_s = args.remote_addr.rsplit(":", 1)
     port = int(port_s)
+    request_target = _origin_form(args.target_uri)
     ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=args.server_ca)
     ctx.load_cert_chain(args.tls_cert, args.tls_key)
 
@@ -168,7 +196,7 @@ def _make_post(args: argparse.Namespace):
         try:
             hdr_lines = "".join(f"{k}: {v}\r\n" for k, v in headers)
             head = (
-                f"POST / HTTP/1.1\r\nHost: {args.server_name}\r\n"
+                f"POST {request_target} HTTP/1.1\r\nHost: {args.server_name}\r\n"
                 f"{hdr_lines}"
                 f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
             ).encode()

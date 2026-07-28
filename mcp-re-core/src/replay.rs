@@ -207,8 +207,22 @@ pub trait ReplayCache {
 /// a `retain_until = expires_at_unix + max_clock_skew_secs` instant; an entry
 /// is considered live until that instant. Pruning is explicit (see
 /// [`prune`](InMemoryReplayCache::prune)) — there is NO background clock, so the
-/// cache stays pure and deterministic. This reference impl never returns
-/// `Err`: in a single process the lookup always succeeds.
+/// cache stays pure and deterministic.
+///
+/// **Pruning is the embedder's obligation, and forgetting it fails closed.** The
+/// retained set grows by one entry per admitted request, and a signature-valid peer
+/// streaming distinct fresh nonces drives that growth at will — so an embedder that
+/// takes the docs at their word and never schedules [`prune`] would otherwise have a
+/// remotely-driven memory leak. Past [`MAX_ENTRIES`] the cache therefore refuses
+/// further inserts with [`ReplayCacheError::Unavailable`] (→
+/// `mcp-re.replay_cache_unavailable`) rather than growing without bound. Refusing is
+/// never "allow": a request that cannot be recorded is not admitted.
+///
+/// This is the same fail-closed ceiling the proxy's file-backed cache carries. It is
+/// only a ceiling here, not an inline prune: the proxy anchors its inline eviction on
+/// a real clock, and this crate has none by design (`expires_at_unix` cannot stand in
+/// — freshness only bounds `now <= expires_at + skew`, so it may sit arbitrarily far
+/// ahead of real time and would over-evict live entries, reopening a replay window).
 ///
 /// A distributed deployment MUST share replay state across verifiers; this
 /// per-process cache does not prevent cross-node replays.
@@ -216,6 +230,8 @@ pub trait ReplayCache {
 pub struct InMemoryReplayCache {
     /// Symmetric clock skew added to `expires_at_unix` to compute retain-until.
     max_clock_skew_secs: i64,
+    /// Fail-closed ceiling on retained entries; see [`MAX_ENTRIES`].
+    max_entries: usize,
     /// `(signer, audience, nonce)` -> retain-until Unix seconds.
     ///
     /// Behind a [`Mutex`] so `check_and_insert` and `prune` take `&self`
@@ -233,10 +249,20 @@ impl Clone for InMemoryReplayCache {
     fn clone(&self) -> Self {
         InMemoryReplayCache {
             max_clock_skew_secs: self.max_clock_skew_secs,
+            max_entries: self.max_entries,
             seen: Mutex::new(self.seen.lock().expect("replay mutex poisoned").clone()),
         }
     }
 }
+
+/// Fail-closed ceiling on entries retained by [`InMemoryReplayCache`].
+///
+/// A signature-valid peer streaming distinct fresh nonces adds one entry per request,
+/// so without a ceiling the only thing bounding the set is the embedder remembering
+/// to call [`InMemoryReplayCache::prune`]. Past this many entries the cache refuses
+/// to admit more — `mcp-re.replay_cache_unavailable`, fail closed — and the freshness
+/// window drains the backlog as the embedder prunes.
+pub const MAX_ENTRIES: usize = 1_000_000;
 
 impl InMemoryReplayCache {
     /// Construct an empty cache with the symmetric `max_clock_skew_secs` used to
@@ -244,8 +270,27 @@ impl InMemoryReplayCache {
     pub fn new(max_clock_skew_secs: i64) -> Self {
         InMemoryReplayCache {
             max_clock_skew_secs,
+            max_entries: MAX_ENTRIES,
             seen: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Override the fail-closed entry ceiling. Lets a bounded embedder pick a limit
+    /// that fits its memory budget, and lets a test exercise the ceiling without
+    /// inserting [`MAX_ENTRIES`] real entries.
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Number of retained entries (test/inspection aid).
+    pub fn len(&self) -> usize {
+        self.seen.lock().expect("replay mutex poisoned").len()
+    }
+
+    /// Whether the cache retains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Evict every entry whose `retain_until < now_unix`.
@@ -282,6 +327,18 @@ impl ReplayCache for InMemoryReplayCache {
         let mut seen = self.seen.lock().expect("replay mutex poisoned");
         if seen.contains_key(&key) {
             return Ok(ReplayDecision::Replay);
+        }
+        // Fail-closed ceiling: refuse rather than grow without bound. Admitting a
+        // request we cannot record would be the one unsafe option — a nonce that is
+        // not retained can be replayed — so this is `Unavailable`, never `Fresh`.
+        if seen.len() >= self.max_entries {
+            return Err(ReplayCacheError::Unavailable {
+                details: format!(
+                    "in-memory replay cache is at its {} entry ceiling; \
+                     call prune(now) to evict entries past their retain-until",
+                    self.max_entries
+                ),
+            });
         }
         let retain_until = expires_at_unix.saturating_add(self.max_clock_skew_secs);
         seen.insert(key, retain_until);
@@ -331,6 +388,47 @@ mod tests {
                 details: "backing store unreachable".to_string(),
             })
         }
+    }
+
+    #[test]
+    fn the_entry_ceiling_refuses_rather_than_growing_without_bound() {
+        // A signature-valid peer streaming distinct fresh nonces adds one entry per
+        // request. Without a ceiling the only bound is the embedder remembering to
+        // prune — so the failure mode was a remotely-driven memory leak in the crate
+        // that DEFINES the contract.
+        let cache = InMemoryReplayCache::new(SKEW).with_max_entries(3);
+        for i in 0..3 {
+            assert_eq!(
+                cache.check_and_insert(SIGNER, AUD, &format!("nonce-{i}"), EXPIRES),
+                Ok(ReplayDecision::Fresh)
+            );
+        }
+        let refused = cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES);
+        assert!(
+            matches!(refused, Err(ReplayCacheError::Unavailable { .. })),
+            "past the ceiling the cache must refuse, got {refused:?}"
+        );
+        // Fail CLOSED: the refusal maps to the frozen unavailable token, never an allow.
+        assert_eq!(
+            refused.unwrap_err().to_mcp_re_error(),
+            McpReError::ReplayCacheUnavailable
+        );
+        assert_eq!(cache.len(), 3, "the refused entry was not recorded");
+
+        // An already-seen nonce is still reported as a replay at the ceiling: refusing
+        // to GROW must not turn a known replay into an unknown one.
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, "nonce-0", EXPIRES),
+            Ok(ReplayDecision::Replay)
+        );
+
+        // Pruning drains the backlog and the cache admits again.
+        cache.prune(EXPIRES + SKEW + 1);
+        assert!(cache.is_empty());
+        assert_eq!(
+            cache.check_and_insert(SIGNER, AUD, "nonce-over", EXPIRES),
+            Ok(ReplayDecision::Fresh)
+        );
     }
 
     #[test]

@@ -77,6 +77,78 @@ jobs:
       - name: Port-registry gate (single-source ports, no drift)
         run: python3 scripts/check_port_registry.py
 
+      # SEP-2322 discriminator gate: the conformance suite pins the discriminator's
+      # VALUE, but that only protects readers that classify through the shared
+      # helper. The literal had been open-coded in five places, three of which read a
+      # malformed non-terminal reply as terminal — so a rename would have failed the
+      # value guard while leaving those readers silently wrong. This asserts the
+      # literal appears in exactly one shipped source file, which is the only way to
+      # catch a sixth copy: a type system cannot notice a string nobody imported. It
+      # is a script rather than a test because `sdk/` is not Bazel-addressable.
+      # Fast, python-only.
+      - name: Discriminator gate (one classifier, no open-coded copies)
+        run: python3 scripts/discriminator_gate.py
+
+      # Tracked-file leak guard: key material, credential documents, and personal
+      # or concrete service-account identifiers must never land in a tracked file
+      # (a commit is public history even after a later commit deletes it). The
+      # selftest runs first — a detector that silently matches nothing looks
+      # exactly like a clean tree. Fast, python-only.
+      - name: Tracked-secrets gate (no committed credentials or personal identifiers)
+        run: |
+          python3 scripts/tracked_secrets_gate.py --selftest
+          python3 scripts/tracked_secrets_gate.py
+
+      # Deploy image-tag gate: Cloud Build pushes the image tags, and the k8s
+      # manifests, chart and live-validation harnesses reference them. Nothing tied
+      # those together, so they drifted a whole release apart — the multi-replica
+      # harness deployed `:0.12.1` while Cloud Build published `:0.13.0`. Every pin
+      # reads correctly in isolation; the mismatch only shows up as ImagePullBackOff
+      # on a cluster that is already billing. Selftest first: a scanner that matches
+      # nothing is indistinguishable from a clean tree. Fast, python-only.
+      - name: Deploy image-tag gate (every deployed tag == VERSION)
+        run: |
+          python3 scripts/deploy_image_tag_gate.py --selftest
+          python3 scripts/deploy_image_tag_gate.py
+
+      # SLO-harness invocation gate: `tls_load_harness_bench` is NOT an #[ignore]
+      # test (the file is gated to the redis_replay feature lane), so a documented
+      # `-- --ignored` selects ZERO tests, exits 0 and writes no report — a lane that
+      # looks green while measuring nothing. That form had propagated into four
+      # places, the bench image's own ENTRYPOINT among them. This keeps every
+      # runnable invocation honest. Fast, python-only.
+      - name: SLO-harness invocation gate (no command that measures nothing)
+        run: |
+          python3 scripts/slo_invocation_gate.py --selftest
+          python3 scripts/slo_invocation_gate.py
+
+      # Bazel srcs gate: mcp-re-proxy hand-lists its library sources (three feature
+      # flavors share one list) while every other crate globs. A hand-list drifts —
+      # `src/audit_sink.rs` shipped with the ADR-MCPS-035 audit surface and was never
+      # added, so cargo built a module Bazel could not find (E0583) and every Bazel
+      # target downstream of the proxy failed. Only a full `bazel test //...` caught
+      # it, 30+ minutes in. This is the same check in one second. Fast, python-only.
+      - name: Bazel srcs gate (hand-listed srcs matches lib.rs)
+        run: |
+          python3 scripts/bazel_srcs_gate.py --selftest
+          python3 scripts/bazel_srcs_gate.py
+
+      # Helm chart render gate: every fail-closed guard in the chart
+      # (`templates/_helpers.tpl`) is a render-time `fail`, and several of them key
+      # on values Helm treats as FALSY — so an inverted condition does not error, it
+      # omits a flag, and an omitted flag is the permissive default. This renders
+      # the chart under a matrix and asserts which value sets MUST be refused, that
+      # each refusal names the value at fault, and that the rendered argv omits the
+      # flags it must omit (no --signing-key-seed under KMS custody, no
+      # --max-in-flight when unset). Fast, python + helm.
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Helm chart render gate (fail-closed guards must refuse)
+        run: python3 scripts/helm_render_gate.py
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.
@@ -328,11 +400,19 @@ jobs:
       # source python/ tree on sys.path, so `import mcp_re_sdk` resolves to the
       # INSTALLED wheel (its native mcp_re_sdk._core), proving the downloader
       # artifact stands on its own.
+      # The upstream SDK is installed as the WHEEL'S OWN `mcp` extra, never as a
+      # restated `"mcp>=…"` on this line. pyproject declares `mcp>=1.16,<2.0`; naming
+      # the package here independently bypassed that cap, and when upstream published
+      # mcp 2.0.0 — where `JSONRPCMessage` stopped being a RootModel and became a
+      # plain union alias, so it is neither callable nor carries `.root` — this job
+      # installed it and 33 SDK tests failed on a branch that had not touched the SDK.
+      # One source for the constraint, the same rule VERSION and config/ports.toml get.
       - name: Clean-env install (wheel only) + smoke import
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --upgrade pip
-          /tmp/venv/bin/pip install dist/*.whl "mcp>=1.16" "pytest>=8" "pytest-cov>=5"
+          WHEEL="$(ls dist/*.whl)"
+          /tmp/venv/bin/pip install "${WHEEL}[mcp]" "pytest>=8" "pytest-cov>=5"
           /tmp/venv/bin/python -c "import mcp_re_sdk, mcp_re_sdk._core; print('wheel import OK')"
 
       # Run the SDK suite against the installed wheel from the repo root so the

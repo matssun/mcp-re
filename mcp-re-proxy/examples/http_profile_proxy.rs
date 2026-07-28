@@ -14,7 +14,8 @@
 //!      the Streamable-HTTP backend through the proxy's real `HttpInnerPool`;
 //!   5. `sign_delegated_response_full` — sign the backend's reply with the DELEGATED
 //!      key, bound to THIS request, carrying the root-signed credential that
-//!      authorizes it (ADR-MCPRE-052 delegated-required).
+//!      authorizes it (ADR-MCPRE-052 delegated-required) — or, for a one-way
+//!      notification, `sign_delegated_accepted_202` (#424 / #418).
 //! Any fail-closed step emits a DELEGATED-signed rejection receipt instead — bound to
 //! the request once it has verified, preflight (unbound) before that.
 //!
@@ -47,6 +48,7 @@ use mcp_re_core::InMemoryReplayCache;
 use mcp_re_core::ReplayCache;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::verify_request_full;
 use mcp_re_http_profile::ArtifactBinding;
@@ -229,6 +231,31 @@ async fn handle(
     let forwarded = strip_top_level_meta(&http_req.body);
     let inner_bytes = state.inner.dispatch(&forwarded).await;
 
+    // Step 4a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) earns a signed
+    // bodyless 202, not a bodied reply (#424 / #418), exactly as the production serving
+    // path does it. The backend already received it above; the 202 states only that the
+    // enforcement boundary authenticated and accepted the message, NOT that any action
+    // completed. Without this the notification fell through to the bodied signer, which
+    // had no reply to sign and refused the exchange the SDKs are proved against.
+    if is_notification(&http_req.body) {
+        return Ok(match sign_delegated_accepted_202(
+            &http_req,
+            &hpp_common::delegation_credential(now),
+            &hpp_common::delegated_key(),
+            hpp_common::DELEGATED_KEY_ID,
+            now,
+            now + 300,
+        ) {
+            Ok(ack) => to_hyper(ack),
+            Err(e) => to_hyper(rejection(
+                Some(&http_req),
+                Some(&verified.evidence),
+                e.wire_code(),
+                500,
+            )),
+        });
+    }
+
     // Step 5 — sign the backend reply, bound to THIS request.
     let mut response = HttpResponse {
         status: 200,
@@ -328,4 +355,13 @@ fn to_hyper(resp: HttpResponse) -> Response<Full<Bytes>> {
     builder
         .body(Full::new(Bytes::from(resp.body)))
         .expect("response builds")
+}
+
+/// A JSON-RPC NOTIFICATION: a message with a `method` and NO `id` (JSON-RPC 2.0 §4.1).
+/// The same classification the production serving path performs.
+fn is_notification(body: &[u8]) -> bool {
+    match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(v) => v.get("method").is_some() && v.get("id").is_none(),
+        Err(_) => false,
+    }
 }

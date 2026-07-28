@@ -27,6 +27,7 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::VerifiedHttpResponseEvidence;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -83,9 +84,9 @@ impl ResponseExpectation {
 /// trust + OCSP live behind it, so this pure module performs no I/O). On success
 /// returns the [`VerifiedHttpResponseEvidence`]; on any failure the precise frozen
 /// [`HttpProfileError`], fail-closed.
-pub fn verify_signed_response(
+pub fn verify_signed_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -97,16 +98,56 @@ pub fn verify_signed_response(
         now,
     )?;
 
-    // Unexpected-signer guard (client policy): a signer that verifies but is not
-    // the one policy bound to this route/audience fails closed.
+    enforce_expected_server_signer(expectation, &verified)?;
+
+    Ok(verified)
+}
+
+/// The unexpected-signer guard (client policy): a signer that verifies but is not the
+/// one policy bound to this route/audience fails closed.
+///
+/// Direct-root mode only. `resolved_server_actor.identity.keyid` is the keyid the
+/// response signature was accepted under, which on that path is the stable server
+/// signer the pin names.
+fn enforce_expected_server_signer(
+    expectation: &ResponseExpectation,
+    verified: &VerifiedHttpResponseEvidence,
+) -> Result<(), HttpProfileError> {
     if let Some(expected) = &expectation.expected_server_signer_keyid {
-        let signed_keyid = &verified.resolved_server_actor.identity.keyid;
-        if signed_keyid != expected {
+        if &verified.resolved_server_actor.identity.keyid != expected {
             return Err(HttpProfileError::ResponseBindingMismatch);
         }
     }
+    Ok(())
+}
 
-    Ok(verified)
+/// Enforce `expected_server_signer_keyid` on the DELEGATED path (C004b, resolved
+/// 2026-07-27).
+///
+/// The pin binds to the credential's ROOT ISSUER kid, not to the keyid the response
+/// signature verified under. That keyid is the DELEGATED kid — an RFC 7638 thumbprint
+/// that rotates every TTL by design — so pinning it would fail on the first rotation
+/// and means nothing about server identity. The issuer kid is the anchor the credential
+/// proves a chain to, and is what an operator means by "this server".
+///
+/// The interim behaviour this replaces refused any set pin outright, so an operator who
+/// configured one learned it was unenforced rather than believing a control that never
+/// ran. That was the correct holding position; it is not a control.
+///
+/// Fails closed if the verified evidence carries no issuer at all: reaching here means
+/// the delegated path ran, so a missing issuer is a contradiction, and silently
+/// accepting an unpinnable response would restore the very gap this closes.
+fn check_expected_server_signer(
+    expectation: &ResponseExpectation,
+    verified: &VerifiedHttpResponseEvidence,
+) -> Result<(), HttpProfileError> {
+    let Some(pinned) = expectation.expected_server_signer_keyid.as_deref() else {
+        return Ok(());
+    };
+    match verified.delegation_issuer_kid.as_deref() {
+        Some(issuer) if issuer == pinned => Ok(()),
+        _ => Err(HttpProfileError::ResponseBindingMismatch),
+    }
 }
 
 /// A verified response plus its multi-round-trip classification (ADR-MCPS-047),
@@ -122,9 +163,9 @@ pub struct ClassifiedResponse {
 /// Verify a signed RFC 9421 response AND classify its result body for the
 /// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
 /// the class is never trusted from unverified bytes.
-pub fn verify_and_classify_response(
+pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     now: i64,
 ) -> Result<ClassifiedResponse, HttpProfileError> {
@@ -135,14 +176,37 @@ pub fn verify_and_classify_response(
     Ok(ClassifiedResponse { verified, class })
 }
 
-/// Classify a (verified) `result` body as terminal or `InputRequiredResult`. The
-/// `InputRequiredResult` marker is the `resultType == "input_required"` discriminator
-/// (ADR-MCPS-047). Absent/other results are terminal.
+/// Classify a (verified) `result` body as terminal or `InputRequiredResult`,
+/// through the profile's single discriminator
+/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). Absent/other results are
+/// terminal.
+///
+/// This is the typed client-side face of that one classifier, not a second copy of
+/// it: the discriminator string lives in the lower crate every reader shares, so
+/// the SEP-2322 drift guard that pins this function covers the proxy, chain
+/// reconstruction and both SDK bindings too.
 pub fn classify_result(result: Option<&Value>) -> ResultClass {
-    match result.and_then(|r| r.get("resultType")).and_then(|t| t.as_str()) {
-        Some("input_required") => ResultClass::InputRequired,
-        _ => ResultClass::Terminal,
+    if mcp_re_http_profile::result_class::is_input_required(result) {
+        ResultClass::InputRequired
+    } else {
+        ResultClass::Terminal
     }
+}
+
+/// The continuation state a VERIFIED response carries, for callers that must act
+/// on a live exchange rather than reconstruct a record: `Some(state)` for an
+/// `InputRequiredResult`, `None` for a terminal reply, and an ERROR for a reply
+/// that announces itself non-terminal without a usable `requestState`.
+///
+/// This is what the SDK bindings call. Each of them used to open-code the JSON walk
+/// and collapse the malformed case to `None`, which their transports read as
+/// terminal: the open leg's correlation entry was consumed, the input-required
+/// callback never fired, no answer leg was ever signed, and an elicitation was
+/// handed to the application as a completed tool result. See
+/// [`mcp_re_http_profile::result_class::input_required_state`] for the three-way
+/// contract.
+pub fn continuation_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
+    mcp_re_http_profile::result_class::input_required_state(body)
 }
 
 // ---- ADR-MCPRE-052 delegated-required client verification (MCPRE-122) --------
@@ -318,10 +382,36 @@ impl TrustedIssuerSet {
     /// RESPONSE slot in this set at `now`. The Request slot is never resolved on the
     /// response-verification path, so it returns `None`. Rebuild it per verification
     /// with the current `now` so the overlap window is honoured.
+    ///
+    /// This resolver REFUSES a revoked issuer (`None` → `delegation_issuer_untrusted`)
+    /// even though [`resolve_root`](Self::resolve_root) resolves one. A resolver handed
+    /// to the verifier alone cannot know whether the caller ALSO wired this set in as
+    /// the `revocation` argument, and if they did not, resolving a revoked root would
+    /// verify its descendant credentials — revocation silently not applying because a
+    /// value had to be passed twice to take effect. Refusing here makes the raw seam
+    /// safe standing on its own.
+    ///
+    /// Prefer [`verify_delegated_response_anchored`], which takes the set ONCE, wires
+    /// both seams itself, and can therefore afford to resolve a revoked root so the
+    /// rejection carries the honest `delegation_revoked` reason instead of
+    /// `delegation_issuer_untrusted`.
     pub fn response_resolver(
         &self,
         now: i64,
     ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
+        move |kid: &str, slot: SignerSlot| match slot {
+            SignerSlot::Response if !self.is_revoked(kid) => self.resolve_root(kid, now),
+            _ => None,
+        }
+    }
+
+    /// The resolver used by [`verify_delegated_response_anchored`], which pairs it with
+    /// this same set as the revocation source. It DOES resolve a revoked root, so the
+    /// credential's signature is checked and the revocation seam produces
+    /// `delegation_revoked` — the honest reason — rather than masking a revocation as
+    /// an untrusted issuer. Private: it is only safe because the caller is this
+    /// module, which wires both seams together by construction.
+    fn anchored_resolver(&self, now: i64) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
         move |kid: &str, slot: SignerSlot| match slot {
             SignerSlot::Response => self.resolve_root(kid, now),
             _ => None,
@@ -415,9 +505,9 @@ pub struct VerifiedDelegatedResponse {
 /// [`RevocationSource`] consulted with the credential's `delegated_kid`, `issuer_kid`,
 /// and `jti` (an empty [`StaticRevocationList`] is the explicit TTL-only posture — the
 /// deployment relies on short delegated-key TTLs alone).
-pub fn verify_delegated_response(
+pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expectation: &ResponseExpectation,
     policy: &DelegationPolicy,
     revocation: &dyn RevocationSource,
@@ -450,6 +540,7 @@ pub fn verify_delegated_response(
             is_revoked,
             now,
         )?;
+        check_expected_server_signer(expectation, &verified)?;
         return Ok(VerifiedDelegatedResponse {
             verified,
             outcome: DelegatedOutcome::Success,
@@ -468,13 +559,16 @@ pub fn verify_delegated_response(
         is_revoked,
         now,
     ) {
-        Ok(verified) => Ok(VerifiedDelegatedResponse {
-            verified,
-            outcome: DelegatedOutcome::Rejection {
-                bound: true,
-                wire_code: rejection_wire_code(&response.body),
-            },
-        }),
+        Ok(verified) => {
+            check_expected_server_signer(expectation, &verified)?;
+            Ok(VerifiedDelegatedResponse {
+                verified,
+                outcome: DelegatedOutcome::Rejection {
+                    bound: true,
+                    wire_code: rejection_wire_code(&response.body),
+                },
+            })
+        }
         Err(bound_err) => match verify_delegated_response_unbound(
             response,
             resolve_actor,
@@ -482,18 +576,51 @@ pub fn verify_delegated_response(
             is_revoked,
             now,
         ) {
-            Ok(verified) => Ok(VerifiedDelegatedResponse {
-                verified,
-                outcome: DelegatedOutcome::Rejection {
-                    bound: false,
-                    wire_code: rejection_wire_code(&response.body),
-                },
-            }),
+            Ok(verified) => {
+                check_expected_server_signer(expectation, &verified)?;
+                Ok(VerifiedDelegatedResponse {
+                    verified,
+                    outcome: DelegatedOutcome::Rejection {
+                        bound: false,
+                        wire_code: rejection_wire_code(&response.body),
+                    },
+                })
+            }
             // Neither path verified — fail closed. Surface the bound error (the more
             // specific of the two for a receipt claiming to be about this request).
             Err(_unbound_err) => Err(bound_err),
         },
     }
+}
+
+/// Verify a DELEGATED-required response anchored in a [`TrustedIssuerSet`] — the same
+/// verification as [`verify_delegated_response`], with the trust-anchor set supplied
+/// ONCE.
+///
+/// The set feeds two seams the verifier treats as independent: the root RESOLVER
+/// (current + in-window retired) and the REVOCATION source (revoked issuers). Passing
+/// it through [`verify_delegated_response`] means passing the same value in two
+/// argument positions, and getting that wrong fails in the permissive direction — a
+/// caller who builds the resolver from the set but passes an empty revocation list
+/// verifies credentials under a root they have marked REVOKED, with nothing to
+/// indicate the revocation is inert. Revocation of a trust anchor is the one decisive
+/// action that invalidates every descendant delegated credential at once, so it must
+/// not depend on remembering to say it twice.
+///
+/// Use this whenever the trust anchors come from a [`TrustedIssuerSet`] (including one
+/// loaded from a signed trust-anchor manifest). Reach for
+/// [`verify_delegated_response`] only when the resolver and the revocation source are
+/// genuinely different objects — e.g. a resolver backed by a live directory plus a
+/// separately-fed denylist.
+pub fn verify_delegated_response_anchored(
+    response: &HttpResponse,
+    expectation: &ResponseExpectation,
+    policy: &DelegationPolicy,
+    issuers: &TrustedIssuerSet,
+    now: i64,
+) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
+    let resolver = issuers.anchored_resolver(now);
+    verify_delegated_response(response, &resolver, expectation, policy, issuers, now)
 }
 
 /// The server's frozen wire code from a (verified) rejection-receipt body
@@ -504,6 +631,59 @@ fn rejection_wire_code(body: &[u8]) -> Option<String> {
             .and_then(|w| w.as_str())
             .map(str::to_owned)
     })
+}
+
+/// Verify the delegated-signed bodyless **202** a server returns for a one-way
+/// message (#424), on the client. Returns the resolved server actor.
+///
+/// The serving path emits these in production for any JSON-RPC message with no `id`,
+/// and until this existed nothing on the client side of the tree could check one — a
+/// client had a signed acknowledgement it could only take on faith, which is the
+/// posture MCP-RE exists to remove.
+///
+/// **What a verified 202 means: the enforcement boundary authenticated and accepted
+/// the message.** It does NOT mean the action completed, or even started — a
+/// `notifications/cancelled` that verifies here has been accepted for delivery, not
+/// carried out. Treating it as completion is the misreading this doc exists to
+/// prevent.
+///
+/// **Its binding is INSTANCE-level** (see
+/// `docs/spec/http-profile-conformance-notes.md` §3.4): the acknowledgement covers
+/// `mcp-re-request-evidence`, the digest of the request's own signature base, which
+/// includes the request nonce. A 202 for transmission A therefore does NOT verify for a
+/// distinct transmission A′, even when A and A′ carry identical method, target and body
+/// bytes — so a client may read a verified 202 as proof that THIS transmission reached
+/// the boundary, not merely that identical content did at some unspecified time.
+///
+/// Same trust inputs as [`verify_delegated_response`]: the ROOT ISSUER anchor comes
+/// through `resolve_actor` for the `Response` slot, and the credential must satisfy
+/// `policy` (audience scope, accepted epochs, skew) and clear `revocation`.
+pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    policy: &DelegationPolicy,
+    revocation: &dyn RevocationSource,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
+    let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
+    let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
+    let expect = DelegationExpectations {
+        policy: mcp_re_http_profile::VerifierPolicy::default(),
+        verifier_audiences: &audiences,
+        expected_audience_hash: policy.expected_audience_hash.as_str(),
+        accepted_epochs: &epochs,
+        max_clock_skew: policy.max_clock_skew,
+    };
+    let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
+    mcp_re_http_profile::verify_delegated_accepted_202(
+        response,
+        request,
+        resolve_actor,
+        &expect,
+        &is_revoked,
+        now,
+    )
 }
 
 #[cfg(test)]
@@ -550,6 +730,16 @@ mod delegated_tests {
             target_uri: TARGET.into(),
             route: Some("a".into()),
         }
+    }
+    /// A real, structurally valid artifact binding. `artifact_bindings` is required
+    /// and non-empty — `build_signed_request` refuses to sign an empty set, since the
+    /// verifier would reject it as `malformed_evidence` — so these tests supply one
+    /// rather than relying on a request no server could accept.
+    fn bindings() -> Vec<crate::ArtifactBinding> {
+        vec![crate::ArtifactBinding::opaque_digest(
+            crate::ArtifactType::OauthDpop,
+            b"access-token-under-test",
+        )]
     }
     /// The client's trust seam: the ROOT issuer key (by its issuer kid) for the
     /// Response slot. The delegated key is authorized by the credential alone.
@@ -605,7 +795,7 @@ mod delegated_tests {
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
             audience(),
-            Vec::new(),
+            bindings(),
             "nonce-1",
             CREATED,
             EXPIRES,
@@ -652,6 +842,126 @@ mod delegated_tests {
             out.verified.server_signer.as_ref().unwrap().keyid,
             mcp_re_http_profile::jwk_thumbprint_ed25519(&snap.key.public_key().to_b64url()),
         );
+    }
+
+    /// C004b: the signer pin is ENFORCED on the delegated path, against the credential's
+    /// ROOT ISSUER kid. It was previously enforced only in `verify_signed_response`
+    /// (pre-052 direct-root), so every production caller got no enforcement while the
+    /// control read as enabled; the interim behaviour refused any set pin outright, which
+    /// was an honest holding position but not a control.
+    #[test]
+    fn delegated_success_enforces_the_pin_against_the_root_issuer() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("server delegated-signs the success response");
+
+        // No pin: verifies exactly as before (no behaviour change for the normal path).
+        let ok = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("an unpinned delegated success still verifies");
+        assert_eq!(ok.outcome, DelegatedOutcome::Success);
+
+        // The verified evidence reports the anchor the credential chained to.
+        assert_eq!(ok.verified.delegation_issuer_kid.as_deref(), Some(ROOT_KID));
+
+        // A pin on the ROOT ISSUER verifies — the coordinate that is stable across
+        // delegated-key rotation.
+        let pinned = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer(ROOT_KID),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("a pin naming the root issuer verifies");
+        assert_eq!(pinned.outcome, DelegatedOutcome::Success);
+
+        // Any other root fails closed.
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("a pin naming a different root must fail closed");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+
+        // And NOT against the accepted signer keyid: that is the ephemeral delegated
+        // kid, so pinning it would break on the first rotation.
+        let delegated_kid = ok.verified.server_signer.as_ref().unwrap().keyid.clone();
+        assert_ne!(delegated_kid, ROOT_KID);
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer(&delegated_kid),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("the pin binds to the issuer, not to the rotating delegated kid");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+    }
+
+    /// The same enforcement applies to rejection receipts — a receipt is evidence too,
+    /// so a pin must reach it.
+    #[test]
+    fn delegated_rejection_enforces_the_pin_against_the_root_issuer() {
+        let signed = signed();
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let reason = RejectionReason {
+            wire_code: "mcp-re.replay_detected",
+            message: "replayed".into(),
+        };
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            409,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("server builds bound delegated rejection");
+        verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer(ROOT_KID),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect("a receipt whose credential chains to the pinned root verifies");
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed).with_expected_server_signer("some-other-root-kid"),
+            &policy(),
+            &StaticRevocationList::new(),
+            NOW,
+        )
+        .expect_err("a pin naming a different root must fail closed on a receipt too");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
     #[test]
@@ -1009,7 +1319,7 @@ mod delegated_tests {
         let inputs = RequestSigningInputs::new(
             CLIENT_KEY_ID.to_string(),
             audience(),
-            Vec::new(),
+            bindings(),
             "nonce-rot",
             CREATED,
             NOW + 600,

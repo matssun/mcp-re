@@ -1,6 +1,6 @@
 [package]
 name = "mcp-re-proxy"
-version = "0.13.0"
+version = "0.14.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -43,7 +43,14 @@ cryptoki-sys = { workspace = true }
 # proxy closure for the async serving path, so `aio`/`tokio-comp` add redis's
 # async modules but no new runtime. The DEFAULT `:mcp_re_proxy` Bazel target
 # links neither the redis crate nor tokio; only the ext/async flavors do.
-redis = { workspace = true, features = ["aio", "tokio-comp", "connection-manager"] }
+redis = { workspace = true, features = [
+  "aio",
+  "tokio-comp",
+  "connection-manager",
+  # `rediss://` on the ASYNC client too (the serving path's store). Resolves to
+  # tokio-rustls over the same rustls 0.23/ring already linked here.
+  "tokio-rustls-comp",
+] }
 # ureq is the blocking HTTP client for both the OCSP path (plain HTTP) and the AWS
 # KMS signer (HTTPS). The `tls` feature (rustls + webpki-roots) is what gives the
 # KMS adapter HTTPS; rustls/ring is already in the closure, so this reuses it and

@@ -192,16 +192,26 @@ The current implementation demonstrates a complete end-to-end **four-hop** path:
 
 ```text
 plain-MCP client (unmodified)
-  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs the RFC 9421 request, binds authz)
+  -> mcp-re-client-proxy / Python or TypeScript SDK  (signs the RFC 9421 request,
+                                                      binds the authorization artifact)
   -> mTLS transport
   -> mcp-re-proxy  (server-side PEP)
   -> Core signature / freshness / replay verification
-  -> delegated authorization (deny-before-dispatch)
   -> verified-context injection
   -> unmodified inner MCP server
   -> signed response
   -> client-side response verification (correlated, bound, stripped to plain MCP)
 ```
+
+The request BINDS its authorization artifact (the artifact bindings are covered by
+the signature, and a request with none fails closed), but the PEP does not yet
+EVALUATE that artifact on this carrier: deny-before-dispatch authorization was
+delivered on the superseded object/JCS carrier and has not been rebuilt on RFC 9421
+(ADR-MCPS-013). This is enforced rather than merely noted — the only non-`off`
+value of `--authz` is the reference/conformance profile, which the proxy refuses at
+startup, so no parseable configuration runs a policy the serving path would ignore.
+Authorization decisions are the deploying system's responsibility until a production
+profile lands.
 
 ## Deployment profiles
 
@@ -287,6 +297,19 @@ The workspace builds with either Cargo or Bazel. Cargo is the public-facing
 default; Bazel is the hermetic build path the maintainer uses internally and
 both `Cargo.toml` and `BUILD.bazel` files are committed for every crate.
 
+**Everything at once, in cost order — run this before opening a PR and before any
+cloud run:**
+
+```sh
+scripts/local_gate.sh
+```
+
+Structural gates → both cargo suites → `bazel test //...` → the ADR-MCPRE-051 §7 SLO
+lane, stopping at the first failure. Neither command below is the whole battery on its
+own: `cargo test --workspace` does not compile the non-default feature backends, and
+`bazel test //...` excludes the `manual`-tagged infra lane. See
+[`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md).
+
 ### Cargo (recommended for OSS contributors)
 
 ```sh
@@ -305,7 +328,10 @@ The SDK suites live outside the cargo workspace and run separately:
 (`npm test` — builds the native binding then runs `vitest`).
 
 `#[ignore]`-gated tests (developer-only fixture writers and the live Cloud-KMS
-lanes) are deliberate, not skipped production tests.
+lanes) are deliberate, not skipped production tests. The ADR-MCPRE-051 §7 load
+harness is **not** among them — it is kept out of the default battery by its
+`redis_replay` feature gate, so running it with `-- --ignored` selects nothing.
+Drive it through `scripts/local_slo_lane.sh`.
 
 ### Bazel
 
@@ -328,7 +354,7 @@ MODULE.bazel               Bazel module definition.
 
 mcp-re-core/                 Pure verification crate (no networking/async/fs).
 mcp-re-host/                 Client-side ambassador (signing + bound verify).
-mcp-re-transport/            Verifying mTLS client.
+mcp-re-transport/            Verifying mTLS client + the RemoteTransport it implements (the client leg).
 mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox, Redis/PKCS#11).
 mcp-re-policy/               Delegated-authorization profiles (Phase 5).
 mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).

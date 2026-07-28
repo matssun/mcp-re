@@ -55,7 +55,6 @@ pub use replay::ReplayKey;
 pub use resolver::InMemoryTrustResolver;
 pub use resolver::TrustResolver;
 pub use resolver::TrustResolverError;
-pub use time::check_freshness;
 pub use time::parse_rfc3339_utc;
 pub use time::unix_to_rfc3339_utc;
 pub use wire::json_rpc_error_object;

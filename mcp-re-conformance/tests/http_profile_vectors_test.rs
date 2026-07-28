@@ -894,7 +894,13 @@ fn build_fixtures() -> Vec<Fixture> {
         delegated_202_check: None,
     });
 
-    // h37 — the splice: A's acknowledgement presented against notification B.
+    // h37 — the splice: A's acknowledgement presented against notification B. Since
+    // C019b the verdict is `request_binding_mismatch`, not `response_sig_invalid`: the
+    // acknowledgement carries the request-evidence coordinate of the transmission it
+    // answers, the verifier re-derives that coordinate from the request in front of it,
+    // and the mismatch is caught BEFORE the signature check. The more precise verdict
+    // is the point — it names why the pairing is wrong rather than only that the bytes
+    // did not verify.
     let mut note_b = HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
@@ -907,8 +913,46 @@ fn build_fixtures() -> Vec<Fixture> {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h37_bodyless_202_splice".into(),
         kind: "bodyless_202".into(),
-        expected: "mcp-re.response_sig_invalid".into(),
+        expected: "mcp-re.request_binding_mismatch".into(),
         request: Some(to_wire_request(&note_b)),
+        response: Some(to_wire_response(&ack)),
+        oracle: None,
+        artifact_check: None,
+        continuation_check: None,
+        chain_check: None,
+        admission_check: None,
+        delegated_202_check: None,
+    });
+
+    // h50 — the TRANSMISSION-distinct splice (owner ruling C019b). A′ is byte-identical
+    // to A in method, target and body and differs only in the nonce inside its own
+    // `@signature-params` — the ordinary case for a retried `notifications/cancelled`.
+    // A's acknowledgement must not verify for it, or a captured 202 could be presented
+    // as proof of acceptance for a transmission the server in fact refused as a replay.
+    // h37 covers the content-distinct half; this one is what content-level binding could
+    // not express at all.
+    let mut note_a_prime = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
+    };
+    sign_request(
+        &mut note_a_prime,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-note-retransmission",
+    )
+    .expect("the retransmission signs like any request");
+    assert_eq!(note.body, note_a_prime.body, "the two transmissions are content-identical");
+    fixtures.push(Fixture {
+        schema: "mcp-re-http-profile-conformance/v1".into(),
+        name: "h50_bodyless_202_retransmission".into(),
+        kind: "bodyless_202".into(),
+        expected: "mcp-re.request_binding_mismatch".into(),
+        request: Some(to_wire_request(&note_a_prime)),
         response: Some(to_wire_response(&ack)),
         oracle: None,
         artifact_check: None,
@@ -1547,6 +1591,7 @@ fn label_token(label: &ChainLabel) -> String {
                 IncompleteReason::NonTerminalExpected => "non_terminal_expected",
                 IncompleteReason::TerminalExpected => "terminal_expected",
                 IncompleteReason::EmptyChain => "empty_chain",
+                IncompleteReason::HopAfterAuditInstant => "hop_after_audit_instant",
             };
             format!("incomplete:{hop}:{r}")
         }

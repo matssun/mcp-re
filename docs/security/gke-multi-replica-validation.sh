@@ -85,27 +85,34 @@ GKE_MACHINE="${GKE_MACHINE:-e2-standard-2}"
 NAMESPACE="${NAMESPACE:-mcp-re}"
 RELEASE="${RELEASE:-mcp-re-proxy}"
 REPLICAS="${REPLICAS:-3}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
+PORTS_TOML="$REPO_ROOT/config/ports.toml"
+# Image tag — READ FROM THE REPO'S VERSION file, never restated as a literal. Same rule
+# as the port registry below: the chart's appVersion/image.tag and
+# deploy/k8s/inner-fastmcp.yaml already track VERSION, so a tag restated here goes stale
+# the moment VERSION moves and this harness then deploys an image the manifests do not
+# name — on kind an absent tag, on GKE an unpullable one.
+IMAGE_TAG="${MCP_RE_IMAGE_TAG:-$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")}"
+[[ -n "$IMAGE_TAG" ]] || { printf 'could not read the image tag from %s/VERSION\n' "$REPO_ROOT" >&2; exit 1; }
 # Container images. For gke they are pulled from Artifact Registry (the chart's bare
 # `mcp-re-proxy` name is unpullable on a cluster); for kind they are the locally-built
 # tags that get `kind load`ed below (native arch — the SAME image the GKE build
 # produces, per deploy/docker/Dockerfile). Override with MCP_RE_PROXY_IMAGE / _INNER_.
 if [[ "$PROVIDER" == gke ]]; then
   AR="${MCP_RE_AR:-${REGION}-docker.pkg.dev/${PROJECT_ID}/mcp-re}"
-  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:0.12.1}"
-  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:0.12.1}"
-  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${AR}/mcp-re-loadgen:0.12.1}"
+  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:$IMAGE_TAG}"
+  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:$IMAGE_TAG}"
+  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${AR}/mcp-re-loadgen:$IMAGE_TAG}"
 else
-  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-mcp-re-proxy:0.12.1}"
-  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-mcp-re-inner-fastmcp:0.12.1}"
-  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-mcp-re-loadgen:0.12.1}"
+  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-mcp-re-proxy:$IMAGE_TAG}"
+  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-mcp-re-inner-fastmcp:$IMAGE_TAG}"
+  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-mcp-re-loadgen:$IMAGE_TAG}"
 fi
 # The TLS/trust material the fleet Secret is built from (emit_mtls_fixtures output).
 # Required only for the DEPLOY path (enforced at the Secret step below); --teardown
 # must run without it, so don't fail-fast here.
 FIXTURES_DIR="${MCP_RE_FIXTURES_DIR:-}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CHART_DIR="$REPO_ROOT/deploy/helm/mcp-re-proxy"
-PORTS_TOML="$REPO_ROOT/config/ports.toml"
 
 log() { printf '\n=== %s ===\n' "$*"; }
 fail() { printf 'PROOF FAILED: %s\n' "$*" >&2; exit 1; }
@@ -151,8 +158,20 @@ if [[ "$PROVIDER" == gke ]]; then
     # software-seed fallback. The default node pool created here gets GKE_METADATA
     # automatically. Run docs/security/gke-kms-wi-setup.sh once after this to bind the
     # GSA. fileSeed roots ignore all of this; WI just sits unused.
+    #
+    # --enable-network-policy installs Calico, which is what makes
+    # `mcp-re-inner-fastmcp-allow-proxy-only` (deploy/k8s/inner-fastmcp.yaml) actually
+    # filter packets. Without it the object is accepted and enforces NOTHING: the inner
+    # plane speaks plain HTTP with no auth of its own, so any pod in the cluster could
+    # POST straight past the PEP — no signature, no replay admission, no audit record.
+    # A GKE run on a cluster without this proves the four coherence properties but NOT
+    # inner containment, and the earlier v0.11/v0.12.1 runs were in exactly that state.
+    # The SLO phase is unaffected: `tls_load_harness_bench` spawns its own proxy in-pod
+    # and drives it over loopback (`https://localhost/`, echo backend on 127.0.0.1, the
+    # Redis sidecars sharing the pod netns), so the measured path never crosses the CNI.
     gcloud container clusters create "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE" \
       --num-nodes "$GKE_NODES" --machine-type "$GKE_MACHINE" --disk-size 30 --no-enable-basic-auth \
+      --enable-network-policy \
       --workload-pool "${PROJECT_ID}.svc.id.goog"
   fi
   gcloud container clusters get-credentials "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE"
@@ -197,8 +216,16 @@ kubectl -n "$NAMESPACE" create secret generic mcp-re-proxy-material \
 
 # --- 1c. Inner FastMCP backend (the ALLOWED Streamable-HTTP inner plane) ------
 log "Inner FastMCP backend ($INNER_IMAGE)"
-sed "s#image: mcp-re-inner-fastmcp:0.12.1#image: $INNER_IMAGE#" \
-  "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml" | kubectl -n "$NAMESPACE" apply -f -
+# Repoint the manifest's image at THIS run's image. Match the repository and ignore the
+# tag it carries: a tag-anchored pattern no-ops the moment the manifest and this harness
+# disagree, and a no-op here is silent — the fleet would then deploy the manifest's bare
+# local name, which is absent on kind and unpullable on GKE. The applied YAML is checked
+# for the substitution rather than trusted.
+INNER_YAML="$(sed -E "s#image: [^[:space:]/]*mcp-re-inner-fastmcp:[^[:space:]]+#image: $INNER_IMAGE#" \
+  "$REPO_ROOT/deploy/k8s/inner-fastmcp.yaml")"
+printf '%s\n' "$INNER_YAML" | grep -q "image: $INNER_IMAGE" \
+  || fail "inner manifest image was not substituted — deploy/k8s/inner-fastmcp.yaml no longer matches the expected 'image: mcp-re-inner-fastmcp:<tag>' line"
+printf '%s\n' "$INNER_YAML" | kubectl -n "$NAMESPACE" apply -f -
 # Force a fresh pod so it runs THIS run's freshly built image. An `apply` with an
 # unchanged spec (same image tag) does NOT restart the pod, so a rebuilt-and-reloaded
 # image under the same tag (e.g. kind load, or a re-pushed registry tag with
@@ -209,7 +236,19 @@ kubectl -n "$NAMESPACE" rollout restart deploy/mcp-re-inner-fastmcp
 kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-inner-fastmcp --timeout=420s
 
 # --- 2. Shared Redis tier (replay + trust epoch) -----------------------------
-log "Shared Redis tier"
+# A PRIMARY plus REDIS_REPLICAS replicas, because the chart declares
+# `replay.durabilityTier: redis-wait-quorum:<quorum>:<timeout_ms>` and the proxy fails
+# an admission CLOSED when `WAIT` returns fewer acks than that quorum. A standalone
+# Redis returns 0 acks forever, so every nonce insert fails and the very first request
+# with a freshly drawn nonce comes back `replay` — a fail-closed store reads exactly
+# like a spent nonce. The replica count is therefore DERIVED from the quorum the chart
+# asks for, not chosen: a topology that cannot satisfy the declared tier is not a
+# shared replay tier, it is an outage.
+REDIS_REPLICAS="${MCP_RE_REDIS_REPLICAS:-$(
+  awk -F'"' '/^  durabilityTier:/{split($2,p,":"); print p[2]}' "$CHART_DIR/values.yaml"
+)}"
+[[ "${REDIS_REPLICAS:-0}" -ge 1 ]] || fail "could not read the wait-quorum replica count from $CHART_DIR/values.yaml"
+log "Shared Redis tier (primary + $REDIS_REPLICAS replicas for the declared wait quorum)"
 kubectl -n "$NAMESPACE" apply -f - <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
@@ -240,6 +279,43 @@ spec:
   ports: [{ port: 6379, targetPort: 6379 }]
 YAML
 kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis --timeout=300s
+
+# The replicas that make `WAIT <quorum>` answerable. Same in-memory settings as the
+# primary; `--replicaof` points them at its Service. They carry no Service of their own —
+# the proxy only ever talks to the primary, and these exist solely to acknowledge writes.
+kubectl -n "$NAMESPACE" apply -f - <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mcp-re-redis-replica }
+spec:
+  replicas: $REDIS_REPLICAS
+  selector: { matchLabels: { app: mcp-re-redis-replica } }
+  template:
+    metadata: { labels: { app: mcp-re-redis-replica } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          args: ["--save", "", "--appendonly", "no", "--stop-writes-on-bgsave-error", "no",
+                 "--replicaof", "mcp-re-redis", "6379"]
+          ports: [{ containerPort: 6379 }]
+YAML
+kubectl -n "$NAMESPACE" rollout status deploy/mcp-re-redis-replica --timeout=300s
+
+# Ready is not the same as SYNCED: a replica reports Ready as soon as its port answers,
+# but it does not acknowledge writes until it has attached to the primary. Deploying the
+# fleet before then makes the first proof race the sync and fail closed for a reason that
+# has nothing to do with what it tests. Block until the primary itself reports the acks.
+redis_synced=""
+for _ in $(seq 1 60); do
+  acks="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+          redis-cli WAIT "$REDIS_REPLICAS" 1000 2>/dev/null | tr -d '\r')"
+  if [[ "${acks:-0}" -ge "$REDIS_REPLICAS" ]]; then redis_synced=1; break; fi
+  sleep 2
+done
+[[ -n "$redis_synced" ]] \
+  || fail "only ${acks:-0} of $REDIS_REPLICAS Redis replicas acknowledge writes — the declared wait-quorum tier cannot be satisfied, and every replay insert would fail closed"
+echo "  OK: $REDIS_REPLICAS replica(s) acknowledging writes; the declared wait quorum is satisfiable."
 
 # --- 3. Deploy the fleet (strict + fleet + shared tiers) ---------------------
 # The chart REFUSES to start a --fleet deployment on a node-local replay cache
@@ -295,6 +371,30 @@ case "$KEY_SOURCE" in
   *) fail "MCP_RE_KEY_SOURCE must be gcpKms|fileSeed" ;;
 esac
 
+# The trust domain both sides sign/verify under. ONE variable, used for the chart AND
+# every client invocation, so the two cannot drift.
+#
+# It defaults to `example.com` because `emit_mtls_fixtures` bakes that value into
+# trust.json as part of the resolved actor id (role:trust_domain:subject:keyid), and
+# this harness is driven by those fixtures — signing under any other domain would not
+# resolve. That is also why the install below sets identity.allowExampleFixtures.
+TRUST_DOMAIN="${MCP_RE_TRUST_DOMAIN:-example.com}"
+
+# The identity the chart now needs at RENDER time. These are also required further down
+# for the client flags, but that is after the install — demand them here so a missing
+# one fails before anything is deployed, rather than rendering a blank --audience.
+: "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
+: "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
+: "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
+: "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
+: "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch base label}"
+
+# Pass this run's identity to the chart so the proxy verifies exactly what the client
+# signs. Previously NOTHING was passed: the proxy took the chart's own placeholder
+# values while the client signed from these variables, and the proofs passed only
+# because the two happened to coincide. `identity.allowExampleFixtures` then tells the
+# chart's placeholder guard that this is a fenced validation run whose identity is
+# pinned by emit_mtls_fixtures, not an unconfigured production install.
 helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set replicaCount="$REPLICAS" \
   --set fleet=true \
@@ -302,8 +402,16 @@ helm -n "$NAMESPACE" upgrade --install "$RELEASE" "$CHART_DIR" \
   --set image.repository="${PROXY_IMAGE%:*}" \
   --set image.tag="${PROXY_IMAGE##*:}" \
   --set-string "inner.httpUrls={$INNER_URL}" \
+  --set identity.audience="$MCP_RE_AUDIENCE" \
+  --set identity.serverSigner="$MCP_RE_SERVER_SIGNER" \
+  --set identity.serverKeyId="$MCP_RE_SERVER_KEY_ID" \
+  --set identity.targetUri="$MCP_RE_TARGET_URI" \
+  --set identity.trustDomain="$TRUST_DOMAIN" \
+  --set identity.delegatedTrustEpoch="$MCP_RE_TRUST_EPOCH" \
+  --set identity.allowExampleFixtures=true `# identity is pinned by emit_mtls_fixtures (did:example:server-1 / example.com), which trust.json encodes in the actor id` \
   --set replay.redisUrl="redis://mcp-re-redis:6379" \
   --set revocation.trustEpochRedisUrl="redis://mcp-re-redis:6379" \
+  --set replay.allowPlaintextRedis=true `# the in-cluster redis:7 this harness brings up serves no TLS; the opt-out is explicit because the chart refuses plaintext under fleet by default` \
   "${KMS_SETS[@]}" \
   --wait --timeout 8m
 # The chart's deployment name is its fullname (<release>-<chart>), NOT the bare
@@ -372,22 +480,38 @@ CLIENT_COMMON=(
   --key-id           "${MCP_RE_KEY_ID:?set MCP_RE_KEY_ID}"
   --signing-key-seed "${MCP_RE_SIGNING_KEY_SEED:?set MCP_RE_SIGNING_KEY_SEED to a b64url seed or @file}"
   # ADR-MCPRE-052 delegated-required: the server-* trio is the ROOT ISSUER anchor the
-  # delegation credential chains to (NOT a per-response key). --trust-epoch is the
-  # accepted trust-epoch set and MUST equal the proxy's --delegated-trust-epoch (§7),
-  # or every response fails closed on a stale-epoch credential.
+  # delegation credential chains to (NOT a per-response key). --trust-epoch is NOT in
+  # this array: with a trust-epoch source wired the proxy mints "<base>#<counter>", so
+  # the accepted epoch has to be resolved from the shared counter at CALL time (see
+  # `epoch_label` / `client`). It advances whenever an operator INCRs, and the counter
+  # is monotonic — it is never rolled back.
   --server-signer    "${MCP_RE_SERVER_SIGNER:?set MCP_RE_SERVER_SIGNER}"
   --server-key-id    "${MCP_RE_SERVER_KEY_ID:?set MCP_RE_SERVER_KEY_ID}"
   --server-pubkey    "${MCP_RE_SERVER_PUBKEY:?set MCP_RE_SERVER_PUBKEY to a b64url key or @file}"
-  --trust-epoch      "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch}"
   --audience         "${MCP_RE_AUDIENCE:?set MCP_RE_AUDIENCE (the proxy --audience id)}"
   # RFC 9421 audience tuple (ADR-MCPRE-050): the client signs {audience,target-uri,route}
   # and the proxy rejects invalid_audience unless target-uri matches its --target-uri.
   --target-uri       "${MCP_RE_TARGET_URI:?set MCP_RE_TARGET_URI to the proxy --target-uri (e.g. https://proxy.internal:8600/mcp)}"
-  --trust-domain     "${MCP_RE_TRUST_DOMAIN:-example.com}"
+  --trust-domain     "$TRUST_DOMAIN"
   --tls-cert         "${MCP_RE_TLS_CERT:?set MCP_RE_TLS_CERT to the client cert PEM path}"
   --tls-key          "${MCP_RE_TLS_KEY:?set MCP_RE_TLS_KEY to the client key PEM path}"
   --server-ca        "${MCP_RE_SERVER_CA:?set MCP_RE_SERVER_CA to the server CA PEM path}"
 )
+
+# The epoch the proxy is currently minting: "<base>#<counter>", where <counter> is the
+# shared Redis key (unset reads as 0). Resolved per call because an INCR moves it and a
+# restarted replica resolves the SAME value — that is the property Proof 2 exercises.
+epoch_label() {
+  local c
+  c="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+        redis-cli GET mcp-re:trust:epoch 2>/dev/null | tr -d '\r')"
+  printf '%s#%s' "${MCP_RE_TRUST_EPOCH:?set MCP_RE_TRUST_EPOCH to the proxy --delegated-trust-epoch base label}" "${c:-0}"
+}
+
+# Every client invocation goes through this so the accepted epoch is always current.
+client() {
+  $CLIENT "${CLIENT_COMMON[@]}" --trust-epoch "$(epoch_label)" "$@"
+}
 # A minimal plain-MCP request the non-MRT proofs send. Override MCP_RE_REQ for your inner.
 REQ="${MCP_RE_REQ:-}"
 [[ -n "$REQ" ]] || REQ='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -442,60 +566,90 @@ YAML
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
     | awk -F'\t' '$2=="True"{print $1}' | tail -1)"
   [[ -n "$LOADGEN_POD" ]] || fail "loadgen pod did not become ready"
+
+  # --- Inner-containment deny test -------------------------------------------
+  # `deploy/k8s/inner-fastmcp.yaml` ships a NetworkPolicy making the proxy the ONLY
+  # admitted ingress to the inner plane. A NetworkPolicy is accepted by every cluster
+  # and enforced only by some, so "applied" says nothing about whether the containment
+  # exists — and an allow-rule whose selector matches no pod does not fail loudly, it
+  # denies everything. The loadgen is a real unrelated pod in the same namespace, so it
+  # is the deny test: it must NOT reach the inner.
+  #
+  # Reported, not asserted. On a non-enforcing CNI (a GKE Standard cluster created
+  # without --enable-network-policy, as this harness does) the reachability is expected
+  # and the containment simply is not in force; failing here would block a run over a
+  # property this cluster never claimed. What must never happen is silence — an
+  # unenforced policy reading as a protected inner plane.
+  if kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- \
+       python -c 'import socket,sys; socket.create_connection(("mcp-re-inner-fastmcp", '"$(port_of mcp_re_inner_backend)"'), timeout=6).close()' \
+       >/dev/null 2>&1; then
+    echo "  NOTE: an unrelated pod REACHED the inner plane — this CNI does not enforce"
+    echo "        NetworkPolicy, so mcp-re-inner-fastmcp-allow-proxy-only is inert here."
+    echo "        Inner containment is NOT in force on this cluster; do not claim it."
+  else
+    echo "  OK: inner containment enforced — an unrelated pod cannot reach the inner plane."
+  fi
 fi
 
 # --- Proof 1: cross-replica replay coherence ---------------------------------
 log "Proof 1 — cross-replica replay coherence"
 # A proper 128-bit b64url nonce, PINNED so both replicas see the identical
 # (signer, audience, nonce) triple — the whole point of the coherence proof.
+#
+# Passed as `--nonce=<value>`, NOT `--nonce <value>`. base64url maps `+` to `-`, so
+# roughly one nonce in 64 starts with a hyphen, and argparse then reads it as the next
+# OPTION rather than this one's value: "argument --nonce: expected one argument", and
+# Proof 1 fails for a reason that has nothing to do with replay coherence. The `=` form
+# binds the value to the flag whatever it starts with. A 1-in-64 spurious failure in a
+# proof that gates a release is worse than a common one — it is rare enough to be
+# dismissed as a fluke and re-run.
 NONCE="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
-  --remote-addr "$REPLICA_A" --nonce "$NONCE" --expect accepted \
+printf '%s\n' "$REQ" | client \
+  --remote-addr "$REPLICA_A" --nonce="$NONCE" --expect accepted \
   || fail "replica A did not accept a fresh pinned nonce"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
-  --remote-addr "$REPLICA_B" --nonce "$NONCE" --expect replay \
+printf '%s\n' "$REQ" | client \
+  --remote-addr "$REPLICA_B" --nonce="$NONCE" --expect replay \
   || fail "replica B accepted a nonce already spent on A (replay coherence broken)"
 echo "  OK: nonce Fresh on A, Replay on B."
 
 # --- Proof 2: cross-replica trust revocation ---------------------------------
 log "Proof 2 — cross-replica trust-epoch revocation"
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted \
+printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted \
   || fail "baseline request rejected before revocation"
-# Capture the PRE-BUMP epoch value: the shared counter is monotonic AND persistent, so
-# its absolute value carries across runs — the replicas' startup baseline is this value,
-# not 0. We restore exactly this after the proof so serving recovers (see the reset).
-EPOCH_BEFORE="$(kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli GET mcp-re:trust:epoch | tr -d '\r')"
+# The shared counter is MONOTONIC and is never rolled back: minting under a lower epoch
+# would resurrect credentials the fleet's verifiers have already stopped accepting, so a
+# replica REFUSES a regressed counter rather than rebasing to it (that refusal is the
+# C007 invariant). Revocation is therefore undone the way it is in production — by
+# pointing verifiers at the NEW epoch — not by rewinding the store.
+EPOCH_BEFORE="$(epoch_label)"
 kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
   redis-cli INCR mcp-re:trust:epoch >/dev/null
 sleep 2  # bounded propagation window
-printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect revoked \
-  || fail "sibling B still trusted a credential revoked by the epoch bump"
-echo "  OK: epoch bump on the shared tier revoked across replicas."
 
-# Proof 2 ADVANCED the shared epoch to prove revocation; that revocation is real and
-# fleet-wide, so EVERY subsequent request now fails closed until the trust generation
-# is restored. Reset the epoch to the startup baseline so the later, independent proofs
-# serve again: each replica's delegated-epoch watch re-issues under the base epoch once
-# the counter returns to baseline, and verifiers pinned to it accept once more. (This
-# is test isolation between independent proofs — NOT relaxing the revocation just shown.)
-log "Reset trust epoch to baseline (restore serving for the remaining proofs)"
-if [[ -n "$EPOCH_BEFORE" ]]; then
-  kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli SET mcp-re:trust:epoch "$EPOCH_BEFORE" >/dev/null
-else
-  # No prior value: the key was unset at startup, so unset it again (reads as 0 = baseline).
-  kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- redis-cli DEL mcp-re:trust:epoch >/dev/null
-fi
-# Wait (bounded) for every replica to re-issue the base epoch before continuing.
+# Sibling B must reject a credential minted under the PRE-bump epoch. Pin the old label
+# explicitly: `client` would resolve the new one and (correctly) accept.
+printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --trust-epoch "$EPOCH_BEFORE" \
+  --remote-addr "$REPLICA_B" --expect revoked \
+  || fail "sibling B still trusted a credential revoked by the epoch bump"
+echo "  OK: epoch bump on the shared tier revoked across replicas (old epoch $EPOCH_BEFORE rejected)."
+
+# Serving continues immediately under the ADVANCED epoch — no rollback, no restart. This
+# is also the restart invariant in situ: `epoch_label` re-derives from shared state, so
+# any replica (fresh or long-lived) resolves the same post-INCR label.
+log "Confirm serving under the advanced epoch (no rollback, no restart)"
+EPOCH_AFTER="$(epoch_label)"
+[[ "$EPOCH_AFTER" != "$EPOCH_BEFORE" ]] \
+  || fail "the INCR did not change the resolved epoch label ($EPOCH_AFTER)"
 restored=""
 for _ in $(seq 1 30); do
-  if printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
-     && printf '%s\n' "$REQ" | $CLIENT "${CLIENT_COMMON[@]}" --remote-addr "$REPLICA_B" --expect accepted >/dev/null 2>&1; then
+  if printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_A" --expect accepted >/dev/null 2>&1 \
+     && printf '%s\n' "$REQ" | client --remote-addr "$REPLICA_B" --expect accepted >/dev/null 2>&1; then
     restored=1; break
   fi
   sleep 1
 done
-[[ -n "$restored" ]] || fail "serving did not recover after resetting the trust epoch to baseline"
-echo "  OK: base epoch re-issued across replicas; serving restored."
+[[ -n "$restored" ]] || fail "replicas did not re-issue under the advanced epoch $EPOCH_AFTER"
+echo "  OK: every replica re-issued under $EPOCH_AFTER; serving continues without a rollback."
 
 # --- Proof 3: MRT continuation survives a replica switch ---------------------
 # Open an InputRequired elicitation on A (persisting the continuation), read the
@@ -511,14 +665,14 @@ else
   MRT_OPEN_REQ="${MCP_RE_MRT_OPEN_REQ:-}"
   [[ -n "$MRT_OPEN_REQ" ]] || MRT_OPEN_REQ="$(jq -nc --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:$t,arguments:{}}}')"
-  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+  OPEN_RESP="$(printf '%s\n' "$MRT_OPEN_REQ" | client \
     --remote-addr "$REPLICA_A" --save-cont "$CONT_FILE")" \
     || fail "could not open a multi-round-trip continuation on A"
   STATE="$(printf '%s' "$OPEN_RESP" | jq -r '.result.requestState // empty')"
   [[ -n "$STATE" ]] || fail "A's response carried no requestState (tool did not elicit input)"
   ANSWER_REQ="$(jq -nc --arg s "$STATE" --arg t "$MRT_TOOL" \
     '{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:$t,arguments:{},inputResponses:{confirm:true},requestState:$s}}')"
-  printf '%s\n' "$ANSWER_REQ" | $CLIENT "${CLIENT_COMMON[@]}" \
+  printf '%s\n' "$ANSWER_REQ" | client \
     --remote-addr "$REPLICA_B" --load-cont "$CONT_FILE" --expect accepted \
     || fail "continuation opened on A was not honoured on B"
   rm -f "$CONT_FILE"
@@ -543,15 +697,26 @@ else
   LG="--server-name $MCP_RE_SERVER_NAME --signer-id $MCP_RE_SIGNER_ID --key-id $MCP_RE_KEY_ID"
   LG="$LG --signing-key-seed @/etc/mcp-re-client/client-signing-seed"
   LG="$LG --server-signer $MCP_RE_SERVER_SIGNER --server-key-id $MCP_RE_SERVER_KEY_ID"
-  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $MCP_RE_TRUST_EPOCH"
-  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain ${MCP_RE_TRUST_DOMAIN:-example.com}"
+  # The in-cluster load generator needs the SAME resolved "<base>#<counter>" label the
+  # proxy is minting; the bare base is never minted when a trust-epoch source is wired.
+  LG="$LG --server-pubkey @/etc/mcp-re-client/server-pubkey --trust-epoch $(epoch_label)"
+  LG="$LG --audience $MCP_RE_AUDIENCE --target-uri $MCP_RE_TARGET_URI --trust-domain $TRUST_DOMAIN"
   LG="$LG --tls-cert /etc/mcp-re-client/client-cert --tls-key /etc/mcp-re-client/client-key --server-ca /etc/mcp-re-client/server-ca"
   # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish
   # before the roll does and miss the tail). Counts drops over the window.
   SECS="${MCP_RE_ROLLING_SECS:-75}"
+  # A drop is recorded WITH the client's stderr, not just as a tally. The two things
+  # that end a request here are not the same finding and must not look the same: a
+  # connection-level failure (the kube-proxy endpoint-propagation race this proof is
+  # actually about) versus a `verdict mismatch` (the proxy answered, and answered
+  # something other than accepted — a fail-closed regression). Discarding stderr made
+  # both print the bare word DROP, so a security regression during a rollout was
+  # indistinguishable from a load-balancer timing artefact and neither could be triaged
+  # after the fact. stdout is still discarded; only the diagnosis is kept.
   REMOTE="end=\$(( \$(date +%s) + $SECS )); n=0; drops=0; \
 while [ \$(date +%s) -lt \$end ]; do \
-  printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted >/dev/null 2>&1 || { echo DROP; drops=\$((drops+1)); }; \
+  why=\$(printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted 2>&1 >/dev/null) \
+    || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
   n=\$((n+1)); \
 done; echo \"loadgen: \$n requests, \$drops drop(s)\""
   kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!

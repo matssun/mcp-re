@@ -272,6 +272,62 @@ fn degenerate_window_fails_closed_regardless_of_skew() {
     assert_eq!(err, HttpProfileError::StaleWindow);
 }
 
+/// C093/C094: `mcp_re_core::check_freshness` was a SECOND freshness gate — exported,
+/// unwired, and weaker than this one in three specific ways. It is deleted; these pin the
+/// strictness of the surviving gate so a replacement cannot quietly reintroduce any of
+/// them.
+///
+/// The deleted gate: (1) rejected only `expires < issued`, so a degenerate
+/// `expires == issued` window was FRESH; (2) treated the upper bound as inclusive, so
+/// `now == expires + skew` was FRESH; (3) had no bound at all on how WIDE a window the
+/// signer could declare.
+#[test]
+fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
+    let skew = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+
+    // (1) A zero-length window. Covered by degenerate_window_fails_closed_regardless_of_skew
+    // for `expires == created`; asserted here at the exact instant the deleted gate called
+    // fresh, to state the boundary rather than imply it.
+    let mut req = request();
+    sign_request(&mut req, &client_key(), "client-key-1", CREATED, CREATED, "n-zero")
+        .expect("signs");
+    assert_eq!(
+        verify_request(&req, &resolver(), CREATED).unwrap_err(),
+        HttpProfileError::StaleWindow,
+        "a zero-length window is never fresh, however the clocks read"
+    );
+
+    // (2) The upper edge is EXCLUSIVE: `expires + skew` itself is already stale.
+    let req = signed_request();
+    assert_eq!(
+        verify_request(&req, &resolver(), EXPIRES + skew).unwrap_err(),
+        HttpProfileError::StaleWindow,
+        "expires + skew is the first stale instant, not the last fresh one"
+    );
+    // One second earlier is still fresh, so this pins an edge rather than a blanket deny.
+    verify_request(&req, &resolver(), EXPIRES + skew - 1).expect("still inside the window");
+
+    // (3) Window WIDTH is bounded. Freshness says when a window may be used; it says
+    // nothing about how long it may be. Unbounded, a client presents
+    // `created = now, expires = now + 10y` — fresh, accepted, and the replay tier then
+    // retains that nonce until `expires + skew`, so a single client chooses the
+    // retention. Checked skew-free: the width is the message's own property.
+    let max = mcp_re_http_profile::VerifierPolicy::default().max_signature_validity();
+    let mut wide = request();
+    sign_request(&mut wide, &client_key(), "client-key-1", CREATED, CREATED + max + 1, "n-wide")
+        .expect("signs");
+    assert_eq!(
+        verify_request(&wide, &resolver(), CREATED + 1).unwrap_err(),
+        HttpProfileError::StaleWindow,
+        "a window wider than the policy ceiling fails closed even while it is 'fresh'"
+    );
+    // Exactly at the ceiling is admitted, so the bound is the ceiling and not an off-by-one.
+    let mut at_bound = request();
+    sign_request(&mut at_bound, &client_key(), "client-key-1", CREATED, CREATED + max, "n-bound")
+        .expect("signs");
+    verify_request(&at_bound, &resolver(), CREATED + 1).expect("a window AT the ceiling is fine");
+}
+
 #[test]
 fn wrong_keyid_fails_closed() {
     let mut req = request();

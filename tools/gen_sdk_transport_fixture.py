@@ -102,10 +102,6 @@ def base_config(target: str, created: int, poster_nonce, **over) -> McpReConfig:
         accepted_epochs=["epoch-1"],
         max_clock_skew=60,
         request_ttl=300,
-        # A standard ClientSession sends `notifications/initialized`; MCP-RE has no
-        # ratified one-way notification profile yet (#418), so recording a session needs
-        # the unsafe opt-in to get one open at all.
-        unsafe_drop_notifications=True,
         nonce_factory=poster_nonce,
         clock=lambda: created,
     )
@@ -131,7 +127,10 @@ async def record(target: str, created: int) -> dict:
                     "body_b64": b64(r.content),
                 }
             )
-            if r.status_code != 200:
+            # 202 is the accepted-notification acknowledgement (#418 §3.4); 200 is an
+            # ordinary bodied reply. Anything else means the proxy refused a message
+            # this recording depends on.
+            if r.status_code not in (200, 202):
                 raise SystemExit(f"proxy refused a recording request: {r.status_code} {r.text[:200]}")
             return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
 
@@ -272,9 +271,9 @@ async def record(target: str, created: int) -> dict:
         # The delegated kid the credential authorizes, for the revocation test.
         "delegated_key_id": "server-key-1/delegated/1",
         "tool": {"name": TOOL, "arguments": TOOL_ARGS},
-        # In order: initialize, tools/call, then the tools/list the MCP SDK issues to
-        # validate structuredContent. The client->server notifications/initialized
-        # carries no evidence and never reaches the wire.
+        # In order: initialize, the client->server notifications/initialized (answered
+        # with a signed bodyless 202), tools/call, then the tools/list the MCP SDK issues
+        # to validate structuredContent.
         "exchanges": exchanges,
         # The ADR-MCPS-047 open leg, driven below the session layer.
         "elicitation": elicitation,

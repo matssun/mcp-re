@@ -26,7 +26,12 @@
 set -euo pipefail
 
 NS="${NS:-mcp-re}"
-BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:0.12.1}"
+# The tag is READ FROM VERSION, never restated: deploy/cloudbuild/mcp-re-images.yaml pushes
+# the image at whatever VERSION says, so a literal here goes stale on the next bump and
+# the Job then references a tag Artifact Registry does not hold (ImagePullBackOff on a
+# cluster that is already costing money).
+BENCH_TAG="$(tr -d '[:space:]' < "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/VERSION")"
+BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:$BENCH_TAG}"
 
 POOL="${1:?usage: run_slo_job.sh <node-pool> <hw-class> <cores> <out.json>}"
 HW="${2:?hw-class label, e.g. e2-standard-8}"

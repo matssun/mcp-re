@@ -246,6 +246,15 @@ where
         self.custody.trust_epoch()
     }
 
+    /// Set the trust epoch WITHOUT issuing — used once at startup to pin the resolved
+    /// `<base>#<counter>` label before the first key is minted, so the very first
+    /// credential carries a globally comparable epoch rather than the bare base label.
+    /// After startup use [`advance_trust_epoch`](Self::advance_trust_epoch), which
+    /// re-issues so the change takes effect immediately.
+    pub fn set_trust_epoch_before_first_issue(&mut self, epoch: String) {
+        self.custody.set_trust_epoch(epoch);
+    }
+
     /// Advance the minted trust epoch and immediately re-issue under it, publishing the
     /// fresh snapshot for the hot path (ADR-MCPRE-052 §7). Called by the rotation owner
     /// when the shared trust-epoch counter advances: verifiers pinned to the prior

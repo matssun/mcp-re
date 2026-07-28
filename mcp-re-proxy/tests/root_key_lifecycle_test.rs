@@ -37,8 +37,10 @@ use mcp_re_client_core::ResolvedActor;
 use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::SignedRequest;
 use mcp_re_client_core::SignerSlot;
+use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::TrustedIssuerSet;
 use mcp_re_client_core::verify_delegated_response;
+use mcp_re_client_core::verify_delegated_response_anchored;
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::CustodyConfig;
@@ -171,17 +173,17 @@ fn mint_under(root_seed: [u8; 32], issuer_kid: &str, signed: &SignedRequest, now
     resp
 }
 
-/// Verify a delegated response against a trust-anchor set at `now` — the set feeds
-/// BOTH the root resolver (current + in-window retired) AND the issuer revocation
-/// source (revoked issuers).
+/// Verify a delegated response against a trust-anchor set at `now`. Goes through
+/// `verify_delegated_response_anchored`, which takes the set ONCE and wires both seams
+/// (root resolver + issuer revocation) itself — the previous form of this helper passed
+/// the set in two argument positions, which is exactly the mis-wiring C064/C065 named.
 fn verify_with(
     resp: &HttpResponse,
     signed: &SignedRequest,
     set: &TrustedIssuerSet,
     now: i64,
 ) -> Result<DelegatedOutcome, HttpProfileError> {
-    let resolver = set.response_resolver(now);
-    verify_delegated_response(resp, &resolver, &expectation(signed), &policy(), set, now)
+    verify_delegated_response_anchored(resp, &expectation(signed), &policy(), set, now)
         .map(|v| v.outcome)
 }
 
@@ -293,6 +295,51 @@ fn revoking_one_root_does_not_disturb_the_other() {
         verify_with(&resp_b, &signed, &set, NOW).unwrap(),
         DelegatedOutcome::Success,
         "revoking Root A leaves Root B fully trusted"
+    );
+}
+
+#[test]
+fn a_split_seam_cannot_verify_under_a_revoked_root() {
+    // C064/C065. The verifier treats the root resolver and the revocation source as
+    // independent arguments, so a caller CAN build the resolver from a set and then
+    // pass a different revocation source. That mistake fails in the permissive
+    // direction: the revoked root resolves, its signature checks out, and nothing
+    // consults the revocation the operator recorded.
+    //
+    // Two things make it safe now. (1) `response_resolver` — the raw seam handed to
+    // `verify_delegated_response` — refuses a revoked issuer itself, so even the
+    // mis-wired call rejects. (2) `verify_delegated_response_anchored` takes the set
+    // once, so the mistake is not expressible there and the rejection keeps the honest
+    // `delegation_revoked` reason.
+    let signed = signed_request();
+    let resp_a = mint_under(ROOT_A_SEED, ROOT_A_KID, &signed, NOW);
+    let set = TrustedIssuerSet::new()
+        .with_current(root_actor(ROOT_A_KID, &ROOT_A_SEED))
+        .revoke(ROOT_A_KID);
+
+    // The mis-wiring: resolver from the set, revocation source that knows nothing.
+    let resolver = set.response_resolver(NOW);
+    let empty_revocation = StaticRevocationList::new();
+    let split = verify_delegated_response(
+        &resp_a,
+        &resolver,
+        &expectation(&signed),
+        &policy(),
+        &empty_revocation,
+        NOW,
+    );
+    assert_eq!(
+        split.map(|v| v.outcome).unwrap_err(),
+        HttpProfileError::DelegationIssuerUntrusted,
+        "a revoked root must not verify just because the revocation source was not \
+         wired in; the raw resolver refuses it as untrusted"
+    );
+
+    // The supported path rejects with the honest reason instead.
+    assert_eq!(
+        verify_with(&resp_a, &signed, &set, NOW).unwrap_err(),
+        HttpProfileError::DelegationRevoked,
+        "the anchored entry point wires both seams, so the reason is REVOKED"
     );
 }
 

@@ -37,12 +37,16 @@
         "sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:"
       ],
       [
+        "mcp-re-request-evidence",
+        "k-dNjrAQNoiWZTO3Afq0g4IbEM_iBZUMEP9UaAfUH14"
+      ],
+      [
         "Signature-Input",
-        "mcp-re-response=(\"@status\" \"content-digest\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"server-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+        "mcp-re-response=(\"@status\" \"content-digest\" \"mcp-re-request-evidence\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000000;expires=1700000300;keyid=\"server-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
       ],
       [
         "Signature",
-        "mcp-re-response=:drTe0UBi4QLrAwkwPKODYj+tY7a2q8Pt3nB0oxgZOGQVX3kEjq5GVIhu2nDUKp8ibVqr5BxEBEQTkpQxuwdvDQ==:"
+        "mcp-re-response=:KO3nACYSNWpQ3nyAU6Ck1CJjeHgK+FtwZuQpeopcefBsUUBsLLLQ5yaUGGkc2dLl05eRFZ/uh1SB+SOnn6yTBg==:"
       ],
       [
         "Content-Type",

@@ -18,6 +18,14 @@
 //! sidesteps the `SET NX` non-idempotency-under-retry subtlety (sync store audit
 //! #97) — an outage is NEVER a fresh nonce.
 //!
+//! The `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020) is carried here too: with
+//! [`with_wait_quorum`](RedisAsyncAtomicReplayStore::with_wait_quorum) a fresh
+//! insert is followed by `WAIT <quorum> <timeout_ms>` and an ack shortfall fails
+//! closed, through the same pure decision helper as the sync backend. Without it the
+//! store is the plain `REDIS_ASYNC` path, so the tier a deployment DECLARES must be
+//! applied when the store is built (see `app.rs`) or the stronger guarantee would be
+//! audited but not enforced.
+//!
 //! TTL derivation and the MCPS-08 pre-store staleness guard reuse the SAME pure
 //! helpers as the sync backend ([`compute_ttl_ms`] / [`is_nonpositive_ttl`]),
 //! reading the store's own clock, so the `PX` window is the intended
@@ -30,10 +38,12 @@ use redis::aio::ConnectionManager;
 
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
+use crate::redis_store::classify_wait_acks;
 use crate::redis_store::compute_ttl_ms;
 use crate::redis_store::is_nonpositive_ttl;
 use crate::redis_store::system_clock;
 use crate::redis_store::UnixClock;
+use crate::redis_store::WaitQuorum;
 use crate::shared_replay::ReplayStoreError;
 
 /// A durable, cross-process ASYNC authoritative replay store backed by Redis
@@ -45,6 +55,11 @@ pub struct RedisAsyncAtomicReplayStore {
     /// The store's own clock (the proxy's impure edge), read once per op for both
     /// the staleness guard and the TTL window.
     clock: UnixClock,
+    /// `Some` for the `REDIS_WAIT_QUORUM` tier — after a fresh insert, `WAIT` for
+    /// `quorum` replica acks within `timeout_ms` and fail closed on a shortfall
+    /// (ADR-MCPS-020). `None` = `REDIS_ASYNC` / `SINGLE_STORE_FAIL_CLOSED`: plain
+    /// `SET NX PX`, no replica wait.
+    wait_quorum: Option<WaitQuorum>,
 }
 
 impl RedisAsyncAtomicReplayStore {
@@ -67,7 +82,21 @@ impl RedisAsyncAtomicReplayStore {
             .map_err(|e| ReplayStoreError::Unavailable {
                 details: format!("connect redis async: {e}"),
             })?;
-        Ok(RedisAsyncAtomicReplayStore { conn, clock })
+        Ok(RedisAsyncAtomicReplayStore {
+            conn,
+            clock,
+            wait_quorum: None,
+        })
+    }
+
+    /// Enable the `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020): after each fresh insert,
+    /// issue `WAIT <quorum> <timeout_ms>` and fail closed unless at least `quorum`
+    /// replicas acknowledge within the timeout. Without this the store is the
+    /// `REDIS_ASYNC` / `SINGLE_STORE_FAIL_CLOSED` plain `SET NX PX` path, whose
+    /// weaker guarantee a failover can lose.
+    pub fn with_wait_quorum(mut self, quorum: u32, timeout_ms: u64) -> Self {
+        self.wait_quorum = Some(WaitQuorum { quorum, timeout_ms });
+        self
     }
 }
 
@@ -80,6 +109,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
     ) -> ReplayDecisionFuture<'a> {
         let key = key.to_string();
         let mut conn = self.conn.clone();
+        let wait_quorum = self.wait_quorum;
         // Read the store's OWN clock once (ignore the trait's vestigial 0), and reuse
         // it for both the staleness guard and the TTL window.
         let now = (self.clock)();
@@ -111,7 +141,33 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
                 .query_async(&mut conn)
                 .await;
             match result {
-                Ok(Some(_)) => Ok(ReplayDecision::Fresh),
+                Ok(Some(_)) => match wait_quorum {
+                    // REDIS_ASYNC / SINGLE_STORE_FAIL_CLOSED: the primary's ack is the
+                    // whole guarantee.
+                    None => Ok(ReplayDecision::Fresh),
+                    // REDIS_WAIT_QUORUM: the nonce counts as admitted only once it is
+                    // replicated, so a failover to a replica cannot resurrect it.
+                    // `WAIT` returns the ack count reached within the timeout (a
+                    // timeout is a partial count, not an error), and the shortfall
+                    // decision is the SAME pure helper the sync store uses. As
+                    // everywhere on this path, an error fails closed with no retry —
+                    // and here that also avoids the SET+WAIT non-idempotency the sync
+                    // store must reason about: a re-run would find the key it just
+                    // wrote and report a false `Replay`.
+                    Some(WaitQuorum { quorum, timeout_ms }) => {
+                        let acked: Result<i64, redis::RedisError> = redis::cmd("WAIT")
+                            .arg(quorum)
+                            .arg(timeout_ms)
+                            .query_async(&mut conn)
+                            .await;
+                        match acked {
+                            Ok(acked) => classify_wait_acks(acked, quorum, timeout_ms),
+                            Err(e) => Err(ReplayStoreError::Unavailable {
+                                details: format!("redis async WAIT failed: {e}"),
+                            }),
+                        }
+                    }
+                },
                 Ok(None) => Ok(ReplayDecision::Replay),
                 Err(e) => Err(ReplayStoreError::Unavailable {
                     details: format!("redis async SET NX failed: {e}"),

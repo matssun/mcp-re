@@ -23,6 +23,40 @@ use crate::tls::ServerLimits;
 use crate::transport::IdentityPolicy;
 use crate::transport::ReverseProxyHeaderFormat;
 
+/// A secret string that does not leak through `Debug` and is scrubbed on drop.
+///
+/// [`Config`] derives `Debug`, so any structured log, panic message, or debug print of
+/// the config would otherwise carry the PKCS#11 User PIN verbatim. The PIN is the
+/// credential that unlocks a token holding the response-signing and (optionally) TLS
+/// private keys, so it belongs in the same custody class as the keys themselves.
+///
+/// `Zeroizing` wipes the heap allocation when the value drops. That is a best effort
+/// against a core dump or a freed-page read, not a guarantee: the string was already
+/// copied by whatever read it in, and `Clone` (needed because `Config` is `Clone`)
+/// makes another copy. It removes the copies this code controls.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(zeroize::Zeroizing<String>);
+
+impl SecretString {
+    /// Wrap a secret value.
+    pub fn new(value: impl Into<String>) -> Self {
+        SecretString(zeroize::Zeroizing::new(value.into()))
+    }
+
+    /// Borrow the secret. Every call site is a place the value can escape — keep them
+    /// few and close to the API that consumes it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // No length either: a PIN's length is worth guessing with.
+        f.write_str("SecretString(redacted)")
+    }
+}
+
 /// Where key material is read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySourceKind {
@@ -128,8 +162,13 @@ pub struct Config {
     pub server_signer: String,
     /// Response-signing key id.
     pub server_key_id: String,
-    /// Symmetric clock skew (seconds).
+    /// Symmetric clock skew (seconds), applied to BOTH the RFC 9421 freshness gate
+    /// and the replay `retain_until`. Bounded `0..=VerifierPolicy::MAX_CLOCK_SKEW_BOUND`
+    /// at parse time.
     pub max_clock_skew: i64,
+    /// Accepted `Mcp-Protocol-Version` values (§4.1). Empty = no MCP transport
+    /// contract is enforced.
+    pub mcp_protocol_versions: Vec<String>,
     /// The canonical RFC 9421 `@target-uri` this deployment binds requests to
     /// (ADR-MCPRE-050); client and server sign it byte-for-byte.
     pub target_uri: String,
@@ -185,6 +224,10 @@ pub struct Config {
     /// per-core linear-scaling benchmark reproducible (drive N=1 then N=cores) and
     /// lets an operator cap workers below the core count.
     pub cores: usize,
+    /// MCPRE-114: fleet-GLOBAL in-flight ceiling, divided evenly across cores by
+    /// `async_fleet`. `None` = no global target (a per-core `limits
+    /// .max_in_flight_requests` may still apply; with neither there is no ceiling).
+    pub max_in_flight_total: Option<usize>,
     /// Replay-cache backend.
     pub replay: ReplayKind,
     /// Replay-cache file path (required when `replay == File`).
@@ -274,8 +317,26 @@ pub struct Config {
     /// PKCS#11 module (provider `.so`/`.dylib`) path. Required when
     /// `key_source == Pkcs11` (issue #4034).
     pub pkcs11_module: Option<String>,
-    /// PKCS#11 token User PIN (SENSITIVE). Required when `key_source == Pkcs11`.
-    pub pkcs11_pin: Option<String>,
+    /// Path the PKCS#11 token User PIN is read from. Required when
+    /// `key_source == Pkcs11`.
+    ///
+    /// The PIN itself is deliberately NOT a field here. Two reasons, and the config
+    /// carrying the path rather than the value answers both:
+    ///
+    /// * There is no way to pass it on argv. A process's command line is world-readable
+    ///   on every platform this runs on (`ps`, `/proc/<pid>/cmdline`), so
+    ///   `--pkcs11-pin <pin>` published the credential that unlocks the token holding
+    ///   the response-signing (and optionally TLS) private keys to every local user for
+    ///   the lifetime of the process.
+    /// * [`Config`] derives `Debug` and is cloned freely, so a PIN stored here would
+    ///   ride along into any structured log, panic message, or debug print. Keeping only
+    ///   the path means there is nothing to redact.
+    ///
+    /// The file is read once, at key-source construction, into a short-lived
+    /// [`SecretString`], and is held to the same permission floor as the other key files
+    /// (`key_file_mode_is_insecure`) — the PIN is protected by the same mechanism as the
+    /// keys it unlocks.
+    pub pkcs11_pin_file: Option<String>,
     /// PKCS#11 token label selecting the slot whose token holds the signing key
     /// (token labels are stable across reboots; slot ids are not). Required when
     /// `key_source == Pkcs11`.
@@ -360,16 +421,76 @@ pub struct Config {
     /// (`mcp_re_audience_hash`). Defaults to `--audience`; must match the verifier's
     /// expected audience hash.
     pub delegated_audience_hash: Option<String>,
+    /// Accept a key file that is group-READABLE (never group-writable, never
+    /// world-anything) when its group is one this process is in — the Kubernetes
+    /// `fsGroup` mount model, which the strict `0600` floor makes unsatisfiable for a
+    /// non-root pod (C053b). Explicit opt-in; the default posture is unchanged.
+    pub allow_group_readable_key_files: bool,
 }
 
 /// Parse CLI arguments (excluding argv[0]) into a [`Config`]. Returns a
 /// human-readable error string on any missing/invalid argument.
+/// Validate an operator-supplied KMS endpoint override before anything is sent to it.
+///
+/// These overrides carry the ROOT-KEY trust bootstrap: `getPublicKey` fetches the
+/// `spki_der`/verify key that the verify-before-return guardrail is measured against, and
+/// on GCP every request also carries a live workload-identity bearer token. An unvalidated
+/// override therefore hands a replayable credential to whatever host is named and lets a
+/// substituted endpoint supply an attacker-chosen root signing key that every local
+/// fail-closed check then passes self-consistently.
+///
+/// So: `https://` always; `http://` ONLY to loopback, which keeps the LocalStack / KMS
+/// emulator lane working without letting a plaintext credential leave the machine.
+/// Anything else is refused at parse, before a credential is minted.
+fn validated_kms_endpoint(flag: &str, value: &str) -> Result<String, String> {
+    let rest = if let Some(rest) = value.strip_prefix("https://") {
+        return non_empty_authority(flag, value, rest).map(|()| value.to_string());
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        rest
+    } else {
+        return Err(format!(
+            "{flag} must be an absolute https:// URL (got {value:?}); this endpoint carries the \
+             root-key trust bootstrap and, on GCP, a live bearer token"
+        ));
+    };
+    non_empty_authority(flag, value, rest)?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = match authority.rsplit_once(':') {
+        // Bracketed IPv6 literal: the last colon may belong to the address.
+        Some((h, _)) if !authority.starts_with('[') || h.ends_with(']') => h,
+        _ => authority,
+    };
+    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+        return Ok(value.to_string());
+    }
+    Err(format!(
+        "{flag} may only use http:// for a loopback emulator (localhost, 127.0.0.1, [::1]); \
+         got host {host:?}. A plaintext endpoint exfiltrates the KMS credential and lets a \
+         substituted host supply the root verify key"
+    ))
+}
+
+/// Reject a URL whose authority is empty (`https://`, `http:///v1`), which would otherwise
+/// produce a request URL with no host.
+fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String> {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return Err(format!("{flag} has no host: {value:?}"));
+    }
+    Ok(())
+}
+
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut bind = None;
     let mut audience = None;
     let mut server_signer = None;
     let mut server_key_id = None;
-    let mut max_clock_skew: i64 = 300;
+    // One skew governs BOTH the RFC 9421 freshness gate and the replay `retain_until`,
+    // so an admitted nonce is retained exactly as long as its signature can still be
+    // accepted. The default is the profile's own `DEFAULT_MAX_CLOCK_SKEW` rather than a
+    // locally-chosen number, so proxy and verifier cannot drift apart.
+    let mut max_clock_skew: i64 = mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW;
+    let mut mcp_protocol_versions: Vec<String> = Vec::new();
     // ADR-MCPS-039 (D1): default to the migration posture (admit both wire
     // profiles) so an omitted flag preserves back-compat with draft-01 clients;
     // `--expected-version-policy draft-02-only` tightens it.
@@ -389,6 +510,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut inner_http_urls: Vec<String> = Vec::new();
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
+    let mut max_in_flight_total: Option<usize> = None;
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -430,7 +552,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // #4034 PKCS#11 key source: module path, User PIN (sensitive), token label,
     // and signing-key object label. Required only when `--key-source pkcs11`.
     let mut pkcs11_module: Option<String> = None;
-    let mut pkcs11_pin: Option<String> = None;
+    let mut pkcs11_pin_file: Option<String> = None;
     let mut pkcs11_token_label: Option<String> = None;
     let mut pkcs11_key_label: Option<String> = None;
     // #59 PKCS#11 delegated TLS: optional SECOND token object holding the Ed25519
@@ -440,6 +562,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // endpoint optional (emulator). Credentials come from AWS_* env vars.
     let mut aws_kms_region: Option<String> = None;
     let mut aws_kms_key_id: Option<String> = None;
+    let mut allow_group_readable_key_files = false;
     let mut aws_kms_endpoint: Option<String> = None;
     let mut aws_kms_tls_key_id: Option<String> = None;
     // ADR-MCPS-028 §C GCP Cloud KMS: key-version resource path required when
@@ -485,6 +608,15 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             i += 1;
             continue;
         }
+        // Valueless boolean flag (C053b): accept a group-READABLE key file whose group
+        // this process is in — the Kubernetes fsGroup mount model. Explicit, because it
+        // widens who can read a signing key; the strict 0600 floor is otherwise
+        // unsatisfiable for a non-root pod.
+        if flag == "--allow-group-readable-key-files" {
+            allow_group_readable_key_files = true;
+            i += 1;
+            continue;
+        }
         // Select the horizontally-scaled (fleet) deployment topology.
         if flag == "--fleet" {
             fleet = true;
@@ -500,8 +632,23 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--server-signer" => server_signer = Some(value.clone()),
             "--server-key-id" => server_key_id = Some(value.clone()),
             "--max-clock-skew" => {
-                max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?
+                max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?;
+                // Bounded at parse time, matching `VerifierPolicy::new`: a negative
+                // skew narrows the window asymmetrically and a skew above the bound
+                // stops the freshness gate being a freshness gate. Refused here so the
+                // operator learns at the command line, not from a startup failure.
+                if !(0..=mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+                    .contains(&max_clock_skew)
+                {
+                    return Err(format!(
+                        "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}",
+                        mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND, max_clock_skew
+                    ));
+                }
             }
+            // §4.1 MCP transport contract. Repeatable; each occurrence adds an
+            // accepted `Mcp-Protocol-Version`. Absent = no transport contract.
+            "--mcp-protocol-version" => mcp_protocol_versions.push(value.clone()),
             "--target-uri" => target_uri = Some(value.clone()),
             "--trust-domain" => trust_domain = value.clone(),
             "--route" => route = Some(value.clone()),
@@ -524,20 +671,41 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     }
                 }
             }
-            // #4034 PKCS#11 key source. `--pkcs11-pin` is SENSITIVE: prefer a
-            // mechanism that keeps it off the argv visible via `ps`/`/proc`.
+            // #4034 PKCS#11 key source.
             "--pkcs11-module" => pkcs11_module = Some(value.clone()),
-            "--pkcs11-pin" => pkcs11_pin = Some(value.clone()),
+            // The PIN is read from a FILE, never argv. See `Config::pkcs11_pin_file`.
+            "--pkcs11-pin-file" => pkcs11_pin_file = Some(value.clone()),
+            // Still recognised, only to REFUSE it with the reason and the replacement.
+            // Falling through to "unknown flag" would be a worse error for the one
+            // operator who most needs to understand what changed — and worse, it would
+            // report a secret-handling decision as a typo. The PIN has already been
+            // exposed at this point (it is in this process's argv, which is
+            // world-readable): the refusal is about not making it a standing exposure,
+            // and the operator should treat that PIN as compromised and change it.
+            "--pkcs11-pin" => {
+                return Err(
+                    "--pkcs11-pin is refused: a process command line is world-readable \
+                     (ps, /proc/<pid>/cmdline), so the PIN unlocking the token that holds \
+                     the signing keys would be published to every local user for the \
+                     lifetime of the process. Use --pkcs11-pin-file <path> with a 0600 \
+                     file. Treat any PIN previously passed this way as compromised."
+                        .to_string(),
+                )
+            }
             "--pkcs11-token-label" => pkcs11_token_label = Some(value.clone()),
             "--pkcs11-key-label" => pkcs11_key_label = Some(value.clone()),
             "--pkcs11-tls-key-label" => pkcs11_tls_key_label = Some(value.clone()),
             // ADR-MCPS-028 §B AWS KMS / §C GCP Cloud KMS key-source parameters.
             "--aws-kms-region" => aws_kms_region = Some(value.clone()),
             "--aws-kms-key-id" => aws_kms_key_id = Some(value.clone()),
-            "--aws-kms-endpoint" => aws_kms_endpoint = Some(value.clone()),
+            "--aws-kms-endpoint" => {
+                aws_kms_endpoint = Some(validated_kms_endpoint("--aws-kms-endpoint", value)?)
+            }
             "--aws-kms-tls-key-id" => aws_kms_tls_key_id = Some(value.clone()),
             "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
-            "--gcp-kms-endpoint" => gcp_kms_endpoint = Some(value.clone()),
+            "--gcp-kms-endpoint" => {
+                gcp_kms_endpoint = Some(validated_kms_endpoint("--gcp-kms-endpoint", value)?)
+            }
             "--gcp-kms-tls-key-version" => gcp_kms_tls_key_version = Some(value.clone()),
             "--signing-key-seed" => signing_key_seed = Some(value.clone()),
             "--tls-cert" => tls_cert = Some(value.clone()),
@@ -783,6 +951,31 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
                 limits.max_concurrent_connections = n;
             }
+            // MCPRE-114: bounded per-request ADMISSION control. Without a ceiling the
+            // proxy queues in-flight requests without bound, so one client holding a
+            // valid mTLS certificate can drive unbounded concurrent work (each request
+            // buffering up to --max-body-bytes). `--max-in-flight` sets the per-core
+            // ceiling directly; `--max-in-flight-total` sets a fleet-wide target that
+            // async_fleet divides evenly across cores (lock-free: each core enforces
+            // only its own share). An explicit per-core ceiling wins.
+            "--max-in-flight" => {
+                let n: usize = value.parse().map_err(|_| "invalid --max-in-flight".to_string())?;
+                if n == 0 {
+                    return Err("--max-in-flight must be > 0 (omit the flag for no ceiling)".to_string());
+                }
+                limits.max_in_flight_requests = Some(n);
+            }
+            "--max-in-flight-total" => {
+                let n: usize =
+                    value.parse().map_err(|_| "invalid --max-in-flight-total".to_string())?;
+                if n == 0 {
+                    return Err(
+                        "--max-in-flight-total must be > 0 (omit the flag for no ceiling)"
+                            .to_string(),
+                    );
+                }
+                max_in_flight_total = Some(n);
+            }
             "--max-client-cert-lifetime" => {
                 max_client_cert_lifetime = parse_cert_lifetime(value)?
             }
@@ -901,8 +1094,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         if pkcs11_module.is_none() {
             return Err("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
         }
-        if pkcs11_pin.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-pin <pin>".to_string());
+        if pkcs11_pin_file.is_none() {
+            return Err(
+                "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
+                 never accepted on argv, which is world-readable via ps and \
+                 /proc/<pid>/cmdline"
+                    .to_string(),
+            );
         }
         if pkcs11_token_label.is_none() {
             return Err("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
@@ -1159,16 +1357,25 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             );
         }
     }
-    // (b) `--client-ocsp require` demands the verified online OCSP path, which is
-    //     compiled ONLY under the `online_ocsp` feature. In a build without it,
-    //     `require` must FAIL CLOSED at parse time rather than silently skipping
-    //     the revocation check (the proxy must never start believing it enforces
-    //     online revocation when the code to do so is not present).
-    #[cfg(not(feature = "online_ocsp"))]
+    // (b) `--client-ocsp require` is refused unconditionally: the online-OCSP check is
+    //     unreachable on the serving path. `ocsp_rejection` is called only from
+    //     `connection_rejection`, which only the blocking serve loops use; the
+    //     production data plane is the per-core async fleet (ADR-MCPRE-051 §1), which
+    //     calls `connection_rejection_for_leaf` and performs only the cert-lifetime
+    //     check. Accepting `require` would print "ONLINE OCSP client-cert revocation
+    //     enabled" at startup while admitting every revoked client certificate — the
+    //     forbidden-claim shape (security-boundary §2). This holds with OR without the
+    //     `online_ocsp` feature: without it the code is absent, with it the code is
+    //     present but never called. Refused until the async path carries the full peer
+    //     chain and performs the responder round-trip off the runtime worker.
     if client_ocsp == OcspKind::Require {
         return Err(
-            "--client-ocsp require needs the online_ocsp feature, which is \
-             not available in this build (rebuild with --features online_ocsp)"
+            "--client-ocsp require cannot be honored: online OCSP is implemented only on \
+             the blocking serve loop, while the production data plane is the per-core \
+             async fleet, which performs no OCSP revocation check. Accepting it would \
+             announce enforcement that does not happen. Use --client-crl (with \
+             --client-crl-reload-secs for restart-free refresh) for client-certificate \
+             revocation on the async serving path."
                 .to_string(),
         );
     }
@@ -1251,14 +1458,43 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         server_signer: require(server_signer, "--server-signer")?,
         server_key_id: require(server_key_id, "--server-key-id")?,
         max_clock_skew,
-        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). Optional at parse; an
-        // unset value serves nothing (the audience/target check fails closed on every
-        // request), so a deployment MUST set --target-uri to serve.
-        target_uri: target_uri.unwrap_or_default(),
+        mcp_protocol_versions,
+        // The RFC 9421 `@target-uri` binding (ADR-MCPRE-050). REQUIRED and non-empty:
+        // an empty target makes both sides of the audience/target conjunction the same
+        // empty string, so the dispatch-boundary binding degrades to a tautology and
+        // two deployments sharing an `--audience` become indistinguishable to the
+        // verifier. Refused here rather than served as a binding that binds nothing.
+        target_uri: {
+            let uri = require(target_uri, "--target-uri")?;
+            if uri.trim().is_empty() {
+                return Err(
+                    "--target-uri must not be empty: an empty target makes the audience/target \
+                     binding a tautology (both sides compare equal) instead of binding this \
+                     deployment's dispatch boundary"
+                        .to_string(),
+                );
+            }
+            uri
+        },
         trust_domain,
         route,
         key_source,
-        signing_key_seed: require(signing_key_seed, "--signing-key-seed")?,
+        // Required only where the seed is actually READ. Under a non-exporting
+        // custody (PKCS#11 / AWS KMS / GCP KMS) the response-signing key never leaves
+        // the device, and those sources thread this path only into the FileKeySource
+        // they use for TLS material — the seed accessor is never called. Requiring it
+        // there made every operator provision an Ed25519 root seed into every pod in
+        // exactly the mode chosen because no key should land in the pod, so a
+        // deployment's most sensitive file existed only to satisfy an argument parser.
+        // An explicitly-supplied path is still accepted and still permission-checked.
+        signing_key_seed: match key_source {
+            KeySourceKind::File | KeySourceKind::Env => {
+                require(signing_key_seed, "--signing-key-seed")?
+            }
+            KeySourceKind::Pkcs11 | KeySourceKind::AwsKms | KeySourceKind::GcpKms => {
+                signing_key_seed.unwrap_or_default()
+            }
+        },
         tls_cert: require(tls_cert, "--tls-cert")?,
         // #59: on the DELEGATED TLS path the TLS key is token-resident and never
         // read from disk, so an exported `--tls-key` is not merely optional — it is
@@ -1274,6 +1510,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         client_crl_paths,
         inner_http_urls,
         cores,
+        max_in_flight_total,
         client_crl_reload_secs,
         client_ocsp,
         ocsp_responder_url,
@@ -1298,12 +1535,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         authz,
         revocation_list_paths,
         pkcs11_module,
-        pkcs11_pin,
+        pkcs11_pin_file,
         pkcs11_token_label,
         pkcs11_key_label,
         pkcs11_tls_key_label,
         aws_kms_region,
         aws_kms_key_id,
+        allow_group_readable_key_files,
         aws_kms_endpoint,
         aws_kms_tls_key_id,
         gcp_kms_key_version,
@@ -1332,6 +1570,24 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
              profile, which is NOT accepted as the production authorization authority \
              (ADR-MCPS-013; Biscuit is the intended production profile). Run --authz off \
              until a production authorization profile is available."
+                .to_string(),
+        );
+    }
+
+    // ADR-MCPS-013: the policy-layer deny-list is consumed by the authorization layer
+    // (`LiveTrustResolver::resolve_with_revocation_id`), which only runs under an authz
+    // profile. `--authz reference` is refused just above and no production profile has
+    // landed, so authz is `Off` in every parseable config and a supplied deny-list
+    // could only be silently ignored — an operator would believe a compromised grant
+    // was revoked while it kept being authorized. Refused rather than accepted-and-
+    // ignored (security-boundary §2: never surface a capability that is not delivered).
+    if !config.revocation_list_paths.is_empty() {
+        return Err(
+            "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
+             consulted only by an authorization profile and no production profile is \
+             available (--authz is always off), so the list would enforce NOTHING. Remove \
+             --revocation-list; use the trust store and --revocation-tier for key \
+             revocation on the request path."
                 .to_string(),
         );
     }
@@ -1424,6 +1680,29 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
             MAX_CLIENT_CERT_LIFETIME.as_secs(),
         )),
         Some(_) => {}
+    }
+    // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
+    // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
+    // by `request_deadline`, and with either gone a handful of connections pin serve
+    // slots up to `max_concurrent_connections` with nothing to drop them.
+    //
+    // An out-of-range value was already rejected LOUDLY, with the stated reason that
+    // "the control can never be turned off by out-of-range input". `0` turned the same
+    // control off silently, which left the binary asserting a maximal-security posture
+    // while its own defense was disabled. Each default is `Some(30s)`, so `None` here
+    // only ever comes from an operator explicitly passing `0`.
+    for (value, flag) in [
+        (config.limits.read_timeout, "--read-timeout-secs"),
+        (config.limits.write_timeout, "--write-timeout-secs"),
+        (config.limits.request_deadline, "--request-deadline-secs"),
+    ] {
+        if value.is_none() {
+            violations.push(format!(
+                "{flag} 0 disables a slow-loris defense: a peer that trickles bytes then \
+                 holds a serve slot indefinitely, up to --max-connections, with no \
+                 fail-closed drop. Set a bounded value (default 30s)"
+            ));
+        }
     }
     if config.identity_source == IdentityPolicy::CnLegacy {
         violations.push(
@@ -1550,6 +1829,87 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
 /// group/world permission bit set is an insecure posture.
 pub fn key_file_mode_is_insecure(mode: u32) -> bool {
     mode & 0o077 != 0
+}
+
+/// Why a key file's posture was refused, or `None` when it is acceptable.
+///
+/// The strict rule ([`key_file_mode_is_insecure`]) is `0600`/`0400` and nothing else,
+/// which is correct on a normal host and IMPOSSIBLE under the Kubernetes model a
+/// non-root pod needs: a Secret mounted for a non-root uid is owned by the pod's
+/// `fsGroup` and delivered mode `0440`, so the strict predicate refuses to start
+/// exactly the deployment that stopped running as root (C053b).
+///
+/// So group READ is acceptable, but only under all three conditions, and only when the
+/// operator has explicitly asked for it:
+///
+///   1. `allow_group_read` — an explicit opt-in, never a silent default. This widens
+///      who can read a signing key, so the deployment states it (the same shape as
+///      `replay.allowPlaintextRedis` / `identity.allowExampleFixtures`).
+///   2. the file's group is one THIS PROCESS is in — otherwise "group-readable" grants
+///      a group the proxy has nothing to do with, which is strictly worse than the
+///      posture being relaxed.
+///   3. no group WRITE and no other/world bit at all. Group write would let a peer
+///      process replace the signing key; that is never a mount-model requirement.
+pub fn key_file_posture_violation(
+    mode: u32,
+    file_gid: u32,
+    allow_group_read: bool,
+    process_gids: &[u32],
+) -> Option<&'static str> {
+    if mode & 0o007 != 0 {
+        return Some("world-accessible");
+    }
+    if mode & 0o020 != 0 {
+        return Some("group-writable");
+    }
+    if mode & 0o050 == 0 {
+        return None;
+    }
+    if !allow_group_read {
+        return Some("group-accessible (pass --allow-group-readable-key-files if this is an fsGroup-owned mount)");
+    }
+    if !process_gids.contains(&file_gid) {
+        return Some("group-accessible to a group this process is not a member of");
+    }
+    None
+}
+
+/// Read the PKCS#11 User PIN from `path` into a short-lived [`SecretString`].
+///
+/// Enforces the key-file permission floor here as well as at startup: `run()` checks it
+/// via `key_files_read_from_disk`, but `build_key_source` is a public entry point a test
+/// or an embedding binary can reach directly, and a secret-reading function that trusts
+/// its caller to have checked is one refactor from not being checked at all.
+///
+/// Trailing whitespace is trimmed — a PIN file written with `echo` ends in a newline, and
+/// a token would reject the PIN with an opaque error that looks like a wrong PIN. Interior
+/// whitespace is preserved: it may be part of the PIN.
+pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path).map_err(|e| {
+            KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
+        })?;
+        let mode = meta.permissions().mode();
+        if key_file_mode_is_insecure(mode) {
+            return Err(KeyError::NotFound(format!(
+                "--pkcs11-pin-file {path} is group/world-accessible (mode {:o}); it unlocks \
+                 the token holding the signing keys, so restrict it to 0600",
+                mode & 0o777
+            )));
+        }
+    }
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
+    })?;
+    let pin = SecretString::new(raw.trim_end());
+    if pin.expose().is_empty() {
+        return Err(KeyError::NotFound(format!(
+            "--pkcs11-pin-file {path} is empty; a blank PIN would be sent to the token"
+        )));
+    }
+    Ok(pin)
 }
 
 /// Parse a timeout in whole seconds; `0` disables the timeout (`None`). The
@@ -1714,7 +2074,12 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
                     .ok_or_else(|| KeyError::NotFound(format!("--key-source pkcs11 requires {flag}")))
             };
             let module = require(&config.pkcs11_module, "--pkcs11-module")?;
-            let pin = require(&config.pkcs11_pin, "--pkcs11-pin")?;
+            // Read the User PIN here, at the one point it is used, so it exists for as
+            // short a window as possible and never lands in `Config` (which is `Debug`
+            // and freely cloned). The file must be no more readable than a key file:
+            // it unlocks the token holding the signing keys.
+            let pin_file = require(&config.pkcs11_pin_file, "--pkcs11-pin-file")?;
+            let pin = read_pkcs11_pin(&pin_file)?;
             let token_label = require(&config.pkcs11_token_label, "--pkcs11-token-label")?;
             let key_label = require(&config.pkcs11_key_label, "--pkcs11-key-label")?;
             // #59: an optional SECOND token object holds the Ed25519 TLS key. When
@@ -1722,7 +2087,7 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
             // reads `--tls-key` from disk (the exclusivity guard already forbade it).
             Ok(Box::new(crate::pkcs11_keysource::Pkcs11KeySource::open(
                 &module,
-                &pin,
+                pin.expose(),
                 &token_label,
                 &key_label,
                 &config.tls_cert,
@@ -2254,6 +2619,83 @@ mod tests {
         list.iter().map(|s| s.to_string()).collect()
     }
 
+    // ---- KMS endpoint override validation (C054) --------------------------
+
+    /// Parse `minimal()` plus one KMS endpoint override.
+    fn with_kms_endpoint(flag: &str, endpoint: &str) -> Result<super::Config, String> {
+        let mut a = minimal();
+        // `minimal()` omits --replay-cache, which `unsafe_config_violations` refuses; that
+        // refusal is unrelated to endpoint validation and would mask an accept case.
+        a.extend(args(&[
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/tmp/mcp-re-cli-kms-endpoint-test",
+        ]));
+        a.push(flag.to_string());
+        a.push(endpoint.to_string());
+        parse_args(&a)
+    }
+
+    #[test]
+    fn an_https_kms_endpoint_is_accepted() {
+        for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+            let r = with_kms_endpoint(flag, "https://kms.example.internal");
+            assert!(r.is_ok(), "{flag} must accept https, got {:?}", r.err());
+        }
+    }
+
+    /// The emulator lane (LocalStack et al.) must keep working: plaintext to LOOPBACK
+    /// cannot carry a credential off the machine.
+    #[test]
+    fn a_loopback_http_kms_endpoint_is_accepted_for_emulators() {
+        for endpoint in [
+            "http://localhost:4566",
+            "http://127.0.0.1:4566/",
+            "http://[::1]:4566",
+        ] {
+            assert!(
+                with_kms_endpoint("--aws-kms-endpoint", endpoint).is_ok(),
+                "{endpoint} is a loopback emulator and must be accepted"
+            );
+        }
+    }
+
+    /// The finding: plaintext to a NON-loopback host hands a live GCP workload-identity
+    /// bearer token to that host and lets it serve the root verify key the whole
+    /// verify-before-return guardrail is measured against.
+    #[test]
+    fn a_plaintext_kms_endpoint_to_a_remote_host_is_refused() {
+        for flag in ["--aws-kms-endpoint", "--gcp-kms-endpoint"] {
+            let err = with_kms_endpoint(flag, "http://kms.attacker.test")
+                .expect_err("plaintext to a remote host must be refused");
+            assert!(
+                err.contains("loopback"),
+                "the refusal must name the loopback exception, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_http_kms_endpoint_scheme_is_refused() {
+        for endpoint in ["file:///etc/passwd", "kms.example.internal", "ftp://x.test"] {
+            assert!(
+                with_kms_endpoint("--gcp-kms-endpoint", endpoint).is_err(),
+                "{endpoint} is not an absolute http(s) URL and must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn a_kms_endpoint_with_no_host_is_refused() {
+        for endpoint in ["https://", "http:///v1", "https:///"] {
+            assert!(
+                with_kms_endpoint("--aws-kms-endpoint", endpoint).is_err(),
+                "{endpoint} has no authority and must be refused"
+            );
+        }
+    }
+
     fn minimal() -> Vec<String> {
         args(&[
             "--bind", "127.0.0.1:8443",
@@ -2266,6 +2708,10 @@ mod tests {
             "--client-ca", "/ca",
             "--trust", "/trust.json",
             "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            // The RFC 9421 @target-uri this deployment binds to. Required and
+            // non-empty: an empty target makes the audience/target conjunction a
+            // tautology, so it is refused at parse.
+            "--target-uri", "https://mcp.example.com/mcp",
             // Delegated-signing is the only response mode; the trust epoch is required
             // for every config (ADR-MCPRE-052 §7).
             "--delegated-trust-epoch", "epoch-min",
@@ -2286,6 +2732,7 @@ mod tests {
             "--tls-key", "/key",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -2308,6 +2755,106 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    // --- §5.1 bounded skew / §4.1 MCP transport contract ----------------------
+
+    #[test]
+    fn max_clock_skew_is_accepted_across_the_whole_bound() {
+        for skew in [0, 1, 30, 299, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+            let mut a = minimal_durable();
+            a.push("--max-clock-skew".into());
+            a.push(skew.to_string());
+            let config = parse_args(&a).unwrap_or_else(|e| panic!("skew {skew} must parse: {e}"));
+            assert_eq!(config.max_clock_skew, skew);
+        }
+    }
+
+    /// A skew the freshness gate would refuse must be refused at the command line —
+    /// not accepted and then silently applied to replay retention alone.
+    #[test]
+    fn out_of_bounds_max_clock_skew_is_refused_at_parse() {
+        for skew in [-1, -30, 301, 3600] {
+            let mut a = minimal_durable();
+            a.push("--max-clock-skew".into());
+            a.push(skew.to_string());
+            let err = parse_args(&a)
+                .err()
+                .unwrap_or_else(|| panic!("skew {skew} must be refused"));
+            assert!(err.contains("--max-clock-skew must be"), "got: {err}");
+        }
+    }
+
+    /// An empty `--target-uri` would make the audience/target conjunction compare
+    /// `"" == ""` on every request. Refused at parse rather than served.
+    #[test]
+    fn empty_or_missing_target_uri_is_refused() {
+        let base: Vec<String> = minimal_durable()
+            .into_iter()
+            .collect::<Vec<_>>();
+        // The helper supplies --target-uri; drop it to prove it is required.
+        let mut without = Vec::new();
+        let mut skip = false;
+        for a in &base {
+            if skip {
+                skip = false;
+                continue;
+            }
+            if a == "--target-uri" {
+                skip = true;
+                continue;
+            }
+            without.push(a.clone());
+        }
+        let err = parse_args(&without).expect_err("--target-uri must be required");
+        assert!(err.contains("--target-uri"), "got: {err}");
+
+        for empty in ["", "   "] {
+            let mut a = without.clone();
+            a.push("--target-uri".into());
+            a.push(empty.into());
+            let err = parse_args(&a).expect_err("an empty --target-uri must be refused");
+            assert!(err.contains("must not be empty"), "got: {err}");
+        }
+    }
+
+    /// MCPRE-114: the bounded-admission ceiling exists in `async_serve`/`async_fleet`
+    /// but had NO CLI flag, so no shipped configuration could enable it — the proxy
+    /// always ran unbounded in-flight. Both knobs must reach the config.
+    #[test]
+    fn admission_ceilings_are_configurable_and_default_to_unbounded() {
+        let config = parse_args(&minimal_durable()).expect("parse");
+        assert_eq!(config.limits.max_in_flight_requests, None, "unbounded by default");
+        assert_eq!(config.max_in_flight_total, None);
+
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.limits.max_in_flight_requests, Some(32));
+        assert_eq!(config.max_in_flight_total, Some(256));
+    }
+
+    /// Zero would silently mean "admit nothing"; refuse it rather than serve a proxy
+    /// that 503s every request.
+    #[test]
+    fn zero_admission_ceiling_is_refused() {
+        for flag in ["--max-in-flight", "--max-in-flight-total"] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&[flag, "0"]));
+            let err = parse_args(&a).expect_err("zero must be refused");
+            assert!(err.contains("must be > 0"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn mcp_protocol_version_is_repeatable_and_absent_by_default() {
+        let mut a = minimal_durable();
+        a.push("--mcp-protocol-version".into());
+        a.push("2026-07-28".into());
+        a.push("--mcp-protocol-version".into());
+        a.push("2025-06-18".into());
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28", "2025-06-18"]);
     }
 
     // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
@@ -2364,7 +2911,13 @@ mod tests {
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(config.bind, "127.0.0.1:8443");
         assert_eq!(config.audience, "did:example:server-1");
-        assert_eq!(config.max_clock_skew, 300);
+        // The default skew is the profile's own, so the freshness gate the verifier
+        // runs and the retention the replay tier applies cannot drift apart.
+        assert_eq!(
+            config.max_clock_skew,
+            mcp_re_http_profile::VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW
+        );
+        assert!(config.mcp_protocol_versions.is_empty());
         assert_eq!(config.key_source, KeySourceKind::File);
         assert_eq!(config.replay, ReplayKind::File);
         assert_eq!(config.binding, BindingKind::Exact);
@@ -2770,7 +3323,7 @@ mod tests {
         args(&[
             "--key-source", "pkcs11",
             "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin", "1234",
+            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
             "--pkcs11-token-label", "mcp-re-test",
             "--pkcs11-key-label", "mcp-re-response-signing",
         ])
@@ -2786,7 +3339,11 @@ mod tests {
             config.pkcs11_module.as_deref(),
             Some("/opt/pkcs11/libmock_pkcs11.so")
         );
-        assert_eq!(config.pkcs11_pin.as_deref(), Some("1234"));
+        assert_eq!(
+            config.pkcs11_pin_file.as_deref(),
+            Some("/etc/mcp-re/pkcs11-pin"),
+            "the config carries the PIN's PATH; the PIN itself is not a Config field"
+        );
         assert_eq!(config.pkcs11_token_label.as_deref(), Some("mcp-re-test"));
         assert_eq!(
             config.pkcs11_key_label.as_deref(),
@@ -2801,7 +3358,7 @@ mod tests {
         // and the TLS paths are supplied by `minimal()`.)
         for missing in [
             "--pkcs11-module",
-            "--pkcs11-pin",
+            "--pkcs11-pin-file",
             "--pkcs11-token-label",
             "--pkcs11-key-label",
         ] {
@@ -2814,6 +3371,90 @@ mod tests {
             let err = parse_args(&a).unwrap_err();
             assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
         }
+    }
+
+    #[test]
+    fn argv_pkcs11_pin_is_refused_with_the_replacement_named() {
+        // C048: argv is world-readable, so a PIN there is a standing exposure. The flag
+        // is still recognised so the refusal explains WHY and what to use instead —
+        // falling through to "unknown flag" would report a secret-handling decision as
+        // a typo.
+        let mut a = minimal_durable();
+        a.splice(0..0, pkcs11_flags());
+        a.extend(args(&["--pkcs11-pin", "1234"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--pkcs11-pin is refused"), "got: {err}");
+        assert!(err.contains("--pkcs11-pin-file"), "the replacement must be named: {err}");
+        assert!(
+            err.contains("compromised"),
+            "the operator must be told the PIN already leaked: {err}"
+        );
+        assert!(
+            !err.contains("1234"),
+            "the refusal must not echo the secret it is refusing: {err}"
+        );
+    }
+
+    #[test]
+    fn a_secret_string_does_not_print_its_value_or_length() {
+        // C049: Config derives Debug and is cloned freely. The PIN is no longer a Config
+        // field at all, but the type that carries it in transit must not leak either.
+        let secret = super::SecretString::new("hunter2");
+        let rendered = format!("{secret:?}");
+        assert!(!rendered.contains("hunter2"), "Debug leaked the value: {rendered}");
+        assert!(!rendered.contains('7'), "Debug leaked the length: {rendered}");
+        assert_eq!(secret.expose(), "hunter2", "the value is still retrievable on purpose");
+    }
+
+    #[test]
+    fn the_pin_file_reader_trims_a_trailing_newline_and_refuses_an_empty_file() {
+        // A PIN file written with `echo` ends in a newline; sending that to a token gets
+        // an opaque failure that looks like a wrong PIN. An EMPTY file is refused rather
+        // than sending a blank PIN.
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let ok_path = dir.join(format!("mcp-re-pin-ok-{pid}"));
+        let empty_path = dir.join(format!("mcp-re-pin-empty-{pid}"));
+        std::fs::write(&ok_path, b"1234\n").expect("write pin");
+        std::fs::write(&empty_path, b"  \n").expect("write empty pin");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for p in [&ok_path, &empty_path] {
+                std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))
+                    .expect("chmod 0600");
+            }
+        }
+
+        let pin = super::read_pkcs11_pin(ok_path.to_str().unwrap()).expect("reads");
+        assert_eq!(pin.expose(), "1234", "the trailing newline is not part of the PIN");
+        assert!(
+            super::read_pkcs11_pin(empty_path.to_str().unwrap()).is_err(),
+            "an empty PIN file must not yield a blank PIN"
+        );
+        let _ = std::fs::remove_file(&ok_path);
+        let _ = std::fs::remove_file(&empty_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_group_readable_pin_file_is_refused() {
+        // The PIN unlocks the token holding the signing keys, so it sits behind the same
+        // permission floor as a key file. Checked in the reader itself, not only at
+        // startup: build_key_source is a public entry point.
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("mcp-re-pin-lax-{}", std::process::id()));
+        std::fs::write(&path, b"1234").expect("write pin");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640))
+            .expect("chmod 0640");
+        let err = super::read_pkcs11_pin(path.to_str().unwrap()).unwrap_err();
+        let message = format!("{err:?}");
+        assert!(
+            message.contains("group/world-accessible"),
+            "expected a permission refusal, got: {message}"
+        );
+        assert!(!message.contains("1234"), "the refusal must not echo the PIN: {message}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -2915,6 +3556,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -3012,6 +3654,7 @@ mod tests {
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }
@@ -3134,14 +3777,18 @@ mod tests {
             args(&[
                 "--max-body-bytes", "1024",
                 "--max-connections", "8",
-                "--read-timeout-secs", "0",
+                "--read-timeout-secs", "45",
                 "--request-deadline-secs", "12",
             ]),
         );
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_body_bytes, 1024);
         assert_eq!(config.limits.max_concurrent_connections, 8);
-        assert_eq!(config.limits.read_timeout, None, "0 disables the timeout");
+        assert_eq!(
+            config.limits.read_timeout,
+            Some(std::time::Duration::from_secs(45)),
+            "--read-timeout-secs sets the per-socket read timeout"
+        );
         assert_eq!(
             config.limits.request_deadline,
             Some(std::time::Duration::from_secs(12)),
@@ -3149,15 +3796,77 @@ mod tests {
         );
     }
 
+    /// A `0` timeout is what `parse_timeout` maps to "disabled", and disabling any of
+    /// these removes the slow-loris defense. The proxy documents itself as refusing every
+    /// unsafe configuration, and an OUT-OF-RANGE value was already rejected for exactly
+    /// this reason ("the control can never be turned off by out-of-range input") — `0`
+    /// was the hole in that argument.
     #[test]
-    fn request_deadline_secs_zero_disables() {
+    fn a_zero_timeout_is_refused_because_it_disables_the_slow_loris_defense() {
+        for flag in [
+            "--read-timeout-secs",
+            "--write-timeout-secs",
+            "--request-deadline-secs",
+        ] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&[flag, "0"]));
+            let err = parse_args(&a).expect_err("a disabled timeout must be refused");
+            assert!(
+                err.contains("refuses unsafe configuration") && err.contains(flag),
+                "{flag} 0 must be named in the refusal; got: {err}"
+            );
+            assert!(
+                err.contains("slow-loris"),
+                "the refusal must say what control is being disabled; got: {err}"
+            );
+        }
+    }
+
+    /// Under a non-exporting custody the response key never leaves the device, so the
+    /// seed is never read — requiring it made operators put an Ed25519 root seed in
+    /// every pod in exactly the mode chosen because no key should land there.
+    #[test]
+    fn a_non_exporting_custody_does_not_require_a_signing_key_seed() {
+        for (source, extra) in [
+            ("gcp-kms", vec!["--gcp-kms-key-version", "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"]),
+            ("aws-kms", vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"]),
+        ] {
+            let mut a: Vec<String> = minimal_durable()
+                .into_iter()
+                .collect::<Vec<_>>();
+            // Drop `--signing-key-seed /seed` from the baseline args.
+            let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+            a.drain(i..i + 2);
+            a.splice(0..0, args(&["--key-source", source]));
+            a.splice(0..0, args(&extra));
+
+            let config = parse_args(&a)
+                .unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
+            assert_eq!(
+                config.signing_key_seed, "",
+                "{source}: an unsupplied seed stays empty rather than naming a phantom file"
+            );
+        }
+    }
+
+    #[test]
+    fn file_custody_still_requires_a_signing_key_seed() {
+        // Where the seed IS read, omitting it must still fail closed at parse.
         let mut a = minimal_durable();
-        a.splice(0..0, args(&["--request-deadline-secs", "0"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.limits.request_deadline, None,
-            "0 disables the aggregate read-phase deadline (like --read-timeout-secs)"
-        );
+        let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+        a.drain(i..i + 2);
+        let err = parse_args(&a).expect_err("file custody reads the seed, so it is required");
+        assert!(err.contains("--signing-key-seed"), "got: {err}");
+    }
+
+    #[test]
+    fn the_default_timeouts_are_bounded_so_the_refusal_never_fires_by_default() {
+        // The guard above is only safe because every default is Some(30s): it must be
+        // impossible to trip by omitting the flags.
+        let config = parse_args(&minimal_durable()).expect("the default config parses");
+        assert!(config.limits.read_timeout.is_some());
+        assert!(config.limits.write_timeout.is_some());
+        assert!(config.limits.request_deadline.is_some());
     }
 
     #[test]
@@ -3667,15 +4376,16 @@ mod tests {
     // there is no ack to override this (see `authz_reference_is_refused`).
     // `--revocation-list` itself still parses (authz stays off), exercised below.
 
+    /// The deny-list parses into the config, but a config that CARRIES one is refused:
+    /// nothing consults it while authz is off, so accepting it would be a silent
+    /// no-op on a control the operator believes is enforcing.
     #[test]
-    fn parses_comma_separated_revocation_lists() {
+    fn a_supplied_revocation_list_is_refused_because_nothing_consults_it() {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--revocation-list", "/a,/b,/c"]));
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(
-            config.revocation_list_paths,
-            vec!["/a".to_string(), "/b".to_string(), "/c".to_string()]
-        );
+        let err = parse_args(&a).expect_err("a deny-list that enforces nothing must be refused");
+        assert!(err.contains("--revocation-list"), "got: {err}");
+        assert!(err.contains("enforce NOTHING"), "got: {err}");
     }
 
     #[test]
@@ -3804,21 +4514,13 @@ mod tests {
                 "http://ocsp.example.test/r",
             ]),
         );
-        // In a build WITHOUT the online_ocsp feature, `--client-ocsp require`
-        // fails closed at parse time; under the feature it parses fully.
-        match parse_args(&a) {
-            Ok(config) => {
-                assert_eq!(config.client_ocsp, OcspKind::Require);
-                assert_eq!(
-                    config.ocsp_responder_url.as_deref(),
-                    Some("http://ocsp.example.test/r")
-                );
-            }
-            Err(err) => assert!(
-                err.contains("online_ocsp feature"),
-                "without the feature, require must fail closed; got: {err}"
-            ),
-        }
+        // `--client-ocsp require` fails closed at parse time in EVERY build: without
+        // the feature the OCSP code is absent, and with it the code exists but the
+        // async serving fleet never calls it. Announcing enforcement that does not
+        // happen is the defect this refusal removes.
+        let err = parse_args(&a).expect_err("--client-ocsp require must fail closed");
+        assert!(err.contains("cannot be honored"), "got: {err}");
+        assert!(err.contains("--client-crl"), "the error must name the working alternative; got: {err}");
     }
 
     #[test]
@@ -3850,15 +4552,17 @@ mod tests {
         assert!(err.contains("non-empty URL"), "got: {err}");
     }
 
-    #[cfg(not(feature = "online_ocsp"))]
+    /// `--client-ocsp require` fails closed in EVERY build configuration — the check
+    /// is unreachable from the async serving fleet whether or not the `online_ocsp`
+    /// code is compiled in.
     #[test]
-    fn client_ocsp_require_fails_closed_without_feature() {
+    fn client_ocsp_require_fails_closed_in_every_build() {
         let mut a = minimal();
         a.splice(0..0, args(&["--client-ocsp", "require"]));
         let err = parse_args(&a).unwrap_err();
         assert!(
-            err.contains("online_ocsp feature") && err.contains("not available in this build"),
-            "require must fail closed without the feature; got: {err}"
+            err.contains("cannot be honored") && err.contains("async fleet"),
+            "require must fail closed in every build; got: {err}"
         );
     }
 
@@ -3877,11 +4581,10 @@ mod tests {
                 "none",
             ]),
         );
+        // Refused — now for the stronger reason that the serving path performs no OCSP
+        // check at all, which subsumes the reverse-proxy-mode objection.
         let err = parse_args(&a).unwrap_err();
-        assert!(
-            err.contains("reverse-proxy mode"),
-            "OCSP checks the local client cert, absent in reverse-proxy mode; got: {err}"
-        );
+        assert!(err.contains("cannot be honored"), "got: {err}");
     }
 
     #[test]
@@ -4330,6 +5033,55 @@ mod tests {
         assert!(super::key_file_mode_is_insecure(0o777), "world-everything is insecure");
     }
 
+    // ---- C053b: the fsGroup-owned mount posture -------------------------------
+
+    #[test]
+    fn the_strict_posture_is_unchanged_by_default() {
+        // No opt-in: the 0600/0400 floor behaves exactly as before.
+        assert_eq!(super::key_file_posture_violation(0o600, 1000, false, &[1000]), None);
+        assert_eq!(super::key_file_posture_violation(0o400, 1000, false, &[1000]), None);
+        assert!(super::key_file_posture_violation(0o440, 1000, false, &[1000]).is_some());
+    }
+
+    #[test]
+    fn an_fsgroup_owned_mount_is_accepted_only_with_the_opt_in() {
+        // The Kubernetes shape: mode 0440, owned by a supplementary group the process
+        // is in. Refused by default, accepted when the operator asks for it.
+        assert!(super::key_file_posture_violation(0o440, 2000, false, &[1000, 2000]).is_some());
+        assert_eq!(
+            super::key_file_posture_violation(0o440, 2000, true, &[1000, 2000]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_group_this_process_is_not_in_is_still_refused() {
+        // "Group-readable" to a group the proxy has nothing to do with is strictly
+        // worse than the posture being relaxed, so the opt-in does not reach it.
+        assert!(super::key_file_posture_violation(0o440, 9999, true, &[1000, 2000]).is_some());
+    }
+
+    #[test]
+    fn group_write_is_never_accepted() {
+        // A peer process able to REPLACE the signing key is never a mount requirement.
+        for mode in [0o460, 0o660, 0o620] {
+            assert!(
+                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
+                "{mode:o} is group-writable and must be refused even with the opt-in"
+            );
+        }
+    }
+
+    #[test]
+    fn any_world_bit_is_never_accepted() {
+        for mode in [0o444, 0o604, 0o441, 0o642] {
+            assert!(
+                super::key_file_posture_violation(mode, 2000, true, &[2000]).is_some(),
+                "{mode:o} has a world bit and must be refused even with the opt-in"
+            );
+        }
+    }
+
     #[test]
     fn tls_signing_exclusivity_rejects_both_and_admits_either_or_neither() {
         // ADR-MCPS-028 §G / issue #58: delegated XOR exported TLS signing.
@@ -4359,13 +5111,14 @@ mod tests {
             "--server-key-id", "server-key-1",
             "--key-source", "pkcs11",
             "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin", "1234",
+            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
             "--pkcs11-token-label", "mcp-re-test",
             "--pkcs11-key-label", "mcp-re-response-signing",
             "--signing-key-seed", "/unused-seed",
             "--tls-cert", "/cert",
             "--client-ca", "/ca",
             "--trust", "/trust.json",
+            "--target-uri", "https://mcp.example.com/mcp",
             "--delegated-trust-epoch", "epoch-min",
         ])
     }

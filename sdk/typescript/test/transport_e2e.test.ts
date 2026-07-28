@@ -19,7 +19,7 @@
 //     cargo build -p mcp-re-proxy --example http_profile_proxy
 //     brew install fastmcp
 import { spawn, type ChildProcess } from "node:child_process";
-import { createPrivateKey, createPublicKey } from "node:crypto";
+import { createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
@@ -150,11 +150,6 @@ function config(over: Partial<McpReConfig> = {}): McpReConfig {
     targetUri: target,
     route: "a",
     dpopToken: "access-token-xyz",
-    // A standard Client cannot complete its lifecycle without
-    // `notifications/initialized`, and MCP-RE has no ratified one-way notification
-    // profile yet (#418) — so every live session today needs this unsafe opt-in. That it
-    // is required here is the point: the hole is visible, not papered over.
-    unsafeDropNotifications: true,
     // The trusted ROOT anchor only: the delegated key is learned from the credential the
     // response carries, never enrolled here.
     issuerKeyId: "server-key-1",
@@ -188,10 +183,13 @@ const newClient = () => new Client({ name: "mcp-re-adapter-e2e", version: "0.1.0
 describe.runIf(existsSync(PROXY_BIN) && haveFastmcp())("McpReHttpTransport (live)", () => {
   it("lets a real MCP Client call a tool with no sign/verify in app code", async () => {
     expect(available).toBe(true);
-    const dropped: string[] = [];
+    const acknowledged: [string, string][] = [];
     const client = newClient();
     await client.connect(
-      new McpReHttpTransport(config({ onDroppedNotification: (m) => dropped.push(m) }), poster),
+      new McpReHttpTransport(
+        config({ onNotificationAcknowledged: (m, k) => acknowledged.push([m, k]) }),
+        poster,
+      ),
     );
 
     expect(client.getServerVersion()?.name).toBe("mcp-re-inner-backend");
@@ -204,9 +202,12 @@ describe.runIf(existsSync(PROXY_BIN) && haveFastmcp())("McpReHttpTransport (live
     // The app never saw MCP-RE's own evidence block.
     expect(result.structuredContent).not.toHaveProperty("_meta");
 
-    // A client->server notification has no reply, so it carries no evidence and cannot be
-    // verified. Dropping it is the honest behaviour — but it must be observable.
-    expect(dropped).toContain("notifications/initialized");
+    // C055: the lifecycle notification went over the wire as a signed POST and the
+    // proxy's signed bodyless 202 verified against the real credential chain — the
+    // acknowledgement half of the contract, which nothing on the client side used to
+    // check. The signer is a DELEGATED key; the root stays off the request path.
+    expect(acknowledged.map(([m]) => m)).toContain("notifications/initialized");
+    expect(acknowledged.map(([, k]) => k)).not.toContain("server-key-1");
     await client.close();
   }, 30_000);
 
@@ -216,10 +217,21 @@ describe.runIf(existsSync(PROXY_BIN) && haveFastmcp())("McpReHttpTransport (live
     // error correlated to the request id — so the awaiting call REJECTS. A dropped
     // failure would hang the client forever, which is worse than an error.
     const client = newClient();
-    // Freeze the nonce so the second call is a byte-identical replay.
-    await client.connect(
-      new McpReHttpTransport(config({ nonceFactory: () => "nonce-ts-adapter-replay-fixed" }), poster),
-    );
+    // A session now emits three signed messages — `initialize`, the lifecycle
+    // notification, and the tool call — so a single frozen nonce would make the
+    // NOTIFICATION the replay and fail the connection before the call under test ran.
+    // Draw 0 (`initialize`) and draw 2 (the tool call) share a nonce; draw 1 (the
+    // notification) gets its own.
+    // The prefix is unique per run so the test does not depend on a freshly-started
+    // proxy: the replay it proves is the one it creates, not a leftover from an earlier
+    // run whose nonces this proxy still remembers.
+    const run = randomBytes(8).toString("base64url");
+    let draw = 0;
+    const replayingNonce = (): string => {
+      const n = draw++;
+      return `nonce-ts-adapter-replay-${run}-${n === 2 ? 0 : n}`;
+    };
+    await client.connect(new McpReHttpTransport(config({ nonceFactory: replayingNonce }), poster));
 
     // The replay: `initialize` already consumed this nonce.
     await expect(client.callTool({ name: "add", arguments: { a: 1, b: 1 } })).rejects.toThrow(

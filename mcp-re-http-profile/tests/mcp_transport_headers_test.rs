@@ -170,10 +170,16 @@ fn the_divergent_request_is_otherwise_valid() {
         .expect("the same request with an agreeing header verifies");
 }
 
-/// A body with no `method` (a response or notification shape) has nothing to
-/// diverge from; the divergence rule does not invent a violation.
+/// An `Mcp-Method` header on a body that HAS no method is refused.
+///
+/// This shape — a result body carrying a signed `Mcp-Method: tools/call` — is the
+/// one case where the §4.1 agreement rule has nothing to compare against, so the
+/// header's value would be constrained by nothing while still carrying the signer's
+/// full authenticity. An intermediary that routes, rate-limits or audits on the
+/// header (the stated reason §4.1 covers it) would act on an arbitrary string. The
+/// header may only accompany the `method` it mirrors.
 #[test]
-fn body_without_a_method_does_not_diverge() {
+fn an_mcp_method_header_with_no_body_method_is_rejected() {
     let mut r = HttpRequest {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
@@ -185,7 +191,24 @@ fn body_without_a_method_does_not_diverge() {
     };
     sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nom")
         .expect("signing succeeds");
-    verify_request(&r, &resolver(), NOW).expect("no body method: nothing to compare");
+    let err = verify_request(&r, &resolver(), NOW).unwrap_err();
+    assert_eq!(err, HttpProfileError::McpMethodDivergence);
+    assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
+}
+
+/// The same result-shaped body WITHOUT the header verifies, so it is the
+/// unconstrained header that is refused above — not the message shape.
+#[test]
+fn a_result_shaped_body_without_the_header_verifies() {
+    let mut r = HttpRequest {
+        method: "POST".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+    };
+    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nom2")
+        .expect("signing succeeds");
+    verify_request(&r, &resolver(), NOW).expect("no header, nothing to constrain");
 }
 
 // --- session-id is scoped out ------------------------------------------------

@@ -162,18 +162,17 @@ jobs:
       # MCP_RE_REQUIRE_LIVE_INFRA=1 turns a missing backend into a failure.
       # `async_serve` is added so the async replay-race lanes in
       # replay_race_harness_test compile in: the store-level async Redis
-      # exactly-one-Fresh proof AND the full-serving-path race that drives N cores
-      # through one shared async `Proxy` over the LIVE Redis L2 (MCPRE-117 AC —
-      # "cross-replica through the full serving path"). Both self-skip without a
-      # store, so MCP_RE_REQUIRE_LIVE_INFRA=1 above is what makes them binding here.
+      # exactly-one-Fresh proof AND the full-serving-path race that drives N tasks
+      # through one shared `HttpProfileProxy` over the LIVE Redis L2, plus the
+      # two-replicas-over-one-store lane (MCPRE-117 AC — "cross-replica through the
+      # full serving path"). All self-skip without a store, so
+      # MCP_RE_REQUIRE_LIVE_INFRA=1 above is what makes them binding here.
       - name: Run live-infra e2e (Redis replay + OCSP revocation)
         run: >-
           cargo test -p mcp-re-proxy
           --features async_serve,redis_replay,online_ocsp
           --test redis_replay_e2e_test
-          --test fleet_replay_e2e_test
           --test redis_trust_epoch_e2e_test
-          --test fleet_trust_epoch_e2e_test
           --test replay_race_harness_test
           --test ocsp_e2e_test
 
@@ -230,8 +229,8 @@ jobs:
       # `cpstore_etcd` compiles the etcd stores + their gated tests; `async_serve`
       # compiles the async replay-race lanes. MCP_RE_REQUIRE_LIVE_INFRA=1 turns a
       # missing etcd into a failure, so the async etcd store (previously with NO live
-      # coverage) is now exercised both at the store level and cross-replica through
-      # the full async serving `Proxy` (MCPRE-117 AC).
+      # coverage) is now exercised both at the store level and through the full
+      # serving `HttpProfileProxy` (MCPRE-117 AC).
       - name: Run live-infra e2e (etcd replay)
         run: >-
           cargo test -p mcp-re-proxy

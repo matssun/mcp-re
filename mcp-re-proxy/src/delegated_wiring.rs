@@ -28,6 +28,7 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::PROFILE_TAG;
+use zeroize::Zeroizing;
 
 use crate::cli::Config;
 use crate::delegated_server_signer::DelegatedRotor;
@@ -135,9 +136,14 @@ pub fn build_delegated_signing(
     // DELEGATED-KEY FACTORY: a fresh in-memory Ed25519 key per issuance/rotation,
     // seeded from the OS CSPRNG (`getrandom`). The private key lives only in this
     // process and is replaced every TTL — never exported, never the root.
+    // The seed is held in `Zeroizing` and scrubbed when this closure returns. Every
+    // owned temporary holding a raw seed is wrapped this way (see `key_source.rs`); a
+    // plain `[u8; 32]` here would leave one unscrubbed copy of a live response-signing
+    // seed on the rotation thread's stack per rotation, for the process lifetime —
+    // recoverable from a core dump, a swapped page, or a later stack disclosure.
     let factory: BoxedKeyFactory = Box::new(|| {
-        let mut seed = [0u8; 32];
-        getrandom::getrandom(&mut seed).expect("OS CSPRNG for delegated key seed");
+        let mut seed: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
+        getrandom::getrandom(&mut *seed).expect("OS CSPRNG for delegated key seed");
         SigningKey::from_seed_bytes(&seed)
     });
 

@@ -12,11 +12,17 @@
 # (ADR-MCPS-001/012) and intended for future standalone extraction to a public
 # repository, where this same `deny.toml` runs unchanged from the repo root.
 #
-# Validate locally (cargo-deny pinned to the SAME version as the CI workflow):
-#   cargo deny --manifest-path Cargo.toml check licenses
-#   cargo deny --manifest-path Cargo.toml check bans
-#   cargo deny --manifest-path Cargo.toml check sources
-#   cargo deny --manifest-path Cargo.toml check advisories
+# This one policy governs ALL FOUR Cargo lockfiles in the repository — the root
+# workspace, both SDK crate universes, and the test-only mock PKCS#11 provider.
+# A crate is only assessed if the manifest that reaches it is checked, so the CI
+# gate runs every one of them.
+#
+# Validate locally (cargo-deny pinned to the SAME version as the CI workflow —
+# `CARGO_DENY_VERSION` in that file):
+#   cargo deny --manifest-path Cargo.toml check advisories licenses bans sources
+#   cargo deny --manifest-path sdk/python/Cargo.toml check advisories licenses bans sources
+#   cargo deny --manifest-path sdk/typescript/Cargo.toml check advisories licenses bans sources
+#   cargo deny --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml check advisories licenses bans sources
 
 # ---------------------------------------------------------------------------
 # [graph] — the dependency surface that every check below is evaluated against.
@@ -65,10 +71,23 @@ confidence-threshold = 0.8
 allow = [
     "Apache-2.0",   # workspace license + most of the RustCrypto/rustls tree
     "MIT",          # dual-licensed crates (serde, libc, syn, ...) + memchr's "Unlicense OR MIT"
-    "BSD-3-Clause", # curve25519-dalek, ed25519-dalek, subtle
+    "BSD-3-Clause", # curve25519-dalek, ed25519-dalek, subtle, redis
     "ISC",          # rustls, rustls-webpki, untrusted, and part of ring
     "Unicode-3.0",  # unicode-ident
     "Unlicense",    # memchr (offered as "Unlicense OR MIT")
+    # webpki-roots (0.26 shim + 1.0), reached via ureq's `tls` feature. CDLA-
+    # Permissive-2.0 is a DATA license: the crate ships the Mozilla CA root set,
+    # and the CDLA governs that data, not code linked into MCP-RE. It is
+    # permissive with no reciprocal/share-alike obligation on downstream output.
+    # This is the crate's ONLY license (no dual-license alternative to fall back
+    # on), so the id has to be allowed for the gate to see the tree at all.
+    "CDLA-Permissive-2.0",
+    # target-lexicon, a BUILD dependency of pyo3 in sdk/python. The LLVM
+    # exception only RELAXES Apache-2.0 (it removes the object-code attribution
+    # requirement), so allowing it grants nothing beyond plain Apache-2.0, which
+    # is already allowed above. Listed as the full expression rather than
+    # widening the policy with `exceptions`.
+    "Apache-2.0 WITH LLVM-exception",
 ]
 # `ring` is the well-known non-trivial case: its SPDX expression resolves to
 # "Apache-2.0 AND ISC" (Apache-2.0 for ring's own code, ISC/BoringSSL for the
@@ -80,10 +99,11 @@ allow = [
 # [bans] — duplicate-version and wildcard-dependency hygiene.
 # ---------------------------------------------------------------------------
 [bans]
-# This tree currently has a single version of every crate (no duplicates). Keep
-# duplicates at "warn" rather than "deny": a future transitive bump that pulls a
-# second major of e.g. getrandom should surface a warning, not block the gate
-# on a non-security issue. Promote to "deny" with a documented skip-list if/when
+# Keep duplicates at "warn" rather than "deny": a transitive bump that pulls a
+# second major of e.g. getrandom should surface a warning, not block the gate on
+# a non-security issue. The tree currently carries one such duplicate —
+# webpki-roots 0.26.11 (a thin re-export shim) alongside webpki-roots 1.0.7,
+# both from ureq. Promote to "deny" with a documented skip-list if/when
 # duplicate-version policy is tightened.
 multiple-versions = "warn"
 # Allow `path = "../x"` intra-workspace dependencies (which Cargo records as a

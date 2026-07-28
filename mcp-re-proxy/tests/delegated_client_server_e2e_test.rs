@@ -42,9 +42,13 @@ use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
 use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 
+use mcp_re_client_core::verify_delegated_response;
+use mcp_re_client_core::DelegatedOutcome;
+use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
 use mcp_re_client_core::DelegationPolicy;
+use mcp_re_client_core::ManifestVersionFloor;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_proxy::transport::RemoteTransport;
@@ -67,6 +71,9 @@ const ROOT_KID: &str = "root-kid";
 const AUD: &str = "verifier-1";
 const EPOCH: &str = "epoch-1";
 const ACCESS_TOKEN: &str = "access-token-xyz";
+/// Inside the rotation-overlap window (ttl 300, overlap 60): the rotor mints a
+/// successor only from `exp - overlap` onward, so an earlier `rotate` is a no-op.
+const ROTATED_AT: i64 = NOW + 250;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
@@ -135,7 +142,7 @@ fn server_resolver() -> ActorResolver {
             slot,
         }),
         _ => None,
-    })
+    }.into())
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -250,7 +257,7 @@ fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
             slot,
         }),
         _ => None,
-    })
+    }.into())
 }
 
 fn client_proxy(server: HttpProfileProxy) -> ClientProxy {
@@ -274,8 +281,11 @@ fn client_proxy_with_revocation(
         )],
         extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
         expected_server_keyid: None,
-        resolve_actor: client_resolver(),
-        verification: ClientVerification::DelegatedRequired(delegation_policy(), revocation),
+        verification: ClientVerification::DelegatedRequired(
+            delegation_policy(),
+            client_resolver(),
+            revocation,
+        ),
     };
     let registry = RouteRegistry::new().register(route);
     ClientProxy::new(
@@ -284,6 +294,98 @@ fn client_proxy_with_revocation(
         CLIENT_KEY_ID,
         Box::new(InProcessServer::new(server, NOW)),
     )
+}
+
+/// The same client, but with its trust anchors loaded from a SIGNED trust-anchor
+/// manifest against a durable rollback floor — the production path for
+/// `ClientVerification::DelegatedAnchored`.
+fn client_proxy_anchored(
+    server: HttpProfileProxy,
+    issuers: mcp_re_client_core::TrustedIssuerSet,
+) -> ClientProxy {
+    let route = Route {
+        route_id: "r1".into(),
+        target_uri: TARGET.into(),
+        audience: audience(),
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
+        expected_server_keyid: None,
+        verification: ClientVerification::DelegatedAnchored(delegation_policy(), issuers),
+    };
+    ClientProxy::new(
+        RouteRegistry::new().register(route),
+        client_key(),
+        CLIENT_KEY_ID,
+        Box::new(InProcessServer::new(server, NOW)),
+    )
+}
+
+/// Publish a signed trust-anchor manifest listing the server's root, load it through a
+/// FILE-BACKED rollback floor, and return the resulting anchor set. This is the whole
+/// distribution chain the manifest exists for: org key signs → verifier pins the org
+/// key → floor records the version → anchors feed response verification.
+fn issuers_from_signed_manifest(
+    floor_path: &std::path::Path,
+    manifest_version: u64,
+    revoke_root: bool,
+) -> mcp_re_client_core::TrustedIssuerSet {
+    let org = SigningKey::from_seed_bytes(&[91u8; 32]);
+    let org_kid = "org-admin-1";
+    let manifest = mcp_re_client_core::TrustAnchorManifest {
+        profile: MANIFEST_PROFILE.into(),
+        manifest_version,
+        current_issuers: vec![mcp_re_client_core::ManifestIssuer {
+            issuer_kid: ROOT_KID.into(),
+            public_key: root_key().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:server".into(),
+        }],
+        retiring_issuers: vec![],
+        revoked_issuers: if revoke_root {
+            vec![ROOT_KID.to_string()]
+        } else {
+            vec![]
+        },
+        issued_at: NOW - 100,
+        expires_at: NOW + 100_000,
+    };
+    let signed = mcp_re_client_core::sign_manifest(&manifest, &org, org_kid);
+    let mut floor = mcp_re_client_proxy::FileManifestFloor::open(floor_path).expect("open floor");
+    let org_public = org.public_key();
+    mcp_re_client_core::load_signed_manifest_with_floor(
+        &signed,
+        |kid| (kid == org_kid).then(|| org_public.clone()),
+        MANIFEST_PROFILE,
+        &mut floor,
+        NOW,
+    )
+    .expect("manifest loads")
+    .issuer_set
+}
+
+const MANIFEST_PROFILE: &str = "mcp-re-http-v1";
+
+/// A unique floor path per test, cleaned up on drop.
+struct FloorPath(std::path::PathBuf);
+
+impl FloorPath {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir()
+            .join(format!("mcp-re-e2e-floor-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        FloorPath(path)
+    }
+}
+
+impl Drop for FloorPath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("tmp"));
+    }
 }
 
 fn plain_request() -> serde_json::Value {
@@ -346,6 +448,272 @@ fn replayed_request_yields_a_verified_delegated_rejection() {
     assert!(second.plain_response.get("result").is_none());
 }
 
+// ---- C004b: the server-signer pin under delegation --------------------------
+
+/// Build the expectation the client verifies under, with an optional signer pin.
+fn expectation_with_pin(
+    signed: &mcp_re_client_core::SignedRequest,
+    pin: Option<&str>,
+) -> ResponseExpectation {
+    let base = ResponseExpectation::new(signed.request().clone(), signed.evidence().clone());
+    match pin {
+        Some(kid) => base.with_expected_server_signer(kid),
+        None => base,
+    }
+}
+
+/// Drive one signed exchange against the real delegated server and return the raw
+/// response plus what the client signed, so a test can verify it under its own
+/// expectation.
+fn one_exchange(
+    server: &HttpProfileProxy,
+    rt: &tokio::runtime::Runtime,
+    nonce: &str,
+    at: i64,
+) -> (mcp_re_client_core::SignedRequest, mcp_re_http_profile::HttpResponse) {
+    let inputs = mcp_re_client_core::RequestSigningInputs::new(
+        CLIENT_KEY_ID,
+        audience(),
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        nonce,
+        at,
+        at + 60,
+    )
+    .with_headers(vec![(
+        "Authorization".into(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = mcp_re_client_core::build_signed_request(
+        &json!(1),
+        "tools/call",
+        json!({"name": "read"}).as_object().cloned().unwrap(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("client signs");
+    let served = ServedHttpRequest {
+        method: signed.request().method.clone(),
+        target_uri: signed.request().target_uri.clone(),
+        headers: signed.request().headers.clone(),
+        body: signed.request().body.clone(),
+        identity: None,
+        assertion: None,
+    };
+    let resp = rt.block_on(async { server.handle(served, at).await });
+    (
+        signed,
+        mcp_re_http_profile::HttpResponse {
+            status: resp.status,
+            headers: resp.headers,
+            body: resp.body,
+        },
+    )
+}
+
+/// The pin binds to the credential's ROOT ISSUER kid. Before C004b any set pin was
+/// refused outright on this path, so the control could not be used at all.
+#[test]
+fn a_pin_on_the_root_issuer_kid_verifies() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let server = build_server();
+    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-ok", NOW);
+    let verified = verify_delegated_response(
+        &response,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect("a pin on the issuer kid is the coordinate that verifies");
+    assert!(matches!(verified.outcome, DelegatedOutcome::Success));
+    assert_eq!(
+        verified.verified.delegation_issuer_kid.as_deref(),
+        Some(ROOT_KID),
+        "the verified evidence reports the anchor the credential chained to"
+    );
+}
+
+/// Pinning the wrong issuer fails closed — the control is load-bearing, not decorative.
+#[test]
+fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let server = build_server();
+    let (signed, response) = one_exchange(&server, &rt, "nonce-pin-wrong", NOW);
+    let err = verify_delegated_response(
+        &response,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed, Some("some-other-root")),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect_err("a pin naming a different root must fail closed");
+    assert_eq!(err, mcp_re_client_core::HttpProfileError::ResponseBindingMismatch);
+}
+
+/// THE REASON the pin binds to the issuer and not to the accepted keyid: the delegated
+/// kid is an RFC 7638 thumbprint that rotates every TTL. A pin on it would break on the
+/// first rotation. Rotate the server's key and the SAME issuer pin still verifies.
+#[test]
+fn the_issuer_pin_survives_a_delegated_key_rotation() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("rt");
+    let config = server_config();
+    let wiring =
+        mcp_re_proxy::build_delegated_signing(&config, root_key()).expect("wiring");
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first key");
+    let first_kid = wiring
+        .signer
+        .current(NOW)
+        .expect("published")
+        .delegated_kid
+        .clone();
+    let server = HttpProfileProxy::new_delegated(
+        server_resolver(),
+        AudienceTuple {
+            audience_id: config.audience.clone(),
+            target_uri: config.target_uri.clone(),
+            route: config.route.clone(),
+        },
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        canned_inner(),
+        300,
+        Arc::clone(&wiring.signer),
+    );
+
+    let (signed_a, response_a) = one_exchange(&server, &rt, "nonce-pin-rot-1", NOW);
+    verify_delegated_response(
+        &response_a,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed_a, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        NOW,
+    )
+    .expect("verifies before rotation");
+
+    // Rotate: a NEW delegated key, a new ephemeral kid, the SAME root issuer. The
+    // rotor only mints inside the overlap window (ttl 300, overlap 60), so rotating
+    // earlier is correctly a no-op — hence ROTATED_AT rather than NOW + 1.
+    rotor.rotate(ROTATED_AT).expect("rotates");
+    let second_kid = wiring
+        .signer
+        .current(ROTATED_AT)
+        .expect("published")
+        .delegated_kid
+        .clone();
+    assert_ne!(first_kid, second_kid, "the delegated kid must actually rotate");
+
+    let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
+    let verified = verify_delegated_response(
+        &response_b,
+        client_resolver().as_ref(),
+        &expectation_with_pin(&signed_b, Some(ROOT_KID)),
+        &delegation_policy(),
+        &StaticRevocationList::new(),
+        ROTATED_AT,
+    )
+    .expect("the SAME issuer pin still verifies after rotation — this is why it is the coordinate");
+    assert_eq!(
+        verified.verified.delegation_issuer_kid.as_deref(),
+        Some(ROOT_KID)
+    );
+}
+
+// ---- ADR-MCPS-035 audit emission (C086) ------------------------------------
+
+/// `security-boundary.md` S9 presents `mcp-re.request.accepted` /
+/// `.rejected` and `mcp-re.response.signed` as a delivered surface. Until this was
+/// wired, `HttpProfileProxy::handle` emitted NOTHING on any exit, so a deployment
+/// relying on that surface for post-incident attribution got no record of which actor
+/// was admitted or which wire code caused a rejection.
+#[test]
+fn an_accepted_request_emits_accepted_then_signed_with_the_resolved_actor() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-audit-1"))
+        .expect("round trip succeeds");
+    assert_eq!(out.kind, ResponseKind::Success);
+
+    let records = sink.records();
+    let types: Vec<&str> = records.iter().map(|r| r.event.event_type).collect();
+    assert_eq!(
+        types,
+        vec!["mcp-re.request.accepted", "mcp-re.response.signed"],
+        "an admitted request records exactly accept-then-sign, in order"
+    );
+    // Attribution is the point of the surface: the actor is the VERIFIER-RESOLVED one.
+    for record in &records {
+        assert!(
+            record.actor_id.is_some(),
+            "an admitted request's records must carry the resolved actor"
+        );
+        assert_eq!(
+            record.event.reason, None,
+            "a success event carries no rejection reason"
+        );
+    }
+}
+
+/// A rejection records the EXACT frozen wire code, and never also claims acceptance —
+/// `accepted` and `rejected` are mutually exclusive per request, which is what makes
+/// the surface usable for attribution.
+#[test]
+fn a_replay_emits_exactly_one_rejection_carrying_the_frozen_wire_code() {
+    let sink = Arc::new(mcp_re_proxy::CollectingAuditSink::new());
+    let proxy = client_proxy(build_server().with_audit_sink(sink.clone()));
+    let p = params("nonce-audit-replay");
+    proxy.handle("r1", &plain_request(), &p).expect("first ok");
+    let before = sink.records().len();
+
+    proxy
+        .handle("r1", &plain_request(), &p)
+        .expect("the rejection receipt verifies");
+
+    let replay_records: Vec<_> = sink.records().into_iter().skip(before).collect();
+    assert_eq!(
+        replay_records.len(),
+        1,
+        "the replayed request records ONE decision, got {replay_records:?}"
+    );
+    let record = &replay_records[0];
+    assert_eq!(record.event.event_type, "mcp-re.request.rejected");
+    assert_eq!(
+        record.event.reason,
+        Some("mcp-re.replay_detected"),
+        "the reason is the exact frozen wire code, never a parallel sub-name"
+    );
+    // 409 Conflict is the replay status; the record carries the status actually
+    // returned, so a reader can correlate the audit line with the HTTP response.
+    assert_eq!(record.status, 409);
+}
+
+/// No sink installed is the explicit no-emission posture and must not disturb serving.
+#[test]
+fn serving_without_an_audit_sink_still_round_trips() {
+    let proxy = client_proxy(build_server());
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-audit-none"))
+        .expect("round trip succeeds with no sink installed");
+    assert_eq!(out.kind, ResponseKind::Success);
+}
+
 // Downgrade resistance (a delegated-required verifier refusing a pre-052 direct-root
 // response) is proven at the serving, client-core, http-profile, and conformance (d10)
 // altitudes. It is not re-driven through the two-proxy round trip here because a
@@ -382,4 +750,106 @@ fn non_revoked_client_still_round_trips() {
         .expect("a non-matching denylist does not block a valid delegated response");
     assert_eq!(out.kind, ResponseKind::Success);
     assert_eq!(out.plain_response["result"]["ok"], json!(true));
+}
+
+// --- Trust anchors from a SIGNED MANIFEST (C039/C075/C076) --------------------
+//
+// The signed trust-anchor manifest, the four-state TrustedIssuerSet, and the rollback
+// floor were all built and all unreachable: nothing in the serving or client path ever
+// loaded a manifest, and the accepted `manifest_version` was handed back for a caller
+// to record with no caller and nowhere to record it. These drive the whole chain
+// end-to-end through the real two-proxy round trip.
+
+#[test]
+fn a_manifest_published_root_verifies_a_real_round_trip() {
+    // Publish → pin the org key → record the version → verify a response. The client's
+    // trust anchors come from the signed document, not from a hand-written resolver.
+    let floor = FloorPath::new("accept");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let out = proxy
+        .handle("r1", &plain_request(), &params("nonce-manifest-ok"))
+        .expect("a manifest-published root verifies the delegated response");
+    assert_eq!(out.kind, ResponseKind::Success);
+    assert_eq!(out.plain_response["result"]["ok"], json!(true));
+}
+
+#[test]
+fn a_manifest_revoked_root_fails_the_round_trip_closed() {
+    // The decisive action: the manifest lists the server's root as REVOKED, so every
+    // descendant delegated credential is invalid at once — no per-key denylist entry,
+    // and the client never had to be told the delegated kid. This is also the anchored
+    // variant proving both seams are wired from the ONE set (C064/C065): the reason is
+    // delegation_revoked, which only the revocation seam can produce.
+    let floor = FloorPath::new("revoke");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let err = proxy
+        .handle("r1", &plain_request(), &params("nonce-manifest-revoked"))
+        .expect_err("a manifest-revoked root must fail closed");
+    assert_eq!(
+        err.wire_code(),
+        Some("mcp-re.delegation_revoked"),
+        "revoking the ROOT in the manifest invalidates the delegated credential under it"
+    );
+}
+
+#[test]
+fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
+    // The rollback attack the floor exists to stop, driven all the way to a round trip.
+    // v2 revokes the root; an attacker then re-serves v1, which does not. With a durable
+    // floor the old manifest is refused, so the revocation cannot be walked back — and
+    // the floor is read from disk, so this holds across a restart rather than only
+    // within one process.
+    let floor = FloorPath::new("rollback");
+
+    // v2: the root is revoked. Loading it raises the floor to 2.
+    let revoked_issuers = issuers_from_signed_manifest(&floor.0, 2, true);
+    let proxy = client_proxy_anchored(build_server(), revoked_issuers);
+    assert_eq!(
+        proxy
+            .handle("r1", &plain_request(), &params("nonce-rollback-1"))
+            .expect_err("v2 revoked the root")
+            .wire_code(),
+        Some("mcp-re.delegation_revoked"),
+    );
+
+    // The replay: v1 (root not revoked), offered to a FRESH floor handle reading the
+    // same file — i.e. the state a restarted verifier would see.
+    let org = SigningKey::from_seed_bytes(&[91u8; 32]);
+    let manifest = mcp_re_client_core::TrustAnchorManifest {
+        profile: MANIFEST_PROFILE.into(),
+        manifest_version: 1,
+        current_issuers: vec![mcp_re_client_core::ManifestIssuer {
+            issuer_kid: ROOT_KID.into(),
+            public_key: root_key().public_key().to_b64url(),
+            role: "server".into(),
+            trust_domain: "example.com".into(),
+            subject: "did:example:server".into(),
+        }],
+        retiring_issuers: vec![],
+        revoked_issuers: vec![],
+        issued_at: NOW - 100,
+        expires_at: NOW + 100_000,
+    };
+    let signed = mcp_re_client_core::sign_manifest(&manifest, &org, "org-admin-1");
+    let mut reopened = mcp_re_client_proxy::FileManifestFloor::open(&floor.0).expect("reopen");
+    assert_eq!(
+        reopened.min_version().expect("floor readable"),
+        2,
+        "the floor survived in the file, not just in the process that wrote it"
+    );
+    let org_public = org.public_key();
+    let replayed = mcp_re_client_core::load_signed_manifest_with_floor(
+        &signed,
+        |kid| (kid == "org-admin-1").then(|| org_public.clone()),
+        MANIFEST_PROFILE,
+        &mut reopened,
+        NOW,
+    );
+    assert_eq!(
+        replayed.err(),
+        Some(mcp_re_client_core::TrustManifestError::Stale { version: 1, min_version: 2 }),
+        "the superseded manifest is refused, so the root stays revoked"
+    );
 }

@@ -25,10 +25,18 @@ spec:
       # in-flight request, exit 0). Give the kubelet headroom over the request
       # deadline so a rollout drains rather than kills.
       terminationGracePeriodSeconds: {{ .Values.drainGracePeriodSeconds }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: mcp-re-proxy
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if and (eq .Values.keySource "gcpKms") (not .Values.gcpKms.useMetadata) .Values.gcpKms.accessTokenSecretName }}
           # Operator-supplied Cloud KMS token path (useMetadata=false): the pod has
           # no Workload-Identity metadata server (e.g. a local kind cluster running
@@ -46,6 +54,13 @@ spec:
           args:
             - "--bind"
             - "0.0.0.0:{{ .Values.bindPort }}"
+            {{- if .Values.podSecurityContext.fsGroup }}
+            # C053b: the Secret is mounted 0440 and owned by fsGroup, so the key file is
+            # group-readable by construction. Rendered ONLY when fsGroup is set, so a
+            # chart that does not use the fsGroup mount model never relaxes the check.
+            # The proxy still refuses unless the group is one it is actually a member of.
+            - "--allow-group-readable-key-files"
+            {{- end }}
             # There is NO security toggle: the proxy always runs the maximal-security
             # posture and refuses any unsafe config at startup. `--fleet` selects the
             # horizontally-scaled TOPOLOGY (it does not relax security) and additionally
@@ -69,6 +84,17 @@ spec:
             {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
+            # MCPRE-114 admission ceiling. Omitted when unset, which the proxy reads
+            # as unbounded — so an existing release keeps its behaviour on upgrade.
+            # An explicit per-core ceiling wins over the fleet-wide total, so only one
+            # flag is ever emitted.
+            {{- if .Values.admission.maxInFlight }}
+            - "--max-in-flight"
+            - "{{ .Values.admission.maxInFlight }}"
+            {{- else if .Values.admission.maxInFlightTotal }}
+            - "--max-in-flight-total"
+            - "{{ .Values.admission.maxInFlightTotal }}"
+            {{- end }}
             - "--audience"
             - {{ .Values.identity.audience | quote }}
             # RFC 9421 audience tuple (ADR-MCPRE-050): the signed request's audience
@@ -116,11 +142,15 @@ spec:
             - "--key-source"
             - "file"
             {{- end }}
-            # The CLI REQUIRES --signing-key-seed even in a KMS key-source (where it is
-            # accepted but UNUSED — the response key lives in KMS). So always mount +
-            # pass it; the Secret always provides signing-seed.
+            {{- if ne .Values.keySource "gcpKms" }}
+            # Passed ONLY under file custody, where the proxy actually reads it. Under
+            # gcpKms the response key never leaves KMS and the seed is never read, so
+            # passing it would put a deployment's most sensitive file in the pod for no
+            # reason — in exactly the mode chosen because no key material should be
+            # there. (The CLI used to require it unconditionally; it no longer does.)
             - "--signing-key-seed"
             - "{{ .Values.tls.mountPath }}/signing-seed"
+            {{- end }}
             - "--tls-cert"
             - "{{ .Values.tls.mountPath }}/tls.crt"
             {{- if not (and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion) }}
@@ -132,12 +162,11 @@ spec:
             - "--trust"
             - "{{ .Values.tls.mountPath }}/trust.json"
             {{- if .Values.transportBinding }}
-            # mTLS channel binding (ADR-MCPS-023). `exact` (the proxy default and
-            # the fail-safe) binds each signed request to the verified client-cert
-            # identity. `none` decouples them — only for a reference deploy driven
-            # by an HTTP-profile client that carries no channel-binding claim (the
-            # shipped mcp_re_gke_client / SDK e2e). lb-assertion / attested-ingress
-            # need their own ingress key/anchor values.
+            # mTLS channel binding (ADR-MCPS-023). `exact` — the proxy default, the
+            # fail-safe, and the only value this flag can carry on the RFC 9421
+            # serving path — binds each signed request to the verified client-cert
+            # identity. The render-time guard rejects everything else, so this line
+            # only ever emits `exact`.
             - "--transport-binding"
             - {{ .Values.transportBinding | quote }}
             {{- end }}
@@ -188,10 +217,13 @@ spec:
         - name: material
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
-            # The proxy refuses to start on a group/world-readable key file
-            # (signing-seed, tls.key). Secret volumes default to 0644; mount
-            # owner-read-only.
-            defaultMode: 0400
+            # The proxy refuses a key file with any world bit or group WRITE bit
+            # (signing-seed, tls.key). Secret volumes default to 0644, so the mode is
+            # pinned. 0440 rather than 0400: under a non-root podSecurityContext the
+            # file is owned by fsGroup, and the process reads it through its group
+            # membership. Paired with --allow-group-readable-key-files below; the
+            # proxy still verifies at startup that the group is one it is in.
+            defaultMode: 0440
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

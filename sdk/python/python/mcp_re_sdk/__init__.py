@@ -34,16 +34,20 @@ from .custody import (
     SigningDevice,
 )
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "core_version",
     "profile_tag",
     "sign_preimage",
     "sign_request",
     "sign_request_with_signer",
+    "sign_notification",
+    "sign_notification_with_signer",
     "verify_response",
+    "verify_accepted_202",
     "SignedRequest",
     "VerifyResult",
+    "AcceptedResult",
     "CustodyClass",
     "McpReError",
     "McpReSdkError",
@@ -63,8 +67,8 @@ __all__ = [
     "ConnectionClosed",
     "HttpReply",
     "McpReConfig",
-    "NotificationsUnsupported",
-    "UnsafeConfigurationRefused",
+    "ClientResponseUnsupported",
+    "NotificationNotAcknowledged",
     "mcp_re_http_transport",
 ]
 
@@ -76,8 +80,8 @@ _TRANSPORT_EXPORTS = frozenset(
         "ConnectionClosed",
         "HttpReply",
         "McpReConfig",
-        "NotificationsUnsupported",
-        "UnsafeConfigurationRefused",
+        "ClientResponseUnsupported",
+    "NotificationNotAcknowledged",
         "mcp_re_http_transport",
     }
 )
@@ -104,10 +108,20 @@ sign_preimage = _core.sign_preimage
 sign_request = _core.sign_request
 #: Sign an MCP request under non-exporting custody: the SDK holds only a sign callback.
 sign_request_with_signer = _core.sign_request_with_signer
+#: Sign a one-way MCP notification (a message with a ``method`` and no ``id``) as an
+#: RFC 9421 + RFC 9530 message. Answered with a signed bodyless 202, not a bodied reply.
+sign_notification = _core.sign_notification
+#: Sign a notification under non-exporting custody: the SDK holds only a sign callback.
+sign_notification_with_signer = _core.sign_notification_with_signer
 #: Verify a signed RFC 9421 response bound to the request the client sent.
 verify_response = _core.verify_response
+#: Verify the signed bodyless 202 a server returns for a one-way notification, bound to
+#: the exact transmission this client sent.
+verify_accepted_202 = _core.verify_accepted_202
 #: A signed RFC 9421 request: ``.method`` / ``.target_uri`` / ``.headers`` /
 #: ``.body()`` (bytes) / ``.evidence_digest_alg`` / ``.evidence_digest_value``.
 SignedRequest = _core.PySignedRequest
 #: The verification outcome: ``.ok`` / ``.server_keyid``.
 VerifyResult = _core.PyVerifyResult
+#: The outcome of verifying a signed bodyless 202: ``.ok`` / ``.server_keyid``.
+AcceptedResult = _core.PyAcceptedResult

@@ -73,6 +73,7 @@ use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::PROFILE_TAG;
@@ -369,7 +370,15 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         route: config.route.clone(),
     };
     let r = resolver(root_pub.clone());
-    let actor_resolver: ActorResolver = Box::new(move |k: &str, s| r(k, s));
+    // This fixture resolver is healthy by construction and knows exactly two bindings,
+    // so a miss is a DEFINITIVE negative: NotTrusted, never Unavailable. The two are not
+    // interchangeable — they surface as `mcp-re.actor_binding_failed` versus
+    // `mcp-re.trust_resolver_unavailable` — so the choice is made here rather than left
+    // to a blanket `Option` conversion that would silently pick one.
+    let actor_resolver: ActorResolver = Box::new(move |k: &str, s| match r(k, s) {
+        Some(actor) => ResolverOutcome::Resolved(actor),
+        None => ResolverOutcome::NotTrusted,
+    });
     let proxy = HttpProfileProxy::new_delegated(
         actor_resolver,
         expected_audience,

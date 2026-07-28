@@ -26,7 +26,7 @@ use serde_json::Value;
 use mcp_re_core::SigningKey;
 
 use crate::block::ActorIdentity;
-use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
@@ -208,10 +208,10 @@ pub fn build_delegated_rejection_preflight(
 /// `request` is `Some`, the `;req` binding to that request is checked (a spliced
 /// rejection fails). Fails closed on any signature/digest/binding problem — a
 /// client under `require_mcp_re` treats that failure as an untrusted rejection.
-pub fn verify_signed_rejection(
+pub fn verify_signed_rejection<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: Option<&HttpRequest>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<SignedRejection, HttpProfileError> {
     // A rejection is a server-signed response: resolve for the RESPONSE slot.
@@ -264,14 +264,14 @@ mod tests {
 
     /// Slot-aware trust seam: the server key is trusted only for the Response
     /// slot, the client key only for the Request slot (MCPRE-100).
-    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+    fn resolver() -> impl Fn(&str, SignerSlot) -> Option<crate::block::ResolvedActor> {
         move |key_id: &str, slot: SignerSlot| {
             let (role, key) = match (key_id, slot) {
                 ("server-key-1", SignerSlot::Response) => ("server", server_key()),
                 ("client-key-1", SignerSlot::Request) => ("client", client_key()),
                 _ => return None,
             };
-            Some(ResolvedActor {
+            Some(crate::block::ResolvedActor {
                 identity: crate::block::ActorIdentity {
                     role: role.into(),
                     trust_domain: "example.com".into(),

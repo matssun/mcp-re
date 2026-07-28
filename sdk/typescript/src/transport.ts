@@ -22,28 +22,37 @@
  * never comes; a hang is a worse failure mode than a raise, and an unverifiable response
  * must never reach the application as a result.
  *
- * **This is a request/response adapter.** One-way notifications fail closed by default —
- * see {@link NotificationsUnsupported} for why that is a missing profile rather than an
- * inherent limit, and `unsafeDropNotifications` for the interim escape hatch.
+ * **One-way notifications are carried, not dropped.** A notification is its own signed
+ * POST, and the acknowledgement it earns — a signed bodyless 202 bound to that exact
+ * transmission — is verified before the adapter treats it as delivered. See
+ * {@link NotificationNotAcknowledged} for what happens when it is not.
  *
  * MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
- * a `poster` so this layer stays transport-agnostic and testable; `connectMtlsHttp` (the
- * mTLS construction helper) builds on top of it.
+ * a `poster` so this layer stays transport-agnostic and testable, which also means
+ * establishing and hardening the connection (mTLS, pooling, timeouts) is the caller's.
+ * There is no mTLS construction helper in this SDK — see
+ * {@link https://github.com/matssun/mcp-re/issues/413 | #413}. The Rust client leg ships
+ * one (`mcp_re_transport::remote::MtlsRemoteTransport`).
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { verifyResponse, type HttpHeader } from "../native/binding.js";
+import {
+  verifyAccepted202,
+  verifyResponse,
+  type HttpHeader,
+  type SignedRequestJs,
+} from "../native/binding.js";
 import {
   bindingsJson as serializeBindings,
   type AuthorizationBindingPolicy,
   type AuthorizationBindingProvider,
   type BindingRequestContext,
 } from "./authorization.js";
-import { ContinuationHandles, CorrelationStore } from "./correlation.js";
+import { ContinuationHandles, CorrelationStore, type PendingRequest } from "./correlation.js";
 import { McpReError, McpReSdkError, type Signer, type SignerPolicy } from "./custody.js";
 
 /**
@@ -59,38 +68,59 @@ const RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response";
 const MCP_RE_ERROR_CODE = -32001;
 
 /**
- * A one-way MCP notification was sent, and MCP-RE has no ratified profile for one.
+ * Widest delegation clock skew a caller may configure, in seconds.
  *
- * **Not** an inherent limitation: a notification is its own POST under MCP Streamable
- * HTTP, so its request signature and `Content-Digest` authenticate it exactly like any
- * other request. What is missing is the ratified one-way notification + acknowledgement
- * profile (MCP-RE issue #418) — what a verifier returns for a message with no JSON-RPC
- * response, and how that acknowledgement binds to the request evidence.
- *
- * Until that lands the adapter fails closed here rather than passing the message
- * unprotected or discarding it silently. `unsafeDropNotifications: true` opts into
- * dropping instead; a hardened policy refuses that opt-in outright.
- *
- * A local condition — nothing was transmitted, so no wire code describes it.
+ * Mirrors the RFC 9421 verifier's own ceiling (`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`)
+ * so one deployment does not run two different notions of "close enough" — beyond this
+ * the credential's nbf/exp window stops bounding anything.
  */
-export class NotificationsUnsupported extends McpReSdkError {
+const MAX_CLOCK_SKEW_BOUND = 300;
+
+/**
+ * The client tried to send a client->server RESPONSE, which has no MCP-RE carrier.
+ *
+ * A server-initiated request (sampling, elicitation over the same session) would be
+ * answered by a JSON-RPC response travelling client->server. MCP-RE profiles two client
+ * message shapes — a request that earns a signed reply, and a notification that earns a
+ * signed bodyless 202 — and a response is neither.
+ *
+ * Failing closed here is the narrow choice on purpose. The alternative the notification
+ * path makes available is worse: a response has no `method`, so carrying it as a
+ * notification would mean signing a fabricated message and reporting the acknowledgement
+ * of THAT as if the response had been delivered.
+ */
+export class ClientResponseUnsupported extends McpReSdkError {
   constructor(detail: string) {
     super(detail);
-    this.name = "NotificationsUnsupported";
+    this.name = "ClientResponseUnsupported";
   }
 }
 
 /**
- * A hardening profile refused an explicitly unsafe option.
+ * A notification was transmitted and its acknowledgement did not verify.
  *
- * The hardened profile exists to make "this deployment does not accept known-unsafe
- * behaviour" enforceable rather than advisory, so an unsafe opt-in must fail the
- * connection there instead of being honoured.
+ * The message left this process. What could not be established is that the enforcement
+ * boundary authenticated and accepted it: the 202 was absent, unsigned, signed by an
+ * untrusted key, or bound to a different transmission.
+ *
+ * It is thrown from `send()`, so the caller that emitted the notification is the one
+ * that learns it was not acknowledged — there is no reply for a JSON-RPC error to ride
+ * back on, and treating an unverifiable acknowledgement as delivery is the
+ * take-it-on-faith posture this protocol exists to remove. `wireCode` carries the frozen
+ * reason when the failure has one.
  */
-export class UnsafeConfigurationRefused extends McpReSdkError {
-  constructor(detail: string) {
-    super(detail);
-    this.name = "UnsafeConfigurationRefused";
+export class NotificationNotAcknowledged extends McpReSdkError {
+  readonly method: string;
+  readonly wireCode: string;
+
+  constructor(method: string, wireCode: string) {
+    super(
+      `'${method}' was sent but its acknowledgement did not verify (${wireCode}); ` +
+        `it must not be treated as delivered`,
+    );
+    this.name = "NotificationNotAcknowledged";
+    this.method = method;
+    this.wireCode = wireCode;
   }
 }
 
@@ -141,6 +171,35 @@ export type Poster = (
 /** 128 bits from the OS CSPRNG: the freshness window rejects a repeat, so the only
  * requirement here is that a collision is not reachable in practice. */
 const defaultNonce = (): string => randomBytes(16).toString("base64url");
+
+/**
+ * Minimum characters in an anti-replay nonce. 128 bits base64url-encodes to 22, which
+ * is what {@link defaultNonce} produces — so this floor never constrains the default
+ * path. It constrains an OVERRIDE: `nonceFactory` is caller-supplied and was accepted
+ * unchecked, so a factory returning a counter, a timestamp, or a truncated value
+ * silently weakened replay protection for every request while every signature still
+ * verified.
+ */
+const MIN_NONCE_CHARS = 22;
+
+/**
+ * Draw a nonce and refuse a sub-floor one, at SIGN time.
+ *
+ * Fails closed rather than signing: a request signed under a guessable nonce is
+ * accepted by the verifier, which is precisely what the replay window cannot save you
+ * from. Enforced only where a nonce is EMITTED, so the accepted wire language is
+ * unchanged — no cross-implementation coordination, no fixture regeneration.
+ */
+const checkedNonce = (factory: () => string): string => {
+  const nonce = factory();
+  if (typeof nonce !== "string" || nonce.length < MIN_NONCE_CHARS) {
+    const got = typeof nonce === "string" ? `${nonce.length} characters` : typeof nonce;
+    throw new Error(
+      `mcp-re-sdk: nonceFactory returned ${got}; a nonce must be at least ${MIN_NONCE_CHARS} (128 bits base64url)`,
+    );
+  }
+  return nonce;
+};
 
 const defaultClock = (): number => Math.floor(Date.now() / 1000);
 
@@ -195,24 +254,15 @@ export interface McpReConfig {
   maxConcurrentExchanges?: number;
 
   /**
-   * Drop client->server notifications instead of failing closed on them. **Unsafe.**
+   * Called with `(method, serverKeyid)` for each client->server notification whose signed
+   * 202 verified. Observability only — the acceptance claim has already been checked by
+   * the time this runs, and declining to observe it changes nothing.
    *
-   * A standard MCP client cannot complete its lifecycle without
-   * `notifications/initialized`, so this exists to keep the adapter usable at all until
-   * the one-way notification + acknowledgement profile is ratified (#418). It is named
-   * for what it is: `notifications/cancelled` silently becomes "keep going", which is a
-   * safety hole, not a compatibility quirk.
-   *
-   * A hardened {@link SignerPolicy} refuses this outright.
+   * What a verified acknowledgement means is exactly: the enforcement boundary
+   * authenticated and accepted the message. NOT that the action completed — a verified
+   * ack for `notifications/cancelled` does not mean anything was cancelled.
    */
-  unsafeDropNotifications?: boolean;
-
-  /**
-   * Called with each client->server notification the adapter drops, when
-   * `unsafeDropNotifications` is on. Dropping is never silent by default — the default is
-   * to fail closed — but a caller who opts in should still be able to see it.
-   */
-  onDroppedNotification?: (method: string) => void;
+  onNotificationAcknowledged?: (method: string, serverKeyid: string) => void;
 
   /**
    * Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
@@ -232,6 +282,20 @@ function stripResponseEvidence(body: Buffer): unknown {
     if (Object.keys(meta).length === 0) delete doc._meta;
   }
   return doc;
+}
+
+/**
+ * `sha-256:<b64url>` over the exact authorization-binding bytes that were signed.
+ *
+ * ADR-MCPS-044 enumerates this among the fields a conforming client keeps per outstanding
+ * request. It is retained for audit only and never re-interpreted (bind-not-interpret): it
+ * records WHICH authorization artefacts this request was bound to, so an audit trail can
+ * be reconciled against the signed bytes without the transport ever parsing them. `null`
+ * when the request carried no bindings.
+ */
+function authzBindingDigest(bindingsJson: string | null): string | null {
+  if (bindingsJson === null) return null;
+  return `sha-256:${createHash("sha256").update(bindingsJson, "utf8").digest("base64url")}`;
 }
 
 /** A JSON-RPC error correlated to the request, so the awaiting call rejects. */
@@ -312,6 +376,49 @@ export class McpReHttpTransport implements Transport {
         )}`,
       );
     }
+    // The delegation credential's nbf/exp window is only as strong as the skew allowed
+    // around it: `now + skew < nbf` and `now - skew > exp` are how it is applied, so a
+    // large value accepts a credential arbitrarily far outside its validity window and
+    // a negative one distorts the comparison rather than tightening it. Nothing
+    // downstream bounds it — DelegationPolicy stores it verbatim — so it is checked
+    // here, against the same ceiling the RFC 9421 verifier uses for its own skew.
+    const skew = config.maxClockSkew ?? 60;
+    if (!Number.isInteger(skew) || skew < 0 || skew > MAX_CLOCK_SKEW_BOUND) {
+      throw new McpReSdkError(
+        `maxClockSkew must be an integer in 0..=${MAX_CLOCK_SKEW_BOUND} seconds, got ${JSON.stringify(
+          config.maxClockSkew,
+        )}`,
+      );
+    }
+    // The delegated-verification anchor. TypeScript's type system makes these fields
+    // required but cannot make them non-empty, and an empty value cannot match anything
+    // it is compared against: empty `acceptedEpochs` fails every response as a stale
+    // trust epoch, empty `verifierAudiences` as an audience mismatch, an empty issuer key
+    // as an invalid key. The client is therefore not *unsafe* with them blank — it is
+    // unusable — but it does not discover that until the first response comes back
+    // looking like a server fault.
+    const missing = (
+      [
+        ["issuerKeyId", config.issuerKeyId],
+        ["issuerPubkeyB64Url", config.issuerPubkeyB64Url],
+        ["issuerTrustDomain", config.issuerTrustDomain],
+        ["issuerSubject", config.issuerSubject],
+        ["expectedAudienceHash", config.expectedAudienceHash],
+        ["verifierAudiences", config.verifierAudiences?.length ? "set" : ""],
+        ["acceptedEpochs", config.acceptedEpochs?.length ? "set" : ""],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new McpReSdkError(
+        `the delegated-verification trust anchor is incomplete: ${missing
+          .slice()
+          .sort()
+          .join(", ")} must be set. Every response is verified against these, so an ` +
+          `empty value rejects every response the server sends rather than relaxing the check.`,
+      );
+    }
     this.#config = config;
     this.#poster = poster;
     this.#slots = new Semaphore(bound);
@@ -331,6 +438,17 @@ export class McpReHttpTransport implements Transport {
     return this.#correlation.size;
   }
 
+  /**
+   * The outstanding requests, in issue order — the ADR-MCPS-044 in-flight correlation
+   * state this transport holds, including each request's authorization-binding digest.
+   *
+   * Read-only: the entries are what the store already recorded, and consuming one is the
+   * response path's business.
+   */
+  pendingRequests(): PendingRequest[] {
+    return this.#correlation.pending();
+  }
+
   async start(): Promise<void> {
     if (this.#state !== TransportState.New) {
       // The MCP SDK's own transports treat a double start as a defect; a second start
@@ -341,15 +459,6 @@ export class McpReHttpTransport implements Transport {
       );
     }
     this.#config.policy?.check(this.#config.signer);
-    if (this.#config.policy?.requireNonExporting && this.#config.unsafeDropNotifications) {
-      // The hardening profile is what makes "this deployment does not accept known-unsafe
-      // behaviour" enforceable rather than advisory.
-      throw new UnsafeConfigurationRefused(
-        `profile '${this.#config.policy.profile}' requires non-exporting custody and so ` +
-          `refuses unsafeDropNotifications: silently discarding 'notifications/cancelled' ` +
-          `is not acceptable under a hardened policy (#418)`,
-      );
-    }
     this.#config.authorizationPolicy?.check(this.#config.authorization ?? []);
     this.#state = TransportState.Open;
   }
@@ -362,29 +471,63 @@ export class McpReHttpTransport implements Transport {
         `McpReHttpTransport is ${this.#state}, not OPEN; it accepts no work`,
       );
     }
-    if (!("method" in message) || !("id" in message)) {
-      const method = "method" in message ? message.method : "<unknown>";
-      if (!this.#config.unsafeDropNotifications) {
-        // Fail closed. MCP-RE has no ratified profile for a one-way message (#418), and
-        // the two ways to proceed without one are both worse than stopping: pass it
-        // unprotected, or discard a `notifications/cancelled` and let the peer keep going.
-        throw new NotificationsUnsupported(
-          `'${method}' is a one-way notification; MCP-RE has no ratified one-way ` +
-            `notification profile yet (#418). Set unsafeDropNotifications: true to drop ` +
-            `notifications instead.`,
-        );
+    if (!("method" in message)) {
+      // A client->server RESPONSE or error. It has no `method`, so the notification path
+      // below could only carry it by signing a fabricated message; refuse it instead of
+      // inventing one.
+      throw new ClientResponseUnsupported(
+        "a client->server response has no MCP-RE carrier; the profile covers a signed " +
+          "request and a signed notification, and a response is neither",
+      );
+    }
+    if (!("id" in message)) {
+      // A one-way notification: its own signed POST, answered by a signed bodyless 202
+      // rather than a JSON-RPC reply. It runs under the same concurrency bound as an
+      // exchange because it costs the same resources — a connection and a signing
+      // operation. A failure throws from here rather than becoming a delivered message:
+      // there is no request id to correlate one to, and this caller is the only party
+      // that can learn the message was not acknowledged.
+      const params = "params" in message ? message.params : undefined;
+      await this.#slots.acquire();
+      let releaseAbortListener: () => void = () => {};
+      try {
+        // Re-checked AFTER the queue wait, and raced against close(), for the same
+        // reason a request is (#421): a notification that waited for a slot must not
+        // reach the server after the caller tore the transport down, and an aborted one
+        // must fail rather than wait out a poster nobody is listening for.
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
+        const aborted = this.#aborted();
+        releaseAbortListener = aborted.release;
+        await Promise.race([this.#notify(message.method, params), aborted.promise]);
+      } finally {
+        this.#slots.release();
+        releaseAbortListener();
       }
-      this.#config.onDroppedNotification?.(method);
       return;
     }
 
     const request = message;
     let reply: JSONRPCMessage;
     await this.#slots.acquire();
+    // Registered per request and removed in the finally below. An AbortSignal outlives
+    // every request raced against it, so a listener left behind is retained — with its
+    // captured promise — until the transport itself is collected; a long session would
+    // accumulate one per request it ever sent.
+    let releaseAbortListener: () => void = () => {};
     try {
+      // Re-check AFTER the queue wait. The state check above happened before this
+      // request waited for a slot, and close() can land during that wait. Without this
+      // the exchange below would still sign and POST — `Promise.race` starts both
+      // arms, so racing `#aborted()` only decides which result the caller sees, not
+      // whether the request reaches the server. A queued request is not
+      // already-dispatched work, so emitting it after close() would hand the server
+      // a valid, fresh, correctly-signed request the caller believes it cancelled.
+      if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
       // Race the exchange against close(): an aborted exchange fails its request with
       // ConnectionClosed rather than waiting out a poster the caller no longer wants.
-      reply = await Promise.race([this.#exchange(request), this.#aborted()]);
+      const aborted = this.#aborted();
+      releaseAbortListener = aborted.release;
+      reply = await Promise.race([this.#exchange(request), aborted.promise]);
     } catch (e) {
       if (e instanceof ConnectionClosed) {
         // Not a wire outcome: the local transport went away. The upstream Client already
@@ -399,9 +542,19 @@ export class McpReHttpTransport implements Transport {
         // A local failure (e.g. the signing device). No wire code describes it.
         reply = errorMessage(request.id, `mcp-re-sdk: ${e.message}`);
       } else if (e instanceof Error) {
-        // The core's own fail-closed errors arrive as plain Errors carrying the frozen
-        // token; deliver it rather than letting the caller hang.
-        reply = errorMessage(request.id, e.message);
+        // Two unrelated things arrive here as plain Errors: the core's own fail-closed
+        // errors, which carry a frozen `mcp-re.*` token, and whatever the caller's
+        // `poster` throws while doing real I/O — a reset connection, a TLS error, a
+        // timeout. Delivering both verbatim would put "socket hang up" in the same field
+        // that otherwise only ever holds something the peer said, so only a message that
+        // IS a frozen token is passed through as one. Everything else is delivered under
+        // the prefix that means "local condition", named, exactly as Python does it.
+        reply = errorMessage(
+          request.id,
+          /^mcp-re\.[a-z0-9_]+$/.test(e.message)
+            ? e.message
+            : `mcp-re-sdk: ${e.name}: ${e.message}`,
+        );
       } else {
         throw e;
       }
@@ -409,19 +562,36 @@ export class McpReHttpTransport implements Transport {
       // In a finally because the non-Error branch above re-throws: leaking a slot there
       // would shrink the pool permanently, and enough of them would deadlock the session.
       this.#slots.release();
+      releaseAbortListener();
     }
     // No message callback after the close callback: delivering to an application that
     // believes it has disconnected is worse than dropping (#421).
     if (this.#state === TransportState.Open) this.onmessage?.(reply);
   }
 
-  /** Rejects with ConnectionClosed as soon as close() begins. */
-  #aborted(): Promise<never> {
-    return new Promise((_resolve, reject) => {
-      const signal = this.#abort.signal;
+  /**
+   * A promise that rejects with ConnectionClosed as soon as close() begins, paired with
+   * the `release` that unregisters it.
+   *
+   * The caller MUST call `release` once the race it feeds has settled. `{ once: true }`
+   * only removes the listener when it actually fires, which is the rare case: the common
+   * one is an exchange that completes normally, leaving the listener registered on a
+   * signal that lives as long as the transport.
+   */
+  #aborted(): { promise: Promise<never>; release: () => void } {
+    const signal = this.#abort.signal;
+    let release = () => {};
+    const promise = new Promise<never>((_resolve, reject) => {
       if (signal.aborted) return reject(signal.reason);
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      release = () => signal.removeEventListener("abort", onAbort);
     });
+    // An already-aborted signal rejects synchronously above and registers nothing, so the
+    // no-op release is correct there. Attach a catch so a promise that loses the race
+    // cannot surface as an unhandled rejection when it is abandoned.
+    promise.catch(() => {});
+    return { promise, release: () => release() };
   }
 
   /**
@@ -450,6 +620,77 @@ export class McpReHttpTransport implements Transport {
   }
 
   /**
+   * Sign one notification, POST it, and verify the acknowledgement it earns.
+   *
+   * A notification is signed by the ordinary request rules — same evidence block, same
+   * covered components, same freshness triple. What it gets back is a signed bodyless
+   * 202 whose `;req` components plus `mcp-re-request-evidence` bind it to THIS
+   * transmission (owner ruling C019b), so a 202 captured from an earlier send of the
+   * same notification does not verify here.
+   *
+   * There is deliberately no "sent it anyway" path: an unverified acknowledgement
+   * establishes nothing, and treating it as delivery is what the profile removes.
+   */
+  async #notify(method: string, params: unknown): Promise<void> {
+    const config = this.#config;
+    const now = this.#clock;
+    const created = now();
+    const expires = created + (config.requestTtl ?? 300);
+    const bindingsJson = this.#bindingsJson(method);
+
+    const signed = config.signer.signNotification({
+      method,
+      paramsJson: JSON.stringify(params ?? {}),
+      targetUri: config.targetUri,
+      audienceId: config.audienceId,
+      route: config.route ?? null,
+      dpopToken: config.dpopToken,
+      nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
+      created,
+      expires,
+      bindingsJson,
+    });
+
+    const httpReply = await this.#poster(
+      signed.method,
+      signed.targetUri,
+      signed.headers,
+      signed.body,
+    );
+
+    let accepted;
+    try {
+      accepted = verifyAccepted202(
+        httpReply.status,
+        httpReply.headers,
+        httpReply.body,
+        signed.method,
+        signed.targetUri,
+        signed.headers,
+        signed.body,
+        config.issuerKeyId,
+        config.issuerPubkeyB64Url,
+        config.issuerRole ?? "server",
+        config.issuerTrustDomain,
+        config.issuerSubject,
+        [...config.verifierAudiences],
+        config.expectedAudienceHash,
+        [...config.acceptedEpochs],
+        config.maxClockSkew ?? 60,
+        [...(config.revokedIdentifiers ?? [])],
+        now(),
+      );
+    } catch (e) {
+      throw new NotificationNotAcknowledged(
+        method,
+        e instanceof McpReError ? e.wireCode : e instanceof Error ? e.message : String(e),
+      );
+    }
+
+    config.onNotificationAcknowledged?.(method, accepted.serverKeyid);
+  }
+
+  /**
    * Sign one request, POST it, verify the reply, and correlate it back.
    *
    * Returns the plain-MCP message to hand the client — a result on success, or a
@@ -463,6 +704,7 @@ export class McpReHttpTransport implements Transport {
     const created = now();
     const expires = created + (config.requestTtl ?? 300);
     const params = "params" in request && request.params !== undefined ? request.params : {};
+    const bindingsJson = this.#bindingsJson(request.method);
 
     const signed = config.signer.signRequest({
       idJson: JSON.stringify(request.id),
@@ -472,10 +714,10 @@ export class McpReHttpTransport implements Transport {
       audienceId: config.audienceId,
       route: config.route ?? null,
       dpopToken: config.dpopToken,
-      nonce: (config.nonceFactory ?? defaultNonce)(),
+      nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
       created,
       expires,
-      bindingsJson: this.#bindingsJson(request.method),
+      bindingsJson,
     });
 
     const correlationId = this.#correlation.record(signed, {
@@ -487,7 +729,31 @@ export class McpReHttpTransport implements Transport {
       created,
       expires,
       route: config.route ?? null,
+      authzBindingDigest: authzBindingDigest(bindingsJson),
     });
+
+    try {
+      return await this.#exchangeBound(request, signed, correlationId);
+    } catch (e) {
+      // This exchange produced no answer, so nothing will ever bind this entry.
+      // Everything that lands here is remotely triggerable — a reset connection, a reply
+      // that fails verification, a rejection whose own bookkeeping threw — so leaving the
+      // entry outstanding would let a peer grow the store one failed request at a time,
+      // for the life of the session. Retiring it is not a security decision: a response
+      // that arrives for it afterwards is refused either way.
+      this.#correlation.abandon(correlationId);
+      throw e;
+    }
+  }
+
+  /** The part of an exchange that runs with the correlation entry already recorded. */
+  async #exchangeBound(
+    request: JSONRPCMessage & { method: string; id: RequestId },
+    signed: SignedRequestJs,
+    correlationId: string,
+  ): Promise<JSONRPCMessage> {
+    const config = this.#config;
+    const now = this.#clock;
 
     const httpReply = await this.#poster(signed.method, signed.targetUri, signed.headers, signed.body);
 
@@ -518,7 +784,15 @@ export class McpReHttpTransport implements Transport {
     // must reach the app as an error, never as a result.
     if (verified.outcome !== "success") {
       this.#correlation.take(correlationId, now());
-      return errorMessage(request.id, verified.wireCode ?? "mcp-re.response_sig_invalid");
+      // An EMPTY wire code is substituted too, not just a missing one. A rejection
+      // receipt whose `error.data` carries no usable token yields `Some("")` from the
+      // core reader, and `??` would let that through as a JSON-RPC error with an empty
+      // message — an error the application cannot act on or log meaningfully. Python's
+      // truthiness check already substituted here; this is the side that diverged.
+      return errorMessage(
+        request.id,
+        verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+      );
     }
 
     if (verified.requestState !== undefined && verified.requestState !== null) {
@@ -550,3 +824,10 @@ export class McpReHttpTransport implements Transport {
     return serializeBindings(providers, context);
   }
 }
+
+/**
+ * Internals exposed for this package's own tests only. Not part of the public API and
+ * not re-exported from the package entry point; the security check itself runs on the
+ * ordinary signing path, not through this seam.
+ */
+export const __testing = { checkedNonce, defaultNonce, MIN_NONCE_CHARS };

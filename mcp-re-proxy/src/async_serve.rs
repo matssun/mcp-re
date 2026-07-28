@@ -53,7 +53,6 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use hyper_util::rt::TokioTimer;
 use hyper_util::server::conn::auto;
-use rustls::ServerConfig;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -170,12 +169,11 @@ impl Drop for InFlightGuard {
 /// `Proxy: Send + Sync`.
 pub async fn serve<H: AsyncRequestHandler>(
     listener: TcpListener,
-    config: Arc<ServerConfig>,
+    config: Arc<crate::config_snapshot::ServerConfigSnapshot>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
     shutdown: Arc<AtomicBool>,
 ) {
-    let acceptor = TlsAcceptor::from(config);
     let permits = Arc::new(tokio::sync::Semaphore::new(
         options.limits.max_concurrent_connections,
     ));
@@ -216,7 +214,13 @@ pub async fn serve<H: AsyncRequestHandler>(
             continue;
         };
 
-        let acceptor = acceptor.clone();
+        // MCPRE-116: read the CURRENT serving config per connection, so a CRL
+        // hot-reload that atomically swapped a rebuilt `ServerConfig` into the
+        // snapshot is observed by the next handshake — without a restart. Building
+        // the acceptor once outside this loop would pin every core to the config
+        // captured at startup and make `--client-crl-reload-secs` a no-op. An
+        // in-flight handshake keeps serving on the config it captured here.
+        let acceptor = TlsAcceptor::from(config.load());
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
         let in_flight = in_flight.clone();
@@ -243,6 +247,40 @@ pub async fn serve<H: AsyncRequestHandler>(
         }
         tokio::time::sleep(DRAIN_POLL_INTERVAL).await;
     }
+}
+
+/// Is the received request-target inconsistent with the configured `@target-uri`?
+///
+/// Returns `Some(received_origin_form)` on a mismatch, `None` when consistent. Compares
+/// the ORIGIN FORM (path + query) only: the scheme and authority of the external target
+/// are exactly the parts a TLS-terminating proxy cannot observe, which is why the
+/// operator asserts the whole URI in the first place. The path is what the ingress
+/// routes on and what this process CAN see, so it is the part whose assertion is
+/// checkable.
+///
+/// An empty configured target is not checked here — `--target-uri` is already required
+/// and non-empty at parse, and the verifier fails closed on a blank covered value.
+fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
+    if configured.is_empty() {
+        return None;
+    }
+    let configured_origin = origin_form_of(configured)?;
+    let received_origin = received
+        .path_and_query()
+        .map(|pq| pq.as_str().to_owned())
+        .unwrap_or_else(|| "/".to_owned());
+    (configured_origin != received_origin).then_some(received_origin)
+}
+
+/// The path+query of an absolute URI, or `None` when it has no `://` (not absolute —
+/// the parse-time check already rejects that, so there is nothing to compare against).
+fn origin_form_of(absolute: &str) -> Option<String> {
+    let authority_start = absolute.find("://")? + 3;
+    let authority = &absolute[authority_start..];
+    Some(match authority.find('/') {
+        Some(offset) => authority[offset..].to_owned(),
+        None => "/".to_owned(),
+    })
 }
 
 /// Terminate TLS on one accepted socket and serve HTTP/1.1 keep-alive + HTTP/2 over
@@ -280,6 +318,8 @@ async fn serve_connection<H: AsyncRequestHandler>(
 
     // Capture the header-read deadline before `options` moves into the service.
     let header_read_timeout = options.limits.request_deadline.or(options.limits.read_timeout);
+    // Read before `options` is moved into the service closure below.
+    let stream_ceiling = options.limits.max_in_flight_requests;
 
     let io = TokioIo::new(tls);
     let service = service_fn(move |req: Request<Incoming>| {
@@ -301,6 +341,16 @@ async fn serve_connection<H: AsyncRequestHandler>(
         // `header_read_timeout` needs a `Timer` on the connection or hyper panics
         // when it arms the deadline; supply the tokio timer.
         builder.http1().timer(TokioTimer::new()).header_read_timeout(read_timeout);
+    }
+    // Cap HTTP/2 concurrent streams to the same per-core in-flight ceiling. Without a
+    // cap, ONE connection holding a valid client certificate can open unbounded
+    // concurrent streams; each is a request that buffers up to `max_body_bytes`, so the
+    // in-flight semaphore sheds them with a 503 only AFTER hyper has accepted the
+    // stream. Capping at the connection level applies the same bound one layer earlier,
+    // at the multiplexer. Left unset when no ceiling is configured (unbounded, the
+    // historical behavior).
+    if let Some(ceiling) = stream_ceiling {
+        builder.http2().max_concurrent_streams(ceiling as u32);
     }
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.
@@ -341,11 +391,17 @@ async fn handle_request<H: AsyncRequestHandler>(
     // count fall to zero exactly when the last request finishes.
     let _in_flight_guard = InFlightGuard::new(&in_flight_requests);
 
+    // A header value that is not valid UTF-8 has no lossy rendering this profile can
+    // safely use, so the request is refused here — before any view of it is built.
+    // See [`malformed_header_response`].
+    if req.headers().values().any(|value| value.to_str().is_err()) {
+        return Ok(malformed_header_response());
+    }
+
     // A header view with the SAME case-insensitive lookup + duplicate-count
     // semantics the blocking path's `RequestHeaders::parse` produces (used by the
     // reverse-proxy identity provider, the Tier-3 assertion extractor, and the
-    // routing-header hygiene guard). Non-UTF-8 header values become empty — treated
-    // as absent, i.e. fail closed.
+    // routing-header hygiene guard).
     let headers = RequestHeaders::from_pairs(
         req.headers()
             .iter()
@@ -356,6 +412,25 @@ async fn handle_request<H: AsyncRequestHandler>(
     // and the full header block (carrying `Signature`/`Signature-Input`/`Content-Digest`)
     // the handler needs to verify the HTTP evidence carrier (ADR-MCPRE-050).
     let method = req.method().as_str().to_owned();
+    // C008/C045/C046: the covered `@target-uri` is the operator's configured value, not
+    // the received line. That substitution IS the ruled reconstruction mechanism — a
+    // proxy behind TLS termination cannot see the external target URI, so the operator
+    // asserts it (`http-profile-open-questions.md`: "exact reconstruction of the
+    // external @target-uri is mandatory; if it cannot be reconstructed, strict
+    // verification fails"). What was missing is EXACT. Nothing checked the assertion
+    // against reality, so a deployment fanning several ingress paths into one process
+    // silently verified signatures over a target the request did not arrive at, and
+    // the verifier's `expected_audience.target_uri != request.target_uri` check
+    // compared the configured value with itself.
+    //
+    // Compare the received origin-form against the configured target's, and fail
+    // closed on a mismatch. This does not bind the received line INTO the signature
+    // (both ends must still agree on one canonical absolute URI); it refuses to serve
+    // where the operator's assertion is provably not a reconstruction of this request.
+    if let Some(mismatch) = target_uri_mismatch(&options.target_uri, req.uri()) {
+        let _ = mismatch;
+        return Ok(malformed_header_response());
+    }
     let header_pairs: Vec<(String, String)> = req
         .headers()
         .iter()
@@ -427,6 +502,28 @@ fn served_to_hyper(resp: ServedHttpResponse) -> Response<Full<Bytes>> {
         })
 }
 
+/// Fail-closed reply when a header value is not valid UTF-8: an empty `400`, the
+/// handler never reached.
+///
+/// The profile has no lossy rendering of such a value that is safe. Substituting
+/// `""` makes a COVERED component resolve to an empty line in the signature base —
+/// exactly the "never a blank line, always an error" case `sigbase` refuses to
+/// produce — and omitting the header instead hides a duplicate from the
+/// exactly-once rules that `sigbase::component_value` and
+/// [`crate::transport::RequestHeaders::count`] rely on to fail closed on a
+/// duplicated covered field or trust header. One direction fabricates a signable
+/// value, the other conceals a duplicate, so the message is refused at the boundary
+/// rather than rendered into a view that cannot represent it.
+///
+/// Nothing conformant is lost: a covered component's value must be an RFC 8941
+/// string, and this profile's signature base is UTF-8 by construction.
+fn malformed_header_response() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(400)
+        .body(Full::new(Bytes::new()))
+        .expect("static response builds")
+}
+
 /// Fail-closed reply when the body exceeds `max_body_bytes` or the read deadline
 /// elapses: an empty `413`, the inner server never reached. (No request id is
 /// available when the body itself could not be read.)
@@ -446,4 +543,68 @@ fn overloaded_response() -> Response<Full<Bytes>> {
         .status(503)
         .body(Full::new(Bytes::new()))
         .expect("static response builds")
+}
+
+#[cfg(test)]
+mod target_uri_tests {
+    use super::*;
+
+    fn uri(value: &str) -> hyper::Uri {
+        value.parse().expect("test uri")
+    }
+
+    #[test]
+    fn a_matching_origin_form_is_consistent() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=a")),
+            None
+        );
+    }
+
+    /// The finding: an ingress fanning several paths into one process meant the
+    /// operator's asserted target was not a reconstruction of the request that
+    /// arrived, and nothing noticed.
+    #[test]
+    fn a_different_received_path_is_refused() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/other?route=a")),
+            Some("/other?route=a".to_owned())
+        );
+    }
+
+    /// The query is part of the request-target and part of the route coordinate, so a
+    /// differing query is a differing target — not a detail to normalise away.
+    #[test]
+    fn a_different_query_is_refused() {
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/mcp?route=b")),
+            Some("/mcp?route=b".to_owned())
+        );
+    }
+
+    /// Scheme and authority are exactly what a TLS-terminating proxy cannot observe —
+    /// they are why the operator asserts the URI at all — so they are not compared.
+    #[test]
+    fn the_configured_authority_is_not_compared() {
+        assert_eq!(
+            target_uri_mismatch("https://external.example.com/mcp", &uri("/mcp")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_root_target_matches_a_root_request() {
+        assert_eq!(target_uri_mismatch("https://mcp.example.com", &uri("/")), None);
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com/", &uri("/")),
+            None
+        );
+    }
+
+    /// An unset target is not checked here: `--target-uri` is required and non-empty at
+    /// parse, and a blank covered value already fails verification closed.
+    #[test]
+    fn an_empty_configured_target_is_not_checked_here() {
+        assert_eq!(target_uri_mismatch("", &uri("/anything")), None);
+    }
 }

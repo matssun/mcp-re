@@ -62,6 +62,11 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         // guard asserts every audit rejection reason ∈ McpReError::wire_code()).
         "MCP_RE_CORE_SRC_ERROR" => workspace_root.join("mcp-re-core/src/error.rs"),
         "MCP_RE_CORE_SRC_AUDIT" => workspace_root.join("mcp-re-core/src/audit.rs"),
+        // The REAL producer of audit rejection reasons: the RFC 9421 serving path
+        // reaches its verdict as an `HttpProfileError` and hands `wire_code()` to the
+        // audit sink, so the vocabulary guard has to check THIS taxonomy is contained
+        // in the frozen one — otherwise it only checks a vocabulary nothing emits.
+        "MCP_RE_PROFILE_SRC_ERROR" => workspace_root.join("mcp-re-http-profile/src/error.rs"),
         "MCP_RE_PHASE5" => workspace_root.join("mcp-re-policy/tests/vectors/phase5_vectors.json"),
         // Per-crate BUILD.bazel (read by drift / traceability guards)
         "MCP_RE_BUILD_CONFORMANCE" => workspace_root.join("mcp-re-conformance/BUILD.bazel"),

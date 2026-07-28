@@ -26,3 +26,6 @@ __pycache__/
 
 # Coverage artifact from running the SDK suite at the repo root.
 .coverage
+
+# Claude Code
+/.claude

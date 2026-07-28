@@ -112,7 +112,7 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Syn
 
 fn actor_resolver() -> ActorResolver {
     let r = resolver();
-    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot))
+    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot).into())
 }
 
 fn custody_cfg() -> CustodyConfig {
@@ -431,6 +431,43 @@ async fn missing_delegated_key_fails_closed() {
     );
 }
 
+#[tokio::test]
+async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
+    // 503 is a transient status: a client that gets one retries. So if the tool call had
+    // already run, the retry runs it again — a signing-key gap turns one `tools/call`
+    // into two executions of whatever it does. The availability of the delegated key is
+    // therefore asked BEFORE anything is done on the request's behalf, not at the moment
+    // the reply needs signing.
+    let dispatched = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = Arc::clone(&dispatched);
+    let counting_inner: Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> =
+        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        });
+
+    // Rotor never rotated ⇒ no key published, so no reply can be signed.
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let proxy = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        counting_inner,
+        300,
+        signer,
+    );
+
+    let (req, _ev, _v) = signed_request("nonce-no-sideeffect-1");
+    let served = proxy.handle(served_of(&req), NOW).await;
+    assert_eq!(served.status, 503, "fail-closed unavailable");
+    assert_eq!(
+        dispatched.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the backend must not have executed for a request that could never be answered"
+    );
+}
+
 // --- required mode: a direct-root response is rejected ----------------------
 
 #[test]
@@ -519,4 +556,132 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
 
     // The root issuer was touched only at issuance — the 202 path is delegated too.
     assert_eq!(rotor.root_invocations(), 1, "root never touched on the request/202 path");
+}
+
+#[tokio::test]
+async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
+    // The check above goes through `mcp-re-http-profile`, which a client does not bind
+    // — the SDKs bind `mcp-re-client-core`. Until that crate exposed a 202 verifier, a
+    // client held a signed acknowledgement it could only take on faith, which is the
+    // posture MCP-RE exists to remove. This drives the client-facing entry point.
+    use mcp_re_client_core::verify_delegated_accepted_202 as client_verify_202;
+    use mcp_re_client_core::DelegationPolicy;
+    use mcp_re_client_core::StaticRevocationList;
+
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue first delegated key");
+    let proxy = delegated_proxy(Arc::clone(&signer));
+
+    let note = signed_notification("nonce-note-client-1");
+    let ack = http_response(proxy.handle(served_of(&note), NOW).await);
+    assert_eq!(ack.status, 202);
+
+    let policy = DelegationPolicy::new(
+        vec![VERIFIER_AUD.to_string()],
+        AUD_SCOPE,
+        vec![EPOCH.to_string()],
+        60,
+    );
+    let r = resolver();
+    let actor = client_verify_202(
+        &ack,
+        &note,
+        &move |k: &str, s| r(k, s),
+        &policy,
+        &StaticRevocationList::from_identifiers(Vec::<String>::new()),
+        NOW,
+    )
+    .expect("the client-facing crate verifies the server's 202");
+    assert_ne!(actor.identity.keyid, ROOT_KID, "delegated key, not the root");
+
+    // And it fails closed on an epoch the client does not accept — the same kill switch
+    // that governs every other delegated verification governs this one.
+    let stale = DelegationPolicy::new(
+        vec![VERIFIER_AUD.to_string()],
+        AUD_SCOPE,
+        vec!["epoch-999".to_string()],
+        60,
+    );
+    let r = resolver();
+    assert!(
+        client_verify_202(
+            &ack,
+            &note,
+            &move |k: &str, s| r(k, s),
+            &stale,
+            &StaticRevocationList::from_identifiers(Vec::<String>::new()),
+            NOW,
+        )
+        .is_err(),
+        "a 202 minted under an epoch the client does not accept must not verify"
+    );
+}
+
+/// C055: the envelope BOTH SDKs emit, through the real serving path.
+///
+/// The tests above hand-build the notification with `sign_request_full`. That proves the
+/// profile, not the client: what the SDKs actually send comes out of
+/// `mcp_re_client_core::build_signed_notification`, and the serving path classifies a
+/// notification by the ABSENCE of `id` — a client that emitted `"id": null` instead
+/// would be dispatched as a request and answered with a bodied reply nothing awaits.
+/// Nothing else in the tree checks that the two ends agree on that, and the demo proxy
+/// the SDK e2e tests run against had in fact drifted from the serving path here.
+#[tokio::test]
+async fn the_client_cores_own_notification_envelope_earns_a_202() {
+    use mcp_re_client_core::build_signed_notification;
+    use mcp_re_client_core::RequestSigningInputs;
+
+    let signer = Arc::new(DelegatedServerSigner::new());
+    let mut rotor = make_rotor(Arc::clone(&signer));
+    rotor.rotate(NOW).expect("issue first delegated key");
+    let proxy = delegated_proxy(Arc::clone(&signer));
+
+    let inputs = RequestSigningInputs::new(
+        CLIENT_KEY_ID,
+        audience(),
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        "nonce-sdk-envelope-1",
+        CREATED,
+        EXPIRES,
+    )
+    .with_headers(vec![(
+        "Authorization".to_owned(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = build_signed_notification(
+        "notifications/initialized",
+        serde_json::Map::new(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("the client core signs its notification");
+
+    let note = signed.into_request();
+    let served = proxy.handle(served_of(&note), NOW).await;
+    assert_eq!(
+        served.status, 202,
+        "the client core's own envelope must be classified as a notification"
+    );
+
+    let ack = http_response(served);
+    let r = resolver();
+    mcp_re_client_core::verify_delegated_accepted_202(
+        &ack,
+        &note,
+        &move |k: &str, s| r(k, s),
+        &mcp_re_client_core::DelegationPolicy::new(
+            vec![VERIFIER_AUD.to_string()],
+            AUD_SCOPE,
+            vec![EPOCH.to_string()],
+            60,
+        ),
+        &mcp_re_client_core::StaticRevocationList::from_identifiers(Vec::<String>::new()),
+        NOW,
+    )
+    .expect("the client core verifies the acknowledgement its own notification earned");
 }

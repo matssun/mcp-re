@@ -18,6 +18,13 @@ single-node non-claim retirement (MCPS-91) depend on.
 
 ## How to run
 
+**Precondition: `scripts/local_gate.sh --with-kind` green.** Stage 5 runs these four
+proofs against the identical harness, chart and images on a local kind cluster, for
+free — `PROVIDER=kind ./docs/security/gke-multi-replica-validation.sh`. That rehearsal
+has already caught six deploy defects (three fatal to the GKE run) that would
+otherwise have surfaced only after `gcloud builds submit`, on a billing cluster. See
+[`docs/dev/local-gate-order.md`](../dev/local-gate-order.md).
+
 ```bash
 gcloud auth login && gcloud config set project <PROJECT_ID>
 # provide the fleet TLS + trust Secret `mcp-re-tls` (see docs/fleet-deployment-guide.md)
@@ -44,6 +51,14 @@ export MCP_RE_TLS_CERT=…         MCP_RE_TLS_KEY=…     MCP_RE_SERVER_CA=…
 PROJECT_ID=<PROJECT_ID> ./docs/security/gke-multi-replica-validation.sh
 PROJECT_ID=<PROJECT_ID> ./docs/security/gke-multi-replica-validation.sh --teardown
 ```
+
+> **Inner containment is a per-cluster property, not a repo property.** The inner
+> manifest ships a NetworkPolicy making the proxy the only admitted ingress, but a
+> NetworkPolicy is accepted everywhere and enforced only by a CNI that implements it —
+> and the GKE cluster this script creates does NOT pass `--enable-network-policy`. The
+> harness therefore runs a deny test from an unrelated pod and prints whether the
+> containment is actually in force. Do not claim it on a cluster where that line says
+> it is not.
 
 The script is idempotent (create-or-reuse cluster/release), contains no secrets,
 and models the same shape as `gcloud-kms-validation.sh`. It deploys the Helm

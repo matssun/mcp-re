@@ -37,15 +37,18 @@
 
 use crate::block::HttpContinuation;
 use crate::block::HttpRequestEvidenceBlock;
-use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::extract_meta_block;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
+use crate::ids::REQUEST_LABEL;
+use crate::ids::RESPONSE_LABEL;
 use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
+use crate::verify::parse_signature_input_for;
 use crate::verify::verify_request_with_policy;
 use crate::verify::verify_response_bound_full_with_policy;
 
@@ -90,6 +93,11 @@ pub enum IncompleteReason {
     TerminalExpected,
     /// The reconstruction was handed no hops at all.
     EmptyChain,
+    /// A message in this hop declares a `created` later than the audit instant.
+    /// A record cannot contain evidence from the future, so the chain is refused
+    /// rather than verified at an instant its own archivist could not have
+    /// observed.
+    HopAfterAuditInstant,
 }
 
 /// The verdict on a retained chain. Never a bare boolean (§9.3).
@@ -146,24 +154,23 @@ pub enum HopOutcome {
     Terminal,
 }
 
-/// Classify a VERIFIED response body (`resultType == "input_required"`,
-/// SEP-2322 / ADR-MCPS-047).
+/// Classify a VERIFIED response body through the single discriminator
+/// ([`crate::result_class`], SEP-2322 / ADR-MCPS-047).
 ///
 /// Only ever called on bytes whose signature and `content-digest` already
 /// verified, so the classification is a reading of protected content rather than
 /// a claim about it. Anything that is not the input-required discriminator is
-/// terminal — the conservative direction, since mislabeling a terminal answer as
-/// non-terminal would make a COMPLETE chain look truncated (a false alarm),
+/// terminal — the conservative direction here, since mislabeling a terminal answer
+/// as non-terminal would make a COMPLETE chain look truncated (a false alarm),
 /// whereas the reverse would let a truncated chain pass as complete.
+///
+/// A body that will not parse is terminal for the same reason, and reconstruction
+/// does not need the stricter reading [`crate::result_class::input_required_state`]
+/// gives a live exchange: an unparseable body cannot have verified in step 2, so
+/// this is never reached with one.
 fn classify_verified_response(body: &[u8]) -> HopOutcome {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
-    let is_input_required = parsed
-        .as_ref()
-        .and_then(|v| v.get("result"))
-        .and_then(|r| r.get("resultType"))
-        .and_then(|t| t.as_str())
-        == Some("input_required");
-    if is_input_required {
+    if crate::result_class::is_input_required(parsed.as_ref().and_then(|v| v.get("result"))) {
         HopOutcome::InputRequired
     } else {
         HopOutcome::Terminal
@@ -176,6 +183,10 @@ fn classify_verified_response(body: &[u8]) -> HopOutcome {
 /// trust seam the live path uses — a keyid never introduces trust here either, and
 /// reconstruction is not a reason to relax it.
 ///
+/// `now` is the AUDIT instant, not the freshness clock: each message is verified
+/// at its own covered `created`, and `now` bounds those from above so a record
+/// cannot contain evidence from the future. [`hop_instant`] carries the reasoning.
+///
 /// Terminal/non-terminal status is DERIVED from each response's protected body
 /// after that response verifies. It is deliberately not a parameter: a caller-
 /// supplied classification would be authoritative over the chain-shape rule, and a
@@ -186,9 +197,9 @@ fn classify_verified_response(body: &[u8]) -> HopOutcome {
 /// broken hop: past that point the record is already not complete, and continuing
 /// would invite reporting later hops as "fine" when nothing links them to a
 /// beginning.
-pub fn reconstruct_chain(
+pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     hops: &[RetainedHop],
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> ChainReconstruction {
@@ -205,9 +216,43 @@ pub fn reconstruct_chain(
     }
 
     for (i, hop) in hops.iter().enumerate() {
+        // 0. Each message is verified at its own covered `created`, bounded above
+        //    by the audit instant. See [`hop_instant`] for why a retained record
+        //    cannot be held to the live clock.
+        let request_at = match hop_instant(
+            &hop.request.headers,
+            REQUEST_LABEL,
+            "request signature-input",
+            policy,
+            now,
+        ) {
+            Ok(t) => t,
+            Err(HopInstantError::Unreadable(e)) => {
+                return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e))
+            }
+            Err(HopInstantError::AfterAuditInstant) => {
+                return incomplete(hop_evidence, i, IncompleteReason::HopAfterAuditInstant)
+            }
+        };
+        let response_at = match hop_instant(
+            &hop.response.headers,
+            RESPONSE_LABEL,
+            "response signature-input",
+            policy,
+            now,
+        ) {
+            Ok(t) => t,
+            Err(HopInstantError::Unreadable(e)) => {
+                return incomplete(hop_evidence, i, IncompleteReason::ResponseUnverifiable(e))
+            }
+            Err(HopInstantError::AfterAuditInstant) => {
+                return incomplete(hop_evidence, i, IncompleteReason::HopAfterAuditInstant)
+            }
+        };
+
         // 1. The hop's request must verify on its own.
         let verified_req =
-            match verify_request_with_policy(&hop.request, resolve_actor, policy, now) {
+            match verify_request_with_policy(&hop.request, resolve_actor, policy, request_at) {
                 Ok(v) => v,
                 Err(e) => {
                     return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e))
@@ -221,7 +266,7 @@ pub fn reconstruct_chain(
             &verified_req.evidence,
             resolve_actor,
             policy,
-            now,
+            response_at,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -282,6 +327,58 @@ pub fn reconstruct_chain(
         label: ChainLabel::Complete,
         hop_evidence,
     }
+}
+
+/// Why an instant could not be taken from a retained message.
+enum HopInstantError {
+    /// The message carries no readable `signature-input`, or no `created` in it.
+    /// Verification would fail on the same ground, so this is reported as the
+    /// message being unverifiable rather than as a distinct kind of break.
+    Unreadable(HttpProfileError),
+    /// The message declares a `created` after the audit instant.
+    AfterAuditInstant,
+}
+
+/// The instant at which ONE retained message is verified.
+///
+/// A retained chain is a RECORD, not live traffic. Verifying every hop against the
+/// caller's live clock made [`ChainLabel::Complete`] unreachable for any genuine
+/// multi-turn call older than a single freshness window: hop 0's window closes
+/// while the call is still in progress, so the label decayed with age instead of
+/// describing the evidence. Each message is therefore verified at its OWN covered
+/// `created`, which satisfies its own freshness test by construction — a window
+/// with `expires <= created` is refused skew-free, so `created` always lies inside
+/// the window that message declares.
+///
+/// This does not relax the window rules. Both are properties of the message rather
+/// than of the clock, and both still run per hop: the degenerate-window check and
+/// the bound on how WIDE a signer may declare its window. And `created` is covered
+/// by the signature that is about to be checked, so a hop cannot move its own
+/// verification instant without invalidating itself — reading it here, before that
+/// signature verifies, decides only which instant to test, never whether to trust.
+///
+/// `now` keeps a job, and a sharper one: it is the AUDIT instant. A message
+/// `created` after it is refused, because a record cannot contain evidence from
+/// the future. The same skew tolerance the live path allows applies, so an
+/// archivist whose clock trails the signer's by less than the tolerance does not
+/// see its own honest records rejected.
+fn hop_instant(
+    headers: &[(String, String)],
+    label: &str,
+    what: &'static str,
+    policy: &VerifierPolicy,
+    now: i64,
+) -> Result<i64, HopInstantError> {
+    let parsed = parse_signature_input_for(headers, label, what)
+        .map_err(HopInstantError::Unreadable)?;
+    let created = parsed
+        .params
+        .created
+        .ok_or(HopInstantError::Unreadable(HttpProfileError::StaleWindow))?;
+    if created.saturating_sub(policy.max_clock_skew()) > now {
+        return Err(HopInstantError::AfterAuditInstant);
+    }
+    Ok(created)
 }
 
 fn incomplete(

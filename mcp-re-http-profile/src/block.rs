@@ -110,6 +110,57 @@ pub struct ResolvedActor {
     pub slot: SignerSlot,
 }
 
+/// What the trust seam answers with (C079).
+///
+/// The seam used to be `-> Option<ResolvedActor>`, which made a store OUTAGE and an
+/// UNKNOWN KEYID the same observation. Both fail closed — that was never in doubt —
+/// but they are different facts, and the verifier reported the outage as
+/// `actor_binding_failed`, sending an operator to inspect the caller's credentials
+/// during an incident in their own trust store. `mcp-re-core` has modelled the
+/// distinction since the beginning (`TrustResolverError::Unavailable`); it simply could
+/// not cross this seam, so `mcp-re.trust_resolver_unavailable` had no emission site.
+///
+/// `From<Option<ResolvedActor>>` is provided so a resolver with no notion of
+/// unavailability — every in-process and test resolver — stays a one-line closure:
+/// `None` means NOT TRUSTED, which is what it always meant.
+#[derive(Debug, Clone)]
+pub enum ResolverOutcome {
+    /// The keyid resolves to this actor for the requested slot.
+    Resolved(ResolvedActor),
+    /// A definitive negative from a HEALTHY resolver: no such trusted binding.
+    /// → `mcp-re.actor_binding_failed`.
+    NotTrusted,
+    /// The resolver could not answer (backing store unreachable, timeout). NOT a
+    /// verdict about the key, and never a fallback to allow.
+    /// → `mcp-re.trust_resolver_unavailable`.
+    Unavailable,
+}
+
+impl ResolverOutcome {
+    /// The resolved actor, collapsing both negative outcomes to `None`.
+    ///
+    /// Used where a downstream seam cannot yet express unavailability — currently the
+    /// delegation credential's ROOT-key resolver, which is
+    /// `Fn(&str) -> Option<VerificationKey>`. Collapsing there preserves today's
+    /// fail-closed behaviour exactly; widening that seam too is follow-on work, and it
+    /// is called out here rather than left as a silent narrowing.
+    pub fn resolved(self) -> Option<ResolvedActor> {
+        match self {
+            ResolverOutcome::Resolved(actor) => Some(actor),
+            ResolverOutcome::NotTrusted | ResolverOutcome::Unavailable => None,
+        }
+    }
+}
+
+impl From<Option<ResolvedActor>> for ResolverOutcome {
+    fn from(value: Option<ResolvedActor>) -> Self {
+        match value {
+            Some(actor) => ResolverOutcome::Resolved(actor),
+            None => ResolverOutcome::NotTrusted,
+        }
+    }
+}
+
 impl ResolvedActor {
     /// The canonical `actor_id` of the resolved signer (delegates to
     /// [`ActorIdentity::actor_id`]).

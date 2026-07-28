@@ -35,7 +35,6 @@
 // ADR-MCPS-022: explicit authorized server key set + per-audience response-signing
 // identity mode (per_node_keyset default | shared_remote_signer). The verifier-side
 // admission anchor; composes with `trust_cache::BoundedTrustCache` (ADR-MCPS-021).
-pub mod authorized_keyset;
 // ADR-MCPRE-051 §6 (MCPRE-116): versioned, atomically-swapped serving-config
 // snapshots + the in-process CRL hot-reloader (subsumes MCPS-66). Always compiled;
 // pure std (RwLock<Arc<ServerConfig>>), no new dependency.
@@ -73,6 +72,7 @@ pub mod durable_replay;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
 pub mod key_source;
+pub mod audit_sink;
 pub mod log_sink;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the
@@ -189,12 +189,6 @@ pub mod trust_epoch;
 // the bounded-`T` window + negative-cache classification + fail-closed rules.
 pub mod trust_cache;
 
-pub use authorized_keyset::AuthorizedKeyEntry;
-pub use authorized_keyset::AuthorizedKeySet;
-pub use authorized_keyset::KeySetError;
-pub use authorized_keyset::KeySetTrustResolver;
-pub use authorized_keyset::KeyStatus;
-pub use authorized_keyset::ResponseSigningIdentityMode;
 // ADR-MCPS-028 §B: the AWS KMS Ed25519 backend (feature-gated). Drives the
 // `KmsResponseSigner` core via the `KmsEd25519Backend` seam.
 #[cfg(feature = "aws_kms_keysource")]
@@ -217,6 +211,11 @@ pub use gcp_kms_keysource::GcpKmsConfig;
 #[cfg(feature = "gcp_kms_keysource")]
 pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use durable_replay::DurableReplayCache;
+pub use audit_sink::AuditRecord;
+pub use audit_sink::AuditSink;
+pub use audit_sink::CollectingAuditSink;
+pub use audit_sink::NoAuditSink;
+pub use audit_sink::StderrAuditSink;
 pub use log_sink::InnerLogEvent;
 pub use log_sink::InnerLogSink;
 pub use log_sink::StderrLogSink;
@@ -281,6 +280,7 @@ pub use transport::AssertedIdentityRejection;
 pub use transport::RoutingHeaderRejection;
 pub use transport::MCP_METHOD_HEADER;
 pub use transport::MCP_NAME_HEADER;
+pub use transport::MAX_ASSERTED_IDENTITY_LEN;
 pub use transport::ExactMatchBinding;
 pub use transport::IdentityPolicy;
 pub use transport::IdentitySource;

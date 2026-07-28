@@ -22,10 +22,10 @@ use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::transport::TransportBindingPolicy;
 use crate::async_serve::ServedHttpRequest;
-use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use std::collections::HashMap;
 use crate::tls;
@@ -58,28 +58,153 @@ fn trust_clock() -> crate::trust_cache::UnixClock {
     crate::trust_cache::system_clock()
 }
 
+/// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
+/// consults for every signature it verifies (slot discipline, MCPRE-100).
+///
+/// The Response slot answers only for `response_kid`, from the root/issuer public key
+/// held at build time: that key is the deployment's trust anchor, revoked by root
+/// rotation rather than by a trust-store entry.
+///
+/// The Request slot resolves through `request_trust` — the ADR-MCPS-021
+/// revocation-tier resolver — on EVERY request. `client_signers` supplies only the
+/// `kid -> signer` identity coordinate; deliberately not the key, since caching the
+/// key here would re-freeze trust at process start and silently bypass the tier.
+/// Every non-active outcome (`Revoked`, `NotFound`, `MalformedKey`, `Unavailable`)
+/// yields no actor, which the verifier surfaces as `actor_binding_failed`; an
+/// operational failure is never softened into an allow.
+pub fn build_actor_resolver(
+    client_signers: HashMap<String, String>,
+    request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
+    trust_domain: String,
+    response_kid: String,
+    server_identity: ActorIdentity,
+    response_pub: mcp_re_core::VerificationKey,
+) -> crate::ActorResolver {
+    Box::new(move |kid: &str, slot: SignerSlot| match slot {
+        SignerSlot::Response if kid == response_kid => {
+            ResolverOutcome::Resolved(ResolvedActor {
+                identity: server_identity.clone(),
+                verification_key: response_pub.clone(),
+                slot,
+            })
+        }
+        SignerSlot::Request => {
+            // An unknown kid is a definitive negative from a healthy resolver.
+            let Some(signer) = client_signers.get(kid) else {
+                return ResolverOutcome::NotTrusted;
+            };
+            // C079: `.ok()?` used to throw this error away, so a store OUTAGE and an
+            // unknown keyid became the same observation and the outage was reported as
+            // `actor_binding_failed`. `mcp-re-core` has always modelled the difference
+            // (`TrustResolverError::Unavailable`); it simply could not cross the seam.
+            // Both still fail closed — only the reported reason changes.
+            let key = match request_trust.resolve(signer, kid) {
+                Ok(key) => key,
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {
+                    return ResolverOutcome::Unavailable
+                }
+                Err(_) => return ResolverOutcome::NotTrusted,
+            };
+            ResolverOutcome::Resolved(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".to_string(),
+                    trust_domain: trust_domain.clone(),
+                    subject: signer.clone(),
+                    keyid: kid.to_string(),
+                },
+                verification_key: key,
+                slot,
+            })
+        }
+        _ => ResolverOutcome::NotTrusted,
+    })
+}
+
 /// Enforce the key-file-permission posture for a sensitive key file. The proxy
 /// always runs the maximal-security posture, so a group/world-accessible key file
 /// is a HARD error returned to the caller (startup refuses). Uses the pure
 /// [`cli::key_file_mode_is_insecure`] predicate so it stays consistent with (and
 /// testable alongside) the parse-time checks.
 #[cfg(unix)]
-fn check_key_file_perms(path: &str) -> Result<(), String> {
+fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(path) {
         let mode = meta.permissions().mode();
-        if cli::key_file_mode_is_insecure(mode) {
+        if let Some(reason) = cli::key_file_posture_violation(
+            mode,
+            meta.gid(),
+            allow_group_read,
+            &process_gids(),
+        ) {
             return Err(format!(
                 "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
-                 is group/world-accessible (mode {:o}); restrict to 0600",
+                 is {reason} (mode {:o}); restrict to 0600",
                 mode & 0o777
             ));
         }
     }
     Ok(())
 }
+
+/// The groups this process belongs to: the effective gid plus its supplementary
+/// groups. Under Kubernetes `fsGroup` the mounted Secret is owned by a supplementary
+/// group, not the effective one, so checking only `getegid()` would refuse the very
+/// mount model the relaxation exists for.
+#[cfg(unix)]
+fn process_gids() -> Vec<u32> {
+    let mut gids = vec![unsafe { libc::getegid() } as u32];
+    // SAFETY: the two-call idiom — ask for the count, then fill a buffer of that size.
+    unsafe {
+        let count = libc::getgroups(0, std::ptr::null_mut());
+        if count > 0 {
+            let mut buf = vec![0 as libc::gid_t; count as usize];
+            if libc::getgroups(count, buf.as_mut_ptr()) >= 0 {
+                gids.extend(buf.into_iter().map(|g| g as u32));
+            }
+        }
+    }
+    gids
+}
+/// Every private-key file this config causes the proxy to READ from disk.
+///
+/// Pure, so the decision is testable on its own — the defect this replaces was not in
+/// the permission predicate but in which files it was pointed at.
+///
+/// The rule follows the files, not the key-source name. The signing seed is read only
+/// under `file` custody; a PKCS#11/KMS source never surrenders it, and those sources
+/// thread the path only into the `FileKeySource` they use for TLS material. The TLS
+/// server private key, by contrast, is read under EVERY custody mode unless TLS signing
+/// is itself delegated — and `cli::parse_args` leaves `tls_key` empty in exactly that
+/// delegated case, which is why emptiness is the right test rather than the mode.
+///
+/// Gating the whole check on `key_source == File` therefore skipped the one private key
+/// that DOES land in the pod in precisely the modes advertised as "no key material ever
+/// lands in the pod": a Secret mounted with Kubernetes' default 0644 booted silently.
+fn key_files_read_from_disk(config: &cli::Config) -> Vec<&str> {
+    let mut paths = Vec::new();
+    if config.key_source == KeySourceKind::File && !config.signing_key_seed.is_empty() {
+        paths.push(config.signing_key_seed.as_str());
+    }
+    if !config.tls_key.is_empty() {
+        paths.push(config.tls_key.as_str());
+    }
+    // The PKCS#11 User PIN file is not a key, but it is the credential that unlocks the
+    // token holding the signing and (optionally) TLS keys — so a group/world-readable PIN
+    // file is as good as a readable key file, and belongs behind the same floor.
+    if let Some(pin_file) = config.pkcs11_pin_file.as_deref() {
+        if !pin_file.is_empty() {
+            paths.push(pin_file);
+        }
+    }
+    paths
+}
+
+/// No-op off unix: the mode bits this guard reads do not exist there. Kept in step with
+/// the unix signature above — it had drifted to a second `strict` parameter no caller
+/// passes, so this arm could not have compiled.
 #[cfg(not(unix))]
-fn check_key_file_perms(_path: &str, _strict: bool) -> Result<(), String> {
+fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -146,12 +271,11 @@ pub fn run(
             config.bind,
         );
     }
-    if config.key_source == KeySourceKind::File {
-        // A group/world-readable key file is a HARD error (refuse startup). The other
-        // guards are parse-time and already enforced inside `cli::parse_args`; this
-        // one is filesystem-dependent so it lives here.
-        check_key_file_perms(&config.signing_key_seed)?;
-        check_key_file_perms(&config.tls_key)?;
+    // A group/world-readable key file is a HARD error (refuse startup). The other
+    // guards are parse-time and already enforced inside `cli::parse_args`; this one is
+    // filesystem-dependent so it lives here.
+    for path in key_files_read_from_disk(&config) {
+        check_key_file_perms(path, config.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
     // rejected at parse time (`cli::unsafe_config_violations`), so by here it is
@@ -238,9 +362,15 @@ pub fn run(
     // Build the RFC 9421 serving PEP (ADR-MCPRE-050 sole carrier). The trust file
     // supplies the ActorResolver: each trusted key_id resolves to a structured
     // ResolvedActor — client keys for the Request slot, the server key for the
-    // Response slot (slot discipline, MCPRE-100). `_resolver`/`key_source` stay for
-    // the TLS path; the object response-signer seam is gone.
-    let _ = &resolver;
+    // Response slot (slot discipline, MCPRE-100).
+    //
+    // The Request slot resolves its verification key through the ADR-MCPS-021
+    // revocation-tier resolver built above, so the tier whose guarantee is printed
+    // at startup is the tier the data plane actually runs: a `Revoked`/`NotFound`
+    // binding rejects the request, and an `Unavailable` fails closed rather than
+    // serving a key. The trust file supplies only the kid -> signer identity
+    // coordinate; the KEY comes from the resolver on every request.
+    let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
     let trust_entries = cli::load_trust_entries(&trust_bytes)?;
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
@@ -260,34 +390,22 @@ pub fn run(
         subject: config.server_signer.clone(),
         keyid: response_kid.clone(),
     };
-    let mut client_map: HashMap<String, (String, VerificationKey)> = HashMap::new();
-    for (signer, key_id, key) in trust_entries {
+    // kid -> signer only. The verification key is deliberately NOT captured here:
+    // caching it would re-freeze trust at boot and bypass the revocation tier.
+    let mut client_signers: HashMap<String, String> = HashMap::new();
+    for (signer, key_id, _key) in trust_entries {
         if key_id != response_kid {
-            client_map.insert(key_id, (signer, key));
+            client_signers.insert(key_id, signer);
         }
     }
-    let skid = response_kid.clone();
-    let sident = server_identity.clone();
-    let td = config.trust_domain.clone();
-    let resolve_actor: crate::ActorResolver =
-        Box::new(move |kid: &str, slot: SignerSlot| match slot {
-            SignerSlot::Response if kid == skid => Some(ResolvedActor {
-                identity: sident.clone(),
-                verification_key: response_pub.clone(),
-                slot,
-            }),
-            SignerSlot::Request => client_map.get(kid).map(|(signer, key)| ResolvedActor {
-                identity: ActorIdentity {
-                    role: "client".to_string(),
-                    trust_domain: td.clone(),
-                    subject: signer.clone(),
-                    keyid: kid.to_string(),
-                },
-                verification_key: key.clone(),
-                slot,
-            }),
-            _ => None,
-        });
+    let resolve_actor = build_actor_resolver(
+        client_signers,
+        Arc::clone(&resolver),
+        config.trust_domain.clone(),
+        response_kid.clone(),
+        server_identity.clone(),
+        response_pub,
+    );
     let expected_audience = AudienceTuple {
         audience_id: config.audience.clone(),
         target_uri: config.target_uri.clone(),
@@ -391,10 +509,18 @@ pub fn run(
                         .enable_all()
                         .build()
                         .map_err(|e| format!("build replay control runtime: {e}"))?;
-                    let store = Arc::new(
-                        rt.block_on(crate::RedisAsyncAtomicReplayStore::connect(&url))
-                            .map_err(|e| format!("connect redis async replay store: {e:?}"))?,
-                    );
+                    let mut store = rt
+                        .block_on(crate::RedisAsyncAtomicReplayStore::connect(&url))
+                        .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
+                    // Apply the DECLARED durability tier to the store that actually
+                    // serves. `startup_audit_line` above promises "WAIT timeout or
+                    // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
+                    // this the store would run plain SET NX PX and the promise would
+                    // be audited but unenforced.
+                    if let Some((quorum, timeout_ms)) = tier_kind.wait_quorum_params() {
+                        store = store.with_wait_quorum(quorum, timeout_ms);
+                    }
+                    let store = Arc::new(store);
                     replay_async = crate::async_replay::AsyncReplayTier::new(
                         store,
                         config.max_clock_skew,
@@ -737,6 +863,31 @@ pub fn run(
             mut rotor,
             overlap,
         } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
+        // Resolve the shared trust epoch BEFORE the first key is minted, so the very
+        // first credential carries the globally comparable `<base>#<counter>` label
+        // rather than the bare base. Minting under the bare label is what let a
+        // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
+        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
+        if let Some(watch) = epoch_watch.as_ref() {
+            // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
+            // read means we cannot produce an epoch verifiers can compare, so we must
+            // not issue at all. Refusing to start is the honest outcome — the previous
+            // behaviour was to start anyway with the switch wired to nothing.
+            let label = watch.current_label().ok_or_else(|| {
+                "delegated-signing: --trust-epoch-redis-url is configured but the shared trust \
+                 epoch could NOT be read at startup, so no credential can carry a comparable \
+                 epoch. Refusing to start rather than minting keys the operator's kill switch \
+                 cannot revoke (fail closed, ADR-MCPRE-052 §7)."
+                    .to_string()
+            })?;
+            eprintln!(
+                "mcp-re-proxy: delegated trust-epoch watch ACTIVE; minting under {label:?}. An \
+                 operator INCR moves every replica to the next label, so verifiers pinned to the \
+                 prior accepted-epoch set reject fleet-wide — and a restarted replica resolves \
+                 the SAME label as its peers."
+            );
+            rotor.set_trust_epoch_before_first_issue(label);
+        }
         // Initial issuance MUST succeed before serving: the proxy never serves without
         // an active delegated key (fail closed, ADR-MCPRE-052 §6).
         rotor.rotate(startup_now_unix).map_err(|e| {
@@ -756,7 +907,6 @@ pub fn run(
         // watches the shared trust-epoch counter and re-issues under a new epoch on an
         // advance, so an operator `INCR` revokes the outstanding delegated keys across
         // the fleet (ADR-MCPRE-052 §7).
-        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
         spawn_delegated_rotation_task(
             rotor,
             Arc::clone(&signer),
@@ -774,6 +924,48 @@ pub fn run(
             signer,
         )
     };
+    // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
+    // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
+    // `VerifierPolicy::new` is the validating constructor: a skew outside
+    // `0..=MAX_CLOCK_SKEW_BOUND` refuses to build and startup fails closed rather
+    // than serving a window the operator did not get. One value drives both the
+    // acceptance window and the replay `retain_until`, so an admitted nonce is
+    // retained for exactly as long as its signature can still be accepted.
+    let mut verifier_policy =
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], config.max_clock_skew).map_err(
+            |_| {
+                format!(
+                    "--max-clock-skew {} is out of bounds: the RFC 9421 freshness gate accepts \
+                     0..={} seconds (§5.1 bounded skew)",
+                    config.max_clock_skew,
+                    mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+                )
+            },
+        )?;
+    // §4.1: the MCP transport/version contract is enforced only when the operator
+    // declares the protocol versions this deployment serves. Absent the flag there
+    // is no contract, so required-header presence and `Mcp-Name`/`params.name`
+    // agreement are not asserted — declared explicitly rather than defaulted.
+    if !config.mcp_protocol_versions.is_empty() {
+        let versions: Vec<&str> = config
+            .mcp_protocol_versions
+            .iter()
+            .map(String::as_str)
+            .collect();
+        eprintln!(
+            "mcp-re-proxy: MCP transport contract ENFORCED for protocol version(s) {:?} \
+             (required transport headers covered; Mcp-Name must equal params.name)",
+            config.mcp_protocol_versions
+        );
+        verifier_policy = verifier_policy.with_mcp_transport(
+            mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&versions),
+        );
+    }
+    eprintln!(
+        "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
+        skew = config.max_clock_skew
+    );
+    proxy = proxy.with_verifier_policy(verifier_policy);
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
     }
@@ -853,9 +1045,15 @@ fn serve_fleet(
         addr,
         cores: config.cores, // 0 = auto (one worker per core); --cores pins it
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
-        max_in_flight_total: None,
+        // MCPRE-114: the operator's fleet-global ceiling, divided evenly per core by
+        // `async_fleet::apply_global_admission`. `None` = no global target.
+        max_in_flight_total: config.max_in_flight_total,
     };
-    let server_config = config_snapshot.load();
+    // MCPRE-116: hand the fleet the SNAPSHOT, not a one-shot `load()`. The accept
+    // loop re-reads it per connection, so the CRL hot-reload task's atomic swap is
+    // observed by the next handshake instead of being written to a config nothing
+    // reads again.
+    let server_config = Arc::clone(&config_snapshot);
     let serve_options = Arc::new(serve_options);
     // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
     // test flips it directly). We hand a clone to the fleet and poll the same flag.
@@ -970,8 +1168,55 @@ fn spawn_delegated_rotation_task(
     epoch_watch: Option<DelegatedEpochWatch>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    use crate::delegated_server_signer::rotation_backoff;
     std::thread::spawn(move || {
+        // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
+        // its `JoinHandle` is dropped, so nothing joins it. Left bare, a panic on any
+        // reachable `.expect()` (the CSPRNG draw, the two custody invariants) would end all
+        // rotation for the process lifetime while every health surface still read steady
+        // state: `DelegatedRotationMetrics.consecutive_failures` is only written BY this
+        // thread, so a dead thread leaves it at 0 and the replica appears healthy right up
+        // until the current key's `exp`, then 503s with no attributable cause.
+        //
+        // So the loop runs inside `catch_unwind` and a panic is converted into the
+        // strongest honest signal available: RETIRE the snapshot, which makes the hot path
+        // fail closed IMMEDIATELY (`delegated_signing_unavailable`) rather than at `exp`,
+        // and record a failure so the metric stops reading healthy. The thread does not
+        // resume — after a panic the rotor's state is not known good, and continuing to
+        // mint from it would be worse than refusing.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rotation_loop(
+                &mut rotor,
+                &signer,
+                overlap,
+                epoch_watch.as_ref(),
+                &shutdown,
+            )
+        }));
+        if outcome.is_err() {
+            signer.retire();
+            signer.metrics().record_failure();
+            eprintln!(
+                "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
+                 rotation has stopped for the lifetime of this process and the current \
+                 snapshot has been retired, so response signing now fails closed \
+                 (delegated_signing_unavailable) immediately rather than at the key's exp. \
+                 This replica cannot recover on its own — restart it."
+            );
+        }
+    });
+}
+
+/// The rotation loop proper. Split out of [`spawn_delegated_rotation_task`] so the
+/// supervisor above can catch a panic from anywhere inside it.
+fn rotation_loop(
+    rotor: &mut crate::delegated_wiring::ProdDelegatedRotor,
+    signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
+    overlap: i64,
+    epoch_watch: Option<&DelegatedEpochWatch>,
+    shutdown: &Arc<std::sync::atomic::AtomicBool>,
+) {
+    use crate::delegated_server_signer::rotation_backoff;
+    {
         // Failures since the last success drive the backoff schedule; 0 in steady state.
         let mut consecutive_failures: u32 = 0;
         // The epoch this node is currently minting under (starts at the configured
@@ -1018,7 +1263,32 @@ fn spawn_delegated_rotation_task(
             // reject on the next request (cross-replica, since every replica reads the
             // same counter). ADR-MCPRE-052 §7.
             if let Some(watch) = epoch_watch.as_ref() {
-                if let Some(label) = watch.current_label() {
+                let resolved = watch.current_label();
+                if resolved.is_none() {
+                    // FAIL CLOSED FOR MINTING: the shared epoch is unreadable (outage)
+                    // or went backwards (refused, never rebased). Either way we cannot
+                    // produce a comparable epoch, so we must not issue. The current key
+                    // keeps serving until its `exp`, after which the hot path fails
+                    // closed on its own — no stale-epoch minting, no rebase. Back off
+                    // and retry; the reader reconnects on the next read.
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: shared trust epoch unreadable or regressed; \
+                         NOT minting (a credential without a comparable epoch is unrevokable). \
+                         Current key serves until exp then fails closed. \
+                         consecutive_failures {}, time-to-expiry {}s. Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                    continue;
+                }
+                if let Some(label) = resolved {
                     if label != last_label {
                         match rotor.advance_trust_epoch(label.clone(), now_unix()) {
                             Ok(()) => {
@@ -1027,8 +1297,11 @@ fn spawn_delegated_rotation_task(
                                 signer.metrics().record_success(now_unix());
                                 eprintln!(
                                     "mcp-re-proxy: trust epoch advanced -> {last_label}: delegated \
-                                     keys re-issued under the new epoch; the prior epoch is now \
-                                     rejected (delegation_trust_epoch_stale) across the fleet."
+                                     keys re-issued under the new epoch. This replica no longer \
+                                     mints under the prior epoch. Credentials already issued under \
+                                     it stay VERIFIABLE until verifiers are pointed at the new \
+                                     epoch — update the verifiers' accepted epochs to complete the \
+                                     revocation (delegation_trust_epoch_stale)."
                                 );
                                 continue;
                             }
@@ -1052,7 +1325,35 @@ fn spawn_delegated_rotation_task(
                     }
                 }
             }
+            // The delegated kid BEFORE the attempt, so silent no-progress is detectable.
+            // `ensure_active` returns Ok when successor issuance FAILED but the current
+            // key is still valid (custody.rs: the `!current_valid` guard is skipped and
+            // the fallthrough `Some(a) if now < a.exp => Ok(())` wins). That is the
+            // PRIMARY failure mode — a root outage during the overlap window, exactly
+            // what the overlap exists to absorb — and taking it as success would reset
+            // `consecutive_failures`, collapse `wake_at` to now (we are already past
+            // `exp - overlap`), and re-enter this arm immediately: a tight retry loop
+            // against the root KMS/HSM, minting a fresh keypair every pass, for the
+            // whole overlap window. The backoff below must cover it.
+            let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
             match rotor.rotate(now_unix()) {
+                Ok(()) if !rotation_made_progress(&signer, &before_kid, overlap) => {
+                    consecutive_failures = signer.metrics().record_failure();
+                    let ttl = signer.seconds_to_expiry(now_unix());
+                    let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: delegated successor issuance FAILED (root issuer \
+                         unavailable) but the current key is still valid; consecutive_failures {}, \
+                         time-to-expiry {}s. Serving continues on the current key until its exp, \
+                         then FAILS CLOSED (ADR-MCPRE-052 §6). Retrying in {}ms.",
+                        consecutive_failures,
+                        ttl.unwrap_or(0),
+                        backoff.as_millis(),
+                    );
+                    if interruptible_sleep(backoff, &shutdown) {
+                        return;
+                    }
+                }
                 Ok(()) => {
                     consecutive_failures = 0;
                     signer.metrics().record_success(now_unix());
@@ -1094,7 +1395,36 @@ fn spawn_delegated_rotation_task(
                 }
             }
         }
-    });
+    }
+}
+
+/// Did the rotation attempt actually mint a successor?
+///
+/// `DelegatedSigningCustody::ensure_active` reports `Ok(())` in two very different
+/// situations: a successor was issued, or issuance failed while the current key is
+/// still valid (so the fleet keeps signing and the caller is expected to retry).
+/// Only the first is progress. Without this distinction the retry loop treats a root
+/// outage during the overlap window as steady state and spins on the root issuer.
+///
+/// Progress means the published delegated kid changed. When nothing is published at
+/// all there is nothing to keep serving on, and the `Err` arm already handles that;
+/// when the attempt was not yet due (we are outside the overlap window) an unchanged
+/// kid is expected and not a failure.
+fn rotation_made_progress(
+    signer: &crate::delegated_server_signer::DelegatedServerSigner,
+    before_kid: &Option<String>,
+    overlap: i64,
+) -> bool {
+    let now = now_unix();
+    let Some(active) = signer.current(now) else {
+        // Nothing published: not progress, but also nothing to back off protecting.
+        return false;
+    };
+    if active.delegated_kid != *before_kid.as_deref().unwrap_or("") {
+        return true;
+    }
+    // Same kid. Only a rotation that was DUE and did not happen is a failure.
+    now < active.exp - overlap
 }
 
 /// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
@@ -1169,33 +1499,69 @@ fn build_trust_epoch_channel(
 /// response keys across the fleet (ADR-MCPRE-052 §7). The RESPONSE-side counterpart to
 /// [`build_trust_epoch_channel`], which flushes the REQUEST-trust cache on the same
 /// advance. Read-only; a read error leaves the epoch unchanged (never advance on a
-/// transient blip). The minted label is baseline-relative: while the live counter
-/// equals the value seen at startup the node mints the configured `--delegated-trust-epoch`
-/// (so verifiers pinned to it accept); once it advances, the node mints a DISTINCT
-/// label (`<base>#<counter>`) that those verifiers reject as a stale epoch.
+/// transient blip).
+///
+/// What an advance does and does not do: it stops this fleet MINTING under the prior
+/// epoch. It does not reach credentials already issued under it — no verifier reads the
+/// counter, so `accepted_epochs` is static verifier configuration and a leaked
+/// credential stays verifiable until the verifiers are pointed at the new epoch
+/// (docs/spec/delegated-required-validation-matrix.md §C.1, "Operational consequence").
+/// The counter is therefore also a fleet availability dependency: anyone who can write
+/// the shared key can advance it and make every replica mint a label the currently
+/// configured verifiers reject.
+///
+/// The emitted label is ALWAYS `<base>#<counter>` — never the bare base label. That is
+/// what makes an operator `INCR` survive a replica restart: the label is derived purely
+/// from shared state, so every replica at counter `N` mints `<base>#N` regardless of
+/// when it started. The previous design compared the counter against a baseline read at
+/// *this process's* startup and emitted the bare base label while they matched, so a
+/// replica restarting after an `INCR` adopted the advanced value as its own baseline,
+/// never observed an advance, and kept minting an epoch verifiers still accepted — the
+/// kill switch was process-relative rather than durable.
+///
+/// `high_water` makes the emitted epoch monotone WITHIN a process: a read that goes
+/// backwards (store reset, failover to a stale replica, a reconnect landing on the
+/// wrong instance) is refused rather than rebased, so reconnection can never re-mint
+/// under an epoch a verifier has already stopped accepting. Across a restart the shared
+/// counter is the only authority, by construction — a store that loses its counter is a
+/// trust-store failure, not something a replica can detect locally.
 struct DelegatedEpochWatch {
     reader: Box<dyn crate::trust_epoch::EpochReader>,
-    baseline: i64,
     base_label: String,
+    high_water: std::sync::Mutex<Option<i64>>,
 }
 
 impl DelegatedEpochWatch {
-    /// The trust-epoch label for the current shared counter, or `None` on a read
-    /// error (the caller then leaves the minted epoch unchanged — fail safe: a Redis
-    /// blip must never spuriously revoke a healthy fleet).
+    /// The label to mint under, or `None` when the shared epoch cannot be established.
+    ///
+    /// `None` is FAIL CLOSED FOR MINTING: the caller must not issue a credential,
+    /// because it cannot produce an epoch verifiers can compare. It does not retire the
+    /// current key — the fleet keeps signing off it until its `exp` and the hot path
+    /// then fails closed on its own (ADR-MCPRE-052 §6). Crucially it is also not treated
+    /// as "no change": a blip must never be read as an advance, nor as permission to
+    /// mint under a stale label.
     fn current_label(&self) -> Option<String> {
-        match self.reader.read_epoch() {
-            Ok(c) if c == self.baseline => Some(self.base_label.clone()),
-            Ok(c) => Some(format!("{}#{}", self.base_label, c)),
-            Err(_) => None,
+        let counter = self.reader.read_epoch().ok()?;
+        let mut hw = self.high_water.lock().ok()?;
+        if matches!(*hw, Some(prev) if counter < prev) {
+            // Regression. Refuse rather than rebase: minting under the lower epoch
+            // would resurrect credentials the fleet's verifiers already reject.
+            return None;
         }
+        *hw = Some(counter);
+        Some(format!("{}#{}", self.base_label, counter))
     }
 }
 
 /// Build the delegated-signing trust-epoch watcher from `--trust-epoch-redis-url`.
-/// `None` when no source is configured (no cross-replica revocation signal — the
-/// epoch is then whatever `--delegated-trust-epoch` fixed it to, the honest bounded
-/// behavior). `base_label` is the configured `--delegated-trust-epoch`.
+/// `None` when no source is configured — the epoch is then whatever
+/// `--delegated-trust-epoch` fixed it to, with no cross-replica revocation signal (the
+/// honest bounded behaviour for a single-node deployment).
+///
+/// When a URL IS configured the watcher is always returned: the reader connects lazily
+/// and re-establishes after any failure, so a store that is briefly unreachable at boot
+/// no longer leaves this replica permanently without the operator's kill switch. The
+/// caller resolves the initial label and fails closed if it cannot.
 #[cfg(feature = "redis_replay")]
 fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Option<DelegatedEpochWatch> {
     let url = config.trust_epoch_redis_url.as_ref()?;
@@ -1203,24 +1569,20 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
         .trust_epoch_key
         .as_deref()
         .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
-    use crate::trust_epoch::EpochReader as _;
-    match crate::trust_epoch::RedisEpochReader::connect(url, key) {
-        Ok(reader) => {
-            // The value at startup is this node's baseline; an unset key reads as 0.
-            let baseline = reader.read_epoch().unwrap_or(0);
-            eprintln!(
-                "mcp-re-proxy: delegated trust-epoch watch ACTIVE (redis, key {key:?}, baseline \
-                 {baseline}); an epoch advance re-issues delegated keys under a stale label so \
-                 verifiers pinned to the prior epoch reject across replicas."
-            );
-            Some(DelegatedEpochWatch {
-                reader: Box::new(reader),
-                baseline,
-                base_label,
-            })
-        }
+    match crate::trust_epoch::RedisEpochReader::connect_lazy(url, key) {
+        Ok(reader) => Some(DelegatedEpochWatch {
+            reader: Box::new(reader),
+            base_label,
+            high_water: std::sync::Mutex::new(None),
+        }),
         Err(e) => {
-            eprintln!("mcp-re-proxy: NOTE: delegated trust-epoch watch unavailable ({}); cross-replica delegated revocation is inert until it recovers.", e.0);
+            // Only a malformed URL reaches here (`Client::open` parses, it does not
+            // connect), so this is a configuration error, not an outage.
+            eprintln!(
+                "mcp-re-proxy: --trust-epoch-redis-url is not a usable Redis URL ({}); \
+                 delegated trust-epoch revocation cannot be wired.",
+                e.0
+            );
             None
         }
     }
@@ -1229,4 +1591,517 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
 #[cfg(not(feature = "redis_replay"))]
 fn build_delegated_epoch_watch(_config: &cli::Config, _base_label: String) -> Option<DelegatedEpochWatch> {
     None
+}
+
+#[cfg(all(test, unix))]
+mod key_file_perm_tests {
+    use super::check_key_file_perms;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A key file at `mode`, named per-process so concurrent test binaries do not
+    /// collide. Mirrors the temp-file idiom the rest of this crate's tests use
+    /// (`std::env::temp_dir()` + pid) rather than adding a dev-dependency.
+    struct KeyFile(String);
+
+    impl KeyFile {
+        fn at(mode: u32, name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("mcp_re_perm_{}_{name}", std::process::id()));
+            let mut f = std::fs::File::create(&path).expect("create");
+            f.write_all(b"key-material").expect("write");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .expect("chmod");
+            KeyFile(path.to_string_lossy().into_owned())
+        }
+        fn path(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl Drop for KeyFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// A parsed `Config` for `source`, built through the REAL parser so the test cannot
+    /// drift from what the CLI actually produces. An empty `tls_key` is how the parser
+    /// represents delegated TLS, so it is passed through rather than defaulted.
+    fn config_with(
+        source: crate::cli::KeySourceKind,
+        seed: &str,
+        tls_key: &str,
+    ) -> crate::cli::Config {
+        use crate::cli::KeySourceKind;
+        let (name, mut extra): (&str, Vec<&str>) = match source {
+            KeySourceKind::File => ("file", vec![]),
+            KeySourceKind::Env => ("env", vec![]), // unreachable outside dev_env_key_source
+            KeySourceKind::Pkcs11 => (
+                "pkcs11",
+                vec![
+                    "--pkcs11-module", "/m.so", "--pkcs11-token-label", "t",
+                    "--pkcs11-key-label", "k", "--pkcs11-pin-file", "/etc/mcp-re/pin",
+                ],
+            ),
+            KeySourceKind::AwsKms => (
+                "aws-kms",
+                vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"],
+            ),
+            KeySourceKind::GcpKms => (
+                "gcp-kms",
+                vec![
+                    "--gcp-kms-key-version",
+                    "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+                ],
+            ),
+        };
+        let mut argv: Vec<&str> = vec![
+            "--bind", "127.0.0.1:8443",
+            "--audience", "did:example:server-1",
+            "--server-signer", "did:example:server-1",
+            "--server-key-id", "server-key-1",
+            "--tls-cert", "/cert",
+            "--client-ca", "/ca",
+            "--trust", "/trust.json",
+            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            "--target-uri", "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch", "epoch-min",
+            "--replay-cache", "file",
+            "--replay-path", "/replay",
+            "--key-source", name,
+        ];
+        argv.append(&mut extra);
+        if !seed.is_empty() {
+            argv.extend_from_slice(&["--signing-key-seed", seed]);
+        }
+        // An empty `tls_key` means delegated TLS; the parser only leaves it empty when a
+        // delegated TLS custody is configured, so express that rather than omitting it.
+        if tls_key.is_empty() {
+            argv.extend_from_slice(&[
+                "--gcp-kms-tls-key-version",
+                "projects/p/locations/l/keyRings/r/cryptoKeys/tls/cryptoKeyVersions/1",
+            ]);
+        } else {
+            argv.extend_from_slice(&["--tls-key", tls_key]);
+        }
+        let owned: Vec<String> = argv.into_iter().map(str::to_string).collect();
+        crate::cli::parse_args(&owned)
+            .unwrap_or_else(|e| panic!("{source:?} config must parse: {e}"))
+    }
+
+    /// C048: the PKCS#11 PIN file unlocks the token holding the signing keys, so it must
+    /// be among the files the startup permission check covers — otherwise the credential
+    /// protecting the keys sits behind a weaker floor than the keys themselves.
+    #[test]
+    fn the_pkcs11_pin_file_is_permission_checked() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        let config = config_with(KeySourceKind::Pkcs11, "", "/tls.key");
+        let files = key_files_read_from_disk(&config);
+        assert!(
+            files.contains(&"/etc/mcp-re/pin"),
+            "the PIN file must be checked; got {files:?}"
+        );
+        // And it is NOT claimed for a source that reads no PIN.
+        let file_custody = config_with(KeySourceKind::File, "/seed", "/tls.key");
+        assert!(
+            !key_files_read_from_disk(&file_custody)
+                .iter()
+                .any(|p| p.contains("pin")),
+            "file custody reads no PIN file"
+        );
+    }
+
+    /// 0644 is world-readable, not merely group-readable — the refusal now says which,
+    /// because "restrict to 0600" is more actionable when it names the actual bit.
+    #[test]
+    fn a_world_readable_key_file_is_refused() {
+        let f = KeyFile::at(0o644, "world.key");
+        let err = check_key_file_perms(f.path(), false).expect_err("0644 must be refused");
+        assert!(err.contains("world-accessible"), "got: {err}");
+    }
+
+    /// C053b: group-readable is refused by DEFAULT — the opt-in is what changes it, and
+    /// the default posture is exactly what it was.
+    #[test]
+    fn a_group_readable_key_file_is_refused_without_the_opt_in() {
+        let f = KeyFile::at(0o640, "group.key");
+        let err = check_key_file_perms(f.path(), false).expect_err("0640 must be refused");
+        assert!(err.contains("group-accessible"), "got: {err}");
+        assert!(
+            err.contains("--allow-group-readable-key-files"),
+            "the refusal must name the opt-in that exists for the fsGroup mount model: {err}"
+        );
+    }
+
+    /// With the opt-in, a group-readable file whose group this process is actually in
+    /// is accepted — the file the test harness creates is owned by our own gid.
+    #[test]
+    fn a_group_readable_key_file_owned_by_our_group_is_accepted_with_the_opt_in() {
+        let f = KeyFile::at(0o640, "fsgroup.key");
+        check_key_file_perms(f.path(), true).expect("an fsGroup-shaped mount is accepted");
+    }
+
+    /// The opt-in does not reach group-WRITE: a peer able to replace the signing key is
+    /// never a mount-model requirement.
+    #[test]
+    fn group_write_is_refused_even_with_the_opt_in() {
+        let f = KeyFile::at(0o660, "groupwrite.key");
+        let err = check_key_file_perms(f.path(), true).expect_err("0660 must be refused");
+        assert!(err.contains("group-writable"), "got: {err}");
+    }
+
+    #[test]
+    fn an_owner_only_key_file_is_accepted() {
+        let f = KeyFile::at(0o600, "owner.key");
+        check_key_file_perms(f.path(), false).expect("0600 is the required posture");
+    }
+
+    /// The load-bearing property, on the pure predicate `run` actually uses: the TLS
+    /// server key is read from disk under EVERY custody mode unless TLS signing is
+    /// itself delegated — including the KMS modes advertised as "no key material ever
+    /// lands in the pod" — so it must always be among the files checked.
+    #[test]
+    fn the_tls_key_is_checked_under_every_custody_mode() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        // `Env` is omitted: it is rejected by the parser outside a
+        // `dev_env_key_source` build, so it cannot be constructed here.
+        for source in [
+            KeySourceKind::File,
+            KeySourceKind::Pkcs11,
+            KeySourceKind::AwsKms,
+            KeySourceKind::GcpKms,
+        ] {
+            let config = config_with(source, "/seed", "/tls.key");
+            let checked = key_files_read_from_disk(&config);
+            assert!(
+                checked.contains(&"/tls.key"),
+                "{source:?}: the TLS key lands on disk and must be permission-checked"
+            );
+            // The SEED is read only where custody is file-based.
+            assert_eq!(
+                checked.contains(&"/seed"),
+                source == KeySourceKind::File,
+                "{source:?}: the seed is checked iff it is actually read"
+            );
+        }
+    }
+
+    /// Delegated TLS leaves `tls_key` empty — that emptiness is how the wiring says "no
+    /// key file is read", so nothing must be checked for it.
+    #[test]
+    fn a_delegated_tls_key_contributes_no_file_to_check() {
+        use crate::app::key_files_read_from_disk;
+        use crate::cli::KeySourceKind;
+
+        let config = config_with(KeySourceKind::GcpKms, "", "");
+        assert!(
+            key_files_read_from_disk(&config).is_empty(),
+            "delegated TLS + KMS custody reads no private key from disk"
+        );
+    }
+
+    /// Delegated TLS leaves `tls_key` EMPTY (see `cli::parse_args`), which is how the
+    /// wiring expresses "no key file is read" — and an empty path must not be treated as
+    /// a key file to check.
+    #[test]
+    fn an_absent_key_file_is_not_an_error() {
+        check_key_file_perms("", false).expect("no file configured is not a violation");
+        check_key_file_perms("/nonexistent/path/tls.key", false)
+            .expect("a missing file is reported by the loader, not by this guard");
+    }
+}
+
+#[cfg(test)]
+mod rotation_progress_tests {
+    use super::rotation_made_progress;
+    use crate::delegated_server_signer::DelegatedServerSigner;
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::ActorIdentity;
+    use std::sync::Arc;
+
+    const OVERLAP: i64 = 60;
+
+    fn key(kid: &str, exp: i64) -> ActiveDelegatedKey {
+        ActiveDelegatedKey {
+            key: Arc::new(SigningKey::from_seed_bytes(&[7u8; 32])),
+            delegated_kid: kid.to_string(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: kid.to_string(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp,
+        }
+    }
+
+    /// The defect this guards: `ensure_active` reports `Ok(())` both when a successor
+    /// was minted AND when issuance failed while the current key is still valid. Taking
+    /// the second as success reset `consecutive_failures`, collapsed the steady-state
+    /// wake time to now (we are already past `exp - overlap`), and re-entered the
+    /// rotate arm immediately — a tight loop against the root KMS/HSM, minting a fresh
+    /// keypair each pass, for the entire overlap window.
+    #[test]
+    fn unchanged_kid_inside_the_overlap_window_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        // Published key is inside its overlap window: a rotation is DUE.
+        signer.publish(key("K1", now + OVERLAP - 1));
+        let before = Some("K1".to_string());
+        assert!(
+            !rotation_made_progress(&signer, &before, OVERLAP),
+            "a due rotation that did not change the kid means issuance failed"
+        );
+    }
+
+    #[test]
+    fn a_new_kid_is_progress() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        signer.publish(key("K2", now + 300));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Outside the overlap window an unchanged kid is expected, not a failure — the
+    /// backoff must not engage in steady state.
+    #[test]
+    fn unchanged_kid_outside_the_overlap_window_is_not_a_failure() {
+        let signer = DelegatedServerSigner::new();
+        let now = crate::app::now_unix();
+        signer.publish(key("K1", now + 10 * OVERLAP));
+        let before = Some("K1".to_string());
+        assert!(rotation_made_progress(&signer, &before, OVERLAP));
+    }
+
+    /// Nothing published: the `Err` arm owns that case; report no progress.
+    #[test]
+    fn nothing_published_is_not_progress() {
+        let signer = DelegatedServerSigner::new();
+        assert!(!rotation_made_progress(&signer, &None, OVERLAP));
+    }
+}
+
+#[cfg(test)]
+mod trust_epoch_watch_tests {
+    use super::DelegatedEpochWatch;
+    use crate::trust_epoch::EpochReader;
+    use crate::trust_epoch::EpochReadError;
+    use std::sync::atomic::AtomicI64;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    const BASE: &str = "epoch-min";
+
+    /// A shared counter standing in for the Redis key, plus a switch that makes reads
+    /// fail so an outage can be simulated deterministically.
+    struct SharedCounter {
+        value: AtomicI64,
+        down: Mutex<bool>,
+        reads: AtomicUsize,
+    }
+
+    impl SharedCounter {
+        fn new(v: i64) -> Arc<Self> {
+            Arc::new(SharedCounter {
+                value: AtomicI64::new(v),
+                down: Mutex::new(false),
+                reads: AtomicUsize::new(0),
+            })
+        }
+        fn incr(&self) {
+            self.value.fetch_add(1, Ordering::SeqCst);
+        }
+        fn set(&self, v: i64) {
+            self.value.store(v, Ordering::SeqCst);
+        }
+        fn set_down(&self, down: bool) {
+            *self.down.lock().expect("down lock") = down;
+        }
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::SeqCst)
+        }
+    }
+
+    struct CounterReader(Arc<SharedCounter>);
+
+    impl EpochReader for CounterReader {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            self.0.reads.fetch_add(1, Ordering::SeqCst);
+            if *self.0.down.lock().expect("down lock") {
+                return Err(EpochReadError("epoch store unreachable".into()));
+            }
+            Ok(self.0.value.load(Ordering::SeqCst))
+        }
+    }
+
+    /// Start a replica's watch over the shared counter. Constructing a NEW watch over
+    /// the SAME counter is exactly what a restart looks like: no carried-over state.
+    fn replica(counter: &Arc<SharedCounter>) -> DelegatedEpochWatch {
+        DelegatedEpochWatch {
+            reader: Box::new(CounterReader(Arc::clone(counter))),
+            base_label: BASE.to_string(),
+            high_water: Mutex::new(None),
+        }
+    }
+
+    /// The label is derived purely from shared state, so it is globally comparable.
+    #[test]
+    fn label_is_always_base_hash_counter_never_the_bare_base() {
+        let counter = SharedCounter::new(0);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#0"));
+        counter.incr();
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
+    }
+
+    /// Every replica at the same counter mints the same label, whenever it started.
+    #[test]
+    fn all_replicas_agree_regardless_of_start_time() {
+        let counter = SharedCounter::new(4);
+        let a = replica(&counter);
+        assert_eq!(a.current_label().as_deref(), Some("epoch-min#4"));
+        // B joins the fleet later.
+        let b = replica(&counter);
+        assert_eq!(b.current_label(), a.current_label());
+    }
+
+    /// THE INVARIANT (C007). An operator INCR must stay effective across a restart: the
+    /// restarted replica must NOT reinterpret the current counter as a fresh local
+    /// baseline and resume minting a label verifiers treat as unrevoked.
+    #[test]
+    fn an_increment_survives_a_replica_restart() {
+        let counter = SharedCounter::new(7);
+        let long_lived = replica(&counter);
+        let before = long_lived.current_label().expect("readable");
+        assert_eq!(before, "epoch-min#7");
+
+        // Operator revokes the fleet.
+        counter.incr();
+        let after_incr = long_lived.current_label().expect("readable");
+        assert_eq!(after_incr, "epoch-min#8");
+        assert_ne!(after_incr, before, "the INCR must change the minted label");
+
+        // A replica restarts: brand-new watch, no memory of the pre-INCR value.
+        let restarted = replica(&counter);
+        let after_restart = restarted.current_label().expect("readable");
+
+        assert_eq!(
+            after_restart, after_incr,
+            "a restarted replica must resolve the SAME post-INCR label as its peers"
+        );
+        assert_ne!(
+            after_restart, before,
+            "a restart must NOT resurrect the pre-INCR epoch — that is the revocation \
+             being defeated by a restart"
+        );
+    }
+
+    /// An outage is fail-closed FOR MINTING: no label, so the caller must not issue.
+    /// It is not silently treated as "unchanged", which would keep minting blind.
+    #[test]
+    fn an_outage_yields_no_label_so_minting_stops() {
+        let counter = SharedCounter::new(3);
+        let w = replica(&counter);
+        assert!(w.current_label().is_some());
+        counter.set_down(true);
+        assert!(
+            w.current_label().is_none(),
+            "an unreadable epoch must fail closed for minting"
+        );
+    }
+
+    /// Reconnect after an outage resumes at the CURRENT shared value — including an
+    /// INCR that happened while this replica could not read.
+    #[test]
+    fn reconnect_after_an_outage_resumes_and_sees_missed_increments() {
+        let counter = SharedCounter::new(1);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#1"));
+
+        counter.set_down(true);
+        assert!(w.current_label().is_none());
+        // The operator revokes DURING the outage.
+        counter.incr();
+        counter.incr();
+        assert!(w.current_label().is_none(), "still down");
+
+        counter.set_down(false);
+        assert_eq!(
+            w.current_label().as_deref(),
+            Some("epoch-min#3"),
+            "a reconnect must observe increments missed during the outage"
+        );
+        assert!(counter.reads() >= 4, "each attempt re-reads; no cached verdict");
+    }
+
+    /// Reconnection must not reset, rebase or otherwise weaken an already-issued
+    /// revocation: a counter that goes BACKWARDS (store reset, failover to a stale
+    /// replica, reconnect to the wrong instance) is refused, never adopted.
+    #[test]
+    fn a_regressed_counter_is_refused_not_rebased() {
+        let counter = SharedCounter::new(9);
+        let w = replica(&counter);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
+
+        counter.set(2); // store rolled back
+        assert!(
+            w.current_label().is_none(),
+            "minting under a lower epoch would resurrect credentials verifiers reject"
+        );
+        // Still refused on retry — it is not a transient blip that clears itself.
+        assert!(w.current_label().is_none());
+
+        // Recovery to at-or-above the high-water mark resumes minting.
+        counter.set(9);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#9"));
+        counter.set(11);
+        assert_eq!(w.current_label().as_deref(), Some("epoch-min#11"));
+    }
+
+    /// Issuance continues normally across the whole sequence the operator cares about:
+    /// steady state -> INCR -> outage -> reconnect -> restart.
+    #[test]
+    fn full_sequence_increment_outage_restart_reconnect_continued_issuance() {
+        let counter = SharedCounter::new(0);
+        let mut minted: Vec<String> = Vec::new();
+        let w = replica(&counter);
+
+        minted.push(w.current_label().expect("steady state"));
+        counter.incr();
+        minted.push(w.current_label().expect("after incr"));
+
+        counter.set_down(true);
+        assert!(w.current_label().is_none(), "no minting during the outage");
+        counter.set_down(false);
+        minted.push(w.current_label().expect("after reconnect"));
+
+        // Restart: fresh watch, same shared counter.
+        let w2 = replica(&counter);
+        minted.push(w2.current_label().expect("after restart"));
+        counter.incr();
+        minted.push(w2.current_label().expect("issuance continues after restart"));
+
+        assert_eq!(
+            minted,
+            vec![
+                "epoch-min#0".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#1".to_string(),
+                "epoch-min#2".to_string(),
+            ],
+            "labels track the shared counter only — never a per-process baseline"
+        );
+    }
 }

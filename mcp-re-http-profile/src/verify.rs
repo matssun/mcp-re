@@ -19,6 +19,7 @@ use crate::block::AudienceTuple;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::HttpResponseEvidenceBlock;
 use crate::block::ResolvedActor;
+use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
 use crate::body::authorization_bearer_bytes;
 use crate::body::extract_meta_block;
@@ -120,6 +121,15 @@ pub struct VerifiedHttpResponseEvidence {
     /// to match the keyid the response signature was accepted under. `None` on
     /// the seam-only path.
     pub server_signer: Option<ActorIdentity>,
+    /// The ROOT issuer kid the delegation credential chained to (C004b).
+    ///
+    /// The STABLE server-identity coordinate under ADR-MCPRE-052: the keyid the
+    /// response signature verified under is the DELEGATED kid, which is ephemeral and
+    /// rotates every TTL, so pinning it is meaningless. The issuer kid is the anchor
+    /// the credential proves a chain to and is what an operator means by "this
+    /// server". `None` on the non-delegated and seam-only paths, where no credential
+    /// was verified.
+    pub delegation_issuer_kid: Option<String>,
 }
 
 /// Resolve a keyid through the trust seam for a specific signing slot and apply
@@ -128,12 +138,23 @@ pub struct VerifiedHttpResponseEvidence {
 /// and fails `actor_binding_failed`. The verifier additionally asserts the
 /// returned actor is vouched for the slot it asked for — never a role-string
 /// comparison — so a resolver that hands back a wrong-slot actor is also caught.
-pub(crate) fn resolve_actor_for_slot(
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     key_id: &str,
     slot: SignerSlot,
 ) -> Result<ResolvedActor, HttpProfileError> {
-    let actor = resolve_actor(key_id, slot).ok_or(HttpProfileError::UnresolvedKeyId)?;
+    let actor = match resolve_actor(key_id, slot).into() {
+        ResolverOutcome::Resolved(actor) => actor,
+        // A definitive negative from a healthy resolver.
+        ResolverOutcome::NotTrusted => return Err(HttpProfileError::UnresolvedKeyId),
+        // The resolver could not answer. Fail closed, but say WHICH failure it was
+        // (C079): during a store outage the previous seam reported "untrusted key",
+        // which sends an operator to look at the caller's credentials instead of at
+        // their trust store.
+        ResolverOutcome::Unavailable => {
+            return Err(HttpProfileError::TrustResolverUnavailable)
+        }
+    };
     if actor.slot != slot {
         return Err(HttpProfileError::ActorSlotMismatch);
     }
@@ -148,12 +169,29 @@ pub(crate) struct ParsedSignatureInput {
 
 /// Split a Structured Fields dictionary into members at top-level commas
 /// (commas inside quoted strings do not split).
+///
+/// The quote state honours RFC 8941 `\` escapes. Without that, a `\"` inside a
+/// member's string value toggled the state and left it odd, so the next top-level
+/// comma was swallowed and TWO dictionary members merged into one — and this runs
+/// BEFORE any value is validated, so the profile would be reading the merged text
+/// as a single member's parameters before anything could reject the value that
+/// caused it. Every construction traced from there still failed closed downstream,
+/// but "the parser recovers by erroring" is not the same as splitting the
+/// dictionary the way every other RFC 8941 implementation does.
 fn split_dictionary(value: &str) -> Vec<&str> {
     let mut members = Vec::new();
     let mut start = 0usize;
     let mut in_quotes = false;
+    let mut escaped = false;
     for (i, c) in value.char_indices() {
+        if escaped {
+            // Inside a string, `\` escapes exactly one following character; it never
+            // ends the string.
+            escaped = false;
+            continue;
+        }
         match c {
+            '\\' if in_quotes => escaped = true,
             '"' => in_quotes = !in_quotes,
             ',' if !in_quotes => {
                 members.push(value[start..i].trim());
@@ -164,6 +202,37 @@ fn split_dictionary(value: &str) -> Vec<&str> {
     }
     members.push(value[start..].trim());
     members
+}
+
+/// Split a signature-input's parameter section at top-level `;` — semicolons inside
+/// a quoted string are part of the value, not separators.
+///
+/// Same reasoning as [`split_dictionary`]: a `;` inside a `nonce` used to cut the
+/// value in half and produce a parameter list that was never on the wire. The halves
+/// then failed to unquote, so this was fail-closed too, but the parse disagreed with
+/// a conforming one before it got there.
+fn split_parameters(value: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    let mut escaped = false;
+    for (i, c) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            ';' if !in_quotes => {
+                parts.push(value[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(value[start..].trim());
+    parts
 }
 
 /// Find the member value for `label` in a `Signature-Input`/`Signature`
@@ -185,10 +254,30 @@ fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpP
     found.ok_or(HttpProfileError::MissingEvidence("signature label"))
 }
 
-/// Leak-free integer parse for created/expires.
+/// Leak-free integer parse for created/expires, restricted to the ONE spelling
+/// RFC 8941 §3.3.1 allows: optional `-`, then digits with no leading zero (except
+/// `0` itself).
+///
+/// Rust's `i64::from_str` also accepts `+1700000000` and `0017`, which this profile
+/// must not: the verifier rebuilds `@signature-params` from the PARSED values and
+/// re-serializes them canonically ([`crate::sigbase`]), so every accepted spelling of
+/// the same number collapses to one signature base. An intermediary could then
+/// rewrite `created=1700000000` to `created=+1700000000` and the signature would
+/// still verify, leaving any consumer that reads the raw header looking at bytes
+/// other than the ones that were signed. Rejecting the alternate spellings keeps the
+/// on-wire form pinned, the same reason parameter reordering is rejected structurally
+/// rather than normalized away.
 fn parse_i64(s: &str) -> Result<i64, HttpProfileError> {
-    s.parse::<i64>()
-        .map_err(|_| HttpProfileError::MalformedEvidence("integer signature parameter"))
+    let malformed = || HttpProfileError::MalformedEvidence("integer signature parameter");
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(malformed());
+    }
+    // No leading zeros: "0" is fine, "00" / "0017" / "-01" are not.
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err(malformed());
+    }
+    s.parse::<i64>().map_err(|_| malformed())
 }
 
 /// Parse one `("a" "b";req ...);k=v;...` signature-input member value.
@@ -234,22 +323,44 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
             // (#424): coverable so the credential it carries is protected by the
             // response signature. Only the bodyless-202 path requires it.
             "mcp-re-delegation" => "mcp-re-delegation",
+            // The request-evidence header on a bodyless 202 (C019b): coverable so the
+            // per-instance coordinate it carries is protected by the response
+            // signature. Only the bodyless-202 path requires it.
+            "mcp-re-request-evidence" => "mcp-re-request-evidence",
             _ => {
                 return Err(HttpProfileError::MalformedEvidence(
                     "unknown covered component",
                 ))
             }
         };
-        components.push(if req {
+        let component = if req {
             CoveredComponent::req(known)
         } else {
             CoveredComponent::new(known)
-        });
+        };
+        // RFC 9421 §2.5 requires an error when an identifier is added to the base
+        // twice. Beyond conformance, admitting duplicates would mean one message has
+        // many valid signature bases — `signature_base` emits a line per occurrence —
+        // and therefore many distinct evidence handles for the same bytes, so the
+        // handle would stop being a function of the message. `;req` makes an
+        // identifier distinct: "content-digest" and "content-digest";req name
+        // different values, so only an exact (name, req) repeat is a duplicate. This
+        // is the same exactly-once discipline already applied to duplicated header
+        // FIELDS in `sigbase`.
+        if components
+            .iter()
+            .any(|c: &CoveredComponent| c.name == component.name && c.req == component.req)
+        {
+            return Err(HttpProfileError::MalformedEvidence(
+                "duplicate covered component",
+            ));
+        }
+        components.push(component);
     }
 
     let mut params = SignatureParams::default();
     let mut last_param_rank: i32 = -1;
-    for p in value[close + 1..].split(';') {
+    for p in split_parameters(&value[close + 1..]) {
         let p = p.trim();
         if p.is_empty() {
             continue;
@@ -257,13 +368,24 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         let (k, v) = p
             .split_once('=')
             .ok_or(HttpProfileError::MalformedEvidence("signature parameter"))?;
+        // A quoted string parameter, held to exactly what this profile will EMIT
+        // (`sigbase::validate_sf_string`): printable ASCII with no `"` and no `\`.
+        //
+        // The escape forms RFC 8941 permits are refused rather than decoded. The
+        // verifier rebuilds `@signature-params` from these parsed values and
+        // re-serializes them canonically, so decoding `\"` would make two wire
+        // spellings collapse to one signature base — the same defect the profile
+        // already refuses for `created=+1` (see `parse_i64`). Refusing keeps the
+        // received bytes and the signed bytes in one-to-one correspondence.
         let unquote = |v: &str| -> Result<String, HttpProfileError> {
-            v.strip_prefix('"')
+            let inner = v
+                .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
-                .map(str::to_owned)
                 .ok_or(HttpProfileError::MalformedEvidence(
                     "quoted signature parameter",
-                ))
+                ))?;
+            crate::sigbase::validate_sf_string(inner, "quoted signature parameter")?;
+            Ok(inner.to_owned())
         };
         // Strict Structured Fields (MCPRE-98): the profile's parameter set is
         // closed AND ordered. The verifier normalizes to a canonical order when
@@ -342,6 +464,16 @@ fn check_params(
     {
         return Err(HttpProfileError::StaleWindow);
     }
+    // Bound how WIDE the signer may declare its own window (§5.1). Freshness above
+    // decides when a window may be used; it says nothing about its width, so without
+    // this a client can present `created = now, expires = now + 10y` — fresh, and
+    // therefore accepted — and the replay tier then retains that nonce until
+    // `expires + skew`. The retention a single client can pin would be client-chosen
+    // and unbounded. The window is the message's own property, so like the degenerate
+    // `expires <= created` case this is checked skew-free.
+    if expires.saturating_sub(created) > policy.max_signature_validity() {
+        return Err(HttpProfileError::StaleWindow);
+    }
     let nonce = match (&params.nonce, require_nonce) {
         (Some(n), _) => n.clone(),
         (None, false) => String::new(),
@@ -408,10 +540,15 @@ fn reject_mcp_method_divergence(request: &HttpRequest) -> Result<(), HttpProfile
     };
     let body: serde_json::Value = serde_json::from_slice(&request.body)
         .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
-    // A body with no `method` is a response/notification shape; there is nothing
-    // to diverge from, and the request-shape rules are not this function's job.
+    // A body with no `method` gives the header nothing to agree with, so the signed
+    // value would be constrained by nothing at all — and an intermediary that routes,
+    // rate-limits or audits on `Mcp-Method` (the stated reason §4.1 covers it) would
+    // act on an arbitrary signer-chosen string carrying full authenticity. Skipping
+    // the check here would make "the header always mirrors the body" true only for
+    // the shapes that happen to have a body method. A message that sends this header
+    // must therefore carry the `method` it mirrors.
     let Some(body_method) = body.get("method").and_then(|m| m.as_str()) else {
-        return Ok(());
+        return Err(HttpProfileError::McpMethodDivergence);
     };
     if header_method.trim() != body_method {
         return Err(HttpProfileError::McpMethodDivergence);
@@ -459,8 +596,48 @@ pub(crate) fn parse_signature_input_for(
     parse_signature_input(member_value(input_header, label)?)
 }
 
-/// [`require_components`] for the bodyless sets — same enforcement, invoked with
-/// a different NAMED set.
+/// Enforce PRESENT ⇒ COVERED for every conditionally-mandatory request header
+/// (§4.1): `authorization`, `dpop`, and the MCP transport headers.
+///
+/// Presence is the condition rather than a configured protocol version, because that
+/// is the question the verifier can answer from the message in front of it: if the
+/// sender put the header on the wire, the signature covers it or the request is
+/// rejected. A deployment whose version does not define these simply never sends them
+/// and nothing here fires.
+///
+/// Shared by the bodied and BODYLESS request paths. The bodyless path (§8.1) had none
+/// of these checks, which meant a bodyless request could carry an
+/// `Authorization: Bearer <token>` — or an `Mcp-Method` contradicting nothing because
+/// there is no body to contradict — entirely outside its signature. An intermediary
+/// could then add or swap the presented credential without invalidating anything,
+/// which is precisely what covering it prevents on the bodied path. Two copies of a
+/// rule this shape is how one of them ends up missing, so there is one copy.
+pub(crate) fn require_conditional_coverage(
+    headers: &[(String, String)],
+    covered: &[CoveredComponent],
+) -> Result<(), HttpProfileError> {
+    for header in conditionally_covered_request_headers() {
+        // `single_header` also fails closed on a duplicated header, so a smuggled
+        // second `authorization` cannot slip past by being the uncovered one.
+        if single_header(headers, header)?.is_some()
+            && !covered.iter().any(|c| !c.req && c.name == header)
+        {
+            return Err(HttpProfileError::MissingCoveredComponent(header));
+        }
+    }
+    Ok(())
+}
+
+/// Every request header that is mandatory-if-present, in one place so the signer and
+/// the verifier cannot disagree about the set: `authorization`/`dpop` bind the presented
+/// credential surface, and [`MCP_COVERABLE_TRANSPORT_HEADERS`] binds the routing claims
+/// made in the clear (whose rationale lives on that constant).
+pub(crate) fn conditionally_covered_request_headers() -> impl Iterator<Item = &'static str> {
+    ["authorization", "dpop"]
+        .into_iter()
+        .chain(MCP_COVERABLE_TRANSPORT_HEADERS)
+}
+
 pub(crate) fn require_components_for(
     covered: &[CoveredComponent],
     required_plain: &[&'static str],
@@ -510,9 +687,9 @@ fn require_components(
 /// maps a keyid to a verification key ONLY if local policy trusts that key for
 /// this route/audience — a keyid never introduces trust (CONTEXT.md anchor
 /// rule; v0.11 grill B.1).
-pub fn verify_request(
+pub fn verify_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     verify_request_with_policy(request, resolve_actor, &VerifierPolicy::default(), now)
@@ -521,9 +698,9 @@ pub fn verify_request(
 /// [`verify_request`] under an explicit verifier-local [`VerifierPolicy`] —
 /// the algorithm allowlist (§13.1) and the bounded clock-skew tolerance (§5.1).
 /// [`verify_request`] is this function at [`VerifierPolicy::default`].
-pub fn verify_request_with_policy(
+pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
@@ -548,31 +725,7 @@ pub fn verify_request_with_policy(
             "req component on a request",
         ));
     }
-    // Conditional coverage is mandatory when the header is present.
-    if single_header(&request.headers, "authorization")?.is_some()
-        && !parsed.components.iter().any(|c| c.name == "authorization")
-    {
-        return Err(HttpProfileError::MissingCoveredComponent("authorization"));
-    }
-    if single_header(&request.headers, "dpop")?.is_some()
-        && !parsed.components.iter().any(|c| c.name == "dpop")
-    {
-        return Err(HttpProfileError::MissingCoveredComponent("dpop"));
-    }
-    // MCP transport headers (§4.1): conditionally mandatory on exactly the
-    // `authorization`/`dpop` pattern above — present means covered. Presence is
-    // the condition rather than a configured protocol version because that is the
-    // question the verifier can actually answer from the message in front of it:
-    // if the sender put the header on the wire, the signature covers it or the
-    // request is rejected. A deployment whose version does not define these
-    // simply never sends them, and nothing here fires.
-    for header in MCP_COVERABLE_TRANSPORT_HEADERS {
-        if single_header(&request.headers, header)?.is_some()
-            && !parsed.components.iter().any(|c| c.name == header)
-        {
-            return Err(HttpProfileError::MissingCoveredComponent(header));
-        }
-    }
+    require_conditional_coverage(&request.headers, &parsed.components)?;
     let (created, expires, nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
@@ -641,11 +794,11 @@ pub fn verify_request_with_policy(
 /// etc.); DPoP is derived from the covered `Authorization` header. A binding with
 /// no obtainable credential fails `artifact_binding_failed` — full profile never
 /// silently accepts an unverifiable binding.
-pub fn verify_request_full(
+pub fn verify_request_full<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     expected_audience: &AudienceTuple,
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
     verify_request_full_with_policy(
@@ -659,11 +812,11 @@ pub fn verify_request_full(
 }
 
 /// [`verify_request_full`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_request_full_with_policy(
+pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     expected_audience: &AudienceTuple,
     artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpRequestEvidence, HttpProfileError> {
@@ -718,10 +871,10 @@ fn resolve_artifact_credential(
 /// Verify a signed MCP-RE/HTTP response against the exact request the caller
 /// sent. The `;req` components are resolved from `request`, so a spliced
 /// response (signed for a different request) fails the signature.
-pub fn verify_response(
+pub fn verify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_with_policy(
@@ -734,10 +887,10 @@ pub fn verify_response(
 }
 
 /// [`verify_response`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_with_policy(
+pub fn verify_response_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -782,6 +935,8 @@ pub fn verify_response_with_policy(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
+        // No credential on this path, so there is no issuer to report.
+        delegation_issuer_kid: None,
     })
 }
 
@@ -799,11 +954,11 @@ pub fn verify_response_with_policy(
 /// `verified_request` is the [`VerifiedHttpRequestEvidence`] from
 /// `verify_request_full`; its `evidence` handle is the recomputed request
 /// signature-base digest compared here — no re-parse of the request.
-pub fn verify_response_full(
+pub fn verify_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_bound_full(
@@ -823,11 +978,11 @@ pub fn verify_response_full(
 /// server-style verified-request context. Semantics are otherwise identical to
 /// [`verify_response_full`] — the `;req` cryptographic floor plus the response
 /// evidence block's `profile` / `server_signer.keyid` / `request_evidence` checks.
-pub fn verify_response_bound_full(
+pub fn verify_response_bound_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_bound_full_with_policy(
@@ -841,11 +996,11 @@ pub fn verify_response_bound_full(
 }
 
 /// [`verify_response_bound_full`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_bound_full_with_policy(
+pub fn verify_response_bound_full_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -924,11 +1079,11 @@ pub struct DelegationExpectations<'a> {
 /// [`verify_delegated_response_bound_full`] directly (the delegated analogue of
 /// [`verify_response_bound_full`]).
 #[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_response_full(
+pub fn verify_delegated_response_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     verified_request: &VerifiedHttpRequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -955,11 +1110,11 @@ pub fn verify_delegated_response_full(
 /// `cnf.jwk`. The only difference is that the request-evidence binding is compared
 /// against the passed `bound_request_evidence` handle the client kept from signing.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_delegated_response_bound_full(
+pub fn verify_delegated_response_bound_full<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     request: &HttpRequest,
     bound_request_evidence: &RequestEvidence,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -1016,7 +1171,7 @@ pub fn verify_delegated_response_bound_full(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
         |kid| is_revoked(kid),
     )?;
 
@@ -1065,6 +1220,9 @@ pub fn verify_delegated_response_bound_full(
             digest_value: block.request_evidence.digest_value.clone(),
         }),
         server_signer: Some(server_signer),
+        // C004b: the ROOT anchor the credential chained to — the stable
+        // coordinate, unlike the ephemeral delegated kid.
+        delegation_issuer_kid: Some(verified.issuer_kid.clone()),
     })
 }
 
@@ -1079,9 +1237,9 @@ pub fn verify_delegated_response_bound_full(
 /// diagnostic and is NOT treated as a binding here. Delegation remains REQUIRED: a
 /// response with no inline credential — including a directly root-signed one — is
 /// rejected `delegation_credential_missing`.
-pub fn verify_delegated_response_unbound(
+pub fn verify_delegated_response_unbound<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
@@ -1138,7 +1296,7 @@ pub fn verify_delegated_response_unbound(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).map(|a| a.verification_key),
+        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
         |kid| is_revoked(kid),
     )?;
 
@@ -1173,6 +1331,9 @@ pub fn verify_delegated_response_unbound(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: Some(server_signer),
+        // C004b: the ROOT anchor the credential chained to — the stable
+        // coordinate, unlike the ephemeral delegated kid.
+        delegation_issuer_kid: Some(verified.issuer_kid.clone()),
     })
 }
 
@@ -1180,18 +1341,18 @@ pub fn verify_delegated_response_unbound(
 /// rejection emitted before a request could be parsed. Covers only the response
 /// components; any `;req` component is malformed here (there is no request to
 /// resolve it against).
-pub fn verify_response_unbound(
+pub fn verify_response_unbound<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
     verify_response_unbound_with_policy(response, resolve_actor, &VerifierPolicy::default(), now)
 }
 
 /// [`verify_response_unbound`] under an explicit verifier-local [`VerifierPolicy`].
-pub fn verify_response_unbound_with_policy(
+pub fn verify_response_unbound_with_policy<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
-    resolve_actor: &dyn Fn(&str, SignerSlot) -> Option<ResolvedActor>,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<VerifiedHttpResponseEvidence, HttpProfileError> {
@@ -1235,5 +1396,7 @@ pub fn verify_response_unbound_with_policy(
         bound_request_evidence: None,
         body_request_evidence: None,
         server_signer: None,
+        // No credential on this path, so there is no issuer to report.
+        delegation_issuer_kid: None,
     })
 }

@@ -100,6 +100,54 @@ the per-gate unit tests in `mcp-re-http-profile/src/delegation.rs`.
 | C13 | Unsigned response rejected (client fails closed) | `unsigned_response_is_rejected` (`mcp-re-client-core`) | CI |
 | C14 | Unbound signature not accepted as success (a 200 must carry `;req`) | `unbound_signature_is_not_accepted_as_success` | CI |
 
+## C.1 Trust-epoch wire contract (ADR-MCPRE-052 §7)
+
+The minted trust epoch depends on whether a networked trust-epoch source is wired.
+
+| proxy configuration | minted epoch | verifier must accept |
+|---|---|---|
+| no `--trust-epoch-redis-url` | the bare `--delegated-trust-epoch` label | that label |
+| `--trust-epoch-redis-url` set | **`<base>#<counter>`**, always | `<base>#<counter>` |
+
+`<counter>` is the value of the shared key (`--trust-epoch-key`, default
+`mcp-re:trust:epoch`); an unset key reads as `0`, so the first minted epoch is
+`<base>#0`. **The counter is always appended — the bare label is never minted when a
+source is wired.**
+
+### Why the counter is always appended
+
+The epoch must be derived purely from shared state so that an operator `INCR` remains
+effective across a replica restart. The superseded design compared the counter against a
+baseline captured at *that process's* startup and emitted the bare label while they were
+equal; a replica restarting after an `INCR` therefore adopted the advanced value as its
+own baseline, never observed an advance, and resumed minting an epoch verifiers still
+accepted. The kill switch was process-relative rather than durable.
+
+### Invariants
+
+| # | invariant |
+|---|---|
+| E1 | The emitted epoch is a pure function of `(base label, shared counter)` — no per-process state contributes. Every replica at counter `N` mints `<base>#N`, whenever it started. |
+| E2 | An `INCR` survives a restart: a restarted replica resolves the same label as its long-lived peers, never the pre-`INCR` one. |
+| E3 | **Fail closed for minting.** A replica that cannot establish the shared epoch does not issue: no credential is minted without a comparable epoch. The current key keeps serving until its `exp`, after which the hot path fails closed on its own. Startup refuses outright rather than serving with the kill switch wired to nothing. |
+| E4 | The emitted epoch is monotone within a process. A counter that goes backwards (store reset, failover to a stale replica, a reconnect landing on the wrong instance) is **refused, never rebased** — minting under a lower epoch would resurrect credentials verifiers already reject. |
+| E5 | Connectivity is lazy and retrying. A store briefly unreachable at boot or at runtime does not permanently disable the kill switch; reconnection observes increments missed during the outage (E4 still applies). |
+
+Across a restart the shared counter is the only authority, by construction: a store that
+loses or rewinds its counter is a trust-store failure, and a freshly started replica has
+no local state with which to detect it. E4 bounds this within a process lifetime.
+
+### Operational consequence
+
+Revocation is undone by pointing verifiers at the **new** epoch, never by rewinding the
+counter — a rewind is refused by E4. The multi-replica proof harness
+(`docs/security/gke-multi-replica-validation.sh`) resolves the accepted epoch per call
+from the shared counter for exactly this reason.
+
+Covered by `mcp-re-proxy` unit tests `trust_epoch_watch_tests` (increment, outage,
+restart, reconnect, regression, and the full sequence) and, live, by Proof 2 of the
+multi-replica harness.
+
 ## D. Client-side revocation enforcement (ADR-MCPRE-052 §7)
 
 | # | Required behavior | Proof (`test_fn` / vector) | Enforced |

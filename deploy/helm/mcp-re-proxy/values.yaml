@@ -10,7 +10,7 @@ replicaCount: 3
 image:
   repository: mcp-re-proxy
   # Pin to a digest in production; a tag is shown here for readability.
-  tag: "0.13.0"
+  tag: "0.14.0"
   pullPolicy: IfNotPresent
 
 # The port the proxy binds (mTLS/MCP-RE over TLS). The Service and the tcpSocket
@@ -40,27 +40,74 @@ service:
 
 # Shared replay store (ADR-MCPS-020). MUST be a shared tier at >= REDIS_WAIT_QUORUM
 # under --fleet, or the proxy refuses to start.
+#
+# The URL scheme is security-relevant, so the default is the safe one. This hop
+# carries the admitted replay nonces: anyone who can reach it unauthenticated can
+# DEL/FLUSHDB the keyspace and re-open the replay window fleet-wide. Use `rediss://`
+# (TLS) and a credentialed URL — `rediss://:<password>@host:6379`, or an ACL user as
+# `rediss://<user>:<password>@host:6379`. Supply the credential by overriding this
+# value from a Secret; do not commit it.
 replay:
-  redisUrl: "redis://mcp-re-redis:6379"
+  redisUrl: "rediss://mcp-re-redis:6379"
   durabilityTier: "redis-wait-quorum:2:2000"
+  # Escape hatch for a plaintext `redis://` endpoint. The render-time guard refuses
+  # a plaintext URL under fleet=true unless this is explicitly true, so running
+  # unencrypted is a decision someone wrote down rather than a default. Only
+  # defensible where the hop is confined by other means (a fenced validation
+  # namespace, a service mesh terminating TLS transparently).
+  allowPlaintextRedis: false
 
 # Trust revocation (ADR-MCPS-021 / MCPS-84). The push tier + a trust-epoch Redis
 # source gives near-zero cross-replica revocation lag (bounded T on outage). Set
 # trustEpochRedisUrl to "" to run the push tier inert (bounded-T only).
+#
+# Same scheme rule as replay.redisUrl, and the stakes are higher: the epoch value
+# read from this key drives credential minting, so an attacker who can write it
+# forces every replica to re-mint under an epoch verifiers reject — a fleet-wide
+# response-signing outage. `replay.allowPlaintextRedis` governs both URLs.
 revocation:
   tier: "push:60"
-  trustEpochRedisUrl: "redis://mcp-re-redis:6379"
+  trustEpochRedisUrl: "rediss://mcp-re-redis:6379"
   trustEpochKey: "mcp-re:trust:epoch"
 
 # Client-certificate lifetime ceiling (short-lived-cert revocation posture).
 maxClientCertLifetimeSeconds: 3600
 
-# mTLS channel binding (ADR-MCPS-023). Empty = omit the flag, so the proxy uses
-# its own fail-safe default (`exact`: bind each signed request to the verified
-# client-cert identity). Set "none" ONLY for a reference deploy driven by an
-# HTTP-profile client that carries no channel-binding claim (the shipped
-# mcp_re_gke_client / SDK e2e). "lb-assertion"/"attested-ingress" additionally
-# require the ingress key/anchor inputs the proxy documents.
+# Per-request ADMISSION control (MCPRE-114). With no ceiling the proxy accepts
+# in-flight requests without bound, so ONE client holding a valid mTLS certificate
+# can drive unbounded concurrent work — each admitted request buffering up to
+# --max-body-bytes. Over the ceiling the proxy answers 503 BEFORE the handler, so
+# the inner plane is never reached.
+#
+# Both are empty by default and the flags are then omitted, which means UNBOUNDED.
+# That is the proxy's own default and is deliberately preserved here so upgrading
+# the chart cannot start shedding load on an existing release — but it is not a
+# defensible production posture. Set one of these.
+#
+#   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
+#   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
+#                     cores; each core then enforces only its own share (lock-free)
+#
+# Size maxInFlightTotal against the inner plane's own concurrency, not the pod's
+# memory: the point is to shed at the boundary rather than queue in front of a
+# backend that is already saturated. A value of 0 is refused at render — the CLI
+# rejects it too, since "0" reads like a tightening but means "no ceiling".
+admission:
+  maxInFlight: ""
+  maxInFlightTotal: ""
+
+# mTLS channel binding (ADR-MCPS-023). The ONLY two values this chart can render
+# into a pod that starts:
+#
+#   ""       omit the flag; the proxy applies its own fail-safe default, `exact`
+#   "exact"  the same thing, stated explicitly
+#
+# `exact` binds each signed request to the verified client-cert identity. There is
+# no "none": the proxy rejects it at argument parse. "lb-assertion" and
+# "attested-ingress" parse but are refused at boot on the RFC 9421 serving path
+# (rebinding an owner-signed ingress assertion to the request-evidence digest is
+# pending owner authorization), so setting either CrashLoops the pods. The
+# render-time guard rejects all three rather than letting the chart produce them.
 transportBinding: ""
 
 # The proxy's server identity (response signing + expected audience).
@@ -70,6 +117,14 @@ transportBinding: ""
 # targetUri/trustDomain/route MUST agree with what mcp_re_gke_client.py signs
 # (--target-uri / --trust-domain / --route). An empty route omits the flag (route
 # = None on both sides).
+# Every value below is deployment-specific and MUST be overridden. They are the
+# identity of one dispatch boundary: the audience tuple is what makes a signed
+# request valid HERE and nowhere else (RE-15). Two installs that both keep a shipped
+# default would share one audience tuple and one trust epoch, so a request signed for
+# either verifies at the other whenever they share a trust anchor, and advancing the
+# epoch on one advances it on both. The render-time guard therefore rejects the
+# `did:example:` / `example.com` / `epoch-1` placeholders rather than rendering a
+# chart whose security properties depend on nobody else using the defaults.
 identity:
   audience: "did:example:server-1"
   serverSigner: "did:example:server-1"
@@ -81,6 +136,13 @@ identity:
   # minted into every delegation credential (required; MUST be coordinated with the
   # verifiers' accepted-epoch set — §7). Advance it to invalidate an epoch of keys.
   delegatedTrustEpoch: "epoch-1"
+  # Escape hatch for the demo/validation identity above. `emit_mtls_fixtures` bakes
+  # `did:example:server-1` and `example.com` into trust.json as part of the resolved
+  # actor id, so a harness driven by those fixtures MUST deploy with the matching
+  # identity — the placeholder guard would otherwise make the fixtures unusable.
+  # Setting this true is a statement that the deployment is a fenced validation run,
+  # not a production boundary; leave it false everywhere else.
+  allowExampleFixtures: false
 
 # Inner MCP plane (ADR-MCPRE-051 §3). The proxy NO LONGER launches a subprocess;
 # it forwards to a stateless Streamable-HTTP backend over `--inner-http-url`.
@@ -131,10 +193,18 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# TLS + trust material, mounted from a Secret. The Secret MUST provide these keys:
-#   tls.crt, tls.key, client-ca.pem, trust.json, signing-seed — minus tls.key when
-#   gcpKms.tlsKeyVersion is set. signing-seed is required even under keySource=gcpKms
-#   (the CLI mandates --signing-key-seed; in KMS mode it is accepted but UNUSED).
+# TLS + trust material, mounted from a Secret. The Secret MUST provide:
+#   tls.crt, client-ca.pem, trust.json
+#   tls.key      — unless gcpKms.tlsKeyVersion custodies it (then it must be ABSENT;
+#                  the proxy refuses an exported TLS key alongside a delegated one)
+#   signing-seed — ONLY under keySource: fileSeed. Under gcpKms the response key never
+#                  leaves KMS, the chart does not pass --signing-key-seed, and the
+#                  proxy never reads one, so provisioning a seed there would put a
+#                  deployment's most sensitive file in the pod for nothing.
+#
+# Every key file this Secret does provide is mounted 0400: the proxy refuses to start
+# on a group/world-readable key file, and that refusal now covers tls.key under EVERY
+# custody mode (it used to be skipped for anything but fileSeed).
 tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"
@@ -154,3 +224,38 @@ podAnnotations: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Pod / container hardening.
+#
+# The proxy mounts the response-signing seed and the TLS private key from a Secret,
+# so a container escape is a key-compromise event. These defaults drop every
+# capability, forbid privilege escalation, and pin the runtime's default seccomp
+# profile — none of which changes the uid the process runs as.
+#
+# Runs as a non-root uid (C053b, resolved 2026-07-27). The conflict that blocked this
+# was real: the proxy refuses a key file with ANY group or other permission bit, while
+# a Secret mounted for a non-root uid is owned by fsGroup and delivered mode 0440.
+#
+# Resolved by teaching the key-file check about that mount model rather than by
+# weakening it. Group READ is accepted only when the operator passes
+# --allow-group-readable-key-files (rendered below) AND the file's group is one the
+# process is actually in. Group WRITE and every world bit are still refused outright,
+# with or without the opt-in — a peer able to replace the signing key is never a mount
+# requirement.
+#
+# fsGroup must match the mounted Secret's group, and defaultMode is 0440 for the same
+# reason; the two are a pair, so changing one without the other fails closed at startup.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  capabilities:
+    drop:
+      - ALL

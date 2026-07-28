@@ -85,18 +85,26 @@ This procedure was executed for the v0.11 (v1 envelope) and v0.12 (v2 envelope)
 declarations. Re-run it to refresh `production_slo` on a new major release or after a
 performance pass (full steps + teardown: [`gke-slo-baseline-runbook.md`](../security/gke-slo-baseline-runbook.md)):
 
+0. **First, locally**: `scripts/local_slo_lane.sh` must be green on your box. It is
+   free, it runs the same envelope, and a red local lane means the declared-hardware
+   run would only spend money to reproduce the same regression.
 1. On the declared hardware class, run the load harness at 1 core and at N cores,
-   capturing machine reports:
+   capturing machine reports (`--exact`, NOT `--ignored` — the bench is not an
+   `#[ignore]` test, so `--ignored` selects nothing, exits 0 and measures nothing;
+   `redis_replay` is required, the bench needs the shared Redis tier; and
+   `MCP_RE_LOADGEN_OUT` must be absolute because cargo runs the test from the
+   package root):
    ```
    MCP_RE_LOADGEN_HW_CLASS="<class>" MCP_RE_LOADGEN_CORES=1 \
-     MCP_RE_LOADGEN_OUT=one_core.json \
-     cargo test -p mcp-re-proxy --features async_serve \
-       --test tls_load_harness_bench tls_load_harness_bench -- --ignored --nocapture
+     MCP_RE_LOADGEN_OUT=$PWD/one_core.json \
+     cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
+       --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
    MCP_RE_LOADGEN_HW_CLASS="<class>" MCP_RE_LOADGEN_CORES=N \
-     MCP_RE_LOADGEN_OUT=n_core.json \
-     cargo test -p mcp-re-proxy --features async_serve \
-       --test tls_load_harness_bench tls_load_harness_bench -- --ignored --nocapture
+     MCP_RE_LOADGEN_OUT=$PWD/n_core.json \
+     cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
+       --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
    ```
+   On GKE this is `tools/slo/run_slo_job.sh`, which already pins all of the above.
 2. Derive the release floor/ceilings from that baseline (e.g. throughput floor at
    a chosen fraction of measured median; p99/p999 ceilings at a chosen multiple
    of measured tail), record `production_slo.hardware_class` + `measured_on`, and set

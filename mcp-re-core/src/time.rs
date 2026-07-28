@@ -156,47 +156,6 @@ pub fn parse_rfc3339_utc(s: &str) -> Result<i64, McpReError> {
     Ok(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-/// Check that `now_unix` falls inside the freshness window for a request
-/// (MCP_RE_SPEC §5, §9 step 9).
-///
-/// With a symmetric `max_clock_skew_secs`, the valid window is
-/// `[issued_at − skew, expires_at + skew]` (both bounds inclusive). The function
-/// returns:
-///
-/// - [`McpReError::ExpiredRequest`] if either timestamp is malformed (delegated
-///   to [`parse_rfc3339_utc`]'s fail-closed mapping),
-/// - [`McpReError::ExpiredRequest`] if `expires_at < issued_at` (a nonsensical
-///   window),
-/// - [`McpReError::ExpiredRequest`] if `now_unix < issued_at − skew`
-///   (future-dated beyond skew) or `now_unix > expires_at + skew` (stale),
-/// - `Ok(())` otherwise.
-///
-/// `max_clock_skew_secs` is expected to be non-negative; a negative value simply
-/// tightens the window (subtracting from `expires_at`, adding to `issued_at`),
-/// which can only reject more, never admit more — still fail-closed.
-pub fn check_freshness(
-    issued_at: &str,
-    expires_at: &str,
-    now_unix: i64,
-    max_clock_skew_secs: i64,
-) -> Result<(), McpReError> {
-    let issued = parse_rfc3339_utc(issued_at)?;
-    let expires = parse_rfc3339_utc(expires_at)?;
-
-    // A window whose end precedes its start is nonsensical -> fail closed.
-    if expires < issued {
-        return Err(McpReError::ExpiredRequest);
-    }
-
-    let lower = issued.saturating_sub(max_clock_skew_secs);
-    let upper = expires.saturating_add(max_clock_skew_secs);
-
-    if now_unix < lower || now_unix > upper {
-        return Err(McpReError::ExpiredRequest);
-    }
-    Ok(())
-}
-
 /// Convert days-since-Unix-epoch to a Gregorian `(year, month, day)`, using
 /// Howard Hinnant's `civil_from_days` — the exact inverse of [`days_from_civil`].
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -228,7 +187,6 @@ pub fn unix_to_rfc3339_utc(unix: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::check_freshness;
     use super::parse_rfc3339_utc;
     use crate::error::McpReError;
 
@@ -353,79 +311,6 @@ mod tests {
         // Non-digit in a numeric field.
         assert_eq!(
             parse_rfc3339_utc("2026-0X-28T20:00:00Z"),
-            Err(McpReError::ExpiredRequest)
-        );
-    }
-
-    // ---- freshness ----
-
-    const ISSUED: &str = "2026-05-28T20:00:00Z"; // 1_779_998_400
-    const EXPIRES: &str = "2026-05-28T20:05:00Z"; // +300s
-    const ISSUED_EPOCH: i64 = 1_779_998_400;
-    const EXPIRES_EPOCH: i64 = 1_779_998_400 + 300;
-
-    #[test]
-    fn now_inside_window_is_ok() {
-        assert_eq!(
-            check_freshness(ISSUED, EXPIRES, ISSUED_EPOCH + 150, 30),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn now_at_exact_issued_and_expires_is_ok() {
-        // Window is inclusive at both ends even with zero skew.
-        assert_eq!(check_freshness(ISSUED, EXPIRES, ISSUED_EPOCH, 0), Ok(()));
-        assert_eq!(check_freshness(ISSUED, EXPIRES, EXPIRES_EPOCH, 0), Ok(()));
-    }
-
-    #[test]
-    fn now_past_expires_plus_skew_is_expired() {
-        let skew = 30;
-        // Exactly at expires + skew is inclusive -> Ok.
-        assert_eq!(
-            check_freshness(ISSUED, EXPIRES, EXPIRES_EPOCH + skew, skew),
-            Ok(())
-        );
-        // One second beyond -> expired.
-        assert_eq!(
-            check_freshness(ISSUED, EXPIRES, EXPIRES_EPOCH + skew + 1, skew),
-            Err(McpReError::ExpiredRequest)
-        );
-    }
-
-    #[test]
-    fn now_before_issued_minus_skew_is_expired() {
-        let skew = 30;
-        // Exactly at issued - skew is inclusive -> Ok.
-        assert_eq!(
-            check_freshness(ISSUED, EXPIRES, ISSUED_EPOCH - skew, skew),
-            Ok(())
-        );
-        // One second before -> future-dated beyond skew -> expired.
-        assert_eq!(
-            check_freshness(ISSUED, EXPIRES, ISSUED_EPOCH - skew - 1, skew),
-            Err(McpReError::ExpiredRequest)
-        );
-    }
-
-    #[test]
-    fn expires_before_issued_is_expired() {
-        // Nonsensical window: expires precedes issued.
-        assert_eq!(
-            check_freshness(EXPIRES, ISSUED, ISSUED_EPOCH, 30),
-            Err(McpReError::ExpiredRequest)
-        );
-    }
-
-    #[test]
-    fn malformed_timestamp_in_freshness_is_expired() {
-        assert_eq!(
-            check_freshness("garbage", EXPIRES, ISSUED_EPOCH, 30),
-            Err(McpReError::ExpiredRequest)
-        );
-        assert_eq!(
-            check_freshness(ISSUED, "garbage", ISSUED_EPOCH, 30),
             Err(McpReError::ExpiredRequest)
         );
     }

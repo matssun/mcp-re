@@ -93,12 +93,13 @@ ALLOW_HITL_LIVE = {
 # hermetic sandbox with no `.git` and no working tree, so a generated target
 # would fail spuriously. These are structurally cargo-lane-only, not "not yet
 # wired" — do NOT move them to a Bazel target.
-ALLOW_NON_HERMETIC = {
-    # no_tracked_secrets runs `git rev-parse` + `git grep` over the tracked files
-    # to prove no real GCP/personal identifier was ever committed; the git tree is
-    # the subject under test, so it cannot be sandboxed.
-    "no_tracked_secrets",
-}
+# Empty. This held "no_tracked_secrets", allowlisted as a permanent cargo-only
+# guard — but no such test existed anywhere in the tree (the crate it named,
+# `mcp-re-walkthrough`, is not a workspace member), so the entry excused a target
+# that could never run. The guard it described now exists for real as
+# `scripts/tracked_secrets_gate.py`, a python CI gate that reads the git tree
+# directly, so it needs no cargo-lane exemption here.
+ALLOW_NON_HERMETIC: set[str] = set()
 
 # Cargo-only test-support crates: a Cargo package that exists ONLY to be built
 # on-demand by a cargo test (via a nested `cargo build`) and loaded at runtime —

@@ -5,9 +5,9 @@
 //! A signed 202 states exactly one thing: the enforcement boundary
 //! authenticated and accepted the message. Not that a cancellation completed,
 //! not that the inner application saw it, not that anything was done. These
-//! tests pin the mechanics; `signed_202_binds_only_to_its_own_notification` pins
-//! the property that makes the claim meaningful at all — an acknowledgement that
-//! could be lifted onto another message would acknowledge nothing.
+//! tests pin the mechanics; `an_acknowledgement_binds_to_one_transmission_not_to_content`
+//! pins the exact reach of the acknowledgement — it names ONE transmission and cannot
+//! be lifted onto any other, including a byte-identical resend (C019b).
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_accepted_202;
@@ -95,14 +95,28 @@ fn signed_202_verifies_against_its_notification() {
     assert_eq!(actor.identity.keyid, SERVER_KEY_ID);
 }
 
-/// The property that makes the 202 mean anything: it binds to the exact
-/// notification it acknowledges, via the mandatory `;req` components. A bodyless
-/// response has no body, so it cannot restate its `request_evidence` the way a
-/// bodied response does — the `;req` binding is the ONLY binding, which is why
-/// it is mandatory rather than optional. An acknowledgement that could be lifted
-/// onto another message would acknowledge nothing.
+/// The exact reach of the acknowledgement, both directions, in one test.
+///
+/// The `;req` components (`@method`, `@target-uri`, `content-digest`,
+/// `content-type`) are the ONLY binding a bodyless 202 has — it has no body in which
+/// to restate its `request_evidence` — and every one of them is a function of the
+/// request's CONTENT:
+///
+/// * a 202 for notification A does NOT verify against a different notification B —
+///   an acknowledgement liftable onto another message would acknowledge nothing;
+/// * a 202 for notification A DOES verify against a byte-identical notification A',
+///   because nothing unique to a request instance is covered. The request `nonce`
+///   lives in its own `@signature-params` (not a coverable component) and the request
+///   evidence block carries no instance field.
+///
+/// The second assertion is the standing "Binding granularity" ruling
+/// (`docs/spec/http-profile-conformance-notes.md` §3.4), pinned so the contract is
+/// visible rather than implied: byte-identical notifications are the ordinary case
+/// (`notifications/initialized`, a retried `notifications/cancelled`), so a verified
+/// 202 does not prove that THIS transmission reached the boundary. If the ruling
+/// changes, this test is the one that must change with it.
 #[test]
-fn signed_202_binds_only_to_its_own_notification() {
+fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let note_a = notification("n-a", "notifications/initialized");
     let note_b = notification("n-b", "notifications/cancelled");
     let ack_a = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
@@ -111,9 +125,74 @@ fn signed_202_binds_only_to_its_own_notification() {
     verify_accepted_202(&ack_a, &note_a, &resolver(), &policy(), NOW).expect("binds to A");
     assert_eq!(
         verify_accepted_202(&ack_a, &note_b, &resolver(), &policy(), NOW).unwrap_err(),
-        HttpProfileError::ResponseSignatureInvalid,
-        "A's acknowledgement must not acknowledge B"
+        HttpProfileError::ResponseBindingMismatch,
+        "A's acknowledgement must not acknowledge a DIFFERENT notification B"
     );
+
+    // THE INVARIANT (C019b, owner ruling 2026-07-27). Same method, same target, same
+    // body — a distinct TRANSMISSION differing only in the request signature's own
+    // nonce. Before this ruling the covered set reached nothing that distinguished
+    // them and A's acknowledgement verified against this too, so a captured ack could
+    // be presented as evidence for a later resend that the server had in fact rejected
+    // as a replay. The server could tell the two apart; the client could not.
+    let note_a_again = notification("n-a-again", "notifications/initialized");
+    assert_ne!(
+        signature_input_of(&note_a),
+        signature_input_of(&note_a_again),
+        "the two transmissions must genuinely be distinct request instances"
+    );
+    assert_eq!(
+        verify_accepted_202(&ack_a, &note_a_again, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::ResponseBindingMismatch,
+        "an acknowledgement for transmission A must NOT verify for a distinct \
+         transmission A', even with identical method, target and body content"
+    );
+}
+
+/// The coordinate is re-derived from the request, never trusted from the response: a
+/// forged header naming some other transmission is refused even though the 202's own
+/// signature is valid over it.
+#[test]
+fn a_forged_request_evidence_header_is_refused() {
+    let note_a = notification("n-a", "notifications/initialized");
+    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("signs");
+    for (name, value) in ack.headers.iter_mut() {
+        if name.eq_ignore_ascii_case("mcp-re-request-evidence") {
+            *value = "0".repeat(value.len());
+        }
+    }
+    assert!(
+        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).is_err(),
+        "a request-evidence value the verifier cannot re-derive must fail closed"
+    );
+}
+
+/// Stripping the coordinate is not a downgrade to content-level binding: the header is
+/// a REQUIRED covered component, so its absence fails closed rather than falling back.
+#[test]
+fn a_missing_request_evidence_header_is_refused() {
+    let note_a = notification("n-a", "notifications/initialized");
+    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
+        .expect("signs");
+    ack.headers
+        .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
+    assert_eq!(
+        verify_accepted_202(&ack, &note_a, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::MissingEvidence("response request-evidence"),
+        "there is no weaker content-level mode to fall back to"
+    );
+}
+
+/// The `Signature-Input` header value, used to show two notifications are distinct
+/// request instances even when their covered content is identical.
+fn signature_input_of(request: &HttpRequest) -> String {
+    request
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+        .map(|(_, v)| v.clone())
+        .expect("a signed request carries signature-input")
 }
 
 /// The digest of empty content is a signed STATEMENT that there is no body — not
@@ -267,4 +346,132 @@ fn the_bodied_request_set_still_requires_content_type() {
         mcp_re_http_profile::verify_request(&stripped, &resolver(), NOW).is_err(),
         "the bodied set is unchanged"
     );
+}
+
+// --- C047: PRESENT ⇒ COVERED on the bodyless request set --------------------
+//
+// The bodied request path enforces that `authorization`, `dpop`, and the MCP transport
+// headers are covered whenever they are present. The bodyless path (§8.1) enforced
+// none of them, and its signer built components from a closed three-element set so it
+// could not have covered them anyway. A bodyless request could therefore present a
+// bearer credential entirely outside its own signature.
+
+/// A bodyless request carrying `Authorization` must have it COVERED — and the signer
+/// must produce exactly that, or the two ends disagree.
+#[test]
+fn a_bodyless_request_covers_a_present_authorization_header() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-auth")
+        .expect("signs");
+    assert!(
+        signature_input_of(&req).contains("\"authorization\""),
+        "the signer must cover a present authorization header: {}",
+        signature_input_of(&req)
+    );
+    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+        .expect("a bodyless request with a covered credential verifies");
+}
+
+/// The attack the gap allowed: swap the presented bearer token. With the credential
+/// covered this breaks the signature; the point of this test is that the header cannot
+/// be left uncovered in the first place — see the sibling test below.
+#[test]
+fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Authorization".into(), "Bearer token-abc".into())],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-swap")
+        .expect("signs");
+    for (name, value) in req.headers.iter_mut() {
+        if name.eq_ignore_ascii_case("authorization") {
+            *value = "Bearer token-ATTACKER".into();
+        }
+    }
+    assert!(
+        verify_bodyless_request(&req, &resolver(), &policy(), NOW).is_err(),
+        "a swapped bearer token must invalidate the signature"
+    );
+}
+
+/// The core of C047: a credential ADDED after signing — so it is present but not
+/// covered — must be rejected rather than silently accepted as part of the request.
+/// Before the fix this verified, because the bodyless verifier never asked.
+#[test]
+fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-inject")
+        .expect("signs");
+    // An intermediary attaches a credential the signature says nothing about.
+    req.headers.push(("Authorization".into(), "Bearer token-INJECTED".into()));
+    assert_eq!(
+        verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+        HttpProfileError::MissingCoveredComponent("authorization"),
+        "a present-but-uncovered credential must fail closed, not ride along"
+    );
+}
+
+/// Same rule for `dpop` and for the MCP transport headers, so the fix is not
+/// authorization-specific.
+#[test]
+fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected() {
+    for (header, expected) in [
+        ("DPoP", "dpop"),
+        ("Mcp-Method", "mcp-method"),
+        ("Mcp-Name", "mcp-name"),
+        ("Mcp-Protocol-Version", "mcp-protocol-version"),
+    ] {
+        let mut req = HttpRequest {
+            method: "DELETE".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![],
+            body: Vec::new(),
+        };
+        sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-h")
+            .expect("signs");
+        req.headers.push((header.into(), "injected".into()));
+        assert_eq!(
+            verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
+            HttpProfileError::MissingCoveredComponent(expected),
+            "an uncovered {header} must fail closed on the bodyless path"
+        );
+    }
+}
+
+/// And the signer covers each of them when present, so a legitimately-signed bodyless
+/// request carrying them still round-trips. Without this half the fix would simply make
+/// those requests unsignable.
+#[test]
+fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![
+            ("Authorization".into(), "Bearer t".into()),
+            ("DPoP".into(), "proof".into()),
+            ("Mcp-Method".into(), "notifications/cancelled".into()),
+            ("Mcp-Name".into(), "tool-a".into()),
+            ("Mcp-Protocol-Version".into(), "2026-07-28".into()),
+        ],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-all")
+        .expect("signs");
+    let input = signature_input_of(&req);
+    for name in ["authorization", "dpop", "mcp-method", "mcp-name", "mcp-protocol-version"] {
+        assert!(input.contains(&format!("\"{name}\"")), "{name} must be covered: {input}");
+    }
+    verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
 }

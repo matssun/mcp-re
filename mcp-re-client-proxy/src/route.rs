@@ -8,30 +8,55 @@
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::DelegationPolicy;
-use mcp_re_client_core::ResolvedActor;
+use mcp_re_client_core::ResolverOutcome;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::SignerSlot;
+use mcp_re_client_core::TrustedIssuerSet;
 use std::collections::HashMap;
 
 /// The per-route trust seam: resolve the response signer keyid to a structured
 /// actor for RFC 9421 response verification.
-pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync>;
+/// The client route's trust seam. Returns a [`ResolverOutcome`] so a resolver outage is
+/// distinguishable from an unknown keyid (C079); both fail closed.
+pub type RouteActorResolver =
+    Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
 
 /// How the proxy verifies the server's response for a route. Delegated-signing is the
 /// ONLY response mode (ADR-MCPRE-052, MCPRE-122): the client enforces the same
 /// strictness as the server — a delegated-signed response is required, and any
 /// direct-root, unsigned, or object/`_meta` carrier fails closed. There is no
 /// direct-root client verification mode.
+///
+/// Both variants carry the ROOT-resolving trust seam INSIDE them. It used to be a
+/// separate `Route::resolve_actor` field, which made the two halves of a trust decision
+/// — which roots resolve, and which are revoked — independently settable. A route could
+/// then resolve roots from one source and check revocation against another (or against
+/// nothing), and revocation would be silently inert. Keeping them in one variant means
+/// a route cannot be built with a mismatched pair.
 pub enum ClientVerification {
     /// Verify a delegated-signed response (a success OR a rejection receipt) carrying
     /// the inline delegation credential. No direct-root, unsigned, or object/`_meta`
     /// downgrade is accepted.
     ///
-    /// The [`RevocationSource`] is a REQUIRED field — a route cannot be constructed
-    /// without one, so the verifier is never silently never-revoked (ADR-MCPRE-052 §3
-    /// step 7). An operator that relies on short TTLs alone passes an explicit empty
+    /// For a resolver and a revocation source that are genuinely DIFFERENT objects — a
+    /// live directory plus a separately-fed denylist. The [`RevocationSource`] is a
+    /// required field, so the verifier is never silently never-revoked (ADR-MCPRE-052 §3
+    /// step 7); an operator relying on short TTLs alone passes an explicit empty
     /// `StaticRevocationList` — a visible choice, not a default.
-    DelegatedRequired(DelegationPolicy, Box<dyn RevocationSource>),
+    ///
+    /// The resolver receives no `now`, so it cannot express a time-bounded trust
+    /// decision. Use [`ClientVerification::DelegatedAnchored`] for anything with an
+    /// overlap window.
+    DelegatedRequired(DelegationPolicy, RouteActorResolver, Box<dyn RevocationSource>),
+    /// Verify against a [`TrustedIssuerSet`] — the trust-anchor lifecycle: current
+    /// roots, retiring roots with a `valid_until` overlap deadline, revoked roots.
+    ///
+    /// This is the variant a signed trust-anchor manifest loads into
+    /// ([`mcp_re_client_core::load_signed_manifest_with_floor`]). The set supplies both
+    /// the resolver and the revocation source, and the proxy rebuilds the resolver per
+    /// request with that request's `now` — so a retiring root stops being trusted the
+    /// moment its window closes, rather than at whatever time the route was built.
+    DelegatedAnchored(DelegationPolicy, TrustedIssuerSet),
 }
 
 /// One configured route: the canonical `@target-uri`, the resolved audience tuple,
@@ -56,10 +81,10 @@ pub struct Route {
     /// authorized by the credential, not enrolled); this field is retained for route
     /// bookkeeping.
     pub expected_server_keyid: Option<String>,
-    /// The trust seam resolving the response signer for verification. Resolves the
-    /// credential's ROOT `issuer_kid` for the `Response` slot.
-    pub resolve_actor: RouteActorResolver,
-    /// How the server's response is verified for this route (delegated-signing).
+    /// How the server's response is verified for this route (delegated-signing),
+    /// INCLUDING the trust seam that resolves the credential's ROOT `issuer_kid`. The
+    /// resolver lives inside the variant so it cannot be paired with a revocation
+    /// source that describes a different set of roots.
     pub verification: ClientVerification,
 }
 

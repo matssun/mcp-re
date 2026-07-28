@@ -8,8 +8,14 @@
 // The theme throughout: **a failure must be DELIVERED, not dropped.** A transport that
 // swallowed a failed exchange would leave `Client` awaiting a reply that never comes, and
 // a hang is a worse failure mode than a raise.
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+
+import { bindingsJson } from "../src/authorization.js";
+import type { HttpHeader } from "../native/binding.js";
+import type { PendingRequest } from "../src/correlation.js";
 
 import {
   McpReError,
@@ -21,17 +27,21 @@ import {
   SigningDevice,
 } from "../src/index.js";
 import {
+  ClientResponseUnsupported,
   ConnectionClosed,
   McpReHttpTransport,
-  NotificationsUnsupported,
+  NotificationNotAcknowledged,
   TransportState,
-  UnsafeConfigurationRefused,
+  type HttpReply,
   type McpReConfig,
   type Poster,
 } from "../src/transport.js";
 
 const CLIENT_SEED = Buffer.alloc(32, 11);
 const TARGET = "https://proxy.internal:8600/mcp";
+/** The `server-key-1` root issuer of `sdk/fixtures/delegated_response_replay.json`, so the
+ * anchor these tests carry is the one the recorded session actually verifies against. */
+const ISSUER_PUBKEY = "URw0oaLLUh3xa7JGuN6OeZfOI1x-drIqPXUDokgZ3Yo";
 
 /** The minimum a config can carry: every optional knob left to its default, so the
  * default side of each branch is what runs. */
@@ -42,7 +52,7 @@ function minimalConfig(over: Partial<McpReConfig> = {}): McpReConfig {
     targetUri: TARGET,
     dpopToken: "access-token-xyz",
     issuerKeyId: "server-key-1",
-    issuerPubkeyB64Url: "",
+    issuerPubkeyB64Url: ISSUER_PUBKEY,
     issuerTrustDomain: "example.com",
     issuerSubject: "did:example:server-1",
     verifierAudiences: ["verifier-1"],
@@ -184,6 +194,52 @@ describe("McpReHttpTransport lifecycle", () => {
     expect(events).toEqual(["poster-hit", "onclose"]);
   });
 
+  it("does not sign or POST a request still queued at the semaphore when close() lands", async () => {
+    // The gap the in-flight test above does NOT cover. close() is documented as making
+    // no claim about already-DISPATCHED work — but a request waiting for a concurrency
+    // slot has not been dispatched. Before the fix, the OPEN check ran before the queue
+    // wait and `Promise.race` started the exchange regardless, so every queued request
+    // was signed and POSTed after teardown: the server executed work the caller believed
+    // it had cancelled, with valid signatures and fresh nonces.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const posted: string[] = [];
+    const poster: Poster = async (req) => {
+      posted.push(String(req.headers?.["signature-input"] ?? "signed"));
+      await gate;
+      throw new McpReError("mcp-re.replay_detected");
+    };
+    // One slot, so the second and third sends are stuck in the queue.
+    const transport = new McpReHttpTransport(
+      minimalConfig({ maxConcurrentExchanges: 1 }),
+      poster,
+    );
+    await transport.start();
+
+    const first = transport.send(REQUEST);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted.length, "the first request holds the only slot").toBe(1);
+
+    const queued = [transport.send(REQUEST), transport.send(REQUEST)];
+    await new Promise((r) => setTimeout(r, 20));
+    expect(posted.length, "the queued requests are still waiting for a slot").toBe(1);
+
+    await transport.close();
+    release();
+
+    await expect(first).rejects.toThrow(ConnectionClosed);
+    for (const q of queued) {
+      await expect(q, "a queued request must fail closed, not be emitted").rejects.toThrow(
+        ConnectionClosed,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    expect(
+      posted.length,
+      "no request queued at close() may reach the server",
+    ).toBe(1);
+  });
+
   it("clears abandoned correlation state on close", async () => {
     // Correlation entries would otherwise outlive the transport that owns them.
     let release!: () => void;
@@ -210,76 +266,115 @@ describe("McpReHttpTransport lifecycle", () => {
 describe("McpReHttpTransport notification handling", () => {
   const NOTIFICATION: JSONRPCMessage = { jsonrpc: "2.0", method: "notifications/initialized" };
 
-  it("fails closed on a notification by default", async () => {
-    // The default must not silently discard a standard MCP message. MCP-RE has no
-    // ratified one-way notification profile (#418); until it does, the two ways to
-    // proceed are both worse than stopping: pass the message unprotected, or discard a
-    // `notifications/cancelled` and let the peer keep working.
+  /** A poster that records what went out and answers with `reply`. */
+  const capturing = (
+    calls: { headers: HttpHeader[]; body: Buffer }[],
+    reply: HttpReply,
+  ): Poster => {
+    return async (_method, _targetUri, headers, body) => {
+      calls.push({ headers, body });
+      return reply;
+    };
+  };
+
+  const unsignedAck: HttpReply = { status: 202, headers: [], body: Buffer.alloc(0) };
+
+  it("transmits a notification as a signed POST", async () => {
+    // The adapter used to refuse or drop it: MCP-RE had no ratified one-way profile, so
+    // a `notifications/cancelled` silently became "keep going". The profile exists now
+    // (#418 / C019b), so the message is carried and its acknowledgement is checked.
+    const calls: { headers: HttpHeader[]; body: Buffer }[] = [];
+    const transport = new McpReHttpTransport(minimalConfig(), capturing(calls, unsignedAck));
+    await transport.start();
+
+    // The unsigned ack fails the check below; what this test reads is what DID go out.
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationNotAcknowledged);
+
+    expect(calls).toHaveLength(1);
+    const names = new Set(calls[0].headers.map((h) => h.key.toLowerCase()));
+    for (const required of ["signature", "signature-input", "content-digest"]) {
+      expect(names).toContain(required);
+    }
+    const body = JSON.parse(calls[0].body.toString("utf8"));
+    expect(body.method).toBe("notifications/initialized");
+    // The serving path classifies a notification by an ABSENT id. `null` is a present id
+    // and would be dispatched as a request, answered with a bodied reply nothing awaits.
+    expect("id" in body).toBe(false);
+    expect(body._meta, "the request evidence block rides along").toBeTruthy();
+  });
+
+  it("fails closed on an unsigned acknowledgement", async () => {
+    // A 202 with no evidence establishes nothing, so it must not pass as delivery. The
+    // caller that sent the notification is the one told, because there is no reply for a
+    // JSON-RPC error to ride back on.
+    const transport = new McpReHttpTransport(minimalConfig(), async () => unsignedAck);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toMatchObject({
+      name: "NotificationNotAcknowledged",
+      method: "notifications/initialized",
+    });
+  });
+
+  it("fails closed on a bodied 200 in place of an acknowledgement", async () => {
+    // The named bodyless set is checked as a set: a bodied 200 is not an
+    // acknowledgement, however well-formed it looks.
+    const transport = new McpReHttpTransport(minimalConfig(), async () => ({
+      status: 200,
+      headers: [{ key: "Content-Type", value: "application/json" }],
+      body: Buffer.from('{"jsonrpc":"2.0","id":null,"result":{"ok":true}}'),
+    }));
+    await transport.start();
+
+    await expect(
+      transport.send({ jsonrpc: "2.0", method: "notifications/cancelled" }),
+    ).rejects.toThrow(NotificationNotAcknowledged);
+  });
+
+  it("aborts an in-flight notification on close rather than waiting out the poster", async () => {
+    // #421 applies to a notification for the same reason it applies to a request: the
+    // caller has torn the transport down, and an acknowledgement it will never look at
+    // must not hold the close open.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const transport = new McpReHttpTransport(minimalConfig(), async () => {
+      await gate;
+      return unsignedAck;
+    });
+    await transport.start();
+    const inflight = transport.send(NOTIFICATION);
+    await new Promise((r) => setTimeout(r, 20));
+    await transport.close();
+    await expect(inflight).rejects.toThrow(ConnectionClosed);
+    release();
+  });
+
+  it("refuses a sub-floor nonce override before a notification is signed", async () => {
+    // A notification signed under a guessable nonce is exactly as replayable as a
+    // request signed under one; a check that covered only requests would be a hole
+    // shaped like the message the caller cares least about.
+    const poster = vi.fn<Poster>();
+    const transport = new McpReHttpTransport(minimalConfig({ nonceFactory: () => "short" }), poster);
+    await transport.start();
+
+    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/at least 22/);
+    expect(poster, "nothing may reach the wire under a sub-floor nonce").not.toHaveBeenCalled();
+  });
+
+  it("refuses a client-side RESPONSE rather than carrying it as a notification", async () => {
+    // A response has no `method`. Signing one as a notification would fabricate a
+    // message and then report ITS acknowledgement as if the response had been delivered.
     const poster = vi.fn<Poster>();
     const transport = new McpReHttpTransport(minimalConfig(), poster);
     await transport.start();
 
-    await expect(transport.send(NOTIFICATION)).rejects.toThrow(NotificationsUnsupported);
-    await expect(transport.send(NOTIFICATION)).rejects.toThrow(/#418/);
-    expect(poster, "nothing may reach the wire").not.toHaveBeenCalled();
-  });
-
-  it("requires an explicit unsafe opt-in to drop notifications", async () => {
-    const dropped: string[] = [];
-    const poster = vi.fn<Poster>();
-    const seen = await sendAndCapture(
-      minimalConfig({
-        unsafeDropNotifications: true,
-        onDroppedNotification: (m) => dropped.push(m),
-      }),
-      poster,
-      NOTIFICATION,
-    );
-
-    expect(dropped).toEqual(["notifications/initialized"]);
-    expect(poster).not.toHaveBeenCalled();
-    expect(seen).toBeUndefined();
-  });
-
-  it("drops under the opt-in even with no observer installed", async () => {
-    // Opting in is the decision; the observer is only how you watch it.
-    const poster = vi.fn<Poster>();
     await expect(
-      sendAndCapture(minimalConfig({ unsafeDropNotifications: true }), poster, NOTIFICATION),
-    ).resolves.toBeUndefined();
-    expect(poster).not.toHaveBeenCalled();
+      transport.send({ jsonrpc: "2.0", id: 1, result: {} } as JSONRPCMessage),
+    ).rejects.toThrow(ClientResponseUnsupported);
+    expect(poster, "nothing fabricated may reach the wire").not.toHaveBeenCalled();
   });
 
-  it("treats a client-side response the same way — it is not a client-initiated request", async () => {
-    const dropped: string[] = [];
-    const response: JSONRPCMessage = { jsonrpc: "2.0", id: 1, result: {} };
-    await sendAndCapture(
-      minimalConfig({ unsafeDropNotifications: true, onDroppedNotification: (m) => dropped.push(m) }),
-      vi.fn<Poster>(),
-      response,
-    );
-    expect(dropped).toEqual(["<unknown>"]);
-  });
-
-  it("refuses the unsafe opt-in under a hardened policy", async () => {
-    // The hardening profile makes "no known-unsafe behaviour here" enforceable rather
-    // than advisory, so the opt-in must fail the CONNECTION.
-    const transport = new McpReHttpTransport(
-      minimalConfig({
-        signer: Signer.fromDevice(
-          "did:example:host-a",
-          "client-key-1",
-          SigningDevice.fromSeed(CLIENT_SEED),
-        ),
-        policy: SignerPolicy.hardened("did:example:host-a"),
-        unsafeDropNotifications: true,
-      }),
-      vi.fn<Poster>(),
-    );
-    await expect(transport.start()).rejects.toThrow(UnsafeConfigurationRefused);
-  });
-
-  it("accepts the fail-closed default under a hardened policy", async () => {
+  it("opens under a hardened policy with a non-exporting signer", async () => {
     const transport = new McpReHttpTransport(
       minimalConfig({
         signer: Signer.fromDevice(
@@ -322,6 +417,88 @@ describe("McpReHttpTransport failure delivery", () => {
       throwingPoster(new Error("mcp-re.response_sig_invalid")),
     );
     expect(seen).toMatchObject({ error: { message: "mcp-re.response_sig_invalid" } });
+  });
+
+  it("delivers a network error under the local prefix, not as something the peer said", async () => {
+    // The `poster` does real I/O, so a reset connection arrives here as a plain Error
+    // exactly like a frozen core token does. Passing it through verbatim would put
+    // "socket hang up" in the field that otherwise only ever holds a wire outcome.
+    // Mirrors `test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code`.
+    const seen = await sendAndCapture(minimalConfig(), throwingPoster(new Error("socket hang up")));
+    const message = (seen as { error: { message: string } }).error.message;
+    expect(message).toBe("mcp-re-sdk: Error: socket hang up");
+    expect(message).not.toMatch(/^mcp-re\./);
+  });
+
+  it("keeps a failed exchange from taking down the session's other requests", async () => {
+    // Mirrors `test_one_exchanges_network_error_does_not_take_down_the_session`: a
+    // per-request failure must stay per-request. A peer that can cause a reset would
+    // otherwise end the session and every other in-flight request with it.
+    const ids: unknown[] = [];
+    const poster: Poster = async (_m, _u, _h, body) => {
+      const id = JSON.parse(body.toString("utf8")).id;
+      ids.push(id);
+      if (id === 1) throw new Error("connection reset by peer");
+      throw new McpReError("mcp-re.replay_detected");
+    };
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    const seen: Record<string, string> = {};
+    transport.onmessage = (m) => {
+      const e = m as { id: number; error: { message: string } };
+      seen[String(e.id)] = e.error.message;
+    };
+    await transport.start();
+    await Promise.all(
+      [1, 2, 3].map((id) => transport.send({ jsonrpc: "2.0", id, method: "tools/list", params: {} })),
+    );
+
+    expect(ids.slice().sort()).toEqual([1, 2, 3]);
+    expect(seen["1"]).toBe("mcp-re-sdk: Error: connection reset by peer");
+    expect(seen["2"]).toBe("mcp-re.replay_detected");
+    expect(seen["3"]).toBe("mcp-re.replay_detected");
+  });
+
+  it("does not accumulate an abort listener per request", async () => {
+    // The AbortController lives as long as the transport, so a listener registered for
+    // one request's close-race and never removed is retained — with its captured promise
+    // — for the whole session. `{ once: true }` does not help: it only fires on close,
+    // which is the rare case. A long-lived client would hold one per request it ever sent.
+    const added = vi.spyOn(AbortSignal.prototype, "addEventListener");
+    const removed = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+    try {
+      const transport = new McpReHttpTransport(
+        minimalConfig(),
+        throwingPoster(new McpReError("mcp-re.replay_detected")),
+      );
+      await transport.start();
+      for (let i = 0; i < 5; i += 1) {
+        await transport.send({ jsonrpc: "2.0", id: i, method: "tools/list", params: {} });
+      }
+      const abortAdds = added.mock.calls.filter(([type]) => type === "abort").length;
+      const abortRemoves = removed.mock.calls.filter(([type]) => type === "abort").length;
+      expect(abortAdds).toBe(5);
+      expect(abortRemoves).toBe(abortAdds);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
+  it("does not leave a failed exchange's correlation entry outstanding", async () => {
+    // The entry is recorded before the POST and consumed by the response. A failure in
+    // between produces no response to consume it, and everything that can fail an
+    // exchange is remotely triggerable — so without an explicit retirement the store
+    // grows by one per failed request for the life of the session.
+    for (const thrown of [
+      new Error("connection reset by peer"),
+      new McpReError("mcp-re.replay_detected"),
+      new Error("mcp-re.response_sig_invalid"),
+    ]) {
+      const transport = new McpReHttpTransport(minimalConfig(), throwingPoster(thrown));
+      await transport.start();
+      await transport.send(REQUEST);
+      expect(transport.pendingCorrelations, `${thrown} left its entry outstanding`).toBe(0);
+    }
   });
 
   it("re-throws a non-Error, which is a defect rather than a protocol outcome", async () => {
@@ -491,4 +668,64 @@ describe("McpReHttpTransport signing inputs", () => {
     expect(evidence).not.toContain("pdp-decision-document");
     expect(evidence).not.toContain(material.toString("base64url"));
   });
+
+  /** Hold an exchange open at the POST so its correlation entry can be inspected. */
+  async function inspectPending(config: McpReConfig): Promise<PendingRequest> {
+    const transport = new McpReHttpTransport(config, () => new Promise<never>(() => {}));
+    await transport.start();
+    void transport.send(REQUEST).catch(() => {}); // close() aborts it below
+    await new Promise((r) => setImmediate(r));
+    const [pending] = transport.pendingRequests();
+    await transport.close();
+    return pending;
+  }
+
+  it("records the authorization-binding digest on the correlation entry", async () => {
+    // ADR-MCPS-044 enumerates it; retained for audit only, never re-interpreted. It must
+    // be the digest of the bytes that were SIGNED, not of anything recomputed later.
+    const providers = [new OpaqueBytesProvider("pdp-decision", Buffer.from("doc"))];
+    const config = minimalConfig({ authorization: providers });
+    const signedBindings = bindingsJson(providers, {
+      audienceId: config.audienceId,
+      targetUri: config.targetUri,
+      method: "tools/list",
+      route: null,
+    });
+    const expected = `sha-256:${createHash("sha256").update(signedBindings, "utf8").digest("base64url")}`;
+
+    expect((await inspectPending(config)).authzBindingDigest).toBe(expected);
+  });
+
+  it("records no binding digest for a request that carries no bindings", async () => {
+    expect((await inspectPending(minimalConfig())).authzBindingDigest).toBeNull();
+  });
+});
+
+describe("McpReHttpTransport delegated-verification anchor", () => {
+  // Empty is not a relaxed check — it is a check nothing can satisfy. An empty
+  // `acceptedEpochs` rejects every response as a stale trust epoch, an empty
+  // `verifierAudiences` as an audience mismatch. The client is unusable rather than
+  // unsafe, but it should not have to send a request to find that out. Mirrors
+  // `test_an_incomplete_trust_anchor_fails_at_construction`.
+  const BLANK: Partial<Record<keyof McpReConfig, unknown>> = {
+    issuerKeyId: "",
+    issuerPubkeyB64Url: "",
+    issuerTrustDomain: "",
+    issuerSubject: "",
+    expectedAudienceHash: "",
+    verifierAudiences: [],
+    acceptedEpochs: [],
+  };
+
+  for (const field of Object.keys(BLANK) as (keyof McpReConfig)[]) {
+    it(`refuses a config with an empty ${field}`, () => {
+      expect(
+        () =>
+          new McpReHttpTransport(
+            minimalConfig({ [field]: BLANK[field] } as Partial<McpReConfig>),
+            vi.fn<Poster>(),
+          ),
+      ).toThrow(new RegExp(`trust anchor is incomplete[\\s\\S]*${field}`));
+    });
+  }
 });

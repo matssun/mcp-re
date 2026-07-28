@@ -79,6 +79,11 @@ pub const DEFAULT_ALGORITHMS: [&str; 1] = [ALG_ED25519];
 pub struct VerifierPolicy {
     algorithms: Vec<ProfileAlgorithm>,
     max_clock_skew: i64,
+    /// The widest `expires - created` this verifier accepts (§5.1). Bounds how long
+    /// a single admitted nonce must be retained: the replay store keeps an entry
+    /// until `expires + skew`, so an unbounded window would let ONE client pin store
+    /// keys for as long as it likes.
+    max_signature_validity: i64,
     /// The MCP transport/version contract (§4.1). `None` = no transport policy,
     /// which is today's behavior: `Mcp-Method` divergence is still always checked
     /// (a covered header must not lie about the body), but required-header
@@ -97,6 +102,16 @@ impl VerifierPolicy {
     /// widest disagreement a deployment can declare and still call itself
     /// conforming; beyond this the freshness gate stops being a freshness gate.
     pub const MAX_CLOCK_SKEW_BOUND: i64 = 300;
+
+    /// The default ceiling on a signature's own validity window (`expires - created`).
+    ///
+    /// Freshness bounds when a window may be used; it does not bound how WIDE the
+    /// signer may declare that window. Without a ceiling a client can present
+    /// `created = now, expires = now + 10y`: the message is fresh, so it verifies, and
+    /// the replay tier then retains its nonce until `expires + skew` — a decade of
+    /// store keys per request, chosen by the client. One hour is generous headroom
+    /// over the SDKs' own 300 s default request TTL while keeping retention bounded.
+    pub const DEFAULT_MAX_SIGNATURE_VALIDITY: i64 = 3600;
 
     /// Build a policy, failing closed on any configuration that would be unsafe
     /// or meaningless:
@@ -130,6 +145,7 @@ impl VerifierPolicy {
         Ok(VerifierPolicy {
             algorithms: resolved,
             max_clock_skew,
+            max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
             mcp_transport: None,
         })
     }
@@ -161,6 +177,27 @@ impl VerifierPolicy {
     pub fn max_clock_skew(&self) -> i64 {
         self.max_clock_skew
     }
+
+    /// Narrow (or widen) the accepted signature-validity window. A non-positive value
+    /// is refused: it would reject every message and reads as a misconfiguration
+    /// rather than a policy.
+    pub fn with_max_signature_validity(
+        mut self,
+        secs: i64,
+    ) -> Result<Self, HttpProfileError> {
+        if secs <= 0 {
+            return Err(HttpProfileError::MalformedEvidence(
+                "max signature validity must be positive",
+            ));
+        }
+        self.max_signature_validity = secs;
+        Ok(self)
+    }
+
+    /// The widest accepted `expires - created`, in seconds.
+    pub fn max_signature_validity(&self) -> i64 {
+        self.max_signature_validity
+    }
 }
 
 impl Default for VerifierPolicy {
@@ -169,6 +206,7 @@ impl Default for VerifierPolicy {
         VerifierPolicy {
             algorithms: vec![ProfileAlgorithm::Ed25519],
             max_clock_skew: Self::DEFAULT_MAX_CLOCK_SKEW,
+            max_signature_validity: Self::DEFAULT_MAX_SIGNATURE_VALIDITY,
             mcp_transport: None,
         }
     }
@@ -176,6 +214,33 @@ impl Default for VerifierPolicy {
 
 #[cfg(test)]
 mod tests {
+
+    /// The signature-validity ceiling bounds how long ONE client can pin replay-store
+    /// retention. Freshness alone does not: a `created = now, expires = now + 10y`
+    /// window is fresh, so it verifies, and the nonce is then retained for a decade.
+    #[test]
+    fn signature_validity_ceiling_defaults_and_validates() {
+        let p = VerifierPolicy::default();
+        assert_eq!(
+            p.max_signature_validity(),
+            VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY
+        );
+        let p = VerifierPolicy::new(&["ed25519"], 30).expect("policy");
+        assert_eq!(
+            p.max_signature_validity(),
+            VerifierPolicy::DEFAULT_MAX_SIGNATURE_VALIDITY
+        );
+
+        let narrowed = p.clone().with_max_signature_validity(60).expect("narrow");
+        assert_eq!(narrowed.max_signature_validity(), 60);
+
+        for bad in [0, -1, -3600] {
+            assert!(
+                VerifierPolicy::default().with_max_signature_validity(bad).is_err(),
+                "a non-positive ceiling rejects every message and must be refused"
+            );
+        }
+    }
     use super::*;
 
     #[test]

@@ -13,7 +13,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import { profileTag, signRequest, Signer, SigningDevice } from "../src/index.js";
+import {
+  profileTag,
+  signNotification,
+  signRequest,
+  Signer,
+  SigningDevice,
+} from "../src/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(HERE, "..", "..", "fixtures", "parity_vectors.json");
@@ -63,9 +69,47 @@ function sign(name: string) {
     contRequestState: (i["cont_request_state"] ?? null) as unknown as string | null,
   };
   const bindingsJson = (i["bindings_json"] ?? null) as unknown as string | null;
-  if (name.startsWith("non_exporting")) {
+  // The case name carries the shape: `notification_*` is a one-way message (no `id`),
+  // and a name mentioning non-exporting custody goes through a device signer.
+  const notification = name.startsWith("notification");
+  const device = name.includes("non_exporting");
+  const noteArgs = {
+    method: args.method,
+    paramsJson: args.paramsJson,
+    targetUri: args.targetUri,
+    audienceId: args.audienceId,
+    route: args.route,
+    dpopToken: args.dpopToken,
+    nonce: args.nonce,
+    created: args.created,
+    expires: args.expires,
+    bindingsJson,
+  };
+  if (device) {
     const signer = Signer.fromDevice("did:example:client", keyId, SigningDevice.fromSeed(seed));
-    return { signed: signer.signRequest(args), expected: c.expected };
+    return {
+      signed: notification ? signer.signNotification(noteArgs) : signer.signRequest(args),
+      expected: c.expected,
+    };
+  }
+  if (notification) {
+    return {
+      signed: signNotification(
+        seed,
+        keyId,
+        noteArgs.method,
+        noteArgs.paramsJson,
+        noteArgs.targetUri,
+        noteArgs.audienceId,
+        noteArgs.route,
+        noteArgs.dpopToken,
+        noteArgs.nonce,
+        noteArgs.created,
+        noteArgs.expires,
+        bindingsJson,
+      ),
+      expected: c.expected,
+    };
   }
   const signed = signRequest(
     seed,
@@ -127,6 +171,21 @@ describe("the oracle bytes witness the custody claim", () => {
     expect(ne.body_b64).toBe(sw.body_b64);
     expect(ne.headers).toEqual(sw.headers);
     expect(ne.evidence_digest_value).toBe(sw.evidence_digest_value);
+  });
+
+  it("the notification envelope carries no id, in either custody class", () => {
+    // The shape most able to drift invisibly: a binding that emitted `"id": null` would
+    // still sign and verify, but the serving path would dispatch it as a request.
+    for (const name of ["notification_initialized", "notification_non_exporting"]) {
+      const body = JSON.parse(
+        Buffer.from(ORACLE.cases[name].expected.body_b64, "base64").toString("utf8"),
+      );
+      expect("id" in body).toBe(false);
+      expect(body.method).toBe("notifications/initialized");
+    }
+    expect(ORACLE.cases["notification_non_exporting"].expected.body_b64).toBe(
+      ORACLE.cases["notification_initialized"].expected.body_b64,
+    );
   });
 
   it("a signed continuation changes the evidence it rides in", () => {

@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: fastmcp
-          image: mcp-re-inner-fastmcp:0.13.0
+          image: mcp-re-inner-fastmcp:0.14.0
           imagePullPolicy: IfNotPresent
           env:
             - name: MCP_RE_INNER_BACKEND_HOST
@@ -68,3 +68,49 @@ spec:
     - name: http
       port: 8620
       targetPort: 8620
+---
+# The PEP's central claim is that an unauthorized request never reaches the inner
+# server. Nothing in the inner backend enforces that: it listens on 0.0.0.0 and its
+# ClusterIP Service is reachable by every pod in the cluster, so any workload with
+# pod-network access could POST JSON-RPC straight to it — unsigned, unverified,
+# unreplay-checked — and bypass the proxy entirely. The backend cannot defend itself
+# (it is an unmodified FastMCP server, out of the TCB by design), so the restriction
+# has to be enforced by the network layer.
+#
+# This policy makes the proxy the ONLY admitted ingress. It selects the inner backend
+# and allows ingress solely from the proxy workload.
+#
+# The `from` selector matches on `app.kubernetes.io/name` ALONE — deliberately, not for
+# brevity. It previously also required `app.kubernetes.io/instance: mcp-re`, which is
+# the HELM RELEASE NAME, and the release this repo actually installs is `mcp-re-proxy`.
+# The selector therefore matched no pod at all, and a NetworkPolicy whose allow-rule
+# matches nothing does not degrade to "allow" — it degrades to DENY EVERYTHING. On a
+# CNI that enforces, the proxy could not reach the inner and every request failed with
+# "inner server unavailable"; on one that does not, the same object silently protected
+# nothing. Release names are a deployment choice; the workload identity is not, so the
+# rule keys on the identity.
+#
+# REQUIRES a CNI that enforces NetworkPolicy (Calico, Cilium, GKE Dataplane V2, ...).
+# On a cluster without one this object is accepted and silently enforces nothing.
+# `gke-multi-replica-validation.sh` runs the deny test the previous note only advised:
+# it drives an unrelated pod at the inner and reports whether containment is real.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mcp-re-inner-fastmcp-allow-proxy-only
+  labels:
+    app.kubernetes.io/name: mcp-re-inner-fastmcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-re-inner-fastmcp
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-re-proxy
+      ports:
+        - protocol: TCP
+          port: 8620

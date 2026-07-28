@@ -59,6 +59,7 @@ use mcp_re_proxy::DelegatedServerSigner;
 use mcp_re_proxy::HttpProfileProxy;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
+const CLIENT_SEED_2: [u8; 32] = [12u8; 32];
 const ROOT_SEED: [u8; 32] = [33u8; 32];
 const NOW: i64 = 1_700_000_100;
 const CREATED: i64 = 1_700_000_000;
@@ -66,6 +67,7 @@ const EXPIRES: i64 = 1_700_000_300;
 const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const ACCESS_TOKEN: &str = "access-token-xyz";
 const CLIENT_KEY_ID: &str = "client-key-1";
+const CLIENT_KEY_ID_2: &str = "client-key-2";
 const ROOT_KID: &str = "root-kid";
 const VERIFIER_AUD: &str = "verifier-1";
 const AUD_SCOPE: &str = "aud-scope-1";
@@ -75,6 +77,11 @@ const OVERLAP: i64 = 60;
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
+}
+/// A SECOND legitimate client: a distinct actor the resolver trusts for the Request
+/// slot, so "verified" and "the actor that opened the leg" can be told apart.
+fn second_client_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&CLIENT_SEED_2)
 }
 fn root_key() -> SigningKey {
     SigningKey::from_seed_bytes(&ROOT_SEED)
@@ -89,16 +96,23 @@ fn audience() -> AudienceTuple {
 
 fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync + Clone {
     move |key_id: &str, slot: SignerSlot| {
-        let (role, key) = match (key_id, slot) {
-            (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key().public_key()),
-            (ROOT_KID, SignerSlot::Response) => ("server", root_key().public_key()),
+        let (role, subject, key) = match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => {
+                ("client", "did:example:host-a", client_key().public_key())
+            }
+            // A second trusted client — same role, different subject and keyid, so it
+            // resolves to a DIFFERENT actor id.
+            (CLIENT_KEY_ID_2, SignerSlot::Request) => {
+                ("client", "did:example:host-b", second_client_key().public_key())
+            }
+            (ROOT_KID, SignerSlot::Response) => ("server", "did:example:server", root_key().public_key()),
             _ => return None,
         };
         Some(ResolvedActor {
             identity: ActorIdentity {
                 role: role.into(),
                 trust_domain: "example.com".into(),
-                subject: format!("did:example:{role}"),
+                subject: subject.into(),
                 keyid: key_id.into(),
             },
             verification_key: key,
@@ -109,7 +123,7 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Syn
 
 fn actor_resolver() -> ActorResolver {
     let r = resolver();
-    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot))
+    Box::new(move |kid: &str, slot: SignerSlot| r(kid, slot).into())
 }
 
 fn custody_cfg() -> CustodyConfig {
@@ -240,8 +254,20 @@ fn wire_code_of(body: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-/// Sign an RFC 9421 request with an optional MRTR continuation in the evidence block.
+/// Sign an RFC 9421 request as the default client.
 fn signed_request(
+    nonce: &str,
+    body: &[u8],
+    continuation: Option<HttpContinuation>,
+) -> (HttpRequest, RequestEvidence) {
+    signed_request_as(CLIENT_KEY_ID, &client_key(), nonce, body, continuation)
+}
+
+/// Sign an RFC 9421 request AS a named actor, with an optional MRTR continuation in
+/// the evidence block.
+fn signed_request_as(
+    key_id: &str,
+    key: &SigningKey,
     nonce: &str,
     body: &[u8],
     continuation: Option<HttpContinuation>,
@@ -265,9 +291,8 @@ fn signed_request(
         ],
         body: body.to_vec(),
     };
-    let evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-            .expect("client signs RFC 9421 request");
+    let evidence = sign_request_full(&mut req, &block, key, key_id, CREATED, EXPIRES, nonce)
+        .expect("client signs RFC 9421 request");
     (req, evidence)
 }
 
@@ -378,7 +403,8 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     assert!(String::from_utf8_lossy(&resp.body).contains("\"confirmed\":true"));
 
     // One-shot: a second answer for the same requestState finds no store entry (the
-    // first answer's `take` removed it), so it fails closed regardless of the handles.
+    // first answer's `consume` removed it once it was ADMITTED), so it fails closed
+    // regardless of the handles.
     let (p2, i2, _s2) = handles_of(STATE);
     let continuation2 = HttpContinuation::from_handles(p2, i2, state.as_bytes());
     let (replay_req, _e) = signed_request("nonce-answer-2", &answer_body(&state), Some(continuation2));
@@ -419,6 +445,79 @@ async fn answer_without_a_shared_store_entry_fails_closed() {
     assert_eq!(wire_code_of(&served.body), "mcp-re.continuation_binding_failed");
 }
 
+// --- a rejected answer leg must not destroy a live continuation --------------
+
+#[tokio::test]
+async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
+    // Reading the retained bases is not a side effect, so a request that is about to be
+    // refused cannot take a live continuation down with it. This is what makes the
+    // failure recoverable: an approval round trip cannot be re-opened, so destroying it
+    // on a rejected request would be permanent.
+    const STATE: &str = "state-token-D1";
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&store), STATE);
+    let b = replica(ready_signer(), Arc::clone(&store), STATE);
+
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // A well-formed answer for the RIGHT state whose continuation digests are wrong —
+    // the same shape a client hits after losing track of which response it is answering.
+    let wrong = HttpContinuation::from_handles(d_prev.clone(), d_prev.clone(), state.as_bytes());
+    let (bad_req, _e) = signed_request("nonce-bad-answer", &answer_body(&state), Some(wrong));
+    let served_bad = b.handle(served_of(&bad_req), NOW).await;
+    assert_eq!(served_bad.status, 409, "a mismatched continuation is refused");
+    assert_eq!(wire_code_of(&served_bad.body), "mcp-re.continuation_binding_failed");
+
+    // The genuine answer still binds: the refusal cost the client one request, not its
+    // continuation.
+    let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
+    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let served_good = b.handle(served_of(&good_req), NOW).await;
+    assert_eq!(
+        served_good.status, 200,
+        "the refused answer must not have consumed the continuation (got {})",
+        wire_code_of(&served_good.body)
+    );
+}
+
+// --- one actor cannot reach another's continuation ---------------------------
+
+#[tokio::test]
+async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
+    // `requestState` is minted by the inner application and MCP-RE treats it as opaque
+    // — nothing in the profile makes it unguessable. So a peer that verifies must not be
+    // able to reach another actor's continuation merely by naming its state, whether or
+    // not its own request then succeeds.
+    const STATE: &str = "state-token-E1";
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let a = replica(ready_signer(), Arc::clone(&store), STATE);
+    let b = replica(ready_signer(), Arc::clone(&store), STATE);
+
+    let (d_prev, d_irr, state) = open_on(&a, STATE).await;
+
+    // A DIFFERENT verified actor names the first actor's requestState. It holds valid
+    // trust-file credentials; it simply is not the actor that opened the leg.
+    let intruder = HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
+    let (intruder_req, _e) =
+        signed_request_as(CLIENT_KEY_ID_2, &second_client_key(), "nonce-intruder", &answer_body(&state), Some(intruder));
+    let served_intruder = b.handle(served_of(&intruder_req), NOW).await;
+    assert_eq!(served_intruder.status, 409, "another actor's answer is refused");
+    assert_eq!(
+        wire_code_of(&served_intruder.body),
+        "mcp-re.continuation_binding_failed"
+    );
+
+    // And the first actor's open leg is untouched.
+    let good = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
+    let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
+    let served_good = b.handle(served_of(&good_req), NOW).await;
+    assert_eq!(
+        served_good.status, 200,
+        "the intruder must not have destroyed the victim's continuation (got {})",
+        wire_code_of(&served_good.body)
+    );
+}
+
 // --- fail closed: a tampered requestState breaks the binding -----------------
 
 #[tokio::test]
@@ -438,4 +537,254 @@ async fn tampered_request_state_breaks_the_binding() {
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "tampered requestState → fail closed");
     assert_eq!(wire_code_of(&served.body), "mcp-re.continuation_binding_failed");
+}
+
+// --- a malformed open leg must not be served as terminal (C059/C060) ---------
+
+/// A replica whose inner backend is supplied by the caller, for the malformed-open
+/// cases below. Everything else matches [`replica`].
+fn replica_with_inner(
+    signer: Arc<DelegatedServerSigner>,
+    store: Arc<dyn AsyncContinuationStore>,
+    inner: Box<dyn AsyncInnerServer>,
+) -> HttpProfileProxy {
+    HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        inner,
+        300,
+        signer,
+    )
+    .with_continuation_store(store, TTL)
+}
+
+/// An inner backend that announces a non-terminal turn and then withholds the state
+/// its continuation needs.
+fn malformed_eliciting_inner(result_json: &'static str) -> Box<dyn AsyncInnerServer> {
+    Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+        format!(r#"{{"jsonrpc":"2.0","id":1,"result":{result_json}}}"#).into_bytes()
+    })
+}
+
+/// THE regression. The proxy's open-leg recorder used to read "declares itself
+/// `input_required`, carries no usable `requestState`" as `None` — indistinguishable
+/// from a terminal reply. It therefore signed and returned the non-terminal leg with
+/// a 200 while recording NO continuation for it, so no answer leg could ever be
+/// honoured on any replica: the client held a signed, verified elicitation that was
+/// permanently unanswerable, and its correlation entry was closed as if the call had
+/// completed.
+///
+/// Classification now fails closed, so the malformed body is refused instead of
+/// being served as a success.
+#[tokio::test]
+async fn an_open_leg_that_withholds_its_request_state_is_refused_not_served_as_terminal() {
+    for malformed in [
+        r#"{"resultType":"input_required"}"#,
+        r#"{"resultType":"input_required","requestState":null}"#,
+        r#"{"resultType":"input_required","requestState":42}"#,
+        r#"{"resultType":"input_required","requestState":{"opaque":"x"}}"#,
+    ] {
+        let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+        let proxy = replica_with_inner(
+            ready_signer(),
+            Arc::clone(&store),
+            malformed_eliciting_inner(malformed),
+        );
+
+        let (req, _ev) = signed_request("nonce-malformed", OPEN_BODY, None);
+        let served = proxy.handle(served_of(&req), NOW).await;
+
+        assert_ne!(
+            served.status, 200,
+            "{malformed} was served as a successful reply"
+        );
+        assert_eq!(served.status, 502, "a malformed inner reply is a bad gateway");
+        assert_eq!(
+            wire_code_of(&served.body),
+            "mcp-re.malformed_envelope",
+            "the rejection names the malformed body: {malformed}"
+        );
+    }
+}
+
+/// The mirror, so the test above cannot pass by refusing everything: a WELL-FORMED
+/// open leg through the same replica shape is still served and still recorded.
+#[tokio::test]
+async fn a_well_formed_open_leg_is_still_served_and_recorded() {
+    const STATE: &str = "state-token-wf";
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let proxy = replica_with_inner(
+        ready_signer(),
+        Arc::clone(&store),
+        eliciting_inner(STATE),
+    );
+
+    let (_d_prev, _d_irr, state) = open_on(&proxy, STATE).await;
+    assert_eq!(state, STATE);
+}
+
+/// A terminal reply is unaffected: it has no continuation to record, and nothing
+/// about the stricter classification turns "no state" into an error.
+#[tokio::test]
+async fn a_terminal_reply_is_not_caught_by_the_stricter_classification() {
+    let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+    let proxy = replica_with_inner(
+        ready_signer(),
+        Arc::clone(&store),
+        malformed_eliciting_inner(r#"{"resultType":"completed","confirmed":true}"#),
+    );
+
+    let (req, _ev) = signed_request("nonce-terminal", OPEN_BODY, None);
+    let served = proxy.handle(served_of(&req), NOW).await;
+    assert_eq!(served.status, 200, "a terminal reply is served normally");
+}
+
+// --- the SDK-boundary fixture for the same defect (C059/C060) ----------------
+
+/// Freeze a delegated-signed exchange whose reply declares itself non-terminal and
+/// withholds its `requestState`, so both SDK bindings can prove they REFUSE it.
+///
+/// A recorded fixture cannot come from the proxy here: a conformant MCP-RE proxy now
+/// rejects this body rather than serving it (see the test above), which is the whole
+/// point. The malformed reply is therefore signed directly with the same delegated
+/// custody the proxy uses — it stands for a non-conformant or hostile server, which
+/// is the only place such a reply can now originate.
+///
+/// Regenerate with:
+///   MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
+///     --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture
+#[test]
+fn write_malformed_elicitation_sdk_fixture() {
+    use mcp_re_core::b64url_encode;
+    use mcp_re_http_profile::sign_delegated_response_full;
+
+    // The delegated snapshot the proxy would sign with.
+    let signer = ready_signer();
+    let active = signer.current(NOW).expect("a delegated key is published");
+
+    // The client's open-leg request, signed exactly as the SDK signs it.
+    let (request, req_evidence) = signed_request("nonce-sdk-malformed", OPEN_BODY, None);
+
+    // The reply: non-terminal discriminator, no usable state.
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#.to_vec(),
+    };
+    sign_delegated_response_full(
+        &mut response,
+        &request,
+        &req_evidence,
+        &active.server_signer,
+        &active.credential,
+        active.key.as_ref(),
+        &active.delegated_kid,
+        NOW,
+        NOW + TTL,
+    )
+    .expect("the malformed reply signs — signing does not classify");
+
+    // Precondition: this fixture is only meaningful if the response is otherwise
+    // GENUINE. If it failed verification the SDKs would refuse it for the wrong
+    // reason and the test would prove nothing.
+    let r = resolver();
+    let no_material = |_b: &ArtifactBinding| None;
+    let verified_req = verify_request_full(
+        &request,
+        &audience(),
+        &no_material,
+        &move |k: &str, s| r(k, s),
+        NOW,
+    )
+    .expect("the fixture request verifies");
+    let r = resolver();
+    verify_delegated_response_full(
+        &response,
+        &request,
+        &verified_req,
+        &move |k: &str, s| r(k, s),
+        &expectations(&[EPOCH]),
+        &|_| false,
+        NOW,
+    )
+    .expect("the fixture response is genuine evidence — only its BODY is malformed");
+
+    let fixture = serde_json::json!({
+        "_comment":
+            "A delegated-signed reply that declares itself non-terminal and withholds \
+             its requestState. Genuine evidence with a malformed body: both SDK \
+             bindings must REFUSE it, never report it as a terminal result. \
+             Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
+             --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture",
+        "client_seed_b64url": b64url_encode(&CLIENT_SEED),
+        "key_id": CLIENT_KEY_ID,
+        "signer_id": "did:example:host-a",
+        "nonce": "nonce-sdk-malformed",
+        "created": CREATED,
+        "expires": EXPIRES,
+        "now": NOW,
+        "target_uri": TARGET,
+        "audience_id": VERIFIER_AUD,
+        "route": "a",
+        "dpop_token": ACCESS_TOKEN,
+        "expected_audience_hash": AUD_SCOPE,
+        "accepted_epochs": [EPOCH],
+        "max_clock_skew": 60,
+        "issuer": {
+            "key_id": ROOT_KID,
+            "pubkey_b64url": b64url_encode(&root_key().public_key().to_bytes()),
+            "role": "server",
+            "trust_domain": "example.com",
+            "subject": "did:example:server",
+        },
+        "exchange": {
+            "request_method": request.method,
+            "request_target_uri": request.target_uri,
+            "request_headers": request.headers,
+            "request_body_b64url": b64url_encode(&request.body),
+            "request_evidence_digest_alg": req_evidence.digest_alg,
+            "request_evidence_digest_value": req_evidence.digest_value,
+            "status": response.status,
+            "headers": response.headers,
+            "body_b64url": b64url_encode(&response.body),
+        },
+    });
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("sdk/fixtures/malformed_elicitation.json");
+    let rendered = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&fixture).expect("fixture serializes")
+    );
+
+    if std::env::var("MCP_RE_WRITE_SDK_FIXTURE").is_ok() {
+        std::fs::write(&path, &rendered).expect("write the SDK fixture");
+        return;
+    }
+
+    // `sdk/` is not Bazel-addressable — there is no BUILD file under it, so the SDKs
+    // are outside `bazel test //...` entirely and the fixture is not in this target's
+    // runfiles. Under a Bazel sandbox the source tree genuinely is not there, which is
+    // the ONE case where having nothing to compare against is not a failure. The
+    // condition is the sandbox itself, not "the file was missing": in the Cargo lane a
+    // missing fixture still panics below.
+    let sandboxed = std::env::var("TEST_SRCDIR").is_ok() || std::env::var("RUNFILES_DIR").is_ok();
+    if sandboxed && !path.exists() {
+        return;
+    }
+
+    // Otherwise this is a GATE: the committed fixture must still be the one this
+    // code produces, so a change to the signing path cannot silently leave both SDK
+    // suites asserting against a stale recording.
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("{} is missing — regenerate it (see this test's doc)", path.display())
+    });
+    assert_eq!(
+        committed, rendered,
+        "the committed SDK fixture has drifted from the signing path; regenerate it"
+    );
 }

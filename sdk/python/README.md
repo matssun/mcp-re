@@ -17,19 +17,19 @@ signed requests and verified responses, added without changing application code.
 > | Cross-language parity gate vs the frozen oracle | **done** |
 > | In-flight correlation (`CorrelationStore`) — fail-closed on unbound / late / duplicate responses | **done** |
 > | Authorization-binding providers (`opaque-bytes` / `authz-system-reference`) — core digests real artifacts | **done** |
-> | Transport adapter (`mcp_re_http_transport`) — a real `ClientSession` signs/verifies by construction | **done** (request/response only) |
+> | Transport adapter (`mcp_re_http_transport`) — a real `ClientSession` signs/verifies by construction | **done** |
 > | Nonce/freshness generation | **done** (adapter-generated) |
 > | Concurrent exchanges, bounded (`max_concurrent_exchanges`, default 8) | **done** |
-> | One-way notifications (`notifications/*`) | **fail closed** — no ratified profile yet; `unsafe_drop_notifications` is an unsafe interim opt-in, refused under a hardened policy ([#418](https://github.com/matssun/mcp-re/issues/418), release-blocking) |
+> | One-way notifications (`notifications/*`) — signed POST + verified signed `202` | **done** ([#418](https://github.com/matssun/mcp-re/issues/418)) |
 > | ADR-MCPS-047 answer-leg orchestration | **not implemented** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
 > | Transport shutdown contract — abortive close, `NEW → OPEN → CLOSING → CLOSED` | **done** ([#421](https://github.com/matssun/mcp-re/issues/421)) |
 > | mTLS connection helper (`connect_mtls_http`) | **not implemented** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
 >
-> **Not released.** One boundary remains: the one-way notification + acknowledgement
-> profile ([#418](https://github.com/matssun/mcp-re/issues/418)), which is a **wire-format**
-> decision — the response evidence block rides in the body, and an accepted notification is
-> `202` with no body, so the acknowledgement needs a ratified carrier. Until then a standard
-> client needs the unsafe notification opt-in, so this is not shippable.
+> **Not released.** The one-way notification + acknowledgement profile
+> ([#418](https://github.com/matssun/mcp-re/issues/418)) has landed: a notification is its
+> own signed POST and the `202` it earns is signed, bodyless, and bound to that exact
+> transmission, so a standard client no longer needs an unsafe opt-in to complete its
+> lifecycle.
 >
 > `mcp.ClientSession` now speaks MCP-RE by construction: open it on the adapter's streams
 > and application code calls `session.call_tool(...)` with no sign/verify of its own. **You
@@ -107,22 +107,26 @@ block the whole session. The bound (`max_concurrent_exchanges`, default 8) exist
 each in-flight exchange holds a connection in your `poster` and a signing operation (a KMS
 round trip under non-exporting custody).
 
-**Notifications fail closed — this is a request/response adapter, for now.** Sending a
-one-way `notifications/*` message raises `NotificationsUnsupported`.
+**One-way notifications are carried and acknowledged.** A `notifications/*` message is its
+own signed POST — same RFC 9421 request signature, same RFC 9530 `Content-Digest`, same
+evidence block as any request — and the enforcement boundary answers it with a signed,
+bodyless `202`. The adapter verifies that acknowledgement before treating the message as
+delivered; `on_notification_acknowledged` observes the ones that verified.
 
-This is a **missing profile, not an inherent limit.** A notification is its own POST under
-MCP Streamable HTTP, so its RFC 9421 request signature and RFC 9530 `Content-Digest`
-authenticate it exactly like any other request. What MCP-RE has not yet ratified is the
-one-way notification **+ acknowledgement** profile: what a verifier returns for a message
-with no JSON-RPC response, and how that acknowledgement binds to the request evidence
-([#418](https://github.com/matssun/mcp-re/issues/418), release-blocking; the agreed target
-is to sign the notification and return a **signed HTTP 202** bound to its request
-evidence).
+The acknowledgement is bound to the **transmission**, not merely to the content: it covers
+`mcp-re-request-evidence`, the digest of the request's own signature base, which includes
+its nonce. A `202` captured from an earlier send of a byte-identical notification therefore
+does not verify for a later one.
 
-Until that lands, a standard `ClientSession` cannot complete its lifecycle — it must send
-`notifications/initialized` — so `unsafe_drop_notifications=True` is the interim escape
-hatch, and it is named for what it is: a dropped `notifications/cancelled` silently becomes
-"keep going". A hardened `SignerPolicy` refuses the opt-in outright.
+**What a verified acknowledgement claims, exactly: the enforcement boundary authenticated
+and accepted the message.** Not that the action completed — a verified ack for
+`notifications/cancelled` does not mean anything was cancelled.
+
+If it does not verify, the adapter raises `NotificationNotAcknowledged` and the transport
+fails closed. A notification has no reply for an error to ride back on, so there is no
+request id to correlate a failure to and no application call awaiting an answer; continuing
+a session in which an unverifiable claim of acceptance was accepted would be exactly the
+take-it-on-faith posture this SDK exists to remove.
 
 ## Why PyO3, not pure Python
 
@@ -203,12 +207,6 @@ parity oracle from the primitives to the transport itself. Re-record with
 
 ## Known open work
 
-- **Notification semantics are undecided** ([#418](https://github.com/matssun/mcp-re/issues/418)).
-  The adapter drops every client→server notification, silently by default. The live test
-  shows FastMCP tolerates the missing `notifications/initialized` — that is **not**
-  evidence that dropping standard client messages is generally correct, and dropping
-  `notifications/cancelled` silently turns "stop" into "keep going". Until this is
-  ratified, treat the adapter as request/response-only.
 - **The mTLS connection helper** (`connect_mtls_http`) — the adapter takes an injected
   `poster`, so establishing and hardening the connection is still the caller's job
   ([#413](https://github.com/matssun/mcp-re/issues/413)).

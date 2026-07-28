@@ -453,7 +453,7 @@ ACCEPTED THIS MESSAGE. Not that a requested cancellation completed, not that the
 inner application observed the notification, not that any action was taken (#418).
 
 **Proven by.** `bodyless_202_test` (11 tests, incl.
-`signed_202_binds_only_to_its_own_notification` and
+`signed_202_shape_binds_content_not_instance` and
 `the_bodied_request_set_still_requires_content_type` — the new sets must not have
 weakened the old one).
 
@@ -494,12 +494,59 @@ so the credential's own root-signed `mcp_re_server_signer` is authoritative and 
 `audience_hash` scope is the load-bearing binding. There is no independent identity
 to disagree, so no splice vector is lost.
 
-**Binding granularity.** `;req` binds the request's covered CONTENT
-(`@method`/`@target-uri`/`content-digest`/`content-type`), not its nonce. Two
-byte-identical notifications differing only in nonce share one ack — correctly, since
-they are indistinguishable messages; a bodyless 202 has no body to carry a full
-request-evidence handle, so instance-level binding is not expressible, and
-content-level binding is what a splice across DISTINCT messages needs.
+**Binding granularity — INSTANCE-level (owner ruling, 2026-07-27, C019b).** A signed
+bodyless 202 names the exact request TRANSMISSION it acknowledges. The invariant:
+
+> A valid acknowledgement for request transmission A MUST NOT verify as the
+> acknowledgement for any distinct transmission A′, even when A and A′ have identical
+> method, target and body content.
+
+**Mechanism.** The 202 carries `mcp-re-request-evidence`, a REQUIRED covered component
+whose value is the REQUEST-role evidence digest: a labeled SHA-256 over the request's
+own RFC 9421 signature base. The base includes `@signature-params`, so the digest
+covers the request nonce and every covered request component. The verifier re-derives
+it from the request in front of it and fails closed on a mismatch
+(`mcp-re.request_binding_mismatch`) — nothing is trusted from the acknowledgement's own
+claims. Because the header is covered by the 202's signature, tampering with it also
+breaks the signature; the two checks are independent layers.
+
+This is the SAME derivation the bodied path binds through (`request_evidence` in the
+response evidence block), so the two response shapes now carry identical binding
+strength. The response shape no longer changes the meaning or strength of
+request–response binding.
+
+**Why this mechanism and not the alternatives.**
+
+| Mechanism | Verdict |
+|---|---|
+| Cover the request's `Signature`/`Signature-Input` via `;req` | **Ruled out.** RFC 9421 §7.3.7 makes this NOT RECOMMENDED: signatures of signatures do not give transitive coverage of covered components, and the practice carries its own attacks. |
+| Carry a per-instance value INSIDE `HttpRequestEvidenceBlock`, so `content-digest;req` binds the instance for free | **Not taken.** The block is `deny_unknown_fields`, so it breaks existing verifiers and both SDKs, and it requires the CLIENT to author the value — changing the request the backend sees. |
+| Cover a derived request-evidence digest on the RESPONSE (**taken**) | Canonical, includes the nonce and all covered request components, independently recomputable by the verifier, and touches the response side only — the request, client signing, and both SDKs' request paths are unchanged. |
+
+**The superseded ruling.** Until 2026-07-27 this section ruled CONTENT-level binding:
+two byte-identical notifications differing only in nonce shared one acknowledgement.
+That is withdrawn, not retained as an optional weaker mode. Its stated justification —
+that instance-level binding "is not expressible" — was false, and the exposure was
+real: a captured acknowledgement could be presented as evidence for a later
+byte-identical retransmission that the server had in fact rejected as a replay. The
+server could distinguish the two transmissions while the client could not determine
+which one the acknowledgement belonged to, which is precisely the defect. Proof of
+acceptance must not collapse distinct delivery attempts.
+
+**Wire change.** `mcp-re-request-evidence` is the second narrow exception to the "no
+new MCP-RE header fields" rule (E-3), for the same structural reason as
+`mcp-re-delegation`: a bodyless 202 has no body to carry what a bodied response carries
+in its evidence block. Frozen vectors `h34`–`h37` and `h47`–`h49` were regenerated;
+`h37` (the splice) now expects `mcp-re.request_binding_mismatch` rather than
+`mcp-re.response_sig_invalid`, because the coordinate check fires before signature
+verification and names why the pairing is wrong. `h50` pins the transmission-distinct
+splice itself — two notifications identical in method, target and body, differing only in
+nonce — which is the case content-level binding could not express at all.
+
+**Pinned by** `bodyless_202_test::an_acknowledgement_binds_to_one_transmission_not_to_content`
+(which asserts a distinct transmission is REFUSED), plus
+`a_forged_request_evidence_header_is_refused` and
+`a_missing_request_evidence_header_is_refused` (no fallback to a weaker mode).
 
 **What a delegated 202 claims.** A delegated key trusted for THIS service
 authenticated and accepted this notification — NOT that any action completed (#418).
@@ -510,7 +557,18 @@ a delegated-signed bodyless 202 instead of a bodied reply. The root is touched o
 at credential issuance, never on the 202 path.
 
 **Proven by.** `bodyless_202_test` (the non-delegated 202 shape),
-`delegated_202_test` (8 tests: valid, uncovered/missing/duplicated/oversized
-credential, revoked, epoch-stale, splice across distinct notifications),
+`delegated_202_test` (9 tests: valid, uncovered/missing/duplicated/oversized
+credential, revoked, epoch-stale, splice across distinct notifications, and the
+retransmission of an identical one),
 `delegated_serving_test::a_notification_is_served_a_verifiable_delegated_202` (the
 proxy end-to-end), and frozen vectors `h47`–`h49`.
+
+**Carried by both SDKs (C055).** A notification is signed through
+`mcp_re_client_core::build_signed_notification` — the ordinary request rules, with the
+JSON-RPC `id` key OMITTED rather than sent as `null`, because the serving path classifies
+on its absence — and the 202 is verified through `verify_delegated_accepted_202`, exposed
+as `sign_notification`/`verify_accepted_202` (Python) and
+`signNotification`/`verifyAccepted202` (TypeScript). Neither SDK treats a notification as
+delivered until its acknowledgement verifies. Proven live against the real proxy in both
+languages, offline through the recorded replay fixture, and against the serving path by
+`delegated_serving_test::the_client_cores_own_notification_envelope_earns_a_202`.

@@ -158,7 +158,7 @@ Both feed layer 5. Neither replaces the other.
 
 **Known work in this layer:**
 
-- **MCP-RE** — `mcp-re-core` (pure verification) + `mcp-re-host` (request signing, bound response verification) + `mcp-re-transport` (verifying mTLS). Per-call freshness, replay, response binding, verified-context propagation.
+- **MCP-RE** — `mcp-re-core` (pure verification) + `mcp-re-client-core` (request signing, bound response verification) + `mcp-re-client-proxy` (the client-side pipeline) + `mcp-re-transport` (verifying mTLS, and the `RemoteTransport` implementation that carries the RFC 9421 evidence over it). Per-call freshness, replay, response binding, verified-context propagation.
 - **SEAL / SMCP** — JWT-validated request envelopes, 30-second freshness window, audit logging. No response-binding in v1.0 (deferred to Future Work).
 - **Continuous drift monitoring** (Maaz Khan / Interlock) — baseline tool schemas at first-observation, diff subsequent declarations against the baseline, anchor baselines to the admitted identity from layer 1.
 

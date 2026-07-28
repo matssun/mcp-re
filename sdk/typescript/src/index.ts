@@ -16,12 +16,16 @@
 export {
   coreVersion,
   profileTag,
+  signNotification,
+  signNotificationWithSigner,
   signPreimage,
   signRequest,
   signRequestWithSigner,
+  verifyAccepted202,
   verifyResponse,
 } from "../native/binding.js";
 export type {
+  AcceptedResultJs,
   HttpHeader,
   SignedRequestJs,
   VerifyResultJs,
@@ -35,7 +39,7 @@ export {
   SignerUnavailable,
   SigningDevice,
 } from "./custody.js";
-export type { SignRequestArgs } from "./custody.js";
+export type { SignNotificationArgs, SignRequestArgs } from "./custody.js";
 export { ContinuationHandles, CorrelationStore } from "./correlation.js";
 export type { PendingRequest, RecordArgs } from "./correlation.js";
 export {

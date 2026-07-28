@@ -46,10 +46,22 @@ MCP-RE is incubating under a third-party extension identifier. Do not describe i
 
 ## Developer workflow
 
-Suggested baseline check before opening a PR:
+**Run the whole local gate first — before opening a PR, and before anything that
+costs money:**
 
 ```text
-bazel test //...
+scripts/local_gate.sh
 ```
 
-Use the repository-specific MCP-RE conformance guide when available.
+One command, ordered by cost, stops at the first failure: structural gates (image
+tags, port registry, tracked secrets, Helm fail-closed guards) → both cargo suites →
+`bazel test //...` → the ADR-MCPRE-051 §7 SLO lane. Add `--with-kind` to also run the
+fleet proofs on a local kind cluster before any cloud run.
+
+`bazel test //...` alone is **not** the full battery: it excludes the `manual`-tagged
+infra lane, and `cargo test --workspace` does not compile the non-default feature
+backends. The gate script runs each lane that CI runs.
+
+Read [`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md) for what each
+stage catches and the two ways the SLO lane can silently measure nothing. Use the
+repository-specific MCP-RE conformance guide when available.

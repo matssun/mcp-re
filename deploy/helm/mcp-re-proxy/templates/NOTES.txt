@@ -13,6 +13,32 @@ Reach the fleet:
 
 The Secret "{{ .Values.tls.secretName }}" MUST provide: tls.crt, tls.key,
 client-ca.pem, trust.json, signing-seed.
+{{- if .Values.revocation.trustEpochRedisUrl }}
+
+TRUST-EPOCH WIRE CONTRACT (ADR-MCPRE-052 §7) — read this before configuring clients.
+Because a networked trust-epoch source is wired, every replica mints the epoch
+
+    {{ .Values.identity.delegatedTrustEpoch }}#<counter>
+
+where <counter> is the current value of Redis key "{{ .Values.revocation.trustEpochKey }}"
+(an unset key reads as 0). The counter is ALWAYS appended — a bare
+"{{ .Values.identity.delegatedTrustEpoch }}" is never minted. That is what makes an operator
+
+    redis-cli INCR {{ .Values.revocation.trustEpochKey }}
+
+survive a replica restart: the label comes only from shared state, so a restarted
+replica resolves the same label as its peers instead of adopting the current counter
+as a fresh local baseline and appearing unrevoked.
+
+Clients MUST therefore be configured to accept "{{ .Values.identity.delegatedTrustEpoch }}#<counter>",
+NOT the bare label. Read the counter first:
+
+    kubectl exec deploy/mcp-re-redis -- redis-cli GET {{ .Values.revocation.trustEpochKey }}
+
+A replica that cannot read the counter does NOT mint: its current key serves until
+expiry and the hot path then fails closed. Startup refuses outright if the counter is
+unreadable, rather than serving with the kill switch wired to nothing.
+{{- end }}
 
 This is a NON-NORMATIVE reference. Live-cluster validation is MCPS-90 (HITL). See
 docs/fleet-deployment-guide.md.

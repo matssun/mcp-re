@@ -22,6 +22,7 @@
 //! costs an authoritative L2 round-trip, never a false `Fresh`.
 
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::future::Future;
@@ -79,14 +80,63 @@ pub trait AsyncAtomicReplayStore: Send + Sync {
 /// shares the same underlying state, so one store can back several per-core tiers and
 /// model cross-core / cross-replica racing within one process. The atomic op is a
 /// short critical section (no real I/O), so it never blocks a runtime worker.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct InMemoryAsyncAtomicReplayStore {
     inner: std::sync::Arc<Mutex<InMemoryState>>,
+    /// The store's OWN clock, used to anchor the inline prune. Shared with clones so
+    /// every handle onto the same state evicts against the same notion of now.
+    clock: Arc<UnixClock>,
+    max_entries: usize,
 }
 
 #[derive(Default)]
 struct InMemoryState {
-    seen: HashSet<String>,
+    /// composite key -> retain-until (the skew-folded instant the tier computed).
+    seen: HashMap<String, i64>,
+    /// Admitted inserts since the last prune; drives the eviction cadence.
+    inserts_since_prune: u64,
+}
+
+/// A unix-seconds clock. Local to this module so the async in-memory store keeps its
+/// eviction anchor in the default build — `redis_store`'s twin is feature-gated.
+type UnixClock = Box<dyn Fn() -> i64 + Send + Sync>;
+
+/// Wall-clock unix seconds; the production anchor for the inline prune.
+fn system_clock() -> UnixClock {
+    Box::new(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    })
+}
+
+/// How often (in admitted inserts) the async in-memory store evicts entries past
+/// their retain-until.
+///
+/// Every accepted request adds one entry, and a signature-valid peer can stream
+/// distinct fresh nonces at will, so without eviction the set grows with total
+/// request volume rather than with the freshness window. Pruning on every insert
+/// would itself be O(n); a small cadence amortises it while keeping the bound tight.
+/// Mirrors the file-backed cache's `PRUNE_EVERY_N_INSERTS`.
+const ASYNC_PRUNE_EVERY_N_INSERTS: u64 = 64;
+
+/// Fail-closed ceiling on retained entries. Within a single freshness window a
+/// pathological peer can present more distinct fresh nonces than the prune cadence
+/// drains, so past this the store refuses further inserts with
+/// [`ReplayStoreError::Unavailable`] (→ `mcp-re.replay_cache_unavailable`) rather
+/// than growing without bound — never a silent allow. Mirrors the file-backed
+/// cache's `MAX_ENTRIES`.
+const ASYNC_MAX_ENTRIES: usize = 1_000_000;
+
+impl Default for InMemoryAsyncAtomicReplayStore {
+    fn default() -> Self {
+        InMemoryAsyncAtomicReplayStore {
+            inner: std::sync::Arc::new(Mutex::new(InMemoryState::default())),
+            clock: Arc::new(system_clock()),
+            max_entries: ASYNC_MAX_ENTRIES,
+        }
+    }
 }
 
 impl InMemoryAsyncAtomicReplayStore {
@@ -94,16 +144,66 @@ impl InMemoryAsyncAtomicReplayStore {
         Self::default()
     }
 
+    /// Override the fail-closed entry ceiling (tests, and bounded embedders).
+    pub fn with_max_entries(mut self, max_entries: usize) -> Self {
+        self.max_entries = max_entries;
+        self
+    }
+
+    /// Inject a fixed clock so the inline-prune anchor is deterministic in tests.
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, clock: UnixClock) -> Self {
+        self.clock = Arc::new(clock);
+        self
+    }
+
+    /// Number of retained entries (test/inspection aid).
+    pub fn len(&self) -> usize {
+        self.inner.lock().expect("replay state lock").seen.len()
+    }
+
+    /// Whether the store retains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// The synchronous core of the atomic op: insert-if-absent under the lock.
     /// Exactly one caller among many racing on the same key observes it absent
     /// (`Fresh`); the rest see `Replay`.
-    fn insert_locked(&self, key: &str) -> ReplayDecision {
+    fn insert_locked(
+        &self,
+        key: &str,
+        retain_until: i64,
+    ) -> Result<ReplayDecision, ReplayStoreError> {
         let mut state = self.inner.lock().expect("replay state lock");
-        if state.seen.insert(key.to_string()) {
-            ReplayDecision::Fresh
-        } else {
-            ReplayDecision::Replay
+        if state.seen.contains_key(key) {
+            return Ok(ReplayDecision::Replay);
         }
+
+        // Opportunistic, bounded-cadence eviction. The anchor is the store's OWN
+        // clock — NOT the caller's `retain_until`, which is derived from the request's
+        // `expires` and can sit arbitrarily far ahead of real time, so using it would
+        // over-evict still-live entries and reopen a replay window.
+        state.inserts_since_prune = state.inserts_since_prune.saturating_add(1);
+        if state.inserts_since_prune >= ASYNC_PRUNE_EVERY_N_INSERTS {
+            state.inserts_since_prune = 0;
+            let now = (self.clock)();
+            state.seen.retain(|_, &mut until| until >= now);
+        }
+
+        // Fail-closed ceiling: refuse rather than grow without bound. Admitting a
+        // request whose nonce is not retained would be the one unsafe option, since an
+        // unrecorded nonce can be replayed — so this is `Unavailable`, never `Fresh`.
+        if state.seen.len() >= self.max_entries {
+            return Err(ReplayStoreError::Unavailable {
+                details: format!(
+                    "in-memory async replay store is at its {} entry ceiling",
+                    self.max_entries
+                ),
+            });
+        }
+        state.seen.insert(key.to_string(), retain_until);
+        Ok(ReplayDecision::Fresh)
     }
 }
 
@@ -111,13 +211,13 @@ impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
     fn atomic_insert_if_absent<'a>(
         &'a self,
         key: &'a str,
-        _expires_at_unix: i64,
+        expires_at_unix: i64,
         _now_unix: i64,
     ) -> ReplayDecisionFuture<'a> {
-        // The in-memory reference has no server-side TTL (eviction would be an
-        // explicit prune) — the decision is a lock-guarded insert. Wrapped in a
-        // ready future so it satisfies the async contract without ever blocking.
-        Box::pin(async move { Ok(self.insert_locked(key)) })
+        // `expires_at_unix` is the skew-folded retain-until the tier computed. The
+        // decision is a lock-guarded insert, wrapped in a ready future so it satisfies
+        // the async contract without ever blocking a runtime worker.
+        Box::pin(async move { self.insert_locked(key, expires_at_unix) })
     }
 }
 
@@ -314,6 +414,76 @@ mod tests {
             store.durability_class(),
             ReplayDurabilityClass::SingleProcessReference
         );
+    }
+
+    #[test]
+    fn the_async_store_evicts_entries_past_their_retain_until() {
+        // Every accepted request adds an entry, and a signature-valid peer can stream
+        // distinct fresh nonces at will — so without eviction the set grows with total
+        // request volume rather than with the freshness window.
+        let now = Arc::new(Mutex::new(1_000i64));
+        let n = Arc::clone(&now);
+        let store = InMemoryAsyncAtomicReplayStore::new()
+            .with_clock(Box::new(move || *n.lock().expect("clock")));
+
+        block(async {
+            // A prune runs on the 64th insert; the first 63 all retain-until 1_500.
+            for i in 0..(ASYNC_PRUNE_EVERY_N_INSERTS - 1) {
+                store
+                    .atomic_insert_if_absent(&format!("nonce-{i}"), 1_500, 0)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(store.len() as u64, ASYNC_PRUNE_EVERY_N_INSERTS - 1);
+
+            // Move the clock past their retain-until; the next insert triggers the
+            // cadence and evicts them.
+            *now.lock().expect("clock") = 2_000;
+            store
+                .atomic_insert_if_absent("nonce-live", 9_000, 0)
+                .await
+                .unwrap();
+            assert_eq!(store.len(), 1, "only the still-live entry survives");
+        });
+    }
+
+    #[test]
+    fn the_async_store_refuses_rather_than_growing_past_its_ceiling() {
+        // Within one freshness window a peer can present more distinct fresh nonces
+        // than the prune cadence drains. Refusing is the only safe answer: admitting a
+        // request whose nonce is not retained would let it be replayed.
+        let store = InMemoryAsyncAtomicReplayStore::new()
+            .with_max_entries(3)
+            .with_clock(Box::new(|| 1_000));
+        block(async {
+            for i in 0..3 {
+                assert_eq!(
+                    store
+                        .atomic_insert_if_absent(&format!("nonce-{i}"), 9_000, 0)
+                        .await
+                        .unwrap(),
+                    ReplayDecision::Fresh
+                );
+            }
+            let refused = store.atomic_insert_if_absent("nonce-over", 9_000, 0).await;
+            assert!(
+                matches!(refused, Err(ReplayStoreError::Unavailable { .. })),
+                "past the ceiling the store must refuse, got {refused:?}"
+            );
+            // Fail CLOSED: it maps to the frozen unavailable token, never an allow.
+            assert_eq!(
+                ReplayCacheError::from(refused.unwrap_err()).to_mcp_re_error(),
+                mcp_re_core::McpReError::ReplayCacheUnavailable
+            );
+            assert_eq!(store.len(), 3, "the refused entry was not recorded");
+
+            // A known replay is still reported as one at the ceiling: refusing to GROW
+            // must not turn a known replay into an unknown.
+            assert_eq!(
+                store.atomic_insert_if_absent("nonce-0", 9_000, 0).await.unwrap(),
+                ReplayDecision::Replay
+            );
+        });
     }
 
     #[test]

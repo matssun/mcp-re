@@ -17,9 +17,6 @@ use crate::digest::content_digest_sha256;
 use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::ALG_ED25519;
-use crate::ids::MCP_METHOD_HEADER;
-use crate::ids::MCP_NAME_HEADER;
-use crate::ids::MCP_PROTOCOL_VERSION_HEADER;
 use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
@@ -68,7 +65,7 @@ fn emit_signature(
     set_header(
         headers,
         "Signature-Input",
-        format!("{label}={}", params.serialize_with(components)),
+        format!("{label}={}", params.serialize_with(components)?),
     );
     set_header(
         headers,
@@ -90,25 +87,29 @@ fn request_components(request: &HttpRequest) -> Result<Vec<CoveredComponent>, Ht
         .iter()
         .map(|n| CoveredComponent::new(n))
         .collect();
-    // Conditional coverage (v0.11 grill B.1): bind the exact presented
-    // credential surface when present, exactly-once enforced by lookup.
-    if single_header(&request.headers, "authorization")?.is_some() {
-        components.push(CoveredComponent::new("authorization"));
-    }
-    if single_header(&request.headers, "dpop")?.is_some() {
-        components.push(CoveredComponent::new("dpop"));
-    }
-    // MCP transport headers (#415 rev 2 §4.1): cover them when the sender put
-    // them on the wire. The signer covers exactly what is present, so a
-    // deployment on a protocol version that does not define these signs exactly
-    // what it did before — the rule is version-conditional without the signer
-    // needing to be told which version it is on.
-    for header in [
-        MCP_METHOD_HEADER,
-        MCP_NAME_HEADER,
-        MCP_PROTOCOL_VERSION_HEADER,
-    ] {
-        if single_header(&request.headers, header)?.is_some() {
+    components.extend(conditional_request_components(&request.headers)?);
+    Ok(components)
+}
+
+/// The conditionally-covered components for `headers`: one per mandatory-if-present
+/// request header actually on the wire (v0.11 grill B.1 for the credential surface,
+/// #415 rev 2 §4.1 for the MCP transport headers).
+///
+/// Reads the SAME set the verifier requires
+/// (`verify::conditionally_covered_request_headers`), so the signer covers exactly what
+/// the verifier will insist on. The signer covers only what is present, which makes the
+/// rule version-conditional without the signer needing to be told which protocol
+/// version it is on. Exactly-once is enforced by `single_header`'s duplicate rejection.
+///
+/// Shared with the BODYLESS signer, which previously built its components from a closed
+/// three-element set and therefore could not cover these at all — so a bodyless request
+/// carrying an `Authorization` header signed it outside the signature.
+pub(crate) fn conditional_request_components(
+    headers: &[(String, String)],
+) -> Result<Vec<CoveredComponent>, HttpProfileError> {
+    let mut components = Vec::new();
+    for header in crate::verify::conditionally_covered_request_headers() {
+        if single_header(headers, header)?.is_some() {
             components.push(CoveredComponent::new(header));
         }
     }

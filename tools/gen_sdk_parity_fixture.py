@@ -145,6 +145,28 @@ def build() -> dict:
         {**ref_args, **meta, "bindings_json": json.dumps([reference.spec(ctx)])},
     )
 
+    # A one-way NOTIFICATION. Pinned because the two SDKs could drift here in a way the
+    # request cases cannot show: the envelope omits `id` entirely, and a binding that
+    # emitted `"id": null` instead would be dispatched by the serving path as a REQUEST.
+    # There is no `id_json` and no continuation — a message that receives no result
+    # cannot be an answer leg.
+    note = dict(
+        method="notifications/initialized",
+        params_json="{}",
+        target_uri=BASE["target_uri"],
+        audience_id=BASE["audience_id"],
+        route=None,
+        dpop_token=BASE["dpop_token"],
+        nonce="nonce-parity-0006",
+        created=BASE["created"],
+        expires=BASE["expires"],
+    )
+    cases["notification_initialized"] = case(
+        mcp_re_sdk.sign_notification(SEED, KEY_ID, **note), {**note, **meta}
+    )
+    # And under non-exporting custody: same bytes, key behind the device.
+    cases["notification_non_exporting"] = case(ne.sign_notification(**note), {**note, **meta})
+
     return {
         "schema": "mcp-re-sdk-parity/v1",
         "comment": (

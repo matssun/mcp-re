@@ -36,6 +36,23 @@ __all__ = [
     "PendingRequest",
 ]
 
+#: How many consumed ids may accumulate before the store scans them for eviction.
+#:
+#: The scan is O(consumed), so amortising it over this many requests keeps the cost per
+#: request constant. It is a scan trigger, not a ceiling: nothing is dropped before its
+#: retention deadline, so the set can legitimately hold more than this while a burst of
+#: requests is still inside its freshness window.
+_CONSUMED_SCAN_AT = 1024
+
+#: How long past a request's own expiry its correlation id stays remembered, in seconds.
+#:
+#: The consumed set exists to answer "was this id already answered?", which only matters
+#: for a response that arrives LATE — so retention has to outlast the request window, not
+#: end with it. 300s is the profile's own widest skew tolerance: past it a response is so
+#: late that calling it a duplicate says nothing more than calling it unbound, and both
+#: refuse it.
+_CONSUMED_GRACE = 300
+
 
 @dataclass(frozen=True)
 class PendingRequest:
@@ -91,10 +108,18 @@ class CorrelationStore:
 
     def __init__(self) -> None:
         self._pending: Dict[str, PendingRequest] = {}
-        # Consumed correlation ids, so a second response for the same request is a
-        # replay rather than an unknown-request mismatch. The distinction matters: one
-        # is a duplicate, the other is an unrelated message.
-        self._consumed: set[str] = set()
+        # Consumed correlation ids mapped to the deadline past which the id may be
+        # dropped, so a second response for the same request is a replay rather than an
+        # unknown-request mismatch. The distinction matters: one is a duplicate, the
+        # other is an unrelated message.
+        #
+        # Retention runs to the request's expiry plus `_CONSUMED_GRACE`. Past that the
+        # id is dropped, and a duplicate arriving later fails as
+        # `mcp-re.request_binding_mismatch` instead of `mcp-re.replay_detected` — a less
+        # precise refusal, never an acceptance. Keeping every id forever would be the
+        # alternative, and a set that grows once per request for the life of the session
+        # is not one.
+        self._consumed: Dict[str, int] = {}
 
     def __len__(self) -> int:
         return len(self._pending)
@@ -120,6 +145,9 @@ class CorrelationStore:
         ``signed`` is the :class:`SignedRequest` returned by ``sign_request``.
         """
         correlation_id = signed.evidence_digest_value
+        # Amortised here because `record` is the one call every request makes.
+        if len(self._consumed) >= _CONSUMED_SCAN_AT:
+            self.prune_consumed(created)
         if correlation_id in self._pending:
             # The evidence digest is unique per request; a collision means the same
             # request was recorded twice, which would let one response consume the
@@ -167,15 +195,28 @@ class CorrelationStore:
         if pending.is_expired(now):
             # A late response is dropped AND the entry consumed: it must not stay
             # outstanding for a later, even later, answer.
-            del self._pending[correlation_id]
-            self._consumed.add(correlation_id)
+            self._retire(pending)
             raise McpReError(
                 "mcp-re.expired_request",
                 f"response arrived at {now} for a request that expired at {pending.expires}",
             )
-        del self._pending[correlation_id]
-        self._consumed.add(correlation_id)
+        self._retire(pending)
         return pending
+
+    def abandon(self, correlation_id: str) -> None:
+        """Retire an outstanding request whose exchange failed. Does not raise.
+
+        A failed exchange never produces a response to bind, so its entry can never be
+        taken — and anything that can make an exchange fail (a reset connection, an
+        unverifiable reply, a rejected signature) is remotely triggerable, so leaving the
+        entry outstanding lets a peer grow the store for the life of the session.
+
+        Idempotent by design: it is called on the failure path, where the entry may
+        already have been consumed by whichever step raised.
+        """
+        pending = self._pending.pop(correlation_id, None)
+        if pending is not None:
+            self._consumed[correlation_id] = pending.expires + _CONSUMED_GRACE
 
     def record_input_required(
         self,
@@ -205,8 +246,7 @@ class CorrelationStore:
                 f"({correlation_id!r})",
             )
         if pending.is_expired(now):
-            del self._pending[correlation_id]
-            self._consumed.add(correlation_id)
+            self._retire(pending)
             raise McpReError(
                 "mcp-re.expired_request",
                 f"input-required response arrived at {now} for a request that expired "
@@ -224,10 +264,27 @@ class CorrelationStore:
         """Drop every outstanding request past its deadline; returns those dropped.
 
         Reaping bounds the store: without it, requests that never get an answer
-        accumulate for the life of the session.
+        accumulate for the life of the session. Consumed ids past their retention
+        deadline go with them, so neither half of the store outlives its usefulness.
         """
         dead = [p for p in self._pending.values() if p.is_expired(now)]
         for p in dead:
-            del self._pending[p.correlation_id]
-            self._consumed.add(p.correlation_id)
+            self._retire(p)
+        self.prune_consumed(now)
         return dead
+
+    def prune_consumed(self, now: int) -> int:
+        """Drop consumed ids past their retention deadline; returns how many went.
+
+        Safe by construction: an evicted id can no longer be recognised as a duplicate,
+        so a late second response for it fails as `mcp-re.request_binding_mismatch`
+        rather than `mcp-re.replay_detected`. Both refuse it.
+        """
+        dead = [cid for cid, retain_until in self._consumed.items() if now > retain_until]
+        for cid in dead:
+            del self._consumed[cid]
+        return len(dead)
+
+    def _retire(self, pending: PendingRequest) -> None:
+        del self._pending[pending.correlation_id]
+        self._consumed[pending.correlation_id] = pending.expires + _CONSUMED_GRACE
