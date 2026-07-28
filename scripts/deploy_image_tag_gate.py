@@ -49,6 +49,17 @@ SCAN_GLOBS = (
 # `{{ .Values… }}`) is exactly the fix this gate wants and must not match.
 IMAGE_TAG = re.compile(r"\b(mcp-re-[a-z0-9-]+):(\d+\.\d+\.\d+)\b")
 
+# ANY reference to one of this project's images, whether the tag is a literal semver or
+# a shell expansion. The coverage check needs this wider net precisely BECAUSE the drift
+# fix works: once `run_slo_job.sh` derives its tag from VERSION (`mcp-re-slo-bench:
+# $BENCH_TAG`), a literal-only pattern no longer sees the image at all — so the check
+# for "deployed but never built" would go blind on exactly the files the other check
+# just fixed. A port is not a tag, so `mcp-re-redis:6379` and
+# `mcp-re-inner-fastmcp:8620` are excluded by construction.
+IMAGE_REF = re.compile(
+    r"\b(mcp-re-[a-z0-9-]+):(\d+\.\d+\.\d+|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"
+)
+
 
 def expected_version() -> str:
     return (REPO / "VERSION").read_text().strip()
@@ -91,8 +102,57 @@ def selftest() -> int:
         if scan(root, "9.9.9"):
             print("SELFTEST FAILED: a correctly-pinned tree still reported findings")
             return 1
+
+    # Coverage: an image something DEPLOYS but no cloudbuild config BUILDS. Its own
+    # fixture, so the two checks cannot mask each other. The orphan is asserted with an
+    # EXPANSION tag, not a literal — that is the form the drift fix produces, and a
+    # literal-only matcher would go blind on exactly the files the drift fix touches.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "deploy" / "cloudbuild").mkdir(parents=True)
+        (root / "tools").mkdir()
+        cb = root / "deploy" / "cloudbuild" / "images.yaml"
+        cb.write_text('args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n')
+        (root / "tools" / "run_job.sh").write_text(
+            'IMG="${_AR}/mcp-re-slo-bench:$BENCH_TAG"\n'
+        )
+        orphans = unbuilt_images(root)
+        if orphans != ["mcp-re-slo-bench"]:
+            print(f"SELFTEST FAILED: expected ['mcp-re-slo-bench'] unbuilt, got {orphans}")
+            return 1
+        cb.write_text(
+            'args: [build, -t, "${_AR}/mcp-re-proxy:9.9.9", .]\n'
+            'args: [build, -t, "${_AR}/mcp-re-slo-bench:9.9.9", .]\n'
+        )
+        if unbuilt_images(root):
+            print("SELFTEST FAILED: a fully-built tree still reported unbuilt images")
+            return 1
     print("deploy image-tag gate selftest: PASS")
     return 0
+
+
+def unbuilt_images(root: Path) -> list[str]:
+    """Images something DEPLOYS that no Cloud Build config BUILDS.
+
+    Matching tags to VERSION is not enough: a pin can be perfectly current and still
+    name an image nobody ever pushed. That is how the SLO bench went missing — it lived
+    in a second build config, so submitting the main one produced a registry that looked
+    complete, and `run_slo_job.sh` pinned a tag Artifact Registry did not hold. The
+    failure surfaced as ImagePullBackOff on a running cluster, after the proofs had
+    passed. Deployed-but-never-built is its own defect, so it gets its own check.
+    """
+    built: set[str] = set()
+    for cfg in sorted((root / "deploy" / "cloudbuild").glob("*.yaml")):
+        for image, _ in IMAGE_REF.findall(cfg.read_text(errors="replace")):
+            built.add(image)
+    deployed: set[str] = set()
+    for glob in SCAN_GLOBS:
+        for path in sorted(root.glob(glob)):
+            if not path.is_file() or "cloudbuild" in path.parts:
+                continue
+            for image, _ in IMAGE_REF.findall(path.read_text(errors="replace")):
+                deployed.add(image)
+    return sorted(deployed - built)
 
 
 def main() -> int:
@@ -100,12 +160,15 @@ def main() -> int:
         return selftest()
     version = expected_version()
     findings = scan(REPO, version)
-    if findings:
-        print(f"deploy image-tag gate: FAIL ({len(findings)} drifted pin(s), VERSION={version})")
+    orphans = unbuilt_images(REPO)
+    if findings or orphans:
+        print(f"deploy image-tag gate: FAIL (VERSION={version})")
         for f in findings:
             print(f"  {f}")
+        for o in orphans:
+            print(f"  {o} is deployed but no deploy/cloudbuild/*.yaml builds it")
         return 1
-    print(f"deploy image-tag gate: PASS (every deployed image tag == VERSION {version})")
+    print(f"deploy image-tag gate: PASS (every deployed image tag == VERSION {version}, and every one is built)")
     return 0
 
 

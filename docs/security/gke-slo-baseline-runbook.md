@@ -53,8 +53,7 @@ export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 ## 1. Build the amd64 images (native, on Cloud Build — no local QEMU)
 
 ```sh
-gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .   # proxy + FastMCP inner + loadgen
-gcloud builds submit --config deploy/cloudbuild/slo-bench.yaml .       # SLO baseline runner
+gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .   # ALL FOUR images
 ```
 
 `.gcloudignore` keeps the upload to ~24 MiB (excludes `target/`, ~49 GB). The proxy

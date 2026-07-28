@@ -16,7 +16,7 @@
 #
 # Env: PROJECT_ID, CLUSTER, ZONE, NAMESPACE, RELEASE (defaults below); BENCH_IMG
 # overrides the SLO bench image (default: current-source AR tag rebuilt by
-# deploy/cloudbuild/slo-bench.yaml).
+# deploy/cloudbuild/mcp-re-images.yaml).
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 

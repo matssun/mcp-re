@@ -26,7 +26,7 @@
 set -euo pipefail
 
 NS="${NS:-mcp-re}"
-# The tag is READ FROM VERSION, never restated: deploy/cloudbuild/slo-bench.yaml pushes
+# The tag is READ FROM VERSION, never restated: deploy/cloudbuild/mcp-re-images.yaml pushes
 # the image at whatever VERSION says, so a literal here goes stale on the next bump and
 # the Job then references a tag Artifact Registry does not hold (ImagePullBackOff on a
 # cluster that is already costing money).
