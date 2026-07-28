@@ -57,6 +57,9 @@ _PROXY_LIB_SRCS = [
     # protocol mapping behind the #3838 delegation seam). Always compiled.
     "src/kms_keysource.rs",
     "src/lib.rs",
+    # ADR-MCPS-035: the serving path's audit emission seam (admitted actor, rejection
+    # wire code, response signing key). Pure std, no feature gate — always compiled.
+    "src/audit_sink.rs",
     # Inner-server lifecycle logging seam (transport-agnostic; used by the async
     # dispatch path). Split out of inner_launch so it stays in the PEP when the
     # stdio subprocess machinery relocates to mcp-re-stdio-bridge.
