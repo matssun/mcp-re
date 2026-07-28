@@ -56,11 +56,11 @@
     }
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.16.0",
-    "@napi-rs/cli": "^3.7.2",
-    "@types/node": "^22.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/cli": "^3.8.0",
+    "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
-    "typescript": "^5.5.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.9"
   },
   "overrides": {
