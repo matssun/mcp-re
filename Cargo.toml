@@ -81,7 +81,7 @@ rustls-pki-types = "1"
 # already in the closure (rustls' provider), so this barely grows it. The verify
 # CODE ships in the proxy's `online_ocsp` module (it is no longer behind a
 # separate feature); enabling `verify` here makes the API available to it.
-x509-parser = { version = "0.16", features = ["verify"] }
+x509-parser = { version = "0.18", features = ["verify"] }
 # (MCPS-088): asn1-rs BitString type for the OCSP responder-signature verify
 # path (re-exported by x509-parser; same version it resolves).
 asn1-rs = "0.6"
