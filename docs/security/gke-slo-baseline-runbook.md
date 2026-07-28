@@ -18,10 +18,10 @@ end; a rerun with images cached is ~15 min.
 > requests, cold TLS1.3-mTLS** — the SAME for the local baseline AND this GKE run.
 > The earlier GKE run used the lighter v1 defaults (concurrency 64 / 2000), so it
 > was never comparable to the local baseline; `tools/slo/run_slo_job.sh` now pins
-> 128/8000 explicitly. **Run the local baseline first** (`cargo test --release -p
-> mcp-re-proxy --features async_serve --test tls_load_harness_bench
-> tls_load_harness_bench -- --ignored`, then `scripts/adr051_slo_gate.py`) and
-> confirm it is green before spending on GKE. The GKE production floors in
+> 128/8000 explicitly. **Run the local baseline first — `scripts/local_slo_lane.sh` —
+> and confirm it is green before spending on GKE** (see
+> [Run everything locally first](#run-everything-locally-first-non-negotiable)). The
+> GKE production floors in
 > `adr-051-slo-targets.json` are **DECLARED under this v2 envelope** (re-measured
 > 2026-07-13, v0.12); rerun this runbook to refresh them on a new major release.
 
@@ -31,6 +31,27 @@ end; a rerun with images cached is ~15 min.
   `deploy/cloudbuild/*.yaml`, `deploy/helm/mcp-re-proxy`, `deploy/k8s/inner-fastmcp.yaml`,
   `tools/slo/run_slo_job.sh`, `docs/security/mcp_re_gke_client.py`,
   `docs/bench/adr-051-slo-targets.json`, `scripts/slo_gate.py`.
+
+## Run everything locally first (non-negotiable)
+
+**Nothing in this runbook may be started until `scripts/local_gate.sh` is green.**
+It is free, it runs on your machine, and it covers the structural gates, both cargo
+suites, Bazel parity and the ADR-051 §7 SLO lane — see
+[`docs/dev/local-gate-order.md`](../dev/local-gate-order.md).
+
+```sh
+scripts/local_gate.sh --with-kind    # stages 1-5, including the fleet proofs on kind
+```
+
+Stage 5 runs the **identical** harness, chart and images this runbook deploys, on a
+local kind cluster (`PROVIDER=kind docs/security/gke-multi-replica-validation.sh`).
+That rehearsal has already found six deploy defects — three of which would have
+failed the GKE run outright — every one of them *after* `gcloud builds submit` would
+have run and while a cluster was billing. Stage 4 is the local SLO lane; if it is
+red, the declared-hardware run below can only pay money to reproduce the same
+regression.
+
+The order is: local gate → kind → **only then** anything in this document.
 
 ## 0. One-time project setup (idempotent)
 

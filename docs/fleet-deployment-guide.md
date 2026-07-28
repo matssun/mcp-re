@@ -209,7 +209,10 @@ The concurrent-TLS-client load harness (`tls_load_harness_bench.rs`,
 ADR-MCPRE-051 §7) drives the real per-core listener over mTLS and reports p50/p99/p999
 added latency and throughput against the declared benchmark envelope
 ([`docs/bench/adr-051-load-harness-envelope.md`](bench/adr-051-load-harness-envelope.md));
-run it against your Redis to size the fleet. The dominant per-request cost at
+run it against your Redis to size the fleet — via `scripts/local_slo_lane.sh`, or
+`MCP_RE_LOADGEN_REDIS_URL=… ` plus the raw invocation in the envelope doc (`--exact`,
+never `--ignored`, which selects zero tests and measures nothing). The dominant
+per-request cost at
 scale is the shared-store round-trip. (The older single-thread
 `fleet_throughput_bench.rs` (MCPS-89) calls `Proxy::handle` directly and cannot
 measure the concurrent serving path.)

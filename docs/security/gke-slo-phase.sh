@@ -17,6 +17,11 @@
 # Env: PROJECT_ID, CLUSTER, ZONE, NAMESPACE, RELEASE (defaults below); BENCH_IMG
 # overrides the SLO bench image (default: current-source AR tag rebuilt by
 # deploy/cloudbuild/mcp-re-images.yaml).
+#
+# PRECONDITION — `scripts/local_gate.sh` green, including its stage-4 local SLO lane
+# (docs/dev/local-gate-order.md). That lane measures the SAME v2 envelope this phase
+# measures, for free. If it is red, this script can only spend money reproducing the
+# same regression on billed hardware.
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 

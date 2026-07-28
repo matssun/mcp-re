@@ -20,16 +20,32 @@ they are enforced by their own always-on tests
 are NOT re-checked here — this script only guards the throughput/latency
 regression band.
 
-Usage:
-    # 1. produce a fresh report at the baseline anchor config
+Usage — prefer the lane script, which does both steps and refuses the known traps:
+
+    scripts/local_slo_lane.sh          # 6 anchor reps, each gated by THIS script
+
+By hand (see docs/dev/local-gate-order.md before you do):
+
+    # 1. produce a fresh report at the baseline anchor config. `--exact`, NEVER
+    #    `--ignored`: this bench is not an #[ignore] test (the file is gated to the
+    #    redis_replay feature lane), so `--ignored` selects ZERO tests, exits 0 and
+    #    writes no report. MCP_RE_LOADGEN_OUT must be ABSOLUTE — cargo runs the test
+    #    binary from the package root. The harness spawns the real CLI, so the BIN
+    #    must be built with the same features, not just the test target.
+    cargo build --release -p mcp-re-proxy --features async_serve,redis_replay --bins
     MCP_RE_LOADGEN_CORES=1 MCP_RE_LOADGEN_CONCURRENCY=128 \\
     MCP_RE_LOADGEN_REQUESTS=8000 MCP_RE_LOADGEN_MODE=cold \\
-    MCP_RE_LOADGEN_HW_CLASS=... MCP_RE_LOADGEN_OUT=/tmp/fresh.json \\
-    cargo test -p mcp-re-proxy --release --test tls_load_harness_bench \\
-        tls_load_harness_bench -- --ignored
+    MCP_RE_LOADGEN_HW_CLASS=... MCP_RE_LOADGEN_OUT=$PWD/fresh.json \\
+    cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \\
+        --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
 
     # 2. gate it
-    python3 scripts/adr051_slo_gate.py --report /tmp/fresh.json
+    python3 scripts/adr051_slo_gate.py --report $PWD/fresh.json
+
+Measure on a QUIET box: the loadgen is co-located with the proxy, so an unrelated
+build on the same machine produces an environmental FAIL that says nothing about the
+code (this cost one full A/B/B/A investigation in 2026-07). The lane script enforces
+this; a hand-run does not.
 
 Exit status: 0 = within tolerance, 1 = regression, 2 = usage/data error.
 """

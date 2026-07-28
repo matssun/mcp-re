@@ -111,6 +111,28 @@ jobs:
           python3 scripts/deploy_image_tag_gate.py --selftest
           python3 scripts/deploy_image_tag_gate.py
 
+      # SLO-harness invocation gate: `tls_load_harness_bench` is NOT an #[ignore]
+      # test (the file is gated to the redis_replay feature lane), so a documented
+      # `-- --ignored` selects ZERO tests, exits 0 and writes no report — a lane that
+      # looks green while measuring nothing. That form had propagated into four
+      # places, the bench image's own ENTRYPOINT among them. This keeps every
+      # runnable invocation honest. Fast, python-only.
+      - name: SLO-harness invocation gate (no command that measures nothing)
+        run: |
+          python3 scripts/slo_invocation_gate.py --selftest
+          python3 scripts/slo_invocation_gate.py
+
+      # Bazel srcs gate: mcp-re-proxy hand-lists its library sources (three feature
+      # flavors share one list) while every other crate globs. A hand-list drifts —
+      # `src/audit_sink.rs` shipped with the ADR-MCPS-035 audit surface and was never
+      # added, so cargo built a module Bazel could not find (E0583) and every Bazel
+      # target downstream of the proxy failed. Only a full `bazel test //...` caught
+      # it, 30+ minutes in. This is the same check in one second. Fast, python-only.
+      - name: Bazel srcs gate (hand-listed srcs matches lib.rs)
+        run: |
+          python3 scripts/bazel_srcs_gate.py --selftest
+          python3 scripts/bazel_srcs_gate.py
+
       # Helm chart render gate: every fail-closed guard in the chart
       # (`templates/_helpers.tpl`) is a render-time `fail`, and several of them key
       # on values Helm treats as FALSY — so an inverted condition does not error, it

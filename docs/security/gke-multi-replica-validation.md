@@ -18,6 +18,13 @@ single-node non-claim retirement (MCPS-91) depend on.
 
 ## How to run
 
+**Precondition: `scripts/local_gate.sh --with-kind` green.** Stage 5 runs these four
+proofs against the identical harness, chart and images on a local kind cluster, for
+free — `PROVIDER=kind ./docs/security/gke-multi-replica-validation.sh`. That rehearsal
+has already caught six deploy defects (three fatal to the GKE run) that would
+otherwise have surfaced only after `gcloud builds submit`, on a billing cluster. See
+[`docs/dev/local-gate-order.md`](../dev/local-gate-order.md).
+
 ```bash
 gcloud auth login && gcloud config set project <PROJECT_ID>
 # provide the fleet TLS + trust Secret `mcp-re-tls` (see docs/fleet-deployment-guide.md)

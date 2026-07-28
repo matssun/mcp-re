@@ -36,6 +36,17 @@ option. It is not.
    today's code, or copy design from it. The full JCS-era snapshot is also
    recoverable from the git tag `pre-adr-mcpre-050-jcs`.
 
+9. **Run the local gate before anything else, and never fake a green.** One command:
+   `scripts/local_gate.sh` (see [`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
+   It is free and it is the precondition for every PR and every cloud run — no
+   `gcloud builds submit`, no GKE cluster, no baseline declaration ahead of it. Two
+   specific traps, both of which produce a lane that LOOKS green while measuring
+   nothing: `tls_load_harness_bench` is **not** `#[ignore]`, so `-- --ignored` runs
+   ZERO tests and exits 0 (use `-- --exact`); and a relative `MCP_RE_LOADGEN_OUT` is
+   written under the package root where the gate will not find it. Use
+   `scripts/local_slo_lane.sh`, which refuses both. If a command reports success,
+   confirm it actually ran what you think it ran before reporting it as done.
+
 If a task seems to require Native JCS for *new* work, stop — it does not. Re-read
 the design note; if you still believe it does, raise it with the maintainer
 rather than reintroducing the legacy profile.

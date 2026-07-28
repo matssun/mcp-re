@@ -9,8 +9,13 @@
 #   docker build -f deploy/docker/Dockerfile.bench -t mcp-re-slo-bench:0.13.0 .
 #
 # Drive per run with env: MCP_RE_LOADGEN_HW_CLASS (the machine class label),
-# MCP_RE_LOADGEN_CORES (1 then N for the scaling curve). Envelope defaults
-# (concurrency 64, 2000 requests, cold) otherwise (docs/bench/adr-051-*).
+# MCP_RE_LOADGEN_CORES (1 then N for the scaling curve). The canonical v2 envelope
+# is concurrency 128 / 8000 requests / cold — tools/slo/run_slo_job.sh pins it
+# explicitly; the harness's own built-in defaults are the same 128/8000
+# (docs/bench/adr-051-benchmark-envelope.json).
+#
+# Run the LOCAL lane before ever building or scheduling this image:
+# scripts/local_gate.sh (docs/dev/local-gate-order.md). Same envelope, no cost.
 FROM rust:1.94.1-slim-bookworm AS bench
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential perl pkg-config libssl-dev ca-certificates \
@@ -20,4 +25,10 @@ COPY . .
 # Warm the target so the runtime `cargo test` runs the bench with no recompile.
 RUN cargo test -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench --no-run
 ENV MCP_RE_LOADGEN_OUT=/tmp/slo_report.json
-ENTRYPOINT ["bash","-lc","cargo test -p mcp-re-proxy --features async_serve --test tls_load_harness_bench -- --ignored --nocapture && echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]
+# `--exact`, NEVER `--ignored`: this bench is not an #[ignore] test (the whole file is
+# gated to the redis_replay feature lane), so `--ignored` selects ZERO tests, exits 0
+# and writes no report — a Job that measures nothing and reports success. The features
+# must match the warm-build on line 21 or the runtime `cargo test` recompiles. The
+# `1 passed` check is the guard that makes a non-measurement impossible to mistake for
+# a result. Needs a shared Redis at MCP_RE_LOADGEN_REDIS_URL (the Job supplies sidecars).
+ENTRYPOINT ["bash","-lc","set -o pipefail; cargo test -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture | tee /tmp/bench.log; grep -q 'test result: ok. 1 passed' /tmp/bench.log || { echo 'SLO BENCH DID NOT RUN — zero tests selected, nothing measured' >&2; exit 1; }; echo '===REPORT_JSON_BEGIN===' && cat \"$MCP_RE_LOADGEN_OUT\" && echo '===REPORT_JSON_END==='"]

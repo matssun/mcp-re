@@ -84,18 +84,41 @@ hardware-independent — always required, every release — and are enforced by
 their own always-on tests (`//mcp-re-proxy:replay_race_harness_test`,
 `//mcp-re-proxy:async_drain_test`), not by the throughput gate above.
 
-To reproduce the baseline anchor and gate a change against it:
+To reproduce the baseline anchor and gate a change against it, run the lane script —
+it is the ONLY supported entry point:
 
 ```
-# fresh anchor run (single served core, moderate concurrency, cold mTLS)
+scripts/local_slo_lane.sh          # 6 anchor reps + the gate on each
+scripts/local_slo_lane.sh --reps 1 # quick pre-flight
+```
+
+It reads the anchor config out of `docs/bench/adr-051-baseline-local.json`, builds
+both the test AND the `mcp-re-proxy` bin the harness spawns, refuses to measure on a
+loaded box, asserts a test actually ran, and calls `scripts/adr051_slo_gate.py`.
+
+**Do not hand-roll the cargo command.** Two ways to get a silent non-measurement:
+
+- `-- --ignored` selects only `#[ignore]` tests. `tls_load_harness_bench` is **not**
+  `#[ignore]` (the file is gated to the `redis_replay` feature lane instead), so
+  cargo runs **zero** tests, exits **0**, and writes no report. Use `-- --exact`.
+- Omitting `--features async_serve,redis_replay` on the **bin** build leaves
+  `target/release/mcp-re-proxy` without the serving features the harness spawns it
+  with.
+
+The equivalent raw invocation, for reference only:
+
+```
 MCP_RE_LOADGEN_CORES=1 MCP_RE_LOADGEN_CONCURRENCY=128 \
 MCP_RE_LOADGEN_REQUESTS=8000 MCP_RE_LOADGEN_MODE=cold \
 MCP_RE_LOADGEN_HW_CLASS=apple-m4-pro-14c-dev MCP_RE_LOADGEN_OUT=/tmp/fresh.json \
-  cargo test -p mcp-re-proxy --release --test tls_load_harness_bench \
-    tls_load_harness_bench -- --ignored
+  cargo test -p mcp-re-proxy --release --features async_serve,redis_replay \
+    --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture
 
 python3 scripts/adr051_slo_gate.py --report /tmp/fresh.json
 ```
+
+`MCP_RE_LOADGEN_OUT` must be **absolute**: cargo runs the test binary with cwd =
+the package root, so a relative path lands under `mcp-re-proxy/`.
 
 ## Faithfulness to ADR-051 §7
 

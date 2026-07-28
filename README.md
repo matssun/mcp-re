@@ -297,6 +297,19 @@ The workspace builds with either Cargo or Bazel. Cargo is the public-facing
 default; Bazel is the hermetic build path the maintainer uses internally and
 both `Cargo.toml` and `BUILD.bazel` files are committed for every crate.
 
+**Everything at once, in cost order — run this before opening a PR and before any
+cloud run:**
+
+```sh
+scripts/local_gate.sh
+```
+
+Structural gates → both cargo suites → `bazel test //...` → the ADR-MCPRE-051 §7 SLO
+lane, stopping at the first failure. Neither command below is the whole battery on its
+own: `cargo test --workspace` does not compile the non-default feature backends, and
+`bazel test //...` excludes the `manual`-tagged infra lane. See
+[`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md).
+
 ### Cargo (recommended for OSS contributors)
 
 ```sh
@@ -315,7 +328,10 @@ The SDK suites live outside the cargo workspace and run separately:
 (`npm test` — builds the native binding then runs `vitest`).
 
 `#[ignore]`-gated tests (developer-only fixture writers and the live Cloud-KMS
-lanes) are deliberate, not skipped production tests.
+lanes) are deliberate, not skipped production tests. The ADR-MCPRE-051 §7 load
+harness is **not** among them — it is kept out of the default battery by its
+`redis_replay` feature gate, so running it with `-- --ignored` selects nothing.
+Drive it through `scripts/local_slo_lane.sh`.
 
 ### Bazel
 
