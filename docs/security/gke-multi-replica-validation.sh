@@ -158,8 +158,20 @@ if [[ "$PROVIDER" == gke ]]; then
     # software-seed fallback. The default node pool created here gets GKE_METADATA
     # automatically. Run docs/security/gke-kms-wi-setup.sh once after this to bind the
     # GSA. fileSeed roots ignore all of this; WI just sits unused.
+    #
+    # --enable-network-policy installs Calico, which is what makes
+    # `mcp-re-inner-fastmcp-allow-proxy-only` (deploy/k8s/inner-fastmcp.yaml) actually
+    # filter packets. Without it the object is accepted and enforces NOTHING: the inner
+    # plane speaks plain HTTP with no auth of its own, so any pod in the cluster could
+    # POST straight past the PEP — no signature, no replay admission, no audit record.
+    # A GKE run on a cluster without this proves the four coherence properties but NOT
+    # inner containment, and the earlier v0.11/v0.12.1 runs were in exactly that state.
+    # The SLO phase is unaffected: `tls_load_harness_bench` spawns its own proxy in-pod
+    # and drives it over loopback (`https://localhost/`, echo backend on 127.0.0.1, the
+    # Redis sidecars sharing the pod netns), so the measured path never crosses the CNI.
     gcloud container clusters create "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE" \
       --num-nodes "$GKE_NODES" --machine-type "$GKE_MACHINE" --disk-size 30 --no-enable-basic-auth \
+      --enable-network-policy \
       --workload-pool "${PROJECT_ID}.svc.id.goog"
   fi
   gcloud container clusters get-credentials "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE"
@@ -583,12 +595,20 @@ fi
 log "Proof 1 — cross-replica replay coherence"
 # A proper 128-bit b64url nonce, PINNED so both replicas see the identical
 # (signer, audience, nonce) triple — the whole point of the coherence proof.
+#
+# Passed as `--nonce=<value>`, NOT `--nonce <value>`. base64url maps `+` to `-`, so
+# roughly one nonce in 64 starts with a hyphen, and argparse then reads it as the next
+# OPTION rather than this one's value: "argument --nonce: expected one argument", and
+# Proof 1 fails for a reason that has nothing to do with replay coherence. The `=` form
+# binds the value to the flag whatever it starts with. A 1-in-64 spurious failure in a
+# proof that gates a release is worse than a common one — it is rare enough to be
+# dismissed as a fluke and re-run.
 NONCE="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
 printf '%s\n' "$REQ" | client \
-  --remote-addr "$REPLICA_A" --nonce "$NONCE" --expect accepted \
+  --remote-addr "$REPLICA_A" --nonce="$NONCE" --expect accepted \
   || fail "replica A did not accept a fresh pinned nonce"
 printf '%s\n' "$REQ" | client \
-  --remote-addr "$REPLICA_B" --nonce "$NONCE" --expect replay \
+  --remote-addr "$REPLICA_B" --nonce="$NONCE" --expect replay \
   || fail "replica B accepted a nonce already spent on A (replay coherence broken)"
 echo "  OK: nonce Fresh on A, Replay on B."
 
@@ -685,9 +705,18 @@ else
   # Time-bounded so the load spans the WHOLE rollout (a fixed request count can finish
   # before the roll does and miss the tail). Counts drops over the window.
   SECS="${MCP_RE_ROLLING_SECS:-75}"
+  # A drop is recorded WITH the client's stderr, not just as a tally. The two things
+  # that end a request here are not the same finding and must not look the same: a
+  # connection-level failure (the kube-proxy endpoint-propagation race this proof is
+  # actually about) versus a `verdict mismatch` (the proxy answered, and answered
+  # something other than accepted — a fail-closed regression). Discarding stderr made
+  # both print the bare word DROP, so a security regression during a rollout was
+  # indistinguishable from a load-balancer timing artefact and neither could be triaged
+  # after the fact. stdout is still discarded; only the diagnosis is kept.
   REMOTE="end=\$(( \$(date +%s) + $SECS )); n=0; drops=0; \
 while [ \$(date +%s) -lt \$end ]; do \
-  printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted >/dev/null 2>&1 || { echo DROP; drops=\$((drops+1)); }; \
+  why=\$(printf '%s\\n' '$REQ' | python /app/mcp_re_gke_client.py $LG --remote-addr $TARGET_ADDR --expect accepted 2>&1 >/dev/null) \
+    || { echo \"DROP \$(echo \$why | tr '\\n' ' ')\"; drops=\$((drops+1)); }; \
   n=\$((n+1)); \
 done; echo \"loadgen: \$n requests, \$drops drop(s)\""
   kubectl -n "$NAMESPACE" exec "$LOADGEN_POD" -- sh -c "$REMOTE" > /tmp/mcps90.load 2>&1 & LOAD=$!
