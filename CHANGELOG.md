@@ -12,7 +12,46 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-28
+
+**A security-audit release.** Fourteen rounds of the audit funnel over the serving
+path, the signing core, the deploy surface and both SDKs closed **57 finding
+clusters**, each fix carrying a negative control that fails when the fix is reverted.
+The dominant defect shape was not a missing control but an unreachable one: a control
+that exists, is announced at startup, and is never reached by the production data
+plane. Twelve such controls were wired in round 1 alone.
+
+Alongside it: the first **live GKE fleet run** of the four coherence proofs (and a
+free kind rehearsal that caught six deploy defects before any cloud spend), one
+**breaking profile change** to bodyless-202 binding (owner ruling C019b), and
+notification support in both SDKs.
+
 ### Added
+- **One local gate, run before anything else — and a gate against the command that
+  measured nothing.** `scripts/local_gate.sh` runs every free stage in cost order,
+  stopping at the first failure: structural gates → both cargo suites (the default
+  workspace battery does not compile the non-default feature backends) → `bazel test
+  //...` → the ADR-MCPRE-051 §7 SLO lane → optionally the fleet proofs on kind
+  (`--with-kind`). It is now the documented precondition for every PR and every cloud
+  run ([`docs/dev/local-gate-order.md`](docs/dev/local-gate-order.md)).
+
+  The SLO half is `scripts/local_slo_lane.sh`, which exists because the documented
+  invocation was wrong in four places — the GKE runbook, both `docs/bench/` docs, and
+  the bench image's own `ENTRYPOINT` — all of them passing `-- --ignored`.
+  `tls_load_harness_bench` is deliberately **not** an `#[ignore]` test (the file is
+  gated to the `redis_replay` feature lane instead), so `--ignored` selects **zero**
+  tests, exits **0**, and writes no report: a lane that looks green while having
+  measured nothing. `scripts/slo_invocation_gate.py` (with self-test, wired into CI
+  and stage 1) now fails any tracked invocation carrying `--ignored` or missing
+  `redis_replay`, so the form cannot come back.
+
+  The lane script also fixes three quieter traps: it builds the **bin** with the
+  serving features (the harness spawns the real `mcp-re-proxy` as a child, so a
+  test-only build is not enough), it forces an absolute `MCP_RE_LOADGEN_OUT` (cargo
+  runs a test from the *package* root, so a relative path lands where the gate cannot
+  read it), and it **refuses to measure on a loaded box** — the loadgen is co-located
+  with the proxy, and that exact false alarm already cost a full A/B/B/A investigation
+  in which v0.12.1 measured ~3225 rps against its own 4906.9 rps anchor.
 - **Both SDKs carry and verify one-way notifications (#418, C055).** A `notifications/*`
   message is now its own signed POST — the ordinary request rules, no new signing — and the
   signed bodyless `202` it earns is verified before the message counts as delivered:
@@ -35,7 +74,33 @@ or wire-format compatibility while the design lines from
   message fell through to the bodied signer — which is why a serving-path test now drives
   `build_signed_notification`'s own envelope end to end.
 
+- **The ADR-MCPS-035 audit surface the serving path claimed to have.**
+  `HttpProfileProxy::handle` emitted nothing on any exit, so a deployment relying on
+  the documented audit trail for post-incident attribution had no record of which
+  actor was admitted, which wire code caused a rejection, or which key signed a
+  response. The profile's 23 wire codes proved to be a strict subset of the frozen
+  43-code `McpReError` taxonomy, so the surface is emitted without minting a parallel
+  set of reason names; a drift guard now asserts the containment holds.
+- **A client leg that can actually carry the profile.** `mcp-re-transport` was an
+  object-profile-era crate: bytes-in/bytes-out was a complete transport API only while
+  evidence lived in a JSON `_meta` block. ADR-MCPRE-050 moved evidence to RFC 9421
+  headers and the status line — the two things that API discards. On the request side
+  the request line was a fixed literal with no header parameter at all, so a signed
+  request arrived carrying **no evidence whatsoever** (C057/C061/C071).
+- **Live GKE fleet validation, and a free local rehearsal of it.** The four coherence
+  proofs now run on a real GKE fleet (2× `e2-standard-2`, zonal, Workload Identity,
+  Cloud KMS root, Artifact Registry images), and identically on a local kind cluster
+  via `PROVIDER=kind`. The kind lane found six deploy defects — three fatal to the
+  cloud run — before a cluster was created.
+
 ### Changed
+- **BREAKING (profile): a signed bodyless `202` binds to a TRANSMISSION, not to
+  content (owner ruling C019b).** The content-level binding in §3.4 is replaced, not
+  retained as a weaker optional mode. Under it, a captured `202` could be presented as
+  evidence for a later byte-identical retransmission that the server had in fact
+  rejected as a replay: the server could distinguish the two transmissions while the
+  client could not determine which one the acknowledgement belonged to.
+  Proof-of-acceptance semantics must not collapse distinct delivery attempts.
 - **BREAKING (SDKs): `unsafe_drop_notifications` / `unsafeDropNotifications` and their
   observers are removed, along with `NotificationsUnsupported` and (Python)
   `UnsafeConfigurationRefused`.** They existed only because the notification profile did
@@ -54,6 +119,120 @@ or wire-format compatibility while the design lines from
   is the case content-level binding could not express at all (owner ruling C019b).
 
 ### Fixed
+
+*Controls that existed but were never reached by the serving path (round 1, 12 root
+causes over 21 clusters):*
+- **No `VerifierPolicy` was ever attached.** `app.rs` never called
+  `with_verifier_policy`, so `VerifierPolicy::default()` always won:
+  `--max-clock-skew` reached only replay retention while the freshness gate ran a
+  hardcoded 30s, and `McpTransportPolicy` was unreachable from any shipped
+  deployment. One value now drives both the acceptance window and `retain_until`.
+- **The revocation-tier resolver was built, its guarantee printed, and dropped**
+  (`let _ = &resolver;`). The PEP resolved signers from a boot-time `HashMap`, so a
+  revoked key kept verifying until restart on **every** tier — including
+  `--revocation-tier live`, which advertises a near-zero window.
+- **CRL hot-reload wrote to a config nothing re-read.** The `TlsAcceptor` was built
+  outside the accept loop, so the documented per-connection read never happened.
+
+*Trust, revocation and credential identity:*
+- **The trust-epoch kill switch did not survive a replica restart** (C007/C017). A
+  restarted replica adopted the advanced shared counter as its own baseline and kept
+  minting an epoch verifiers still accepted — the switch was process-relative, not
+  durable. The emitted epoch is now a pure function of (base label, shared counter).
+- **A revoked root still verified its descendants** (C064/C065). `verify_delegated_
+  response` takes a root resolver and a revocation source as independent arguments; a
+  caller who built the resolver from a `TrustedIssuerSet` but passed an empty
+  revocation list verified credentials under a root they had marked REVOKED. The
+  negative control returned `Success` — a full bypass of the one action that
+  invalidates every descendant credential.
+- **The delegation credential `jti` collided across a fleet** (C034). It was
+  `issuer_kid#counter` with a per-instance counter starting at 0, while `jti` is a
+  *revocation* identifier: revoking one revoked the corresponding credential on every
+  replica, and after a restart a freshly-minted credential could be born already on a
+  denylist. Now `{issuer_kid}#{delegated_kid}#{counter}`.
+- **The server-signer pin bound to the wrong key** (C004b). It now binds to the root
+  issuer kid — the anchor a credential proves a chain to — not the delegated kid, an
+  RFC 7638 thumbprint the rotor mints fresh every TTL.
+- **A trust-store outage was indistinguishable from an unknown keyid** (C079). The
+  verifier seam was `Fn(&str, SignerSlot) -> Option<ResolvedActor>`, and an `Option`
+  cannot carry that difference, so an outage was reported as `actor_binding_failed`
+  and `mcp-re.trust_resolver_unavailable` had no emission site in the tree.
+
+*Ordering and the MRT continuation:*
+- **Nothing irreversible may precede admission** — and the MRTR continuation was both
+  reachable and destructible. Its store key was `SHA-256(requestState)` with no actor
+  component, and `requestState` is minted by the inner application. The audit called
+  this a cross-tenant DoS; the added negative control returns **200**, so a second
+  verified actor could *complete* the victim's human-approval round trip. The entry
+  was also read destructively by `GETDEL` before the binding was checked, so merely
+  naming another actor's `requestState` deleted the retained bases for good.
+
+*Signing core and canonicalization:*
+- **String signature parameters had no escaping contract** (C092). `split_dictionary`
+  toggled its in-quotes state on every `"` with no regard for backslash escapes, and
+  the splitters run before any value can be validated. Refused rather than escaped,
+  following the existing `parse_i64` rule.
+- **RFC 8941-invalid integers were accepted** (`created=+1700000000`) by rebuilding
+  `@signature-params` from parsed values rather than the covered bytes — a signature
+  verified over bytes it never covered. Duplicate covered-component identifiers are
+  now refused per RFC 9421 §2.5.
+- **Bodyless requests did not cover conditionally-mandatory headers** (C047/C093).
+  `authorization`, `dpop` and the coverable MCP transport headers were signed and
+  required on a bodied request but neither covered nor required on a bodyless one, so
+  a bodyless request could present an `authorization` header outside the signature.
+  Both paths now share one source of truth.
+- **`@target-uri` reconstruction was not compared** (C008/C045/C046). Operator
+  assertion is the sanctioned mechanism for a TLS-terminating deployment; what was
+  missing was the word EXACT.
+- **The nonce floor was enforced where nonces are accepted, not where they are
+  emitted** (C080/C088) — so the `nonce_factory` / `nonceFactory` override, the actual
+  gap, was unchecked. Both production generators already clear the floor.
+- **A retained chain was verified against the caller's live clock** (C033), so an
+  intact multi-turn record older than one freshness window could never be labelled
+  `Complete` — the label decayed with age instead of describing the evidence. Every
+  fixture had signed all hops inside one window, which is why 18 tests passed over it.
+
+*Replay tier, KMS and configuration:*
+- **`REDIS_WAIT_QUORUM` was demanded by config and unimplemented on the async store
+  that actually serves.** A tier declaring "WAIT" returned `Fresh` the moment the SET
+  landed on the primary, so a nonce could be admitted and then lost with the primary.
+- **The KMS endpoint override was substituted into request URLs with no validation**
+  (C054/C083). That URL carries the root-key trust bootstrap, and on GCP every request
+  also carries a live workload-identity bearer token — so an attacker-named endpoint
+  both exfiltrates a replayable credential and supplies the root signing key, with
+  every local fail-closed check still passing self-consistently. `https://` is now
+  required, `http://` only to loopback.
+- **The delegated-key rotor hot-spun the root KMS through the whole overlap window**
+  (C012) — a root outage during the overlap, exactly what the overlap exists to
+  absorb, produced a tight retry loop instead of the bounded jittered backoff written
+  for it, because a failed issuance was reported as success.
+- **Three config-surface fail-open paths** (round 6): `--signing-key-seed` was
+  required for every key source, so a `gcpKms` deployment had to provision a raw
+  Ed25519 seed it never reads; the key-file permission check was pointed only at the
+  signing seed, so `tls.key` was never checked outside `fileSeed` custody.
+- **A strict key-file floor made non-root pods unstartable** (C053b) — a Kubernetes
+  Secret mounted for a non-root uid is delivered mode 0440, so a security control
+  blocked a security improvement. Resolved by teaching the check the mount model
+  (explicit opt-in + the group must be one the process is actually in), not by
+  relaxing it.
+- **A PKCS#11 PIN on argv, a colliding credential id, and an unbounded await**
+  (round 8).
+
+*Deploy surface:*
+- **Every deployed image tag now resolves from `VERSION`** and is gated
+  (`scripts/deploy_image_tag_gate.py`), including a *deployed-but-never-built* check:
+  the SLO bench lived in its own Cloud Build config, so `gcloud builds submit` produced
+  a registry that looked complete and silently lacked it. All four images build from
+  one config.
+- **The inner-plane NetworkPolicy was inert on a cluster created without
+  `--enable-network-policy`.** The inner plane speaks plain HTTP with no auth of its
+  own, so any pod in the cluster could POST straight past the PEP — no signature, no
+  replay admission, no audit record. The v0.11/v0.12.1 runs were in exactly that state.
+- **The proof client never sent the path it signed** — it hardcoded `POST /` while
+  signing `@target-uri = …/mcp`.
+- **Bazel/cargo parity was broken for three test targets**, two since round 1, so
+  every round reported as verified in between had been verified on the cargo lane only.
+
 - **Python SDK: the nonce floor was defined but never called on the signing path.** The
   C080/C088 check shipped with its unit tests passing while the production call site still
   used the unchecked factory, so a caller-supplied sub-floor `nonce_factory` was accepted
@@ -61,6 +240,11 @@ or wire-format compatibility while the design lines from
   sign time, for requests and notifications alike.
 
 ### Security
+- **`cryptography` 46.0.7 → 48.0.1** (Dependabot #13). Wheels below 48.0.1 statically
+  link a vulnerable OpenSSL (high; OpenSSL secadv 20260609). This pin is the repo's
+  sole `cryptography` declaration — the RFC 9421 cross-verification no-merge gate —
+  and Ed25519 sign/verify is RFC 8032-stable across these versions, so the
+  deterministic gate's agreement result is unchanged.
 - **TypeScript SDK (`@mcp-re/sdk`) → 0.1.1.** Forced the dev/peer-tree `@hono/node-server`
   to `^2.0.10` via an npm `overrides` entry, clearing GHSA-frvp-7c67-39w9 (moderate; Windows
   `serve-static` path traversal via encoded backslash). The advisory's only fix is in the 2.x
