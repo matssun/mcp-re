@@ -332,7 +332,7 @@ jobs:
       # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
       # Cargo lock so a dependency change busts it.
       - name: Cache Bazel
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/bazel
