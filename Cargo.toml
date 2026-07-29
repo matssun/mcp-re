@@ -103,7 +103,7 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 # mcp-re-proxy/src/pkcs11_native.rs, rather than the high-level `cryptoki` crate
 # which transitively pulls the UNMAINTAINED `paste` (RUSTSEC-2024-0436) and fails
 # the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
-cryptoki-sys = "0.1.8"
+cryptoki-sys = "0.5.0"
 # Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
 # `tls-rustls` is what makes a `rediss://` URL usable at all: the replay tier and the
 # trust-epoch counter carry admitted nonces and the epoch that drives response
