@@ -125,7 +125,7 @@ ureq = { version = "2", default-features = false }
 # is a hard constraint. A pure, no-async crate; HTTPS transport reuses the blocking
 # `ureq` client (its `tls` feature is enabled only in mcp-re-proxy under that feature).
 hmac = "0.12"
-der = "0.7"
+der = "0.8"
 spki = "0.7"
 x509-cert = "0.2"
 # (sha2 is already a workspace dependency — reused via `workspace = true`.)
