@@ -87,7 +87,7 @@ x509-parser = { version = "0.18", features = ["verify"] }
 asn1-rs = "0.6"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 # Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
 # fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
 # ceiling) client cert. Same `time` version rcgen already resolves — no new pin.
