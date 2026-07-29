@@ -62,7 +62,7 @@ zeroize = "1"
 # source. Used ONLY by mcp-re-host (the injected NonceSource trait keeps tests
 # deterministic). A thin OS-entropy wrapper — NO networking/async runtime, so
 # mcp-re-host stays transport-free. mcp-re-core MUST NOT reference it.
-getrandom = "0.2"
+getrandom = "0.4"
 # MCPS-037 (ADR-MCPS-016): Unix setrlimit(2) + RLIMIT_* constants for inner-server
 # resource hardening (NOT sandboxing). Used ONLY by mcp-re-proxy's inner-launch
 # layer, behind #[cfg(unix)], inside a pre_exec hook (async-signal-safe:
@@ -125,7 +125,7 @@ ureq = { version = "2", default-features = false }
 # is a hard constraint. A pure, no-async crate; HTTPS transport reuses the blocking
 # `ureq` client (its `tls` feature is enabled only in mcp-re-proxy under that feature).
 hmac = "0.12"
-der = "0.7"
+der = "0.8"
 spki = "0.7"
 x509-cert = "0.3"
 # (sha2 is already a workspace dependency — reused via `workspace = true`.)
