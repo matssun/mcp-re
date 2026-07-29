@@ -307,7 +307,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
- "der_derive",
+ "der_derive 0.7.3",
+ "flagset",
+ "zeroize",
+]
+
+[[package]]
+name = "der"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a69dedd701da44b0536442edf09c81a64b0ab97a7a4a5e3d1971f00027cbc63d"
+dependencies = [
+ "const-oid 0.10.2",
+ "der_derive 0.8.0",
  "flagset",
  "pem-rfc7468",
  "zeroize",
@@ -338,6 +350,17 @@ name = "der_derive"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "der_derive"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59600e2c2d636fde9b65e99cc6445ac770c63d3628195ff39932b8d6d7409903"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -961,13 +984,13 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "sha2 0.11.0",
- "spki",
+ "spki 0.7.3",
  "thiserror 1.0.69",
  "time",
  "tokio",
  "tokio-rustls",
  "ureq",
- "x509-cert",
+ "x509-cert 0.3.0",
  "x509-ocsp",
  "x509-parser",
  "zeroize",
@@ -1097,9 +1120,9 @@ dependencies = [
 
 [[package]]
 name = "pem-rfc7468"
-version = "0.7.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+checksum = "a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9"
 dependencies = [
  "base64ct",
 ]
@@ -1913,8 +1936,8 @@ dependencies = [
  "digest 0.10.7",
  "rand_core",
  "signature",
- "spki",
- "x509-cert",
+ "spki 0.7.3",
+ "x509-cert 0.2.5",
 ]
 
 [[package]]

@@ -127,7 +127,7 @@ ureq = { version = "2", default-features = false }
 hmac = "0.12"
 der = "0.8"
 spki = "0.7"
-x509-cert = "0.2"
+x509-cert = "0.3"
 # (sha2 is already a workspace dependency — reused via `workspace = true`.)
 # Linux kernel sandbox (Landlock fs ruleset + seccomp egress). Linux-only;
 # referenced ONLY under mcp-re-proxy's [target.'cfg(target_os="linux")'.dependencies]
