@@ -62,7 +62,7 @@ zeroize = "1"
 # source. Used ONLY by mcp-re-host (the injected NonceSource trait keeps tests
 # deterministic). A thin OS-entropy wrapper — NO networking/async runtime, so
 # mcp-re-host stays transport-free. mcp-re-core MUST NOT reference it.
-getrandom = "0.2"
+getrandom = "0.4"
 # MCPS-037 (ADR-MCPS-016): Unix setrlimit(2) + RLIMIT_* constants for inner-server
 # resource hardening (NOT sandboxing). Used ONLY by mcp-re-proxy's inner-launch
 # layer, behind #[cfg(unix)], inside a pre_exec hook (async-signal-safe:
