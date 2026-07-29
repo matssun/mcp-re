@@ -51,7 +51,7 @@ jobs:
       MCP_RE_TEST_REDIS_REPLICA_URL: "redis://127.0.0.1:6380"
       RUST_TEST_THREADS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # redis-server (the primary + replica instances, started below). The OCSP
       # responder uses openssl, already present on the runner.
@@ -197,7 +197,7 @@ jobs:
       MCP_RE_TEST_ETCD_URL: "http://127.0.0.1:2379"
       RUST_TEST_THREADS: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # etcd serves its v3 gRPC-JSON gateway on the client port (2379) by default in
       # 3.4+, under `/v3/...` — the exact paths async_etcd_store posts to
