@@ -67,6 +67,23 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: "x509-parser"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # `der`, `spki` and `x509-cert` are PINNED BY x509-ocsp 0.2.1 — the newest
+      # release — which requires der 0.7.8 / spki 0.7.2 / x509-cert 0.2.4. ocsp.rs
+      # passes values of all three straight into x509_ocsp's OcspRequestBuilder,
+      # CertId and BasicOcspResponse, so a split is a hard COMPILE error. There is
+      # no version of x509-ocsp on der 0.8, so these cannot move while OCSP exists.
+      # Both were merged unattended (PRs #471, #472) and had to be reverted.
+      - dependency-name: "der"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "spki"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "x509-cert"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # rcgen 0.14 replaced `signed_by(&key, &cert, &key)` with an `Issuer` type
+      # across 26 fixture call sites. Held at 0.13 until that migration lands;
+      # tracked in #478. Remove this entry as part of it.
+      - dependency-name: "rcgen"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # sdk/typescript ships an npm package; demo/video/mcps-intro is the render-only
   # demo where the postcss advisory landed.
