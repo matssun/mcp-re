@@ -61,7 +61,7 @@ ed25519-dalek = { version = "3", features = ["zeroize", "pkcs8", "alloc"] }
 # implementations (ours and the one dalek hashes with internally).
 sha2 = "0.11"
 base64 = "0.23"
-thiserror = "1.0"
+thiserror = "2.0"
 hex = "0.4"
 # MCPS-076 (audit gap G-3): scrub raw-seed-bearing OWNED temporaries (the
 # Base64URL-decoded `Vec<u8>`, the `[u8;32]` seed, the env/file seed text) via
