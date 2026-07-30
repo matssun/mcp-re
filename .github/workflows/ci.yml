@@ -20,10 +20,15 @@
 #     token. The remaining live-infra e2e tests (real Redis / OCSP responder)
 #     self-skip cleanly when their MCP_RE_TEST_* env vars are unset; they hard-fail
 #     only when MCP_RE_REQUIRE_LIVE_INFRA is set, which this job leaves unset.
-#   - ADVISORY (continue-on-error): `cargo fmt --check` and `cargo clippy`. The
-#     repository was not developed under `cargo fmt`/`clippy -D warnings`, so these
-#     surface drift without blocking. Promote them to blocking once a one-time
-#     repo-wide format + lint cleanup lands (and bump rust-toolchain.toml together).
+#   - BLOCKING: `cargo fmt --check` and `cargo clippy -D warnings`. The tree carries
+#     zero warnings, so any new one is a build failure rather than a line of scroll-
+#     back nobody reads. Both run over EVERY cargo universe (the root workspace, the
+#     two SDK crates, the mock-PKCS#11 crate) and clippy additionally runs the
+#     non-default feature lane — the advisory form linted only the root default
+#     features, which left `etcd_store.rs`, `redis_store.rs` and mock-pkcs11 entirely
+#     unlinted and hid 19 of the 60 warnings the cleanup had to fix.
+#     A `rust-toolchain.toml` bump ships new lints, so bump it in a commit that
+#     re-runs `scripts/local_gate.sh` and clears whatever the new lints find.
 #   - BLOCKING (ADR-MCPS-048 / MCPS-70): the `bazel` job gates the OTHER build
 #     system. Bazel was ungated, which is exactly how #220 (Bazel/cargo drift)
 #     happened. Two steps: (1) the semantic-drift gate — gazelle_rust as a drift
@@ -186,13 +191,27 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Format check (advisory)
-        run: cargo fmt --all -- --check
-        continue-on-error: true
+      # Every cargo universe, not just the root workspace: the SDK crates and the
+      # mock-PKCS#11 crate have their own manifests and are invisible to `--workspace`.
+      - name: Format check
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --all --manifest-path sdk/python/Cargo.toml -- --check
+          cargo fmt --all --manifest-path sdk/typescript/Cargo.toml -- --check
+          cargo fmt --all --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml -- --check
 
-      - name: Clippy (advisory)
-        run: cargo clippy --workspace --all-targets
-        continue-on-error: true
+      # The feature lane is not optional: the default features do not compile
+      # etcd_store.rs / redis_store.rs at all, so linting only the default set
+      # leaves the ADR-051 control-plane backends unlinted.
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets \
+            --features dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd \
+            -- -D warnings
+          cargo clippy --manifest-path sdk/python/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path sdk/typescript/Cargo.toml --all-targets -- -D warnings
+          cargo clippy --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml --all-targets -- -D warnings
 
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)

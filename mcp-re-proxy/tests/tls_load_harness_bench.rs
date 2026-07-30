@@ -1078,7 +1078,6 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
             let failures = Arc::clone(&failures);
             let reconnects = Arc::clone(&reconnects);
             let config = Arc::clone(&config);
-            let addr = addr;
             let mode = cfg.mode;
             let total = cfg.requests;
             std::thread::spawn(move || {
@@ -1558,6 +1557,7 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
 ///   * a LONG-lived client leaf (over the ceiling) is REJECTED with the pre-handler
 ///     cert-lifetime verdict (`transport_binding_failed`) — the exact class of
 ///     mistake that failed the first GKE run.
+///
 /// This is the regression that would have caught it locally, for free.
 #[test]
 fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {

@@ -63,6 +63,19 @@ run() { # run <label> <command...>
 # No `set -e` in these functions: errexit set inside a function persists for the WHOLE
 # shell afterwards, so a later harmless non-zero would abort the run with no message.
 # Chain with && instead — the function's exit status is what `run` checks.
+
+# The four cargo universes. `--workspace` sees only the first, so every lint and
+# format check has to name the other three explicitly or they go unchecked.
+MANIFESTS=(sdk/python/Cargo.toml sdk/typescript/Cargo.toml mcp-re-proxy/tests/mock-pkcs11/Cargo.toml)
+
+# Formatting needs no build, so it belongs in the no-build stage.
+fmt_check() {
+  cargo fmt --all -- --check || return 1
+  for m in "${MANIFESTS[@]}"; do
+    cargo fmt --all --manifest-path "$m" -- --check || return 1
+  done
+}
+
 stage_static() {
   python3 scripts/jcs_vocabulary_gate.py --selftest \
     && python3 scripts/jcs_vocabulary_gate.py \
@@ -77,6 +90,7 @@ stage_static() {
     && python3 scripts/bazel_srcs_gate.py --selftest \
     && python3 scripts/bazel_srcs_gate.py \
     && python3 scripts/slo_gate.py --selftest \
+    && fmt_check \
     || return 1
   if command -v helm >/dev/null 2>&1; then
     python3 scripts/helm_render_gate.py
@@ -90,10 +104,24 @@ stage_static() {
 # so the feature-gated lane is a SEPARATE, required run — the same split CI makes.
 FEATURES=dev_env_key_source,pkcs11_keysource,redis_replay,online_ocsp,aws_kms_keysource,gcp_kms_keysource,async_serve,cpstore_etcd
 stage_suites() {
-  cargo build --workspace --all-targets \
+  clippy_check \
+    && cargo build --workspace --all-targets \
     && cargo test --workspace \
     && cargo build --workspace --all-targets --features "$FEATURES" \
     && cargo test -p mcp-re-proxy --features "$FEATURES"
+}
+
+# The tree carries zero warnings; `-D warnings` keeps it that way. Runs before the
+# suites so lint drift surfaces in one build rather than after the full test battery.
+# The feature lane is required, not thorough: the default features do not compile
+# etcd_store.rs / redis_store.rs at all, so the default lane cannot see them.
+clippy_check() {
+  cargo clippy --workspace --all-targets -- -D warnings \
+    && cargo clippy --workspace --all-targets --features "$FEATURES" -- -D warnings \
+    || return 1
+  for m in "${MANIFESTS[@]}"; do
+    cargo clippy --manifest-path "$m" --all-targets -- -D warnings || return 1
+  done
 }
 
 # --- stage 3: Bazel parity ------------------------------------------------------

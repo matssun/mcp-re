@@ -49,10 +49,13 @@ pub const ORG_KID: &str = "org-admin-manifest-key";
 /// A minted trust anchor: its id, its public key, and a signer over the JWS signing
 /// input (raw 64-byte Ed25519). In-memory roots wrap a local key; KMS roots wrap a
 /// Cloud KMS `asymmetricSign` call — both feed the SAME issuance seam.
+/// A signer over the JWS signing input, returning a raw 64-byte Ed25519 signature.
+pub type RootSignFn = Box<dyn Fn(&[u8]) -> Vec<u8> + Send + Sync>;
+
 pub struct RootAuthority {
     pub issuer_kid: String,
     pub public_key: VerificationKey,
-    sign: Box<dyn Fn(&[u8]) -> Vec<u8> + Send + Sync>,
+    sign: RootSignFn,
 }
 
 impl RootAuthority {
@@ -60,7 +63,7 @@ impl RootAuthority {
     pub fn new(
         issuer_kid: impl Into<String>,
         public_key: VerificationKey,
-        sign: Box<dyn Fn(&[u8]) -> Vec<u8> + Send + Sync>,
+        sign: RootSignFn,
     ) -> Self {
         RootAuthority {
             issuer_kid: issuer_kid.into(),

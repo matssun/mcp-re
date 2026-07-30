@@ -57,9 +57,9 @@ use rcgen::IsCa;
 use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::PublicKeyData;
-use rcgen::SigningKey;
 use rcgen::SanType;
 use rcgen::SignatureAlgorithm;
+use rcgen::SigningKey;
 
 use rustls::crypto::ring;
 use rustls::ClientConfig;

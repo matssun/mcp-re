@@ -56,6 +56,7 @@ impl RevocationUnavailable {
 /// reasons explicitly:
 ///   * `Ok(RevocationStatus::Revoked)` — the id is revoked.
 ///   * `Err(RevocationUnavailable)` — status is indeterminate (backend down).
+///
 /// The caller denies the request in BOTH cases, but with distinct wire tokens.
 /// Only `Ok(RevocationStatus::NotRevoked)` allows the request to proceed.
 pub trait RevocationSource {

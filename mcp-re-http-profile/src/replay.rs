@@ -106,6 +106,9 @@ mod tests {
     use super::*;
     use mcp_re_core::InMemoryReplayCache;
 
+    /// Mutates one component of a replay key, to check that component discriminates.
+    type KeyMutator = fn(&mut HttpReplayKey);
+
     const EXPIRES: i64 = 1_000;
 
     fn key() -> HttpReplayKey {
@@ -134,7 +137,7 @@ mod tests {
     /// that component is admitted, never merged onto the prior key.
     #[test]
     fn every_component_discriminates() {
-        let variants: [(&str, fn(&mut HttpReplayKey)); 5] = [
+        let variants: [(&str, KeyMutator); 5] = [
             ("profile_id", |k| k.profile_id = "mcp-re-http-v2".into()),
             ("signature_label", |k| {
                 k.signature_label = "mcp-re-response".into()

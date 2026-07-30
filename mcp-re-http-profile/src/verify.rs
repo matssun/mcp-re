@@ -144,7 +144,7 @@ pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
     slot: SignerSlot,
 ) -> Result<ResolvedActor, HttpProfileError> {
     let actor = match resolve_actor(key_id, slot).into() {
-        ResolverOutcome::Resolved(actor) => actor,
+        ResolverOutcome::Resolved(actor) => *actor,
         // A definitive negative from a healthy resolver.
         ResolverOutcome::NotTrusted => return Err(HttpProfileError::UnresolvedKeyId),
         // The resolver could not answer. Fail closed, but say WHICH failure it was

@@ -16,6 +16,7 @@
 //!      key, bound to THIS request, carrying the root-signed credential that
 //!      authorizes it (ADR-MCPRE-052 delegated-required) — or, for a one-way
 //!      notification, `sign_delegated_accepted_202` (#424 / #418).
+//!
 //! Any fail-closed step emits a DELEGATED-signed rejection receipt instead — bound to
 //! the request once it has verified, preflight (unbound) before that.
 //!

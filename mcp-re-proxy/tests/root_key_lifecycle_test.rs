@@ -19,11 +19,11 @@
 //!   2. ROOT REVOCATION — revoking issuer_kid A rejects EVERY credential A anchors,
 //!      immediately (`delegation_revoked`), even before the credential's own exp and
 //!      without individually revoking each delegated key.
-//!   (Category 3 — root ISSUANCE FAILURE / disabled KMS → serve until the current
-//!    delegated key expires then fail closed, never extend, never fall back to
-//!    direct-root — is a SERVER-side rotor property, proven by
-//!    `mcp-re-proxy/tests/delegated_production_wiring_test.rs::
-//!    issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`.)
+//!
+//! (Category 3 — root ISSUANCE FAILURE / disabled KMS → serve until the current
+//! delegated key expires then fail closed, never extend, never fall back to
+//! direct-root — is a SERVER-side rotor property, proven by
+//! `mcp-re-proxy/tests/delegated_production_wiring_test.rs::issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`.)
 
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::verify_delegated_response;

@@ -134,11 +134,12 @@ pub const MCP_INGRESS_ASSERTION_HEADER: &str = "mcp-ingress-assertion";
 /// OR by an LB-signed request-bound ingress assertion — never more than one. The
 /// CLI enforces the exclusivity; the serve loop honours the one chosen strategy
 /// and never mixes them on a single connection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum IdentityStrategy {
     /// Direct mTLS: the identity is the configured field of the verified peer
     /// (leaf) certificate. This is the default and leaves the local-TLS path
     /// fully intact.
+    #[default]
     DirectTls,
     /// Reverse-proxy ingress: mTLS is terminated UPSTREAM and the verified client
     /// identity is read from a trusted forwarded header. The local client-cert is
@@ -157,16 +158,10 @@ pub enum IdentityStrategy {
     LbAssertion,
 }
 
-impl Default for IdentityStrategy {
-    fn default() -> Self {
-        IdentityStrategy::DirectTls
-    }
-}
-
 /// How the serve loop turns a connection into a served request: which client-cert
 /// field is the authoritative identity, the resource limits, and the maximum
 /// client-certificate lifetime.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerOptions {
     /// The authoritative client-certificate identity field (no implicit fallback).
     /// Used for [`IdentityStrategy::DirectTls`]; for the reverse-proxy strategy the
@@ -206,20 +201,6 @@ pub struct ServerOptions {
     /// verifier checks it against the request evidence block's audience tuple. Empty
     /// when unset (the audience/target check then fails closed).
     pub target_uri: String,
-}
-
-impl Default for ServerOptions {
-    fn default() -> Self {
-        ServerOptions {
-            identity_policy: IdentityPolicy::default(),
-            identity_strategy: IdentityStrategy::default(),
-            limits: ServerLimits::default(),
-            max_client_cert_lifetime: None,
-            #[cfg(feature = "online_ocsp")]
-            ocsp_checker: None,
-            target_uri: String::new(),
-        }
-    }
 }
 
 /// Errors building the TLS server configuration.
@@ -655,6 +636,7 @@ fn connection_identity(
 ///   * [`IdentityStrategy::ReverseProxyHeader`] reads it from the trusted
 ///     forwarded header via the [`ReverseProxyMtlsProvider`] and NEVER consults
 ///     the local client certificate (mTLS is terminated upstream).
+///
 /// Either way a missing/unparseable identity is `None`, and the downstream
 /// transport-binding policy fails closed.
 fn resolve_identity(
@@ -1193,6 +1175,7 @@ struct HttpRequest {
 ///   * an obs-fold continuation line (a line beginning with SP/HTAB after a CRLF) —
 ///     RFC 7230 §3.2.4 requires rejection, and the downstream parser would silently
 ///     drop it (a colon-less line) rather than fold it.
+///
 /// Fails closed with `InvalidData` so the connection is dropped, consistent with the
 /// other framing guards here (oversized header / body).
 fn reject_malformed_header_framing(header_bytes: &[u8]) -> io::Result<()> {

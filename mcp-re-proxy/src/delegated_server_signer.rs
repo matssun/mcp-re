@@ -319,22 +319,24 @@ mod tests {
         }
     }
 
-    fn rotor() -> (
-        DelegatedRotor<
-            impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
-            impl FnMut() -> SigningKey,
-        >,
-        Arc<DelegatedServerSigner>,
-    ) {
+    /// Issues a delegation credential for a header/claims pair, or declines.
+    type IssueFn = Box<dyn FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>>;
+    /// Mints the next delegated signing key.
+    type KeyFactory = Box<dyn FnMut() -> SigningKey>;
+    /// Both callbacks are boxed so the rotor the tests drive has a nameable type
+    /// (a `type` alias cannot hold `impl Trait`).
+    type TestRotor = DelegatedRotor<IssueFn, KeyFactory>;
+
+    fn rotor() -> (TestRotor, Arc<DelegatedServerSigner>) {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
-        let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        let issue: IssueFn = Box::new(move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
-        };
+        });
         let mut n = 100u8;
-        let factory = move || {
+        let factory: KeyFactory = Box::new(move || {
             n = n.wrapping_add(1);
             SigningKey::from_seed_bytes(&[n; 32])
-        };
+        });
         let signer = Arc::new(DelegatedServerSigner::new());
         let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
         (DelegatedRotor::new(custody, Arc::clone(&signer)), signer)

@@ -2,10 +2,10 @@
 //! Remote-leg transport abstraction + proxy error type (MCPS-49, #196), on the
 //! RFC 9421 carrier (ADR-MCPRE-050).
 //!
-//! The proxy forwards the SIGNED RFC 9421 request (method + `@target-uri` + headers
-//! + body) to the remote MCP-RE server over some transport (HTTP, in-process) and
-//! gets the signed [`HttpResponse`] back. The transport is abstracted so the
-//! security pipeline is testable without real I/O.
+//! The proxy forwards the SIGNED RFC 9421 request (method + `@target-uri` + headers +
+//! body) to the remote MCP-RE server over some transport (HTTP, in-process) and gets
+//! the signed [`HttpResponse`] back. The transport is abstracted so the security
+//! pipeline is testable without real I/O.
 
 use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;

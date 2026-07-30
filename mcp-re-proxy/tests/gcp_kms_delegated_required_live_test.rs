@@ -402,7 +402,7 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // `mcp-re.trust_resolver_unavailable` — so the choice is made here rather than left
     // to a blanket `Option` conversion that would silently pick one.
     let actor_resolver: ActorResolver = Box::new(move |k: &str, s| match r(k, s) {
-        Some(actor) => ResolverOutcome::Resolved(actor),
+        Some(actor) => ResolverOutcome::Resolved(Box::new(actor)),
         None => ResolverOutcome::NotTrusted,
     });
     let proxy = HttpProfileProxy::new_delegated(

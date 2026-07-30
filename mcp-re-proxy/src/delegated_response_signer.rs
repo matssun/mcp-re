@@ -28,8 +28,13 @@ use crate::key_source::ResponseSigner;
 /// `DelegatedResponseSigner` exposes no accessor to recover any of that. The only
 /// operations are "sign these bytes" and "hand me the public key" — precisely the
 /// non-exporting contract a real HSM/KMS offers.
+/// An opaque signing capability: "sign these bytes", and nothing else. It may have
+/// captured a private key, a device handle, or a network session; the type exposes
+/// no way to recover any of that.
+pub type DelegatedSignFn = Box<dyn Fn(&[u8]) -> Result<String, KeyError> + Send + Sync>;
+
 pub struct DelegatedResponseSigner {
-    sign_fn: Box<dyn Fn(&[u8]) -> Result<String, KeyError> + Send + Sync>,
+    sign_fn: DelegatedSignFn,
     public_key: VerificationKey,
 }
 
@@ -38,10 +43,7 @@ impl DelegatedResponseSigner {
     /// paired with whatever private key the callback signs under. The caller is
     /// responsible for the pairing (a real device returns its own public key); a
     /// signature from `sign_fn` must verify under `public_key`.
-    pub fn new(
-        sign_fn: Box<dyn Fn(&[u8]) -> Result<String, KeyError> + Send + Sync>,
-        public_key: VerificationKey,
-    ) -> Self {
+    pub fn new(sign_fn: DelegatedSignFn, public_key: VerificationKey) -> Self {
         DelegatedResponseSigner {
             sign_fn,
             public_key,

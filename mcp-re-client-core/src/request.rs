@@ -35,10 +35,11 @@ use serde_json::Value;
 /// The already-resolved inputs for one RFC 9421 signed request.
 ///
 /// Every field is a value the mode-specific layer has already produced: the signer
-/// key id (from the key-custody layer), the resolved [`AudienceTuple`] (audience id
-/// + `@target-uri` + optional route — MCPS-43), the required, non-empty artifact
-/// bindings (from an authorization-binding provider — MCPS-45), and the freshness
-/// triple `nonce`/`created`/`expires` (RFC 9421 signature parameters, Unix seconds).
+/// key id (from the key-custody layer), the resolved [`AudienceTuple`] (audience
+/// id + `@target-uri` + optional route — MCPS-43), the required, non-empty
+/// artifact bindings (from an authorization-binding provider — MCPS-45), and the
+/// freshness triple `nonce`/`created`/`expires` (RFC 9421 signature parameters,
+/// Unix seconds).
 #[derive(Debug, Clone)]
 pub struct RequestSigningInputs {
     /// Identifier of the signing key (named in the RFC 9421 `keyid`; never the key).
@@ -113,9 +114,9 @@ impl RequestSigningInputs {
 }
 
 /// A fully signed RFC 9421 request: the reconstructed [`HttpRequest`] (method +
-/// `@target-uri` + headers carrying `Signature`/`Signature-Input`/`Content-Digest`
-/// + body with the composed evidence block) plus the [`RequestEvidence`] handle
-/// that binds a later signed response.
+/// `@target-uri` + headers carrying `Signature`/`Signature-Input`/`Content-Digest` +
+/// body with the composed evidence block) plus the [`RequestEvidence`] handle that
+/// binds a later signed response.
 #[derive(Debug, Clone)]
 pub struct SignedRequest {
     request: HttpRequest,

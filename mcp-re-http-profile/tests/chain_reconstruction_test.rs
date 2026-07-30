@@ -622,7 +622,7 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
 
     let within = CREATED - policy.max_clock_skew();
     assert_eq!(
-        reconstruct_chain(&[h0.clone()], &resolver(), &policy, within).label,
+        reconstruct_chain(std::slice::from_ref(&h0), &resolver(), &policy, within).label,
         ChainLabel::Complete,
         "a hop one skew ahead of the auditor's clock is honest disagreement"
     );
