@@ -138,6 +138,12 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-047: the Redis-backed continuation store (SET PX + GETDEL). #[cfg(feature
     # = "redis_replay")] — cfg'd out of the default build, like async_redis_store.
     "src/redis_continuation_store.rs",
+    # MCPRE-493 (#414 §4.3): the authoritative admission-state seam — trait + in-memory
+    # impl always compiled, so the serving path's §7 currency gate builds by default.
+    "src/admission_source.rs",
+    # MCPRE-493: the Redis-backed admission source (live per-request GET, no cached
+    # copy). #[cfg(feature = "redis_replay")] — cfg'd out of the default build.
+    "src/redis_admission_source.rs",
     "src/transport.rs",
     # ADR-MCPS-021: bounded trust-propagation cache (revocation window T).
     "src/trust_cache.rs",
@@ -556,6 +562,28 @@ nt_rust_test(
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# MCPRE-493: §7 admission currency through the production PEP. A superseded generation
+# and a revoked status are refused BEFORE the backend runs; a healthy authority with no
+# record is a definitive negative rather than an outage; degraded mode serves only
+# within P; and a revocation on a shared source is honoured by a replica that never saw
+# the workload. The Redis-backed propagation MEASUREMENT is a separate cargo-only lane
+# (it needs a live store, so it is not hermetic).
+nt_rust_test(
+    name = "admission_currency_serving_test",
+    srcs = ["tests/admission_currency_serving_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
         "@crates_mcp_re//:tokio",
     ],
 )

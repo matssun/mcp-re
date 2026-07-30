@@ -41,14 +41,17 @@
 use std::sync::Arc;
 
 use mcp_re_core::McpReError;
+use mcp_re_core::VerificationKey;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::check_admission;
 use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::result_class::ResultTypeClass;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::strip_proxy_owned_meta;
 use mcp_re_http_profile::verify_request_full_with_policy;
+use mcp_re_http_profile::AdmissionPolicy;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpProfileError;
@@ -64,6 +67,7 @@ use mcp_re_http_profile::VerifiedContextPolicy;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::VerifierPolicy;
 
+use crate::admission_source::AsyncAdmissionSource;
 use crate::async_inner::AsyncInnerServer;
 use crate::async_serve::ServedHttpRequest;
 use crate::async_serve::ServedHttpResponse;
@@ -88,6 +92,16 @@ pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
 /// store OUTAGE is distinguishable from an UNKNOWN KEYID (C079): both fail closed, but
 /// only one of them is a statement about the caller's key.
 pub type ActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
+
+/// Resolves an admission assertion's `issuer_kid` to the admission authority's root
+/// key. `None` means the issuer is not one this deployment trusts to admit anything —
+/// a kid never introduces trust, so an assertion naming an unresolvable issuer is
+/// refused exactly as an unknown request keyid is.
+///
+/// Separate from [`ActorResolver`] because admitting a workload and signing a message
+/// are different authorities: a key trusted for one must not be usable for the other
+/// by sharing a seam.
+pub type AdmissionAuthorityResolver = Arc<dyn Fn(&str) -> Option<VerificationKey> + Send + Sync>;
 
 /// The RFC 9421 server-side PEP run by the async fleet (ADR-MCPRE-051).
 ///
@@ -139,6 +153,36 @@ pub struct HttpProfileProxy {
     /// The ADR-MCPS-035 security-audit sink. `None` is the explicit no-emission
     /// posture; a sink failure never fails a request (see [`crate::audit_sink`]).
     audit: crate::audit_sink::MaybeAuditSink,
+    /// The §7 admission-currency gate (ADR-MCPRE-053). `None` disables admission
+    /// entirely: the binding, if a call carries one, is verified evidence that
+    /// decides nothing.
+    admission: Option<AdmissionEnforcer>,
+}
+
+/// What a request that carries NO admission evidence means to this deployment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionEnforcement {
+    /// Serve it. For a deployment that has not rolled admission out to every client
+    /// yet — the binding is honoured when present and absent is not an error.
+    Optional,
+    /// Refuse it. The only setting under which "every served call acted under a
+    /// current admission" is a true statement about the deployment.
+    Required,
+}
+
+/// The §7 admission gate's collaborators, held together because none of them is
+/// meaningful alone.
+struct AdmissionEnforcer {
+    /// The authoritative state this PEP consults per call.
+    source: Arc<dyn AsyncAdmissionSource>,
+    /// The N/P/TTL freshness budget and the degraded-mode opt-in (§5.2).
+    policy: AdmissionPolicy,
+    /// What an admission-free request means here.
+    enforcement: AdmissionEnforcement,
+    /// Resolves an assertion's `issuer_kid` to the admission authority's root key.
+    /// A kid never introduces trust: an assertion signed by an unresolvable issuer
+    /// is refused, exactly as an unknown request keyid is.
+    resolve_authority: AdmissionAuthorityResolver,
 }
 
 impl HttpProfileProxy {
@@ -202,6 +246,7 @@ impl HttpProfileProxy {
             verified_context_policy: VerifiedContextPolicy::default(),
             verifier_policy: VerifierPolicy::default(),
             audit: None,
+            admission: None,
         }
     }
 
@@ -254,6 +299,112 @@ impl HttpProfileProxy {
         self
     }
 
+    /// Enforce §7 admission currency (ADR-MCPRE-053) against an authoritative source.
+    ///
+    /// Without this the assertion and its binding are verified evidence that decides
+    /// nothing: a call carrying a fresh, correctly-bound assertion is served even
+    /// after the workload's admission has been superseded or revoked, because
+    /// currency is a comparison against state only the deployment can supply.
+    ///
+    /// `enforcement` decides what an admission-free request means. It is a
+    /// deployment's call, not a default: `Required` on a fleet that does not issue
+    /// assertions refuses every call, and `Optional` on one that does silently
+    /// accepts a caller who simply omits the evidence.
+    pub fn with_admission(
+        mut self,
+        source: Arc<dyn AsyncAdmissionSource>,
+        policy: AdmissionPolicy,
+        enforcement: AdmissionEnforcement,
+        resolve_authority: AdmissionAuthorityResolver,
+    ) -> Self {
+        self.admission = Some(AdmissionEnforcer {
+            source,
+            policy,
+            enforcement,
+            resolve_authority,
+        });
+        self
+    }
+
+    /// The §7 currency gate. `None` when the call is admitted (or admission is not
+    /// enforced); `Some(response)` is the signed rejection to return.
+    ///
+    /// Placed before replay admission and the inner round trip, because both are
+    /// irreversible: burning a nonce and running a tool on behalf of a workload whose
+    /// admission has been revoked is precisely what this exists to prevent.
+    async fn admission_gate(
+        &self,
+        http_req: &HttpRequest,
+        verified: &VerifiedHttpRequestEvidence,
+        now: i64,
+    ) -> Option<ServedHttpResponse> {
+        let enforcer = self.admission.as_ref()?;
+        let block = verified.request_block.as_ref();
+        let binding = block.and_then(|b| b.admission.as_ref());
+        let assertion = block.and_then(|b| b.admission_assertion.as_deref());
+
+        let (binding, assertion) = match (binding, assertion) {
+            (Some(b), Some(a)) => (b, a),
+            // The block validator already refuses one half without the other, so
+            // reaching here means BOTH are absent: the call declares no admission.
+            _ => {
+                if enforcer.enforcement == AdmissionEnforcement::Required {
+                    return Some(self.rejection(
+                        http_req,
+                        HttpProfileError::AdmissionStateUnavailable.wire_code(),
+                        403,
+                        now,
+                        Some(&verified.evidence),
+                    ));
+                }
+                return None;
+            }
+        };
+
+        // The authoritative lookup. An outage yields `None` — the ONLY input that
+        // reaches the §5.2 degraded fork — while a healthy authority that has never
+        // heard of this workload is a definitive negative, refused here rather than
+        // being handed to a fork that would serve it on its own assertion.
+        let authoritative = match enforcer.source.current(&binding.admission_id).await {
+            Ok(Some(state)) => Some(state),
+            Ok(None) => {
+                return Some(self.rejection(
+                    http_req,
+                    HttpProfileError::AdmissionNotCurrent.wire_code(),
+                    403,
+                    now,
+                    Some(&verified.evidence),
+                ))
+            }
+            Err(_) => None,
+        };
+
+        let resolve = Arc::clone(&enforcer.resolve_authority);
+        match check_admission(
+            binding,
+            assertion,
+            authoritative.as_ref(),
+            mcp_re_http_profile::PROFILE_TAG,
+            &[self.expected_audience.audience_id.as_str()],
+            &enforcer.policy,
+            now,
+            move |kid: &str| resolve(kid),
+        ) {
+            // Admitted. Note what is NOT recorded: `VerifiedAdmission::degraded`
+            // distinguishes a live-confirmed admission from one served on a stale
+            // snapshot inside the P window, and the audit stream cannot currently
+            // carry that difference — ADR-MCPS-035 §3 freezes the success-event
+            // allowlist and says no third success event may be minted without an
+            // ADR. So a degraded-mode serve is indistinguishable in audit from a
+            // confirmed one. That is a real gap in the record, named here rather
+            // than closed by quietly widening a pinned vocabulary.
+            Ok(_) => None,
+            Err(e) => {
+                Some(self.rejection(http_req, e.wire_code(), 403, now, Some(&verified.evidence)))
+            }
+        }
+    }
+
     /// Serve one request end to end on the async data plane. Always returns a
     /// [`ServedHttpResponse`] — a signed reply on success, a signed rejection receipt
     /// on any fail-closed step. Only the replay admission and the inner round-trip
@@ -302,6 +453,12 @@ impl HttpProfileProxy {
                     Some(&verified.evidence),
                 );
             }
+        }
+
+        // Step 3b — §7 admission currency (ADR-MCPRE-053). Before replay admission
+        // and the inner round trip, both of which are irreversible.
+        if let Some(rejection) = self.admission_gate(&http_req, &verified, now).await {
+            return rejection;
         }
 
         // Step 4 — MRTR continuation prep (ADR-MCPS-047): if the verified request

@@ -299,6 +299,7 @@ fn signed_request(
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     let mut req = base_request();
     let evidence = sign_request_full(

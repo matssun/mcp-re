@@ -135,6 +135,7 @@ pub use evidence::RequestEvidence;
 pub use ids::ALG_ED25519;
 pub use ids::BODYLESS_REQUEST_COMPONENTS;
 pub use ids::BODYLESS_RESPONSE_COMPONENTS;
+pub use ids::MAX_ADMISSION_ASSERTION_LEN;
 pub use ids::MAX_DELEGATION_HEADER_LEN;
 pub use ids::MCP_RE_DELEGATION_HEADER;
 pub use ids::PROFILE_TAG;

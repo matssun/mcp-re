@@ -86,6 +86,12 @@ ALLOW_HITL_LIVE = {
     "gcp_kms_root_rotation_live_test",
     "t4_enterprise_kms_custody",
     "t4_python_kms_custody",
+    # MCPRE-493: MEASURES cross-replica admission-revocation propagation against the
+    # declared P bound. It needs a live Redis two replicas genuinely share — the whole
+    # claim is that a revocation crosses a real store, so an in-process stand-in would
+    # measure a memory write. The hermetic half of the same contract IS a Bazel target
+    # (`admission_currency_serving_test`); only the measurement is cargo-only.
+    "admission_propagation_measure_test",
 }
 
 # Non-hermetic guards: cargo tests that assert an invariant of the git WORKING

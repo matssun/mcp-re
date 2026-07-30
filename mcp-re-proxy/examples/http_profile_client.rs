@@ -87,6 +87,7 @@ fn main() {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     let nonce = format!("nonce-{now}");
     let mut request = HttpRequest {
