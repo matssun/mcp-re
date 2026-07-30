@@ -36,6 +36,21 @@ updates:
         # change (rustls, redis, pyo3 all move APIs), and it deserves its own PR
         # and its own test run rather than riding along in a bulk bump.
         update-types: ["minor", "patch"]
+    # READ BEFORE MERGING A MAJOR ON A `[workspace.dependencies]` PIN.
+    #
+    # The four directories above are separate crate universes, but they share ONE
+    # manifest: //Cargo.toml. So a major on a pin declared there produces one PR
+    # PER DIRECTORY, and every one of them edits that same shared file while
+    # regenerating only its own lockfile.
+    #
+    # Merging them individually is therefore never correct: the first merge moves
+    # the shared pin, and the remaining lockfiles are left resolving a version
+    # their manifest no longer asks for. thiserror 1.0 -> 2.0 arrived exactly this
+    # way as #484 / #485 / #486, and sha2 0.11 (#457) is what the same shape costs
+    # when the crate is a hash implementation rather than a derive macro.
+    #
+    # Sweep them: make the manifest change once, regenerate every affected lockfile
+    # in the same commit, verify, and close the individual PRs as superseded.
     ignore:
       # The RustCrypto stack moves as ONE generation or not at all. The tree is on
       # `digest 0.11` (sha2 0.11 / ed25519-dalek 3 / hmac 0.13 / curve25519-dalek 5
