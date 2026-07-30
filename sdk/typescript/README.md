@@ -3,10 +3,10 @@
 Runtime-evidence security for the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk):
 signed requests and verified responses, added without changing application code.
 
-> **Status — the transport adapter is shipped; the mTLS connection helper is not.** This
-> SDK binds the audited `mcp-re-client-core` over a **napi-rs** native addon and gives you
-> the two cryptographic halves of the client obligation, custody, and an MCP `Transport`
-> that drives both underneath a standard `Client`:
+> **Status — the client obligation is shipped whole.** This SDK binds the audited
+> `mcp-re-client-core` over a **napi-rs** native addon and gives you the two cryptographic
+> halves of the client obligation, custody, a verifying mTLS connection, and an MCP
+> `Transport` that drives all of it underneath a standard `Client`:
 >
 > | Capability | State |
 > | --- | --- |
@@ -21,9 +21,9 @@ signed requests and verified responses, added without changing application code.
 > | Nonce/freshness generation | **done** (adapter-generated) |
 > | Concurrent exchanges, bounded (`maxConcurrentExchanges`, default 8) | **done** |
 > | One-way notifications (`notifications/*`) — signed POST + verified signed `202` | **done** ([#418](https://github.com/matssun/mcp-re/issues/418)) |
-> | ADR-MCPS-047 answer-leg orchestration | **not implemented** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
+> | ADR-MCPS-047 answer-leg orchestration — the adapter drives the chain to a terminal result | **done** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
 > | Transport shutdown contract — abortive close, `NEW → OPEN → CLOSING → CLOSED` | **done** ([#421](https://github.com/matssun/mcp-re/issues/421)) |
-> | mTLS connection helper (`connectMtlsHttp`) | **not implemented** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
+> | mTLS connection helper (`connectMtlsHttp`) — configured CA only, server identity proven, client certificate presented | **done** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
 >
 > **Not released.** The one-way notification + acknowledgement profile
 > ([#418](https://github.com/matssun/mcp-re/issues/418)) has landed: a notification is its
@@ -31,11 +31,11 @@ signed requests and verified responses, added without changing application code.
 > transmission, so a standard client no longer needs an unsafe opt-in to complete its
 > lifecycle.
 >
-> A standard `Client` now speaks MCP-RE by construction: hand it an `McpReHttpTransport`
-> and application code calls `client.callTool(...)` with no sign/verify of its own. **You
-> still supply the HTTP leg** — the adapter takes an injected `poster` that performs the
-> POST, so establishing and hardening the connection (mTLS, pooling, timeouts) is yours
-> until `connectMtlsHttp` lands.
+> A standard `Client` speaks MCP-RE by construction: hand it an `McpReHttpTransport` and
+> application code calls `client.callTool(...)` with no sign/verify of its own — including
+> for a multi-round-trip tool, whose elicitation the adapter answers and continues to a
+> terminal result. `connectMtlsHttp` supplies the HTTP leg as a verifying mTLS connection;
+> the injected `poster` remains available for a caller who wants a different one.
 >
 > Using `signRequest` / `verifyResponse` directly remains supported for callers who want
 > to drive the exchange themselves; it is no longer the only option.
@@ -125,6 +125,53 @@ If it does not verify, `send()` throws `NotificationNotAcknowledged`. A notifica
 reply for a JSON-RPC error to ride back on, so the caller that emitted it is the one told;
 treating an unverifiable acknowledgement as delivery would be exactly the take-it-on-faith
 posture this SDK exists to remove.
+
+**A multi-round-trip call is driven to a terminal result.** An ADR-MCPS-047
+`InputRequiredResult` pauses a call rather than finishing it. Supply `answerInputRequired`
+and the adapter signs the answer leg over the *verified* handles of the leg before it,
+posts it, verifies the reply, and repeats until the server returns a terminal result —
+which is what your single `await` resolves to:
+
+```ts
+const transport = new McpReHttpTransport(
+  {
+    ...config,
+    // Resolve with the `inputResponses` to continue with, or null to decline.
+    answerInputRequired: (prompt) => askTheUser(prompt.result.elicitation),
+  },
+  poster,
+);
+// One call, whatever the server needs in between.
+await client.callTool({ name: "confirm_action", arguments: {} });
+```
+
+Without a handler an elicitation **fails closed** (`ContinuationNotAnswered`); it is never
+delivered up as the result. A pause handed to the application as the reply to `callTool`
+would present a call still waiting for input as one that finished. `maxContinuationRounds`
+(default 4) bounds how long a server may keep one call in that cycle, and is checked before
+you are asked for an answer that could not be sent.
+
+**The connection itself is verified.** `connectMtlsHttp` builds the HTTP leg as a mutual
+TLS connection to the proxy:
+
+```ts
+import { connectMtlsHttp } from "@mcp-re/sdk/mtls";
+
+const transport = connectMtlsHttp(config, {
+  serverCa: readFileSync("ca.pem"),      // the ONLY root trusted to authenticate the proxy
+  clientCert: readFileSync("client.pem"), // presented for the proxy's own binding check
+  clientKey: readFileSync("client.key"),
+  // Optional: dial a load balancer while still requiring the proxy's own identity.
+  connectHost: "10.0.0.7",
+});
+await client.connect(transport);
+```
+
+Node's bundled roots are replaced, not extended; the certificate must be valid for the name
+in your `targetUri` (or `serverName`); and there is no way to turn either check off. A
+helper with a `rejectUnauthorized: false` knob is how mTLS deployments quietly become
+TLS-shaped plaintext — and nothing above this layer could notice, because a response
+signature verifies identically whether or not the channel proved who produced it.
 
 ## Why napi-rs, not pure TypeScript
 
@@ -237,7 +284,8 @@ the downloader lane, so it is a development-time proof rather than a standing ga
 | Test | Counterparty | Runs in CI |
 | --- | --- | --- |
 | `transport.test.ts` | injected `poster`, no network | always |
-| `transport_replay.test.ts` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`../fixtures/delegated_response_replay.json`) | always |
+| `transport_replay.test.ts` | a **recorded** delegated session, a full elicitation chain (open leg + answer leg), and a rejection receipt (`../fixtures/delegated_response_replay.json`) | always |
+| `mtls.test.ts` | a real TLS server holding real certificates, client-auth required | when `tools/gen_mtls_test_material.py` can run; the config-refusal cases always |
 | `transport_e2e.test.ts` | the **live** `http_profile_proxy` + a real MCP SDK backend | **no** — self-skips without the harness (incl. in CI) |
 
 The replay fixture exists because the live test self-skips in the npm downloader lane —
@@ -252,13 +300,9 @@ Re-record with `tools/gen_sdk_transport_fixture.py` against a running harness.
 
 ## Known open work
 
-- **The mTLS connection helper** (`connectMtlsHttp`) — the adapter takes an injected
-  `poster`, so establishing and hardening the connection is still the caller's job
-  ([#413](https://github.com/matssun/mcp-re/issues/413)).
-- **The ADR-MCPS-047 answer leg is not driven by the adapter**
-  ([#419](https://github.com/matssun/mcp-re/issues/419)). The open leg is covered —
-  `onInputRequired` hands up the two evidence handles and the opaque `requestState`,
-  against a recorded elicitation from the real backend's `confirm_action` tool. Signing
-  the answer leg with those handles is still the caller's move
-  (`signRequest(..., cont*)`), which is the choreography the adapter exists to remove —
-  so for MRT tools its central claim does not yet hold.
+- **Transport-as-dispatcher rework** upstream may move the integration seam: this SDK
+  binds to `@modelcontextprotocol/client`'s `Transport` interface, which is where the
+  JSON-RPC bytes are serialized and therefore the only place a byte-exact signature can
+  be produced.
+
+See ADR-MCPS-044 §SDK wrap-or-fork rule and issue #199.

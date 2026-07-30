@@ -653,7 +653,10 @@ fn served(resp: HttpResponse) -> ServedHttpResponse {
 /// Read `params.requestState` (a string) from a JSON-RPC request body — the opaque
 /// MRTR state an answer leg re-presents (ADR-MCPS-047). `None` if the body is not
 /// JSON, has no `params.requestState`, or it is not a string.
-fn extract_request_state(body: &[u8]) -> Option<String> {
+///
+/// The value is read only to KEY the correlation store; it is never interpreted, and
+/// what it binds to is settled by digest equality against the retained bases.
+pub fn extract_request_state(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     v.get("params")?
         .get("requestState")?

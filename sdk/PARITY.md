@@ -56,6 +56,8 @@ behaviour**, in both languages, mirrored:
 | **Lifecycle** | double-start, close, restart; what is checked at open vs per-request | `lifecycle` groups |
 | **Notification handling** | that the notification reaches the wire signed and id-less; that an unverifiable 202 fails closed; that the nonce floor governs it too | `notification handling` groups |
 | **Result classification** | that a verified reply which cannot be classified is refused rather than read as a completed call — a withheld `requestState`, and a `resultType` outside the recognized set | `malformed_elicitation` / `unrecognized_result_type` fixtures, replayed in both |
+| **Continuation** | that a chain is driven to a TERMINAL result; that the answer leg's bytes carry the continuation binding; that an unanswerable pause is refused; that the round ceiling is enforced before the caller is asked; that no correlation entry outlives the chain | `transport_replay` — `elicitation.answer`, replayed in both |
+| **mTLS channel** | that an untrusted root and a wrong-identity certificate are both refused; that response headers keep wire order and repeats | `test_mtls.py` / `mtls.test.ts` — same generated X.509 |
 | **Shutdown** | in-flight work on close, for a request AND a notification; whether a reply can still be delivered | *partially covered* — see below |
 
 ### The rule
@@ -79,6 +81,9 @@ Where that is true it is recorded here rather than papered over:
 | An unverified notification acknowledgement surfaces as | the pump raises, tearing down the session | `send()` rejects | Python's transport is a stream pair with no per-message reply channel; TypeScript's `Transport.send` is a method call that can reject. Both fail closed; both are visible; neither treats the message as delivered. |
 | Correlation state observable as | a `CorrelationStore` the caller may pass in | `transport.pendingCorrelations` / `pendingRequests()` | Python's transport is a context-manager function with no object to hang a getter on. Both own **one store per transport**; see below. |
 | Non-`Error` thrown value | n/a — Python has no analogue | re-thrown | Throwing a non-`Error` is a JavaScript defect with no Python counterpart. |
+| The mTLS leg is built on | `http.client` + `ssl`, on a worker thread | `node:https` | Each uses its platform's own audited HTTP/1.1 implementation rather than hand-rolling framing in two languages. Python's is blocking, so it runs under `to_thread` and is abandoned on cancellation — the same claim `ConnectionClosed` already makes. The security posture is identical and identically tested: configured CA only, name proven, client certificate presented, TLS 1.2 floor, one connection per exchange, bounded response. |
+| Client certificate material | file paths | PEM paths **or** bytes | `ssl.SSLContext.load_cert_chain` reads from disk only; Node accepts either. The CA bundle takes bytes in both. |
+| A continuation answer that is not an object | `ContinuationNotAnswered` naming the type | same, naming `typeof` / "an array" | Same refusal; only the type name the message can offer differs. |
 
 ### Failure delivery — one contract, decided (round 5)
 
@@ -147,6 +152,35 @@ The lifecycle asymmetry is seam-forced and deliberate: Python's public surface i
 manager, so the state is the block — an enum nobody can observe would be theatre.
 TypeScript's `Transport` is a long-lived object the caller holds across `start`/`close`, so
 it needs the explicit state.
+
+### Continuation — the adapter drives it, decided (#419)
+
+An ADR-MCPS-047 `InputRequiredResult` **pauses** a call; it does not finish it. The
+adapter therefore owns the whole chain: it signs each answer leg over the verified handles
+of the leg before it, and only a terminal result reaches the application.
+
+The surface is one handler, at parity: `answer_input_required` / `answerInputRequired`
+returns the `inputResponses` to continue with, or nothing to decline. It may be async in
+both. `on_input_required` / `onInputRequired` stays what it was — an observer that fires
+once per round and decides nothing.
+
+| Contract | Both SDKs |
+| --- | --- |
+| An answered chain | driven to a terminal result; the caller's single `await` resolves to it |
+| The answer leg's id | a NEW id (`<caller-id>/mrt-<n>`), per SEP-2322 §retry; the reply is relabelled to the caller's before delivery |
+| No handler installed | `ContinuationNotAnswered` — the pause is **never** delivered as a result |
+| Handler declines / returns a non-object | `ContinuationNotAnswered` |
+| Round ceiling | `max_continuation_rounds` / `maxContinuationRounds`, default 4, checked **before** the handler runs |
+| Correlation | the open leg stays outstanding while its answer leg runs, then is retired — a chain leaks nothing, answered or not |
+
+The fail-closed default is the load-bearing part. An elicitation delivered up as the reply
+to `call_tool` presents a call still waiting for input as one that finished — the §5.2 /
+§9.3 misrepresentation the protected non-terminal classification exists to make detectable,
+and the same failure `unrecognized_result_type` covers from the other direction.
+
+Relabelling the id is honest here for one reason only: every hop was verified *in this
+adapter* before the terminal result was handed up, so what the application receives is a
+complete record (§9.3), not a spliced one.
 
 ## Running both gates
 

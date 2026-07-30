@@ -283,7 +283,7 @@ What MCP-RE claims today, and what it does not:
 | Claim | Status | Basis |
 |---|---|---|
 | **Base** — per-turn request/response binding | **Claimed** | RFC 9421 dual binding + `request_evidence`; `h01`–`h08` |
-| **One-hop** — a single continuation binds its three handles | **Claimed** | `h15`–`h17`, `block.rs` |
+| **One-hop** — a single continuation binds its three handles | **Claimed** | `h15`–`h17`, `block.rs`; both SDK transport adapters construct the turn end-to-end and a recorded two-leg chain replays in each (#419) |
 | **Multi-hop** — consecutive non-terminal turns re-link to a terminal end | **Claimed** | `h24`, `chain_reconstruction_test` |
 | **Fleet-safe** — cross-replica atomic single-use | **Claimed** | shared-Redis correlation store; live open-on-A/answer-on-B proof (ADR-MCPS-047) |
 | **Complete retained-chain reconstruction** | **Claimed** | `chain.rs`; `h24`–`h29`; incomplete records name the failing hop |

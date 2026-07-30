@@ -63,6 +63,12 @@ PROTOCOL_VERSION = "2025-11-25"
 #: Served by the backend's ConfirmActionShim, which wraps the ASGI app the module builds.
 ELICIT_TOOL = "confirm_action"
 ELICIT_NONCE = "nonce-transport-fixture-elicit"
+#: The ANSWER leg's own nonce. A continuation turn is a fresh signed request with its own
+#: freshness (continuation profile §10.1), so re-using the open leg's would be refused as
+#: a replay — by the proxy, and rightly.
+ELICIT_ANSWER_NONCE = "nonce-transport-fixture-answer"
+#: What the recorded answer leg replies to the elicitation with.
+ELICIT_ANSWERS = {"confirm": True}
 
 
 def b64(raw: bytes) -> str:
@@ -177,29 +183,37 @@ async def record(target: str, created: int) -> dict:
             )
             await read.receive()
 
-        # --- the ADR-MCPS-047 open leg, recorded separately ------------------------
+        # --- the ADR-MCPS-047 chain: open leg + answer leg -------------------------
         #
         # An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot
         # carry it: the elicitation convention lives BELOW the session layer, which is
         # where the adapter implements it. Drive the transport's streams directly, with
-        # its own nonce and a fresh correlation store.
+        # its own nonces and a fresh correlation store.
+        #
+        # The adapter answers the elicitation itself and continues to a TERMINAL result,
+        # so both legs are recorded: the open leg the proxy pauses on, and the answer leg
+        # signed over its verified handles. A replay of the pair proves the whole chain —
+        # including that the answer leg's continuation binding is what the proxy accepts.
         handles = []
+        elicit_nonces = iter([ELICIT_NONCE, ELICIT_ANSWER_NONCE])
         elicit_config = base_config(
             target,
             created,
-            lambda: ELICIT_NONCE,
+            lambda: next(elicit_nonces),
             on_input_required=handles.append,
+            answer_input_required=lambda prompt: ELICIT_ANSWERS,
         )
-        elicit_exchange = {}
+        elicit_legs = []
 
-        # The signed request is kept whole, so the rejection recording below can re-send
-        # the very same bytes rather than a reconstruction of them.
+        # The OPEN leg's signed request is kept whole, so the rejection recording below
+        # can re-send the very same bytes rather than a reconstruction of them.
         sent = {}
 
         async def elicit_poster(method, target_uri, headers, body) -> HttpReply:
             r = await http.request(method, target_uri, headers=dict(headers), content=body)
-            sent.update(method=method, target_uri=target_uri, headers=list(headers), body=body)
-            elicit_exchange.update(
+            if not sent:
+                sent.update(method=method, target_uri=target_uri, headers=list(headers), body=body)
+            elicit_legs.append(
                 {
                     "request_body_b64": b64(body),
                     "status": r.status_code,
@@ -208,7 +222,8 @@ async def record(target: str, created: int) -> dict:
                 }
             )
             if r.status_code != 200:
-                raise SystemExit(f"proxy refused the elicitation open leg: {r.status_code} {r.text[:200]}")
+                leg = "open" if len(elicit_legs) == 1 else "answer"
+                raise SystemExit(f"proxy refused the elicitation {leg} leg: {r.status_code} {r.text[:200]}")
             return HttpReply(status=r.status_code, headers=list(r.headers.items()), body=r.content)
 
         async with mcp_re_http_transport(elicit_config, elicit_poster) as (read, write):
@@ -222,7 +237,16 @@ async def record(target: str, created: int) -> dict:
                     )
                 )
             )
-            await read.receive()
+            terminal = await read.receive()
+
+        if len(elicit_legs) != 2:
+            raise SystemExit(
+                f"expected an open leg and an answer leg, recorded {len(elicit_legs)}: "
+                "the adapter did not drive the ADR-MCPS-047 continuation to a terminal result"
+            )
+        elicit_exchange, answer_exchange = elicit_legs
+        if not hasattr(terminal.message, "result"):
+            raise SystemExit(f"the answer leg did not terminate the call: {terminal.message}")
 
         if not handles:
             raise SystemExit(
@@ -264,6 +288,20 @@ async def record(target: str, created: int) -> dict:
                 "irr_alg": h.irr_alg,
                 "irr_value": h.irr_value,
                 "request_state": h.request_state,
+            },
+            # The ANSWER leg, signed over those handles and accepted by the proxy. Its
+            # request bytes carry the continuation binding, the echoed `requestState` and
+            # the `inputResponses` — so a replay that reproduces them proves the adapter
+            # builds the continuation turn the profile specifies, not merely that it
+            # surfaced the handles.
+            "answer": {
+                "nonce": ELICIT_ANSWER_NONCE,
+                "responses": ELICIT_ANSWERS,
+                "exchange": answer_exchange,
+                # The terminal result the chain resolves to, as the application sees it:
+                # relabelled to the id the CALLER issued, not the answer leg's own.
+                "expect_result": terminal.message.result,
+                "expect_id": terminal.message.id,
             },
         }
 

@@ -58,10 +58,18 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
 use mcp_re_http_profile::RequestEvidence;
 
+use mcp_re_http_profile::result_class::input_required_state;
+use mcp_re_http_profile::RetainedContinuation;
+
 use mcp_re_proxy::async_inner::AsyncInnerServer;
+use mcp_re_proxy::continuation_store::continuation_key;
+use mcp_re_proxy::continuation_store::AsyncContinuationStore;
+use mcp_re_proxy::continuation_store::InMemoryContinuationStore;
+use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::http_profile_serve::extract_request_state;
 #[cfg(feature = "redis_replay")]
 use mcp_re_proxy::redis_store::RedisAtomicReplayStore;
 use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
@@ -81,7 +89,19 @@ struct ProxyState {
     inner: HttpInnerPool,
     replay: Box<dyn ReplayCache + Send + Sync>,
     dispatch_cfg: ProxyDispatchConfig,
+    /// The ADR-MCPS-047 continuation correlation store. In-memory, because this front is
+    /// one process: it carries a multi-round-trip call across its two legs, and makes no
+    /// cross-replica claim. A fleet wires the shared Redis store instead — that is what
+    /// the `serve_fleet` path does, and the difference is the store, not the protocol.
+    continuations: InMemoryContinuationStore,
 }
+
+/// Lifetime of a recorded continuation in this proof front, in seconds.
+///
+/// An open leg is waiting on a human, so it outlives a request's freshness window; it is
+/// bounded anyway because an elicitation nobody ever answers must not be answerable
+/// forever.
+const CONTINUATION_TTL_SECS: i64 = 300;
 
 #[tokio::main]
 async fn main() {
@@ -141,6 +161,7 @@ async fn main() {
             .expect("build inner pool"),
         replay,
         dispatch_cfg,
+        continuations: InMemoryContinuationStore::new(),
     });
 
     let listener = TcpListener::bind(&bind).await.expect("bind HPP_BIND");
@@ -227,12 +248,48 @@ async fn handle(
             }
         };
 
+    // Step 3a — MRTR continuation prep (ADR-MCPS-047). A verified request carrying a
+    // continuation is an ANSWER leg: recover the open leg's retained signature bases from
+    // the correlation store, keyed by the opaque `requestState` the client re-presents,
+    // so the dispatcher can bind this answer to the exact prior exchange. `peek` has no
+    // side effect — a request that fails the binding must not destroy a live
+    // continuation on its way out.
+    //
+    // The key is derived from the actor the VERIFIER resolved, never from anything the
+    // request asserts, so one peer cannot name another's continuation at all.
+    let answer_state = verified
+        .request_block
+        .as_ref()
+        .and_then(|b| b.continuation.as_ref())
+        .and_then(|_| extract_request_state(&http_req.body));
+    let answer_key = answer_state
+        .as_ref()
+        .map(|state| continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()));
+    let retained = match &answer_key {
+        Some(key) => state.continuations.peek(key).await.ok().flatten(),
+        None => None,
+    };
+    let continuation_ctx = match (&retained, &answer_state) {
+        (Some(bases), Some(request_state)) => Some(RetainedContinuation {
+            previous_request_base: &bases.previous_request_base,
+            input_required_response_base: &bases.input_required_response_base,
+            request_state: request_state.as_bytes(),
+        }),
+        // A continuation was signed but nothing was retained for it: pass None so the
+        // dispatcher fails closed rather than admit an unbindable answer leg.
+        _ => None,
+    };
+
     // Step 3 — replay admission (fail-closed) through the configured tier: a shared
     // Redis tier detects a replay across ALL replicas; the fleet-strict gate refuses
-    // a sub-minimum/undeclared tier before touching the store.
-    if let Err(e) =
-        dispatch_request_with_tier_gate(&verified, state.replay.as_ref(), None, &state.dispatch_cfg)
-    {
+    // a sub-minimum/undeclared tier before touching the store. A continuation, when
+    // present, is verified here against the retained bases before the nonce is burned.
+    if let Err(e) = dispatch_request_with_tier_gate(
+        &verified,
+        state.replay.as_ref(),
+        continuation_ctx,
+        &state.dispatch_cfg,
+    ) {
         // Verified, then refused by replay admission: bind the receipt to its evidence.
         return Ok(to_hyper(rejection(
             Some(&http_req),
@@ -240,6 +297,22 @@ async fn handle(
             e.wire_code(),
             409,
         )));
+    }
+
+    // Step 3b — the answer leg is admitted, so retire its continuation NOW, before the
+    // backend runs. This is where one-shot is enforced: `consume` reports whether this
+    // call removed the live entry, so of two concurrent answer legs that both bound
+    // successfully, exactly one proceeds. Refusing before the backend runs means the
+    // loser's call never takes effect.
+    if let Some(key) = &answer_key {
+        if !matches!(state.continuations.consume(key).await, Ok(true)) {
+            return Ok(to_hyper(rejection(
+                Some(&http_req),
+                Some(&verified.evidence),
+                "mcp-re.continuation_binding_failed",
+                409,
+            )));
+        }
     }
 
     // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
@@ -297,7 +370,49 @@ async fn handle(
         now,
         now + 300,
     ) {
-        Ok(_response_base) => Ok(to_hyper(response)),
+        Ok(response_base) => {
+            // Step 6 — MRTR open-leg record (ADR-MCPS-047). When the signed reply is an
+            // `InputRequiredResult`, retain the two signature bases a later answer leg
+            // must bind to: THIS request's, and the reply's just produced. A reply that
+            // cannot be classified is refused rather than signed away as terminal
+            // (MCPRE-495); a continuation that cannot be recorded is refused rather than
+            // returned unanswerable.
+            let open_leg_state = match input_required_state(&response.body) {
+                Ok(state) => state,
+                Err(e) => {
+                    return Ok(to_hyper(rejection(
+                        Some(&http_req),
+                        Some(&verified.evidence),
+                        e.wire_code(),
+                        502,
+                    )))
+                }
+            };
+            if let Some(request_state) = open_leg_state {
+                let bases = RetainedBases {
+                    previous_request_base: verified.request_signature_base.clone(),
+                    input_required_response_base: response_base,
+                };
+                let key = continuation_key(
+                    &verified.resolved_actor.actor_id(),
+                    request_state.as_bytes(),
+                );
+                if state
+                    .continuations
+                    .store(&key, &bases, CONTINUATION_TTL_SECS)
+                    .await
+                    .is_err()
+                {
+                    return Ok(to_hyper(rejection(
+                        Some(&http_req),
+                        Some(&verified.evidence),
+                        "mcp-re.replay_cache_unavailable",
+                        503,
+                    )));
+                }
+            }
+            Ok(to_hyper(response))
+        }
         Err(e) => Ok(to_hyper(rejection(
             Some(&http_req),
             Some(&verified.evidence),

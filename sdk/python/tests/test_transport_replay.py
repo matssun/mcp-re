@@ -220,16 +220,30 @@ async def test_a_revoked_delegated_key_is_refused():
     assert "mcp-re." in detail
 
 
-# --- ADR-MCPS-047: the elicitation open leg ---------------------------------------
+# --- ADR-MCPS-047: the continuation chain -----------------------------------------
+
+ELICIT = FIXTURE["elicitation"]
+ANSWER = ELICIT["answer"]
 
 
-def _elicit_poster():
-    exchange = FIXTURE["elicitation"]["exchange"]
+def _elicit_nonces():
+    """The open leg's nonce, then the answer leg's. A continuation turn is a fresh
+    signed request with its own freshness (continuation profile §10.1)."""
+    return iter([ELICIT["nonce"], ANSWER["nonce"]]).__next__
+
+
+def _chain_poster(legs):
+    """Serve the recorded legs in order, refusing to serve one for a request the
+    recording was not made against."""
+    state = {"i": 0}
 
     async def post(method, target_uri, headers, body) -> HttpReply:
+        assert state["i"] < len(legs), "the adapter sent more legs than were recorded"
+        exchange = legs[state["i"]]
+        state["i"] += 1
         assert body == base64.b64decode(exchange["request_body_b64"]), (
-            "the adapter's open-leg request bytes drifted from the recording; "
-            "re-record with tools/gen_sdk_transport_fixture.py"
+            f"leg {state['i'] - 1}: the adapter's request bytes drifted from the "
+            f"recording; re-record with tools/gen_sdk_transport_fixture.py"
         )
         return HttpReply(
             status=exchange["status"],
@@ -240,45 +254,156 @@ def _elicit_poster():
     return post
 
 
-@pytest.mark.anyio
-async def test_a_verified_input_required_response_surfaces_the_answer_legs_handles():
-    """An elicitation is not the end of the exchange (ADR-MCPS-047).
-
-    An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot carry
-    it: the convention lives BELOW the session layer, which is where the adapter
-    implements it. The adapter must hand up the two evidence handles + opaque state the
-    answer leg signs over, read only from the VERIFIED response.
-    """
-    handles = []
-    config = _config(
-        nonce_factory=lambda: FIXTURE["elicitation"]["nonce"],
-        on_input_required=handles.append,
+def _call() -> JSONRPCRequest:
+    return JSONRPCRequest(
+        jsonrpc="2.0",
+        id=0,
+        method="tools/call",
+        params={"name": ELICIT["tool"], "arguments": {}},
     )
 
-    async with mcp_re_http_transport(config, _elicit_poster()) as (read, write):
-        await write.send(
-            SessionMessage(
-                JSONRPCRequest(
-                    jsonrpc="2.0",
-                    id=0,
-                    method="tools/call",
-                    params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
-                )
-            )
-        )
-        reply = await read.receive()
+
+async def _drive(config, legs):
+    """Run one `tools/call` through the adapter against the recorded legs."""
+    async with mcp_re_http_transport(config, _chain_poster(legs)) as (read, write):
+        await write.send(SessionMessage(_call()))
+        return (await read.receive()).message
+
+
+@pytest.mark.anyio
+async def test_the_adapter_drives_the_answer_leg_to_a_terminal_result():
+    """The whole point of #419: a multi-round-trip tool is an ordinary call.
+
+    An `InputRequiredResult` is not a `CallToolResult`, so `ClientSession` cannot carry
+    it — the convention lives BELOW the session layer, which is where the adapter
+    implements it. So the adapter answers the elicitation itself: it signs the answer leg
+    over the VERIFIED handles, posts it, verifies the reply, and hands up the terminal
+    result. The caller sees one call and one result.
+
+    The recorded answer-leg request is the load-bearing assertion here. Reproducing it
+    byte-for-byte means the adapter built the continuation binding, echoed the opaque
+    `requestState`, and carried `inputResponses` exactly as the profile specifies — the
+    proxy accepted these very bytes when the fixture was recorded.
+    """
+    handles, prompts = [], []
+
+    def answer(prompt):
+        prompts.append(prompt)
+        return ANSWER["responses"]
+
+    config = _config(
+        nonce_factory=_elicit_nonces(),
+        on_input_required=handles.append,
+        answer_input_required=answer,
+    )
+    message = await _drive(config, [ELICIT["exchange"], ANSWER["exchange"]])
 
     assert len(handles) == 1, "the adapter did not surface the elicitation"
     h = handles[0]
-    expect = FIXTURE["elicitation"]["expect_handles"]
+    expect = ELICIT["expect_handles"]
     assert h.prev_alg == expect["prev_alg"]
     assert h.prev_value == expect["prev_value"]
     assert h.irr_alg == expect["irr_alg"]
     assert h.irr_value == expect["irr_value"]
     assert h.request_state == expect["request_state"]
 
-    # The open leg is genuine evidence and reaches the caller as a result, not an error.
-    assert reply.message.result["resultType"] == "input_required"
+    # The handler is asked with everything answering needs, read from the VERIFIED reply.
+    assert len(prompts) == 1
+    assert prompts[0].method == "tools/call"
+    assert prompts[0].round == 1
+    assert prompts[0].result["resultType"] == "input_required"
+    assert prompts[0].result["requestState"] == expect["request_state"]
+    assert prompts[0].handles is h
+
+    # A TERMINAL result, not the pause — and under the id the CALLER issued, not the
+    # answer leg's own `0/mrt-1`.
+    assert message.result == ANSWER["expect_result"]
+    assert message.id == ANSWER["expect_id"]
+    assert CallToolResult.model_validate(message.result).is_error is False
+
+
+@pytest.mark.anyio
+async def test_an_unanswerable_elicitation_is_refused_not_delivered_as_a_result():
+    """A pause is not an outcome (continuation profile §5.2, §9.3).
+
+    With no handler installed there is no answer leg to sign, so the call cannot
+    complete. Delivering the `InputRequiredResult` up as the reply would present a call
+    still waiting for input as one that finished — the misrepresentation the protected
+    non-terminal classification exists to make detectable.
+    """
+    config = _config(nonce_factory=_elicit_nonces())
+    message = await _drive(config, [ELICIT["exchange"]])
+
+    assert message.error is not None, "the pause was delivered as a completed call"
+    assert "no answer_input_required handler" in message.error.message
+
+
+@pytest.mark.anyio
+async def test_a_declined_elicitation_is_refused():
+    """Declining is a decision not to continue, not a decision to accept the pause."""
+    config = _config(
+        nonce_factory=_elicit_nonces(),
+        answer_input_required=lambda prompt: None,
+    )
+    message = await _drive(config, [ELICIT["exchange"]])
+
+    assert message.error is not None
+    assert "declined" in message.error.message
+
+
+@pytest.mark.anyio
+async def test_the_continuation_round_ceiling_is_enforced_before_the_caller_is_asked():
+    """A server decides how long a chain runs, so the client must bound it.
+
+    The ceiling is checked BEFORE the handler: a call that has already spent its
+    continuation budget must not prompt for an answer it cannot send.
+    """
+    asked = []
+    config = _config(
+        nonce_factory=_elicit_nonces(),
+        answer_input_required=lambda prompt: asked.append(prompt) or {},
+        max_continuation_rounds=0,
+    )
+    message = await _drive(config, [ELICIT["exchange"]])
+
+    assert message.error is not None
+    assert "max_continuation_rounds" in message.error.message
+    assert asked == [], "the handler was asked for an answer that could not be sent"
+
+
+@pytest.mark.anyio
+async def test_a_completed_chain_leaves_no_correlation_entry_outstanding():
+    """An open leg is associated, not consumed (ADR-MCPS-047), so something must retire
+    it. Left outstanding, every elicitation would leak an entry for the life of the
+    session — and a peer that can elicit could grow the store at will."""
+    from mcp_re_sdk import CorrelationStore
+
+    store = CorrelationStore()
+    config = _config(
+        nonce_factory=_elicit_nonces(),
+        answer_input_required=lambda prompt: ANSWER["responses"],
+    )
+    async with mcp_re_http_transport(
+        config, _chain_poster([ELICIT["exchange"], ANSWER["exchange"]]), correlation=store
+    ) as (read, write):
+        await write.send(SessionMessage(_call()))
+        await read.receive()
+        assert len(store) == 0, "the chain left correlation state behind"
+
+
+@pytest.mark.anyio
+async def test_an_unanswered_elicitation_leaves_no_correlation_entry_outstanding():
+    """The same bound on the failure path, which is the one a peer can drive."""
+    from mcp_re_sdk import CorrelationStore
+
+    store = CorrelationStore()
+    config = _config(nonce_factory=_elicit_nonces())
+    async with mcp_re_http_transport(
+        config, _chain_poster([ELICIT["exchange"]]), correlation=store
+    ) as (read, write):
+        await write.send(SessionMessage(_call()))
+        await read.receive()
+        assert len(store) == 0
 
 
 @pytest.mark.anyio
