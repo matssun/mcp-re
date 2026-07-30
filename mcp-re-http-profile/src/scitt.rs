@@ -27,17 +27,28 @@
 //! the verified statement. A receipt can never make a truncated call look whole:
 //! the label it commits to says which hop was missing.
 //!
-//! **What is faithful here and what is a stand-in.** The cryptographic content is
-//! real: Ed25519 signatures over the statement and the tree head, and RFC 6962-style
-//! SHA-256 Merkle inclusion proofs, all verified offline. The stand-ins, called out
-//! so nobody mistakes the prototype for the product:
-//!   - the SERIALIZATION is JSON, not the CBOR/COSE_Sign1 of RFC 9052/9942. The
-//!     fields map one-to-one; production swaps the encoder.
-//!   - [`PrototypeTransparencyService`] is an in-process Merkle log, NOT a running
-//!     SCITT Transparency Service. The #434 scope's "prototype against an existing
-//!     SCITT service" is the remaining integration; this proves the mapping and the
-//!     OFFLINE receipt verification the acceptance criterion names, without one.
+//! **What is real here, and the one thing that is not.** The wire form is the real
+//! one (MCPRE-494): a Signed Statement is a tagged `COSE_Sign1` (RFC 9052 §4.2) whose
+//! protected header carries the RFC 9943 CWT claims, and a Receipt is a tagged
+//! `COSE_Sign1` whose payload is the Merkle root and whose unprotected header carries
+//! the RFC 9942 inclusion proof over an RFC 9162 SHA-256 tree. Conformance vectors are
+//! frozen from those octets in `mcp-re-conformance/tests/vectors/scitt/`.
+//!
+//! The remaining stand-in, called out so nobody mistakes the prototype for the
+//! product: [`PrototypeTransparencyService`] is an in-process Merkle log, NOT a
+//! running SCITT Transparency Service. Registering against a real one — and obtaining
+//! interoperability evidence from a counterparty we do not control — is #501, and it
+//! is what an RFC 9942/9943 interoperability CLAIM still waits on. What this module
+//! establishes without one is the mapping and the OFFLINE receipt verification the
+//! acceptance criterion names.
 
+use ciborium::Value;
+use coset::iana;
+use coset::CoseSign1;
+use coset::CoseSign1Builder;
+use coset::HeaderBuilder;
+use coset::Label;
+use coset::TaggedCborSerializable;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
@@ -128,83 +139,309 @@ fn label_token(label: &ChainLabel) -> String {
     }
 }
 
-/// A SCITT Signed Statement (RFC 9943): the issuer's signed claim about a call.
-/// The COSE_Sign1 analog — issuer signs the canonical statement bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// COSE header label for the CWT claims of a Signed Statement (RFC 9597).
+///
+/// RFC 9943 puts the issuer and subject in CWT claims inside the PROTECTED header,
+/// not in the payload, so they are covered by the signature and readable without
+/// decoding the payload.
+const HEADER_CWT_CLAIMS: i64 = 15;
+
+/// CWT claim keys (RFC 8392 §3.1) used in the protected header.
+const CWT_ISS: i64 = 1;
+const CWT_SUB: i64 = 2;
+const CWT_IAT: i64 = 6;
+
+/// COSE header label for the verifiable-data-structure a Receipt proves inclusion
+/// in (RFC 9942 §3.1), in the PROTECTED header.
+const HEADER_VERIFIABLE_DATA_STRUCTURE: i64 = -111;
+
+/// COSE header label for the inclusion proofs of a Receipt (RFC 9942 §3.2), in the
+/// UNPROTECTED header — a proof is not signed by the tree head it proves against.
+const HEADER_INCLUSION_PROOFS: i64 = -222;
+
+/// `RFC9162_SHA256`: the RFC 9162 binary Merkle tree, SHA-256 (RFC 9942 §5).
+const VDS_RFC9162_SHA256: i64 = 1;
+
+/// The subject every MCP-RE Signed Statement is about: one MCP call's evidence.
+/// SCITT requires a `sub`, and a stable value keeps statements from this issuer
+/// groupable without leaking anything about the call.
+pub const STATEMENT_SUBJECT: &str = "mcp-re:call-evidence";
+
+/// The `typ` of an MCP-RE Signed Statement payload.
+pub const STATEMENT_CONTENT_TYPE: &str = "application/mcp-re-evidence+cbor";
+
+/// A SCITT Signed Statement (RFC 9943): the issuer's signed claim about a call,
+/// encoded as a tagged `COSE_Sign1` (RFC 9052 §4.2).
+///
+/// The wire form IS the COSE bytes. They are kept verbatim rather than re-derived,
+/// because a signature is over the exact protected-header and payload bytes that
+/// arrived: reconstructing them to verify would make the check depend on this
+/// encoder reproducing another implementation's CBOR byte-for-byte, which is
+/// precisely the canonicalization dependency COSE's `Sig_structure` exists to avoid.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedStatement {
-    /// The issuer key id (resolved through the trust seam; a kid never introduces
-    /// trust).
-    pub issuer_kid: String,
-    /// The evidence commitment — the statement's payload.
-    pub commitment: EvidenceCommitment,
-    /// The statement issuance time.
-    pub issued_at: i64,
-    /// Ed25519 signature over the canonical statement bytes, base64url.
-    pub signature: String,
+    /// The tagged `COSE_Sign1` bytes — what is transmitted and registered.
+    cose: Vec<u8>,
+    /// The issuer key id, from the protected header `kid`.
+    issuer_kid: String,
+    /// The decoded payload.
+    commitment: EvidenceCommitment,
+    /// The CWT `iat` from the protected header.
+    issued_at: i64,
 }
 
-/// The canonical bytes an issuer signs / a verifier reconstructs. Deterministic
-/// field order; a real deployment uses the CBOR COSE_Sign1 payload instead.
-fn statement_signing_bytes(
-    issuer_kid: &str,
-    commitment: &EvidenceCommitment,
-    issued_at: i64,
-) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(b"mcp-re-scitt-statement-v1\x00");
-    h.update(issuer_kid.as_bytes());
-    h.update([0x00]);
-    h.update(serde_json::to_vec(commitment).expect("commitment serializes"));
-    h.update([0x00]);
-    h.update(issued_at.to_le_bytes());
-    h.finalize().to_vec()
+impl SignedStatement {
+    /// The tagged `COSE_Sign1` bytes.
+    pub fn to_cose(&self) -> &[u8] {
+        &self.cose
+    }
+    /// The issuer key id this statement names. Naming is not trust: it is resolved
+    /// through the trust seam before any signature is believed.
+    pub fn issuer_kid(&self) -> &str {
+        &self.issuer_kid
+    }
+    /// The evidence commitment the statement carries.
+    pub fn commitment(&self) -> &EvidenceCommitment {
+        &self.commitment
+    }
+    /// The CWT `iat` the statement was issued at.
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+
+    /// Parse a tagged `COSE_Sign1` into a statement WITHOUT verifying its signature.
+    ///
+    /// Parsing is not acceptance: nothing here is trustworthy until
+    /// [`verify_receipt_offline`] has checked the issuer signature over these exact
+    /// bytes. It is separate so a malformed statement fails as malformed rather than
+    /// as a bad signature.
+    pub fn from_cose(bytes: &[u8]) -> Result<Self, HttpProfileError> {
+        let sign1 = CoseSign1::from_tagged_slice(bytes)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement cose"))?;
+        let issuer_kid = String::from_utf8(sign1.protected.header.key_id.clone())
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement kid"))?;
+        let issued_at = cwt_claim(&sign1.protected.header, CWT_IAT)
+            .and_then(|v| v.as_integer())
+            .and_then(|i| i64::try_from(i).ok())
+            .ok_or(HttpProfileError::MalformedEvidence("scitt statement iat"))?;
+        let payload = sign1
+            .payload
+            .as_deref()
+            .ok_or(HttpProfileError::MalformedEvidence(
+                "scitt statement payload",
+            ))?;
+        let commitment: EvidenceCommitment = ciborium::from_reader(payload)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement commitment"))?;
+        Ok(SignedStatement {
+            cose: bytes.to_vec(),
+            issuer_kid,
+            commitment,
+            issued_at,
+        })
+    }
+}
+
+/// Read one CWT claim out of a protected header's claims map.
+fn cwt_claim(header: &coset::Header, key: i64) -> Option<Value> {
+    let claims = header
+        .rest
+        .iter()
+        .find(|(label, _)| *label == Label::Int(HEADER_CWT_CLAIMS))
+        .map(|(_, v)| v)?;
+    claims
+        .as_map()?
+        .iter()
+        .find(|(k, _)| k.as_integer().is_some_and(|i| i == key.into()))
+        .map(|(_, v)| v.clone())
 }
 
 /// Issue a Signed Statement over `commitment`, signing with the issuer via the
 /// external-signer seam (the issuer key never enters this crate).
+///
+/// The signature is over the RFC 9052 §4.4 `Sig_structure`
+/// (`["Signature1", protected, external_aad, payload]`), which is what makes it
+/// verifiable by any COSE implementation rather than only by this one.
 pub fn issue_signed_statement(
     issuer_kid: &str,
     commitment: EvidenceCommitment,
     issued_at: i64,
     sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<SignedStatement, HttpProfileError> {
-    let bytes = statement_signing_bytes(issuer_kid, &commitment, issued_at);
-    let sig = sign(&bytes)?;
-    Ok(SignedStatement {
-        issuer_kid: issuer_kid.to_owned(),
-        commitment,
-        issued_at,
-        signature: b64url_encode(&sig),
-    })
+    let mut payload = Vec::new();
+    ciborium::into_writer(&commitment, &mut payload)
+        .map_err(|_| HttpProfileError::MalformedEvidence("scitt commitment encode"))?;
+
+    let claims = Value::Map(vec![
+        (
+            Value::Integer(CWT_ISS.into()),
+            Value::Text(issuer_kid.to_owned()),
+        ),
+        (
+            Value::Integer(CWT_SUB.into()),
+            Value::Text(STATEMENT_SUBJECT.to_owned()),
+        ),
+        (
+            Value::Integer(CWT_IAT.into()),
+            Value::Integer(issued_at.into()),
+        ),
+    ]);
+    let protected = HeaderBuilder::new()
+        .algorithm(iana::Algorithm::EdDSA)
+        .key_id(issuer_kid.as_bytes().to_vec())
+        .content_type(STATEMENT_CONTENT_TYPE.to_owned())
+        .value(HEADER_CWT_CLAIMS, claims)
+        .build();
+
+    // `create_signature` builds the Sig_structure and hands it to the signer, so the
+    // bytes signed are the ones a conforming verifier will reconstruct.
+    let mut failure = None;
+    let sign1 = CoseSign1Builder::new()
+        .protected(protected)
+        .payload(payload)
+        .create_signature(&[], |pt| match sign(pt) {
+            Ok(sig) => sig,
+            Err(e) => {
+                failure = Some(e);
+                Vec::new()
+            }
+        })
+        .build();
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let cose = sign1
+        .to_tagged_vec()
+        .map_err(|_| HttpProfileError::MalformedEvidence("scitt statement encode"))?;
+    SignedStatement::from_cose(&cose)
 }
 
 /// A COSE Receipt (RFC 9942): proof that a Signed Statement was registered on a
-/// transparency service. Carries the leaf index, an RFC 6962-style inclusion
-/// proof, and the transparency service's SIGNED tree head — everything an auditor
-/// needs to verify inclusion OFFLINE.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// transparency service, as a tagged `COSE_Sign1` signed by the service over the
+/// Merkle root.
+///
+/// The inclusion proof rides in the UNPROTECTED header, which is correct rather than
+/// lax: the proof is not a claim the service signs, it is the path a verifier walks
+/// to re-derive the root the service DID sign. Tampering with it cannot forge
+/// inclusion — it only makes the derived root fail to match.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {
-    /// The transparency service key id.
-    pub ts_kid: String,
+    /// The tagged `COSE_Sign1` bytes — what is transmitted and archived.
+    cose: Vec<u8>,
+    /// The transparency service key id, from the protected header `kid`.
+    ts_kid: String,
+    /// The log size the signed tree head commits to.
+    tree_size: u64,
     /// The registered leaf's index in the log.
-    pub leaf_index: u64,
-    /// The log size the tree head commits to.
-    pub tree_size: u64,
-    /// The Merkle inclusion proof: sibling hashes from leaf to root, base64url.
-    pub inclusion_path: Vec<String>,
-    /// The Merkle root the tree head commits to, base64url.
-    pub root: String,
-    /// The transparency service's Ed25519 signature over the tree head, base64url.
-    pub tree_head_signature: String,
+    leaf_index: u64,
+    /// Sibling hashes from leaf to root.
+    inclusion_path: Vec<Vec<u8>>,
+    /// The Merkle root — the receipt's signed payload.
+    root: Vec<u8>,
 }
 
-/// The leaf hash of a signed statement (RFC 6962 leaf prefix `0x00`).
+impl Receipt {
+    /// The tagged `COSE_Sign1` bytes.
+    pub fn to_cose(&self) -> &[u8] {
+        &self.cose
+    }
+    /// The transparency service key id this receipt names.
+    pub fn ts_kid(&self) -> &str {
+        &self.ts_kid
+    }
+    /// The log size the signed tree head commits to.
+    pub fn tree_size(&self) -> u64 {
+        self.tree_size
+    }
+    /// The registered leaf's index.
+    pub fn leaf_index(&self) -> u64 {
+        self.leaf_index
+    }
+
+    /// Parse a tagged `COSE_Sign1` receipt WITHOUT verifying it.
+    pub fn from_cose(bytes: &[u8]) -> Result<Self, HttpProfileError> {
+        let sign1 = CoseSign1::from_tagged_slice(bytes)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt cose"))?;
+        let ts_kid = String::from_utf8(sign1.protected.header.key_id.clone())
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt kid"))?;
+        // The verifiable-data-structure must be one this verifier implements. An
+        // unrecognized structure is refused, never walked as if it were RFC 9162:
+        // a proof format this code does not implement cannot be checked by it.
+        let vds = sign1
+            .protected
+            .header
+            .rest
+            .iter()
+            .find(|(label, _)| *label == Label::Int(HEADER_VERIFIABLE_DATA_STRUCTURE))
+            .and_then(|(_, v)| v.as_integer())
+            .and_then(|i| i64::try_from(i).ok())
+            .ok_or(HttpProfileError::MalformedEvidence("scitt receipt vds"))?;
+        if vds != VDS_RFC9162_SHA256 {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt receipt verifiable data structure unsupported",
+            ));
+        }
+        let proof = sign1
+            .unprotected
+            .rest
+            .iter()
+            .find(|(label, _)| *label == Label::Int(HEADER_INCLUSION_PROOFS))
+            .and_then(|(_, v)| v.as_array())
+            .and_then(|proofs| proofs.first())
+            .and_then(|p| p.as_bytes())
+            .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion proof"))?;
+        let decoded: Value = ciborium::from_reader(proof.as_slice())
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt inclusion proof cbor"))?;
+        let parts = decoded
+            .as_array()
+            .ok_or(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof shape",
+            ))?;
+        let [tree_size, leaf_index, path] = parts.as_slice() else {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof shape",
+            ));
+        };
+        let tree_size = as_u64(tree_size)?;
+        let leaf_index = as_u64(leaf_index)?;
+        let inclusion_path = path
+            .as_array()
+            .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion path"))?
+            .iter()
+            .map(|h| {
+                h.as_bytes().filter(|b| b.len() == 32).cloned().ok_or(
+                    HttpProfileError::MalformedEvidence("scitt inclusion path node"),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let root = sign1
+            .payload
+            .as_deref()
+            .filter(|p| p.len() == 32)
+            .ok_or(HttpProfileError::MalformedEvidence("scitt receipt root"))?
+            .to_vec();
+        Ok(Receipt {
+            cose: bytes.to_vec(),
+            ts_kid,
+            tree_size,
+            leaf_index,
+            inclusion_path,
+            root,
+        })
+    }
+}
+
+fn as_u64(v: &Value) -> Result<u64, HttpProfileError> {
+    v.as_integer()
+        .and_then(|i| u64::try_from(i).ok())
+        .ok_or(HttpProfileError::MalformedEvidence("scitt receipt integer"))
+}
+
+/// The leaf hash of a signed statement (RFC 6962 leaf prefix `0x00`), over the
+/// statement's COSE bytes — the exact octets that were registered.
 fn leaf_hash(statement: &SignedStatement) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update([0x00]);
-    h.update(serde_json::to_vec(statement).expect("statement serializes"));
+    h.update(statement.to_cose());
     h.finalize().into()
 }
 
@@ -217,21 +454,12 @@ fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// The bytes a transparency service signs for its tree head.
-fn tree_head_bytes(tree_size: u64, root: &[u8]) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(b"mcp-re-scitt-tree-head-v1\x00");
-    h.update(tree_size.to_le_bytes());
-    h.update(root);
-    h.finalize().to_vec()
-}
-
 /// Verify a receipt OFFLINE — the acceptance-criterion property. No transparency
 /// service is contacted: given the statement, the receipt, the issuer key, and the
 /// TS key, this checks
-///   1. the issuer's signature over the statement;
-///   2. the RFC 6962 inclusion proof re-derives the receipt's root from the leaf;
-///   3. the TS's signature over `(tree_size, root)`.
+///   1. the issuer's COSE_Sign1 signature over the statement;
+///   2. the RFC 9162 inclusion proof re-derives the receipt's root from the leaf;
+///   3. the TS's COSE_Sign1 signature over the receipt, whose payload IS that root.
 ///
 /// Any failure is fail-closed. On success the caller holds a verified, portable
 /// record of the call — including whether it was a complete or incomplete chain.
@@ -241,60 +469,55 @@ pub fn verify_receipt_offline(
     resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
     resolve_ts: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<(), HttpProfileError> {
-    // 1. Issuer signature over the statement.
+    // 1. Issuer signature over the statement's own Sig_structure.
     let issuer =
-        resolve_issuer(&statement.issuer_kid).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
-    let bytes = statement_signing_bytes(
-        &statement.issuer_kid,
-        &statement.commitment,
-        statement.issued_at,
-    );
-    verify_ed25519_with(
-        &bytes,
-        &statement.signature,
-        &issuer,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| HttpProfileError::ReceiptInvalid)?;
+        resolve_issuer(statement.issuer_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    verify_cose_sign1(statement.to_cose(), &issuer)?;
 
     // 2. Inclusion proof: fold the leaf up through the sibling path and require the
-    //    result to equal the receipt's committed root. The index bits pick the
-    //    left/right position at each level, exactly as RFC 6962 defines.
+    //    result to equal the root the receipt commits to. The index bits pick the
+    //    left/right position at each level, exactly as RFC 9162 defines.
     let mut computed = leaf_hash(statement).to_vec();
     let mut index = receipt.leaf_index;
-    for sibling_b64 in &receipt.inclusion_path {
-        let sibling = decode32(sibling_b64)?;
+    for sibling in &receipt.inclusion_path {
         computed = if index & 1 == 0 {
-            node_hash(&computed, &sibling).to_vec()
+            node_hash(&computed, sibling).to_vec()
         } else {
-            node_hash(&sibling, &computed).to_vec()
+            node_hash(sibling, &computed).to_vec()
         };
         index >>= 1;
     }
-    let root = decode32(&receipt.root)?;
-    if computed != root {
+    if computed != receipt.root {
         return Err(HttpProfileError::ReceiptInclusionInvalid);
     }
 
-    // 3. Tree-head signature: the root the proof produced is the one the TS signed.
-    let ts = resolve_ts(&receipt.ts_kid).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
-    let th = tree_head_bytes(receipt.tree_size, &root);
-    verify_ed25519_with(
-        &th,
-        &receipt.tree_head_signature,
-        &ts,
-        McpReError::InvalidSignature,
-    )
-    .map_err(|_| HttpProfileError::ReceiptInvalid)?;
+    // 3. The receipt's own signature. Its payload is the root the fold just
+    //    reproduced, so a verified receipt is the service's statement that THIS leaf
+    //    is in a tree it signed.
+    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    verify_cose_sign1(receipt.to_cose(), &ts)?;
     Ok(())
 }
 
-fn decode32(b64: &str) -> Result<Vec<u8>, HttpProfileError> {
-    let bytes = mcp_re_core::b64url_decode(b64).map_err(|_| HttpProfileError::ReceiptInvalid)?;
-    if bytes.len() != 32 {
+/// Verify a tagged `COSE_Sign1`'s signature over its own `Sig_structure`.
+///
+/// The algorithm is read from the PROTECTED header and must be EdDSA: accepting
+/// whatever the message named would let a peer choose the verification algorithm,
+/// which is the classic COSE/JOSE algorithm-confusion shape.
+fn verify_cose_sign1(cose: &[u8], key: &VerificationKey) -> Result<(), HttpProfileError> {
+    let sign1 = CoseSign1::from_tagged_slice(cose).map_err(|_| HttpProfileError::ReceiptInvalid)?;
+    if sign1.protected.header.alg
+        != Some(coset::RegisteredLabelWithPrivate::Assigned(
+            iana::Algorithm::EdDSA,
+        ))
+    {
         return Err(HttpProfileError::ReceiptInvalid);
     }
-    Ok(bytes)
+    sign1
+        .verify_signature(&[], |sig, data| {
+            verify_ed25519_with(data, &b64url_encode(sig), key, McpReError::InvalidSignature)
+        })
+        .map_err(|_| HttpProfileError::ReceiptInvalid)
 }
 
 /// A minimal in-process Merkle transparency log — the PROTOTYPE stand-in for a real
@@ -313,8 +536,12 @@ impl PrototypeTransparencyService {
         }
     }
 
-    /// Register a signed statement and return its COSE Receipt, signing the tree
-    /// head via `sign_tree_head` (the TS key never enters the caller's hands).
+    /// Register a signed statement and return its COSE Receipt, signing via
+    /// `sign_tree_head` (the TS key never enters the caller's hands).
+    ///
+    /// The receipt is a tagged `COSE_Sign1` whose payload is the Merkle root and
+    /// whose unprotected header carries the RFC 9942 inclusion proof — so what the
+    /// service signs is the tree, and what the verifier walks is the path to it.
     pub fn register(
         &mut self,
         statement: &SignedStatement,
@@ -325,16 +552,53 @@ impl PrototypeTransparencyService {
 
         let (root, path) = self.root_and_path(leaf_index as usize);
         let tree_size = self.leaves.len() as u64;
-        let th = tree_head_bytes(tree_size, &root);
-        let sig = sign_tree_head(&th)?;
-        Ok(Receipt {
-            ts_kid: self.kid.clone(),
-            leaf_index,
-            tree_size,
-            inclusion_path: path.iter().map(|h| b64url_encode(h)).collect(),
-            root: b64url_encode(&root),
-            tree_head_signature: b64url_encode(&sig),
-        })
+
+        // RFC 9942 §3.2: an inclusion proof is a bstr-wrapped
+        // `[tree_size, leaf_index, [path...]]`.
+        let proof = Value::Array(vec![
+            Value::Integer(tree_size.into()),
+            Value::Integer(leaf_index.into()),
+            Value::Array(path.iter().map(|h| Value::Bytes(h.to_vec())).collect()),
+        ]);
+        let mut proof_bytes = Vec::new();
+        ciborium::into_writer(&proof, &mut proof_bytes)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt inclusion proof encode"))?;
+
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::EdDSA)
+            .key_id(self.kid.as_bytes().to_vec())
+            .value(
+                HEADER_VERIFIABLE_DATA_STRUCTURE,
+                Value::Integer(VDS_RFC9162_SHA256.into()),
+            )
+            .build();
+        let unprotected = HeaderBuilder::new()
+            .value(
+                HEADER_INCLUSION_PROOFS,
+                Value::Array(vec![Value::Bytes(proof_bytes)]),
+            )
+            .build();
+
+        let mut failure = None;
+        let sign1 = CoseSign1Builder::new()
+            .protected(protected)
+            .unprotected(unprotected)
+            .payload(root.to_vec())
+            .create_signature(&[], |pt| match sign_tree_head(pt) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    failure = Some(e);
+                    Vec::new()
+                }
+            })
+            .build();
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        let cose = sign1
+            .to_tagged_vec()
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt encode"))?;
+        Receipt::from_cose(&cose)
     }
 
     /// The Merkle root and the inclusion path for `target` over the current leaf
@@ -509,14 +773,49 @@ mod tests {
         ));
         let mut svc = PrototypeTransparencyService::new(TS_KID);
         let receipt = register(&mut svc, &st);
-        // Tamper the committed label after registration.
-        let mut tampered = st.clone();
-        tampered.commitment.chain_label = "complete-but-lying".into();
-        // The issuer signature no longer covers this statement.
+
+        // Tamper the COSE bytes themselves — what an attacker actually transmits.
+        // The replacement is the SAME LENGTH, so the CBOR still parses and the
+        // failure is the signature rather than a decode error: a test that tampered
+        // the structure would pass for the wrong reason.
+        let mut bytes = st.to_cose().to_vec();
+        let at = find(&bytes, b"complete").expect("the label is in the payload");
+        bytes[at..at + 8].copy_from_slice(b"complet3");
+        let tampered = SignedStatement::from_cose(&bytes).expect("still parses");
+        assert_eq!(tampered.commitment().chain_label, "complet3");
+
         assert_eq!(
             verify_receipt_offline(&tampered, &receipt, ir(), tr()).unwrap_err(),
             HttpProfileError::ReceiptInvalid,
         );
+    }
+
+    /// A statement whose decoded VIEW is edited but whose signed bytes are not is
+    /// still the statement that was signed. The verifier reads the bytes, never the
+    /// view — this pins that, because the opposite would let a caller "verify" a
+    /// record it had quietly rewritten in memory.
+    #[test]
+    fn editing_a_decoded_view_does_not_change_what_was_signed() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let receipt = register(&mut svc, &st);
+
+        let mut edited = st.clone();
+        edited.commitment.chain_label = "complete-but-lying".into();
+        // It verifies, because the COSE bytes are untouched — and the commitment a
+        // consumer should read is the one recovered from those bytes.
+        verify_receipt_offline(&edited, &receipt, ir(), tr()).expect("the signed bytes are intact");
+        let recovered = SignedStatement::from_cose(edited.to_cose()).expect("parses");
+        assert_eq!(recovered.commitment().chain_label, "complete");
+    }
+
+    /// The first occurrence of `needle` in `haystack`.
+    fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 
     #[test]
@@ -529,7 +828,10 @@ mod tests {
         let mut svc = PrototypeTransparencyService::new(TS_KID);
         let mut receipt = register(&mut svc, &st);
         // Swap a sibling: the recomputed root no longer matches the signed one.
-        receipt.inclusion_path = vec![b64url_encode(&[9u8; 32])];
+        // The proof lives in the UNPROTECTED header, so this is exactly the tamper a
+        // receipt must survive — forging it cannot forge inclusion, it can only make
+        // the derived root fail to match the one the service signed.
+        receipt.inclusion_path = vec![vec![9u8; 32]];
         assert!(matches!(
             verify_receipt_offline(&st, &receipt, ir(), tr()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid | HttpProfileError::ReceiptInvalid,

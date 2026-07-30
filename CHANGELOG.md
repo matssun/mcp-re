@@ -13,6 +13,35 @@ or wire-format compatibility while the design lines from
 ## [Unreleased]
 
 ### Added
+- **SCITT statements and receipts are real CBOR/`COSE_Sign1`** (#494). The prototype
+  serialized JSON as an explicit stand-in, which meant nothing on the wire was
+  interoperable and no vector could honestly be frozen — pinning those bytes would
+  have certified a non-wire format.
+
+  A Signed Statement is now a tagged `COSE_Sign1` (RFC 9052 §4.2) whose protected
+  header carries the RFC 9943 CWT claims (`iss`/`sub`/`iat`), the algorithm, the kid
+  and the content type, and whose payload is the CBOR evidence commitment. A Receipt
+  is a tagged `COSE_Sign1` whose payload is the Merkle root and whose **unprotected**
+  header carries the RFC 9942 inclusion proof over an RFC 9162 SHA-256 tree — correct
+  rather than lax: the proof is the path a verifier walks, not a claim the service
+  signs, so forging it cannot forge inclusion, only fail to re-derive the signed root.
+
+  Verification now runs over the **received** octets rather than reconstructing them.
+  That removes a canonicalization dependency: re-deriving the signed bytes would have
+  made the check depend on this encoder reproducing another implementation's CBOR
+  byte-for-byte, which is exactly what COSE's `Sig_structure` exists to avoid. The
+  algorithm is read from the protected header and must be EdDSA — accepting whatever
+  the message named is the classic COSE/JOSE algorithm-confusion shape.
+- **Frozen SCITT conformance vectors** (#494), in
+  `mcp-re-conformance/tests/vectors/scitt/`: a complete record, an incomplete one that
+  verifies and stays labelled incomplete, a same-length payload tamper that must fail
+  as a *signature* rather than a decode, a genuine receipt paired with a different
+  genuine statement (the substitution a verifier that checked signatures alone would
+  accept), and a statement naming an unresolvable issuer. Per-file SHA-256 plus a
+  corpus digest, and a determinism test that regenerating reproduces the octets.
+
+  The interoperability *claim* still waits on #501 — registering against a real
+  external Transparency Service. The encoding no longer waits on it.
 - **The §7 admission-currency check is on the serving path** (#493). ADR-MCPRE-053
   built the evidence — an authority-signed admission assertion and the binding that
   ties a call to it — and `check_admission` verified both. Nothing called it: every
