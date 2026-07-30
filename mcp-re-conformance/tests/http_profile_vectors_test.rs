@@ -1393,6 +1393,10 @@ const EXTERNAL_KATS: [&str; 1] = ["external_kat.json"];
 const CHAIN_TARGET: &str = "https://mcp.example.com/mcp";
 const AWAITING: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#;
 const DONE: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+/// A result type outside the set MCP 2026-07-28 defines and this implementation
+/// advertises. Not malformed — a well-formed message this reader cannot classify.
+const UNRECOGNIZED: &str =
+    r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"com.example/deferred"}}"#;
 
 fn chain_audience() -> AudienceTuple {
     AudienceTuple {
@@ -1617,6 +1621,27 @@ fn chain_fixtures() -> Vec<Fixture> {
         "incomplete:0:non_terminal_expected",
     ));
 
+    // h51 — a hop declaring a `resultType` nobody recognizes (MCPRE-495). Every
+    // message verifies and re-links; what is unknown is whether that turn ENDED.
+    // Labeling it terminal would let this two-hop record read as COMPLETE on a
+    // value no reader could interpret — the laundering §9.3 forbids — so the
+    // record names hop 1 instead of guessing.
+    let (u0, ur0, us0) = chain_hop("chain-unrec0", None, AWAITING);
+    let (u1, _, _) = chain_hop(
+        "chain-unrec1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&ur0),
+            to_digest(&us0),
+            b"state-u",
+        )),
+        UNRECOGNIZED,
+    );
+    out.push(chain_fixture(
+        "h51_chain_unrecognized_result_type_incomplete",
+        &[u0, u1],
+        "incomplete:1:unrecognized_result_type",
+    ));
+
     out
 }
 
@@ -1634,6 +1659,7 @@ fn label_token(label: &ChainLabel) -> String {
                 IncompleteReason::TerminalExpected => "terminal_expected",
                 IncompleteReason::EmptyChain => "empty_chain",
                 IncompleteReason::HopAfterAuditInstant => "hop_after_audit_instant",
+                IncompleteReason::UnrecognizedResultType => "unrecognized_result_type",
             };
             format!("incomplete:{hop}:{r}")
         }

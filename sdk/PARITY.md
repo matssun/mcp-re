@@ -55,6 +55,7 @@ behaviour**, in both languages, mirrored:
 | **Error propagation** | which exception type/shape a caller sees; wire code vs local condition | `failure delivery` groups |
 | **Lifecycle** | double-start, close, restart; what is checked at open vs per-request | `lifecycle` groups |
 | **Notification handling** | that the notification reaches the wire signed and id-less; that an unverifiable 202 fails closed; that the nonce floor governs it too | `notification handling` groups |
+| **Result classification** | that a verified reply which cannot be classified is refused rather than read as a completed call — a withheld `requestState`, and a `resultType` outside the recognized set | `malformed_elicitation` / `unrecognized_result_type` fixtures, replayed in both |
 | **Shutdown** | in-flight work on close, for a request AND a notification; whether a reply can still be delivered | *partially covered* — see below |
 
 ### The rule

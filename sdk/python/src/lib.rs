@@ -782,8 +782,9 @@ fn verify_response(
     let resp_digest = verified.verified.response_signature_base_digest.clone();
     // `result.requestState` only if this is an InputRequiredResult — a terminal reply
     // has none. Read after verification: content-digest covered the body. Classified
-    // by the audited core, which REFUSES a reply that declares itself non-terminal
-    // without a usable state rather than reporting it as terminal.
+    // by the audited core, which REFUSES rather than reporting as terminal both a reply
+    // that declares itself non-terminal without a usable state and one whose
+    // `resultType` is outside the set MCP 2026-07-28 defines (MCPRE-495).
     let request_state = mcp_re_client_core::continuation_state(resp_body).map_err(err)?;
     Ok(PyVerifyResult {
         ok: true,

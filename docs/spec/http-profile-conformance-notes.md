@@ -272,6 +272,7 @@ Every §13.2 category maps to a vector, an existing test, or an explicit N/A.
 | Stale continuation | freshness gate + bounded skew — `request_within_the_skew_bound_is_accepted_but_beyond_it_is_not` | test |
 | Wrong audience/server | `h18_rejection_bound_valid` (`invalid_audience`), `full_profile_test` audience binding | vector + test |
 | Terminal spliced onto another continuation request | `h29_chain_terminal_spliced_incomplete` | vector |
+| Unclassifiable turn — a `resultType` outside the recognized set | `h51_chain_unrecognized_result_type_incomplete`, `an_unrecognized_result_type_is_refused_before_it_is_signed`, both SDKs' `unrecognized_result_type` fixtures | vector + test |
 
 ---
 
@@ -416,7 +417,7 @@ the release candidate:
 | Rejection error code | **Moved to `-31000`.** The final §Error Codes partitions JSON-RPC's `-32000..=-32099` band completely: `-32000..=-32019` is legacy that new implementations "SHOULD NOT use ... at all", and `-32020..=-32099` is reserved for codes the MCP specification itself defines. The old `-32003` sat in the legacy sub-range. Codes for purposes MCP does not define belong outside `-32768..=-32000`, so that is where MCP-RE's now is |
 | SEP-2322 `resultType: "input_required"` snake_case discriminator | **Confirmed in the final text + drift-guarded** — a rename in a later revision fails a test rather than silently classifying continuations as terminal, which would end a call record at hop 1 and look like success |
 | `resultType: "complete"`, and absent-means-complete | **Confirmed + tested.** The final text requires clients to read an absent `resultType` as `complete` for compatibility with earlier revisions, which is what MCP-RE does |
-| Unrecognized `resultType` | **Divergence, tracked in #495.** The final text says a client MUST treat an unrecognized value as invalid; MCP-RE reads it as terminal |
+| Unrecognized `resultType` | **Enforced (#495).** The recognized set is the two values the core protocol defines plus absent-means-complete; anything else fails closed as `mcp-re.continuation_type_unsupported`. The PEP refuses to sign such a reply, reconstruction labels the record incomplete AT that hop, and both SDKs refuse one from a non-conformant server |
 | Handshake bump | **N/A** — no negotiation exists to target. Which versions a deployment accepts is `McpTransportPolicy`, not a handshake |
 
 **Proven by.** `mcp_2026_07_28_alignment_test`.

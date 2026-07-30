@@ -42,6 +42,12 @@ pub enum ResultClass {
     Terminal,
     /// An `InputRequiredResult` — a non-terminal leg awaiting client continuation.
     InputRequired,
+    /// A `resultType` this client does not recognize. MCP 2026-07-28 requires it
+    /// be considered invalid, so it is never resolved to [`Terminal`]: a caller
+    /// that acts on the exchange must refuse it.
+    ///
+    /// [`Terminal`]: ResultClass::Terminal
+    Unrecognized,
 }
 
 /// What the client expects of the bound response for one outstanding request: the
@@ -163,6 +169,12 @@ pub struct ClassifiedResponse {
 /// Verify a signed RFC 9421 response AND classify its result body for the
 /// multi-round-trip flow. Classification runs ONLY after verification succeeds, so
 /// the class is never trusted from unverified bytes.
+///
+/// [`ResultClass::Unrecognized`] is returned rather than raised: this function's
+/// job is to report what the verified body says, and a caller inspecting a record
+/// may legitimately want to see it. A caller acting on a LIVE exchange must refuse
+/// it — [`continuation_state`] is the seam that does, and it is what the SDK
+/// bindings call.
 pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     response: &HttpResponse,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
@@ -176,20 +188,21 @@ pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     Ok(ClassifiedResponse { verified, class })
 }
 
-/// Classify a (verified) `result` body as terminal or `InputRequiredResult`,
-/// through the profile's single discriminator
-/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). Absent/other results are
-/// terminal.
+/// Classify a (verified) `result` body through the profile's single discriminator
+/// ([`mcp_re_http_profile::result_class`], ADR-MCPS-047). An absent `resultType` is
+/// terminal, as MCP 2026-07-28 requires of clients; an unrecognized one is
+/// [`ResultClass::Unrecognized`], never terminal.
 ///
 /// This is the typed client-side face of that one classifier, not a second copy of
 /// it: the discriminator string lives in the lower crate every reader shares, so
 /// the SEP-2322 drift guard that pins this function covers the proxy, chain
 /// reconstruction and both SDK bindings too.
 pub fn classify_result(result: Option<&Value>) -> ResultClass {
-    if mcp_re_http_profile::result_class::is_input_required(result) {
-        ResultClass::InputRequired
-    } else {
-        ResultClass::Terminal
+    use mcp_re_http_profile::result_class::ResultTypeClass;
+    match mcp_re_http_profile::result_class::classify_result_type(result) {
+        ResultTypeClass::InputRequired => ResultClass::InputRequired,
+        ResultTypeClass::Complete => ResultClass::Terminal,
+        ResultTypeClass::Unrecognized => ResultClass::Unrecognized,
     }
 }
 

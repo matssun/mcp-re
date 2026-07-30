@@ -1,0 +1,75 @@
+{
+  "_comment": "A delegated-signed reply carrying a resultType outside the set MCP 2026-07-28 defines. Genuine evidence this reader cannot classify: both SDK bindings must REFUSE it, never report it as a terminal result. Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture",
+  "accepted_epochs": [
+    "epoch-1"
+  ],
+  "audience_id": "verifier-1",
+  "client_seed_b64url": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+  "created": 1700000000,
+  "dpop_token": "access-token-xyz",
+  "exchange": {
+    "body_b64url": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVzcG9uc2UiOnsicHJvZmlsZSI6Im1jcC1yZS1odHRwLXYxIiwicmVxdWVzdF9ldmlkZW5jZSI6eyJkaWdlc3RfYWxnIjoic2hhMjU2IiwiZGlnZXN0X3ZhbHVlIjoibThQOHF5dWw3SXdvRlNuLXVuUFpFNy1UTVVqOEVGdXpQampmSHBVZjVqbyJ9LCJzZXJ2ZXJfZGVsZWdhdGlvbiI6ImV5SjBlWEFpT2lKdFkzQXRjbVV0WkdWc1pXZGhkR2x2Yml0cWQzUWlMQ0poYkdjaU9pSkZaRVJUUVNJc0ltdHBaQ0k2SW5KdmIzUXRhMmxrSW4wLmV5SnBjM01pT2lKa2FXUTZaWGhoYlhCc1pUcHpaWEoyWlhJaUxDSnBZWFFpT2pFM01EQXdNREF4TURBc0ltNWlaaUk2TVRjd01EQXdNREV3TUN3aVpYaHdJam94TnpBd01EQXdOREF3TENKcWRHa2lPaUp5YjI5MExXdHBaQ05IV21sNk5rcEVOMnhyT0dsQ1pVdEJjRnBuTnpNeVoxWlBlR1EyZVdac1ZYWjJSRzFvVmkxeloxRnpJekVpTENKaGRXUWlPaUoyWlhKcFptbGxjaTB4SWl3aWJXTndYM0psWDNCeWIyWnBiR1VpT2lKdFkzQXRjbVV0YUhSMGNDMTJNU0lzSW0xamNGOXlaVjloZFdScFpXNWpaVjlvWVhOb0lqb2lZWFZrTFhOamIzQmxMVEVpTENKdFkzQmZjbVZmYzJWeWRtVnlYM05wWjI1bGNpSTZJbk5sY25abGNqcGxlR0Z0Y0d4bExtTnZiVHBrYVdRbE0wRmxlR0Z0Y0d4bEpUTkJjMlZ5ZG1WeU9rZGFhWG8yU2tRM2JHczRhVUpsUzBGd1dtYzNNekpuVms5NFpEWjVabXhWZG5aRWJXaFdMWE5uVVhNaUxDSnRZM0JmY21WZmEyVjVYM1Z6WlNJNkluSmxjM0J2Ym5ObExYTnBaMjVwYm1jaUxDSmtaV3hsWjJGMFpXUmZhMmxrSWpvaVIxcHBlalpLUkRkc2F6aHBRbVZMUVhCYVp6Y3pNbWRXVDNoa05ubG1iRlYyZGtSdGFGWXRjMmRSY3lJc0ltbHpjM1ZsY2w5cmFXUWlPaUp5YjI5MExXdHBaQ0lzSW5SeWRYTjBYMlZ3YjJOb0lqb2laWEJ2WTJndE1TSXNJbU51WmlJNmV5SnFkMnNpT25zaWEzUjVJam9pVDB0UUlpd2lZM0oySWpvaVJXUXlOVFV4T1NJc0ltdHBaQ0k2SWtkYWFYbzJTa1EzYkdzNGFVSmxTMEZ3V21jM016Sm5Wazk0WkRaNVpteFZkblpFYldoV0xYTm5VWE1pTENKNElqb2lNV2s0UW1Gb056bElhMTltWlZRMk1FeE9hRVZqWlVjMmJuZDZkMVJTUzBoMFkzaDRPV2haYjJaTVp5SjlmWDAuaFpCWHdTb2tsSVBhLV9sS05RZHVQX250RzBJR29kelBXYk1ROFM2WG44MGRiZmlRcTVlV004QU55VE43VUJ1bWd5NVZIekI5Wm42REJvdnRQU0w4RFEiLCJzZXJ2ZXJfc2lnbmVyIjp7ImtleWlkIjoiR1ppejZKRDdsazhpQmVLQXBaZzczMmdWT3hkNnlmbFV2dkRtaFYtc2dRcyIsInJvbGUiOiJzZXJ2ZXIiLCJzdWJqZWN0IjoiZGlkOmV4YW1wbGU6c2VydmVyIiwidHJ1c3RfZG9tYWluIjoiZXhhbXBsZS5jb20ifX19LCJpZCI6MSwianNvbnJwYyI6IjIuMCIsInJlc3VsdCI6eyJyZXN1bHRUeXBlIjoiY29tLmV4YW1wbGUvZGVmZXJyZWQifX0",
+    "headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:vweydmz1Af1iF3T68zRbgXGzoBgMeCWAi5WH7ZWLTa4=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re-response=(\"@status\" \"content-digest\" \"content-type\" \"@method\";req \"@target-uri\";req \"content-digest\";req \"content-type\";req);created=1700000100;expires=1700000400;keyid=\"GZiz6JD7lk8iBeKApZg732gVOxd6yflUvvDmhV-sgQs\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re-response=:d639m881WBfwljMvu/0eVywZniG2sTKFUhBAxJl7Xvk2gHti40NL3Nn8UpTwHFy69NbpMiAsdE3riP4dNjBiAA==:"
+      ]
+    ],
+    "request_body_b64url": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IjRtSXRXMzloTHV1TUQwYWN6eVZuNGVBRFRHaTdrZWExa2FtRDVKcUhyOEEifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoidmVyaWZpZXItMSIsInJvdXRlIjoiYSIsInRhcmdldF91cmkiOiJodHRwczovL21jcC5leGFtcGxlLmNvbS9tY3A_cm91dGU9YSJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnt9LCJuYW1lIjoiY29uZmlybV9hY3Rpb24ifX0",
+    "request_evidence_digest_alg": "sha256",
+    "request_evidence_digest_value": "m8P8qyul7IwoFSn-unPZE7-TMUj8EFuzPjjfHpUf5jo",
+    "request_headers": [
+      [
+        "Content-Type",
+        "application/json"
+      ],
+      [
+        "Authorization",
+        "Bearer access-token-xyz"
+      ],
+      [
+        "Content-Digest",
+        "sha-256=:q5AEB/KsnQAWTYBm3oG9yaS0spTTAcWSB4nc1uXxu7k=:"
+      ],
+      [
+        "Signature-Input",
+        "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-sdk-unrecognized\";keyid=\"client-key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+      ],
+      [
+        "Signature",
+        "mcp-re=:3bZucAjfC+Fm74IZmiXdVH6ExUrh6YcN/ntAnInDoya7+RTO38w4t3bTORqtBi1TUGAUJdvyUMTRhtmvYHz2Cw==:"
+      ]
+    ],
+    "request_method": "POST",
+    "request_target_uri": "https://mcp.example.com/mcp?route=a",
+    "status": 200
+  },
+  "expected_audience_hash": "aud-scope-1",
+  "expires": 1700000300,
+  "issuer": {
+    "key_id": "root-kid",
+    "pubkey_b64url": "iEuIV_TqoWE8YVBNs01L6vNGUXoOMd483dTZtCAdnQs",
+    "role": "server",
+    "subject": "did:example:server",
+    "trust_domain": "example.com"
+  },
+  "key_id": "client-key-1",
+  "max_clock_skew": 60,
+  "nonce": "nonce-sdk-unrecognized",
+  "now": 1700000100,
+  "route": "a",
+  "signer_id": "did:example:host-a",
+  "target_uri": "https://mcp.example.com/mcp?route=a"
+}

@@ -33,9 +33,25 @@ or wire-format compatibility while the design lines from
   (#426). Confirmed against the published specification: the SEP-2322
   `resultType: "input_required"` snake_case discriminator, `complete` as the
   terminal value, and the requirement that clients read an *absent* `resultType`
-  as complete. One divergence found and tracked separately (#495): the final text
-  requires an unrecognized `resultType` to be treated as invalid, while MCP-RE
-  reads it as terminal.
+  as complete.
+- **An unrecognized `resultType` fails closed instead of reading as a completed
+  call** (#495). MCP 2026-07-28 closes the set: unrecognized MUST be considered
+  invalid. Classification gains a third outcome — the danger is specific, not
+  theoretical, because an extension's *non-terminal* result read as terminal ends
+  the exchange, closes the correlation entry, signs no answer leg, and hands a
+  continuation to the application as a finished tool result.
+
+  The PEP refuses to sign such a reply (before signing, and whether or not the
+  deployment runs MRTR); chain reconstruction labels the record incomplete **at
+  that hop** rather than guessing whether the turn ended; both SDKs refuse one
+  arriving from a non-conformant server. Wire code
+  `mcp-re.continuation_type_unsupported` — the same frozen token an unrecognized
+  continuation `type` already used, for the same reason. Vector h51, and a
+  recorded fixture replayed in both SDKs.
+
+  Found by this: the reference inner backend
+  (`tools/fastmcp_inner_backend.py`) emitted `resultType: "completed"`. The
+  specification's terminal value is `complete`.
 
 ## [0.14.0] — 2026-07-28
 

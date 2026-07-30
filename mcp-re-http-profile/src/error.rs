@@ -88,6 +88,15 @@ pub enum HttpProfileError {
     /// An MRTR continuation handle does not match its mandated signature-base
     /// digest (MCPRE-97). Maps to `mcp-re.continuation_binding_failed`.
     ContinuationBindingFailed,
+    /// A verified `result` declares a `resultType` this reader does not recognize
+    /// (MCPRE-495). MCP 2026-07-28 closes the set: unrecognized MUST be considered
+    /// invalid. Reading it as terminal instead would end an exchange whose
+    /// continuation semantics are unknown, so it fails closed — the same posture
+    /// [`McpReError::ContinuationTypeUnsupported`] takes for an unrecognized
+    /// continuation `type`, and it maps to that same frozen token.
+    ///
+    /// [`McpReError::ContinuationTypeUnsupported`]: mcp_re_core::McpReError::ContinuationTypeUnsupported
+    UnrecognizedResultType,
     /// The covered `Mcp-Method` transport header disagrees with the JSON-RPC
     /// `method` in the covered body (#415 rev 2 §4.1, MCPRE-425). Both are
     /// protected, so this is the signer stating two different methods — evidence
@@ -241,6 +250,11 @@ impl HttpProfileError {
             | HttpProfileError::ReceiptInclusionInvalid => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
+            // An unrecognized `resultType` and an unrecognized continuation `type`
+            // are one fact: the message declares a continuation model this reader
+            // does not implement, so it cannot be classified and must not be
+            // treated as an ordinary terminal answer.
+            HttpProfileError::UnrecognizedResultType => "mcp-re.continuation_type_unsupported",
             // Delegated signing-key attestation (ADR-MCPRE-052 §8).
             HttpProfileError::DelegationCredentialMissing => "mcp-re.delegation_credential_missing",
             HttpProfileError::DelegationCredentialInvalid => "mcp-re.delegation_credential_invalid",

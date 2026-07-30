@@ -82,7 +82,7 @@ def _confirm_action_result(params: dict) -> dict:
     if "inputResponses" in params or "requestState" in params:
         responses = params.get("inputResponses") or {}
         return {
-            "resultType": "completed",
+            "resultType": "complete",
             "confirmed": bool(responses.get("confirm")),
             "content": [{"type": "text", "text": "action confirmed"}],
             "isError": False,

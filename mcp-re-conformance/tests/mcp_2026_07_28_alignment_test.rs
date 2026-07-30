@@ -83,9 +83,12 @@ fn mrtr_input_required_discriminator_matches_sep_2322() {
     );
 
     // camelCase is NOT the discriminator: if a later revision were to switch,
-    // this must fail rather than quietly accept both spellings.
+    // this must fail rather than quietly accept both spellings. It is also not
+    // terminal — an unrecognized value is invalid (#495), and a spelling that
+    // differs from the real discriminator by case alone is the last thing that
+    // should read as a completed call.
     let camel = serde_json::json!({ "resultType": "inputRequired" });
-    assert_eq!(classify_result(Some(&camel)), ResultClass::Terminal);
+    assert_eq!(classify_result(Some(&camel)), ResultClass::Unrecognized);
 
     // An absent resultType is terminal, which the final text requires of clients
     // for backward compatibility with revisions that predate the field: "clients
@@ -97,14 +100,19 @@ fn mrtr_input_required_discriminator_matches_sep_2322() {
     assert_eq!(classify_result(None), ResultClass::Terminal);
 }
 
-/// `complete` is the final text's terminal discriminator, and MCP-RE reads it as
-/// terminal. Unrecognized values are a separate question the final text answers
-/// differently from this implementation — see #495.
+/// `complete` is the final text's terminal discriminator, and an unrecognized
+/// value is invalid rather than terminal: "a `resultType` of any value
+/// unrecognized by the client MUST be considered invalid" (#495).
 #[test]
-fn the_complete_discriminator_is_terminal() {
+fn the_recognized_result_types_are_the_two_the_core_protocol_defines() {
     use mcp_re_client_core::classify_result;
     use mcp_re_client_core::ResultClass;
 
     let terminal = serde_json::json!({ "resultType": "complete" });
     assert_eq!(classify_result(Some(&terminal)), ResultClass::Terminal);
+
+    // An extension MAY define more, but only ones the client advertises support
+    // for. MCP-RE advertises none, so an extension value is unrecognized here.
+    let extension = serde_json::json!({ "resultType": "com.example/deferred" });
+    assert_eq!(classify_result(Some(&extension)), ResultClass::Unrecognized);
 }
