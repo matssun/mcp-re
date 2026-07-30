@@ -22,7 +22,7 @@ dependencies = []
 # ClientSession consumes anyio streams of parsed `SessionMessage` objects, so JSON-RPC is
 # serialized inside the transport and that is the only byte-exact place to sign. A major
 # bump can move that seam, so the range is capped rather than open-ended (#413).
-mcp = ["mcp>=2.0.0,<3.0"]
+mcp = ["mcp>=1.16,<2.0"]
 # dev pulls in `mcp` (and its `anyio`) so the transport-adapter tests run.
 dev = ["pytest>=9.1.1", "pytest-cov>=7.1.0", "maturin>=1.5,<2.0", "anyio>=4", "mcp>=1.16,<2.0"]
 
