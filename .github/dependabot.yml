@@ -119,6 +119,20 @@ updates:
     groups:
       pip-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # The upstream MCP SDK's MAJOR version fixes the protocol version the client
+      # advertises (1.x -> 2025-11-25, 2.0 -> 2026-07-28), and that version is part
+      # of the initialize bytes pinned by sdk/fixtures/delegated_response_replay.json
+      # — a fixture SHARED with the TypeScript SDK, which is capped
+      # `@modelcontextprotocol/sdk >=1.16.0 <2.0.0`. Bumping one SDK's major alone
+      # makes the two speak different protocol generations, and the only way to make
+      # the moved side pass is to re-record the shared fixture, which breaks the
+      # other. PR #469 did exactly this and cost 33 test failures on main.
+      #
+      # Both SDKs move to MCP 2.0 together, with the fixture re-recorded in the same
+      # change. Tracked in #479; drop this entry as part of it.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
 
   # Workflow actions. These are currently referenced by moving major tags
   # (actions/checkout@v4, ...), so this is what keeps them current.
