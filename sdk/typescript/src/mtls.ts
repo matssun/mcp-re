@@ -199,24 +199,30 @@ export function mtlsPoster(config: McpReConfig, options: MtlsOptions): Poster {
         timeout: timeoutMs,
       });
 
-      // `setHeader` refuses a CR/LF in a value, so a header that would split the request
-      // into two never reaches the socket.
-      try {
-        for (const { key, value } of headers) req.setHeader(key, value);
-      } catch (e) {
-        req.destroy();
-        reject(new MtlsTransportError(`refusing to emit a malformed header: ${String(e)}`));
-        return;
-      }
-
+      // Registered BEFORE anything can destroy the request. `destroy()` emits `error` on
+      // the next tick, and a ClientRequest with no `error` listener throws that as an
+      // unhandled exception — taking down the host process for what is, here, a refusal
+      // this poster has already reported by rejecting.
       req.on("timeout", () => {
         req.destroy(new MtlsTransportError(`the exchange timed out after ${timeoutMs}ms`));
       });
       req.on("error", (e) => {
         // A handshake rejection — untrusted chain, wrong identity, expired certificate —
-        // arrives here, as does a reset or a timeout. All are failed channels.
+        // arrives here, as does a reset or a timeout. All are failed channels. Rejecting
+        // an already-settled promise is a no-op, which is what makes it safe to also
+        // reject at the throw sites below.
         reject(e instanceof MtlsTransportError ? e : new MtlsTransportError(`the connection failed: ${e.message}`));
       });
+
+      // `setHeader` refuses a CR/LF in a value, so a header that would split the request
+      // into two never reaches the socket.
+      try {
+        for (const { key, value } of headers) req.setHeader(key, value);
+      } catch (e) {
+        reject(new MtlsTransportError(`refusing to emit a malformed header: ${String(e)}`));
+        req.destroy();
+        return;
+      }
 
       req.on("response", (res) => {
         const chunks: Buffer[] = [];
