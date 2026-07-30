@@ -3,4 +3,4 @@
 # implementation independent of the Rust `ed25519-dalek` the corpus is signed
 # with, so agreement is a genuine cross-implementation check. Pin exactly — the
 # gate must be deterministic.
-cryptography==48.0.1
+cryptography==49.0.0
