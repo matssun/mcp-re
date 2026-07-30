@@ -60,7 +60,7 @@ jobs:
     name: cargo build + test (1.97.1)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # JCS vocabulary firewall (D1 of the active-profile/legacy-quarantine note):
       # forward-design docs must not frame a live "object profile + HTTP profile"
@@ -203,7 +203,7 @@ jobs:
     # signature verifies under the Rust verifier. No external validation, no
     # merge; this gate is required before full-profile parity is declared green.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -257,7 +257,7 @@ jobs:
     # and the *_e2e_test suites self-skip. This job exercises the feature-gated
     # UNIT tests + adapter compilation only.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cryptoki-sys builds its FFI bindings with libclang (see the `cargo` job).
       - name: System build dependencies
@@ -321,7 +321,7 @@ jobs:
     # Runs on Linux so the platform-gated crates (seccompiler, landlock) compile
     # (they are cfg'd out on macOS); this is also the canonical hermetic target.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The FFI closure (cryptoki-sys) builds bindings with libclang, same as the
       # cargo jobs; install it so the Bazel build links on a clean runner.
@@ -332,7 +332,7 @@ jobs:
       # the gazelle_rust Go binary, rules_go/gazelle). Keyed on the module lock +
       # Cargo lock so a dependency change busts it.
       - name: Cache Bazel
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/bazel
@@ -364,7 +364,7 @@ jobs:
       run:
         working-directory: sdk/python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -435,7 +435,7 @@ jobs:
       run:
         working-directory: sdk/typescript
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

@@ -1445,7 +1445,7 @@ fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) 
 /// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 fn rotation_jitter() -> u64 {
     let mut b = [0u8; 8];
-    match getrandom::getrandom(&mut b) {
+    match getrandom::fill(&mut b) {
         Ok(()) => u64::from_le_bytes(b),
         Err(_) => 0,
     }

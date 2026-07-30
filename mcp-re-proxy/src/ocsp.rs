@@ -832,7 +832,7 @@ pub fn build_cert_id(leaf_der: &[u8], issuer_der: &[u8]) -> Result<CertId, OcspE
 /// platform RNG is unavailable rather than sending a predictable nonce.
 fn random_nonce() -> Result<Vec<u8>, OcspError> {
     let mut bytes = vec![0u8; OCSP_NONCE_LEN];
-    getrandom::getrandom(&mut bytes)
+    getrandom::fill(&mut bytes)
         .map_err(|e| OcspError::BuildRequest(format!("nonce CSPRNG: {e}")))?;
     Ok(bytes)
 }

@@ -23,7 +23,7 @@ crate-type = ["cdylib"]
 [dependencies]
 # Cryptoki C-ABI type definitions (CK_FUNCTION_LIST, CK_ATTRIBUTE, constants). The
 # SAME crate the client binds, so the function-list ABI matches by construction.
-cryptoki-sys = "0.1.8"
+cryptoki-sys = "0.5.0"
 # Deterministic in-memory Ed25519 signing (RustCrypto — no custom crypto). Keys are
 # seeded from SHA-256(label || id) so a public point read off the mock always matches
 # the signature the mock produces, across re-initialisations.

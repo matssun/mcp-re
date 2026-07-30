@@ -68,8 +68,7 @@ impl NonceSource for SystemNonceSource {
         // considered and rejected (it would let a caller paper over the one
         // failure mode that must never be recovered from). Deterministic tests
         // inject the seeded source and never reach this path.
-        getrandom::getrandom(out)
-            .expect("OS CSPRNG (getrandom) must be available to sign requests");
+        getrandom::fill(out).expect("OS CSPRNG (getrandom) must be available to sign requests");
     }
 }
 

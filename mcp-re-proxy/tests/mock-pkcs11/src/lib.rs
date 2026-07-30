@@ -60,10 +60,10 @@ use cryptoki_sys::CK_SLOT_ID;
 use cryptoki_sys::CK_ULONG;
 use cryptoki_sys::CK_USER_TYPE;
 use cryptoki_sys::CK_VERSION;
-use cryptoki_sys::_CK_ATTRIBUTE;
-use cryptoki_sys::_CK_FUNCTION_LIST;
-use cryptoki_sys::_CK_MECHANISM;
-use cryptoki_sys::_CK_TOKEN_INFO;
+use cryptoki_sys::CK_ATTRIBUTE;
+use cryptoki_sys::CK_FUNCTION_LIST;
+use cryptoki_sys::CK_MECHANISM;
+use cryptoki_sys::CK_TOKEN_INFO;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use sha2::Digest;
@@ -197,13 +197,13 @@ fn der_octet_string(point: &[u8]) -> Vec<u8> {
 
 /// Leaked, process-lifetime function list. `C_GetFunctionList` hands back its
 /// address on every call.
-fn function_list_ptr() -> *mut _CK_FUNCTION_LIST {
+fn function_list_ptr() -> *mut CK_FUNCTION_LIST {
     static LIST: OnceLock<usize> = OnceLock::new();
     let addr = *LIST.get_or_init(|| {
-        // SAFETY: `_CK_FUNCTION_LIST` is all `Option<fn>` (null == None) plus a
+        // SAFETY: `CK_FUNCTION_LIST` is all `Option<fn>` (null == None) plus a
         // `CK_VERSION` (two bytes) — an all-zero bit pattern is a valid, fully-NULL
         // function list. We then fill in only the slots this mock implements.
-        let mut list: _CK_FUNCTION_LIST = unsafe { std::mem::zeroed() };
+        let mut list: CK_FUNCTION_LIST = unsafe { std::mem::zeroed() };
         list.version = CK_VERSION { major: 2, minor: 40 };
         list.C_Initialize = Some(c_initialize);
         list.C_Finalize = Some(c_finalize);
@@ -221,7 +221,7 @@ fn function_list_ptr() -> *mut _CK_FUNCTION_LIST {
         list.C_GetAttributeValue = Some(c_get_attribute_value);
         Box::into_raw(Box::new(list)) as usize
     });
-    addr as *mut _CK_FUNCTION_LIST
+    addr as *mut CK_FUNCTION_LIST
 }
 
 /// The one symbol a PKCS#11 module MUST export. `#[no_mangle] extern "C"`.
@@ -230,7 +230,7 @@ fn function_list_ptr() -> *mut _CK_FUNCTION_LIST {
 /// `pp_list` must be a valid, writable `*mut *mut CK_FUNCTION_LIST` (the loader's
 /// out-parameter), per the Cryptoki ABI.
 #[no_mangle]
-pub unsafe extern "C" fn C_GetFunctionList(pp_list: *mut *mut _CK_FUNCTION_LIST) -> CK_RV {
+pub unsafe extern "C" fn C_GetFunctionList(pp_list: *mut *mut CK_FUNCTION_LIST) -> CK_RV {
     if pp_list.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn C_GetFunctionList(pp_list: *mut *mut _CK_FUNCTION_LIST)
 }
 
 /// Function-list slot variant of the above (same behaviour).
-unsafe extern "C" fn c_get_function_list(pp_list: *mut *mut _CK_FUNCTION_LIST) -> CK_RV {
+unsafe extern "C" fn c_get_function_list(pp_list: *mut *mut CK_FUNCTION_LIST) -> CK_RV {
     C_GetFunctionList(pp_list)
 }
 
@@ -277,7 +277,7 @@ unsafe extern "C" fn c_get_slot_list(
     CKR_OK
 }
 
-unsafe extern "C" fn c_get_token_info(slot: CK_SLOT_ID, info: *mut _CK_TOKEN_INFO) -> CK_RV {
+unsafe extern "C" fn c_get_token_info(slot: CK_SLOT_ID, info: *mut CK_TOKEN_INFO) -> CK_RV {
     if slot != SLOT_ID {
         return CKR_SLOT_ID_INVALID;
     }
@@ -290,7 +290,7 @@ unsafe extern "C" fn c_get_token_info(slot: CK_SLOT_ID, info: *mut _CK_TOKEN_INF
     };
     // Zero the whole struct, then write the space-padded 32-byte label (the client
     // trims trailing spaces). Other fields are irrelevant to the client.
-    ptr::write_bytes(info as *mut u8, 0, std::mem::size_of::<_CK_TOKEN_INFO>());
+    ptr::write_bytes(info as *mut u8, 0, std::mem::size_of::<CK_TOKEN_INFO>());
     let mut label = [b' '; 32];
     let bytes = state.token_label.as_bytes();
     let n = bytes.len().min(32);
@@ -350,7 +350,7 @@ unsafe extern "C" fn c_login(
 
 unsafe extern "C" fn c_find_objects_init(
     session: CK_SESSION_HANDLE,
-    templ: *mut _CK_ATTRIBUTE,
+    templ: *mut CK_ATTRIBUTE,
     count: c_ulong,
 ) -> CK_RV {
     let mut guard = STATE.lock().expect("mock state lock");
@@ -359,7 +359,7 @@ unsafe extern "C" fn c_find_objects_init(
     };
 
     // Read the (class, key_type, label) selector out of the template.
-    let attrs: &[_CK_ATTRIBUTE] = if templ.is_null() || count == 0 {
+    let attrs: &[CK_ATTRIBUTE] = if templ.is_null() || count == 0 {
         &[]
     } else {
         std::slice::from_raw_parts(templ, count as usize)
@@ -448,7 +448,7 @@ unsafe extern "C" fn c_find_objects_final(session: CK_SESSION_HANDLE) -> CK_RV {
 
 unsafe extern "C" fn c_sign_init(
     session: CK_SESSION_HANDLE,
-    mechanism: *mut _CK_MECHANISM,
+    mechanism: *mut CK_MECHANISM,
     key: CK_OBJECT_HANDLE,
 ) -> CK_RV {
     if mechanism.is_null() {
@@ -525,7 +525,7 @@ unsafe extern "C" fn c_sign(
 unsafe extern "C" fn c_get_attribute_value(
     _session: CK_SESSION_HANDLE,
     object: CK_OBJECT_HANDLE,
-    templ: *mut _CK_ATTRIBUTE,
+    templ: *mut CK_ATTRIBUTE,
     count: c_ulong,
 ) -> CK_RV {
     if templ.is_null() {
@@ -538,7 +538,7 @@ unsafe extern "C" fn c_get_attribute_value(
     let Some(obj) = state.object(object) else {
         return CKR_OBJECT_HANDLE_INVALID;
     };
-    let attrs: &mut [_CK_ATTRIBUTE] = std::slice::from_raw_parts_mut(templ, count as usize);
+    let attrs: &mut [CK_ATTRIBUTE] = std::slice::from_raw_parts_mut(templ, count as usize);
     for attr in attrs {
         // The client only ever asks for CKA_EC_POINT; anything else is unsupported.
         if attr.type_ as CK_ATTRIBUTE_TYPE != CKA_EC_POINT {

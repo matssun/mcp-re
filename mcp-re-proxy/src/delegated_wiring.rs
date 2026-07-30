@@ -143,7 +143,7 @@ pub fn build_delegated_signing(
     // recoverable from a core dump, a swapped page, or a later stack disclosure.
     let factory: BoxedKeyFactory = Box::new(|| {
         let mut seed: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        getrandom::getrandom(&mut *seed).expect("OS CSPRNG for delegated key seed");
+        getrandom::fill(&mut *seed).expect("OS CSPRNG for delegated key seed");
         SigningKey::from_seed_bytes(&seed)
     });
 

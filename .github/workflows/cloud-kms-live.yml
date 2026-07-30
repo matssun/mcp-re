@@ -126,7 +126,7 @@ jobs:
       # empty by default => the real AWS endpoint. No emulator is used (none is faithful).
       MCP_RE_AWS_KMS_ENDPOINT: ${{ secrets.MCP_RE_AWS_KMS_ENDPOINT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Why this is nightly-real-only
         run: |
           echo "::notice title=aws-kms nightly-real-only::Running against a REAL AWS KMS endpoint because no faithful LocalStack/emulator supports ECC_NIST_EDWARDS25519 + ED25519_SHA_512/RAW."
@@ -151,7 +151,7 @@ jobs:
       # Optional endpoint override (real Cloud KMS by default; no faithful emulator).
       MCP_RE_GCP_KMS_ENDPOINT: ${{ secrets.MCP_RE_GCP_KMS_ENDPOINT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Why this is nightly-real-only
         run: |
           echo "::notice title=gcp-kms nightly-real-only::Running against a REAL Cloud KMS endpoint because no faithful emulator supports EC_SIGN_ED25519 asymmetricSign."

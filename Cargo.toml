@@ -73,7 +73,7 @@ zeroize = "1"
 # source. Used ONLY by mcp-re-host (the injected NonceSource trait keeps tests
 # deterministic). A thin OS-entropy wrapper — NO networking/async runtime, so
 # mcp-re-host stays transport-free. mcp-re-core MUST NOT reference it.
-getrandom = "0.2"
+getrandom = "0.4"
 # MCPS-037 (ADR-MCPS-016): Unix setrlimit(2) + RLIMIT_* constants for inner-server
 # resource hardening (NOT sandboxing). Used ONLY by mcp-re-proxy's inner-launch
 # layer, behind #[cfg(unix)], inside a pre_exec hook (async-signal-safe:
@@ -101,6 +101,10 @@ x509-parser = { version = "0.18", features = ["verify"] }
 asn1-rs = "0.7"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
+# HELD AT 0.13 pending the 0.14 migration, tracked separately. 0.14 replaced
+# `signed_by(&key, &issuer_cert, &issuer_key)` with an `Issuer` type across 26 call
+# sites in the demo fixtures and mTLS suites. That migration is a change to the
+# fixture helpers in its own right and does not belong in a dependency-policy PR.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 # Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
 # fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
@@ -117,7 +121,7 @@ time = { version = "0.3", default-features = false, features = ["std"] }
 # mcp-re-proxy/src/pkcs11_native.rs, rather than the high-level `cryptoki` crate
 # which transitively pulls the UNMAINTAINED `paste` (RUSTSEC-2024-0436) and fails
 # the cargo-deny gate. Pinned to the exact version already in Cargo.lock.
-cryptoki-sys = "0.1.8"
+cryptoki-sys = "0.5.0"
 # Shared atomic ReplayCache backend (sync redis; default-features off = no aio/tokio).
 # `tls-rustls` is what makes a `rediss://` URL usable at all: the replay tier and the
 # trust-epoch counter carry admitted nonces and the epoch that drives response
@@ -140,6 +144,12 @@ ureq = { version = "2", default-features = false }
 # `ureq` client (its `tls` feature is enabled only in mcp-re-proxy under that feature).
 # 0.13 is the `digest 0.11` generation — moves in lockstep with sha2/dalek above.
 hmac = "0.13"
+# der/spki/x509-cert are PINNED BY x509-ocsp 0.2.1 (the newest release), which
+# requires der 0.7.8 / spki 0.7.2 / x509-cert 0.2.4. ocsp.rs builds der, spki and
+# x509-cert values and passes them straight into x509_ocsp's OcspRequestBuilder,
+# CertId and BasicOcspResponse, so a version split across that boundary is a hard
+# TYPE error, not a duplicate-version warning. der 0.8 / x509-cert 0.3 cannot be
+# adopted while OCSP exists; //.github/dependabot.yml ignores both.
 der = "0.7"
 spki = "0.7"
 x509-cert = "0.2"
