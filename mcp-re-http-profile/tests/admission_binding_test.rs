@@ -100,9 +100,11 @@ fn issue(c: &AdmissionClaims) -> String {
     .expect("issue")
 }
 
-/// Sign a request whose evidence block carries an admission binding. The binding
-/// is protected because `content-digest` covers the body it sits in.
-fn signed_request_with_admission(binding: Option<AdmissionBinding>) -> HttpRequest {
+/// Sign a request whose evidence block carries admission evidence — the binding
+/// AND the assertion it commits to, which travel together or not at all. Both are
+/// protected because `content-digest` covers the body they sit in.
+fn signed_request_with_admission(claims: Option<&AdmissionClaims>) -> HttpRequest {
+    let admission = claims.map(|c| (AdmissionBinding::opaque_from(c), issue(c)));
     let mut req = HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
@@ -121,7 +123,8 @@ fn signed_request_with_admission(binding: Option<AdmissionBinding>) -> HttpReque
             b"tok",
         )],
         continuation: None,
-        admission: binding,
+        admission: admission.as_ref().map(|(b, _)| b.clone()),
+        admission_assertion: admission.as_ref().map(|(_, jws)| jws.clone()),
     };
     sign_request_full(
         &mut req,
@@ -172,7 +175,7 @@ fn verify_and_check(
 #[test]
 fn a_bound_current_admitted_call_passes() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
-    let req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
+    let req = signed_request_with_admission(Some(&claims));
     let auth = AuthoritativeAdmission {
         generation: 5,
         status: AdmissionStatus::Admitted,
@@ -192,7 +195,7 @@ fn a_bound_current_admitted_call_passes() {
 #[test]
 fn a_bound_but_stale_generation_is_refused() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
-    let req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
+    let req = signed_request_with_admission(Some(&claims));
     let auth = AuthoritativeAdmission {
         generation: 6,
         status: AdmissionStatus::Admitted,
@@ -214,7 +217,7 @@ fn a_bound_but_stale_generation_is_refused() {
 #[test]
 fn tampering_the_admission_binding_breaks_the_signature() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
-    let mut req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
+    let mut req = signed_request_with_admission(Some(&claims));
     // Rewrite the bound generation in the signed body.
     let body = String::from_utf8(req.body.clone()).unwrap();
     req.body = body

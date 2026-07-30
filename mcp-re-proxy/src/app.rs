@@ -993,6 +993,79 @@ pub fn run(
         );
     }
 
+    // MCPRE-493: wire the §7 admission-currency gate. Without a source the assertion
+    // and its binding are verified evidence that decides nothing — a call carrying a
+    // fresh, correctly-bound assertion is served even after its workload has been
+    // revoked, because currency is a comparison against state only the deployment can
+    // supply. The CLI has already refused any combination that would leave the gate
+    // enabled but toothless.
+    #[cfg(feature = "redis_replay")]
+    if config.admission != crate::cli::AdmissionKind::Off {
+        let (Some(url), Some(rt)) = (
+            config.admission_redis_url.as_ref(),
+            replay_control_rt.as_ref(),
+        ) else {
+            return Err(
+                "--admission requires --admission-redis-url and the replay control runtime"
+                    .to_string(),
+            );
+        };
+        let source = rt
+            .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
+            .map_err(|e| format!("connect redis admission source: {e}"))?;
+        let kid = config
+            .admission_authority_kid
+            .clone()
+            .ok_or("--admission-authority-kid is required")?;
+        let key = mcp_re_core::VerificationKey::from_b64url(
+            config
+                .admission_authority_pubkey_b64url
+                .as_deref()
+                .ok_or("--admission-authority-pubkey is required")?,
+        )
+        .map_err(|e| format!("--admission-authority-pubkey is not a valid Ed25519 key: {e:?}"))?;
+        let enforcement = match config.admission {
+            crate::cli::AdmissionKind::Required => {
+                crate::http_profile_serve::AdmissionEnforcement::Required
+            }
+            _ => crate::http_profile_serve::AdmissionEnforcement::Optional,
+        };
+        eprintln!(
+            "mcp-re-proxy: admission currency = {} (authority {kid}, shared record over redis, \
+             degraded {})",
+            match enforcement {
+                crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
+                crate::http_profile_serve::AdmissionEnforcement::Optional => "optional",
+            },
+            if config.admission_allow_degraded {
+                format!("allowed within P={}s", config.admission_degraded_bound_secs)
+            } else {
+                "OFF (an unreachable authority fails closed)".to_string()
+            },
+        );
+        proxy = proxy.with_admission(
+            Arc::new(source),
+            mcp_re_http_profile::AdmissionPolicy {
+                max_assertion_age: 300,
+                max_clock_skew: config.max_clock_skew,
+                degraded_propagation_bound: config.admission_degraded_bound_secs,
+                allow_degraded_mode: config.admission_allow_degraded,
+            },
+            enforcement,
+            Arc::new(move |presented: &str| (presented == kid).then(|| key.clone())),
+        );
+    }
+    #[cfg(not(feature = "redis_replay"))]
+    if config.admission != crate::cli::AdmissionKind::Off {
+        // Fail closed rather than serve with admission silently disabled: an operator
+        // who asked for it must not get a proxy that quietly does not do it.
+        return Err(
+            "--admission requires a build with the `redis_replay` feature (the \
+                    shared authoritative admission record)"
+                .to_string(),
+        );
+    }
+
     // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
     // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
     // `replay_control_rt` (if any) is handed in so the redis ConnectionManager's

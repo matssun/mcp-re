@@ -178,6 +178,12 @@ pub const MCP_RE_DELEGATION_HEADER: &str = "mcp-re-delegation";
 /// memory/DoS surface, so it is rejected before parsing.
 pub const MAX_DELEGATION_HEADER_LEN: usize = 8192;
 
+/// Hard size bound on the inline admission assertion in the request evidence block
+/// (MCPRE-493), for the same reason and at the same size as the delegation
+/// credential's: both are compact JWSs over a small fixed claim set, and both are
+/// read from an unauthenticated peer before anything about it has been established.
+pub const MAX_ADMISSION_ASSERTION_LEN: usize = 8192;
+
 /// Covered components of a DELEGATED bodyless 202 (§3.4/§424): the bodyless
 /// response set PLUS the delegation-credential header, bound to the request via
 /// the `;req` components. The header's presence in this set is what makes the

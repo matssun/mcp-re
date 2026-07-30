@@ -278,6 +278,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence) {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     let ev = sign_request_full(
         &mut req,

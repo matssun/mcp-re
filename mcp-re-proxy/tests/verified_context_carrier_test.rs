@@ -194,6 +194,7 @@ fn signed_request(nonce: &str, seed_reserved: Option<serde_json::Value>) -> Http
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     sign_request_full(
         &mut req,
@@ -424,6 +425,7 @@ fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     sign_request_full(
         &mut req,

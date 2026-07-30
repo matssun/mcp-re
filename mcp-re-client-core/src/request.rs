@@ -20,6 +20,7 @@
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_request_full_with_signer;
+use mcp_re_http_profile::AdmissionBinding;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::HttpContinuation;
@@ -63,6 +64,11 @@ pub struct RequestSigningInputs {
     /// — e.g. `Authorization: Bearer <token>` whose bytes an OAuth-DPoP artifact
     /// binding digests. Empty by default. Set via [`RequestSigningInputs::with_headers`].
     pub extra_headers: Vec<(String, String)>,
+    /// The §7 admission evidence this call acts under: the binding, plus the
+    /// authority-signed assertion it commits to. Both or neither — a binding the
+    /// verifier cannot check against an assertion enforces nothing. Set via
+    /// [`RequestSigningInputs::with_admission`].
+    pub admission: Option<(AdmissionBinding, String)>,
 }
 
 impl RequestSigningInputs {
@@ -84,6 +90,7 @@ impl RequestSigningInputs {
             expires,
             continuation: None,
             extra_headers: Vec::new(),
+            admission: None,
         }
     }
 
@@ -101,6 +108,24 @@ impl RequestSigningInputs {
         self
     }
 
+    /// Declare the admission this call acts under (#414 §4.3 / #415 §7): the
+    /// binding and the authority-signed assertion it commits to, both inside the
+    /// signed evidence block.
+    ///
+    /// The assertion travels with the call rather than being fetched by the
+    /// verifier, exactly as the delegation credential does on the response side.
+    /// What it proves is what an authority SAID, at a generation; whether that is
+    /// still true is the PEP's currency check, against authoritative state this
+    /// client never sees.
+    pub fn with_admission(
+        mut self,
+        binding: AdmissionBinding,
+        assertion_jws: impl Into<String>,
+    ) -> Self {
+        self.admission = Some((binding, assertion_jws.into()));
+        self
+    }
+
     /// The HTTP-profile request evidence block this input set authors.
     fn evidence_block(&self) -> HttpRequestEvidenceBlock {
         HttpRequestEvidenceBlock {
@@ -108,7 +133,8 @@ impl RequestSigningInputs {
             audience: self.audience.clone(),
             artifact_bindings: self.artifact_bindings.clone(),
             continuation: self.continuation.clone(),
-            admission: None,
+            admission: self.admission.as_ref().map(|(b, _)| b.clone()),
+            admission_assertion: self.admission.as_ref().map(|(_, jws)| jws.clone()),
         }
     }
 }

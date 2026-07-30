@@ -92,6 +92,7 @@ fn block() -> HttpRequestEvidenceBlock {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     }
 }
 fn base_request(body: &[u8]) -> HttpRequest {

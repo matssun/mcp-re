@@ -1425,6 +1425,7 @@ fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlo
         )],
         continuation,
         admission: None,
+        admission_assertion: None,
     }
 }
 

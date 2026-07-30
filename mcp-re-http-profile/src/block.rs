@@ -32,6 +32,7 @@ use crate::ids::EVIDENCE_DIGEST_ALG;
 use crate::ids::EVIDENCE_LABEL_REQUEST;
 use crate::ids::EVIDENCE_LABEL_REQUEST_STATE;
 use crate::ids::EVIDENCE_LABEL_RESPONSE;
+use crate::ids::MAX_ADMISSION_ASSERTION_LEN;
 
 /// The resolved signing-actor identity. Built by the verifier from what the
 /// TrustResolver returned for the presented keyid — role and trusted key
@@ -471,6 +472,22 @@ pub struct HttpRequestEvidenceBlock {
     /// vectors and admission-free deployments are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<crate::admission::AdmissionBinding>,
+    /// The inline admission assertion (compact JOSE/JWS) the binding commits to
+    /// (MCPRE-493).
+    ///
+    /// A sibling of `admission`, protected by the covered `content-digest` exactly
+    /// as it is — the same shape the response block uses for `server_delegation`,
+    /// and for the same reason: an evidence artifact the verifier must have in hand
+    /// travels with the message rather than being fetched. It rides in the BODY, not
+    /// a header, because E-3 admits a new MCP-RE header field only where the message
+    /// shape leaves no alternative (a bodyless 202), and a request has a body.
+    ///
+    /// Without it the binding is uncheckable: the binding commits to a digest of the
+    /// admitted-state the authority attested, so a verifier holding only the binding
+    /// can compare that digest against nothing. `validate` therefore requires the two
+    /// to appear together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_assertion: Option<String>,
 }
 
 impl HttpRequestEvidenceBlock {
@@ -487,6 +504,29 @@ impl HttpRequestEvidenceBlock {
         }
         for b in &self.artifact_bindings {
             b.validate()?;
+        }
+        // Admission is both halves or neither. A binding alone commits to a digest
+        // of state no one here can see, so it cannot be checked; an assertion alone
+        // is an authority's statement bound to no call. Either shape would verify
+        // structurally and enforce nothing, which is worse than being absent —
+        // absent is at least legible as "this deployment does not do admission".
+        match (&self.admission, &self.admission_assertion) {
+            (None, None) => {}
+            (Some(_), Some(jws)) => {
+                if jws.len() > MAX_ADMISSION_ASSERTION_LEN {
+                    // Bounded before parsing: an assertion is a compact JWS over a
+                    // small claim set, and an unbounded value is a parse/memory
+                    // surface reachable pre-trust.
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "admission assertion size",
+                    ));
+                }
+            }
+            _ => {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "admission binding and assertion must appear together",
+                ))
+            }
         }
         Ok(())
     }
@@ -567,6 +607,7 @@ mod tests {
             artifact_bindings: vec![dpop_binding()],
             continuation: None,
             admission: None,
+            admission_assertion: None,
         }
     }
 

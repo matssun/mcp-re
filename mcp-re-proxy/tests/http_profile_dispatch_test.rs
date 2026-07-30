@@ -104,6 +104,7 @@ fn request_block() -> HttpRequestEvidenceBlock {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     }
 }
 

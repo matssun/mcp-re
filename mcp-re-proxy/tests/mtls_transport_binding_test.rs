@@ -233,6 +233,7 @@ fn signed_request_bound_to_cert(bound_cert_der: &[u8]) -> HttpRequest {
         )],
         continuation: None,
         admission: None,
+        admission_assertion: None,
     };
     let mut request = HttpRequest {
         method: "POST".into(),

@@ -88,6 +88,19 @@ pub enum KeySourceKind {
 
 /// Replay-cache backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionKind {
+    /// Admission is not enforced. A call's admission binding, if it carries one, is
+    /// verified evidence that decides nothing — the pre-MCPRE-493 behaviour.
+    Off,
+    /// Enforced when present. For a rollout that has not reached every client yet.
+    Optional,
+    /// Enforced always: a call with no admission evidence is refused. The only
+    /// setting under which "every served call acted under a current admission" is a
+    /// true statement about this deployment.
+    Required,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayKind {
     /// In-memory (lost on restart).
     Memory,
@@ -235,6 +248,31 @@ pub struct Config {
     /// Shared replay-store connection URL (required when `replay == Shared` and the
     /// declared tier is a Redis tier), e.g. `redis://127.0.0.1:6379` (issue #3837).
     pub replay_redis_url: Option<String>,
+    /// MCPRE-493: what a request carrying NO admission evidence means here —
+    /// `off` (admission not enforced at all), `optional`, or `required`. Anything
+    /// but `off` requires an authority to verify assertions against and a source to
+    /// check currency against; a gate with neither would verify nothing.
+    pub admission: AdmissionKind,
+    /// The admission authority's root key id, as named in an assertion's
+    /// `issuer_kid`. A kid never introduces trust: an assertion naming any other
+    /// issuer is refused.
+    pub admission_authority_kid: Option<String>,
+    /// The admission authority's Ed25519 public key, base64url, no padding.
+    pub admission_authority_pubkey_b64url: Option<String>,
+    /// Redis URL of the shared authoritative admission record — the tier a
+    /// revocation is written to and every replica reads. Separate from
+    /// `replay_redis_url` on purpose: admission state and replay state have
+    /// different owners, lifetimes and blast radii, and collapsing them would make
+    /// one outage two.
+    pub admission_redis_url: Option<String>,
+    /// P (seconds): how long a replica may keep serving on the LAST-KNOWN state when
+    /// the authority is unreachable. Meaningful only with
+    /// `admission_allow_degraded`.
+    pub admission_degraded_bound_secs: i64,
+    /// Whether degraded mode is permitted at all. Off by default: an unreachable
+    /// authority fails closed. Enabling it trades a bounded window of stale-admission
+    /// risk for availability, and that is a deployment's call to make explicitly.
+    pub admission_allow_degraded: bool,
     /// MCPS-84 (ADR-MCPS-049 W2): Redis URL for the networked trust-epoch
     /// invalidation source (ADR-021 Tier 3 / `--revocation-tier push`). When set,
     /// the Push tier watches this Redis's monotonic epoch key and flushes the trust
@@ -517,6 +555,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut client_ocsp = OcspKind::Off;
     let mut ocsp_responder_url: Option<String> = None;
     let mut trust_path = None;
+    let mut admission = AdmissionKind::Off;
+    let mut admission_authority_kid: Option<String> = None;
+    let mut admission_authority_pubkey_b64url: Option<String> = None;
+    let mut admission_redis_url: Option<String> = None;
+    let mut admission_degraded_bound_secs: i64 = 0;
+    let mut admission_allow_degraded = false;
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
     let mut replay_redis_url = None;
@@ -794,6 +838,39 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             }
             "--replay-path" => replay_path = Some(value.clone()),
+            "--admission" => {
+                admission = match value.as_str() {
+                    "off" => AdmissionKind::Off,
+                    "optional" => AdmissionKind::Optional,
+                    "required" => AdmissionKind::Required,
+                    other => {
+                        return Err(format!(
+                            "--admission must be off|optional|required, got {other:?}"
+                        ))
+                    }
+                }
+            }
+            "--admission-authority-kid" => admission_authority_kid = Some(value.clone()),
+            "--admission-authority-pubkey" => {
+                admission_authority_pubkey_b64url = Some(value.clone())
+            }
+            "--admission-redis-url" => admission_redis_url = Some(value.clone()),
+            "--admission-degraded-bound-secs" => {
+                admission_degraded_bound_secs = value.parse().map_err(|_| {
+                    format!("--admission-degraded-bound-secs must be an integer, got {value:?}")
+                })?
+            }
+            "--admission-allow-degraded" => {
+                admission_allow_degraded = match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    other => {
+                        return Err(format!(
+                            "--admission-allow-degraded must be true|false, got {other:?}"
+                        ))
+                    }
+                }
+            }
             "--replay-redis-url" => replay_redis_url = Some(value.clone()),
             "--trust-epoch-redis-url" => trust_epoch_redis_url = Some(value.clone()),
             "--trust-epoch-key" => trust_epoch_key = Some(value.clone()),
@@ -1046,6 +1123,46 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
     if replay == ReplayKind::File && replay_path.is_none() {
         return Err("--replay-cache file requires --replay-path".to_string());
+    }
+    // MCPRE-493: enforcing admission needs BOTH an authority to verify assertions
+    // against and a source to check currency against. With neither, the gate would
+    // verify nothing while looking enabled — the most dangerous of the three states,
+    // because the deployment believes it has admission control.
+    if admission != AdmissionKind::Off {
+        if admission_authority_kid.is_none() || admission_authority_pubkey_b64url.is_none() {
+            return Err("--admission optional|required requires \
+                        --admission-authority-kid and --admission-authority-pubkey \
+                        (an assertion is only evidence if the issuer is one this \
+                        deployment trusts)"
+                .to_string());
+        }
+        if admission_redis_url.is_none() {
+            return Err(
+                "--admission optional|required requires --admission-redis-url \
+                        (the shared authoritative record; without it every call fails \
+                        closed on an unreachable authority)"
+                    .to_string(),
+            );
+        }
+    }
+    // A degraded window of zero is not a window: it would fail closed on every
+    // unreachable-authority call while claiming a degraded mode is available.
+    if admission_allow_degraded && admission_degraded_bound_secs <= 0 {
+        return Err("--admission-allow-degraded true requires a positive \
+                    --admission-degraded-bound-secs (P); degraded mode is a BOUNDED \
+                    window, and an unbounded or zero one is not a policy"
+            .to_string());
+    }
+    if admission == AdmissionKind::Off
+        && (admission_redis_url.is_some() || admission_authority_kid.is_some())
+    {
+        // A dangling admission setting reads as "admission is configured" to anyone
+        // auditing the command line, while nothing is enforced.
+        return Err(
+            "--admission-authority-kid / --admission-redis-url are set but \
+                    --admission is off; enable it or remove them"
+                .to_string(),
+        );
     }
     // ADR-MCPS-020: the durability tier is an explicit deployment assertion that
     // determines the horizontal replay-safety claim, so a shared store MUST
@@ -1514,6 +1631,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         trust_path: require(trust_path, "--trust")?,
         replay,
         replay_path,
+        admission,
+        admission_authority_kid,
+        admission_authority_pubkey_b64url,
+        admission_redis_url,
+        admission_degraded_bound_secs,
+        admission_allow_degraded,
         replay_redis_url,
         trust_epoch_redis_url,
         trust_epoch_key,
@@ -2800,6 +2923,123 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    // --- MCPRE-493 admission currency ----------------------------------------
+
+    /// The full set an enforcing deployment must supply.
+    fn admission_args(mode: &str) -> Vec<String> {
+        args(&[
+            "--admission",
+            mode,
+            "--admission-authority-kid",
+            "admission-root-1",
+            "--admission-authority-pubkey",
+            "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            "--admission-redis-url",
+            "redis://127.0.0.1:6379",
+        ])
+    }
+
+    #[test]
+    fn admission_is_off_by_default() {
+        // A deployment that has not asked for admission must not get a gate it did
+        // not configure — and, more importantly, must not believe it has one.
+        let config = parse_args(&minimal_durable()).expect("parses");
+        assert_eq!(config.admission, super::AdmissionKind::Off);
+    }
+
+    #[test]
+    fn enforcing_admission_parses_with_an_authority_and_a_source() {
+        for mode in ["optional", "required"] {
+            let mut a = minimal_durable();
+            a.splice(0..0, admission_args(mode));
+            let config =
+                parse_args(&a).unwrap_or_else(|e| panic!("--admission {mode} must parse: {e}"));
+            assert_ne!(config.admission, super::AdmissionKind::Off);
+            assert!(config.admission_redis_url.is_some());
+        }
+    }
+
+    #[test]
+    fn enforcing_admission_without_an_authority_is_refused() {
+        // The worst of the three states: a gate that looks enabled and verifies
+        // nothing, because no issuer is trusted to have said anything.
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&[
+                "--admission",
+                "required",
+                "--admission-redis-url",
+                "redis://127.0.0.1:6379",
+            ]),
+        );
+        let err = parse_args(&a).expect_err("an authority is required");
+        assert!(err.contains("--admission-authority-kid"), "got: {err}");
+    }
+
+    #[test]
+    fn enforcing_admission_without_a_source_is_refused() {
+        // Currency is a comparison; with nothing to compare against, every call would
+        // fail closed on an unreachable authority and the deployment would look broken
+        // rather than misconfigured.
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&[
+                "--admission",
+                "required",
+                "--admission-authority-kid",
+                "admission-root-1",
+                "--admission-authority-pubkey",
+                "1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            ]),
+        );
+        let err = parse_args(&a).expect_err("a source is required");
+        assert!(err.contains("--admission-redis-url"), "got: {err}");
+    }
+
+    #[test]
+    fn a_dangling_admission_setting_is_refused() {
+        // It reads as "admission is configured" to anyone auditing the command line,
+        // while nothing is enforced.
+        let mut a = minimal_durable();
+        a.splice(
+            0..0,
+            args(&["--admission-redis-url", "redis://127.0.0.1:6379"]),
+        );
+        let err = parse_args(&a).expect_err("a dangling admission setting is refused");
+        assert!(err.contains("--admission is off"), "got: {err}");
+    }
+
+    #[test]
+    fn degraded_mode_requires_a_positive_bound() {
+        // Degraded mode is a BOUNDED window. Zero is not a window — it would fail
+        // closed on every unreachable-authority call while claiming one exists.
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        a.push("--admission-allow-degraded".into());
+        a.push("true".into());
+        let err = parse_args(&a).expect_err("P must be positive");
+        assert!(
+            err.contains("--admission-degraded-bound-secs"),
+            "got: {err}"
+        );
+
+        a.push("--admission-degraded-bound-secs".into());
+        a.push("120".into());
+        let config = parse_args(&a).expect("a bounded degraded window parses");
+        assert!(config.admission_allow_degraded);
+        assert_eq!(config.admission_degraded_bound_secs, 120);
+    }
+
+    #[test]
+    fn an_unknown_admission_mode_is_refused() {
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--admission", "sometimes"]));
+        let err = parse_args(&a).expect_err("the mode set is closed");
+        assert!(err.contains("off|optional|required"), "got: {err}");
     }
 
     // --- §5.1 bounded skew / §4.1 MCP transport contract ----------------------

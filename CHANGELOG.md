@@ -13,6 +13,65 @@ or wire-format compatibility while the design lines from
 ## [Unreleased]
 
 ### Added
+- **The §7 admission-currency check is on the serving path** (#493). ADR-MCPRE-053
+  built the evidence — an authority-signed admission assertion and the binding that
+  ties a call to it — and `check_admission` verified both. Nothing called it: every
+  `admission` reference in the serving path was *replay* or *connection* admission,
+  and no deployment surface referenced it at all. So a call carrying a fresh,
+  correctly-bound assertion was served after its workload had been superseded or
+  revoked, because currency is a comparison against state the deployment never
+  supplied.
+
+  `HttpProfileProxy::with_admission` closes that: the gate runs before replay
+  admission and before the inner backend, because both are irreversible. A superseded
+  generation, a revoked status, an untrusted authority, or an unreachable one now stop
+  the call with the tool never having run.
+
+  Three parts had to exist first, and each is a decision worth naming:
+
+  - **the assertion travels in the request evidence block**, as `server_delegation`
+    does on the response side. E-3 admits a new MCP-RE header field only where the
+    message shape leaves no alternative, and a request has a body. Binding and
+    assertion are both-or-neither: either alone verifies structurally and enforces
+    nothing.
+  - **`AsyncAdmissionSource` distinguishes reachable-and-absent from unreachable.** A
+    healthy authority that has never heard of a workload is a definitive negative;
+    only an outage reaches the §5.2 degraded fork. Collapsing them would serve an
+    unknown caller on its own assertion — admitted by being unknown.
+  - **`RedisAdmissionSource` is a live per-request read, not a cached copy**, so the
+    propagation number means store visibility plus one round trip rather than a cache
+    TTL. A deployment that adds a cache is making a different claim and must measure
+    it separately.
+
+  `--admission off|optional|required` with `--admission-authority-kid/-pubkey`,
+  `--admission-redis-url`, and the degraded pair. Enforcing without an authority or
+  without a source is refused at parse: a gate that looks enabled and verifies nothing
+  is the most dangerous of the three states, because the deployment believes it has
+  admission control.
+- **Cross-replica revocation propagation is MEASURED** (#493) — the fourth
+  ADR-MCPRE-053 acceptance criterion, open since 2026-07-17 and mislabelled as
+  waiting on a live GKE fleet. Two `HttpProfileProxy` replicas share one Redis-backed
+  source and nothing else; an authority revokes on a third connection; the interval to
+  the first refusal on the sibling replica is measured. **Observed: 3ms, on the first
+  request after the revoking write, against a declared P bound of 2000ms.**
+
+  It is a local number and says so: measured against a Redis on the same host, it
+  bounds the mechanism, not a production fleet, which adds network RTT and replication
+  lag. What it establishes is that the mechanism propagates at all, to a replica with
+  no prior knowledge of the workload, and what the floor looks like when the store is
+  not the bottleneck.
+- **`RequestSigningInputs::with_admission`** — clients could not present admission
+  evidence at all; the block builder hardcoded `admission: None`.
+
+### Known gap
+- A degraded-mode serve is **indistinguishable from a live-confirmed one in the audit
+  stream**. `VerifiedAdmission::degraded` carries the difference, and ADR-MCPS-035 §3
+  freezes the success-event allowlist — no third success event without an ADR. Named
+  rather than closed by quietly widening a pinned vocabulary.
+- An admission refusal reaches the client as `mcp-re.actor_binding_failed`: the wire
+  taxonomy is frozen and every code is a core token, so a revoked workload, an unknown
+  one, and an authority outage are indistinguishable to a client and to an operator
+  reading only the code.
 - **Both SDKs drive the ADR-MCPS-047 answer leg** (#419). An `InputRequiredResult`
   pauses a call rather than finishing it, so the transport adapter now signs the
   answer leg over the *verified* handles of the leg before it, posts it, verifies
