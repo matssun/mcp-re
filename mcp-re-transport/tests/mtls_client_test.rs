@@ -51,6 +51,16 @@ use rustls_pki_types::PrivatePkcs8KeyDer;
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
+    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
+    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
+    params: CertificateParams,
+}
+
+impl Ca {
+    /// The issuing state that minted `cert`, paired with the signing key.
+    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+        rcgen::Issuer::from_params(&self.params, &self.key)
+    }
 }
 
 fn make_ca() -> Ca {
@@ -62,7 +72,7 @@ fn make_ca() -> Ca {
         .distinguished_name
         .push(DnType::CommonName, "mcp-re-test-ca");
     let cert = params.self_signed(&key).expect("ca self-signed");
-    Ca { cert, key }
+    Ca { cert, key, params }
 }
 
 /// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
@@ -84,7 +94,7 @@ fn make_leaf(
         ExtendedKeyUsagePurpose::ServerAuth
     }];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
@@ -105,9 +115,7 @@ fn make_server_leaf_with_validity(
     params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
     params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
-        .expect("leaf signed");
+    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (der, key_der)

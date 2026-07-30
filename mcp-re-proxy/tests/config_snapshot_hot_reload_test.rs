@@ -62,6 +62,16 @@ const CLIENT_URI_SAN: &str = "spiffe://example.org/agent-1";
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
+    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
+    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
+    params: CertificateParams,
+}
+
+impl Ca {
+    /// The issuing state that minted `cert`, paired with the signing key.
+    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+        rcgen::Issuer::from_params(&self.params, &self.key)
+    }
 }
 
 fn make_ca(cn: &str) -> Ca {
@@ -71,7 +81,7 @@ fn make_ca(cn: &str) -> Ca {
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.distinguished_name.push(DnType::CommonName, cn);
     let cert = params.self_signed(&key).expect("ca self-signed");
-    Ca { cert, key }
+    Ca { cert, key, params }
 }
 
 fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certificate, KeyPair) {
@@ -85,9 +95,7 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
-    let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
-        .expect("leaf signed");
+    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     (cert, key)
 }
 
