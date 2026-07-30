@@ -14,7 +14,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:Mwu5mIlATGpjv3PrlekwKNODR2K/SE5KzNWHHqJcdGg=:"
+        "sha-256=:eAQBPpQnrBa6HkVOUzWLScCciIPbhCXo638YAtrZDcQ=:"
       ],
       [
         "Signature-Input",
@@ -22,9 +22,9 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:YViFlkuDNG4euxyJEdMwduvzH28tsE3iS1v0pV6hSyAPm3hNGekL0qLSXjpBmljalWoWL3GQaBozNf+OljoWDA==:"
+        "mcp-re-response=:53fsPOr1LJIxuqs2ouqjANYXmLF6GNKjCa0xs06IKK6CeMNV6hHyRV7htYroDSY8rtqlfW9wP8TYxb+d3i9zCA==:"
       ]
     ],
-    "body_utf8": "{\"error\":{\"code\":-32003,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":null,\"jsonrpc\":\"2.0\"}"
+    "body_utf8": "{\"error\":{\"code\":-31000,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":null,\"jsonrpc\":\"2.0\"}"
   }
 }

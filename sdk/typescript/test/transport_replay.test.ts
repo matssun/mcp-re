@@ -281,7 +281,7 @@ describe("McpReHttpTransport replaying a recorded delegated session", () => {
 
     expect(reply).toMatchObject({
       id: 0,
-      error: { code: -32001, message: rejection.expect_wire_code },
+      error: { code: -31001, message: rejection.expect_wire_code },
     });
   });
 });

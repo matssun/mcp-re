@@ -1311,7 +1311,7 @@ fn build_fixtures() -> Vec<Fixture> {
     // h20 — body tamper: an edited human message breaks Content-Digest.
     let mut tampered_rej = bound.clone();
     tampered_rej.body =
-        br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#
+        br#"{"jsonrpc":"2.0","id":1,"error":{"code":-31000,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#
             .to_vec();
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),

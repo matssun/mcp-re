@@ -208,7 +208,7 @@ JSON-RPC error object shape (when surfaced on the wire):
   "jsonrpc": "2.0",
   "id": null,
   "error": {
-    "code": -32003,
+    "code": -31000,
     "message": "mcp-re.<name>",
     "data": {
       "mcp_re_error": "mcp-re.<name>",
@@ -220,7 +220,7 @@ JSON-RPC error object shape (when surfaced on the wire):
 }
 ```
 
-Code `-32003` is used for signature/verification failures; other codes follow a small documented map. `id` is `null` when it cannot be determined.
+Code `-31000` is used for signature/verification failures; other codes follow a small documented map. `id` is `null` when it cannot be determined. It sits outside JSON-RPC's reserved band `-32768..=-32000`, which MCP 2026-07-28 §Error Codes closes to codes for purposes the MCP specification does not define. The authoritative signal is the `mcp-re.*` token, never the integer.
 
 ## 9. Verification pipeline — canonical step order
 

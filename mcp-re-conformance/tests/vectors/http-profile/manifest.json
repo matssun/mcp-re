@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "9da400ae737538951dd1e7a606e54b1b9db2b6ca542b16bb117a0fd188e92e4e",
+  "corpus_digest": "84b1accf7e4965724e26e357bfc4845ecb44f85d32528322880e3c9207a5b7b5",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -185,23 +185,23 @@
     },
     {
       "file": "h18_rejection_bound_valid.json",
-      "sha256": "0b3ea8a27e720da347da5bf6aa8b51901bfd063bbadeb0db2c8e726560d399bf"
+      "sha256": "3c673582547b11721e7bfe16186244836f96a00a326c01a158d6f9dd472ac675"
     },
     {
       "file": "h19_rejection_unbound_valid.json",
-      "sha256": "b18583c4289d65971e2d784aa5d2f1b6424ecfd70dbf69df9ea25f221683ab54"
+      "sha256": "5ff8166785d77954345c9e0d219c0530cec16e2de8e8910a831f1b816d1fa0e8"
     },
     {
       "file": "h20_rejection_body_tamper.json",
-      "sha256": "7c2a1fa71142f20db50a093562402a277b502c6db7b7f6f2147851cb63fb49cb"
+      "sha256": "463ac1243c878ad8478f070577d2fd6e477ac1caef2b2d0dadc52cb91c3d5c65"
     },
     {
       "file": "h21_rejection_splice.json",
-      "sha256": "261c348fd5d15743cd9adf2c080174cfd7c095a1f18339ba06812a5adefcd90e"
+      "sha256": "41863640451e2f2ea9716855ff9d42c46ea07640a4fe14a4afb441346713a6f9"
     },
     {
       "file": "h22_rejection_unsigned.json",
-      "sha256": "ede5569f868d2272e8a994f915eed54adbb57c244c462c0cec1e8b2635e99ed0"
+      "sha256": "a1e0691ad15916168aad2cdcf17413f3d2c330b974fae358f21ab565857a9fab"
     },
     {
       "file": "external_kat.json",

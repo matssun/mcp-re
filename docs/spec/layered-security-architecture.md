@@ -292,6 +292,7 @@ Where current proposals fit in the five-layer decomposition. **Strong** = the pr
 | Proposal | Layer 1 (admission) | Layer 2 (governance) | Layer 3 (runtime evidence) | Layer 4 (interception) | Layer 5 (audit/receipts) |
 |---|---|---|---|---|---|
 | **ATSA (SEP-2809)** | Strong | Partial (clearance includes sensitivity) | — | — | — |
+| **EMA (ext-auth)** | Partial (enterprise IdP knows the server it issues for) | Strong (enterprise-mediated issuance: ID-JAG / OAuth) | — (consumed by layer 3 as a bound artifact, produces none) | Partial (enforced by the EMA-native server, or by a gateway for a private backend) | Partial (IdP audit of issuance, not portable per-call execution receipts) |
 | **MCP-RE** | Partial (mTLS identity verification) | Strong (AuthorizationProfile + Reference Signed Profile) | Strong (per-call sign/verify, freshness, replay, response binding, verified-context) | Strong (mcp-re-proxy) | Partial (primitives, no portable receipt format) |
 | **SEAL / SMCP** | Partial (workload attestation) | Strong (deny-by-default capability scopes) | Partial (request sign/verify, no response binding in v1.0) | Strong (aegis-seal-gateway) | Partial (audit log, not portable receipts) |
 | **ACTA signed receipts** | — | — | — | — | Strong |
@@ -305,6 +306,7 @@ Reading the table:
 - Layers 1 and 5 each have a clear specialist (ATSA, ACTA respectively). Layer 4 has an institutional home (Interceptors WG).
 - Layers 2, 3, and 4 are currently most-fully realized in MCP-RE.
 - SEAL / SMCP and MCP-RE occupy the same architectural slot at layers 2-4 with different design choices (JWT-based session tokens vs. per-call signing); they are alternative implementations of the same layers rather than complementary ones.
+- EMA and MCP-RE are complementary, not alternatives: EMA issues authorization, MCP-RE binds a concrete call to what was issued. Their one overlap is layer 4, and exactly one of them must own enforcement per deployment — see [`ema-composition.md`](ema-composition.md) for the two modes and the "EMA twice" anti-pattern.
 
 ---
 

@@ -63,8 +63,13 @@ const RESPONSE_BLOCK_KEY = "se.syncom/mcp-re.http.response";
 /**
  * JSON-RPC application error code for a delivered MCP-RE failure. The precise cause is
  * always the frozen `mcp-re.*` token in `.message`.
+ *
+ * This envelope is synthesized locally by the transport, never received from the peer, so
+ * MCP 2026-07-28 requires that it cannot be mistaken for a peer error: it sits outside
+ * JSON-RPC's reserved band, and it differs from the proxy's own rejection code (-31000) so
+ * a caller can tell "my transport refused this" from "the peer rejected this".
  */
-const MCP_RE_ERROR_CODE = -32001;
+const MCP_RE_ERROR_CODE = -31001;
 
 /**
  * Widest delegation clock skew a caller may configure, in seconds.

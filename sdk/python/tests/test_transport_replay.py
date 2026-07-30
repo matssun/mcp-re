@@ -315,5 +315,5 @@ async def test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_resul
         reply = await read.receive()
 
     error = reply.message.error
-    assert error.code == -32001
+    assert error.code == -31001
     assert error.message == rejection["expect_wire_code"]
