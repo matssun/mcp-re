@@ -472,6 +472,15 @@ jobs:
       - name: Build native addon + TypeScript
         run: npm run build
 
+      # `napi build` REGENERATES the committed native/binding.js loader. This job
+      # already ran it, but nothing checked whether the tree changed — so binding.js
+      # sat at @napi-rs/cli 3.8.0's output after the pin moved to 3.8.1, and the loader
+      # that shipped documented different NAPI_RS_FORCE_WASI semantics than the pinned
+      # generator produces. Generation is deterministic, so any diff here is real drift:
+      # run `npm run build:native` and commit the result.
+      - name: Generated napi loader is in sync with the pinned CLI
+        run: git diff --exit-code -- native/binding.js native/binding.d.ts
+
       # Coverage is gated at the repo-wide 90% bar by the `thresholds` block in
       # sdk/typescript/vitest.config.ts; the run fails below it.
       - name: Test + coverage gate (vitest)
