@@ -20,6 +20,13 @@ query-filters:
   # - exclude:
   #     id: rust/access-invalid-pointer
 
+  # `rust/cleartext-logging` is deliberately NOT excluded, even though it is the other
+  # recurring FP source here. Its noise is a naming heuristic on the PUBLIC `--tls-cert`
+  # PATH, tainting all of `Config` field-insensitively; its value is catching a secret
+  # reaching stderr, which is the regression class that matters most in a proxy. Those
+  # alerts are triaged per alert instead — the standing verdict, the two FP shapes, and
+  # the dismissal commands are in docs/dev/codeql-triage.md.
+
 # Belt-and-suspenders for the interpreted languages (python/actions): keep test, example,
 # fixture and generated code out of analysis entirely. For Rust/compiled extraction this
 # is best-effort — the query-filter above is what actually clears the Rust test FPs.
