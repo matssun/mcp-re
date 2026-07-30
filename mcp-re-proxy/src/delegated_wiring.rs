@@ -143,7 +143,7 @@ pub fn build_delegated_signing(
     // recoverable from a core dump, a swapped page, or a later stack disclosure.
     let factory: BoxedKeyFactory = Box::new(|| {
         let mut seed: Zeroizing<[u8; 32]> = Zeroizing::new([0u8; 32]);
-        getrandom::getrandom(&mut *seed).expect("OS CSPRNG for delegated key seed");
+        getrandom::fill(&mut *seed).expect("OS CSPRNG for delegated key seed");
         SigningKey::from_seed_bytes(&seed)
     });
 
@@ -171,22 +171,36 @@ mod tests {
     /// reads config FIELDS, not files.
     fn delegated_config() -> Config {
         let args: Vec<String> = [
-            "--bind", "127.0.0.1:8443",
-            "--audience", "verifier-1",
-            "--server-signer", "did:example:server",
-            "--server-key-id", "root-kid",
-            "--signing-key-seed", "/dev/null",
-            "--tls-cert", "/dev/null",
-            "--tls-key", "/dev/null",
-            "--client-ca", "/dev/null",
-            "--trust", "/dev/null",
-            "--inner-http-url", "http://127.0.0.1:9",
-            "--target-uri", "https://mcp.example.com/mcp?route=a",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "verifier-1",
+            "--server-signer",
+            "did:example:server",
+            "--server-key-id",
+            "root-kid",
+            "--signing-key-seed",
+            "/dev/null",
+            "--tls-cert",
+            "/dev/null",
+            "--tls-key",
+            "/dev/null",
+            "--client-ca",
+            "/dev/null",
+            "--trust",
+            "/dev/null",
+            "--inner-http-url",
+            "http://127.0.0.1:9",
+            "--target-uri",
+            "https://mcp.example.com/mcp?route=a",
             // A durable replay selection so parse-time unsafe-config checks pass; the
             // path is not opened at parse (this builder reads config fields only).
-            "--replay-cache", "file",
-            "--replay-path", "/tmp/mcp-re-delegated-wiring-test-replay",
-            "--delegated-trust-epoch", "epoch-1",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/tmp/mcp-re-delegated-wiring-test-replay",
+            "--delegated-trust-epoch",
+            "epoch-1",
         ]
         .iter()
         .map(|s| s.to_string())

@@ -70,8 +70,15 @@ fn notification(nonce: &str, method: &str) -> HttpRequest {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: format!(r#"{{"jsonrpc":"2.0","method":"{method}"}}"#).into_bytes(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("a notification signs like any request");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("a notification signs like any request");
     r
 }
 
@@ -86,7 +93,9 @@ fn signed_202_verifies_against_its_notification() {
     assert_eq!(ack.status, STATUS_ACCEPTED);
     assert!(ack.body.is_empty(), "an accepted notification gets no body");
     assert!(
-        !ack.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
+        !ack.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
         "a bodyless response has no content-type: there is no content to describe"
     );
 
@@ -119,8 +128,8 @@ fn signed_202_verifies_against_its_notification() {
 fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
     let note_a = notification("n-a", "notifications/initialized");
     let note_b = notification("n-b", "notifications/cancelled");
-    let ack_a = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let ack_a =
+        sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
 
     verify_accepted_202(&ack_a, &note_a, &resolver(), &policy(), NOW).expect("binds to A");
     assert_eq!(
@@ -155,8 +164,8 @@ fn an_acknowledgement_binds_to_one_transmission_not_to_content() {
 #[test]
 fn a_forged_request_evidence_header_is_refused() {
     let note_a = notification("n-a", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let mut ack =
+        sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     for (name, value) in ack.headers.iter_mut() {
         if name.eq_ignore_ascii_case("mcp-re-request-evidence") {
             *value = "0".repeat(value.len());
@@ -173,8 +182,8 @@ fn a_forged_request_evidence_header_is_refused() {
 #[test]
 fn a_missing_request_evidence_header_is_refused() {
     let note_a = notification("n-a", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let mut ack =
+        sign_accepted_202(&note_a, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     ack.headers
         .retain(|(name, _)| !name.eq_ignore_ascii_case("mcp-re-request-evidence"));
     assert_eq!(
@@ -201,8 +210,8 @@ fn signature_input_of(request: &HttpRequest) -> String {
 #[test]
 fn content_injected_into_a_signed_202_is_caught() {
     let note = notification("n-inj", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let mut ack =
+        sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     ack.body = br#"{"cancelled":true}"#.to_vec();
     assert_eq!(
         verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
@@ -216,9 +225,10 @@ fn content_injected_into_a_signed_202_is_caught() {
 #[test]
 fn content_type_on_a_bodyless_202_is_rejected() {
     let note = notification("n-ct", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
-    ack.headers.push(("Content-Type".into(), "application/json".into()));
+    let mut ack =
+        sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
+    ack.headers
+        .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
         verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
@@ -230,8 +240,8 @@ fn content_type_on_a_bodyless_202_is_rejected() {
 #[test]
 fn a_202_without_its_req_binding_is_rejected() {
     let note = notification("n-nb", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let mut ack =
+        sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     for h in ack.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
             h.1 = h.1.replace(" \"@target-uri\";req", "");
@@ -248,8 +258,8 @@ fn a_202_without_its_req_binding_is_rejected() {
 #[test]
 fn a_bodyless_response_that_is_not_202_is_rejected() {
     let note = notification("n-st", "notifications/initialized");
-    let mut ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let mut ack =
+        sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES).expect("signs");
     ack.status = 200;
     assert_eq!(
         verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
@@ -262,8 +272,8 @@ fn a_bodyless_response_that_is_not_202_is_rejected() {
 #[test]
 fn a_202_signed_by_a_request_key_fails_the_response_slot() {
     let note = notification("n-slot", "notifications/initialized");
-    let ack = sign_accepted_202(&note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES)
-        .expect("signs");
+    let ack =
+        sign_accepted_202(&note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES).expect("signs");
     assert_eq!(
         verify_accepted_202(&ack, &note, &resolver(), &policy(), NOW).unwrap_err(),
         HttpProfileError::UnresolvedKeyId,
@@ -290,7 +300,9 @@ fn bodyless_request_round_trips() {
     )
     .expect("a bodyless request signs");
     assert!(
-        !req.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
+        !req.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-type")),
         "no content-type on a bodyless request"
     );
     let (actor, verified) = verify_bodyless_request(&req, &resolver(), &policy(), NOW)
@@ -308,8 +320,15 @@ fn bodyless_get_request_round_trips() {
         headers: vec![],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-get")
-        .expect("signs");
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-get",
+    )
+    .expect("signs");
     verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
 }
 
@@ -321,9 +340,17 @@ fn content_type_on_a_bodyless_request_is_rejected() {
         headers: vec![],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-x")
-        .expect("signs");
-    req.headers.push(("Content-Type".into(), "application/json".into()));
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-x",
+    )
+    .expect("signs");
+    req.headers
+        .push(("Content-Type".into(), "application/json".into()));
     assert_eq!(
         verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
         HttpProfileError::MalformedEvidence("content-type on a bodyless message"),
@@ -366,8 +393,15 @@ fn a_bodyless_request_covers_a_present_authorization_header() {
         headers: vec![("Authorization".into(), "Bearer token-abc".into())],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-auth")
-        .expect("signs");
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-auth",
+    )
+    .expect("signs");
     assert!(
         signature_input_of(&req).contains("\"authorization\""),
         "the signer must cover a present authorization header: {}",
@@ -388,8 +422,15 @@ fn swapping_a_covered_bearer_token_on_a_bodyless_request_is_caught() {
         headers: vec![("Authorization".into(), "Bearer token-abc".into())],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-swap")
-        .expect("signs");
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-swap",
+    )
+    .expect("signs");
     for (name, value) in req.headers.iter_mut() {
         if name.eq_ignore_ascii_case("authorization") {
             *value = "Bearer token-ATTACKER".into();
@@ -412,10 +453,18 @@ fn an_uncovered_authorization_header_on_a_bodyless_request_is_rejected() {
         headers: vec![],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-inject")
-        .expect("signs");
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-inject",
+    )
+    .expect("signs");
     // An intermediary attaches a credential the signature says nothing about.
-    req.headers.push(("Authorization".into(), "Bearer token-INJECTED".into()));
+    req.headers
+        .push(("Authorization".into(), "Bearer token-INJECTED".into()));
     assert_eq!(
         verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
         HttpProfileError::MissingCoveredComponent("authorization"),
@@ -439,8 +488,15 @@ fn uncovered_dpop_and_mcp_transport_headers_on_a_bodyless_request_are_rejected()
             headers: vec![],
             body: Vec::new(),
         };
-        sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-h")
-            .expect("signs");
+        sign_bodyless_request(
+            &mut req,
+            &client_key(),
+            CLIENT_KEY_ID,
+            CREATED,
+            EXPIRES,
+            "n-h",
+        )
+        .expect("signs");
         req.headers.push((header.into(), "injected".into()));
         assert_eq!(
             verify_bodyless_request(&req, &resolver(), &policy(), NOW).unwrap_err(),
@@ -467,11 +523,27 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
         ],
         body: Vec::new(),
     };
-    sign_bodyless_request(&mut req, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-all")
-        .expect("signs");
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-all",
+    )
+    .expect("signs");
     let input = signature_input_of(&req);
-    for name in ["authorization", "dpop", "mcp-method", "mcp-name", "mcp-protocol-version"] {
-        assert!(input.contains(&format!("\"{name}\"")), "{name} must be covered: {input}");
+    for name in [
+        "authorization",
+        "dpop",
+        "mcp-method",
+        "mcp-name",
+        "mcp-protocol-version",
+    ] {
+        assert!(
+            input.contains(&format!("\"{name}\"")),
+            "{name} must be covered: {input}"
+        );
     }
     verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
 }

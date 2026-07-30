@@ -216,11 +216,7 @@ where
             Some(a) => now >= a.exp - self.cfg.overlap,
         };
         if needs {
-            let is_rotation = self
-                .active
-                .as_ref()
-                .map(|a| now < a.exp)
-                .unwrap_or(false);
+            let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
             let key = (self.factory)();
             self.counter += 1;
@@ -288,7 +284,10 @@ where
         request_evidence: &RequestEvidence,
     ) -> Result<(), CustodyError> {
         self.ensure_active(now)?;
-        let a = self.active.as_ref().expect("ensure_active guarantees a key");
+        let a = self
+            .active
+            .as_ref()
+            .expect("ensure_active guarantees a key");
         sign_delegated_response_full(
             response,
             request,
@@ -412,7 +411,9 @@ mod tests {
     /// A software root issuer over a fixed key (stands in for the KMS/HSM).
     fn ok_issuer() -> impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String> {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
-        move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c))
+        move |h: &DelegationHeader, c: &DelegationClaims| {
+            Some(issue_delegation_credential(&root, h, c))
+        }
     }
 
     /// A deterministic delegated-key factory (distinct key per call).
@@ -435,7 +436,11 @@ mod tests {
         for i in 0..50 {
             c.ensure_active(1_000 + i).expect("still active");
         }
-        assert_eq!(c.root_invocations(), 1, "the hot path must not touch the root");
+        assert_eq!(
+            c.root_invocations(),
+            1,
+            "the hot path must not touch the root"
+        );
         assert_eq!(c.audit().len(), 1);
         assert_eq!(c.audit()[0].event_type, "mcp-re.delegated_key.issued");
     }
@@ -455,7 +460,10 @@ mod tests {
         let kinds: Vec<_> = c.audit().iter().map(|e| e.event_type).collect();
         assert_eq!(
             kinds,
-            vec!["mcp-re.delegated_key.issued", "mcp-re.delegated_key.rotated"]
+            vec![
+                "mcp-re.delegated_key.issued",
+                "mcp-re.delegated_key.rotated"
+            ]
         );
     }
 
@@ -495,7 +503,10 @@ mod tests {
         c.reissue(1_000).expect("re-issue at the SAME instant");
         let ids: Vec<&String> = c.audit().iter().map(|e| &e.jti).collect();
         assert_eq!(ids.len(), 2);
-        assert_ne!(ids[0], ids[1], "a same-instant re-issuance still gets its own id");
+        assert_ne!(
+            ids[0], ids[1],
+            "a same-instant re-issuance still gets its own id"
+        );
     }
 
     /// A factory that hands out distinct keys from a caller-chosen seed base, so two
@@ -530,7 +541,11 @@ mod tests {
         assert_eq!(c.trust_epoch(), format!("{base_epoch}#1"));
         let second_kid = c.active_kid().unwrap().to_string();
         assert_ne!(first_kid, second_kid, "a fresh delegated key was minted");
-        assert_eq!(c.root_invocations(), 2, "the root re-issued exactly once more");
+        assert_eq!(
+            c.root_invocations(),
+            2,
+            "the root re-issued exactly once more"
+        );
         // The prior key was dropped, not kept alongside — the old epoch stops serving.
         assert!(c.active_snapshot().is_some());
     }

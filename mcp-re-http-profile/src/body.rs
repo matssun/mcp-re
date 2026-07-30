@@ -25,19 +25,21 @@ pub fn insert_meta_block<T: Serialize>(
     key: &str,
     block: &T,
 ) -> Result<Vec<u8>, HttpProfileError> {
-    let mut root: Value =
-        serde_json::from_slice(body).map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+    let mut root: Value = serde_json::from_slice(body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
     let obj = root
         .as_object_mut()
-        .ok_or(HttpProfileError::MalformedEvidence("body not a json object"))?;
+        .ok_or(HttpProfileError::MalformedEvidence(
+            "body not a json object",
+        ))?;
     let meta = obj
         .entry(META_KEY)
         .or_insert_with(|| Value::Object(serde_json::Map::new()));
     let meta_obj = meta
         .as_object_mut()
         .ok_or(HttpProfileError::MalformedEvidence("_meta not an object"))?;
-    let value =
-        serde_json::to_value(block).map_err(|_| HttpProfileError::MalformedEvidence("block serialize"))?;
+    let value = serde_json::to_value(block)
+        .map_err(|_| HttpProfileError::MalformedEvidence("block serialize"))?;
     meta_obj.insert(key.to_owned(), value);
     serde_json::to_vec(&root).map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))
 }
@@ -51,8 +53,8 @@ pub fn extract_meta_block<T: DeserializeOwned>(
     key: &str,
     what: &'static str,
 ) -> Result<T, HttpProfileError> {
-    let root: Value =
-        serde_json::from_slice(body).map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
+    let root: Value = serde_json::from_slice(body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("body json"))?;
     let block = root
         .get(META_KEY)
         .and_then(|m| m.get(key))

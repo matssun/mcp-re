@@ -166,21 +166,36 @@ fn dns(value: &str) -> SanType {
 
 fn server_config_args() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
-        "--bind", "127.0.0.1:8443",
-        "--audience", AUD,
-        "--server-signer", "did:example:server",
-        "--server-key-id", ROOT_KID,
-        "--signing-key-seed", "/dev/null",
-        "--tls-cert", "/dev/null",
-        "--tls-key", "/dev/null",
-        "--client-ca", "/dev/null",
-        "--trust", "/dev/null",
-        "--inner-http-url", "http://127.0.0.1:9",
-        "--target-uri", TARGET,
-        "--route", "a",
-        "--replay-cache", "file",
-        "--replay-path", "/tmp/mcp-re-mtls-client-leg-e2e-replay",
-        "--delegated-trust-epoch", EPOCH,
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        AUD,
+        "--server-signer",
+        "did:example:server",
+        "--server-key-id",
+        ROOT_KID,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        TARGET,
+        "--route",
+        "a",
+        "--replay-cache",
+        "file",
+        "--replay-path",
+        "/tmp/mcp-re-mtls-client-leg-e2e-replay",
+        "--delegated-trust-epoch",
+        EPOCH,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -189,29 +204,32 @@ fn server_config_args() -> mcp_re_proxy::cli::Config {
 }
 
 fn server_resolver() -> ActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| match (key_id, slot) {
-        (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "client".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:client".into(),
-                keyid: CLIENT_KEY_ID.into(),
-            },
-            verification_key: client_key().public_key(),
-            slot,
-        }),
-        (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
-            verification_key: root_key().public_key(),
-            slot,
-        }),
-        _ => None,
-    }.into())
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: CLIENT_KEY_ID.into(),
+                },
+                verification_key: client_key().public_key(),
+                slot,
+            }),
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: ROOT_KID.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -294,10 +312,11 @@ fn spawn_server(server_ca: &Ca, client_ca: &Ca) -> RunningServer {
             tx.send(listener.local_addr().expect("addr"))
                 .expect("send addr");
             let proxy = Arc::new(build_server());
-            let handler = move |req: async_serve::ServedHttpRequest| -> async_serve::HandlerResponseFuture {
-                let proxy = Arc::clone(&proxy);
-                Box::pin(async move { proxy.handle(req, NOW).await })
-            };
+            let handler =
+                move |req: async_serve::ServedHttpRequest| -> async_serve::HandlerResponseFuture {
+                    let proxy = Arc::clone(&proxy);
+                    Box::pin(async move { proxy.handle(req, NOW).await })
+                };
             async_serve::serve(
                 listener,
                 Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
@@ -330,24 +349,31 @@ fn delegation_policy() -> DelegationPolicy {
 }
 
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| match (key_id, slot) {
-        (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
-            verification_key: root_key().public_key(),
-            slot,
-        }),
-        _ => None,
-    }.into())
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: ROOT_KID.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
 }
 
 /// The client's mTLS leg: presents a client cert signed by `client_ca` and trusts
 /// ONLY `server_ca` to authenticate a server named `SERVER_NAME`.
-fn mtls_transport(client_ca: &Ca, server_ca_der: CertificateDer<'static>, addr: SocketAddr) -> MtlsRemoteTransport {
+fn mtls_transport(
+    client_ca: &Ca,
+    server_ca_der: CertificateDer<'static>,
+    addr: SocketAddr,
+) -> MtlsRemoteTransport {
     let (client_cert, client_key) = make_leaf(client_ca, vec![uri(CLIENT_SPIFFE)], None, true);
     let tls = ClientTlsConfig::from_der(vec![client_cert], client_key, vec![server_ca_der])
         .expect("client tls config");

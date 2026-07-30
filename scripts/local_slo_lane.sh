@@ -31,6 +31,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# This lane can be invoked directly (see the header), not only via local_gate.sh, so
+# it pins the toolchain itself. A benchmark built by a different compiler than CI is
+# not comparable to the committed anchor — measure with the pinned one or not at all.
+. scripts/use_pinned_toolchain.sh
+
 REPS=6
 SWEEP=0
 while [[ $# -gt 0 ]]; do

@@ -227,10 +227,12 @@ pub fn issue_admission_assertion(
         kid: claims.issuer_kid.clone(),
     };
     let h = b64url_encode(
-        &serde_json::to_vec(&header).map_err(|_| HttpProfileError::MalformedEvidence("admission header"))?,
+        &serde_json::to_vec(&header)
+            .map_err(|_| HttpProfileError::MalformedEvidence("admission header"))?,
     );
     let p = b64url_encode(
-        &serde_json::to_vec(claims).map_err(|_| HttpProfileError::MalformedEvidence("admission claims"))?,
+        &serde_json::to_vec(claims)
+            .map_err(|_| HttpProfileError::MalformedEvidence("admission claims"))?,
     );
     let signing_input = format!("{h}.{p}");
     let sig = sign_root(signing_input.as_bytes())?;
@@ -248,8 +250,10 @@ fn split_compact(jws: &str) -> Result<(&str, &str, &str), HttpProfileError> {
 }
 
 fn decode_json<T: for<'de> Deserialize<'de>>(seg: &str) -> Result<T, HttpProfileError> {
-    let bytes = b64url_decode(seg).map_err(|_| HttpProfileError::MalformedEvidence("admission b64url"))?;
-    serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::MalformedEvidence("admission json"))
+    let bytes =
+        b64url_decode(seg).map_err(|_| HttpProfileError::MalformedEvidence("admission b64url"))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| HttpProfileError::MalformedEvidence("admission json"))
 }
 
 /// Verify an admission assertion's signature, shape, and freshness — WITHOUT the
@@ -279,7 +283,8 @@ pub fn verify_admission_assertion(
     }
 
     // Issuer → trusted authority root (a kid never introduces trust).
-    let root = resolve_issuer(&claims.issuer_kid).ok_or(HttpProfileError::AdmissionIssuerUntrusted)?;
+    let root =
+        resolve_issuer(&claims.issuer_kid).ok_or(HttpProfileError::AdmissionIssuerUntrusted)?;
     let signing_input = format!("{h_seg}.{p_seg}");
     verify_ed25519_with(
         signing_input.as_bytes(),
@@ -479,7 +484,10 @@ mod tests {
     #[test]
     fn a_current_admitted_workload_passes() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission { generation: 5, status: AdmissionStatus::Admitted };
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Admitted,
+        };
         let v = check(&c, Some(&auth), &AdmissionPolicy::default()).expect("current");
         assert_eq!(v.generation, 5);
         assert!(!v.degraded);
@@ -502,7 +510,10 @@ mod tests {
         )
         .expect("the assertion itself is valid");
         // ...but the authority has advanced to generation 6.
-        let auth = AuthoritativeAdmission { generation: 6, status: AdmissionStatus::Admitted };
+        let auth = AuthoritativeAdmission {
+            generation: 6,
+            status: AdmissionStatus::Admitted,
+        };
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -512,7 +523,10 @@ mod tests {
     #[test]
     fn a_workload_revoked_after_issuance_is_refused() {
         let c = claims(5, AdmissionStatus::Admitted, NOW - 10);
-        let auth = AuthoritativeAdmission { generation: 5, status: AdmissionStatus::Revoked };
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Revoked,
+        };
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -522,7 +536,10 @@ mod tests {
     #[test]
     fn a_suspended_assertion_never_permits_a_call() {
         let c = claims(5, AdmissionStatus::Suspended, NOW - 10);
-        let auth = AuthoritativeAdmission { generation: 5, status: AdmissionStatus::Admitted };
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Admitted,
+        };
         assert_eq!(
             check(&c, Some(&auth), &AdmissionPolicy::default()).unwrap_err(),
             HttpProfileError::AdmissionNotCurrent,
@@ -540,8 +557,14 @@ mod tests {
         let binding = AdmissionBinding::opaque_from(&c);
         assert_eq!(
             check_admission(
-                &binding, &jws, None, crate::ids::PROFILE_TAG, &["mcp.example.com"],
-                &AdmissionPolicy::default(), NOW, resolver(),
+                &binding,
+                &jws,
+                None,
+                crate::ids::PROFILE_TAG,
+                &["mcp.example.com"],
+                &AdmissionPolicy::default(),
+                NOW,
+                resolver(),
             )
             .unwrap_err(),
             HttpProfileError::AdmissionIssuerUntrusted,
@@ -555,11 +578,20 @@ mod tests {
         // A binding whose digest does not match the assertion's admitted state.
         let mut binding = AdmissionBinding::opaque_from(&c);
         binding.digest_value = b64url_encode(&Sha256::digest(b"different-state"));
-        let auth = AuthoritativeAdmission { generation: 5, status: AdmissionStatus::Admitted };
+        let auth = AuthoritativeAdmission {
+            generation: 5,
+            status: AdmissionStatus::Admitted,
+        };
         assert_eq!(
             check_admission(
-                &binding, &jws, Some(&auth), crate::ids::PROFILE_TAG, &["mcp.example.com"],
-                &AdmissionPolicy::default(), NOW, resolver(),
+                &binding,
+                &jws,
+                Some(&auth),
+                crate::ids::PROFILE_TAG,
+                &["mcp.example.com"],
+                &AdmissionPolicy::default(),
+                NOW,
+                resolver(),
             )
             .unwrap_err(),
             HttpProfileError::AdmissionBindingMismatch,
@@ -580,7 +612,10 @@ mod tests {
         // Within P: a recent assertion is served, marked degraded.
         let recent = claims(5, AdmissionStatus::Admitted, NOW - 20);
         let v = check(&recent, None, &policy(true, 60)).expect("within P");
-        assert!(v.degraded, "the verdict records that it was reached degraded");
+        assert!(
+            v.degraded,
+            "the verdict records that it was reached degraded"
+        );
 
         // Beyond P: a revocation could have propagated; stop serving the snapshot.
         let old = claims(5, AdmissionStatus::Admitted, NOW - 200);

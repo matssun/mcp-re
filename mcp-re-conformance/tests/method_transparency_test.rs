@@ -54,9 +54,12 @@ fn block() -> HttpRequestEvidenceBlock {
     HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, TOKEN.as_bytes())],
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            TOKEN.as_bytes(),
+        )],
         continuation: None,
-            admission: None,
+        admission: None,
     }
 }
 
@@ -76,9 +79,8 @@ fn accepted_verdict_is_identical_across_all_methods() {
     ];
     let material = |_b: &ArtifactBinding| None;
     for (i, method) in methods.iter().enumerate() {
-        let body = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"name":"x"}}}}"#
-        );
+        let body =
+            format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"name":"x"}}}}"#);
         let mut req = HttpRequest {
             method: "POST".into(),
             target_uri: TARGET.into(),
@@ -88,8 +90,16 @@ fn accepted_verdict_is_identical_across_all_methods() {
             ],
             body: body.into_bytes(),
         };
-        sign_request_full(&mut req, &block(), &key(), KID, CREATED, EXPIRES, &format!("nonce-{i}"))
-            .expect("sign");
+        sign_request_full(
+            &mut req,
+            &block(),
+            &key(),
+            KID,
+            CREATED,
+            EXPIRES,
+            &format!("nonce-{i}"),
+        )
+        .expect("sign");
         let verdict = verify_request_full(&req, &audience(), &material, &resolver(), NOW);
         assert!(
             verdict.is_ok(),

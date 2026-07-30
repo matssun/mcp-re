@@ -87,7 +87,7 @@ fn request_block(bindings: Vec<ArtifactBinding>) -> HttpRequestEvidenceBlock {
         audience: audience(),
         artifact_bindings: bindings,
         continuation: None,
-            admission: None,
+        admission: None,
     }
 }
 
@@ -101,7 +101,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -137,7 +138,10 @@ fn full_request_roundtrip_exposes_audience_and_block() {
     let v = verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
         .expect("full request verifies");
     assert_eq!(v.audience.as_ref().unwrap().audience_id, "verifier-1");
-    assert_eq!(v.audience_hash.as_deref(), Some(audience().audience_hash()).as_deref());
+    assert_eq!(
+        v.audience_hash.as_deref(),
+        Some(audience().audience_hash()).as_deref()
+    );
     assert!(v.request_block.is_some());
     assert_eq!(v.resolved_actor.identity.role, "client");
 }
@@ -313,7 +317,8 @@ fn cryptographic_req_splice_still_fails_at_the_floor() {
         .expect("req_a verifies");
 
     let mut req_b = base_request();
-    req_b.body = br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    req_b.body =
+        br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
     let ev_b = sign_request_full(
         &mut req_b,
         &block,

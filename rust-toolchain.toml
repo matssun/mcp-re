@@ -1,8 +1,14 @@
 # Pinned Rust toolchain for cargo dev + CI. Matches the Bazel-pinned version
-# (MODULE.bazel rust.toolchain `versions = ["1.94.1"]`) so the cargo and Bazel
+# (MODULE.bazel rust.toolchain `versions = ["1.97.1"]`) so the cargo and Bazel
 # builds agree and CI is reproducible. Bumping this is a deliberate change:
 # newer rustfmt/clippy reformat/relint pre-existing code, so a bump should be
 # paired with a repo-wide `cargo fmt` + clippy pass.
+#
+# `scripts/use_pinned_toolchain.sh` READS this channel and puts it on PATH for
+# every local build, so a `cargo` that is not a rustup shim (e.g. Homebrew's own
+# `rust` formula, which ignores this file) cannot silently substitute a different
+# compiler. Bump the channel here and local, CI, and Bazel follow from this one
+# edit plus the MODULE.bazel mirror.
 [toolchain]
-channel = "1.94.1"
+channel = "1.97.1"
 components = ["rustfmt", "clippy"]

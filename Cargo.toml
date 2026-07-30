@@ -47,7 +47,18 @@ serde_json = "1.0"
 # (MCPS-088): `pkcs8` lets the OCSP responder-signature TESTS import an
 # rcgen-minted issuer key into a dalek signer to sign a response fixture (the only
 # in-tree, Bazel-addressable signer). Production code does not use it.
-ed25519-dalek = { version = "2.1", features = ["zeroize", "pkcs8"] }
+# `alloc` is required ALONGSIDE `pkcs8` in dalek 3: the `EncodePrivateKey` impl for
+# `SigningKey` is gated `all(feature = "alloc", feature = "pkcs8")`, where 2.x
+# implied alloc from pkcs8. Without it the OCSP responder-signature test fixture
+# cannot serialise its rcgen-minted issuer key.
+ed25519-dalek = { version = "3", features = ["zeroize", "pkcs8", "alloc"] }
+# The RustCrypto hashing core moves as ONE generation — see the matching
+# `deny-multiple-versions` entries in //deny.toml, which fail the build if a
+# second one ever enters the graph. sha2 0.11 / ed25519-dalek 3 / hmac 0.13 /
+# curve25519-dalek 5 / signature 3 are all the `digest 0.11` generation and are
+# bumped together here; taking any one of them alone does not migrate the tree,
+# it forks it, leaving the signing binary with two independent SHA-256
+# implementations (ours and the one dalek hashes with internally).
 sha2 = "0.11"
 base64 = "0.23"
 thiserror = "1.0"
@@ -83,11 +94,18 @@ rustls-pki-types = "1"
 # separate feature); enabling `verify` here makes the API available to it.
 x509-parser = { version = "0.18", features = ["verify"] }
 # (MCPS-088): asn1-rs BitString type for the OCSP responder-signature verify
-# path (re-exported by x509-parser; same version it resolves).
-asn1-rs = "0.6"
+# path. This MUST track whatever x509-parser resolves — the BitString built here
+# is passed straight into `x509_parser::verify::verify_signature`, so a version
+# split is a hard type error, not a duplicate-crate warning. x509-parser 0.18
+# moved to asn1-rs 0.7; leaving this at 0.6 broke the `online_ocsp` build.
+asn1-rs = "0.7"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
-rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+# HELD AT 0.13 pending the 0.14 migration, tracked separately. 0.14 replaced
+# `signed_by(&key, &issuer_cert, &issuer_key)` with an `Issuer` type across 26 call
+# sites in the demo fixtures and mTLS suites. That migration is a change to the
+# fixture helpers in its own right and does not belong in a dependency-policy PR.
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 # Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
 # fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
 # ceiling) client cert. Same `time` version rcgen already resolves — no new pin.
@@ -124,10 +142,17 @@ ureq = { version = "2", default-features = false }
 # NOT the async `aws-sdk-kms`/tokio/Smithy stack — the ADR-MCPS-018 lean-sync firewall
 # is a hard constraint. A pure, no-async crate; HTTPS transport reuses the blocking
 # `ureq` client (its `tls` feature is enabled only in mcp-re-proxy under that feature).
-hmac = "0.12"
-der = "0.8"
+# 0.13 is the `digest 0.11` generation — moves in lockstep with sha2/dalek above.
+hmac = "0.13"
+# der/spki/x509-cert are PINNED BY x509-ocsp 0.2.1 (the newest release), which
+# requires der 0.7.8 / spki 0.7.2 / x509-cert 0.2.4. ocsp.rs builds der, spki and
+# x509-cert values and passes them straight into x509_ocsp's OcspRequestBuilder,
+# CertId and BasicOcspResponse, so a version split across that boundary is a hard
+# TYPE error, not a duplicate-version warning. der 0.8 / x509-cert 0.3 cannot be
+# adopted while OCSP exists; //.github/dependabot.yml ignores both.
+der = "0.7"
 spki = "0.7"
-x509-cert = "0.3"
+x509-cert = "0.2"
 # (sha2 is already a workspace dependency — reused via `workspace = true`.)
 # Linux kernel sandbox (Landlock fs ruleset + seccomp egress). Linux-only;
 # referenced ONLY under mcp-re-proxy's [target.'cfg(target_os="linux")'.dependencies]

@@ -39,7 +39,7 @@ concurrency:
 
 jobs:
   redis-ocsp:
-    name: redis + ocsp e2e (1.94.1)
+    name: redis + ocsp e2e (1.97.1)
     runs-on: ubuntu-latest
     # A primary (6379) + replica (6380) topology is required for the #41
     # WAIT-quorum proof, which a single `services:` Redis container cannot express
@@ -184,7 +184,7 @@ jobs:
           fi
 
   etcd:
-    name: etcd replay e2e (1.94.1)
+    name: etcd replay e2e (1.97.1)
     runs-on: ubuntu-latest
     # A single etcd node is sufficient: the cross-NODE property is proven by two
     # independent client connections to the SAME cluster (two modelled proxy nodes),

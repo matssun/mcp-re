@@ -114,6 +114,13 @@ impl HostSigner {
             created,
             expires,
         );
-        build_signed_tool_call(id, tool_name, arguments, target_uri, &inputs, &self.signing_key)
+        build_signed_tool_call(
+            id,
+            tool_name,
+            arguments,
+            target_uri,
+            &inputs,
+            &self.signing_key,
+        )
     }
 }

@@ -89,7 +89,9 @@ impl AwsCredentials {
         Ok(AwsCredentials {
             access_key_id,
             secret_access_key: Zeroizing::new(secret_access_key),
-            session_token: std::env::var("AWS_SESSION_TOKEN").ok().filter(|s| !s.is_empty()),
+            session_token: std::env::var("AWS_SESSION_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty()),
         })
     }
 }
@@ -648,7 +650,11 @@ mod tests {
         .expect("construct");
         let transcript = b"tls handshake transcript bytes";
         let sig = backend.sign_tls_ed25519(transcript).expect("tls sign");
-        assert_eq!(sig.len(), 64, "delegated TLS signature is a raw 64-byte Ed25519 sig");
+        assert_eq!(
+            sig.len(),
+            64,
+            "delegated TLS signature is a raw 64-byte Ed25519 sig"
+        );
         // The reported SPKI is the advertised KMS public key and verifies the sig.
         let raw = ed25519_raw_point_from_spki(&backend.tls_public_key_spki_der().unwrap()).unwrap();
         let key = VerificationKey::from_bytes(&raw).unwrap();

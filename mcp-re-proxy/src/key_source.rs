@@ -178,7 +178,9 @@ fn certs_from_pem(pem: &[u8], what: &str) -> Result<Vec<CertificateDer<'static>>
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| KeyError::Malformed(format!("{what}: {e}")))?;
     if certs.is_empty() {
-        return Err(KeyError::Malformed(format!("{what}: no certificates in PEM")));
+        return Err(KeyError::Malformed(format!(
+            "{what}: no certificates in PEM"
+        )));
     }
     Ok(certs)
 }

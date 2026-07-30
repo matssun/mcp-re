@@ -669,8 +669,8 @@ mod tests {
     /// the SPKI it reports is the advertised key.
     #[test]
     fn gcp_backend_signs_and_verifies_end_to_end() {
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(12)))
-        .expect("construct");
+        let backend =
+            GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(12))).expect("construct");
         let preimage = b"mcp-re canonical response preimage";
         let sig = backend.sign_raw_ed25519(preimage).expect("sign");
         assert_eq!(sig.len(), 64);
@@ -701,8 +701,8 @@ mod tests {
     /// reuses the object-signing RAW-Ed25519 `asymmetricSign`.
     #[test]
     fn gcp_backend_tls_sign_verifies_under_reported_spki() {
-        let backend = GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(24)))
-        .expect("construct");
+        let backend =
+            GcpKmsEd25519Backend::with_transport(Box::new(FakeGcp::good(24))).expect("construct");
         let transcript = b"tls handshake transcript bytes";
         let sig = backend.sign_tls_ed25519(transcript).expect("tls sign");
         assert_eq!(
@@ -803,7 +803,10 @@ mod tests {
         let signer = "did:example:server-1";
         let key_id = "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1";
         trust.insert(signer, key_id, key);
-        assert!(trust.resolve(signer, key_id).is_ok(), "trusted before revoke");
+        assert!(
+            trust.resolve(signer, key_id).is_ok(),
+            "trusted before revoke"
+        );
         // ...but a trust-policy revoke makes the verifier reject it: acceptance is
         // trust-policy-driven, not signature-driven.
         trust.revoke(signer, key_id);

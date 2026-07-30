@@ -70,10 +70,7 @@ pub struct SignatureParams {
 /// Nothing legitimate is lost: `alg` and `tag` come from closed sets, `keyid` from
 /// deployment configuration, and `nonce` is base64url. None of them can contain a
 /// quote or a backslash without being malformed already.
-pub(crate) fn validate_sf_string(
-    value: &str,
-    what: &'static str,
-) -> Result<(), HttpProfileError> {
+pub(crate) fn validate_sf_string(value: &str, what: &'static str) -> Result<(), HttpProfileError> {
     let ok = value
         .bytes()
         .all(|b| (0x20..=0x7E).contains(&b) && b != b'"' && b != b'\\');

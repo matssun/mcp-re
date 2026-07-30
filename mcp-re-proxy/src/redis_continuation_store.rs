@@ -56,13 +56,11 @@ impl RedisContinuationStore {
         let client = redis::Client::open(url).map_err(|e| ContinuationStoreError::Unavailable {
             details: format!("open redis client: {e}"),
         })?;
-        let conn =
-            client
-                .get_connection_manager()
-                .await
-                .map_err(|e| ContinuationStoreError::Unavailable {
-                    details: format!("connect redis async: {e}"),
-                })?;
+        let conn = client.get_connection_manager().await.map_err(|e| {
+            ContinuationStoreError::Unavailable {
+                details: format!("connect redis async: {e}"),
+            }
+        })?;
         Ok(RedisContinuationStore { conn })
     }
 }

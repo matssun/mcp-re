@@ -130,9 +130,11 @@ pub(crate) fn build_txn_body(key_b64: &str, value_b64: &str, lease_id: i64) -> V
 /// ints as strings). A missing/zero/unparseable id is an operational failure →
 /// fail closed (an unleased put would never expire — the very DoS we guard).
 pub(crate) fn parse_lease_id(resp: &Value) -> Result<i64, ReplayStoreError> {
-    let raw = resp.get("ID").ok_or_else(|| ReplayStoreError::Unavailable {
-        details: "etcd lease/grant response missing ID".to_string(),
-    })?;
+    let raw = resp
+        .get("ID")
+        .ok_or_else(|| ReplayStoreError::Unavailable {
+            details: "etcd lease/grant response missing ID".to_string(),
+        })?;
     // The gateway encodes the id as a string; tolerate a raw number too.
     let id = match raw {
         Value::String(s) => s.parse::<i64>().ok(),
@@ -158,7 +160,10 @@ pub(crate) fn parse_lease_id(resp: &Value) -> Result<i64, ReplayStoreError> {
 /// without a live etcd.
 pub(crate) fn decision_from_txn(resp: &Value) -> ReplayDecision {
     // etcd omits `succeeded` (defaults false) when the compare fails.
-    let succeeded = resp.get("succeeded").and_then(Value::as_bool).unwrap_or(false);
+    let succeeded = resp
+        .get("succeeded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if succeeded {
         ReplayDecision::Fresh
     } else {
@@ -279,7 +284,6 @@ impl EtcdAtomicReplayStore {
     pub(crate) fn with_transport(transport: Box<dyn EtcdTransport>, clock: UnixClock) -> Self {
         EtcdAtomicReplayStore { transport, clock }
     }
-
 }
 
 /// The etcd `lease/revoke` request body for `POST /v3/lease/revoke`: the lease id as
@@ -419,11 +423,20 @@ mod tests {
         let retain_until: i64 = 1_779_998_730;
         let now: i64 = retain_until - 600;
         let ttl = compute_ttl_secs(retain_until, now);
-        assert_eq!(ttl, 600, "TTL must be the (retain_until - now) window in seconds");
+        assert_eq!(
+            ttl, 600,
+            "TTL must be the (retain_until - now) window in seconds"
+        );
         // Nowhere near the absolute-epoch range the now=0 bug produced.
         let now_zero_bug = compute_ttl_secs(retain_until, 0);
-        assert_eq!(now_zero_bug, retain_until, "the now=0 bug would make TTL the absolute epoch");
-        assert!(ttl < now_zero_bug / 1000, "window TTL must be vastly smaller than the now=0 epoch TTL");
+        assert_eq!(
+            now_zero_bug, retain_until,
+            "the now=0 bug would make TTL the absolute epoch"
+        );
+        assert!(
+            ttl < now_zero_bug / 1000,
+            "window TTL must be vastly smaller than the now=0 epoch TTL"
+        );
     }
 
     /// PURE proof of the MCPS-090 clock WIRING: the store derives the TTL from a
@@ -436,7 +449,10 @@ mod tests {
         let fixed_now: i64 = retain_until - 600;
         let clock: UnixClock = Box::new(move || fixed_now);
         let ttl = ttl_secs_via_clock(&clock, retain_until);
-        assert_eq!(ttl, 600, "TTL must be (retain_until - injected_now), proving the clock is read, not 0");
+        assert_eq!(
+            ttl, 600,
+            "TTL must be (retain_until - injected_now), proving the clock is read, not 0"
+        );
         assert_ne!(
             ttl,
             compute_ttl_secs(retain_until, 0),
@@ -449,7 +465,11 @@ mod tests {
     #[test]
     fn ttl_secs_clamps_to_minimal_when_already_expired() {
         assert_eq!(compute_ttl_secs(1_000, 1_000), 1, "exactly-now → 1s");
-        assert_eq!(compute_ttl_secs(900, 1_000), 1, "already-past → 1s, not 0/neg");
+        assert_eq!(
+            compute_ttl_secs(900, 1_000),
+            1,
+            "already-past → 1s, not 0/neg"
+        );
     }
 
     /// The lease-grant body carries the bounded TTL and ID 0 (etcd assigns the id).
@@ -468,26 +488,44 @@ mod tests {
         let cmp = &body["compare"][0];
         assert_eq!(cmp["target"], json!("CREATE"));
         assert_eq!(cmp["result"], json!("EQUAL"));
-        assert_eq!(cmp["create_revision"], json!("0"), "absent <=> create_revision 0");
+        assert_eq!(
+            cmp["create_revision"],
+            json!("0"),
+            "absent <=> create_revision 0"
+        );
         assert_eq!(cmp["key"], json!("a2V5"));
         let put = &body["success"][0]["request_put"];
         assert_eq!(put["key"], json!("a2V5"));
         assert_eq!(put["value"], json!("dmFs"));
-        assert_eq!(put["lease"], json!("42"), "lease id is a string (JSON gateway 64-bit encoding)");
-        assert_eq!(body["failure"], json!([]), "key-present branch is a no-op (Replay)");
+        assert_eq!(
+            put["lease"],
+            json!("42"),
+            "lease id is a string (JSON gateway 64-bit encoding)"
+        );
+        assert_eq!(
+            body["failure"],
+            json!([]),
+            "key-present branch is a no-op (Replay)"
+        );
     }
 
     /// `succeeded: true` ⇒ the compare held (key absent, put landed) ⇒ Fresh.
     #[test]
     fn txn_succeeded_is_fresh() {
-        assert_eq!(decision_from_txn(&json!({ "succeeded": true })), ReplayDecision::Fresh);
+        assert_eq!(
+            decision_from_txn(&json!({ "succeeded": true })),
+            ReplayDecision::Fresh
+        );
     }
 
     /// `succeeded: false` AND an omitted `succeeded` (etcd's false-compare shape)
     /// both mean the key already existed ⇒ Replay (fail-safe default).
     #[test]
     fn txn_not_succeeded_is_replay() {
-        assert_eq!(decision_from_txn(&json!({ "succeeded": false })), ReplayDecision::Replay);
+        assert_eq!(
+            decision_from_txn(&json!({ "succeeded": false })),
+            ReplayDecision::Replay
+        );
         assert_eq!(
             decision_from_txn(&json!({ "header": { "revision": "7" } })),
             ReplayDecision::Replay,
@@ -499,7 +537,10 @@ mod tests {
     /// number is tolerated).
     #[test]
     fn parse_lease_id_accepts_string_and_number() {
-        assert_eq!(parse_lease_id(&json!({ "ID": "7587880697336124931" })).unwrap(), 7587880697336124931);
+        assert_eq!(
+            parse_lease_id(&json!({ "ID": "7587880697336124931" })).unwrap(),
+            7587880697336124931
+        );
         assert_eq!(parse_lease_id(&json!({ "ID": 1234 })).unwrap(), 1234);
     }
 
@@ -580,9 +621,15 @@ mod tests {
             let mut replies = std::collections::HashMap::new();
             // A lease-grant reply carrying a non-zero id (the JSON gateway's string
             // encoding) so `parse_lease_id` succeeds and the flow reaches the txn.
-            replies.insert("v3/lease/grant".to_string(), json!({ "ID": "424242", "TTL": "600" }));
+            replies.insert(
+                "v3/lease/grant".to_string(),
+                json!({ "ID": "424242", "TTL": "600" }),
+            );
             replies.insert("v3/kv/txn".to_string(), txn_reply);
-            replies.insert("v3/lease/revoke".to_string(), json!({ "header": { "revision": "9" } }));
+            replies.insert(
+                "v3/lease/revoke".to_string(),
+                json!({ "header": { "revision": "9" } }),
+            );
             ScriptedTransport {
                 replies,
                 revoke_fails,
@@ -668,10 +715,8 @@ mod tests {
     #[test]
     fn replay_revokes_the_unused_lease() {
         let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": false }), false));
-        let store = EtcdAtomicReplayStore::with_transport(
-            Box::new(Arc::clone(&transport)),
-            fixed_clock(),
-        );
+        let store =
+            EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let decision = store
             .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
             .expect("replay decision must not error");
@@ -708,10 +753,8 @@ mod tests {
     #[test]
     fn fresh_does_not_revoke_the_lease() {
         let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": true }), false));
-        let store = EtcdAtomicReplayStore::with_transport(
-            Box::new(Arc::clone(&transport)),
-            fixed_clock(),
-        );
+        let store =
+            EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let decision = store
             .insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0)
             .expect("fresh decision must not error");
@@ -729,10 +772,8 @@ mod tests {
     #[test]
     fn replay_revoke_failure_still_returns_replay_never_errors() {
         let transport = Arc::new(ScriptedTransport::new(json!({ "succeeded": false }), true));
-        let store = EtcdAtomicReplayStore::with_transport(
-            Box::new(Arc::clone(&transport)),
-            fixed_clock(),
-        );
+        let store =
+            EtcdAtomicReplayStore::with_transport(Box::new(Arc::clone(&transport)), fixed_clock());
         let result = store.insert_if_absent("did:example:host|aud|nonce", 1_779_998_700, 0);
         assert_eq!(
             result,
@@ -766,9 +807,12 @@ mod tests {
             _expires_at_unix: i64,
             _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
-            let mut set = self.seen.lock().map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("model store poisoned: {e}"),
-            })?;
+            let mut set = self
+                .seen
+                .lock()
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("model store poisoned: {e}"),
+                })?;
             // `compare CREATE == 0` succeeds IFF the key was absent ⇒ Fresh.
             let was_absent = set.insert(key.to_string());
             let txn = json!({ "succeeded": was_absent });

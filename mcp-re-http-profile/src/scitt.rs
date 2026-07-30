@@ -87,7 +87,10 @@ impl EvidenceCommitment {
         // The record commits to the FIRST hop's request/response handles as the
         // call's identity, and to a digest over every hop's handles as its shape.
         let (request_evidence, response_evidence) = match reconstruction.hop_evidence.first() {
-            Some(h) => (h.request_evidence.digest_value.clone(), h.response_evidence.digest_value.clone()),
+            Some(h) => (
+                h.request_evidence.digest_value.clone(),
+                h.response_evidence.digest_value.clone(),
+            ),
             None => (String::new(), String::new()),
         };
         let mut shape = Sha256::new();
@@ -239,10 +242,20 @@ pub fn verify_receipt_offline(
     resolve_ts: impl Fn(&str) -> Option<VerificationKey>,
 ) -> Result<(), HttpProfileError> {
     // 1. Issuer signature over the statement.
-    let issuer = resolve_issuer(&statement.issuer_kid).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
-    let bytes = statement_signing_bytes(&statement.issuer_kid, &statement.commitment, statement.issued_at);
-    verify_ed25519_with(&bytes, &statement.signature, &issuer, McpReError::InvalidSignature)
-        .map_err(|_| HttpProfileError::ReceiptInvalid)?;
+    let issuer =
+        resolve_issuer(&statement.issuer_kid).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    let bytes = statement_signing_bytes(
+        &statement.issuer_kid,
+        &statement.commitment,
+        statement.issued_at,
+    );
+    verify_ed25519_with(
+        &bytes,
+        &statement.signature,
+        &issuer,
+        McpReError::InvalidSignature,
+    )
+    .map_err(|_| HttpProfileError::ReceiptInvalid)?;
 
     // 2. Inclusion proof: fold the leaf up through the sibling path and require the
     //    result to equal the receipt's committed root. The index bits pick the
@@ -266,8 +279,13 @@ pub fn verify_receipt_offline(
     // 3. Tree-head signature: the root the proof produced is the one the TS signed.
     let ts = resolve_ts(&receipt.ts_kid).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
     let th = tree_head_bytes(receipt.tree_size, &root);
-    verify_ed25519_with(&th, &receipt.tree_head_signature, &ts, McpReError::InvalidSignature)
-        .map_err(|_| HttpProfileError::ReceiptInvalid)?;
+    verify_ed25519_with(
+        &th,
+        &receipt.tree_head_signature,
+        &ts,
+        McpReError::InvalidSignature,
+    )
+    .map_err(|_| HttpProfileError::ReceiptInvalid)?;
     Ok(())
 }
 
@@ -289,7 +307,10 @@ pub struct PrototypeTransparencyService {
 
 impl PrototypeTransparencyService {
     pub fn new(kid: &str) -> Self {
-        PrototypeTransparencyService { kid: kid.to_owned(), leaves: Vec::new() }
+        PrototypeTransparencyService {
+            kid: kid.to_owned(),
+            leaves: Vec::new(),
+        }
     }
 
     /// Register a signed statement and return its COSE Receipt, signing the tree
@@ -327,7 +348,11 @@ impl PrototypeTransparencyService {
             let mut i = 0;
             while i < level.len() {
                 let left = level[i];
-                let right = if i + 1 < level.len() { level[i + 1] } else { level[i] };
+                let right = if i + 1 < level.len() {
+                    level[i + 1]
+                } else {
+                    level[i]
+                };
                 if i == idx || i + 1 == idx {
                     let sibling = if idx & 1 == 0 { right } else { left };
                     path.push(sibling);
@@ -363,18 +388,24 @@ mod tests {
     fn recon(label: ChainLabel, hops: usize) -> ChainReconstruction {
         let hop_evidence = (0..hops)
             .map(|i| HopEvidence {
-                request_evidence: RequestEvidence::from_signature_base(format!("req-{i}").as_bytes()),
+                request_evidence: RequestEvidence::from_signature_base(
+                    format!("req-{i}").as_bytes(),
+                ),
                 response_evidence: RequestEvidence::from_response_signature_base(
                     format!("rsp-{i}").as_bytes(),
                 ),
             })
             .collect();
-        ChainReconstruction { label, hop_evidence }
+        ChainReconstruction {
+            label,
+            hop_evidence,
+        }
     }
 
     fn statement(commitment: EvidenceCommitment) -> SignedStatement {
         issue_signed_statement(ISSUER_KID, commitment, 1_700_000_000, |b| {
-            mcp_re_core::b64url_decode(&issuer().sign(b)).map_err(|_| HttpProfileError::InvalidSignature)
+            mcp_re_core::b64url_decode(&issuer().sign(b))
+                .map_err(|_| HttpProfileError::InvalidSignature)
         })
         .expect("issue")
     }
@@ -388,7 +419,8 @@ mod tests {
 
     fn register(svc: &mut PrototypeTransparencyService, st: &SignedStatement) -> Receipt {
         svc.register(st, |b| {
-            mcp_re_core::b64url_decode(&ts().sign(b)).map_err(|_| HttpProfileError::InvalidSignature)
+            mcp_re_core::b64url_decode(&ts().sign(b))
+                .map_err(|_| HttpProfileError::InvalidSignature)
         })
         .expect("register")
     }
@@ -442,14 +474,23 @@ mod tests {
     fn an_incomplete_chain_record_is_distinguishable_in_the_receipt() {
         let commitment = EvidenceCommitment::from_reconstruction(
             &recon(
-                ChainLabel::Incomplete { hop: 1, reason: IncompleteReason::TerminalExpected },
+                ChainLabel::Incomplete {
+                    hop: 1,
+                    reason: IncompleteReason::TerminalExpected,
+                },
                 1,
             ),
             None,
             None,
         );
-        assert!(!commitment.is_complete_record(), "the receipt commits to an incomplete record");
-        assert!(commitment.chain_label.starts_with("incomplete:1:"), "and names the failing hop");
+        assert!(
+            !commitment.is_complete_record(),
+            "the receipt commits to an incomplete record"
+        );
+        assert!(
+            commitment.chain_label.starts_with("incomplete:1:"),
+            "and names the failing hop"
+        );
 
         let st = statement(commitment);
         let mut svc = PrototypeTransparencyService::new(TS_KID);
@@ -461,7 +502,11 @@ mod tests {
 
     #[test]
     fn a_tampered_statement_fails_the_receipt() {
-        let st = statement(EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None));
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
         let mut svc = PrototypeTransparencyService::new(TS_KID);
         let receipt = register(&mut svc, &st);
         // Tamper the committed label after registration.
@@ -476,7 +521,11 @@ mod tests {
 
     #[test]
     fn a_forged_inclusion_path_fails() {
-        let st = statement(EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 2), None, None));
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 2),
+            None,
+            None,
+        ));
         let mut svc = PrototypeTransparencyService::new(TS_KID);
         let mut receipt = register(&mut svc, &st);
         // Swap a sibling: the recomputed root no longer matches the signed one.
@@ -489,7 +538,11 @@ mod tests {
 
     #[test]
     fn an_untrusted_issuer_or_ts_is_rejected() {
-        let st = statement(EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None));
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
         let mut svc = PrototypeTransparencyService::new(TS_KID);
         let receipt = register(&mut svc, &st);
         assert_eq!(

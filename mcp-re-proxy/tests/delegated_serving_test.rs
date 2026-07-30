@@ -140,14 +140,18 @@ fn make_rotor(
     impl FnMut() -> SigningKey,
 > {
     let root = root_key();
-    let issue =
-        move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c));
+    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
     let mut n = 100u8;
     let factory = move || {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(DelegatedSigningCustody::new(custody_cfg(), issue, factory), signer)
+    DelegatedRotor::new(
+        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
+        signer,
+    )
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -163,7 +167,10 @@ fn delegated_proxy(signer: Arc<DelegatedServerSigner>) -> HttpProfileProxy {
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         canned_inner(),
         300,
         signer,
@@ -189,8 +196,17 @@ fn sign_legacy_direct_root_response_for_negative_test(
         subject: "did:example:server".into(),
         keyid: ROOT_KID.into(),
     };
-    sign_response_full(&mut resp, req, request_evidence, &identity, &root_key(), ROOT_KID, NOW, NOW + 300)
-        .expect("root directly signs a pre-052 RFC 9421 response");
+    sign_response_full(
+        &mut resp,
+        req,
+        request_evidence,
+        &identity,
+        &root_key(),
+        ROOT_KID,
+        NOW,
+        NOW + 300,
+    )
+    .expect("root directly signs a pre-052 RFC 9421 response");
     resp
 }
 
@@ -203,7 +219,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -212,15 +228,29 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-            .expect("client signs RFC 9421 request");
+    let evidence = sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified = verify_request_full(&req, &audience(), &no_material, &move |k: &str, s| r(k, s), NOW)
-        .expect("client's own request verifies (for response binding)");
+    let verified = verify_request_full(
+        &req,
+        &audience(),
+        &no_material,
+        &move |k: &str, s| r(k, s),
+        NOW,
+    )
+    .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 
@@ -310,7 +340,11 @@ async fn delegated_success_response_verifies_and_root_touched_once() {
     }
 
     // The load-bearing property: the root issuer was touched ONLY at issuance.
-    assert_eq!(rotor.root_invocations(), 1, "root never touched on the request path");
+    assert_eq!(
+        rotor.root_invocations(),
+        1,
+        "root never touched on the request path"
+    );
 }
 
 // --- bound rejection: verified request, later replay failure ----------------
@@ -329,7 +363,9 @@ async fn delegated_bound_rejection_verifies() {
     assert_eq!(served.status, 409, "replay rejected");
     let resp = http_response(served);
     assert!(
-        String::from_utf8(resp.body.clone()).unwrap().contains("server_delegation"),
+        String::from_utf8(resp.body.clone())
+            .unwrap()
+            .contains("server_delegation"),
         "the rejection carries the inline delegation credential"
     );
 
@@ -363,10 +399,15 @@ async fn delegated_preflight_rejection_verifies_unbound() {
     req.body[last] ^= 0x01;
 
     let served = proxy.handle(served_of(&req), NOW).await;
-    assert_eq!(served.status, 403, "unverifiable request rejected preflight");
+    assert_eq!(
+        served.status, 403,
+        "unverifiable request rejected preflight"
+    );
     let resp = http_response(served);
     assert!(
-        String::from_utf8(resp.body.clone()).unwrap().contains("server_delegation"),
+        String::from_utf8(resp.body.clone())
+            .unwrap()
+            .contains("server_delegation"),
         "the preflight rejection still carries the inline delegation credential"
     );
 
@@ -452,7 +493,10 @@ async fn a_request_that_cannot_be_answered_never_reaches_the_backend() {
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         counting_inner,
         300,
         signer,
@@ -513,8 +557,16 @@ fn signed_notification(nonce: &str) -> HttpRequest {
         ],
         body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
     };
-    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("client signs the notification");
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("client signs the notification");
     req
 }
 
@@ -533,11 +585,16 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
 
     let note = signed_notification("nonce-note-1");
     let served = proxy.handle(served_of(&note), NOW).await;
-    assert_eq!(served.status, 202, "an accepted notification gets a bodyless 202");
+    assert_eq!(
+        served.status, 202,
+        "an accepted notification gets a bodyless 202"
+    );
     let ack = http_response(served);
     assert!(ack.body.is_empty(), "the 202 is bodyless");
     assert!(
-        ack.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("mcp-re-delegation")),
+        ack.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("mcp-re-delegation")),
         "the credential rides in the header"
     );
 
@@ -552,10 +609,17 @@ async fn a_notification_is_served_a_verifiable_delegated_202() {
         NOW,
     )
     .expect("the client verifies the delegated 202");
-    assert_ne!(actor.identity.keyid, ROOT_KID, "signed by the delegated key, not the root");
+    assert_ne!(
+        actor.identity.keyid, ROOT_KID,
+        "signed by the delegated key, not the root"
+    );
 
     // The root issuer was touched only at issuance — the 202 path is delegated too.
-    assert_eq!(rotor.root_invocations(), 1, "root never touched on the request/202 path");
+    assert_eq!(
+        rotor.root_invocations(),
+        1,
+        "root never touched on the request/202 path"
+    );
 }
 
 #[tokio::test]
@@ -593,7 +657,10 @@ async fn the_client_facing_crate_can_verify_the_202_the_server_emits() {
         NOW,
     )
     .expect("the client-facing crate verifies the server's 202");
-    assert_ne!(actor.identity.keyid, ROOT_KID, "delegated key, not the root");
+    assert_ne!(
+        actor.identity.keyid, ROOT_KID,
+        "delegated key, not the root"
+    );
 
     // And it fails closed on an epoch the client does not accept — the same kill switch
     // that governs every other delegated verification governs this one.

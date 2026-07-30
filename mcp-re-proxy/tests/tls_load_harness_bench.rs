@@ -165,7 +165,9 @@ fn make_ca() -> Ca {
     let mut params = CertificateParams::new(Vec::new()).expect("ca params");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params.distinguished_name.push(DnType::CommonName, "mcp-re-loadgen-ca");
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "mcp-re-loadgen-ca");
     let cert = params.self_signed(&key).expect("ca self-signed");
     Ca { cert, key }
 }
@@ -189,7 +191,9 @@ fn make_leaf(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -207,7 +211,9 @@ fn make_client_leaf(ca: &Ca, sans: Vec<SanType>) -> (rcgen::Certificate, KeyPair
     params.not_before = now - time::Duration::seconds(60);
     params.not_after = now + ceiling - time::Duration::seconds(120);
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -240,7 +246,10 @@ fn dns(value: &str) -> SanType {
 fn tmp(name: &str) -> PathBuf {
     static SEQ: AtomicUsize = AtomicUsize::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("mcp_re_loadgen_{}_{seq}_{name}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "mcp_re_loadgen_{}_{seq}_{name}",
+        std::process::id()
+    ))
 }
 
 struct Material {
@@ -399,13 +408,16 @@ impl Drop for ProxyProcess {
 /// clear message if the `docker` CLI is unavailable — this is an integration test
 /// and Docker is part of its milieu.
 fn docker(args: &[&str]) -> std::process::Output {
-    Command::new("docker").args(args).output().unwrap_or_else(|e| {
-        panic!(
-            "docker is required to run the load-harness integration test (bringing up the \
+    Command::new("docker")
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| {
+            panic!(
+                "docker is required to run the load-harness integration test (bringing up the \
              Redis wait-quorum replay fleet), but invoking `docker {}` failed: {e}",
-            args.join(" ")
-        )
-    })
+                args.join(" ")
+            )
+        })
 }
 
 /// A Redis primary + 2 replicas on a private Docker network, published on an
@@ -427,7 +439,11 @@ impl RedisFleet {
         // `load_harness_smoke` and `tls_load_harness_bench`. A per-instance sequence
         // makes every fleet's network + container names distinct.
         static SEQ: AtomicUsize = AtomicUsize::new(0);
-        let id = format!("{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+        let id = format!(
+            "{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
         let net = format!("mcp-re-loadgen-net-{id}");
         let primary = format!("mcp-re-loadgen-redis-primary-{id}");
         let r1 = format!("mcp-re-loadgen-redis-r1-{id}");
@@ -448,21 +464,56 @@ impl RedisFleet {
         // Disk persistence is REQUIRED: the replay store's whole purpose is to
         // remember admitted nonces, and default disk-based replication only completes
         // when the primary persists (otherwise replicas stall and WAIT returns 0).
-        let persist = ["--appendonly", "yes", "--appendfsync", "everysec", "--save", "60 1000 300 10"];
+        let persist = [
+            "--appendonly",
+            "yes",
+            "--appendfsync",
+            "everysec",
+            "--save",
+            "60 1000 300 10",
+        ];
 
-        let mut primary_args: Vec<&str> =
-            vec!["run", "-d", "--name", &primary, "--network", &net, "-p", "0:6379",
-                 "redis:7-alpine", "redis-server"];
+        let mut primary_args: Vec<&str> = vec![
+            "run",
+            "-d",
+            "--name",
+            &primary,
+            "--network",
+            &net,
+            "-p",
+            "0:6379",
+            "redis:7-alpine",
+            "redis-server",
+        ];
         primary_args.extend(persist);
         let out = docker(&primary_args);
-        assert!(out.status.success(), "run redis primary: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "run redis primary: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         for r in [&r1, &r2] {
-            let mut a: Vec<&str> = vec!["run", "-d", "--name", r, "--network", &net,
-                                        "redis:7-alpine", "redis-server", "--replicaof", &primary, "6379"];
+            let mut a: Vec<&str> = vec![
+                "run",
+                "-d",
+                "--name",
+                r,
+                "--network",
+                &net,
+                "redis:7-alpine",
+                "redis-server",
+                "--replicaof",
+                &primary,
+                "6379",
+            ];
             a.extend(persist);
             let out = docker(&a);
-            assert!(out.status.success(), "run redis replica {r}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "run redis replica {r}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
 
         // Resolve the ephemeral host port publishing the primary's 6379.
@@ -473,20 +524,31 @@ impl RedisFleet {
             .next()
             .and_then(|l| l.rsplit(':').next())
             .and_then(|p| p.trim().parse::<u16>().ok())
-            .unwrap_or_else(|| panic!("could not parse published redis port from `docker port`: {mapping:?}"));
+            .unwrap_or_else(|| {
+                panic!("could not parse published redis port from `docker port`: {mapping:?}")
+            });
 
-        let fleet = RedisFleet { net, containers: vec![primary.clone(), r1, r2], host_port };
+        let fleet = RedisFleet {
+            net,
+            containers: vec![primary.clone(), r1, r2],
+            host_port,
+        };
 
         // Wait until BOTH replicas report state=online, so the `WAIT 2` in the
         // durability tier gets 2 acks rather than timing out on every request.
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let info = docker(&["exec", &primary, "redis-cli", "info", "replication"]);
-            let online = String::from_utf8_lossy(&info.stdout).matches("state=online").count();
+            let online = String::from_utf8_lossy(&info.stdout)
+                .matches("state=online")
+                .count();
             if online >= 2 {
                 break;
             }
-            assert!(Instant::now() < deadline, "redis replicas did not come online within budget");
+            assert!(
+                Instant::now() < deadline,
+                "redis replicas did not come online within budget"
+            );
             std::thread::sleep(Duration::from_millis(300));
         }
         fleet
@@ -506,7 +568,12 @@ impl Drop for RedisFleet {
     }
 }
 
-fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_url: &str) -> ProxyProcess {
+fn spawn_proxy(
+    material: &Material,
+    inner_http_url: &str,
+    cores: usize,
+    redis_url: &str,
+) -> ProxyProcess {
     let cli = locate("MCP_RE_PROXY_CLI");
 
     // ADR-MCPRE-051 §1/§7: PIN the per-core worker count so `declared_cores` in the
@@ -529,36 +596,57 @@ fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_ur
     // port from bind onward), unlike a bind-release-rebind `free_port()`.
     let mut child = Command::new(&cli)
         .args([
-            "--bind", "127.0.0.1:0",
-            "--audience", AUDIENCE,
-            "--server-signer", SERVER,
-            "--server-key-id", SERVER_KEY_ID,
+            "--bind",
+            "127.0.0.1:0",
+            "--audience",
+            AUDIENCE,
+            "--server-signer",
+            SERVER,
+            "--server-key-id",
+            SERVER_KEY_ID,
             // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7):
             // the trust epoch minted into every delegation credential is mandatory.
-            "--delegated-trust-epoch", "epoch-1",
-            "--key-source", "file",
-            "--signing-key-seed", &material.seed_path.to_string_lossy(),
-            "--tls-cert", &material.server_cert_path.to_string_lossy(),
-            "--tls-key", &material.server_key_path.to_string_lossy(),
-            "--client-ca", &material.client_ca_path.to_string_lossy(),
-            "--trust", &material.trust_path.to_string_lossy(),
+            "--delegated-trust-epoch",
+            "epoch-1",
+            "--key-source",
+            "file",
+            "--signing-key-seed",
+            &material.seed_path.to_string_lossy(),
+            "--tls-cert",
+            &material.server_cert_path.to_string_lossy(),
+            "--tls-key",
+            &material.server_key_path.to_string_lossy(),
+            "--client-ca",
+            &material.client_ca_path.to_string_lossy(),
+            "--trust",
+            &material.trust_path.to_string_lossy(),
             // RFC 9421 serving path: the audience `@target-uri` both sides sign over,
             // and the trust domain the resolved client/server actor_id is built under.
-            "--target-uri", TARGET_URI,
-            "--trust-domain", TRUST_DOMAIN,
-            "--transport-binding", "exact",
-            "--transport-identity-source", "uri_san",
+            "--target-uri",
+            TARGET_URI,
+            "--trust-domain",
+            TRUST_DOMAIN,
+            "--transport-binding",
+            "exact",
+            "--transport-identity-source",
+            "uri_san",
             // The enforced ceiling itself — the client leaf's span is minted within it.
-            "--max-client-cert-lifetime", &cert_lifetime,
+            "--max-client-cert-lifetime",
+            &cert_lifetime,
             // Shared replay: the per-core async plane refuses node-local caches. The
             // fleet has 2 replicas, so `WAIT 2` is satisfiable.
-            "--replay-cache", "shared",
-            "--replay-redis-url", redis_url,
-            "--replay-durability-tier", "redis-wait-quorum:2:2000",
-            "--cores", &cores_str,
+            "--replay-cache",
+            "shared",
+            "--replay-redis-url",
+            redis_url,
+            "--replay-durability-tier",
+            "redis-wait-quorum:2:2000",
+            "--cores",
+            &cores_str,
             // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the stateless
             // in-process HTTP echo backend.
-            "--inner-http-url", inner_http_url,
+            "--inner-http-url",
+            inner_http_url,
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -609,7 +697,10 @@ fn spawn_proxy(material: &Material, inner_http_url: &str, cores: usize, redis_ur
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    assert!(up, "mcp_re_proxy_cli listening address {addr} is not accepting connections");
+    assert!(
+        up,
+        "mcp_re_proxy_cli listening address {addr} is not accepting connections"
+    );
 
     ProxyProcess { child, addr }
 }
@@ -727,7 +818,10 @@ fn read_http_response(stream: &mut impl Read) -> std::io::Result<HttpReply> {
         .nth(1)
         .and_then(|c| c.parse::<u16>().ok())
         .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "no HTTP status in response")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "no HTTP status in response",
+            )
         })?;
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
@@ -740,7 +834,10 @@ fn read_http_response(stream: &mut impl Read) -> std::io::Result<HttpReply> {
         .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, v)| v.trim().parse::<usize>().ok())
         .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "no Content-Length in response")
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "no Content-Length in response",
+            )
         })?;
     let keeps_alive = !headers
         .iter()
@@ -748,11 +845,20 @@ fn read_http_response(stream: &mut impl Read) -> std::io::Result<HttpReply> {
 
     let mut body = vec![0u8; content_length];
     stream.read_exact(&mut body)?;
-    Ok(HttpReply { status, headers, body, keeps_alive })
+    Ok(HttpReply {
+        status,
+        headers,
+        body,
+        keeps_alive,
+    })
 }
 
 /// Serialize the request line + signed headers + transport headers for a POST.
-fn http_post_head(signed_headers: &[(String, String)], keep_alive: bool, body_len: usize) -> String {
+fn http_post_head(
+    signed_headers: &[(String, String)],
+    keep_alive: bool,
+    body_len: usize,
+) -> String {
     let mut head = String::from("POST / HTTP/1.1\r\nHost: localhost\r\n");
     for (k, v) in signed_headers {
         // Content-Length / Connection are transport-owned below; the signed set
@@ -763,7 +869,9 @@ fn http_post_head(signed_headers: &[(String, String)], keep_alive: bool, body_le
         head.push_str(&format!("{k}: {v}\r\n"));
     }
     let conn = if keep_alive { "keep-alive" } else { "close" };
-    head.push_str(&format!("Content-Length: {body_len}\r\nConnection: {conn}\r\n\r\n"));
+    head.push_str(&format!(
+        "Content-Length: {body_len}\r\nConnection: {conn}\r\n\r\n"
+    ));
     head
 }
 
@@ -809,8 +917,18 @@ fn signed_request(nonce: &str) -> SignedRequest {
         route: None,
     };
     let binding = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, DPOP_TOKEN.as_bytes());
-    let inputs = RequestSigningInputs::new(SIGNER_A_KEY_ID, audience, vec![binding], nonce, now, now + 300)
-        .with_headers(vec![("Authorization".to_string(), format!("Bearer {DPOP_TOKEN}"))]);
+    let inputs = RequestSigningInputs::new(
+        SIGNER_A_KEY_ID,
+        audience,
+        vec![binding],
+        nonce,
+        now,
+        now + 300,
+    )
+    .with_headers(vec![(
+        "Authorization".to_string(),
+        format!("Bearer {DPOP_TOKEN}"),
+    )]);
     let mut params = Map::new();
     params.insert("text".to_string(), Value::String("hello".to_string()));
     build_signed_request(
@@ -887,7 +1005,10 @@ impl LoadConfig {
     /// comparable (MCPRE-110; the earlier 64/2000 GKE run was under-configured).
     fn from_env() -> Self {
         let env_usize = |k: &str, default: usize| {
-            std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default)
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(default)
         };
         let mode = match std::env::var("MCP_RE_LOADGEN_MODE").ok().as_deref() {
             Some("keepalive") => Mode::KeepAlive,
@@ -901,7 +1022,9 @@ impl LoadConfig {
                 .unwrap_or_else(|_| "unspecified".to_string()),
             cores: env_usize(
                 "MCP_RE_LOADGEN_CORES",
-                std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1),
             ),
         }
     }
@@ -1020,7 +1143,11 @@ fn run_load(addr: SocketAddr, config: Arc<ClientConfig>, cfg: &LoadConfig) -> Re
         p99_us: quantile(&samples, 0.99),
         p999_us: quantile(&samples, 0.999),
         min_us: samples.first().copied().unwrap_or(0),
-        mean_us: if successes > 0 { sum / successes as u128 } else { 0 },
+        mean_us: if successes > 0 {
+            sum / successes as u128
+        } else {
+            0
+        },
         max_us: samples.last().copied().unwrap_or(0),
         throughput_rps,
         reuse_fraction,
@@ -1065,12 +1192,19 @@ fn print_report(cfg: &LoadConfig, report: &Report) {
     println!(
         "declared_cores     : {} (per-core async fleet, SO_REUSEPORT; pinned via --cores, {})",
         cfg.cores,
-        if cfg.cores == 0 { "0 = auto/one-per-core" } else { "workers served == this count" }
+        if cfg.cores == 0 {
+            "0 = auto/one-per-core"
+        } else {
+            "workers served == this count"
+        }
     );
     println!("connection_mode    : {}", cfg.mode.as_str());
     println!("concurrency        : {}", cfg.concurrency);
     println!("requests           : {}", cfg.requests);
-    println!("successes/failures : {}/{}", report.successes, report.failures);
+    println!(
+        "successes/failures : {}/{}",
+        report.successes, report.failures
+    );
     println!("wall_clock         : {:.3}s", report.wall.as_secs_f64());
     println!("throughput         : {:.1} req/s", report.throughput_rps);
     println!(
@@ -1089,7 +1223,10 @@ fn print_report(cfg: &LoadConfig, report: &Report) {
 /// Emit the report as machine-readable JSON to `MCP_RE_LOADGEN_OUT` when set, so a
 /// run's numbers are attributable to the envelope that produced them.
 fn maybe_write_json(cfg: &LoadConfig, report: &Report) {
-    let Some(path) = std::env::var("MCP_RE_LOADGEN_OUT").ok().filter(|p| !p.is_empty()) else {
+    let Some(path) = std::env::var("MCP_RE_LOADGEN_OUT")
+        .ok()
+        .filter(|p| !p.is_empty())
+    else {
         return;
     };
     let doc = json!({
@@ -1179,7 +1316,12 @@ fn load_harness_smoke() {
         // Profile-issued kids are RFC 7638 JWK thumbprints (MCPRE-432); the property
         // under test is that a DELEGATED key signed, not the root directly.
         assert_ne!(
-            verified.verified.server_signer.as_ref().expect("delegated signer").keyid,
+            verified
+                .verified
+                .server_signer
+                .as_ref()
+                .expect("delegated signer")
+                .keyid,
             SERVER_KEY_ID,
             "signed by the delegated key chaining to the root, not the root directly",
         );
@@ -1199,7 +1341,10 @@ fn load_harness_smoke() {
     assert_eq!(report.successes, cfg.requests, "all requests accounted for");
     assert!(report.throughput_rps > 0.0, "throughput must be positive");
     assert!(report.p50_us > 0, "p50 latency must be measured");
-    assert!(report.p999_us >= report.p50_us, "percentiles must be monotonic");
+    assert!(
+        report.p999_us >= report.p50_us,
+        "percentiles must be monotonic"
+    );
 }
 
 /// `app::run` builds + starts + cleanly drains across the revocation-tier and
@@ -1228,16 +1373,45 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
             .port();
         let bind = format!("127.0.0.1:{port}");
         let mut v: Vec<String> = [
-            "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
-            "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+            "--bind",
+            bind.as_str(),
+            "--audience",
+            AUDIENCE,
+            "--server-signer",
+            SERVER,
+            "--server-key-id",
+            SERVER_KEY_ID,
+            "--key-source",
+            "file",
+            "--signing-key-seed",
+            &seed,
             // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7).
-            "--delegated-trust-epoch", "epoch-1",
-            "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
-            "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
-            "--max-client-cert-lifetime", &cert_lifetime,
-            "--replay-cache", "shared", "--replay-redis-url", &ru,
-            "--replay-durability-tier", "redis-wait-quorum:2:2000",
-            "--cores", "1", "--inner-http-url", &inner_url,
+            "--delegated-trust-epoch",
+            "epoch-1",
+            "--tls-cert",
+            &scert,
+            "--tls-key",
+            &skey,
+            "--client-ca",
+            &cca,
+            "--trust",
+            &trust,
+            "--target-uri",
+            TARGET_URI,
+            "--trust-domain",
+            TRUST_DOMAIN,
+            "--max-client-cert-lifetime",
+            &cert_lifetime,
+            "--replay-cache",
+            "shared",
+            "--replay-redis-url",
+            &ru,
+            "--replay-durability-tier",
+            "redis-wait-quorum:2:2000",
+            "--cores",
+            "1",
+            "--inner-http-url",
+            &inner_url,
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1284,13 +1458,36 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
 
     let mk = |case: &[&str]| -> Vec<String> {
         let mut v: Vec<String> = [
-            "--bind", "127.0.0.1:0", "--audience", AUDIENCE, "--server-signer", SERVER,
-            "--server-key-id", SERVER_KEY_ID, "--signing-key-seed", seed.as_str(),
-            "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
-            "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
-            "--inner-http-url", "http://127.0.0.1:9/mcp",
-            "--replay-cache", "shared", "--replay-redis-url", "redis://127.0.0.1:1",
-            "--replay-durability-tier", "redis-wait-quorum:2:2000",
+            "--bind",
+            "127.0.0.1:0",
+            "--audience",
+            AUDIENCE,
+            "--server-signer",
+            SERVER,
+            "--server-key-id",
+            SERVER_KEY_ID,
+            "--signing-key-seed",
+            seed.as_str(),
+            "--tls-cert",
+            &scert,
+            "--tls-key",
+            &skey,
+            "--client-ca",
+            &cca,
+            "--trust",
+            &trust,
+            "--target-uri",
+            TARGET_URI,
+            "--trust-domain",
+            TRUST_DOMAIN,
+            "--inner-http-url",
+            "http://127.0.0.1:9/mcp",
+            "--replay-cache",
+            "shared",
+            "--replay-redis-url",
+            "redis://127.0.0.1:1",
+            "--replay-durability-tier",
+            "redis-wait-quorum:2:2000",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1305,25 +1502,44 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     };
 
     // Cloud/HSM key sources that are not compiled into this build fail closed.
-    assert!(app_err(mk(&["--key-source", "aws-kms", "--aws-kms-region", "r", "--aws-kms-key-id", "k"]))
-        .contains("aws_kms"));
     assert!(app_err(mk(&[
-        "--key-source", "gcp-kms", "--gcp-kms-key-version",
+        "--key-source",
+        "aws-kms",
+        "--aws-kms-region",
+        "r",
+        "--aws-kms-key-id",
+        "k"
+    ]))
+    .contains("aws_kms"));
+    assert!(app_err(mk(&[
+        "--key-source",
+        "gcp-kms",
+        "--gcp-kms-key-version",
         "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
     ]))
     .contains("gcp_kms"));
     assert!(app_err(mk(&[
-        "--key-source", "pkcs11", "--pkcs11-module", "/x.so", "--pkcs11-pin-file", "/etc/pin",
-        "--pkcs11-token-label", "t", "--pkcs11-key-label", "k",
+        "--key-source",
+        "pkcs11",
+        "--pkcs11-module",
+        "/x.so",
+        "--pkcs11-pin-file",
+        "/etc/pin",
+        "--pkcs11-token-label",
+        "t",
+        "--pkcs11-key-label",
+        "k",
     ]))
     .to_lowercase()
     .contains("pkcs11"));
     // A node-local file replay cache is refused on the per-core async serving plane.
-    assert!(app_err(mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"]))
-        .contains("file"));
+    assert!(app_err(mk(&["--replay-cache", "file", "--replay-path", "/tmp/x"])).contains("file"));
     // The linearizable (CP) tier needs a cpstore_etcd build.
     assert!(app_err(mk(&[
-        "--replay-durability-tier", "linearizable", "--cpstore-etcd-endpoint", "http://127.0.0.1:2379",
+        "--replay-durability-tier",
+        "linearizable",
+        "--cpstore-etcd-endpoint",
+        "http://127.0.0.1:2379",
     ]))
     .contains("cpstore_etcd"));
 }
@@ -1365,26 +1581,65 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     write_empty_crl(&material.client_ca, &crl_path);
     let crl = crl_path.to_string_lossy().into_owned();
     let argv: Vec<String> = [
-        "--bind", bind.as_str(), "--audience", AUDIENCE, "--server-signer", SERVER,
-        "--server-key-id", SERVER_KEY_ID, "--key-source", "file", "--signing-key-seed", &seed,
+        "--bind",
+        bind.as_str(),
+        "--audience",
+        AUDIENCE,
+        "--server-signer",
+        SERVER,
+        "--server-key-id",
+        SERVER_KEY_ID,
+        "--key-source",
+        "file",
+        "--signing-key-seed",
+        &seed,
         // Delegated-required is the ONLY response-signing mode (ADR-MCPRE-052 §7).
-        "--delegated-trust-epoch", "epoch-1",
-        "--tls-cert", &scert, "--tls-key", &skey, "--client-ca", &cca, "--trust", &trust,
-        "--target-uri", TARGET_URI, "--trust-domain", TRUST_DOMAIN,
-        "--transport-binding", "exact", "--transport-identity-source", "uri_san",
-        "--max-client-cert-lifetime", &cert_lifetime,
+        "--delegated-trust-epoch",
+        "epoch-1",
+        "--tls-cert",
+        &scert,
+        "--tls-key",
+        &skey,
+        "--client-ca",
+        &cca,
+        "--trust",
+        &trust,
+        "--target-uri",
+        TARGET_URI,
+        "--trust-domain",
+        TRUST_DOMAIN,
+        "--transport-binding",
+        "exact",
+        "--transport-identity-source",
+        "uri_san",
+        "--max-client-cert-lifetime",
+        &cert_lifetime,
         // --fleet exercises the horizontally-scaled posture (cross-replica revocation-
         // lag diagnostics); the shared wait-quorum tier satisfies its guardrail.
         "--fleet",
-        "--replay-cache", "shared", "--replay-redis-url", &redis_url,
-        "--replay-durability-tier", "redis-wait-quorum:2:2000",
+        "--replay-cache",
+        "shared",
+        "--replay-redis-url",
+        &redis_url,
+        "--replay-durability-tier",
+        "redis-wait-quorum:2:2000",
         // Exercise the PUSH revocation tier + the networked trust-epoch source on the
         // same Redis fleet, so the trust-epoch wiring is covered on the serving path.
-        "--revocation-tier", "push:60", "--trust-epoch-redis-url", &redis_url,
-        "--trust-epoch-key", "mcp-re:trust:epoch",
+        "--revocation-tier",
+        "push:60",
+        "--trust-epoch-redis-url",
+        &redis_url,
+        "--trust-epoch-key",
+        "mcp-re:trust:epoch",
         // Offline client-cert CRL + in-process hot-reload (rebuilds the verifier).
-        "--client-crl", &crl, "--client-crl-reload-secs", "1",
-        "--cores", "1", "--inner-http-url", &inner_url,
+        "--client-crl",
+        &crl,
+        "--client-crl-reload-secs",
+        "1",
+        "--cores",
+        "1",
+        "--inner-http-url",
+        &inner_url,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -1506,19 +1761,33 @@ fn tls_load_harness_bench() {
     // In a containerized runner (K8s Job) the Docker daemon is unavailable, so allow
     // pointing the bench at an already-running primary+2-replica Redis via
     // MCP_RE_LOADGEN_REDIS_URL; otherwise bring up the Docker-backed fleet as before.
-    let external_redis = std::env::var("MCP_RE_LOADGEN_REDIS_URL").ok().filter(|s| !s.is_empty());
-    let _fleet = if external_redis.is_none() { Some(RedisFleet::start()) } else { None };
+    let external_redis = std::env::var("MCP_RE_LOADGEN_REDIS_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let _fleet = if external_redis.is_none() {
+        Some(RedisFleet::start())
+    } else {
+        None
+    };
     let redis_url = external_redis.unwrap_or_else(|| _fleet.as_ref().unwrap().url());
     let material = write_material();
     let backend = spawn_http_echo_backend();
-    let proxy = spawn_proxy(&material, &format!("http://{backend}/mcp"), cfg.cores, &redis_url);
+    let proxy = spawn_proxy(
+        &material,
+        &format!("http://{backend}/mcp"),
+        cfg.cores,
+        &redis_url,
+    );
     let config = build_client_config(&material.client_ca);
 
     let report = run_load(proxy.addr, config, &cfg);
     print_report(&cfg, &report);
     maybe_write_json(&cfg, &report);
 
-    assert!(report.successes > 0, "load run produced zero successful requests");
+    assert!(
+        report.successes > 0,
+        "load run produced zero successful requests"
+    );
     assert_eq!(
         report.successes + report.failures,
         cfg.requests,

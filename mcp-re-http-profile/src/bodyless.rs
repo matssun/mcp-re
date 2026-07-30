@@ -61,8 +61,8 @@ use crate::error::HttpProfileError;
 use crate::evidence::RequestEvidence;
 use crate::ids::BODYLESS_REQUEST_COMPONENTS;
 use crate::ids::BODYLESS_RESPONSE_COMPONENTS;
-use crate::ids::PROFILE_TAG;
 use crate::ids::MCP_RE_REQUEST_EVIDENCE_HEADER;
+use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
 use crate::ids::RESPONSE_LABEL;
@@ -84,10 +84,7 @@ use crate::sigbase::SourceMessage;
 /// harmless extra: the named set says there is no content, and a content-type
 /// asserts otherwise. Non-empty content on a message signed under a bodyless set
 /// is the same contradiction from the other side.
-fn require_bodyless(
-    headers: &[(String, String)],
-    body: &[u8],
-) -> Result<(), HttpProfileError> {
+fn require_bodyless(headers: &[(String, String)], body: &[u8]) -> Result<(), HttpProfileError> {
     if single_header(headers, "content-type")?.is_some() {
         return Err(HttpProfileError::MalformedEvidence(
             "content-type on a bodyless message",
@@ -142,7 +139,6 @@ fn emit(
     );
     Ok(())
 }
-
 
 /// Derive the REQUEST-role evidence handle from the request itself.
 ///
@@ -309,7 +305,8 @@ pub fn verify_accepted_202<R: Into<ResolverOutcome>>(
     }
     let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, policy, now, false)?;
-    let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
+    let actor =
+        crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
 
     let base = signature_base(
         &parsed.components,
@@ -346,7 +343,9 @@ pub fn sign_delegated_accepted_202(
     expires: i64,
 ) -> Result<HttpResponse, HttpProfileError> {
     if server_delegation.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
-        return Err(HttpProfileError::MalformedEvidence("delegation header too large"));
+        return Err(HttpProfileError::MalformedEvidence(
+            "delegation header too large",
+        ));
     }
     let mut response = HttpResponse {
         status: STATUS_ACCEPTED,
@@ -440,7 +439,9 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     let credential = single_header(&response.headers, crate::ids::MCP_RE_DELEGATION_HEADER)?
         .ok_or(HttpProfileError::DelegationCredentialMissing)?;
     if credential.len() > crate::ids::MAX_DELEGATION_HEADER_LEN {
-        return Err(HttpProfileError::MalformedEvidence("delegation header too large"));
+        return Err(HttpProfileError::MalformedEvidence(
+            "delegation header too large",
+        ));
     }
     let credential = credential.to_owned();
 
@@ -456,7 +457,11 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         &crate::ids::BODYLESS_DELEGATED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    if parsed.components.iter().any(|c| !c.req && c.name == "content-type") {
+    if parsed
+        .components
+        .iter()
+        .any(|c| !c.req && c.name == "content-type")
+    {
         return Err(HttpProfileError::MalformedEvidence(
             "content-type covered on a bodyless message",
         ));
@@ -479,7 +484,12 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     let verified = crate::delegation::verify_delegation_credential(
         &credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
+        |issuer_kid| {
+            resolve_actor(issuer_kid, SignerSlot::Response)
+                .into()
+                .resolved()
+                .map(|a| a.verification_key)
+        },
         |id| is_revoked(id),
     )?;
 
@@ -526,8 +536,8 @@ fn credential_server_signer(compact_jws: &str) -> Result<String, HttpProfileErro
         .ok_or(HttpProfileError::DelegationCredentialInvalid)?;
     let bytes = mcp_re_core::b64url_decode(payload_seg)
         .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
-    let v: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
     v.get("mcp_re_server_signer")
         .and_then(|s| s.as_str())
         .map(str::to_owned)
@@ -562,7 +572,9 @@ pub fn sign_bodyless_request(
     // body-shaped; these are properties of the REQUEST, and a bodyless request can carry
     // an `Authorization` header just as a bodied one can. Without this the signer could
     // not produce a message its own verifier would now accept.
-    components.extend(crate::sign::conditional_request_components(&request.headers)?);
+    components.extend(crate::sign::conditional_request_components(
+        &request.headers,
+    )?);
     let params = params_for(key_id, created, expires, Some(nonce));
     let base = signature_base(&components, &params, &SourceMessage::Request(request))?;
     emit(
@@ -613,7 +625,11 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, policy, now, true)?;
     let actor = crate::verify::resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Request)?;
-    let base = signature_base(&parsed.components, &parsed.params, &SourceMessage::Request(request))?;
+    let base = signature_base(
+        &parsed.components,
+        &parsed.params,
+        &SourceMessage::Request(request),
+    )?;
     let sig = crate::verify::signature_value_for(&request.headers, REQUEST_LABEL)?;
     crate::verify::verify_under(
         algorithm,

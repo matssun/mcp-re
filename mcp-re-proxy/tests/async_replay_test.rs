@@ -50,7 +50,8 @@ impl AsyncAtomicReplayStore for CountingL2 {
         now_unix: i64,
     ) -> ReplayDecisionFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.inner.atomic_insert_if_absent(key, expires_at_unix, now_unix)
+        self.inner
+            .atomic_insert_if_absent(key, expires_at_unix, now_unix)
     }
 }
 
@@ -74,7 +75,8 @@ impl AsyncAtomicReplayStore for FaultInjectingL2 {
                 })
             })
         } else {
-            self.inner.atomic_insert_if_absent(key, expires_at_unix, now_unix)
+            self.inner
+                .atomic_insert_if_absent(key, expires_at_unix, now_unix)
         }
     }
 }
@@ -93,12 +95,20 @@ fn l1_fast_rejects_known_replay_without_consulting_l2_again() {
 
         // First sight of the key: L1 miss ⇒ L2 consulted ⇒ Fresh.
         let first = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
-        assert_eq!(first, ReplayDecision::Fresh, "first insert is Fresh (from L2)");
+        assert_eq!(
+            first,
+            ReplayDecision::Fresh,
+            "first insert is Fresh (from L2)"
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1, "L2 consulted exactly once");
 
         // Second sight of the SAME key: L1 fast-rejects ⇒ Replay, L2 NOT consulted.
         let second = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
-        assert_eq!(second, ReplayDecision::Replay, "known replay fast-rejected by L1");
+        assert_eq!(
+            second,
+            ReplayDecision::Replay,
+            "known replay fast-rejected by L1"
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1, "L1 hit did not touch L2");
     });
 }
@@ -110,7 +120,10 @@ fn l1_eviction_never_causes_a_false_fresh() {
         let l2 = InMemoryAsyncAtomicReplayStore::new();
         let tier = L1FastRejectStore::with_capacity(l2, 2);
 
-        assert_eq!(tier.atomic_insert_if_absent("A", 0, 0).await.expect("ok"), ReplayDecision::Fresh);
+        assert_eq!(
+            tier.atomic_insert_if_absent("A", 0, 0).await.expect("ok"),
+            ReplayDecision::Fresh
+        );
         // Insert enough distinct keys to evict "A" from the 2-slot L1.
         for k in ["B", "C", "D"] {
             let _ = tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok");
@@ -118,7 +131,11 @@ fn l1_eviction_never_causes_a_false_fresh() {
         // "A" is now evicted from L1, but L2 still holds it — so re-inserting "A" must
         // be a Replay (from L2), NEVER a false Fresh.
         let again = tier.atomic_insert_if_absent("A", 0, 0).await.expect("ok");
-        assert_eq!(again, ReplayDecision::Replay, "an L1-evicted known key is still a Replay via L2 — never a false Fresh");
+        assert_eq!(
+            again,
+            ReplayDecision::Replay,
+            "an L1-evicted known key is still a Replay via L2 — never a false Fresh"
+        );
     });
 }
 
@@ -142,8 +159,15 @@ fn l2_outage_fails_closed_and_recovers_clean() {
         // The outage recorded nothing in L1 (presence unknown), so recovery is clean:
         // the first post-recovery sight of the key is a correct Fresh.
         fail.store(false, Ordering::SeqCst);
-        let recovered = tier.atomic_insert_if_absent("k", 0, 0).await.expect("recovered");
-        assert_eq!(recovered, ReplayDecision::Fresh, "clean recovery: first sight is Fresh");
+        let recovered = tier
+            .atomic_insert_if_absent("k", 0, 0)
+            .await
+            .expect("recovered");
+        assert_eq!(
+            recovered,
+            ReplayDecision::Fresh,
+            "clean recovery: first sight is Fresh"
+        );
         let replay = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
         assert_eq!(replay, ReplayDecision::Replay, "and the next is a Replay");
     });
@@ -178,7 +202,10 @@ fn cross_core_exactly_one_fresh_under_concurrency() {
                 ReplayDecision::Replay => replay += 1,
             }
         }
-        assert_eq!(fresh, 1, "EXACTLY ONE Fresh across all cores under concurrency");
+        assert_eq!(
+            fresh, 1,
+            "EXACTLY ONE Fresh across all cores under concurrency"
+        );
         assert_eq!(replay, tasks - 1, "every other caller sees Replay");
     });
 }
@@ -189,10 +216,16 @@ fn distinct_keys_are_each_fresh_once() {
         let tier = L1FastRejectStore::new(InMemoryAsyncAtomicReplayStore::new());
         // Distinct keys are independent: each is Fresh exactly once, Replay thereafter.
         for k in ["a", "b", "c"] {
-            assert_eq!(tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"), ReplayDecision::Fresh);
+            assert_eq!(
+                tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"),
+                ReplayDecision::Fresh
+            );
         }
         for k in ["a", "b", "c"] {
-            assert_eq!(tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"), ReplayDecision::Replay);
+            assert_eq!(
+                tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"),
+                ReplayDecision::Replay
+            );
         }
     });
 }

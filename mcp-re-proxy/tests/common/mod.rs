@@ -164,9 +164,18 @@ impl TestRootAuthorityProvider for InMemoryTestRootAuthorityProvider {
     }
 }
 
-fn org_resolver(signer_kid: &str, org_pub: VerificationKey) -> impl Fn(&str) -> Option<VerificationKey> {
+fn org_resolver(
+    signer_kid: &str,
+    org_pub: VerificationKey,
+) -> impl Fn(&str) -> Option<VerificationKey> {
     let kid = signer_kid.to_string();
-    move |k: &str| if k == kid { Some(org_pub.clone()) } else { None }
+    move |k: &str| {
+        if k == kid {
+            Some(org_pub.clone())
+        } else {
+            None
+        }
+    }
 }
 
 fn verify_params<'a>(now: i64) -> DelegationVerifyParams<'a> {
@@ -201,7 +210,10 @@ fn verify_credential_under_manifest(
     verify_delegation_credential(
         compact_jws,
         &verify_params(now),
-        |issuer_kid| set.resolve_root(issuer_kid, now).map(|a| a.verification_key),
+        |issuer_kid| {
+            set.resolve_root(issuer_kid, now)
+                .map(|a| a.verification_key)
+        },
         |id| set.is_revoked(id),
     )
     .map(|_| ())
@@ -250,8 +262,10 @@ pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org
         expires_at: expires,
     };
     let s2 = sign_manifest(&m2, org_key, ORG_KID);
-    verify_credential_under_manifest(&cred_a, &s2, org_key, 2, now).expect("A still accepted during overlap");
-    verify_credential_under_manifest(&cred_b, &s2, org_key, 2, now).expect("B accepted during overlap");
+    verify_credential_under_manifest(&cred_a, &s2, org_key, 2, now)
+        .expect("A still accepted during overlap");
+    verify_credential_under_manifest(&cred_b, &s2, org_key, 2, now)
+        .expect("B accepted during overlap");
     // Past the overlap deadline: A no longer a trusted anchor, B still is. Short-TTL
     // delegated credentials are re-minted continuously, so mint FRESH ones at `past` —
     // the question under test is the ROOT's trust, not the credential's freshness.
@@ -263,7 +277,8 @@ pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org
         HttpProfileError::DelegationIssuerUntrusted,
         "A rejected after the overlap window closes"
     );
-    verify_credential_under_manifest(&cred_b_past, &s2, org_key, 2, past).expect("B accepted after cutover");
+    verify_credential_under_manifest(&cred_b_past, &s2, org_key, 2, past)
+        .expect("B accepted after cutover");
 
     // Phase 3 — manifest v3: Root A REVOKED (compromise). It stays LISTED (so its
     // material still resolves and the rejection reason is the decisive `Revoked`, not a
@@ -285,12 +300,23 @@ pub fn run_rotation_scenario(root_a: &RootAuthority, root_b: &RootAuthority, org
         HttpProfileError::DelegationRevoked,
         "revoking Root A invalidates its credential immediately, before exp"
     );
-    verify_credential_under_manifest(&cred_b, &s3, org_key, 3, now).expect("B unaffected by A's revocation");
+    verify_credential_under_manifest(&cred_b, &s3, org_key, 3, now)
+        .expect("B unaffected by A's revocation");
 
     // Rollback protection: after accepting v3, a replayed v2 (which un-revokes A) is refused.
     assert_eq!(
-        load_signed_manifest(&s2, org_resolver(ORG_KID, org_key.public_key()), PROFILE_TAG, 3, now).unwrap_err(),
-        TrustManifestError::Stale { version: 2, min_version: 3 },
+        load_signed_manifest(
+            &s2,
+            org_resolver(ORG_KID, org_key.public_key()),
+            PROFILE_TAG,
+            3,
+            now
+        )
+        .unwrap_err(),
+        TrustManifestError::Stale {
+            version: 2,
+            min_version: 3
+        },
         "a rollback to the pre-revocation manifest is refused"
     );
 }

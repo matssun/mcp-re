@@ -16,11 +16,11 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use mcp_re_proxy::RedisAtomicReplayStore;
-use mcp_re_proxy::SharedReplayCache;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
+use mcp_re_proxy::RedisAtomicReplayStore;
+use mcp_re_proxy::SharedReplayCache;
 
 const AUD: &str = "did:example:verifier";
 
@@ -74,7 +74,9 @@ fn composite_key(signer: &str, audience: &str, nonce: &str) -> String {
 /// Read the Redis URL the test should run against, or `None` to skip. A real
 /// shared backend is not present in every environment.
 fn redis_url() -> Option<String> {
-    let url = std::env::var("MCP_RE_TEST_REDIS_URL").ok().filter(|u| !u.trim().is_empty());
+    let url = std::env::var("MCP_RE_TEST_REDIS_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty());
     if url.is_none() && require_live_infra() {
         panic!(
             "MCP_RE_REQUIRE_LIVE_INFRA is set but MCP_RE_TEST_REDIS_URL is unavailable \
@@ -95,8 +97,8 @@ fn require_live_infra() -> bool {
 /// Build a `SharedReplayCache` over a fresh Redis connection to `url`. Each call
 /// is an independent "node" (its own connection) sharing the one Redis.
 fn node(url: &str) -> SharedReplayCache {
-    let store = RedisAtomicReplayStore::connect(url)
-        .expect("connect to MCP_RE_TEST_REDIS_URL Redis");
+    let store =
+        RedisAtomicReplayStore::connect(url).expect("connect to MCP_RE_TEST_REDIS_URL Redis");
     SharedReplayCache::new(Box::new(store), SKEW)
 }
 
@@ -116,7 +118,10 @@ fn cross_node_insert_via_a_is_replay_via_b() {
 
     // Test-name-derived signer plus a per-run suffix, so this test owns its key space
     // and never collides with a prior run's still-live entry (see `run_id`).
-    let signer = &format!("did:example:host#cross_node_insert_via_a_is_replay_via_b-{}", run_id());
+    let signer = &format!(
+        "did:example:host#cross_node_insert_via_a_is_replay_via_b-{}",
+        run_id()
+    );
     let nonce = "nonce-4028-cross-node-insert-via-a-is-replay-via-b";
 
     let node_a = node(&url);
@@ -146,7 +151,10 @@ fn single_node_fresh_then_replay() {
         return;
     };
 
-    let signer = &format!("did:example:host#single_node_fresh_then_replay-{}", run_id());
+    let signer = &format!(
+        "did:example:host#single_node_fresh_then_replay-{}",
+        run_id()
+    );
     let nonce = "nonce-4028-single-node-fresh-then-replay";
 
     let cache = node(&url);
@@ -207,7 +215,9 @@ fn live_pttl_is_bounded_window_not_absolute_epoch() {
     // Probe PTTL on the exact key the cache inserted.
     let key = composite_key(signer, AUD, nonce);
     let client = redis::Client::open(url.as_str()).expect("open redis client");
-    let mut conn = client.get_connection().expect("redis connection for PTTL probe");
+    let mut conn = client
+        .get_connection()
+        .expect("redis connection for PTTL probe");
     let pttl_ms: i64 = redis::cmd("PTTL")
         .arg(&key)
         .query(&mut conn)
@@ -294,7 +304,10 @@ fn host_port(url: &str) -> (String, u16) {
     let s = url.strip_prefix("redis://").unwrap_or(url);
     let s = s.split('/').next().unwrap_or(s);
     let (host, port) = s.rsplit_once(':').expect("redis url is host:port");
-    (host.to_string(), port.parse().expect("redis port is numeric"))
+    (
+        host.to_string(),
+        port.parse().expect("redis port is numeric"),
+    )
 }
 
 /// `connected_slaves:N` from the primary's `INFO replication`, or -1 if absent.
@@ -316,9 +329,7 @@ fn replica_link_up(replica: &mut redis::Connection) -> bool {
         .query(replica)
         .expect("INFO replication on replica");
     let role_slave = info.lines().any(|l| l.trim() == "role:slave");
-    let link_up = info
-        .lines()
-        .any(|l| l.trim() == "master_link_status:up");
+    let link_up = info.lines().any(|l| l.trim() == "master_link_status:up");
     role_slave && link_up
 }
 
@@ -366,8 +377,8 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
 
     impl Drop for ReattachOnDrop {
         fn drop(&mut self) {
-            let Ok(mut conn) = redis::Client::open(self.replica_url.as_str())
-                .and_then(|c| c.get_connection())
+            let Ok(mut conn) =
+                redis::Client::open(self.replica_url.as_str()).and_then(|c| c.get_connection())
             else {
                 return;
             };
@@ -404,7 +415,9 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         .arg(master_port)
         .query(&mut replica)
         .expect("attach replica to primary");
-    poll_until("replica master_link_status:up", || replica_link_up(&mut replica));
+    poll_until("replica master_link_status:up", || {
+        replica_link_up(&mut replica)
+    });
     poll_until("primary connected_slaves>=1", || {
         primary_connected_slaves(&mut primary) >= 1
     });
@@ -456,7 +469,9 @@ fn wait_quorum_shortfall_and_recovery_against_a_replica() {
         .arg(master_port)
         .query(&mut replica)
         .expect("reattach replica to primary");
-    poll_until("replica link up after reattach", || replica_link_up(&mut replica));
+    poll_until("replica link up after reattach", || {
+        replica_link_up(&mut replica)
+    });
     poll_until("primary connected_slaves>=1 after reattach", || {
         primary_connected_slaves(&mut primary) >= 1
     });
@@ -526,17 +541,16 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
         .arg(master_port)
         .query(&mut replica)
         .expect("attach replica to primary");
-    poll_until("replica master_link_status:up", || replica_link_up(&mut replica));
+    poll_until("replica master_link_status:up", || {
+        replica_link_up(&mut replica)
+    });
     poll_until("primary connected_slaves>=1", || {
         primary_connected_slaves(&mut primary) >= 1
     });
 
     // (1) Healthy: the attached replica satisfies WAIT 1 → Fresh.
-    let healthy = rt.block_on(store.atomic_insert_if_absent(
-        &key_of("async-nonce-healthy"),
-        expires_at,
-        0,
-    ));
+    let healthy =
+        rt.block_on(store.atomic_insert_if_absent(&key_of("async-nonce-healthy"), expires_at, 0));
     assert_eq!(
         healthy,
         Ok(ReplayDecision::Fresh),
@@ -553,11 +567,8 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
         primary_connected_slaves(&mut primary) == 0
     });
 
-    let shortfall = rt.block_on(store.atomic_insert_if_absent(
-        &key_of("async-nonce-shortfall"),
-        expires_at,
-        0,
-    ));
+    let shortfall =
+        rt.block_on(store.atomic_insert_if_absent(&key_of("async-nonce-shortfall"), expires_at, 0));
     assert!(
         matches!(shortfall, Err(ReplayStoreError::Unavailable { .. })),
         "an async WAIT-quorum shortfall must fail closed as Unavailable, got {shortfall:?}"
@@ -574,5 +585,7 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
         .arg(master_port)
         .query(&mut replica)
         .expect("reattach replica to primary");
-    poll_until("replica link up after reattach", || replica_link_up(&mut replica));
+    poll_until("replica link up after reattach", || {
+        replica_link_up(&mut replica)
+    });
 }

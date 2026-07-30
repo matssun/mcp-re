@@ -27,5 +27,8 @@ cryptoki-sys = "0.5.0"
 # Deterministic in-memory Ed25519 signing (RustCrypto — no custom crypto). Keys are
 # seeded from SHA-256(label || id) so a public point read off the mock always matches
 # the signature the mock produces, across re-initialisations.
-ed25519-dalek = "2.1"
+ed25519-dalek = "3"
+# Matches the root workspace's generation: this mock is linked into the proxy's
+# PKCS#11 suite, so a second digest generation here forks the test binary's crypto
+# stack exactly as it would the proxy's. See the rationale in //Cargo.toml.
 sha2 = "0.11"

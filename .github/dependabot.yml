@@ -36,6 +36,54 @@ updates:
         # change (rustls, redis, pyo3 all move APIs), and it deserves its own PR
         # and its own test run rather than riding along in a bulk bump.
         update-types: ["minor", "patch"]
+    ignore:
+      # The RustCrypto stack moves as ONE generation or not at all. The tree is on
+      # `digest 0.11` (sha2 0.11 / ed25519-dalek 3 / hmac 0.13 / curve25519-dalek 5
+      # / signature 3), and a lone bump of any single member does not advance it —
+      # it forks it, leaving the signing binary with two independent SHA-256
+      # implementations. That is precisely how sha2 0.11 first landed (PR #457,
+      # unattended) and forked all four lockfiles with nothing going red.
+      #
+      # //deny.toml now denies the duplicate outright, so such a PR could only ever
+      # be a red one; these entries stop it being opened at all. Bump this set by
+      # hand, together, in a single change.
+      - dependency-name: "sha2"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "digest"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "hmac"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "ed25519-dalek"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "curve25519-dalek"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # `asn1-rs` must track whatever `x509-parser` resolves — the BitString built
+      # in mcp-re-proxy/src/ocsp.rs is passed straight into x509-parser's
+      # `verify_signature`, so a version split there is a hard COMPILE error, not a
+      # duplicate warning. The x509-parser 0.18 bump (PR #455) left asn1-rs at 0.6
+      # and broke the `online_ocsp` build on main; only the feature-gated CI lane
+      # sees it. Bump the two together, by hand.
+      - dependency-name: "asn1-rs"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "x509-parser"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # `der`, `spki` and `x509-cert` are PINNED BY x509-ocsp 0.2.1 — the newest
+      # release — which requires der 0.7.8 / spki 0.7.2 / x509-cert 0.2.4. ocsp.rs
+      # passes values of all three straight into x509_ocsp's OcspRequestBuilder,
+      # CertId and BasicOcspResponse, so a split is a hard COMPILE error. There is
+      # no version of x509-ocsp on der 0.8, so these cannot move while OCSP exists.
+      # Both were merged unattended (PRs #471, #472) and had to be reverted.
+      - dependency-name: "der"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "spki"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "x509-cert"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # rcgen 0.14 replaced `signed_by(&key, &cert, &key)` with an `Issuer` type
+      # across 26 fixture call sites. Held at 0.13 until that migration lands;
+      # tracked in #478. Remove this entry as part of it.
+      - dependency-name: "rcgen"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # sdk/typescript ships an npm package; demo/video/mcps-intro is the render-only
   # demo where the postcss advisory landed.
@@ -50,16 +98,41 @@ updates:
       npm-minor-patch:
         update-types: ["minor", "patch"]
 
-  # The Python SDK's uv.lock (dev/test extras — the published wheel has no hard
-  # runtime dependencies).
-  - package-ecosystem: "uv"
-    directory: "/sdk/python"
+  # Python. Both manifests are `pip`, not `uv`: sdk/python/uv.lock is gitignored
+  # (sdk/python/.gitignore) and has never been committed, so Dependabot cannot see a
+  # lockfile there — what it can read is the PEP 621 pyproject, whose dev/test extras
+  # are the whole Python dependency surface (the published wheel has no hard runtime
+  # deps, `dependencies = []`).
+  #
+  # mcp-re-conformance/tools carries the exactly-pinned `cryptography` that the RFC 9421
+  # cross-verification no-merge gate depends on for an Ed25519 implementation independent
+  # of ed25519-dalek. Alerts already reach that file; without it listed here nothing
+  # opens the PR that bumps the pin, which is the one place a stale pin is load-bearing.
+  # An exact pin is updated in place, so the gate stays deterministic.
+  - package-ecosystem: "pip"
+    directories:
+      - "/sdk/python"
+      - "/mcp-re-conformance/tools"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
     groups:
-      uv-minor-patch:
+      pip-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # The upstream MCP SDK's MAJOR version fixes the protocol version the client
+      # advertises (1.x -> 2025-11-25, 2.0 -> 2026-07-28), and that version is part
+      # of the initialize bytes pinned by sdk/fixtures/delegated_response_replay.json
+      # — a fixture SHARED with the TypeScript SDK, which is capped
+      # `@modelcontextprotocol/sdk >=1.16.0 <2.0.0`. Bumping one SDK's major alone
+      # makes the two speak different protocol generations, and the only way to make
+      # the moved side pass is to re-record the shared fixture, which breaks the
+      # other. PR #469 did exactly this and cost 33 test failures on main.
+      #
+      # Both SDKs move to MCP 2.0 together, with the fixture re-recorded in the same
+      # change. Tracked in #479; drop this entry as part of it.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
 
   # Workflow actions. These are currently referenced by moving major tags
   # (actions/checkout@v4, ...), so this is what keeps them current.

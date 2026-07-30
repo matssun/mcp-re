@@ -41,7 +41,9 @@ fn require_env(key: &str) -> String {
 fn kms_root(version_env: &str, issuer_kid: &str) -> RootAuthority {
     let config = GcpKmsConfig {
         key_version_name: require_env(version_env),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     let backend = GcpKmsEd25519Backend::new(&config, use_metadata)
@@ -52,8 +54,12 @@ fn kms_root(version_env: &str, issuer_kid: &str) -> RootAuthority {
         issuer_kid,
         public_key,
         Box::new(move |input: &[u8]| {
-            b64url_decode(&signer.sign_response(input).expect("KMS asymmetricSign over the JWS input"))
-                .expect("KMS returns a base64url raw Ed25519 signature")
+            b64url_decode(
+                &signer
+                    .sign_response(input)
+                    .expect("KMS asymmetricSign over the JWS input"),
+            )
+            .expect("KMS returns a base64url raw Ed25519 signature")
         }),
     )
 }

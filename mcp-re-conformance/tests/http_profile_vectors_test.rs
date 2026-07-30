@@ -26,11 +26,11 @@ use mcp_re_http_profile::block::AudienceTuple;
 use mcp_re_http_profile::build_signed_rejection;
 use mcp_re_http_profile::reconstruct_chain;
 use mcp_re_http_profile::sign_accepted_202;
-use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
 use mcp_re_http_profile::sign_response_full;
+use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
@@ -749,8 +749,8 @@ fn build_fixtures() -> Vec<Fixture> {
             }),
             continuation_check: None,
             chain_check: None,
-        admission_check: None,
-        delegated_202_check: None,
+            admission_check: None,
+            delegated_202_check: None,
         });
     }
 
@@ -837,8 +837,15 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
     };
-    sign_request(&mut note, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note")
-        .expect("a notification signs like any request");
+    sign_request(
+        &mut note,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-note",
+    )
+    .expect("a notification signs like any request");
     let ack = sign_accepted_202(&note, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
         .expect("the PEP signs its acceptance");
 
@@ -860,7 +867,9 @@ fn build_fixtures() -> Vec<Fixture> {
 
     // h35 — content-type present when the named set says it must be absent.
     let mut ack_ct = ack.clone();
-    ack_ct.headers.push(("Content-Type".into(), "application/json".into()));
+    ack_ct
+        .headers
+        .push(("Content-Type".into(), "application/json".into()));
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h35_bodyless_202_content_type_present".into(),
@@ -907,8 +916,15 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#.to_vec(),
     };
-    sign_request(&mut note_b, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-note-b")
-        .expect("signing succeeds");
+    sign_request(
+        &mut note_b,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-note-b",
+    )
+    .expect("signing succeeds");
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h37_bodyless_202_splice".into(),
@@ -946,7 +962,10 @@ fn build_fixtures() -> Vec<Fixture> {
         "vec-nonce-note-retransmission",
     )
     .expect("the retransmission signs like any request");
-    assert_eq!(note.body, note_a_prime.body, "the two transmissions are content-identical");
+    assert_eq!(
+        note.body, note_a_prime.body,
+        "the two transmissions are content-identical"
+    );
     fixtures.push(Fixture {
         schema: "mcp-re-http-profile-conformance/v1".into(),
         name: "h50_bodyless_202_retransmission".into(),
@@ -977,8 +996,15 @@ fn build_fixtures() -> Vec<Fixture> {
             body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
                 .to_vec(),
         };
-        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-mcp")
-            .expect("signing succeeds");
+        sign_request(
+            &mut r,
+            &client_key(),
+            CLIENT_KEY_ID,
+            CREATED,
+            EXPIRES,
+            "vec-nonce-mcp",
+        )
+        .expect("signing succeeds");
         r
     };
 
@@ -1059,8 +1085,15 @@ fn build_fixtures() -> Vec<Fixture> {
             headers: hs,
             body: body.to_vec(),
         };
-        sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-            .expect("signing succeeds");
+        sign_request(
+            &mut r,
+            &client_key(),
+            CLIENT_KEY_ID,
+            CREATED,
+            EXPIRES,
+            nonce,
+        )
+        .expect("signing succeeds");
         r
     };
 
@@ -1112,7 +1145,10 @@ fn build_fixtures() -> Vec<Fixture> {
 
     // h40 — an unsupported protocol version (a client's claim is not consent).
     let tx_badver = tx_sign(
-        vec![("Mcp-Method", "initialize"), ("MCP-Protocol-Version", "1999-01-01")],
+        vec![
+            ("Mcp-Method", "initialize"),
+            ("MCP-Protocol-Version", "1999-01-01"),
+        ],
         br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
         "vec-nonce-tx-ver",
     );
@@ -1379,7 +1415,10 @@ fn chain_block(continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlo
     HttpRequestEvidenceBlock {
         profile: mcp_re_http_profile::PROFILE_TAG.into(),
         audience: chain_audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"tok",
+        )],
         continuation,
         admission: None,
     }
@@ -1435,7 +1474,11 @@ fn chain_hop(
         verify_response_bound_full(&response, &request, &req_evidence, &resolver(), NOW)
             .expect("response verifies")
             .response_signature_base_digest;
-    (RetainedHop { request, response }, req_evidence, rsp_evidence)
+    (
+        RetainedHop { request, response },
+        req_evidence,
+        rsp_evidence,
+    )
 }
 
 fn to_chain_hop(h: &RetainedHop) -> ChainHop {
@@ -1498,7 +1541,6 @@ fn chain_fixtures() -> Vec<Fixture> {
     out.push(chain_fixture(
         "h24_chain_multi_hop_complete",
         &full,
-        
         "complete",
     ));
 
@@ -1661,8 +1703,15 @@ fn d202_notification() -> HttpRequest {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "vec-nonce-d202")
-        .expect("notification signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "vec-nonce-d202",
+    )
+    .expect("notification signs");
     r
 }
 
@@ -1751,7 +1800,10 @@ fn admission_root() -> SigningKey {
     SigningKey::from_seed_bytes(&[44u8; 32])
 }
 
-fn admission_claims(generation: u64, status: mcp_re_http_profile::AdmissionStatus) -> mcp_re_http_profile::AdmissionClaims {
+fn admission_claims(
+    generation: u64,
+    status: mcp_re_http_profile::AdmissionStatus,
+) -> mcp_re_http_profile::AdmissionClaims {
     use sha2::Digest;
     mcp_re_http_profile::AdmissionClaims {
         iss: "did:example:admission".into(),
@@ -1763,7 +1815,9 @@ fn admission_claims(generation: u64, status: mcp_re_http_profile::AdmissionStatu
         mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
         mcp_re_admission_id: "workload-7".into(),
         mcp_re_admission_generation: generation,
-        mcp_re_admitted_state_digest: mcp_re_core::b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
+        mcp_re_admitted_state_digest: mcp_re_core::b64url_encode(&sha2::Sha256::digest(
+            b"admitted-state",
+        )),
         mcp_re_admission_status: status,
         issuer_kid: ADMISSION_ISSUER_KID.into(),
     }
@@ -1810,16 +1864,46 @@ fn admission_fixtures() -> Vec<Fixture> {
     use mcp_re_http_profile::AdmissionStatus::*;
     vec![
         // h42 — current admitted workload: served.
-        admission_fixture("h42_admission_current_admitted", &admission_claims(5, Admitted), Some((5, "admitted")), None, "verify_ok"),
+        admission_fixture(
+            "h42_admission_current_admitted",
+            &admission_claims(5, Admitted),
+            Some((5, "admitted")),
+            None,
+            "verify_ok",
+        ),
         // h43 — the load-bearing case: a valid, fresh, admitted assertion refused
         //       because the authoritative generation advanced. A snapshot is not currency.
-        admission_fixture("h43_admission_stale_generation", &admission_claims(5, Admitted), Some((6, "admitted")), None, "mcp-re.actor_binding_failed"),
+        admission_fixture(
+            "h43_admission_stale_generation",
+            &admission_claims(5, Admitted),
+            Some((6, "admitted")),
+            None,
+            "mcp-re.actor_binding_failed",
+        ),
         // h44 — revoked after issuance.
-        admission_fixture("h44_admission_revoked_after_issuance", &admission_claims(5, Admitted), Some((5, "revoked")), None, "mcp-re.actor_binding_failed"),
+        admission_fixture(
+            "h44_admission_revoked_after_issuance",
+            &admission_claims(5, Admitted),
+            Some((5, "revoked")),
+            None,
+            "mcp-re.actor_binding_failed",
+        ),
         // h45 — authoritative state unreachable, degraded disabled: fail closed.
-        admission_fixture("h45_admission_state_unreachable_failclosed", &admission_claims(5, Admitted), None, None, "mcp-re.actor_binding_failed"),
+        admission_fixture(
+            "h45_admission_state_unreachable_failclosed",
+            &admission_claims(5, Admitted),
+            None,
+            None,
+            "mcp-re.actor_binding_failed",
+        ),
         // h46 — unreachable state within the P bound with degraded enabled: served.
-        admission_fixture("h46_admission_degraded_within_bound", &admission_claims(5, Admitted), None, Some(600), "verify_ok"),
+        admission_fixture(
+            "h46_admission_degraded_within_bound",
+            &admission_claims(5, Admitted),
+            None,
+            Some(600),
+            "verify_ok",
+        ),
     ]
 }
 
@@ -2004,7 +2088,10 @@ fn frozen_http_profile_corpus_verifies() {
                 }
             }
             "delegated_202" => {
-                let check = fixture.delegated_202_check.as_ref().expect("delegated_202_check");
+                let check = fixture
+                    .delegated_202_check
+                    .as_ref()
+                    .expect("delegated_202_check");
                 let request = from_wire_request(&check.request);
                 let response = from_wire_response(&check.response);
                 let root_key =
@@ -2050,22 +2137,22 @@ fn frozen_http_profile_corpus_verifies() {
                 let check = fixture.admission_check.as_ref().expect("admission_check");
                 let binding: mcp_re_http_profile::AdmissionBinding =
                     serde_json::from_value(check.binding.clone()).expect("binding parses");
-                let issuer_key = mcp_re_core::VerificationKey::from_b64url(
-                    &check.issuer_public_key_b64url,
-                )
-                .expect("issuer key parses");
-                let authoritative = match (&check.authoritative_generation, &check.authoritative_status) {
-                    (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
-                        generation: *g,
-                        status: match s.as_str() {
-                            "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
-                            "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
-                            "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
-                            other => panic!("{name}: unknown status {other}"),
-                        },
-                    }),
-                    _ => None,
-                };
+                let issuer_key =
+                    mcp_re_core::VerificationKey::from_b64url(&check.issuer_public_key_b64url)
+                        .expect("issuer key parses");
+                let authoritative =
+                    match (&check.authoritative_generation, &check.authoritative_status) {
+                        (Some(g), Some(s)) => Some(mcp_re_http_profile::AuthoritativeAdmission {
+                            generation: *g,
+                            status: match s.as_str() {
+                                "admitted" => mcp_re_http_profile::AdmissionStatus::Admitted,
+                                "suspended" => mcp_re_http_profile::AdmissionStatus::Suspended,
+                                "revoked" => mcp_re_http_profile::AdmissionStatus::Revoked,
+                                other => panic!("{name}: unknown status {other}"),
+                            },
+                        }),
+                        _ => None,
+                    };
                 let policy = mcp_re_http_profile::AdmissionPolicy {
                     allow_degraded_mode: check.allow_degraded_mode,
                     degraded_propagation_bound: check.degraded_propagation_bound,

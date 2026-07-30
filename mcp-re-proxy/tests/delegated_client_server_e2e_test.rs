@@ -43,12 +43,12 @@ use mcp_re_proxy::ActorResolver;
 use mcp_re_proxy::HttpProfileProxy;
 
 use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::DelegatedOutcome;
-use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
+use mcp_re_client_core::DelegatedOutcome;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::ManifestVersionFloor;
+use mcp_re_client_core::ResponseExpectation;
 use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_proxy::transport::RemoteTransport;
@@ -94,21 +94,36 @@ fn audience() -> AudienceTuple {
 /// The server's delegated-required serving config (parser-produced, as the binary).
 fn server_config() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
-        "--bind", "127.0.0.1:8443",
-        "--audience", AUD,
-        "--server-signer", "did:example:server",
-        "--server-key-id", ROOT_KID,
-        "--signing-key-seed", "/dev/null",
-        "--tls-cert", "/dev/null",
-        "--tls-key", "/dev/null",
-        "--client-ca", "/dev/null",
-        "--trust", "/dev/null",
-        "--inner-http-url", "http://127.0.0.1:9",
-        "--target-uri", TARGET,
-        "--route", "a",
-        "--replay-cache", "file",
-        "--replay-path", "/tmp/mcp-re-client-server-e2e-replay",
-        "--delegated-trust-epoch", EPOCH,
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        AUD,
+        "--server-signer",
+        "did:example:server",
+        "--server-key-id",
+        ROOT_KID,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        TARGET,
+        "--route",
+        "a",
+        "--replay-cache",
+        "file",
+        "--replay-path",
+        "/tmp/mcp-re-client-server-e2e-replay",
+        "--delegated-trust-epoch",
+        EPOCH,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -120,29 +135,32 @@ fn server_config() -> mcp_re_proxy::cli::Config {
 /// inbound requests); the ROOT key for the Response slot (unused on the serving path
 /// but resolved for symmetry).
 fn server_resolver() -> ActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| match (key_id, slot) {
-        (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "client".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:client".into(),
-                keyid: CLIENT_KEY_ID.into(),
-            },
-            verification_key: client_key().public_key(),
-            slot,
-        }),
-        (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
-            verification_key: root_key().public_key(),
-            slot,
-        }),
-        _ => None,
-    }.into())
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: CLIENT_KEY_ID.into(),
+                },
+                verification_key: client_key().public_key(),
+                slot,
+            }),
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: ROOT_KID.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
 }
 
 fn canned_inner() -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerServer> {
@@ -166,7 +184,9 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
     let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
         .expect("build delegated signing wiring");
     let mut rotor = wiring.rotor;
-    rotor.rotate(NOW).expect("server issues the first delegated key");
+    rotor
+        .rotate(NOW)
+        .expect("server issues the first delegated key");
     let issued_kid = wiring
         .signer
         .current(NOW)
@@ -182,7 +202,10 @@ fn build_server_with_kid() -> (HttpProfileProxy, String) {
         server_resolver(),
         expected_audience,
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
@@ -226,7 +249,9 @@ impl RemoteTransport for InProcessServer {
             assertion: None,
         };
         let server = Arc::clone(&self.server);
-        let resp = self.rt.block_on(async move { server.handle(served, self.now).await });
+        let resp = self
+            .rt
+            .block_on(async move { server.handle(served, self.now).await });
         Ok(HttpResponse {
             status: resp.status,
             headers: resp.headers,
@@ -245,19 +270,22 @@ fn delegation_policy() -> DelegationPolicy {
 /// The client's trust seam: the ROOT issuer key for the Response slot (the credential
 /// chains to it). The delegated key is authorized by the credential, never enrolled.
 fn client_resolver() -> mcp_re_client_proxy::route::RouteActorResolver {
-    Box::new(move |key_id: &str, slot: SignerSlot| match (key_id, slot) {
-        (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: ROOT_KID.into(),
-            },
-            verification_key: root_key().public_key(),
-            slot,
-        }),
-        _ => None,
-    }.into())
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: ROOT_KID.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
 }
 
 fn client_proxy(server: HttpProfileProxy) -> ClientProxy {
@@ -374,8 +402,8 @@ struct FloorPath(std::path::PathBuf);
 
 impl FloorPath {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir()
-            .join(format!("mcp-re-e2e-floor-{name}-{}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("mcp-re-e2e-floor-{name}-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         FloorPath(path)
     }
@@ -470,7 +498,10 @@ fn one_exchange(
     rt: &tokio::runtime::Runtime,
     nonce: &str,
     at: i64,
-) -> (mcp_re_client_core::SignedRequest, mcp_re_http_profile::HttpResponse) {
+) -> (
+    mcp_re_client_core::SignedRequest,
+    mcp_re_http_profile::HttpResponse,
+) {
     let inputs = mcp_re_client_core::RequestSigningInputs::new(
         CLIENT_KEY_ID,
         audience(),
@@ -559,7 +590,10 @@ fn a_pin_on_the_wrong_issuer_kid_fails_closed() {
         NOW,
     )
     .expect_err("a pin naming a different root must fail closed");
-    assert_eq!(err, mcp_re_client_core::HttpProfileError::ResponseBindingMismatch);
+    assert_eq!(
+        err,
+        mcp_re_client_core::HttpProfileError::ResponseBindingMismatch
+    );
 }
 
 /// THE REASON the pin binds to the issuer and not to the accepted keyid: the delegated
@@ -572,8 +606,7 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .build()
         .expect("rt");
     let config = server_config();
-    let wiring =
-        mcp_re_proxy::build_delegated_signing(&config, root_key()).expect("wiring");
+    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key()).expect("wiring");
     let mut rotor = wiring.rotor;
     rotor.rotate(NOW).expect("first key");
     let first_kid = wiring
@@ -590,7 +623,10 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
             route: config.route.clone(),
         },
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
@@ -617,7 +653,10 @@ fn the_issuer_pin_survives_a_delegated_key_rotation() {
         .expect("published")
         .delegated_kid
         .clone();
-    assert_ne!(first_kid, second_kid, "the delegated kid must actually rotate");
+    assert_ne!(
+        first_kid, second_kid,
+        "the delegated kid must actually rotate"
+    );
 
     let (signed_b, response_b) = one_exchange(&server, &rt, "nonce-pin-rot-2", ROTATED_AT);
     let verified = verify_delegated_response(
@@ -849,7 +888,10 @@ fn a_replayed_older_manifest_cannot_un_revoke_a_root() {
     );
     assert_eq!(
         replayed.err(),
-        Some(mcp_re_client_core::TrustManifestError::Stale { version: 1, min_version: 2 }),
+        Some(mcp_re_client_core::TrustManifestError::Stale {
+            version: 1,
+            min_version: 2
+        }),
         "the superseded manifest is refused, so the root stays revoked"
     );
 }

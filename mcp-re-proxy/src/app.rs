@@ -10,31 +10,31 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use crate::config_snapshot;
+use crate::async_replay::AsyncReplayTier;
+use crate::async_replay::InMemoryAsyncAtomicReplayStore;
+use crate::async_serve::ServedHttpRequest;
 use crate::cli;
 use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
 use crate::cli::ReplayKind;
+use crate::config_snapshot;
 use crate::http_inner::HttpInnerPool;
-use crate::HttpProfileProxy;
-use crate::async_replay::AsyncReplayTier;
-use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
+use crate::tls;
+use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
-use crate::async_serve::ServedHttpRequest;
+use crate::HttpProfileProxy;
+use crate::IdentityStrategy;
+use crate::ReplayDurabilityTier;
+use crate::ReverseProxyMtlsProvider;
+use crate::RevocationTier;
+use crate::ServerOptions;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use std::collections::HashMap;
-use crate::tls;
-use crate::transport::ExactMatchBinding;
-use crate::ReplayDurabilityTier;
-use crate::IdentityStrategy;
-use crate::RevocationTier;
-use crate::ReverseProxyMtlsProvider;
-use crate::ServerOptions;
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -81,13 +81,11 @@ pub fn build_actor_resolver(
     response_pub: mcp_re_core::VerificationKey,
 ) -> crate::ActorResolver {
     Box::new(move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == response_kid => {
-            ResolverOutcome::Resolved(ResolvedActor {
-                identity: server_identity.clone(),
-                verification_key: response_pub.clone(),
-                slot,
-            })
-        }
+        SignerSlot::Response if kid == response_kid => ResolverOutcome::Resolved(ResolvedActor {
+            identity: server_identity.clone(),
+            verification_key: response_pub.clone(),
+            slot,
+        }),
         SignerSlot::Request => {
             // An unknown kid is a definitive negative from a healthy resolver.
             let Some(signer) = client_signers.get(kid) else {
@@ -131,12 +129,9 @@ fn check_key_file_perms(path: &str, allow_group_read: bool) -> Result<(), String
     use std::os::unix::fs::PermissionsExt;
     if let Ok(meta) = std::fs::metadata(path) {
         let mode = meta.permissions().mode();
-        if let Some(reason) = cli::key_file_posture_violation(
-            mode,
-            meta.gid(),
-            allow_group_read,
-            &process_gids(),
-        ) {
+        if let Some(reason) =
+            cli::key_file_posture_violation(mode, meta.gid(), allow_group_read, &process_gids())
+        {
             return Err(format!(
                 "mcp-re-proxy refuses unsafe configuration:\n  - key file {path} \
                  is {reason} (mode {:o}); restrict to 0600",
@@ -216,7 +211,6 @@ pub fn run(
     config: crate::cli::Config,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
     // freshness check rather than admitting a stale one), but a clock that reads
@@ -266,9 +260,7 @@ pub fn run(
              (loopback / private network / its own mTLS link) and that the upstream STRIPS any \
              client-supplied copy of '{header}' before setting its own. If the socket is \
              reachable by untrusted clients, they can SPOOF any identity.",
-            config.reverse_proxy_header_format,
-            config.identity_source,
-            config.bind,
+            config.reverse_proxy_header_format, config.identity_source, config.bind,
         );
     }
     // A group/world-readable key file is a HARD error (refuse startup). The other
@@ -291,7 +283,9 @@ pub fn run(
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
     let key_source = cli::build_key_source(&config).map_err(|e| e.to_string())?;
-    let server_chain = key_source.tls_server_cert_chain().map_err(|e| e.to_string())?;
+    let server_chain = key_source
+        .tls_server_cert_chain()
+        .map_err(|e| e.to_string())?;
     let client_ca = key_source.client_ca_roots().map_err(|e| e.to_string())?;
     // ADR-MCPS-028 §G / issue #58: TLS signing is DELEGATED xor EXPORTED. When the
     // source offers a delegated TLS signer the server private key never leaves the
@@ -303,8 +297,8 @@ pub fn run(
         Some(_) => None,
         None => Some(key_source.tls_server_key().map_err(|e| e.to_string())?),
     };
-    let trust_bytes = std::fs::read(&config.trust_path)
-        .map_err(|e| format!("{}: {e}", config.trust_path))?;
+    let trust_bytes =
+        std::fs::read(&config.trust_path).map_err(|e| format!("{}: {e}", config.trust_path))?;
     let base_resolver = cli::load_trust(&trust_bytes)?;
 
     // ADR-MCPS-021 Axis 2: surface the DECLARED revocation tier and its honest
@@ -383,7 +377,9 @@ pub fn run(
         .delegated_issuer_kid
         .clone()
         .unwrap_or_else(|| config.server_key_id.clone());
-    let response_pub = key_source.response_public_key().map_err(|e| e.to_string())?;
+    let response_pub = key_source
+        .response_public_key()
+        .map_err(|e| e.to_string())?;
     let server_identity = ActorIdentity {
         role: "server".to_string(),
         trust_domain: config.trust_domain.clone(),
@@ -419,8 +415,10 @@ pub fn run(
         not(any(feature = "cpstore_etcd", feature = "redis_replay")),
         allow(unused_mut)
     )]
-    let mut replay_async =
-        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), config.max_clock_skew);
+    let mut replay_async = AsyncReplayTier::new(
+        Arc::new(InMemoryAsyncAtomicReplayStore::new()),
+        config.max_clock_skew,
+    );
     #[cfg_attr(
         not(any(feature = "cpstore_etcd", feature = "redis_replay")),
         allow(unused_mut)
@@ -471,14 +469,10 @@ pub fn run(
                     );
                     eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("etcd"));
                     let store = Arc::new(
-                        crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(
-                            &endpoint,
-                        ),
+                        crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(&endpoint),
                     );
-                    replay_async = crate::async_replay::AsyncReplayTier::new(
-                        store,
-                        config.max_clock_skew,
-                    );
+                    replay_async =
+                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
                     dispatch_cfg = ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: config.replay_durability_tier.clone(),
@@ -521,10 +515,8 @@ pub fn run(
                         store = store.with_wait_quorum(quorum, timeout_ms);
                     }
                     let store = Arc::new(store);
-                    replay_async = crate::async_replay::AsyncReplayTier::new(
-                        store,
-                        config.max_clock_skew,
-                    );
+                    replay_async =
+                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
                     dispatch_cfg = ProxyDispatchConfig {
                         fleet_strict: true,
                         tier: config.replay_durability_tier.clone(),
@@ -548,8 +540,7 @@ pub fn run(
     // rather than the default selection. mcp-re-core's `durability_class()` defaults
     // (fail closed) to the single-process reference, so an undeclared cache is
     // rejected here too.
-    if replay_async.durability_class()
-        == mcp_re_core::ReplayDurabilityClass::SingleProcessReference
+    if replay_async.durability_class() == mcp_re_core::ReplayDurabilityClass::SingleProcessReference
     {
         return Err(
             "the configured replay cache self-declares the volatile single-process reference \
@@ -675,7 +666,10 @@ pub fn run(
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
     if config.fleet {
-        let trust_bound = match (&config.revocation_tier, config.trust_epoch_redis_url.is_some()) {
+        let trust_bound = match (
+            &config.revocation_tier,
+            config.trust_epoch_redis_url.is_some(),
+        ) {
             (RevocationTier::Push { t_secs }, true) => format!(
                 "near-zero when the trust-epoch source is healthy (flush on the next request after \
                  an epoch advance), bounded {t_secs}s on a source read-outage (fail-closed)"
@@ -752,7 +746,9 @@ pub fn run(
     // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
     // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
     // byte-identical to the static posture.
-    let config_snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server_config)));
+    let config_snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
+        server_config,
+    )));
     if let Some(reload_secs) = config.client_crl_reload_secs {
         if reload_crl_paths.is_empty() {
             eprintln!(
@@ -827,7 +823,11 @@ pub fn run(
                 .as_deref()
                 .map(|u| format!("override {u}"))
                 .unwrap_or_else(|| "from each leaf's AIA".to_string()),
-            if checker.soft_fail() { "ALLOW (soft-fail)" } else { "REJECT (hard-fail)" },
+            if checker.soft_fail() {
+                "ALLOW (soft-fail)"
+            } else {
+                "REJECT (hard-fail)"
+            },
         );
     }
     let serve_options = ServerOptions {
@@ -977,10 +977,7 @@ pub fn run(
     // AND that runtime exist; single-store / in-memory replay deployments run without
     // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
     #[cfg(feature = "redis_replay")]
-    if let (Some(url), Some(rt)) = (
-        config.replay_redis_url.as_ref(),
-        replay_control_rt.as_ref(),
-    ) {
+    if let (Some(url), Some(rt)) = (config.replay_redis_url.as_ref(), replay_control_rt.as_ref()) {
         let store = rt
             .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
             .map_err(|e| format!("connect redis continuation store: {e}"))?;
@@ -1448,7 +1445,7 @@ fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) 
 /// rotation thread — the backoff still bounds the retry rate, only its dither is lost.
 fn rotation_jitter() -> u64 {
     let mut b = [0u8; 8];
-    match getrandom::getrandom(&mut b) {
+    match getrandom::fill(&mut b) {
         Ok(()) => u64::from_le_bytes(b),
         Err(_) => 0,
     }
@@ -1563,7 +1560,10 @@ impl DelegatedEpochWatch {
 /// no longer leaves this replica permanently without the operator's kill switch. The
 /// caller resolves the initial label and fails closed if it cannot.
 #[cfg(feature = "redis_replay")]
-fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Option<DelegatedEpochWatch> {
+fn build_delegated_epoch_watch(
+    config: &cli::Config,
+    base_label: String,
+) -> Option<DelegatedEpochWatch> {
     let url = config.trust_epoch_redis_url.as_ref()?;
     let key = config
         .trust_epoch_key
@@ -1589,7 +1589,10 @@ fn build_delegated_epoch_watch(config: &cli::Config, base_label: String) -> Opti
 }
 
 #[cfg(not(feature = "redis_replay"))]
-fn build_delegated_epoch_watch(_config: &cli::Config, _base_label: String) -> Option<DelegatedEpochWatch> {
+fn build_delegated_epoch_watch(
+    _config: &cli::Config,
+    _base_label: String,
+) -> Option<DelegatedEpochWatch> {
     None
 }
 
@@ -1606,12 +1609,11 @@ mod key_file_perm_tests {
 
     impl KeyFile {
         fn at(mode: u32, name: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("mcp_re_perm_{}_{name}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("mcp_re_perm_{}_{name}", std::process::id()));
             let mut f = std::fs::File::create(&path).expect("create");
             f.write_all(b"key-material").expect("write");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
-                .expect("chmod");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
             KeyFile(path.to_string_lossy().into_owned())
         }
         fn path(&self) -> &str {
@@ -1640,13 +1642,24 @@ mod key_file_perm_tests {
             KeySourceKind::Pkcs11 => (
                 "pkcs11",
                 vec![
-                    "--pkcs11-module", "/m.so", "--pkcs11-token-label", "t",
-                    "--pkcs11-key-label", "k", "--pkcs11-pin-file", "/etc/mcp-re/pin",
+                    "--pkcs11-module",
+                    "/m.so",
+                    "--pkcs11-token-label",
+                    "t",
+                    "--pkcs11-key-label",
+                    "k",
+                    "--pkcs11-pin-file",
+                    "/etc/mcp-re/pin",
                 ],
             ),
             KeySourceKind::AwsKms => (
                 "aws-kms",
-                vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"],
+                vec![
+                    "--aws-kms-region",
+                    "us-east-1",
+                    "--aws-kms-key-id",
+                    "alias/k",
+                ],
             ),
             KeySourceKind::GcpKms => (
                 "gcp-kms",
@@ -1657,19 +1670,32 @@ mod key_file_perm_tests {
             ),
         };
         let mut argv: Vec<&str> = vec![
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--inner-http-url", "http://127.0.0.1:8080/mcp",
-            "--target-uri", "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch", "epoch-min",
-            "--replay-cache", "file",
-            "--replay-path", "/replay",
-            "--key-source", name,
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--tls-cert",
+            "/cert",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/replay",
+            "--key-source",
+            name,
         ];
         argv.append(&mut extra);
         if !seed.is_empty() {
@@ -1893,8 +1919,8 @@ mod rotation_progress_tests {
 #[cfg(test)]
 mod trust_epoch_watch_tests {
     use super::DelegatedEpochWatch;
-    use crate::trust_epoch::EpochReader;
     use crate::trust_epoch::EpochReadError;
+    use crate::trust_epoch::EpochReader;
     use std::sync::atomic::AtomicI64;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -2042,7 +2068,10 @@ mod trust_epoch_watch_tests {
             Some("epoch-min#3"),
             "a reconnect must observe increments missed during the outage"
         );
-        assert!(counter.reads() >= 4, "each attempt re-reads; no cached verdict");
+        assert!(
+            counter.reads() >= 4,
+            "each attempt re-reads; no cached verdict"
+        );
     }
 
     /// Reconnection must not reset, rebase or otherwise weaken an already-issued
@@ -2090,7 +2119,10 @@ mod trust_epoch_watch_tests {
         let w2 = replica(&counter);
         minted.push(w2.current_label().expect("after restart"));
         counter.incr();
-        minted.push(w2.current_label().expect("issuance continues after restart"));
+        minted.push(
+            w2.current_label()
+                .expect("issuance continues after restart"),
+        );
 
         assert_eq!(
             minted,

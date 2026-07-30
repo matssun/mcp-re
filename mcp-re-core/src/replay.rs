@@ -316,11 +316,7 @@ impl ReplayCache for InMemoryReplayCache {
         nonce: &str,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        let key = (
-            signer.to_string(),
-            audience.to_string(),
-            nonce.to_string(),
-        );
+        let key = (signer.to_string(), audience.to_string(), nonce.to_string());
         // The check-and-insert is atomic: the lock spans both the presence
         // check and the insert, so two concurrent callers racing the same
         // triple cannot both observe it absent (exactly one `Fresh`).

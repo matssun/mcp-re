@@ -47,13 +47,11 @@
 //! MCPRE-115 (this increment inherits `serve`'s runtime-drop shutdown); per-core
 //! bounded admission control is MCPRE-114.
 
-
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-
 
 use crate::async_serve::serve;
 use crate::async_serve::AsyncRequestHandler;

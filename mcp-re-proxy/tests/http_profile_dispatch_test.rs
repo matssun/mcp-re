@@ -103,7 +103,7 @@ fn request_block() -> HttpRequestEvidenceBlock {
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     }
 }
 
@@ -115,7 +115,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -129,8 +130,16 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 fn signed_and_verified(nonce: &str) -> (HttpRequest, VerifiedHttpRequestEvidence) {
     let block = request_block();
     let mut req = base_request();
-    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("full sign");
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("full sign");
     let verified = verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
         .expect("full verify");
     (req, verified)
@@ -148,7 +157,8 @@ impl ReplayCache for DurableTestCache {
         nonce: &str,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        self.0.check_and_insert(signer, audience, nonce, expires_at_unix)
+        self.0
+            .check_and_insert(signer, audience, nonce, expires_at_unix)
     }
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable
@@ -171,7 +181,10 @@ fn fleet_strict_refuses_redis_async_tier() {
     };
     let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
         .expect_err("fleet-strict must refuse a redis-async tier");
-    assert_eq!(err, ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::RedisAsyncBounded));
+    assert_eq!(
+        err,
+        ProxyDispatchError::SubMinimumReplayTier(ReplayDurabilityTier::RedisAsyncBounded)
+    );
     assert_eq!(err.wire_code(), "mcp-re.replay_cache_unavailable");
 }
 
@@ -196,7 +209,10 @@ fn fleet_strict_refuses_single_store_fail_closed_tier() {
 fn fleet_strict_refuses_undeclared_tier() {
     let (_req, verified) = signed_and_verified("nonce-none");
     let cache = durable_cache();
-    let cfg = ProxyDispatchConfig { fleet_strict: true, tier: None };
+    let cfg = ProxyDispatchConfig {
+        fleet_strict: true,
+        tier: None,
+    };
     let err = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
         .expect_err("fleet-strict with no declared tier must fail closed");
     assert_eq!(err, ProxyDispatchError::NoDeclaredReplayTier);
@@ -211,7 +227,10 @@ fn fleet_strict_admits_redis_wait_quorum_tier() {
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
-        tier: Some(ReplayDurabilityTier::RedisWaitQuorum { quorum: 2, timeout_ms: 500 }),
+        tier: Some(ReplayDurabilityTier::RedisWaitQuorum {
+            quorum: 2,
+            timeout_ms: 500,
+        }),
     };
     let outcome = dispatch_request_with_tier_gate(&verified, &cache, None, &cfg)
         .expect("redis-wait-quorum meets the strict-production minimum");
@@ -244,7 +263,10 @@ fn core_single_process_gate_fires_beneath_an_acceptable_tier() {
     let single_process = InMemoryReplayCache::new(0);
     let err = dispatch_request_with_tier_gate(&verified, &single_process, None, &cfg)
         .expect_err("the core single-process gate must still fire beneath the tier gate");
-    assert_eq!(err, ProxyDispatchError::Dispatch(DispatchError::NonSharedReplayTier));
+    assert_eq!(
+        err,
+        ProxyDispatchError::Dispatch(DispatchError::NonSharedReplayTier)
+    );
     assert_eq!(err.wire_code(), "mcp-re.replay_cache_unavailable");
 }
 
@@ -270,27 +292,44 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
     //    response must carry back).
     let block = request_block();
     let mut req = base_request();
-    let req_evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "nonce-e2e")
-            .expect("sign request");
+    let req_evidence = sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "nonce-e2e",
+    )
+    .expect("sign request");
     let verified_request =
-        verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW).expect("verify request");
+        verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
+            .expect("verify request");
 
     // 2. Dispatch through the ADAPTER under fleet-strict with an acceptable tier and
     //    a durable cache — the replay key is admitted (Fresh).
     let cache = durable_cache();
     let cfg = ProxyDispatchConfig {
         fleet_strict: true,
-        tier: Some(ReplayDurabilityTier::RedisWaitQuorum { quorum: 2, timeout_ms: 500 }),
+        tier: Some(ReplayDurabilityTier::RedisWaitQuorum {
+            quorum: 2,
+            timeout_ms: 500,
+        }),
     };
     let outcome = dispatch_request_with_tier_gate(&verified_request, &cache, None, &cfg)
         .expect("verified request admitted through the adapter");
-    assert!(!outcome.continuation_verified, "first-leg request carries no continuation");
+    assert!(
+        !outcome.continuation_verified,
+        "first-leg request carries no continuation"
+    );
 
     // A replay of the identical request is now rejected beneath the (passing) tier gate.
     let replay = dispatch_request_with_tier_gate(&verified_request, &cache, None, &cfg)
         .expect_err("second dispatch of the same five-tuple is a replay");
-    assert_eq!(replay, ProxyDispatchError::Dispatch(DispatchError::ReplayDetected));
+    assert_eq!(
+        replay,
+        ProxyDispatchError::Dispatch(DispatchError::ReplayDetected)
+    );
     assert_eq!(replay.wire_code(), "mcp-re.replay_detected");
 
     // 3. Serve: build + sign the response bound to this request, then verify it
@@ -306,12 +345,24 @@ fn http_profile_request_flows_verify_dispatch_serve_end_to_end() {
         subject: "did:example:server-1".into(),
         keyid: SERVER_KEY_ID.into(),
     };
-    sign_response_full(&mut resp, &req, &req_evidence, &server_signer, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("sign response");
-    let verified_response =
-        verify_response_full(&resp, &req, &verified_request, &resolver(), NOW).expect("verify response e2e");
+    sign_response_full(
+        &mut resp,
+        &req,
+        &req_evidence,
+        &server_signer,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign response");
+    let verified_response = verify_response_full(&resp, &req, &verified_request, &resolver(), NOW)
+        .expect("verify response e2e");
     assert_eq!(
-        verified_response.server_signer.expect("server_signer present").keyid,
+        verified_response
+            .server_signer
+            .expect("server_signer present")
+            .keyid,
         SERVER_KEY_ID
     );
 }

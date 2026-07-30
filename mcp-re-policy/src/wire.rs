@@ -53,7 +53,10 @@ mod tests {
             value["error"]["message"].as_str(),
             Some("mcp-re.authorization_scope_denied")
         );
-        assert_eq!(value["error"]["data"]["policy"].as_str(), Some("authorization"));
+        assert_eq!(
+            value["error"]["data"]["policy"].as_str(),
+            Some("authorization")
+        );
         assert_eq!(value["error"]["data"]["retryable"].as_bool(), Some(false));
         assert_eq!(value["error"]["code"].as_i64(), Some(-32003));
     }

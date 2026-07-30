@@ -61,9 +61,9 @@ use mcp_re_proxy::async_inner::AsyncInnerServer;
 use mcp_re_proxy::http_inner::HttpInnerPool;
 use mcp_re_proxy::http_profile_dispatch::dispatch_request_with_tier_gate;
 use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
-use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
 #[cfg(feature = "redis_replay")]
 use mcp_re_proxy::redis_store::RedisAtomicReplayStore;
+use mcp_re_proxy::replay_tier::ReplayDurabilityTier;
 #[cfg(feature = "redis_replay")]
 use mcp_re_proxy::shared_replay::SharedReplayCache;
 
@@ -85,7 +85,8 @@ struct ProxyState {
 #[tokio::main]
 async fn main() {
     let bind = std::env::var("HPP_BIND").expect("HPP_BIND (e.g. 127.0.0.1:8601)");
-    let inner_url = std::env::var("HPP_INNER_URL").expect("HPP_INNER_URL (e.g. http://127.0.0.1:8620/mcp/)");
+    let inner_url =
+        std::env::var("HPP_INNER_URL").expect("HPP_INNER_URL (e.g. http://127.0.0.1:8620/mcp/)");
     let inner_uri = inner_url.parse().expect("HPP_INNER_URL is a valid URI");
 
     // Replay tier: a shared Redis tier under fleet-strict when HPP_REDIS_URL is set
@@ -175,11 +176,23 @@ async fn handle(
     let headers: Vec<(String, String)> = req
         .headers()
         .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap_or("").to_owned()))
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().unwrap_or("").to_owned(),
+            )
+        })
         .collect();
     let body = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes().to_vec(),
-        Err(_) => return Ok(to_hyper(rejection(None, None, "mcp-re.serialization_failed", 400))),
+        Err(_) => {
+            return Ok(to_hyper(rejection(
+                None,
+                None,
+                "mcp-re.serialization_failed",
+                400,
+            )))
+        }
     };
 
     // The canonical @target-uri both sides sign over (deployment-configured).
@@ -198,20 +211,20 @@ async fn handle(
     let no_material = |_b: &ArtifactBinding| None;
 
     // Step 2 — verify (RFC 9421 + 9530 + evidence block).
-    let verified = match verify_request_full(
-        &http_req,
-        &expected_audience,
-        &no_material,
-        &resolver,
-        now,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("reject: verify_request_full -> {}", e.wire_code());
-            // The request never verified: nothing to bind the receipt to.
-            return Ok(to_hyper(rejection(Some(&http_req), None, e.wire_code(), 403)));
-        }
-    };
+    let verified =
+        match verify_request_full(&http_req, &expected_audience, &no_material, &resolver, now) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("reject: verify_request_full -> {}", e.wire_code());
+                // The request never verified: nothing to bind the receipt to.
+                return Ok(to_hyper(rejection(
+                    Some(&http_req),
+                    None,
+                    e.wire_code(),
+                    403,
+                )));
+            }
+        };
 
     // Step 3 — replay admission (fail-closed) through the configured tier: a shared
     // Redis tier detects a replay across ALL replicas; the fleet-strict gate refuses
@@ -220,7 +233,12 @@ async fn handle(
         dispatch_request_with_tier_gate(&verified, state.replay.as_ref(), None, &state.dispatch_cfg)
     {
         // Verified, then refused by replay admission: bind the receipt to its evidence.
-        return Ok(to_hyper(rejection(Some(&http_req), Some(&verified.evidence), e.wire_code(), 409)));
+        return Ok(to_hyper(rejection(
+            Some(&http_req),
+            Some(&verified.evidence),
+            e.wire_code(),
+            409,
+        )));
     }
 
     // Step 4 — strip the proxy-owned top-level `_meta` (the request evidence
@@ -238,22 +256,24 @@ async fn handle(
     // completed. Without this the notification fell through to the bodied signer, which
     // had no reply to sign and refused the exchange the SDKs are proved against.
     if is_notification(&http_req.body) {
-        return Ok(match sign_delegated_accepted_202(
-            &http_req,
-            &hpp_common::delegation_credential(now),
-            &hpp_common::delegated_key(),
-            hpp_common::DELEGATED_KEY_ID,
-            now,
-            now + 300,
-        ) {
-            Ok(ack) => to_hyper(ack),
-            Err(e) => to_hyper(rejection(
-                Some(&http_req),
-                Some(&verified.evidence),
-                e.wire_code(),
-                500,
-            )),
-        });
+        return Ok(
+            match sign_delegated_accepted_202(
+                &http_req,
+                &hpp_common::delegation_credential(now),
+                &hpp_common::delegated_key(),
+                hpp_common::DELEGATED_KEY_ID,
+                now,
+                now + 300,
+            ) {
+                Ok(ack) => to_hyper(ack),
+                Err(e) => to_hyper(rejection(
+                    Some(&http_req),
+                    Some(&verified.evidence),
+                    e.wire_code(),
+                    500,
+                )),
+            },
+        );
     }
 
     // Step 5 — sign the backend reply, bound to THIS request.
@@ -277,7 +297,12 @@ async fn handle(
         now + 300,
     ) {
         Ok(_response_base) => Ok(to_hyper(response)),
-        Err(e) => Ok(to_hyper(rejection(Some(&http_req), Some(&verified.evidence), e.wire_code(), 500))),
+        Err(e) => Ok(to_hyper(rejection(
+            Some(&http_req),
+            Some(&verified.evidence),
+            e.wire_code(),
+            500,
+        ))),
     }
 }
 

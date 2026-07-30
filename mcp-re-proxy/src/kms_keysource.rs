@@ -289,7 +289,8 @@ mod tests {
         let sig = signer.sign_response(preimage).expect("sign");
         let pubkey = signer.response_public_key().expect("public key");
 
-        verify_ed25519(preimage, &sig, &pubkey).expect("KMS signature must verify under mcp-re-core");
+        verify_ed25519(preimage, &sig, &pubkey)
+            .expect("KMS signature must verify under mcp-re-core");
         assert!(
             verify_ed25519(b"tampered preimage", &sig, &pubkey).is_err(),
             "a signature must NOT verify over a different preimage"
@@ -358,10 +359,7 @@ mod tests {
         let signer = KmsResponseSigner::new(Box::new(PrehashKms { key: test_key() }));
         let preimage = b"mcp-re canonical response preimage";
         assert!(
-            matches!(
-                signer.sign_response(preimage),
-                Err(KeyError::Malformed(_))
-            ),
+            matches!(signer.sign_response(preimage), Err(KeyError::Malformed(_))),
             "a prehash/DIGEST signature must fail closed at the seam (it does not \
              verify over the raw preimage under the advertised key)"
         );
@@ -387,7 +385,9 @@ mod tests {
                 Ok(b64url_decode(&self.signing_key.sign(preimage)).expect("b64url"))
             }
             fn public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-                Ok(ed25519_spki_from_raw(&self.advertised.public_key().to_bytes()))
+                Ok(ed25519_spki_from_raw(
+                    &self.advertised.public_key().to_bytes(),
+                ))
             }
         }
         let signer = KmsResponseSigner::new(Box::new(MismatchedKms {

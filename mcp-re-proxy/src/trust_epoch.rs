@@ -193,7 +193,10 @@ impl EpochReader for RedisEpochReader {
             *guard = Some(Self::fresh_conn(&self.client)?);
         }
         let conn = guard.as_mut().expect("connection established above");
-        match redis::cmd("GET").arg(&self.epoch_key).query::<Option<i64>>(conn) {
+        match redis::cmd("GET")
+            .arg(&self.epoch_key)
+            .query::<Option<i64>>(conn)
+        {
             Ok(v) => Ok(v.unwrap_or(0)),
             Err(e) if is_transient(&e) => {
                 // One reconnect-and-retry: a broken socket is replaced, then the
@@ -259,7 +262,10 @@ mod tests {
     #[test]
     fn first_poll_establishes_baseline_without_flush() {
         let src = TrustEpochSource::new(FakeReader::new(7));
-        assert!(src.drain_pending().is_empty(), "baseline poll must not flush");
+        assert!(
+            src.drain_pending().is_empty(),
+            "baseline poll must not flush"
+        );
         assert!(src.is_healthy());
         // A steady epoch on the next poll is still no flush.
         assert!(src.drain_pending().is_empty());
@@ -270,7 +276,7 @@ mod tests {
         // The test submodule can reach the private `reader` field to script epochs.
         let src = TrustEpochSource::new(FakeReader::new(1));
         assert!(src.drain_pending().is_empty()); // baseline @1
-        // Advance the epoch and poll: exactly one FlushAll.
+                                                 // Advance the epoch and poll: exactly one FlushAll.
         src.reader.set(2);
         assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
         // No further flush while the epoch is steady.
@@ -285,7 +291,10 @@ mod tests {
         let src = TrustEpochSource::new(FakeReader::new(3));
         assert!(src.drain_pending().is_empty()); // baseline @3
         src.reader.fail();
-        assert!(src.drain_pending().is_empty(), "a read error emits no events");
+        assert!(
+            src.drain_pending().is_empty(),
+            "a read error emits no events"
+        );
         assert!(!src.is_healthy(), "a read error marks the source unhealthy");
     }
 

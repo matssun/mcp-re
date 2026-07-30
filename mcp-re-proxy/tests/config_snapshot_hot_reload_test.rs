@@ -85,7 +85,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -227,18 +229,21 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
             .build()
             .expect("tokio runtime");
         rt.block_on(async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
-            tx.send(listener.local_addr().expect("addr")).expect("send addr");
-            let handler = move |_req: async_serve::ServedHttpRequest|
-                  -> async_serve::HandlerResponseFuture {
-                Box::pin(async move {
-                    async_serve::ServedHttpResponse {
-                        status: 200,
-                        headers: Vec::new(),
-                        body: b"ok".to_vec(),
-                    }
-                })
-            };
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            tx.send(listener.local_addr().expect("addr"))
+                .expect("send addr");
+            let handler =
+                move |_req: async_serve::ServedHttpRequest| -> async_serve::HandlerResponseFuture {
+                    Box::pin(async move {
+                        async_serve::ServedHttpResponse {
+                            status: 200,
+                            headers: Vec::new(),
+                            body: b"ok".to_vec(),
+                        }
+                    })
+                };
             let options = ServerOptions {
                 limits: ServerLimits::default(),
                 ..Default::default()
@@ -253,7 +258,9 @@ fn spawn(snapshot: Arc<ServerConfigSnapshot>) -> Server {
             .await;
         });
     });
-    let addr = rx.recv_timeout(Duration::from_secs(30)).expect("server bound");
+    let addr = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("server bound");
     Server {
         addr,
         shutdown,

@@ -254,7 +254,11 @@ fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
 fn multi_hop_chain_reconstructs_complete() {
     let hops = three_hop_chain();
     let label = reconstruct(&hops);
-    assert_eq!(label, ChainLabel::Complete, "every hop verifies and re-links");
+    assert_eq!(
+        label,
+        ChainLabel::Complete,
+        "every hop verifies and re-links"
+    );
 }
 
 #[test]
@@ -268,11 +272,18 @@ fn complete_chain_reports_every_hops_evidence() {
     let hops = three_hop_chain();
     let out = reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), NOW);
     assert!(out.label.is_complete());
-    assert_eq!(out.hop_evidence.len(), 3, "the record accounts for all 3 hops");
+    assert_eq!(
+        out.hop_evidence.len(),
+        3,
+        "the record accounts for all 3 hops"
+    );
     // Request-role and response-role handles are domain-separated (§7.3), so no
     // hop's two handles collide even though both digest a signature base.
     for h in &out.hop_evidence {
-        assert_ne!(h.request_evidence.digest_value, h.response_evidence.digest_value);
+        assert_ne!(
+            h.request_evidence.digest_value,
+            h.response_evidence.digest_value
+        );
     }
 }
 
@@ -634,13 +645,18 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
 #[test]
 fn an_over_wide_window_is_still_refused_in_an_aged_record() {
     let policy = VerifierPolicy::default();
-    let h0 = hop_with_bad_window(CREATED, CREATED + policy.max_signature_validity() + 1, "wide");
+    let h0 = hop_with_bad_window(
+        CREATED,
+        CREATED + policy.max_signature_validity() + 1,
+        "wide",
+    );
     match reconstruct_chain(&[h0], &resolver(), &policy, AUDIT_LATER).label {
         ChainLabel::Incomplete {
             hop: 0,
-            reason: IncompleteReason::RequestUnverifiable(
-                mcp_re_http_profile::HttpProfileError::StaleWindow,
-            ),
+            reason:
+                IncompleteReason::RequestUnverifiable(
+                    mcp_re_http_profile::HttpProfileError::StaleWindow,
+                ),
         } => {}
         other => panic!("expected the width bound to still fire, got {other:?}"),
     }
@@ -655,9 +671,10 @@ fn a_degenerate_window_is_still_refused_in_an_aged_record() {
     match reconstruct_chain(&[h0], &resolver(), &VerifierPolicy::default(), AUDIT_LATER).label {
         ChainLabel::Incomplete {
             hop: 0,
-            reason: IncompleteReason::RequestUnverifiable(
-                mcp_re_http_profile::HttpProfileError::StaleWindow,
-            ),
+            reason:
+                IncompleteReason::RequestUnverifiable(
+                    mcp_re_http_profile::HttpProfileError::StaleWindow,
+                ),
         } => {}
         other => panic!("expected the degenerate-window check to still fire, got {other:?}"),
     }

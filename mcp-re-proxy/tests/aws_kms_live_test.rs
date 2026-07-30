@@ -44,7 +44,9 @@ fn aws_kms_signature_verifies_under_mcp_re_core() {
     let config = AwsKmsConfig {
         region: require_env("MCP_RE_AWS_KMS_REGION"),
         key_id: require_env("MCP_RE_AWS_KMS_KEY_ID"),
-        endpoint: std::env::var("MCP_RE_AWS_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_AWS_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     // `from_env` reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
     // and performs GetPublicKey (which fails closed unless the key is Ed25519).

@@ -123,7 +123,9 @@ fn require_env(name: &str) -> String {
 fn live_signer() -> KmsResponseSigner {
     let config = GcpKmsConfig {
         key_version_name: require_env("MCP_RE_GCP_KEY_VERSION"),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     if !use_metadata {
@@ -137,8 +139,8 @@ fn live_signer() -> KmsResponseSigner {
 /// An offline signer over the SAME backend adapter (local seed, no network) —
 /// exercises the KMS-root → serving/flip wiring hermetically in CI.
 fn offline_signer() -> KmsResponseSigner {
-    let backend = GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32])
-        .expect("local-seed KMS backend");
+    let backend =
+        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
     KmsResponseSigner::new(Box::new(backend))
 }
 
@@ -177,7 +179,9 @@ fn audience() -> AudienceTuple {
 /// Resolver: the client key for the Request slot, the KMS ROOT public key (by its
 /// issuer kid) for the Response slot. The DELEGATED key is never enrolled; the
 /// KMS-signed credential authorizes it.
-fn resolver(root_pub: VerificationKey) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync + Clone {
+fn resolver(
+    root_pub: VerificationKey,
+) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Sync + Clone {
     let client_pub = client_key().public_key();
     move |key_id: &str, slot: SignerSlot| {
         let (role, key) = match (key_id, slot) {
@@ -229,21 +233,36 @@ fn custody_cfg() -> CustodyConfig {
 /// config fields, not files. `--server-key-id` becomes the credential issuer kid.
 fn delegated_config() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
-        "--bind", "127.0.0.1:8443",
-        "--audience", VERIFIER_AUD,
-        "--server-signer", "did:example:server",
-        "--server-key-id", ROOT_KID,
-        "--signing-key-seed", "/dev/null",
-        "--tls-cert", "/dev/null",
-        "--tls-key", "/dev/null",
-        "--client-ca", "/dev/null",
-        "--trust", "/dev/null",
-        "--inner-http-url", "http://127.0.0.1:9",
-        "--target-uri", TARGET,
-        "--route", "a",
-        "--replay-cache", "file",
-        "--replay-path", "/tmp/mcp-re-gcp-delegated-required-replay",
-        "--delegated-trust-epoch", EPOCH,
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        VERIFIER_AUD,
+        "--server-signer",
+        "did:example:server",
+        "--server-key-id",
+        ROOT_KID,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        TARGET,
+        "--route",
+        "a",
+        "--replay-cache",
+        "file",
+        "--replay-path",
+        "/tmp/mcp-re-gcp-delegated-required-replay",
+        "--delegated-trust-epoch",
+        EPOCH,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -259,14 +278,18 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
 /// A client-signed request whose freshness window brackets the serve instant `at`
 /// (so serving at `at` exercises the SIGNING step, not a freshness rejection),
 /// verified at `at` for the response binding. `nonce` distinguishes replays.
-fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
+fn signed_request(
+    nonce: &str,
+    at: i64,
+) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
@@ -275,7 +298,7 @@ fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, Verifi
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let mut req = base_request();
     let evidence = sign_request_full(
@@ -354,7 +377,10 @@ fn fresh_response() -> HttpResponse {
 async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     let root_pub = root.response_public_key().expect("KMS root public key");
     let kms_calls = Arc::new(AtomicUsize::new(0));
-    let counting = CountingRootSigner { inner: root, calls: Arc::clone(&kms_calls) };
+    let counting = CountingRootSigner {
+        inner: root,
+        calls: Arc::clone(&kms_calls),
+    };
 
     // Build the serving proxy EXACTLY as `app::run` does in delegated-required mode:
     // `build_delegated_signing` off the KMS root, then `new_delegated`.
@@ -383,15 +409,24 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         actor_resolver,
         expected_audience,
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
     );
 
     // Startup issuance: the KMS signs the FIRST credential (one KMS op).
-    rotor.rotate(NOW).expect("startup issuance mints the first delegated key via the KMS root");
-    assert_eq!(kms_calls.load(Ordering::SeqCst), 1, "startup issuance is exactly one KMS op");
+    rotor
+        .rotate(NOW)
+        .expect("startup issuance mints the first delegated key via the KMS root");
+    assert_eq!(
+        kms_calls.load(Ordering::SeqCst),
+        1,
+        "startup issuance is exactly one KMS op"
+    );
     // Profile-issued kids are RFC 7638 JWK thumbprints (#415 rev 2 §1.5, MCPRE-432),
     // derived from the delegated key itself rather than an issuer counter.
     let snap = signer.current(NOW).expect("a key is published");
@@ -448,7 +483,11 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
         NOW,
     )
     .unwrap_err();
-    assert_eq!(deny, HttpProfileError::DelegationRevoked, "revoked delegated kid fails closed");
+    assert_eq!(
+        deny,
+        HttpProfileError::DelegationRevoked,
+        "revoked delegated kid fails closed"
+    );
     // Revocation seam (allow): a non-empty denylist that does NOT name this kid still verifies.
     verify_delegated_response_full(
         &resp,
@@ -464,10 +503,23 @@ async fn run_kms_delegated_required_serving(root: KmsResponseSigner) {
     // Rotation: cross into the overlap window → the KMS signs the SUCCESSOR
     // credential (one more KMS op), and the new response verifies under it.
     let after = NOW + TTL - OVERLAP + 10;
-    rotor.rotate(after).expect("rotation mints a successor via the KMS root");
-    assert_eq!(kms_calls.load(Ordering::SeqCst), 2, "rotation is exactly one more KMS op");
-    let second_kid = signer.current(after).expect("successor published").delegated_kid.clone();
-    assert_ne!(first_kid, second_kid, "rotation mints a distinct delegated key");
+    rotor
+        .rotate(after)
+        .expect("rotation mints a successor via the KMS root");
+    assert_eq!(
+        kms_calls.load(Ordering::SeqCst),
+        2,
+        "rotation is exactly one more KMS op"
+    );
+    let second_kid = signer
+        .current(after)
+        .expect("successor published")
+        .delegated_kid
+        .clone();
+    assert_ne!(
+        first_kid, second_kid,
+        "rotation mints a distinct delegated key"
+    );
 
     let (req2, _ev2, verified_req2) = signed_request("nonce-after-rotation", after);
     let resp2 = http_response(proxy.handle(served_of(&req2), after).await);
@@ -505,7 +557,9 @@ fn kms_custody(
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| -> Option<String> {
         issue_delegation_credential_with_signer(h, c, |input| {
             kms_calls.fetch_add(1, Ordering::SeqCst);
-            let b64 = signer.sign_response(input).map_err(|_| HttpProfileError::InvalidSignature)?;
+            let b64 = signer
+                .sign_response(input)
+                .map_err(|_| HttpProfileError::InvalidSignature)?;
             b64url_decode(&b64).map_err(|_| HttpProfileError::InvalidSignature)
         })
         .ok()
@@ -531,7 +585,9 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
         &mut direct,
         &req,
         |base| {
-            let b64 = root.sign_response(base).map_err(|_| HttpProfileError::InvalidSignature)?;
+            let b64 = root
+                .sign_response(base)
+                .map_err(|_| HttpProfileError::InvalidSignature)?;
             b64url_decode(&b64).map_err(|_| HttpProfileError::InvalidSignature)
         },
         ROOT_KID,
@@ -565,9 +621,15 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     let mut custody = kms_custody(root, Arc::clone(&kms_calls));
 
     let mut delegated = fresh_response();
-    custody.sign_response(NOW, &mut delegated, &req, &ev).expect("KMS-rooted custody signs");
+    custody
+        .sign_response(NOW, &mut delegated, &req, &ev)
+        .expect("KMS-rooted custody signs");
     let first_kid = custody.active_kid().expect("a key is active").to_owned();
-    assert_eq!(kms_calls.load(Ordering::SeqCst), 1, "the KMS issued exactly one credential");
+    assert_eq!(
+        kms_calls.load(Ordering::SeqCst),
+        1,
+        "the KMS issued exactly one credential"
+    );
     verify_delegated_response_full(
         &delegated,
         &req,
@@ -613,14 +675,25 @@ fn run_kms_authority_flip(root: KmsResponseSigner) {
     // verify. The predecessor response was minted at NOW; re-sign a fresh one so
     // both keys are simultaneously within their TTL at the overlap instant.
     let mut predecessor = fresh_response();
-    custody.sign_response(NOW, &mut predecessor, &req, &ev).expect("predecessor signs");
+    custody
+        .sign_response(NOW, &mut predecessor, &req, &ev)
+        .expect("predecessor signs");
 
     let after = NOW + TTL - OVERLAP + 10;
     let mut successor = fresh_response();
-    custody.sign_response(after, &mut successor, &req, &ev).expect("KMS issues the successor");
+    custody
+        .sign_response(after, &mut successor, &req, &ev)
+        .expect("KMS issues the successor");
     let second_kid = custody.active_kid().expect("successor active").to_owned();
-    assert_ne!(first_kid, second_kid, "rotation mints a distinct delegated authority");
-    assert_eq!(kms_calls.load(Ordering::SeqCst), 2, "the KMS issued exactly two credentials total");
+    assert_ne!(
+        first_kid, second_kid,
+        "rotation mints a distinct delegated authority"
+    );
+    assert_eq!(
+        kms_calls.load(Ordering::SeqCst),
+        2,
+        "the KMS issued exactly two credentials total"
+    );
 
     // Revoke the PREDECESSOR authority. The successor still verifies; the predecessor
     // fails closed — a revoked authority cannot serve even during the overlap.

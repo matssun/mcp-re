@@ -33,7 +33,9 @@ use rustls_pki_types::CertificateDer;
 /// assert chaining).
 fn cert_der(pem: &str) -> CertificateDer<'static> {
     let mut it = CertificateDer::pem_slice_iter(pem.as_bytes());
-    it.next().expect("a certificate in PEM").expect("valid cert")
+    it.next()
+        .expect("a certificate in PEM")
+        .expect("valid cert")
 }
 
 /// Build a proxy server config from the fixture's server leaf + the client CA the
@@ -59,10 +61,15 @@ fn matching_client_identity_round_trips_and_equals_signer() {
     let addr = listener.local_addr().expect("addr");
 
     let server = thread::spawn(move || {
-        serve_once(&listener, config, &ServerOptions::default(), |request, _id| {
-            assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
-            b"{\"ok\":true}".to_vec()
-        })
+        serve_once(
+            &listener,
+            config,
+            &ServerOptions::default(),
+            |request, _id| {
+                assert_eq!(request, b"{\"jsonrpc\":\"2.0\"}");
+                b"{\"ok\":true}".to_vec()
+            },
+        )
     });
 
     // Client config built ENTIRELY from the fixture PEM (the same bytes the demo
@@ -189,11 +196,9 @@ fn write_files_materializes_every_input_and_cleans_up_on_drop() {
 
         // The on-disk seed file content matches the in-memory SERVER seed (the
         // proxy's `--signing-key-seed`), and the trust.json content matches.
-        let seed_on_disk =
-            std::fs::read_to_string(files.signing_seed_path()).expect("read seed");
+        let seed_on_disk = std::fs::read_to_string(files.signing_seed_path()).expect("read seed");
         assert_eq!(seed_on_disk, fx.signing_seed_b64url());
-        let trust_on_disk =
-            std::fs::read_to_string(files.trust_path()).expect("read trust");
+        let trust_on_disk = std::fs::read_to_string(files.trust_path()).expect("read trust");
         assert_eq!(trust_on_disk, fx.trust_json());
     }
     // Dropped: the whole temp directory is removed.

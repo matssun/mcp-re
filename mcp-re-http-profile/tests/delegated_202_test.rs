@@ -146,8 +146,15 @@ fn notification_method(nonce: &str, method: &str) -> HttpRequest {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: format!(r#"{{"jsonrpc":"2.0","method":"{method}"}}"#).into_bytes(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("notification signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("notification signs");
     r
 }
 
@@ -156,8 +163,15 @@ fn no_revocation() -> impl Fn(&str) -> bool {
 }
 
 fn sign_ack(note: &HttpRequest) -> mcp_re_http_profile::HttpResponse {
-    sign_delegated_accepted_202(note, &credential(), &delegated_key(), DELEGATED_KID, CREATED, EXPIRES)
-        .expect("the PEP delegated-signs the acceptance")
+    sign_delegated_accepted_202(
+        note,
+        &credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the PEP delegated-signs the acceptance")
 }
 
 // --- positive ----------------------------------------------------------------
@@ -170,7 +184,9 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
     assert_eq!(ack.status, 202);
     assert!(ack.body.is_empty(), "still bodyless");
     assert!(
-        ack.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER)),
+        ack.headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER)),
         "the credential rides in the header"
     );
     // The credential header is a covered component.
@@ -186,9 +202,15 @@ fn a_delegated_202_verifies_via_the_credential_chain() {
         "the credential MUST be covered by the signature: {sig_input}"
     );
 
-    let actor =
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .expect("the client verifies the delegated acknowledgement");
+    let actor = verify_delegated_accepted_202(
+        &ack,
+        &note,
+        &resolver(),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect("the client verifies the delegated acknowledgement");
     assert_eq!(actor.identity.keyid, DELEGATED_KID);
 }
 
@@ -207,8 +229,15 @@ fn a_credential_header_not_covered_is_rejected() {
         }
     }
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MissingCoveredComponent(MCP_RE_DELEGATION_HEADER),
     );
 }
@@ -218,10 +247,18 @@ fn a_credential_header_not_covered_is_rejected() {
 fn a_missing_credential_header_is_rejected() {
     let note = notification("n-miss");
     let mut ack = sign_ack(&note);
-    ack.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER));
+    ack.headers
+        .retain(|(k, _)| !k.eq_ignore_ascii_case(MCP_RE_DELEGATION_HEADER));
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::DelegationCredentialMissing,
     );
 }
@@ -241,8 +278,15 @@ fn a_duplicated_credential_header_is_rejected() {
         .clone();
     ack.headers.push((MCP_RE_DELEGATION_HEADER.into(), cred));
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::DuplicateHeader(MCP_RE_DELEGATION_HEADER),
     );
 }
@@ -259,8 +303,15 @@ fn an_oversized_credential_header_is_rejected() {
         }
     }
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::MalformedEvidence("delegation header too large"),
     );
 }
@@ -272,8 +323,15 @@ fn a_revoked_delegated_key_is_rejected() {
     let ack = sign_ack(&note);
     let revoked = |id: &str| id == DELEGATED_KID;
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&[EPOCH]), &revoked, NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &revoked,
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::DelegationRevoked,
     );
 }
@@ -291,11 +349,25 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
     let note_a = notification_method("n-a", "notifications/initialized");
     let note_b = notification_method("n-b", "notifications/cancelled");
     let ack_a = sign_ack(&note_a);
-    verify_delegated_accepted_202(&ack_a, &note_a, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-        .expect("binds to A");
+    verify_delegated_accepted_202(
+        &ack_a,
+        &note_a,
+        &resolver(),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect("binds to A");
     assert!(
-        verify_delegated_accepted_202(&ack_a, &note_b, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-            .is_err(),
+        verify_delegated_accepted_202(
+            &ack_a,
+            &note_b,
+            &resolver(),
+            &expectations(&[EPOCH]),
+            &no_revocation(),
+            NOW
+        )
+        .is_err(),
         "A's acknowledgement must not acknowledge B"
     );
 }
@@ -310,11 +382,21 @@ fn a_delegated_202_refuses_a_content_distinct_notification() {
 fn a_delegated_202_refuses_a_retransmission_of_the_same_notification() {
     let a = notification("n-transmission-a");
     let a_prime = notification("n-transmission-a-prime");
-    assert_eq!(a.body, a_prime.body, "the two transmissions are content-identical");
+    assert_eq!(
+        a.body, a_prime.body,
+        "the two transmissions are content-identical"
+    );
 
     let ack_a = sign_ack(&a);
-    verify_delegated_accepted_202(&ack_a, &a, &resolver(), &expectations(&[EPOCH]), &no_revocation(), NOW)
-        .expect("binds to the transmission it acknowledges");
+    verify_delegated_accepted_202(
+        &ack_a,
+        &a,
+        &resolver(),
+        &expectations(&[EPOCH]),
+        &no_revocation(),
+        NOW,
+    )
+    .expect("binds to the transmission it acknowledges");
     assert_eq!(
         verify_delegated_accepted_202(
             &ack_a,
@@ -336,8 +418,15 @@ fn a_stale_trust_epoch_is_rejected() {
     let note = notification("n-epoch");
     let ack = sign_ack(&note);
     assert_eq!(
-        verify_delegated_accepted_202(&ack, &note, &resolver(), &expectations(&["epoch-2"]), &no_revocation(), NOW)
-            .unwrap_err(),
+        verify_delegated_accepted_202(
+            &ack,
+            &note,
+            &resolver(),
+            &expectations(&["epoch-2"]),
+            &no_revocation(),
+            NOW
+        )
+        .unwrap_err(),
         HttpProfileError::DelegationTrustEpochStale,
     );
 }

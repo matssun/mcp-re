@@ -224,7 +224,10 @@ fn store_unavailable_admits_zero_fresh_fail_closed() {
     let store: Arc<dyn AtomicReplayStore + Send + Sync> = Arc::new(AlwaysUnavailableStore);
     for round in 0..RACE_ROUNDS {
         let tally = race_one_key(&store, &round_key(round));
-        assert_eq!(tally.fresh, 0, "round {round}: an unavailable tier must admit ZERO Fresh");
+        assert_eq!(
+            tally.fresh, 0,
+            "round {round}: an unavailable tier must admit ZERO Fresh"
+        );
         assert_eq!(
             tally.unavailable, RACE_WIDTH,
             "round {round}: every submission must fail closed as Unavailable",
@@ -501,7 +504,7 @@ mod http_profile_full_stack {
     use mcp_re_http_profile::HttpRequest;
     use mcp_re_http_profile::HttpRequestEvidenceBlock;
     use mcp_re_http_profile::ResolvedActor;
-use mcp_re_http_profile::ResolverOutcome;
+    use mcp_re_http_profile::ResolverOutcome;
     use mcp_re_http_profile::SignerSlot;
     use mcp_re_http_profile::PROFILE_TAG;
 
@@ -598,7 +601,11 @@ use mcp_re_http_profile::ResolverOutcome;
     /// A delegated-signing PEP over `store` as its authoritative async replay
     /// tier, with its first delegated key already published. `seed_base`
     /// distinguishes the delegated key material of independent replicas.
-    fn proxy_over(store: Arc<dyn AsyncAtomicReplayStore>, seed_base: u8, now: i64) -> HttpProfileProxy {
+    fn proxy_over(
+        store: Arc<dyn AsyncAtomicReplayStore>,
+        seed_base: u8,
+        now: i64,
+    ) -> HttpProfileProxy {
         let signer = Arc::new(DelegatedServerSigner::new());
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
@@ -621,7 +628,10 @@ use mcp_re_http_profile::ResolverOutcome;
             actor_resolver(),
             audience(),
             AsyncReplayTier::new(store, 60),
-            ProxyDispatchConfig { fleet_strict: false, tier: None },
+            ProxyDispatchConfig {
+                fleet_strict: false,
+                tier: None,
+            },
             inner,
             300,
             signer,
@@ -725,7 +735,11 @@ use mcp_re_http_profile::ResolverOutcome;
             ok, 1,
             "nonce {nonce}: a {TASKS}-way race through one shared PEP must serve EXACTLY one"
         );
-        assert_eq!(replay, TASKS - 1, "nonce {nonce}: every loser must be a 409 replay rejection");
+        assert_eq!(
+            replay,
+            TASKS - 1,
+            "nonce {nonce}: every loser must be a 409 replay rejection"
+        );
     }
 
     /// In-memory reference tier — always on, no live infra.
@@ -751,7 +765,9 @@ use mcp_re_http_profile::ResolverOutcome;
     fn serving_path_admits_exactly_one_over_live_redis() {
         use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
-        let Some(url) = live_url("MCP_RE_TEST_REDIS_URL", "Redis") else { return };
+        let Some(url) = live_url("MCP_RE_TEST_REDIS_URL", "Redis") else {
+            return;
+        };
         rt().block_on(async {
             let now = now();
             let store = Arc::new(
@@ -776,7 +792,9 @@ use mcp_re_http_profile::ResolverOutcome;
     fn two_replicas_share_one_live_redis_admission() {
         use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
-        let Some(url) = live_url("MCP_RE_TEST_REDIS_URL", "Redis") else { return };
+        let Some(url) = live_url("MCP_RE_TEST_REDIS_URL", "Redis") else {
+            return;
+        };
         rt().block_on(async {
             let now = now();
             let store = Arc::new(
@@ -791,7 +809,11 @@ use mcp_re_http_profile::ResolverOutcome;
 
             let prefix = unique_prefix("fleet");
             let req = signed_request(&format!("{prefix}-cross"), now);
-            assert_eq!(a.handle(served(&req), now).await.status, 200, "replica A serves it");
+            assert_eq!(
+                a.handle(served(&req), now).await.status,
+                200,
+                "replica A serves it"
+            );
             assert_eq!(
                 b.handle(served(&req), now).await.status,
                 409,
@@ -815,7 +837,9 @@ use mcp_re_http_profile::ResolverOutcome;
     fn serving_path_admits_exactly_one_over_live_etcd() {
         use mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore;
 
-        let Some(endpoint) = live_url("MCP_RE_TEST_ETCD_URL", "etcd") else { return };
+        let Some(endpoint) = live_url("MCP_RE_TEST_ETCD_URL", "etcd") else {
+            return;
+        };
         rt().block_on(async {
             let now = now();
             let store = Arc::new(EtcdAsyncAtomicReplayStore::connect(&endpoint));

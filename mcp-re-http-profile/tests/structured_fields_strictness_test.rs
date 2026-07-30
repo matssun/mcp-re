@@ -261,21 +261,34 @@ fn canonical_order_still_verifies() {
 /// rewrite between them without breaking the signature.
 #[test]
 fn a_string_parameter_that_rfc_8941_cannot_carry_is_never_signed() {
-    for bad in ["nonce\"with-quote", "nonce\\with-backslash", "nonce\twith-tab"] {
+    for bad in [
+        "nonce\"with-quote",
+        "nonce\\with-backslash",
+        "nonce\twith-tab",
+    ] {
         let mut req = HttpRequest {
             method: "POST".into(),
             target_uri: "https://mcp.example.com/mcp".into(),
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: b"{}".to_vec(),
         };
-        let err = sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, bad)
-            .expect_err("signing must refuse a nonce RFC 8941 cannot carry verbatim");
+        let err = sign_request(
+            &mut req,
+            &client_key(),
+            "client-key-1",
+            CREATED,
+            EXPIRES,
+            bad,
+        )
+        .expect_err("signing must refuse a nonce RFC 8941 cannot carry verbatim");
         assert!(
             matches!(err, HttpProfileError::MalformedEvidence(_)),
             "{bad:?} produced {err:?}"
         );
         assert!(
-            !req.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
+            !req.headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
             "{bad:?} must leave no Signature-Input behind"
         );
     }

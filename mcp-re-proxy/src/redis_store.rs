@@ -415,19 +415,21 @@ fn bounded_connect(params: &ConnectParams) -> Result<redis::Connection, ReplaySt
                     details: format!("redis client open failed: {e}"),
                 }
             })?;
-            let conn = c.get_connection_with_timeout(connect_timeout).map_err(|e| {
-                ReplayStoreError::Unavailable {
+            let conn = c
+                .get_connection_with_timeout(connect_timeout)
+                .map_err(|e| ReplayStoreError::Unavailable {
                     details: format!("redis connection failed: {e}"),
-                }
-            })?;
+                })?;
             // Bound EACH subsequent blocking op so a stall mid-session on the
             // established connection also fails closed (H-10).
-            conn.set_read_timeout(read_timeout).map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("redis set_read_timeout failed: {e}"),
-            })?;
-            conn.set_write_timeout(write_timeout).map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("redis set_write_timeout failed: {e}"),
-            })?;
+            conn.set_read_timeout(read_timeout)
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("redis set_read_timeout failed: {e}"),
+                })?;
+            conn.set_write_timeout(write_timeout)
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("redis set_write_timeout failed: {e}"),
+                })?;
             Ok(conn)
         })();
         // A receiver that has already timed out is gone; ignore the send error.
@@ -622,9 +624,12 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
         // Copied out of `self` so the op closure (Fn) captures a plain value.
         let wait_quorum = self.wait_quorum;
 
-        let mut conn = self.conn.lock().map_err(|e| ReplayStoreError::Unavailable {
-            details: format!("redis connection mutex poisoned: {e}"),
-        })?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| ReplayStoreError::Unavailable {
+                details: format!("redis connection mutex poisoned: {e}"),
+            })?;
 
         // Single atomic op: SET key 1 NX PX <ttl_ms>. The reply is a bulk string
         // "OK" when the key was absent and is now set, or NIL when NX found the
@@ -653,10 +658,8 @@ impl AtomicReplayStore for RedisAtomicReplayStore {
                         match wait_quorum {
                             None => OpAttempt::Done(ReplayDecision::Fresh),
                             Some(WaitQuorum { quorum, timeout_ms }) => {
-                                let acked: Result<i64, redis::RedisError> = redis::cmd("WAIT")
-                                    .arg(quorum)
-                                    .arg(timeout_ms)
-                                    .query(conn);
+                                let acked: Result<i64, redis::RedisError> =
+                                    redis::cmd("WAIT").arg(quorum).arg(timeout_ms).query(conn);
                                 match acked {
                                     Ok(n) => classify_fresh_insert_wait(n, quorum, timeout_ms),
                                     // A WAIT error is also fail-closed-Fatal, for the
@@ -723,11 +726,11 @@ mod tests {
 
     use std::cell::Cell;
 
+    use super::classify_fresh_insert_wait;
     use super::compute_ttl_ms;
     use super::is_nonpositive_ttl;
     use super::run_with_reconnect;
     use super::ttl_ms_via_clock;
-    use super::classify_fresh_insert_wait;
     use super::wait_quorum_satisfied;
     use super::ConnectPermit;
     use super::OpAttempt;
@@ -760,9 +763,15 @@ mod tests {
     /// count) is NOT satisfied → the store fails closed.
     #[test]
     fn wait_quorum_is_met_only_with_enough_acks() {
-        assert!(wait_quorum_satisfied(2, 2), "exactly quorum acks is satisfied");
+        assert!(
+            wait_quorum_satisfied(2, 2),
+            "exactly quorum acks is satisfied"
+        );
         assert!(wait_quorum_satisfied(3, 2), "more than quorum is satisfied");
-        assert!(!wait_quorum_satisfied(1, 2), "fewer than quorum fails closed");
+        assert!(
+            !wait_quorum_satisfied(1, 2),
+            "fewer than quorum fails closed"
+        );
         assert!(!wait_quorum_satisfied(0, 1), "zero acks fails closed");
     }
 
@@ -875,7 +884,11 @@ mod tests {
     #[test]
     fn ttl_ms_clamps_to_minimal_when_already_expired() {
         assert_eq!(compute_ttl_ms(1_000, 1_000), 1, "exactly-now → 1ms");
-        assert_eq!(compute_ttl_ms(900, 1_000), 1, "already-past → 1ms, not 0/neg");
+        assert_eq!(
+            compute_ttl_ms(900, 1_000),
+            1,
+            "already-past → 1ms, not 0/neg"
+        );
     }
 
     /// MCPS-08 regression (finding #142) — PURE, no-Redis proof of the pre-store
@@ -888,14 +901,26 @@ mod tests {
     #[test]
     fn nonpositive_window_is_flagged_stale_pre_store() {
         // Boundary: retain_until exactly at now is non-positive → reject.
-        assert!(is_nonpositive_ttl(1_000, 1_000), "exactly-now is non-positive → reject");
+        assert!(
+            is_nonpositive_ttl(1_000, 1_000),
+            "exactly-now is non-positive → reject"
+        );
         // Already past → reject.
-        assert!(is_nonpositive_ttl(900, 1_000), "already-past is non-positive → reject");
+        assert!(
+            is_nonpositive_ttl(900, 1_000),
+            "already-past is non-positive → reject"
+        );
         // A strictly-positive window (1s remaining) is admitted to the store.
-        assert!(!is_nonpositive_ttl(1_001, 1_000), "a positive window is admitted");
+        assert!(
+            !is_nonpositive_ttl(1_001, 1_000),
+            "a positive window is admitted"
+        );
         // And the historical now=0 vestigial path: a real future retain-until with
         // now=0 is a huge positive window (NOT stale) — the guard must not over-fire.
-        assert!(!is_nonpositive_ttl(1_779_998_730, 0), "future retain-until is not stale");
+        assert!(
+            !is_nonpositive_ttl(1_779_998_730, 0),
+            "future retain-until is not stale"
+        );
     }
 
     /// MCPS-08 regression (finding #142) — proof that the SAME injected clock the
@@ -1057,7 +1082,11 @@ mod tests {
         );
 
         let gen = result.expect("the retry on the re-opened connection must succeed");
-        assert_eq!(attempt.get(), 2, "op must run exactly twice (try + one retry)");
+        assert_eq!(
+            attempt.get(),
+            2,
+            "op must run exactly twice (try + one retry)"
+        );
         assert_eq!(logins.get(), 1, "exactly one reconnect (bounded, no loop)");
         assert_eq!(
             gen, 2,
@@ -1181,7 +1210,10 @@ mod tests {
                 Err(e) => panic!("permit {i} of {grantable} must be grantable: {e:?}"),
             }
         }
-        assert_eq!(INFLIGHT_CONNECTS.load(Ordering::Acquire), MAX_INFLIGHT_CONNECTS);
+        assert_eq!(
+            INFLIGHT_CONNECTS.load(Ordering::Acquire),
+            MAX_INFLIGHT_CONNECTS
+        );
 
         // Ceiling reached: the next acquire FAILS CLOSED rather than leaking another
         // thread+fd.
@@ -1202,10 +1234,16 @@ mod tests {
 
         // A worker terminating (permit dropped, fd released) frees exactly one slot.
         held.pop();
-        assert_eq!(INFLIGHT_CONNECTS.load(Ordering::Acquire), MAX_INFLIGHT_CONNECTS - 1);
+        assert_eq!(
+            INFLIGHT_CONNECTS.load(Ordering::Acquire),
+            MAX_INFLIGHT_CONNECTS - 1
+        );
         let reacquired =
             ConnectPermit::acquire().expect("a freed slot must be re-grantable after a drop");
-        assert_eq!(INFLIGHT_CONNECTS.load(Ordering::Acquire), MAX_INFLIGHT_CONNECTS);
+        assert_eq!(
+            INFLIGHT_CONNECTS.load(Ordering::Acquire),
+            MAX_INFLIGHT_CONNECTS
+        );
         drop(reacquired);
 
         // Release everything WE took; the pool returns to its baseline (no permit

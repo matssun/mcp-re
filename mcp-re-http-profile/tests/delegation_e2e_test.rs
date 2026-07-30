@@ -12,8 +12,6 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::issue_delegation_credential;
-use mcp_re_http_profile::CustodyConfig;
-use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
@@ -25,7 +23,9 @@ use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::AudienceTuple;
 use mcp_re_http_profile::Cnf;
+use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::DelegatedJwk;
+use mcp_re_http_profile::DelegatedSigningCustody;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::DelegationHeader;
@@ -119,7 +119,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -138,7 +139,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidenc
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let ev = sign_request_full(
         &mut req,
@@ -461,8 +462,9 @@ fn custody_cfg() -> CustodyConfig {
 fn custody_signed_response_verifies_via_attestation_chain() {
     let (req, ev, verified_req) = signed_request();
     let root = root_key();
-    let issue =
-        move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c));
+    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
     let mut n = 100u8;
     let factory = move || {
         n = n.wrapping_add(1);
@@ -498,7 +500,11 @@ fn custody_signed_response_verifies_via_attestation_chain() {
         rv.server_signer.as_ref().unwrap().keyid,
         mcp_re_http_profile::jwk_thumbprint_ed25519(&first_issued.public_key().to_b64url()),
     );
-    assert_eq!(custody.root_invocations(), 1, "root touched only at issuance");
+    assert_eq!(
+        custody.root_invocations(),
+        1,
+        "root touched only at issuance"
+    );
 }
 
 // --- revocation (step 7), end-to-end ----------------------------------------

@@ -227,8 +227,15 @@ pub async fn serve<H: AsyncRequestHandler>(
         let in_flight_requests = Arc::clone(&in_flight_requests);
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
-            let _ = serve_connection(tcp, acceptor, options, handler, in_flight, in_flight_requests)
-                .await;
+            let _ = serve_connection(
+                tcp,
+                acceptor,
+                options,
+                handler,
+                in_flight,
+                in_flight_requests,
+            )
+            .await;
         });
     }
 
@@ -301,7 +308,9 @@ async fn serve_connection<H: AsyncRequestHandler>(
     let tls = match options.limits.request_deadline {
         Some(deadline) => tokio::time::timeout(deadline, acceptor.accept(tcp))
             .await
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake deadline"))??,
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "TLS handshake deadline")
+            })??,
         None => acceptor.accept(tcp).await?,
     };
 
@@ -317,7 +326,10 @@ async fn serve_connection<H: AsyncRequestHandler>(
     );
 
     // Capture the header-read deadline before `options` moves into the service.
-    let header_read_timeout = options.limits.request_deadline.or(options.limits.read_timeout);
+    let header_read_timeout = options
+        .limits
+        .request_deadline
+        .or(options.limits.read_timeout);
     // Read before `options` is moved into the service closure below.
     let stream_ceiling = options.limits.max_in_flight_requests;
 
@@ -329,7 +341,15 @@ async fn serve_connection<H: AsyncRequestHandler>(
         let in_flight = in_flight.clone();
         let in_flight_requests = Arc::clone(&in_flight_requests);
         async move {
-            handle_request(req, options, handler, leaf_der, in_flight, in_flight_requests).await
+            handle_request(
+                req,
+                options,
+                handler,
+                leaf_der,
+                in_flight,
+                in_flight_requests,
+            )
+            .await
         }
     });
 
@@ -340,7 +360,10 @@ async fn serve_connection<H: AsyncRequestHandler>(
     if let Some(read_timeout) = header_read_timeout {
         // `header_read_timeout` needs a `Timer` on the connection or hyper panics
         // when it arms the deadline; supply the tokio timer.
-        builder.http1().timer(TokioTimer::new()).header_read_timeout(read_timeout);
+        builder
+            .http1()
+            .timer(TokioTimer::new())
+            .header_read_timeout(read_timeout);
     }
     // Cap HTTP/2 concurrent streams to the same per-core in-flight ceiling. Without a
     // cap, ONE connection holding a valid client certificate can open unbounded
@@ -434,7 +457,12 @@ async fn handle_request<H: AsyncRequestHandler>(
     let header_pairs: Vec<(String, String)> = req
         .headers()
         .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap_or("").to_owned()))
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                value.to_str().unwrap_or("").to_owned(),
+            )
+        })
         .collect();
 
     // Read the body, capped at `max_body_bytes` and bounded by the aggregate read
@@ -567,7 +595,10 @@ mod target_uri_tests {
     #[test]
     fn a_different_received_path_is_refused() {
         assert_eq!(
-            target_uri_mismatch("https://mcp.example.com/mcp?route=a", &uri("/other?route=a")),
+            target_uri_mismatch(
+                "https://mcp.example.com/mcp?route=a",
+                &uri("/other?route=a")
+            ),
             Some("/other?route=a".to_owned())
         );
     }
@@ -594,7 +625,10 @@ mod target_uri_tests {
 
     #[test]
     fn a_root_target_matches_a_root_request() {
-        assert_eq!(target_uri_mismatch("https://mcp.example.com", &uri("/")), None);
+        assert_eq!(
+            target_uri_mismatch("https://mcp.example.com", &uri("/")),
+            None
+        );
         assert_eq!(
             target_uri_mismatch("https://mcp.example.com/", &uri("/")),
             None

@@ -56,8 +56,15 @@ fn signed(extra: &[(&str, &str)]) -> HttpRequest {
         headers,
         body: BODY.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-mcp")
-        .expect("signing succeeds");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-mcp",
+    )
+    .expect("signing succeeds");
     r
 }
 
@@ -152,8 +159,15 @@ fn header_body_method_divergence_is_rejected() {
         ],
         body: BODY.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-div")
-        .expect("the client really does sign the contradiction");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-div",
+    )
+    .expect("the client really does sign the contradiction");
 
     let err = verify_request(&r, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
@@ -189,8 +203,15 @@ fn an_mcp_method_header_with_no_body_method_is_rejected() {
         ],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nom")
-        .expect("signing succeeds");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-nom",
+    )
+    .expect("signing succeeds");
     let err = verify_request(&r, &resolver(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::McpMethodDivergence);
     assert_eq!(err.wire_code(), "mcp-re.malformed_envelope");
@@ -206,8 +227,15 @@ fn a_result_shaped_body_without_the_header_verifies() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nom2")
-        .expect("signing succeeds");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-nom2",
+    )
+    .expect("signing succeeds");
     verify_request(&r, &resolver(), NOW).expect("no header, nothing to constrain");
 }
 
@@ -226,7 +254,8 @@ fn mcp_session_id_is_not_a_coverable_component() {
     // ...and a sender that hand-crafts it into the covered set is rejected.
     for h in r.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 = h.1.replace("\"content-type\"", "\"content-type\" \"mcp-session-id\"");
+            h.1 =
+                h.1.replace("\"content-type\"", "\"content-type\" \"mcp-session-id\"");
         }
     }
     assert_eq!(
@@ -242,7 +271,8 @@ fn the_component_allowlist_is_still_closed() {
     let mut r = signed(&[]);
     for h in r.headers.iter_mut() {
         if h.0.eq_ignore_ascii_case("signature-input") {
-            h.1 = h.1.replace("\"content-type\"", "\"content-type\" \"x-acme-custom\"");
+            h.1 =
+                h.1.replace("\"content-type\"", "\"content-type\" \"x-acme-custom\"");
         }
     }
     assert_eq!(
@@ -257,9 +287,9 @@ fn the_component_allowlist_is_still_closed() {
 // presence, the supported-version set, protocol-version/body agreement, and
 // mcp-name agreement — all enforced AFTER the signature, against protected bytes.
 
+use mcp_re_http_profile::verify_request_with_policy;
 use mcp_re_http_profile::McpTransportPolicy;
 use mcp_re_http_profile::VerifierPolicy;
-use mcp_re_http_profile::verify_request_with_policy;
 
 fn strict_transport() -> VerifierPolicy {
     VerifierPolicy::default()
@@ -278,10 +308,18 @@ fn conforming_2026_request_verifies_under_the_transport_contract() {
             ("Mcp-Name".into(), "read".into()),
             ("MCP-Protocol-Version".into(), "2026-07-28".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-ok")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-ok",
+    )
+    .expect("signs");
     verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW)
         .expect("a conforming request verifies");
 }
@@ -300,10 +338,20 @@ fn a_required_header_absent_is_rejected_through_verify() {
         ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-miss")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-miss",
+    )
+    .expect("signs");
     let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
-    assert_eq!(err, HttpProfileError::McpTransportHeaderMissing("mcp-method"));
+    assert_eq!(
+        err,
+        HttpProfileError::McpTransportHeaderMissing("mcp-method")
+    );
     assert_eq!(err.wire_code(), "mcp-re.missing_envelope");
 }
 
@@ -320,8 +368,15 @@ fn an_unsupported_protocol_version_is_rejected_through_verify() {
         ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-ver")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-ver",
+    )
+    .expect("signs");
     let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::McpProtocolVersionUnsupported);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
@@ -341,10 +396,20 @@ fn protocol_version_header_body_divergence_is_rejected_through_verify() {
         ],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"initialize","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-vd")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-vd",
+    )
+    .expect("signs");
     let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
-    assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-protocol-version"));
+    assert_eq!(
+        err,
+        HttpProfileError::McpTransportDivergence("mcp-protocol-version")
+    );
 }
 
 /// Mcp-Name disagreeing with params.name is rejected — the routing header must not
@@ -360,10 +425,18 @@ fn mcp_name_body_divergence_is_rejected_through_verify() {
             ("Mcp-Name".into(), "delete".into()),
             ("MCP-Protocol-Version".into(), "2026-07-28".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-nd")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-nd",
+    )
+    .expect("signs");
     let err = verify_request_with_policy(&r, &resolver(), &strict_transport(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::McpTransportDivergence("mcp-name"));
 }
@@ -377,10 +450,18 @@ fn absent_headers_verify_when_no_transport_policy_is_attached() {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-none")
-        .expect("signs");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-none",
+    )
+    .expect("signs");
     verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW)
         .expect("no transport policy: present-header integrity only, absence allowed");
 }
@@ -396,10 +477,18 @@ fn legacy_omission_serves_bare_client_but_rejects_a_lie_through_verify() {
         method: "POST".into(),
         target_uri: "https://mcp.example.com/mcp".into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    sign_request(&mut bare, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-leg")
-        .expect("signs");
+    sign_request(
+        &mut bare,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-leg",
+    )
+    .expect("signs");
     verify_request_with_policy(&bare, &resolver(), &policy, NOW)
         .expect("a legacy client omitting the headers is served");
 }

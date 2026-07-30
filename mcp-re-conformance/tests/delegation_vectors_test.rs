@@ -254,7 +254,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -276,10 +277,16 @@ fn signed_request() -> (HttpRequest, RequestEvidence) {
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let ev = sign_request_full(
-        &mut req, &block, &client_key(), CLIENT_KID, CREATED, EXPIRES, "nonce-1",
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KID,
+        CREATED,
+        EXPIRES,
+        "nonce-1",
     )
     .expect("sign request");
     (req, ev)
@@ -415,7 +422,13 @@ fn delegated_response(
     rsp
 }
 
-fn fixture(name: &str, expected: &str, req: &WireMessage, rsp: &HttpResponse, check: DelegationCheck) -> Fixture {
+fn fixture(
+    name: &str,
+    expected: &str,
+    req: &WireMessage,
+    rsp: &HttpResponse,
+    check: DelegationCheck,
+) -> Fixture {
     Fixture {
         schema: SCHEMA.into(),
         name: name.into(),
@@ -440,58 +453,145 @@ fn build_fixtures() -> Vec<Fixture> {
 
     // --- 1. valid → accept -------------------------------------------------
     let valid_rsp = delegated_response(
-        &req, &ev, &valid_credential(), &delegated_key(), DELEGATED_KID, DELEGATED_KID,
+        &req,
+        &ev,
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
     );
-    fx.push(fixture("d01_valid", "verify_ok", &req_wire, &valid_rsp, DelegationCheck::nominal()));
+    fx.push(fixture(
+        "d01_valid",
+        "verify_ok",
+        &req_wire,
+        &valid_rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 2. credential_expired (exp < now) ---------------------------------
     let mut c = good_claims(&delegated_key(), DELEGATED_KID);
     c.nbf = CREATED - 20_000;
     c.exp = CREATED - 10_000;
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &good_header(), &c), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d02_credential_expired", "mcp-re.delegation_credential_expired", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(&root_key(), &good_header(), &c),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d02_credential_expired",
+        "mcp-re.delegation_credential_expired",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 3. not_yet_valid (now < nbf) --------------------------------------
     let mut c = good_claims(&delegated_key(), DELEGATED_KID);
     c.nbf = NOW + 10_000;
     c.exp = NOW + 20_000;
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &good_header(), &c), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d03_not_yet_valid", "mcp-re.delegation_credential_expired", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(&root_key(), &good_header(), &c),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d03_not_yet_valid",
+        "mcp-re.delegation_credential_expired",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 4. key_use_invalid ------------------------------------------------
     let mut c = good_claims(&delegated_key(), DELEGATED_KID);
     c.mcp_re_key_use = "request-signing".into();
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &good_header(), &c), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d04_key_use_invalid", "mcp-re.delegation_key_use_invalid", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(&root_key(), &good_header(), &c),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d04_key_use_invalid",
+        "mcp-re.delegation_key_use_invalid",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 5. profile_mismatch -----------------------------------------------
     let mut c = good_claims(&delegated_key(), DELEGATED_KID);
     c.mcp_re_profile = "some-other-profile".into();
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &good_header(), &c), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d05_profile_mismatch", "mcp-re.delegation_profile_mismatch", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(&root_key(), &good_header(), &c),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d05_profile_mismatch",
+        "mcp-re.delegation_profile_mismatch",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 5a. audience_mismatch: verifier not named in `aud` ----------------
     // A VALID credential, rejected because THIS verifier is not in its audience.
     let mut check = DelegationCheck::nominal();
     check.verifier_audiences = vec!["some-other-verifier".into()];
-    fx.push(fixture("d06_verifier_not_in_aud", "mcp-re.delegation_audience_mismatch", &req_wire, &valid_rsp, check));
+    fx.push(fixture(
+        "d06_verifier_not_in_aud",
+        "mcp-re.delegation_audience_mismatch",
+        &req_wire,
+        &valid_rsp,
+        check,
+    ));
 
     // --- 5a'. audience_mismatch: credential scoped to a different service ---
     let mut check = DelegationCheck::nominal();
     check.expected_audience_hash = "different-scope".into();
-    fx.push(fixture("d07_audience_scope_mismatch", "mcp-re.delegation_audience_mismatch", &req_wire, &valid_rsp, check));
+    fx.push(fixture(
+        "d07_audience_scope_mismatch",
+        "mcp-re.delegation_audience_mismatch",
+        &req_wire,
+        &valid_rsp,
+        check,
+    ));
 
     // --- 5b. trust_epoch_stale ---------------------------------------------
     let mut check = DelegationCheck::nominal();
     check.accepted_epochs = vec![NEXT_EPOCH.into()];
-    fx.push(fixture("d08_trust_epoch_stale", "mcp-re.delegation_trust_epoch_stale", &req_wire, &valid_rsp, check));
+    fx.push(fixture(
+        "d08_trust_epoch_stale",
+        "mcp-re.delegation_trust_epoch_stale",
+        &req_wire,
+        &valid_rsp,
+        check,
+    ));
 
     // --- 5b'. bounded rollout window accepts the previous epoch ------------
     // Same valid credential (epoch = EPOCH), accepted only because the verifier
     // explicitly runs { current = NEXT_EPOCH, previous = EPOCH }.
     let mut check = DelegationCheck::nominal();
     check.accepted_epochs = vec![NEXT_EPOCH.into(), EPOCH.into()];
-    fx.push(fixture("d09_bounded_rollout_previous_epoch", "verify_ok", &req_wire, &valid_rsp, check));
+    fx.push(fixture(
+        "d09_bounded_rollout_previous_epoch",
+        "verify_ok",
+        &req_wire,
+        &valid_rsp,
+        check,
+    ));
 
     // --- 5c. delegation required rejects a directly root-signed response ----
     let mut direct = HttpResponse {
@@ -499,22 +599,69 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(&mut direct, &req, &ev, &server_signer_for(ROOT_KID), &root_key(), ROOT_KID, CREATED, EXPIRES)
-        .expect("sign direct-root response");
-    fx.push(fixture("d10_required_rejects_direct_root", "mcp-re.delegation_credential_missing", &req_wire, &direct, DelegationCheck::nominal()));
+    sign_response_full(
+        &mut direct,
+        &req,
+        &ev,
+        &server_signer_for(ROOT_KID),
+        &root_key(),
+        ROOT_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign direct-root response");
+    fx.push(fixture(
+        "d10_required_rejects_direct_root",
+        "mcp-re.delegation_credential_missing",
+        &req_wire,
+        &direct,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 6. revoked delegated key ------------------------------------------
     let mut check = DelegationCheck::nominal();
     check.revoked_kids = vec![DELEGATED_KID.into()];
-    fx.push(fixture("d11_revoked_delegated_key", "mcp-re.delegation_revoked", &req_wire, &valid_rsp, check));
+    fx.push(fixture(
+        "d11_revoked_delegated_key",
+        "mcp-re.delegation_revoked",
+        &req_wire,
+        &valid_rsp,
+        check,
+    ));
 
     // --- 7. substituted key: RFC 9421 keyid ≠ delegated_kid ----------------
-    let rsp = delegated_response(&req, &ev, &valid_credential(), &delegated_key(), "some-other-kid", DELEGATED_KID);
-    fx.push(fixture("d12_keyid_not_delegated_kid", "mcp-re.delegation_key_mismatch", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &valid_credential(),
+        &delegated_key(),
+        "some-other-kid",
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d12_keyid_not_delegated_kid",
+        "mcp-re.delegation_key_mismatch",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 7'. substituted key: signed by a key other than cnf.jwk -----------
-    let rsp = delegated_response(&req, &ev, &valid_credential(), &attacker_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d13_signed_by_non_cnf_key", "mcp-re.delegation_key_mismatch", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &valid_credential(),
+        &attacker_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d13_signed_by_non_cnf_key",
+        "mcp-re.delegation_key_mismatch",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 8. credential stripped from a delegated response ------------------
     let mut stripped = HttpResponse {
@@ -522,9 +669,24 @@ fn build_fixtures() -> Vec<Fixture> {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(&mut stripped, &req, &ev, &server_signer_for(DELEGATED_KID), &delegated_key(), DELEGATED_KID, CREATED, EXPIRES)
-        .expect("sign credential-less delegated response");
-    fx.push(fixture("d14_credential_stripped", "mcp-re.delegation_credential_missing", &req_wire, &stripped, DelegationCheck::nominal()));
+    sign_response_full(
+        &mut stripped,
+        &req,
+        &ev,
+        &server_signer_for(DELEGATED_KID),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign credential-less delegated response");
+    fx.push(fixture(
+        "d14_credential_stripped",
+        "mcp-re.delegation_credential_missing",
+        &req_wire,
+        &stripped,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 8'. credential lifted from a DIFFERENT delegated key/server-signer -
     // A trusted-root credential that authorizes DELEGATED2 (and is thus scoped to
@@ -532,47 +694,146 @@ fn build_fixtures() -> Vec<Fixture> {
     // block names) DELEGATED1. The credential's `mcp_re_server_signer` no longer
     // matches the block's resolved server-signer, so scope binding (§3 step 5)
     // rejects the lifted credential before the step-8 keyid/cnf cross-check.
-    let foreign = mint(&root_key(), &good_header(), &good_claims(&delegated2_key(), DELEGATED2_KID));
-    let rsp = delegated_response(&req, &ev, &foreign, &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d15_credential_lifted_wrong_server_signer", "mcp-re.delegation_audience_mismatch", &req_wire, &rsp, DelegationCheck::nominal()));
+    let foreign = mint(
+        &root_key(),
+        &good_header(),
+        &good_claims(&delegated2_key(), DELEGATED2_KID),
+    );
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &foreign,
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d15_credential_lifted_wrong_server_signer",
+        "mcp-re.delegation_audience_mismatch",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 9. issuer_untrusted -----------------------------------------------
     let mut h = good_header();
     h.kid = "untrusted-root".into();
     let mut c = good_claims(&delegated_key(), DELEGATED_KID);
     c.issuer_kid = "untrusted-root".into();
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &h, &c), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d16_issuer_untrusted", "mcp-re.delegation_issuer_untrusted", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(&root_key(), &h, &c),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d16_issuer_untrusted",
+        "mcp-re.delegation_issuer_untrusted",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 10. wrong_alg (header alg ≠ EdDSA, incl. `none`) ------------------
     let mut h = good_header();
     h.alg = "none".into();
-    let rsp = delegated_response(&req, &ev, &mint(&root_key(), &h, &good_claims(&delegated_key(), DELEGATED_KID)), &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d17_wrong_alg", "mcp-re.delegation_credential_invalid", &req_wire, &rsp, DelegationCheck::nominal()));
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &mint(
+            &root_key(),
+            &h,
+            &good_claims(&delegated_key(), DELEGATED_KID),
+        ),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d17_wrong_alg",
+        "mcp-re.delegation_credential_invalid",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 10'. forged root signature (claims a trusted issuer_kid) ----------
-    let forged = mint(&attacker_key(), &good_header(), &good_claims(&delegated_key(), DELEGATED_KID));
-    let rsp = delegated_response(&req, &ev, &forged, &delegated_key(), DELEGATED_KID, DELEGATED_KID);
-    fx.push(fixture("d18_forged_root_signature", "mcp-re.delegation_credential_invalid", &req_wire, &rsp, DelegationCheck::nominal()));
+    let forged = mint(
+        &attacker_key(),
+        &good_header(),
+        &good_claims(&delegated_key(), DELEGATED_KID),
+    );
+    let rsp = delegated_response(
+        &req,
+        &ev,
+        &forged,
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    );
+    fx.push(fixture(
+        "d18_forged_root_signature",
+        "mcp-re.delegation_credential_invalid",
+        &req_wire,
+        &rsp,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 11. rotation overlap: a response under EITHER successor accepts ----
     // Key A is the primary; key B is a second in-overlap delegated key with its
     // own valid credential. No verification gap across the rotation.
-    fx.push(fixture("d19_rotation_overlap_key_a", "verify_ok", &req_wire, &valid_rsp, DelegationCheck::nominal()));
-    let cred_b = mint(&root_key(), &good_header(), &good_claims(&delegated2_key(), DELEGATED2_KID));
-    let rsp_b = delegated_response(&req, &ev, &cred_b, &delegated2_key(), DELEGATED2_KID, DELEGATED2_KID);
-    fx.push(fixture("d20_rotation_overlap_key_b", "verify_ok", &req_wire, &rsp_b, DelegationCheck::nominal()));
+    fx.push(fixture(
+        "d19_rotation_overlap_key_a",
+        "verify_ok",
+        &req_wire,
+        &valid_rsp,
+        DelegationCheck::nominal(),
+    ));
+    let cred_b = mint(
+        &root_key(),
+        &good_header(),
+        &good_claims(&delegated2_key(), DELEGATED2_KID),
+    );
+    let rsp_b = delegated_response(
+        &req,
+        &ev,
+        &cred_b,
+        &delegated2_key(),
+        DELEGATED2_KID,
+        DELEGATED2_KID,
+    );
+    fx.push(fixture(
+        "d20_rotation_overlap_key_b",
+        "verify_ok",
+        &req_wire,
+        &rsp_b,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 12. response body tamper (content-digest floor) -------------------
     let mut tampered = valid_rsp_clone(&req, &ev);
     let last = tampered.body.len() - 2;
     tampered.body[last] ^= 0x01;
-    fx.push(fixture("d21_body_tamper", "mcp-re.digest_mismatch", &req_wire, &tampered, DelegationCheck::nominal()));
+    fx.push(fixture(
+        "d21_body_tamper",
+        "mcp-re.digest_mismatch",
+        &req_wire,
+        &tampered,
+        DelegationCheck::nominal(),
+    ));
 
     // --- 12'. response signature-bytes tamper (verify under cnf fails) ------
     let mut sig_tampered = valid_rsp_clone(&req, &ev);
     tamper_response_signature(&mut sig_tampered);
-    fx.push(fixture("d22_response_signature_tamper", "mcp-re.delegation_key_mismatch", &req_wire, &sig_tampered, DelegationCheck::nominal()));
+    fx.push(fixture(
+        "d22_response_signature_tamper",
+        "mcp-re.delegation_key_mismatch",
+        &req_wire,
+        &sig_tampered,
+        DelegationCheck::nominal(),
+    ));
 
     fx
 }
@@ -580,7 +841,14 @@ fn build_fixtures() -> Vec<Fixture> {
 /// A fresh copy of the valid delegated response (its own signed bytes) so a
 /// post-signing tamper does not disturb the shared `valid_rsp`.
 fn valid_rsp_clone(req: &HttpRequest, ev: &RequestEvidence) -> HttpResponse {
-    delegated_response(req, ev, &valid_credential(), &delegated_key(), DELEGATED_KID, DELEGATED_KID)
+    delegated_response(
+        req,
+        ev,
+        &valid_credential(),
+        &delegated_key(),
+        DELEGATED_KID,
+        DELEGATED_KID,
+    )
 }
 
 /// Flip one base64url character inside the `mcp-re-response` Signature value,
@@ -681,8 +949,18 @@ fn run_fixture(fixture: &Fixture, verify_at: i64) -> String {
     let response = from_wire_response(&fixture.response);
     let verified_req = recompute_verified_request(&request);
 
-    let auds: Vec<&str> = fixture.check.verifier_audiences.iter().map(String::as_str).collect();
-    let epochs: Vec<&str> = fixture.check.accepted_epochs.iter().map(String::as_str).collect();
+    let auds: Vec<&str> = fixture
+        .check
+        .verifier_audiences
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let epochs: Vec<&str> = fixture
+        .check
+        .accepted_epochs
+        .iter()
+        .map(String::as_str)
+        .collect();
     let expect = DelegationExpectations {
         policy: mcp_re_http_profile::VerifierPolicy::default(),
         verifier_audiences: &auds,
@@ -739,7 +1017,10 @@ fn frozen_delegation_corpus_verifies() {
             continue;
         }
         let fixture: Fixture = serde_json::from_slice(&bytes).expect("fixture parses");
-        assert_eq!(fixture.kind, "delegated_response", "{name}: unexpected kind");
+        assert_eq!(
+            fixture.kind, "delegated_response",
+            "{name}: unexpected kind"
+        );
         let observed = run_fixture(&fixture, manifest.verify_at_unix);
         assert_eq!(observed, fixture.expected, "{name}: verdict mismatch");
     }
@@ -768,7 +1049,11 @@ fn regenerated_delegation_fixtures_match_committed_bytes() {
 fn corpus_covers_the_full_taxonomy() {
     let names: std::collections::BTreeSet<String> =
         build_fixtures().into_iter().map(|f| f.name).collect();
-    assert!(names.len() >= 22, "corpus shrank below the §9 taxonomy: {}", names.len());
+    assert!(
+        names.len() >= 22,
+        "corpus shrank below the §9 taxonomy: {}",
+        names.len()
+    );
     // Every frozen delegation wire token must appear as an expected verdict at
     // least once (the corpus exercises the whole taxonomy, not a subset).
     let verdicts: std::collections::BTreeSet<String> =

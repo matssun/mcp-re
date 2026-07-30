@@ -81,8 +81,8 @@ use sha2::Digest;
 use sha2::Sha256;
 use spki::AlgorithmIdentifierOwned;
 use x509_cert::Certificate;
-use x509_ocsp::ext::Nonce;
 use x509_ocsp::builder::OcspRequestBuilder;
+use x509_ocsp::ext::Nonce;
 use x509_ocsp::BasicOcspResponse;
 use x509_ocsp::CertId;
 use x509_ocsp::CertStatus;
@@ -92,10 +92,10 @@ use x509_ocsp::Request;
 use x509_ocsp::ResponderId;
 use x509_ocsp::SingleResponse;
 use x509_parser::certificate::X509Certificate;
-use x509_parser::time::ASN1Time;
 use x509_parser::extensions::GeneralName;
 use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
+use x509_parser::time::ASN1Time;
 
 /// The `id-kp-OCSPSigning` extended-key-usage OID (`1.3.6.1.5.5.7.3.9`,
 /// RFC 6960 §4.2.2.2). A delegated responder certificate — one carried in the
@@ -133,8 +133,7 @@ const ID_AD_OCSP: &str = "1.3.6.1.5.5.7.48.1";
 /// hash algorithm is SHA-256, so the responder must be configured to answer
 /// SHA-256 CertIDs. Declared as a literal so the build does not depend on a
 /// digest crate exposing its `AssociatedOid` impl under the current feature set.
-const OID_SHA256: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
+const OID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
 
 /// The default HTTP fetch timeout. The serve loop is blocking, so an unbounded
 /// fetch would hang the serving thread; this bounds it and the check fails
@@ -333,8 +332,9 @@ impl OcspChecker {
     fn resolve_responder_url(&self, leaf_der: &[u8]) -> Option<(String, ResponderUrlSource)> {
         match &self.responder_url_override {
             Some(url) => Some((url.clone(), ResponderUrlSource::OperatorOverride)),
-            None => extract_ocsp_responder_url(leaf_der)
-                .map(|url| (url, ResponderUrlSource::CertAia)),
+            None => {
+                extract_ocsp_responder_url(leaf_der).map(|url| (url, ResponderUrlSource::CertAia))
+            }
         }
     }
 
@@ -742,7 +742,9 @@ struct VettingResolver {
 impl VettingResolver {
     /// The production resolver: OS resolution, every address vetted.
     fn std() -> Self {
-        Self { base: Box::new(StdBaseResolver) }
+        Self {
+            base: Box::new(StdBaseResolver),
+        }
     }
 
     /// Resolve `netloc` and return ONLY the vetted addresses, or an error if the
@@ -802,8 +804,8 @@ pub fn build_ocsp_request_der_with_nonce(
     nonce: &[u8],
 ) -> Result<Vec<u8>, OcspError> {
     let cert_id = build_cert_id(leaf_der, issuer_der)?;
-    let nonce_ext = Nonce::new(nonce.to_vec())
-        .map_err(|e| OcspError::BuildRequest(format!("nonce: {e}")))?;
+    let nonce_ext =
+        Nonce::new(nonce.to_vec()).map_err(|e| OcspError::BuildRequest(format!("nonce: {e}")))?;
     let ocsp_request = OcspRequestBuilder::default()
         .with_request(Request::new(cert_id))
         .with_extension(nonce_ext)
@@ -830,7 +832,7 @@ pub fn build_cert_id(leaf_der: &[u8], issuer_der: &[u8]) -> Result<CertId, OcspE
 /// platform RNG is unavailable rather than sending a predictable nonce.
 fn random_nonce() -> Result<Vec<u8>, OcspError> {
     let mut bytes = vec![0u8; OCSP_NONCE_LEN];
-    getrandom::getrandom(&mut bytes)
+    getrandom::fill(&mut bytes)
         .map_err(|e| OcspError::BuildRequest(format!("nonce CSPRNG: {e}")))?;
     Ok(bytes)
 }
@@ -1086,10 +1088,8 @@ fn signature_verifies(
     use x509_parser::prelude::FromDer as _;
     let (_, signer) = X509Certificate::from_der(signer_cert_der)
         .map_err(|e| OcspError::SignatureNotVerified(format!("signer cert parse: {e}")))?;
-    let (_, sig_alg) =
-        x509_parser::x509::AlgorithmIdentifier::from_der(sig_alg_der).map_err(|e| {
-            OcspError::SignatureNotVerified(format!("signature algorithm parse: {e}"))
-        })?;
+    let (_, sig_alg) = x509_parser::x509::AlgorithmIdentifier::from_der(sig_alg_der)
+        .map_err(|e| OcspError::SignatureNotVerified(format!("signature algorithm parse: {e}")))?;
     // The signature value as an asn1-rs BIT STRING (whole octets → 0 unused bits).
     let sig_bits = asn1_rs::BitString::new(0, sig_bytes);
     match x509_parser::verify::verify_signature(
@@ -1137,7 +1137,13 @@ fn responder_id_matches(responder_id: &ResponderId, signer_cert_der: &[u8]) -> b
 /// not a security primitive). Implemented locally to avoid adding a `sha1` dep.
 fn sha1_hash(data: &[u8]) -> [u8; 20] {
     // Minimal SHA-1 (FIPS 180-4). Used only for the byKey ResponderID match.
-    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
     let ml = (data.len() as u64).wrapping_mul(8);
     let mut msg = data.to_vec();
     msg.push(0x80);
@@ -1217,12 +1223,7 @@ fn cert_ids_bind(a: &CertId, b: &CertId) -> bool {
 /// an absolute upper bound of `thisUpdate + max_age + skew`, so a captured
 /// responder-signed response cannot be replayed indefinitely even when the
 /// responder omits `nextUpdate` and ignores the nonce. Pure.
-fn is_fresh(
-    single: &SingleResponse,
-    now: SystemTime,
-    skew: Duration,
-    max_age: Duration,
-) -> bool {
+fn is_fresh(single: &SingleResponse, now: SystemTime, skew: Duration, max_age: Duration) -> bool {
     let Some(now_unix) = system_time_to_unix(now) else {
         return false;
     };
@@ -1289,8 +1290,8 @@ mod tests {
     use super::OcspChecker;
 
     use der::asn1::BitString;
-    use der::Encode;
     use der::Decode;
+    use der::Encode;
     use rcgen::date_time_ymd;
     use rcgen::CertificateParams;
     use rcgen::CustomExtension;
@@ -1444,8 +1445,8 @@ mod tests {
     /// description pointing at `ocsp_url`.
     fn mint_leaf_with_aia(ocsp_url: &str) -> Vec<u8> {
         let key = KeyPair::generate().expect("leaf key");
-        let mut params = CertificateParams::new(vec!["leaf.example".to_string()])
-            .expect("leaf params");
+        let mut params =
+            CertificateParams::new(vec!["leaf.example".to_string()]).expect("leaf params");
         params
             .distinguished_name
             .push(DnType::CommonName, "leaf.example");
@@ -1496,8 +1497,7 @@ mod tests {
     fn aia_url_extraction_none_without_aia() {
         // A leaf with no AIA extension yields None → the caller maps to Unknown.
         let key = KeyPair::generate().expect("key");
-        let params = CertificateParams::new(vec!["no-aia.example".to_string()])
-            .expect("params");
+        let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let cert = params.self_signed(&key).expect("self-signed");
         assert!(
             extract_ocsp_responder_url(cert.der().as_ref()).is_none(),
@@ -1522,8 +1522,7 @@ mod tests {
     #[test]
     fn check_without_responder_url_is_unknown_not_good() {
         let key = KeyPair::generate().expect("key");
-        let params =
-            CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
+        let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let leaf = params.self_signed(&key).expect("self-signed").der().clone();
         let checker = OcspChecker::new(None, false); // no override, hard-fail
         let status = checker
@@ -1569,10 +1568,10 @@ mod tests {
     use std::time::Duration;
     use std::time::SystemTime;
     use std::time::UNIX_EPOCH;
-    use x509_ocsp::ext::Nonce;
-    use x509_ocsp::CertId;
     use x509_cert::ext::AsExtension;
     use x509_cert::ext::Extension;
+    use x509_ocsp::ext::Nonce;
+    use x509_ocsp::CertId;
 
     /// Knobs for hand-building an OCSP response fixture, so each acceptance test
     /// can isolate exactly ONE broken control (wrong CertID, stale, bad nonce, …).
@@ -1610,15 +1609,10 @@ mod tests {
         let (issuer_der, _) = mint_issuer();
         let leaf = mint_leaf_with_aia("http://ocsp.example.test/r");
         let issuer = Certificate::from_der(&issuer_der).expect("issuer");
-        let requested_cert_id =
-            build_cert_id(&leaf, &issuer_der).expect("requested cert id");
+        let requested_cert_id = build_cert_id(&leaf, &issuer_der).expect("requested cert id");
         let response_cert_id = fixture.cert_id.unwrap_or_else(|| requested_cert_id.clone());
 
-        let mut single = SingleResponse::new(
-            response_cert_id,
-            fixture.status,
-            fixture.this_update,
-        );
+        let mut single = SingleResponse::new(response_cert_id, fixture.status, fixture.this_update);
         single.next_update = fixture.next_update;
 
         let response_extensions = fixture.echo_nonce.map(|bytes| {
@@ -1714,14 +1708,10 @@ mod tests {
         // End-to-end: denied (at the signature gate; the binding gate is also
         // asserted directly below so that control is proven independently).
         let nonce = b"n".to_vec();
-        assert!(verify_and_map_response(
-            &response,
-            &issuer,
-            &requested_id,
-            &nonce,
-            at(2024, 1, 1)
-        )
-        .is_err());
+        assert!(
+            verify_and_map_response(&response, &issuer, &requested_id, &nonce, at(2024, 1, 1))
+                .is_err()
+        );
     }
 
     /// ACCEPTANCE 3 — freshness. A signed-Good response whose `nextUpdate` is in
@@ -1799,13 +1789,8 @@ mod tests {
                 echo_nonce: None,
                 signature: Vec::new(),
             });
-            let mapped = verify_and_map_response(
-                &response,
-                &issuer,
-                &requested_id,
-                b"n",
-                at(2024, 1, 1),
-            );
+            let mapped =
+                verify_and_map_response(&response, &issuer, &requested_id, b"n", at(2024, 1, 1));
             assert!(
                 !matches!(mapped, Ok(CertRevocationStatus::Good)),
                 "Revoked/Unknown must never map to an admitting Good"
@@ -1824,7 +1809,10 @@ mod tests {
         let id_a2 = build_cert_id(&leaf_a, &issuer_der).expect("id a2");
         let id_b = build_cert_id(&leaf_b, &issuer_der).expect("id b");
         assert!(cert_ids_bind(&id_a, &id_a2), "same cert binds");
-        assert!(!cert_ids_bind(&id_a, &id_b), "different serial does not bind");
+        assert!(
+            !cert_ids_bind(&id_a, &id_b),
+            "different serial does not bind"
+        );
     }
 
     #[test]
@@ -1862,15 +1850,30 @@ mod tests {
         let basic = decode_basic(&response);
         let single = &basic.tbs_response_data.responses[0];
         assert!(
-            is_fresh(single, at(2024, 1, 1), OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE),
+            is_fresh(
+                single,
+                at(2024, 1, 1),
+                OCSP_FRESHNESS_SKEW,
+                OCSP_MAX_RESPONSE_AGE
+            ),
             "within window"
         );
         assert!(
-            !is_fresh(single, at(2023, 12, 31), OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE),
+            !is_fresh(
+                single,
+                at(2023, 12, 31),
+                OCSP_FRESHNESS_SKEW,
+                OCSP_MAX_RESPONSE_AGE
+            ),
             "before thisUpdate (beyond skew) is not fresh"
         );
         assert!(
-            !is_fresh(single, at(2024, 6, 1), OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE),
+            !is_fresh(
+                single,
+                at(2024, 6, 1),
+                OCSP_FRESHNESS_SKEW,
+                OCSP_MAX_RESPONSE_AGE
+            ),
             "after nextUpdate (beyond skew) is not fresh"
         );
     }
@@ -1889,7 +1892,12 @@ mod tests {
         let single = &basic.tbs_response_data.responses[0];
         // 2 minutes before thisUpdate is within the 5-minute skew.
         let just_before = at(2024, 1, 1) - Duration::from_secs(120);
-        assert!(is_fresh(single, just_before, OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE));
+        assert!(is_fresh(
+            single,
+            just_before,
+            OCSP_FRESHNESS_SKEW,
+            OCSP_MAX_RESPONSE_AGE
+        ));
     }
 
     #[test]
@@ -1911,7 +1919,12 @@ mod tests {
 
         // Just after thisUpdate: still within the cap, so fresh.
         assert!(
-            is_fresh(single, at(2024, 1, 1), OCSP_FRESHNESS_SKEW, OCSP_MAX_RESPONSE_AGE),
+            is_fresh(
+                single,
+                at(2024, 1, 1),
+                OCSP_FRESHNESS_SKEW,
+                OCSP_MAX_RESPONSE_AGE
+            ),
             "no-nextUpdate response at thisUpdate is fresh"
         );
 
@@ -1959,8 +1972,14 @@ mod tests {
             echo_nonce: None,
             signature: Vec::new(),
         });
-        assert!(nonce_ok(&decode_basic(&matching), &req), "echoed == request → ok");
-        assert!(!nonce_ok(&decode_basic(&mismatch), &req), "echoed != request → reject");
+        assert!(
+            nonce_ok(&decode_basic(&matching), &req),
+            "echoed == request → ok"
+        );
+        assert!(
+            !nonce_ok(&decode_basic(&mismatch), &req),
+            "echoed != request → reject"
+        );
         assert!(
             nonce_ok(&decode_basic(&absent), &req),
             "no echoed nonce is permitted (responder may not honor nonces)"
@@ -1979,7 +1998,9 @@ mod tests {
         other_params
             .distinguished_name
             .push(DnType::CommonName, "some-other-ca");
-        let other = other_params.self_signed(&other_key).expect("other self-signed");
+        let other = other_params
+            .self_signed(&other_key)
+            .expect("other self-signed");
         assert!(!responder_id_matches(&by_name, other.der().as_ref()));
     }
 
@@ -1995,14 +2016,9 @@ mod tests {
     fn rejects_non_successful_responder_status() {
         let try_later = OcspResponse::try_later().to_der().expect("try_later DER");
         let (issuer_der, _) = mint_issuer();
-        let id = build_cert_id(
-            &mint_leaf_with_aia("http://x/r"),
-            &issuer_der,
-        )
-        .expect("id");
+        let id = build_cert_id(&mint_leaf_with_aia("http://x/r"), &issuer_der).expect("id");
         assert!(
-            verify_and_map_response(&try_later, &issuer_der, &id, b"n", at(2024, 1, 1))
-                .is_err(),
+            verify_and_map_response(&try_later, &issuer_der, &id, b"n", at(2024, 1, 1)).is_err(),
             "a non-successful OCSP responder status must fail closed"
         );
     }
@@ -2014,8 +2030,8 @@ mod tests {
         let leaf = mint_leaf_with_aia("http://x/r");
         let (issuer_der, _) = mint_issuer();
         let nonce = b"sixteen-byte-non".to_vec();
-        let der = super::build_ocsp_request_der_with_nonce(&leaf, &issuer_der, &nonce)
-            .expect("request");
+        let der =
+            super::build_ocsp_request_der_with_nonce(&leaf, &issuer_der, &nonce).expect("request");
         let decoded = OcspRequest::from_der(&der).expect("round-trips");
         let echoed = decoded.nonce().expect("nonce present");
         assert_eq!(echoed.0.as_bytes(), nonce.as_slice());
@@ -2023,7 +2039,10 @@ mod tests {
 
     #[test]
     fn cert_status_helper_maps_choices() {
-        assert_eq!(map_cert_status(&CertStatus::good()), CertRevocationStatus::Good);
+        assert_eq!(
+            map_cert_status(&CertStatus::good()),
+            CertRevocationStatus::Good
+        );
         assert_eq!(
             map_cert_status(&CertStatus::unknown()),
             CertRevocationStatus::Unknown
@@ -2228,9 +2247,11 @@ mod tests {
             }
         }
         assert!(
-            VettingResolver { base: Box::new(PairResolver) }
-                .resolve_vetted("ocsp.evil.test:80")
-                .is_err(),
+            VettingResolver {
+                base: Box::new(PairResolver)
+            }
+            .resolve_vetted("ocsp.evil.test:80")
+            .is_err(),
             "a mixed public+internal resolve must fail CLOSED, not connect to the public half"
         );
     }
@@ -2265,9 +2286,9 @@ mod tests {
             "http://0.0.0.0/",
             "http://[::]/",
             "http://localhost/",
-            "http://224.0.0.1/",          // multicast
-            "http://[fe80::1]/",          // IPv6 link-local
-            "http://[fc00::1]/",          // IPv6 unique-local
+            "http://224.0.0.1/", // multicast
+            "http://[fe80::1]/", // IPv6 link-local
+            "http://[fc00::1]/", // IPv6 unique-local
         ] {
             assert!(
                 !aia_responder_url_is_safe(url),
@@ -2372,7 +2393,9 @@ mod tests {
         // for a connection without hanging the test.
         let sentinel = TcpListener::bind("127.0.0.1:0").expect("bind sentinel");
         let sentinel_addr = sentinel.local_addr().expect("sentinel addr");
-        sentinel.set_nonblocking(true).expect("sentinel nonblocking");
+        sentinel
+            .set_nonblocking(true)
+            .expect("sentinel nonblocking");
 
         // The guarded responder: accepts one connection, reads the OCSP POST, and
         // replies with a 302 redirect to the sentinel. `responder_hit` proves the
@@ -2486,8 +2509,7 @@ mod tests {
         // No override and a leaf without AIA → check() short-circuits to Unknown
         // (no network performed).
         let key = KeyPair::generate().expect("key");
-        let params = CertificateParams::new(vec!["no-aia.example".to_string()])
-            .expect("params");
+        let params = CertificateParams::new(vec!["no-aia.example".to_string()]).expect("params");
         let leaf = params.self_signed(&key).expect("self-signed");
         let (issuer_der, _) = mint_issuer();
         let checker = OcspChecker::new(None, false);
@@ -2524,14 +2546,14 @@ mod tests {
         use super::super::verify_and_map_response;
         use super::super::CertRevocationStatus;
         use super::super::OcspError;
+        use super::at;
         use super::build_cert_id;
         use super::gtime;
-        use super::at;
         use super::mint_leaf_with_aia;
         use der::asn1::BitString;
-        use der::Encode;
         use der::Decode;
-        use ed25519_dalek::ed25519::pkcs8::EncodePrivateKey;
+        use der::Encode;
+        use ed25519_dalek::pkcs8::EncodePrivateKey;
         use ed25519_dalek::Signer;
         use ed25519_dalek::SigningKey;
         use rcgen::CertificateParams;
@@ -2579,11 +2601,7 @@ mod tests {
         ) -> (Vec<u8>, x509_ocsp::CertId) {
             let issuer = Certificate::from_der(issuer_der).expect("issuer");
             let requested = build_cert_id(leaf_der, issuer_der).expect("cert id");
-            let mut single = SingleResponse::new(
-                requested.clone(),
-                status,
-                gtime(2024, 1, 1),
-            );
+            let mut single = SingleResponse::new(requested.clone(), status, gtime(2024, 1, 1));
             single.next_update = Some(gtime(2024, 1, 2));
             let tbs = ResponseData {
                 version: Version::V1,
@@ -2686,8 +2704,7 @@ mod tests {
             // Sign a response that BINDS to `other_leaf`, but we query for `leaf`.
             let (response, _other_id) =
                 signed_response(&signer, &issuer, &other_leaf, CertStatus::good(), false);
-            let requested_for_leaf =
-                build_cert_id(&leaf, &issuer).expect("requested id");
+            let requested_for_leaf = build_cert_id(&leaf, &issuer).expect("requested id");
             let result = verify_and_map_response(
                 &response,
                 &issuer,

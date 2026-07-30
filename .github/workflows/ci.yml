@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # MCP-RE continuous integration. The Rust toolchain is pinned by the committed
-# rust-toolchain.toml (1.94.1, matching the Bazel build), so rustup installs and
+# rust-toolchain.toml (1.97.1, matching the Bazel build), so rustup installs and
 # selects it automatically on the first cargo invocation — CI and local dev share
 # one toolchain.
 #
@@ -57,7 +57,7 @@ permissions:
 
 jobs:
   cargo:
-    name: cargo build + test (1.94.1)
+    name: cargo build + test (1.97.1)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -251,7 +251,7 @@ jobs:
         run: cargo test -p mcp-re-conformance --test delegation_cross_verification_test
 
   cargo-features:
-    name: cargo test (feature-gated backends, 1.94.1)
+    name: cargo test (feature-gated backends, 1.97.1)
     runs-on: ubuntu-latest
     # No live infra is provisioned here, so MCP_RE_REQUIRE_LIVE_INFRA is left unset
     # and the *_e2e_test suites self-skip. This job exercises the feature-gated

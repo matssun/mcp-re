@@ -28,7 +28,9 @@ const BANNED_METHOD_LITERALS: &[&str] = &[
 /// other traceability guards resolve their fixtures.
 fn core_src_dir() -> PathBuf {
     let lib = mcp_re_test_paths::resolve_runfile("MCP_RE_CORE_SRC_LIB");
-    lib.parent().expect("core src/lib.rs has a parent dir").to_path_buf()
+    lib.parent()
+        .expect("core src/lib.rs has a parent dir")
+        .to_path_buf()
 }
 
 /// The non-test region of a source file: everything BEFORE the first `#[cfg(test)]`
@@ -54,7 +56,10 @@ fn no_banned_method_literal_in_non_test_core_src() {
         let region = non_test_region(&text);
         for literal in BANNED_METHOD_LITERALS {
             if region.contains(literal) {
-                found.push(format!("{:?} contains banned method literal {literal:?}", path.file_name().unwrap()));
+                found.push(format!(
+                    "{:?} contains banned method literal {literal:?}",
+                    path.file_name().unwrap()
+                ));
             }
         }
     }

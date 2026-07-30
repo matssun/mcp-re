@@ -109,7 +109,6 @@ pub enum McpReError {
     // Granular for protocol/profile-confusion failures; low-level JSON
     // value-domain failures stay coarse under `SerializationFailed`. All nine
     // are draft-02-scoped: draft-01 verification never emits them (ADR-MCPS-041).
-
     /// Required draft-02 `authorization_binding` object absent. MINTED for
     /// draft-02 (ADR-MCPS-040): NOT a reuse of `authorization_hash_missing`, which
     /// names a draft-01 field that no longer exists on the draft-02 wire.

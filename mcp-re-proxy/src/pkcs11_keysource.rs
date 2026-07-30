@@ -46,15 +46,15 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use cryptoki_sys::CK_OBJECT_HANDLE;
-use cryptoki_sys::CK_SESSION_HANDLE;
-use cryptoki_sys::CK_SLOT_ID;
 use cryptoki_sys::CKR_DEVICE_ERROR;
 use cryptoki_sys::CKR_DEVICE_REMOVED;
 use cryptoki_sys::CKR_SESSION_CLOSED;
 use cryptoki_sys::CKR_SESSION_COUNT;
 use cryptoki_sys::CKR_SESSION_HANDLE_INVALID;
 use cryptoki_sys::CKR_USER_NOT_LOGGED_IN;
+use cryptoki_sys::CK_OBJECT_HANDLE;
+use cryptoki_sys::CK_SESSION_HANDLE;
+use cryptoki_sys::CK_SLOT_ID;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519;
 use mcp_re_core::VerificationKey;
@@ -246,9 +246,7 @@ fn is_session_invalid(error: &Pkcs11Error) -> bool {
         ),
         // Load / missing-function / protocol shape errors are not transient session
         // faults — re-opening would not cure them. Fail closed.
-        Pkcs11Error::Load(_)
-        | Pkcs11Error::MissingFunction(_)
-        | Pkcs11Error::Protocol(_) => false,
+        Pkcs11Error::Load(_) | Pkcs11Error::MissingFunction(_) | Pkcs11Error::Protocol(_) => false,
     }
 }
 
@@ -393,7 +391,9 @@ impl Pkcs11KeySource {
         // Load the module and C_Initialize with OS locking (CKF_OS_LOCKING_OK)
         // through the owned safe wrapper over the raw cryptoki-sys FFI bindings.
         let context = Pkcs11Context::load_and_initialize(module_path).map_err(|e| {
-            KeyError::NotFound(format!("pkcs11: load+initialize module '{module_path}': {e}"))
+            KeyError::NotFound(format!(
+                "pkcs11: load+initialize module '{module_path}': {e}"
+            ))
         })?;
         let slot = find_token_slot(&context, token_label)?;
 
@@ -613,46 +613,49 @@ impl ResponseSigner for Pkcs11KeySource {
     fn sign_response(&self, preimage: &[u8]) -> Result<String, KeyError> {
         // Run the find+sign through the AMORTIZED logged-in session (M16): the
         // login is reused; only a transient session fault triggers ONE re-login.
-        self.token.session.with_session(self.token.as_ref(), |logged_in| {
-            let view = self.token.context.with_handle(logged_in.handle);
-            let private = find_key(&view, &self.key_label, ObjectClass::Private)?;
-            // CKM_EDDSA over the raw preimage (NO pre-hash), matching MCP-RE's
-            // direct Ed25519 signing rule. The token returns the raw 64-byte sig.
-            let signature = view.sign_eddsa(private, preimage).map_err(|e| {
-                classify_op_error(e, |e| {
-                    KeyError::Malformed(format!("pkcs11: C_Sign (CKM_EDDSA): {e}"))
-                })
-            })?;
-            if signature.len() != ED25519_SIGNATURE_LEN {
-                // A wrong-length signature is intrinsic (not a session fault) —
-                // fail closed, never retry.
-                return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
+        self.token
+            .session
+            .with_session(self.token.as_ref(), |logged_in| {
+                let view = self.token.context.with_handle(logged_in.handle);
+                let private = find_key(&view, &self.key_label, ObjectClass::Private)?;
+                // CKM_EDDSA over the raw preimage (NO pre-hash), matching MCP-RE's
+                // direct Ed25519 signing rule. The token returns the raw 64-byte sig.
+                let signature = view.sign_eddsa(private, preimage).map_err(|e| {
+                    classify_op_error(e, |e| {
+                        KeyError::Malformed(format!("pkcs11: C_Sign (CKM_EDDSA): {e}"))
+                    })
+                })?;
+                if signature.len() != ED25519_SIGNATURE_LEN {
+                    // A wrong-length signature is intrinsic (not a session fault) —
+                    // fail closed, never retry.
+                    return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
                     "pkcs11: token returned a {}-byte signature; expected {ED25519_SIGNATURE_LEN}",
                     signature.len()
                 ))));
-            }
-            // VERIFY-BEFORE-RETURN (ADR-MCPS-028 §D / guardrail): mirror the AWS
-            // (`aws_kms_keysource.rs`) and GCP (`gcp_kms_keysource.rs`) backends —
-            // the 64-byte length is necessary but NOT sufficient. Read the token's
-            // own Ed25519 public point (the SAME object relying parties verify
-            // against via `response_public_key`) and confirm the signature verifies
-            // under the unmodified mcp-re-core verifier BEFORE emitting it. This
-            // catches a mis-bound key, a prehash/over-hashing `CKM_*` mechanism, or
-            // any corruption that still yields a 64-byte blob — fail closed, never
-            // emit an unverifiable signature. Reading the public point is intrinsic
-            // to this signed response; a transient session fault on the read still
-            // routes through the amortization retry via `verification_key`.
-            let verify_key = verification_key(&view, &self.key_label)?;
-            verify_before_emit(preimage, &signature, &verify_key)
-                .map_err(SessionOpError::Fatal)
-        })
+                }
+                // VERIFY-BEFORE-RETURN (ADR-MCPS-028 §D / guardrail): mirror the AWS
+                // (`aws_kms_keysource.rs`) and GCP (`gcp_kms_keysource.rs`) backends —
+                // the 64-byte length is necessary but NOT sufficient. Read the token's
+                // own Ed25519 public point (the SAME object relying parties verify
+                // against via `response_public_key`) and confirm the signature verifies
+                // under the unmodified mcp-re-core verifier BEFORE emitting it. This
+                // catches a mis-bound key, a prehash/over-hashing `CKM_*` mechanism, or
+                // any corruption that still yields a 64-byte blob — fail closed, never
+                // emit an unverifiable signature. Reading the public point is intrinsic
+                // to this signed response; a transient session fault on the read still
+                // routes through the amortization retry via `verification_key`.
+                let verify_key = verification_key(&view, &self.key_label)?;
+                verify_before_emit(preimage, &signature, &verify_key).map_err(SessionOpError::Fatal)
+            })
     }
 
     fn response_public_key(&self) -> Result<VerificationKey, KeyError> {
-        self.token.session.with_session(self.token.as_ref(), |logged_in| {
-            let view = self.token.context.with_handle(logged_in.handle);
-            verification_key(&view, &self.key_label)
-        })
+        self.token
+            .session
+            .with_session(self.token.as_ref(), |logged_in| {
+                let view = self.token.context.with_handle(logged_in.handle);
+                verification_key(&view, &self.key_label)
+            })
     }
 }
 
@@ -741,42 +744,46 @@ impl Pkcs11TlsSigner {
 /// never leaves the device. Runs through the SHARED token's one amortized login.
 impl RawEd25519TlsSigner for Pkcs11TlsSigner {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
-        self.token.session.with_session(self.token.as_ref(), |logged_in| {
-            let view = self.token.context.with_handle(logged_in.handle);
-            let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;
-            // CKM_EDDSA over the raw handshake transcript (NO pre-hash): exactly the
-            // PureEdDSA signature rustls expects for SignatureScheme::ED25519. The
-            // token returns the raw 64-byte signature; the delegated signer wrapper
-            // (delegated_tls.rs) enforces the 64-byte length before it hits the wire.
-            let signature = view.sign_eddsa(private, message).map_err(|e| {
-                classify_op_error(e, |e| {
-                    KeyError::Malformed(format!("pkcs11 tls: C_Sign (CKM_EDDSA): {e}"))
-                })
-            })?;
-            if signature.len() != ED25519_SIGNATURE_LEN {
-                return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
-                    "pkcs11 tls: token returned a {}-byte signature; expected \
+        self.token
+            .session
+            .with_session(self.token.as_ref(), |logged_in| {
+                let view = self.token.context.with_handle(logged_in.handle);
+                let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;
+                // CKM_EDDSA over the raw handshake transcript (NO pre-hash): exactly the
+                // PureEdDSA signature rustls expects for SignatureScheme::ED25519. The
+                // token returns the raw 64-byte signature; the delegated signer wrapper
+                // (delegated_tls.rs) enforces the 64-byte length before it hits the wire.
+                let signature = view.sign_eddsa(private, message).map_err(|e| {
+                    classify_op_error(e, |e| {
+                        KeyError::Malformed(format!("pkcs11 tls: C_Sign (CKM_EDDSA): {e}"))
+                    })
+                })?;
+                if signature.len() != ED25519_SIGNATURE_LEN {
+                    return Err(SessionOpError::Fatal(KeyError::Malformed(format!(
+                        "pkcs11 tls: token returned a {}-byte signature; expected \
                      {ED25519_SIGNATURE_LEN}",
-                    signature.len()
-                ))));
-            }
-            Ok(signature)
-        })
+                        signature.len()
+                    ))));
+                }
+                Ok(signature)
+            })
     }
 
     fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
-        self.token.session.with_session(self.token.as_ref(), |logged_in| {
-            let view = self.token.context.with_handle(logged_in.handle);
-            let public = find_key(&view, &self.tls_key_label, ObjectClass::Public)?;
-            let ec_point = view.get_ec_point(public).map_err(|e| {
-                classify_op_error(e, |e| {
-                    KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
-                })
-            })?;
-            // Build the RFC 8410 SPKI from the raw point; a wrong-length / non-Ed25519
-            // point fails closed (intrinsic — not a session fault).
-            ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
-        })
+        self.token
+            .session
+            .with_session(self.token.as_ref(), |logged_in| {
+                let view = self.token.context.with_handle(logged_in.handle);
+                let public = find_key(&view, &self.tls_key_label, ObjectClass::Public)?;
+                let ec_point = view.get_ec_point(public).map_err(|e| {
+                    classify_op_error(e, |e| {
+                        KeyError::Malformed(format!("pkcs11 tls: read CKA_EC_POINT: {e}"))
+                    })
+                })?;
+                // Build the RFC 8410 SPKI from the raw point; a wrong-length / non-Ed25519
+                // point fails closed (intrinsic — not a session fault).
+                ed25519_spki_from_ec_point(&ec_point).map_err(SessionOpError::Fatal)
+            })
     }
 }
 
@@ -816,8 +823,15 @@ mod tests {
         };
         let spki_bare = ed25519_spki_from_ec_point(&point).expect("bare point → SPKI");
         let spki_wrapped = ed25519_spki_from_ec_point(&wrapped).expect("wrapped point → SPKI");
-        assert_eq!(spki_bare, spki_wrapped, "both encodings yield the same SPKI");
-        assert_eq!(spki_bare.len(), 44, "RFC 8410 Ed25519 SPKI is 12 + 32 bytes");
+        assert_eq!(
+            spki_bare, spki_wrapped,
+            "both encodings yield the same SPKI"
+        );
+        assert_eq!(
+            spki_bare.len(),
+            44,
+            "RFC 8410 Ed25519 SPKI is 12 + 32 bytes"
+        );
         assert_eq!(
             &spki_bare[..super::super::kms_keysource::ED25519_SPKI_PREFIX.len()],
             &super::super::kms_keysource::ED25519_SPKI_PREFIX,
@@ -828,7 +842,10 @@ mod tests {
         // it must recover exactly the original raw point (cert↔signer match basis).
         let recovered = crate::kms_keysource::ed25519_raw_point_from_spki(&spki_bare)
             .expect("exported SPKI parses under the #58 delegated-build guard");
-        assert_eq!(recovered, point, "round-trips to the original Edwards point");
+        assert_eq!(
+            recovered, point,
+            "round-trips to the original Edwards point"
+        );
 
         // Fail closed on a wrong-length point (cannot be a valid Ed25519 key).
         assert!(matches!(
@@ -964,7 +981,9 @@ mod tests {
         let mut generations = Vec::new();
         for _ in 0..N {
             let gen = amortized
-                .with_session(&factory, |session| Ok::<u32, SessionOpError>(session.generation))
+                .with_session(&factory, |session| {
+                    Ok::<u32, SessionOpError>(session.generation)
+                })
                 .expect("amortized op succeeds");
             generations.push(gen);
         }
@@ -1036,8 +1055,15 @@ mod tests {
             })
             .expect("retry on the re-opened session succeeds");
 
-        assert_eq!(attempt.get(), 2, "op must run exactly twice (try + one retry)");
-        assert_eq!(gen, 2, "the retry must run on the FRESH (re-opened) session");
+        assert_eq!(
+            attempt.get(),
+            2,
+            "op must run exactly twice (try + one retry)"
+        );
+        assert_eq!(
+            gen, 2,
+            "the retry must run on the FRESH (re-opened) session"
+        );
         assert_eq!(
             factory.logins.get(),
             2,
