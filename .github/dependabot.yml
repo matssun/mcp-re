@@ -131,8 +131,14 @@ updates:
       #
       # Both SDKs move to MCP 2.0 together, with the fixture re-recorded in the same
       # change. Tracked in #479; drop this entry as part of it.
+      # Matched by VERSION RANGE, not update-type. Dependabot does not classify a
+      # pip requirement WIDENING (`<2.0` -> `<3.0`) as a semver-major update, so
+      # `update-types: [version-update:semver-major]` does not catch it — PR #482
+      # proposed exactly that widening within minutes of the cap being restored.
+      # `versions` blocks anything that would admit 2.0 regardless of how the change
+      # is classified.
       - dependency-name: "mcp"
-        update-types: ["version-update:semver-major"]
+        versions: [">=2.0.0"]
 
   # Workflow actions. These are currently referenced by moving major tags
   # (actions/checkout@v4, ...), so this is what keeps them current.
