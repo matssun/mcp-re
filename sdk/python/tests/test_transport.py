@@ -279,7 +279,7 @@ async def test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error():
     )
     error = out[0].message
     assert error.id == 7
-    assert error.error.code == -32001
+    assert error.error.code == -31001
     assert error.error.message == "mcp-re.replay_detected"
 
 

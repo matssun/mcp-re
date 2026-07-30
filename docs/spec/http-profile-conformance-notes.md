@@ -407,17 +407,24 @@ the MCP transport headers when a sender sends them (§4.1 above), which spans
 2025-11-25 and 2026-07-28 without a version switch. It makes no conformance claim
 for tasks or elicitation models (#416 §1.4), and none for protocol sessions.
 
-**What is genuinely blocked.** The 2026-07-28 spec is final on 2026-07-28; the
-RC-shape guards below are prep, not a conformance claim:
+**Checked against the final text.** 2026-07-28 is the current protocol revision,
+and each item below is confirmed against the published specification rather than
+the release candidate:
 
-| Prep item | Status |
+| Item | Status |
 |---|---|
-| `-32003` non-collision with MCP-reserved `-32020..=-32099` | **Verified + tested** — also inside JSON-RPC's implementation-defined `-32000..=-32099`, where an application code belongs |
-| SEP-2322 `resultType: "input_required"` snake_case discriminator | **Matches the RC + drift-guarded** — a rename in the final text fails a test rather than silently classifying continuations as terminal, which would end a call record at hop 1 and look like success |
-| Handshake bump | **N/A** — no negotiation exists to target |
-| Final-text confirmation | **Blocked until 2026-07-28** |
+| Rejection error code | **Moved to `-31000`.** The final §Error Codes partitions JSON-RPC's `-32000..=-32099` band completely: `-32000..=-32019` is legacy that new implementations "SHOULD NOT use ... at all", and `-32020..=-32099` is reserved for codes the MCP specification itself defines. The old `-32003` sat in the legacy sub-range. Codes for purposes MCP does not define belong outside `-32768..=-32000`, so that is where MCP-RE's now is |
+| SEP-2322 `resultType: "input_required"` snake_case discriminator | **Confirmed in the final text + drift-guarded** — a rename in a later revision fails a test rather than silently classifying continuations as terminal, which would end a call record at hop 1 and look like success |
+| `resultType: "complete"`, and absent-means-complete | **Confirmed + tested.** The final text requires clients to read an absent `resultType` as `complete` for compatibility with earlier revisions, which is what MCP-RE does |
+| Unrecognized `resultType` | **Divergence, tracked in #495.** The final text says a client MUST treat an unrecognized value as invalid; MCP-RE reads it as terminal |
+| Handshake bump | **N/A** — no negotiation exists to target. Which versions a deployment accepts is `McpTransportPolicy`, not a handshake |
 
 **Proven by.** `mcp_2026_07_28_alignment_test`.
+
+**Wire consequence of the code change.** It alters the rejection body bytes, so
+vectors h18–h22 and the corpus digest were regenerated. Nothing parses the integer
+for meaning — the frozen `mcp-re.*` wire code is and remains the authoritative
+signal — so the migration is confined to those bytes.
 
 ---
 

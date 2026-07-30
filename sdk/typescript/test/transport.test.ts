@@ -396,7 +396,7 @@ describe("McpReHttpTransport failure delivery", () => {
       minimalConfig(),
       throwingPoster(new McpReError("mcp-re.replay_detected", "seen before")),
     );
-    expect(seen).toMatchObject({ id: 7, error: { code: -32001, message: "mcp-re.replay_detected" } });
+    expect(seen).toMatchObject({ id: 7, error: { code: -31001, message: "mcp-re.replay_detected" } });
   });
 
   it("delivers a local signer failure WITHOUT claiming a wire code", async () => {

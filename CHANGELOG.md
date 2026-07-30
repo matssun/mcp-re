@@ -12,6 +12,31 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (wire): the MCP-RE JSON-RPC error code moved from `-32003` to
+  `-31000`** (#426). MCP 2026-07-28 is now the current protocol revision, and its
+  final §Error Codes text partitions JSON-RPC's implementation-defined band
+  completely: `-32000..=-32019` is legacy that new implementations "SHOULD NOT use
+  ... at all", and `-32020..=-32099` is reserved for codes the MCP specification
+  itself defines. Codes for purposes MCP does not define belong outside
+  `-32768..=-32000`. The old code sat in the legacy sub-range — the earlier
+  RC-shape guard checked only the MCP-reserved sub-range and recorded a rationale
+  the final text contradicts.
+
+  Nothing parses the integer for meaning: the frozen `mcp-re.*` wire code in
+  `error.data` is and remains the authoritative signal, and the HTTP status is a
+  signed routing hint. The migration is therefore confined to the rejection body
+  bytes — vectors h18–h22 and the corpus digest were regenerated.
+
+### Fixed
+- **The 2026-07-28 alignment guards now check the final text, not the RC**
+  (#426). Confirmed against the published specification: the SEP-2322
+  `resultType: "input_required"` snake_case discriminator, `complete` as the
+  terminal value, and the requirement that clients read an *absent* `resultType`
+  as complete. One divergence found and tracked separately (#495): the final text
+  requires an unrecognized `resultType` to be treated as invalid, while MCP-RE
+  reads it as terminal.
+
 ## [0.14.0] — 2026-07-28
 
 **A security-audit release.** Fourteen rounds of the audit funnel over the serving

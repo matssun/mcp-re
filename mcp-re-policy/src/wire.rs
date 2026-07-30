@@ -58,6 +58,6 @@ mod tests {
             Some("authorization")
         );
         assert_eq!(value["error"]["data"]["retryable"].as_bool(), Some(false));
-        assert_eq!(value["error"]["code"].as_i64(), Some(-32003));
+        assert_eq!(value["error"]["code"].as_i64(), Some(-31000));
     }
 }

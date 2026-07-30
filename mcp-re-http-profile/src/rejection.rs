@@ -40,9 +40,14 @@ use crate::sign::sign_response_unbound;
 use crate::verify::verify_response;
 use crate::verify::verify_response_unbound;
 
-/// The JSON-RPC error code MCP-RE rejections carry (native-profile convention;
-/// the wire code in `data`, not this integer, is the stable signal).
-pub const JSON_RPC_ERROR_CODE: i64 = -32003;
+/// The JSON-RPC error code MCP-RE rejections carry. The wire code in `data`,
+/// not this integer, is the stable signal.
+///
+/// Allocated outside JSON-RPC's reserved band (`-32768..=-32000`), which MCP
+/// 2026-07-28 §Error Codes partitions entirely between a legacy sub-range no new
+/// implementation may draw from and a sub-range reserved for the MCP
+/// specification itself. Mirrors [`mcp_re_core::wire::MCP_RE_JSON_RPC_ERROR_CODE`].
+pub const JSON_RPC_ERROR_CODE: i64 = -31000;
 
 /// A rejection reason: the stable frozen wire code plus a human-readable,
 /// NON-authoritative message.
@@ -392,7 +397,7 @@ mod tests {
             EXPIRES,
         )
         .expect("build");
-        rejection.body = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-32003,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#.to_vec();
+        rejection.body = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-31000,"message":"LIES","data":{"mcp_re_error":{"wire_code":"mcp-re.expired_request"}}}}"#.to_vec();
         let err = verify_signed_rejection(&rejection, Some(&req), &resolver(), NOW).unwrap_err();
         assert_eq!(err, HttpProfileError::ContentDigestMismatch);
     }

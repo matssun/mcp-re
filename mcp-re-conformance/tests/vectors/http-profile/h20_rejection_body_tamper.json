@@ -38,7 +38,7 @@
       ],
       [
         "Content-Digest",
-        "sha-256=:B56haJlvgKG14suRKiBNiiFIeXxmN8QUqWuYgfL8BVk=:"
+        "sha-256=:Zxj/1zjrw9MgRutX9xwq39xUa1B6xtxEV3KtorYGzCU=:"
       ],
       [
         "Signature-Input",
@@ -46,9 +46,9 @@
       ],
       [
         "Signature",
-        "mcp-re-response=:X7fkHkt+WL8ZrGF5WZC10UF2GrUpFLiZEVLOICCkAuM9Z/QlBeYtM/MG4C+RF/yTtJQtT9b7+ZHywHMNmuJ2AQ==:"
+        "mcp-re-response=:kYa2GJM8j7q/k7HEsudzt0merdxjRszh7KiDn2J7fqcD/seV5hmCzJBfvE6wI5wYyl7DeErxY0z0WIeFw85xAQ==:"
       ]
     ],
-    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32003,\"message\":\"LIES\",\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.expired_request\"}}}}"
+    "body_utf8": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-31000,\"message\":\"LIES\",\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.expired_request\"}}}}"
   }
 }

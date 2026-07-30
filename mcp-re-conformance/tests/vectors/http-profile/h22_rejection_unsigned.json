@@ -37,6 +37,6 @@
         "application/json"
       ]
     ],
-    "body_utf8": "{\"error\":{\"code\":-32003,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":1,\"jsonrpc\":\"2.0\"}"
+    "body_utf8": "{\"error\":{\"code\":-31000,\"data\":{\"mcp_re_error\":{\"wire_code\":\"mcp-re.invalid_audience\"}},\"message\":\"audience did not match this verifier (human text — do not trust)\"},\"id\":1,\"jsonrpc\":\"2.0\"}"
   }
 }

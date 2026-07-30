@@ -12,7 +12,12 @@ use serde_json::Value;
 use crate::error::McpReError;
 
 /// JSON-RPC application error code MCP-RE uses for verification failures.
-pub const MCP_RE_JSON_RPC_ERROR_CODE: i64 = -32003;
+///
+/// Allocated outside JSON-RPC's reserved band (`-32768..=-32000`), as MCP
+/// 2026-07-28 §Error Codes requires of codes for purposes the MCP specification
+/// does not define. The code identifies the emitter, not the reason: the frozen
+/// `mcp-re.*` token in `message`/`data.mcp_re_error` carries every meaning.
+pub const MCP_RE_JSON_RPC_ERROR_CODE: i64 = -31000;
 
 /// Serialize `error` as the canonical MCP-RE JSON-RPC error object bound to the
 /// request `id` (use [`Value::Null`] when the id is unavailable). Never fails:
