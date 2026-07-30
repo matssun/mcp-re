@@ -3,10 +3,10 @@
 Runtime-evidence security for the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk):
 signed requests and verified responses, added without changing application code.
 
-> **Status (ADR-MCPS-044) — the transport adapter is shipped; the mTLS connection helper
-> is not.** This SDK binds the audited `mcp-re-client-core` over PyO3 and gives you the two
-> cryptographic halves of the client obligation, custody, and a transport that drives both
-> underneath a standard `mcp.ClientSession`:
+> **Status (ADR-MCPS-044) — the client obligation is shipped whole.** This SDK binds the
+> audited `mcp-re-client-core` over PyO3 and gives you the two cryptographic halves of the
+> client obligation, custody, a verifying mTLS connection, and a transport that drives all
+> of it underneath a standard `mcp.ClientSession`:
 >
 > | Capability | State |
 > | --- | --- |
@@ -21,9 +21,9 @@ signed requests and verified responses, added without changing application code.
 > | Nonce/freshness generation | **done** (adapter-generated) |
 > | Concurrent exchanges, bounded (`max_concurrent_exchanges`, default 8) | **done** |
 > | One-way notifications (`notifications/*`) — signed POST + verified signed `202` | **done** ([#418](https://github.com/matssun/mcp-re/issues/418)) |
-> | ADR-MCPS-047 answer-leg orchestration | **not implemented** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
+> | ADR-MCPS-047 answer-leg orchestration — the adapter drives the chain to a terminal result | **done** ([#419](https://github.com/matssun/mcp-re/issues/419)) |
 > | Transport shutdown contract — abortive close, `NEW → OPEN → CLOSING → CLOSED` | **done** ([#421](https://github.com/matssun/mcp-re/issues/421)) |
-> | mTLS connection helper (`connect_mtls_http`) | **not implemented** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
+> | mTLS connection helper (`connect_mtls_http`) — configured CA only, server identity proven, client certificate presented | **done** ([#413](https://github.com/matssun/mcp-re/issues/413)) |
 >
 > **Not released.** The one-way notification + acknowledgement profile
 > ([#418](https://github.com/matssun/mcp-re/issues/418)) has landed: a notification is its
@@ -31,11 +31,11 @@ signed requests and verified responses, added without changing application code.
 > transmission, so a standard client no longer needs an unsafe opt-in to complete its
 > lifecycle.
 >
-> `mcp.ClientSession` now speaks MCP-RE by construction: open it on the adapter's streams
-> and application code calls `session.call_tool(...)` with no sign/verify of its own. **You
-> still supply the HTTP leg** — the adapter takes an injected `poster` that performs the
-> POST, so establishing and hardening the connection (mTLS, pooling, timeouts) is yours
-> until `connect_mtls_http` lands.
+> `mcp.ClientSession` speaks MCP-RE by construction: open it on the adapter's streams and
+> application code calls `session.call_tool(...)` with no sign/verify of its own — including
+> for a multi-round-trip tool, whose elicitation the adapter answers and continues to a
+> terminal result. `connect_mtls_http` supplies the HTTP leg as a verifying mTLS connection;
+> the injected `poster` remains available for a caller who wants a different one.
 >
 > Using `sign_request` / `verify_response` directly remains supported for callers who want
 > to drive the exchange themselves; it is no longer the only option.
@@ -128,6 +128,53 @@ request id to correlate a failure to and no application call awaiting an answer;
 a session in which an unverifiable claim of acceptance was accepted would be exactly the
 take-it-on-faith posture this SDK exists to remove.
 
+**A multi-round-trip call is driven to a terminal result.** An ADR-MCPS-047
+`InputRequiredResult` pauses a call rather than finishing it. Supply
+`answer_input_required` and the adapter signs the answer leg over the *verified* handles of
+the leg before it, posts it, verifies the reply, and repeats until the server returns a
+terminal result — which is what your single `await` resolves to:
+
+```python
+config = McpReConfig(
+    ...,
+    # Return the `inputResponses` to continue with, or None to decline. May be async.
+    answer_input_required=lambda prompt: ask_the_user(prompt.result["elicitation"]),
+)
+# One call, whatever the server needs in between.
+await session.call_tool("confirm_action", {})
+```
+
+Without a handler an elicitation **fails closed** (`ContinuationNotAnswered`); it is never
+delivered up as the result. A pause handed to the application as the reply to `call_tool`
+would present a call still waiting for input as one that finished. `max_continuation_rounds`
+(default 4) bounds how long a server may keep one call in that cycle, and is checked before
+you are asked for an answer that could not be sent.
+
+**The connection itself is verified.** `connect_mtls_http` builds the HTTP leg as a mutual
+TLS connection to the proxy:
+
+```python
+from mcp_re_sdk import MtlsOptions, connect_mtls_http
+
+options = MtlsOptions(
+    server_ca="ca.pem",          # the ONLY root trusted to authenticate the proxy
+    client_cert="client.pem",    # presented for the proxy's own binding check
+    client_key="client.key",
+    # Optional: dial a load balancer while still requiring the proxy's own identity.
+    connect_address=("10.0.0.7", 8601),
+)
+
+async with connect_mtls_http(config, options) as (read, write):
+    async with ClientSession(read, write) as session:
+        ...
+```
+
+The system trust store is never consulted, the certificate must be valid for the name in
+your `target_uri` (or `server_name`), and there is no way to turn either check off. A
+helper with a `verify=False` knob is how mTLS deployments quietly become TLS-shaped
+plaintext — and nothing above this layer could notice, because a response signature
+verifies identically whether or not the channel proved who produced it.
+
 ## Why PyO3, not pure Python
 
 The signing/verification/enforcement logic lives **once**, in the audited Rust
@@ -192,7 +239,8 @@ the downloader lane, so it is a development-time proof rather than a standing ga
 | Test | Counterparty | Runs in CI |
 | --- | --- | --- |
 | `test_transport.py` | injected `poster`, no network | always |
-| `test_transport_replay.py` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`sdk/fixtures/delegated_response_replay.json`) | always |
+| `test_transport_replay.py` | a **recorded** delegated session, a full elicitation chain (open leg + answer leg), and a rejection receipt (`sdk/fixtures/delegated_response_replay.json`) | always |
+| `test_mtls.py` | a real TLS server holding real certificates, client-auth required | always (material minted by `tools/gen_mtls_test_material.py`) |
 | `test_transport_e2e.py` | the **live** `http_profile_proxy` + a real MCP SDK backend | **no** — self-skips without the harness (incl. in CI) |
 
 The replay fixture exists because the live test self-skips in the downloader lane — the
@@ -207,16 +255,6 @@ parity oracle from the primitives to the transport itself. Re-record with
 
 ## Known open work
 
-- **The mTLS connection helper** (`connect_mtls_http`) — the adapter takes an injected
-  `poster`, so establishing and hardening the connection is still the caller's job
-  ([#413](https://github.com/matssun/mcp-re/issues/413)).
-- **The ADR-MCPS-047 answer leg is not driven by the adapter**
-  ([#419](https://github.com/matssun/mcp-re/issues/419)). The open leg is covered —
-  `on_input_required` hands up the two evidence handles and the opaque `requestState`,
-  against a recorded elicitation from the real backend's `confirm_action` tool. Signing
-  the answer leg with those handles is still the caller's move
-  (`sign_request(..., cont_*)`), which is the choreography the adapter exists to remove —
-  so for MRT tools its central claim does not yet hold.
 - **Transport-as-dispatcher rework** upstream may move the integration seam.
 
   (An earlier note here claimed the package was "mid-refactor — the v1 session layer was

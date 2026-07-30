@@ -179,7 +179,7 @@ fn eliciting_inner(request_state: &'static str) -> Box<dyn AsyncInnerServer> {
             .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
             .unwrap_or(false);
         if is_answer {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"completed","confirmed":true}}"#
+            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","confirmed":true}}"#
                 .to_vec()
         } else {
             format!(
@@ -689,12 +689,89 @@ async fn a_terminal_reply_is_not_caught_by_the_stricter_classification() {
     let proxy = replica_with_inner(
         ready_signer(),
         Arc::clone(&store),
-        malformed_eliciting_inner(r#"{"resultType":"completed","confirmed":true}"#),
+        malformed_eliciting_inner(r#"{"resultType":"complete","confirmed":true}"#),
     );
 
     let (req, _ev) = signed_request("nonce-terminal", OPEN_BODY, None);
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 200, "a terminal reply is served normally");
+}
+
+/// MCPRE-495: an inner reply whose `resultType` this PEP does not recognize is
+/// refused BEFORE it is signed.
+///
+/// MCP 2026-07-28 closes the set — unrecognized MUST be considered invalid — and
+/// the danger is specific rather than theoretical. Read as terminal, an extension's
+/// non-terminal result ends the exchange: the client's correlation entry closes, no
+/// answer leg is ever signed, and a continuation reaches the application as a
+/// completed call. Signing it first would make it worse, because then the
+/// enforcement boundary has vouched for a message whose continuation semantics
+/// nobody can read.
+///
+/// Note `completed`: our own reference backend emitted it until this landed. The
+/// spec's terminal value is `complete`, and one letter is the whole difference
+/// between a recognized result and an unclassifiable one.
+#[tokio::test]
+async fn an_unrecognized_result_type_is_refused_before_it_is_signed() {
+    for unrecognized in [
+        r#"{"resultType":"completed","confirmed":true}"#,
+        r#"{"resultType":"com.example/deferred"}"#,
+        r#"{"resultType":"inputRequired","requestState":"s"}"#,
+        r#"{"resultType":7}"#,
+    ] {
+        let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
+        let proxy = replica_with_inner(
+            ready_signer(),
+            Arc::clone(&store),
+            malformed_eliciting_inner(unrecognized),
+        );
+
+        let (req, _ev) = signed_request("nonce-unrecognized", OPEN_BODY, None);
+        let served = proxy.handle(served_of(&req), NOW).await;
+
+        assert_ne!(
+            served.status, 200,
+            "{unrecognized} was served as a successful reply"
+        );
+        assert_eq!(
+            served.status, 502,
+            "an unclassifiable inner reply is a bad gateway"
+        );
+        assert_eq!(
+            wire_code_of(&served.body),
+            "mcp-re.continuation_type_unsupported",
+            "the rejection names the unreadable continuation model: {unrecognized}"
+        );
+    }
+}
+
+/// The refusal above must not depend on this deployment running MRTR at all. A
+/// replica with no continuation store still cannot classify the reply, and the old
+/// open-leg check lived inside the `if let Some(store)` block — so a store-less
+/// deployment would have signed the unclassifiable reply and returned it.
+#[tokio::test]
+async fn an_unrecognized_result_type_is_refused_without_a_continuation_store() {
+    let proxy = HttpProfileProxy::new_delegated(
+        actor_resolver(),
+        audience(),
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        malformed_eliciting_inner(r#"{"resultType":"com.example/deferred"}"#),
+        300,
+        ready_signer(),
+    );
+
+    let (req, _ev) = signed_request("nonce-no-store", OPEN_BODY, None);
+    let served = proxy.handle(served_of(&req), NOW).await;
+
+    assert_eq!(served.status, 502, "no store is not a reason to sign it");
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.continuation_type_unsupported"
+    );
 }
 
 // --- the SDK-boundary fixture for the same defect (C059/C060) ----------------
@@ -713,6 +790,44 @@ async fn a_terminal_reply_is_not_caught_by_the_stricter_classification() {
 ///     --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture
 #[test]
 fn write_malformed_elicitation_sdk_fixture() {
+    write_sdk_fixture(
+        "nonce-sdk-malformed",
+        br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#,
+        "A delegated-signed reply that declares itself non-terminal and withholds \
+         its requestState. Genuine evidence with a malformed body: both SDK \
+         bindings must REFUSE it, never report it as a terminal result. \
+         Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
+         --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture",
+        "malformed_elicitation.json",
+    );
+}
+
+/// Freeze a delegated-signed reply whose `resultType` is outside the set MCP
+/// 2026-07-28 defines (MCPRE-495), so both SDK bindings can prove they refuse it
+/// rather than reading it as a completed call.
+///
+/// Defense in depth: a conformant proxy will not sign such a reply at all, so this
+/// stands for a non-conformant or hostile server — the only place one can now come
+/// from. The evidence is genuine; only the result type is unreadable.
+///
+/// Regenerate with:
+///   MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
+///     --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture
+#[test]
+fn write_unrecognized_result_type_sdk_fixture() {
+    write_sdk_fixture(
+        "nonce-sdk-unrecognized",
+        br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"com.example/deferred"}}"#,
+        "A delegated-signed reply carrying a resultType outside the set MCP \
+         2026-07-28 defines. Genuine evidence this reader cannot classify: both SDK \
+         bindings must REFUSE it, never report it as a terminal result. \
+         Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
+         --test mrt_continuation_serving_test write_unrecognized_result_type_sdk_fixture",
+        "unrecognized_result_type.json",
+    );
+}
+
+fn write_sdk_fixture(nonce: &str, reply_body: &[u8], comment: &str, file_name: &str) {
     use mcp_re_core::b64url_encode;
     use mcp_re_http_profile::sign_delegated_response_full;
 
@@ -721,13 +836,12 @@ fn write_malformed_elicitation_sdk_fixture() {
     let active = signer.current(NOW).expect("a delegated key is published");
 
     // The client's open-leg request, signed exactly as the SDK signs it.
-    let (request, req_evidence) = signed_request("nonce-sdk-malformed", OPEN_BODY, None);
+    let (request, req_evidence) = signed_request(nonce, OPEN_BODY, None);
 
-    // The reply: non-terminal discriminator, no usable state.
     let mut response = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required"}}"#.to_vec(),
+        body: reply_body.to_vec(),
     };
     sign_delegated_response_full(
         &mut response,
@@ -740,7 +854,7 @@ fn write_malformed_elicitation_sdk_fixture() {
         NOW,
         NOW + TTL,
     )
-    .expect("the malformed reply signs — signing does not classify");
+    .expect("the reply signs — signing does not classify");
 
     // Precondition: this fixture is only meaningful if the response is otherwise
     // GENUINE. If it failed verification the SDKs would refuse it for the wrong
@@ -765,19 +879,14 @@ fn write_malformed_elicitation_sdk_fixture() {
         &|_| false,
         NOW,
     )
-    .expect("the fixture response is genuine evidence — only its BODY is malformed");
+    .expect("the fixture response is genuine evidence — only its RESULT is unreadable");
 
     let fixture = serde_json::json!({
-        "_comment":
-            "A delegated-signed reply that declares itself non-terminal and withholds \
-             its requestState. Genuine evidence with a malformed body: both SDK \
-             bindings must REFUSE it, never report it as a terminal result. \
-             Regenerate with MCP_RE_WRITE_SDK_FIXTURE=1 cargo test -p mcp-re-proxy \
-             --test mrt_continuation_serving_test write_malformed_elicitation_sdk_fixture",
+        "_comment": comment,
         "client_seed_b64url": b64url_encode(&CLIENT_SEED),
         "key_id": CLIENT_KEY_ID,
         "signer_id": "did:example:host-a",
-        "nonce": "nonce-sdk-malformed",
+        "nonce": nonce,
         "created": CREATED,
         "expires": EXPIRES,
         "now": NOW,
@@ -811,7 +920,8 @@ fn write_malformed_elicitation_sdk_fixture() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-        .join("sdk/fixtures/malformed_elicitation.json");
+        .join("sdk/fixtures")
+        .join(file_name);
     let rendered = format!(
         "{}\n",
         serde_json::to_string_pretty(&fixture).expect("fixture serializes")

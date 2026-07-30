@@ -44,6 +44,7 @@ use mcp_re_core::McpReError;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
 use mcp_re_http_profile::insert_verified_context;
+use mcp_re_http_profile::result_class::ResultTypeClass;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::strip_proxy_owned_meta;
@@ -481,6 +482,26 @@ impl HttpProfileProxy {
             };
         }
 
+        // Step 6b — the backend's reply must be classifiable before the enforcement
+        // boundary puts its signature on it (MCPRE-495). MCP 2026-07-28 closes the
+        // `resultType` set: unrecognized MUST be considered invalid. Signing one
+        // anyway would produce a perfectly verifiable message whose continuation
+        // semantics nobody can read — and a client that fails closed on it would be
+        // told the PEP vouched for it. Checked whether or not this deployment runs
+        // MRTR: the reply is unclassifiable either way.
+        if matches!(
+            classify_result_type(&response.body),
+            Some(ResultTypeClass::Unrecognized)
+        ) {
+            return self.rejection(
+                &http_req,
+                HttpProfileError::UnrecognizedResultType.wire_code(),
+                502,
+                now,
+                Some(&verified.evidence),
+            );
+        }
+
         let response_base = match sign_delegated_response_full(
             &mut response,
             &http_req,
@@ -632,7 +653,10 @@ fn served(resp: HttpResponse) -> ServedHttpResponse {
 /// Read `params.requestState` (a string) from a JSON-RPC request body — the opaque
 /// MRTR state an answer leg re-presents (ADR-MCPS-047). `None` if the body is not
 /// JSON, has no `params.requestState`, or it is not a string.
-fn extract_request_state(body: &[u8]) -> Option<String> {
+///
+/// The value is read only to KEY the correlation store; it is never interpreted, and
+/// what it binds to is settled by digest equality against the retained bases.
+pub fn extract_request_state(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     v.get("params")?
         .get("requestState")?
@@ -662,6 +686,17 @@ fn is_notification(body: &[u8]) -> bool {
 /// a signed rejection naming the malformed body.
 fn input_required_state(body: &[u8]) -> Result<Option<String>, HttpProfileError> {
     mcp_re_http_profile::result_class::input_required_state(body)
+}
+
+/// The `resultType` class of a backend reply, or `None` when the reply is not JSON
+/// at all — which is not this check's business: the signing path treats an
+/// unparseable backend body as an ordinary opaque payload, and the client's own
+/// verification is what refuses it.
+fn classify_result_type(body: &[u8]) -> Option<ResultTypeClass> {
+    let parsed: serde_json::Value = serde_json::from_slice(body).ok()?;
+    Some(mcp_re_http_profile::result_class::classify_result_type(
+        parsed.get("result"),
+    ))
 }
 
 /// Compose the body forwarded to the inner server (#415 rev 2 §10, MCPRE-429).

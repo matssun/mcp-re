@@ -64,38 +64,51 @@ __all__ = [
     "BindingRequestContext",
     "OpaqueBytesProvider",
     # Lazy — these need the upstream `mcp` extra (see __getattr__ below).
-    "ConnectionClosed",
-    "HttpReply",
-    "McpReConfig",
     "ClientResponseUnsupported",
+    "ConnectionClosed",
+    "ContinuationNotAnswered",
+    "HttpReply",
+    "InputRequired",
+    "McpReConfig",
+    "MtlsOptions",
+    "MtlsTransportError",
     "NotificationNotAcknowledged",
+    "connect_mtls_http",
     "mcp_re_http_transport",
+    "mtls_poster",
 ]
 
-#: The transport adapter's names, resolved lazily. `transport` imports the upstream MCP
-#: SDK, which is an optional extra: a caller who wants only the signing/verification
+#: Names resolved lazily, and the module each lives in. Both modules import the upstream
+#: MCP SDK, which is an optional extra: a caller who wants only the signing/verification
 #: bindings must be able to `import mcp_re_sdk` without installing `mcp`.
-_TRANSPORT_EXPORTS = frozenset(
-    {
-        "ConnectionClosed",
-        "HttpReply",
-        "McpReConfig",
-        "ClientResponseUnsupported",
-    "NotificationNotAcknowledged",
-        "mcp_re_http_transport",
-    }
-)
+_LAZY_EXPORTS = {
+    "ClientResponseUnsupported": "transport",
+    "ConnectionClosed": "transport",
+    "ContinuationNotAnswered": "transport",
+    "HttpReply": "transport",
+    "InputRequired": "transport",
+    "McpReConfig": "transport",
+    "NotificationNotAcknowledged": "transport",
+    "mcp_re_http_transport": "transport",
+    "MtlsOptions": "mtls",
+    "MtlsTransportError": "mtls",
+    "connect_mtls_http": "mtls",
+    "mtls_poster": "mtls",
+}
 
 
 def __getattr__(name: str):
-    if name in _TRANSPORT_EXPORTS:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is not None:
+        import importlib
+
         try:
-            from . import transport
+            module = importlib.import_module(f".{module_name}", __name__)
         except ImportError as exc:  # pragma: no cover - depends on the install extras
             raise ImportError(
                 f"mcp_re_sdk.{name} needs the upstream MCP SDK: pip install 'mcp-re-sdk[mcp]'"
             ) from exc
-        return getattr(transport, name)
+        return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 #: The audited SDK core version string.

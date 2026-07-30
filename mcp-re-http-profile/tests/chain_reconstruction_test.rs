@@ -521,6 +521,68 @@ fn terminality_is_derived_from_protected_content() {
     );
 }
 
+/// MCPRE-495: a hop whose `resultType` this reader does not recognize makes the
+/// record incomplete AT THAT HOP, rather than being read as terminal.
+///
+/// This is the direction that matters. Reconstruction is the one reader for which
+/// "unknown ⇒ terminal" looks safe — a false truncation is only a false alarm —
+/// but it is not safe at the END of a chain: if the last hop carries an extension's
+/// non-terminal result, unknown-as-terminal reports a chain that stops mid-call as
+/// COMPLETE. An auditor is owed "hop 1 declares a result type I cannot classify",
+/// not a confident verdict derived from a value nobody read.
+#[test]
+fn an_unrecognized_result_type_makes_the_record_incomplete_at_that_hop() {
+    const UNRECOGNIZED: &str =
+        r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"com.example/deferred"}}"#;
+
+    let (h0, r0, s0) = hop("n-u0", None, AWAITING);
+    let (h1, _, _) = hop(
+        "n-u1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-u",
+        )),
+        UNRECOGNIZED,
+    );
+
+    assert_eq!(
+        reconstruct(&[h0, h1]),
+        ChainLabel::Incomplete {
+            hop: 1,
+            reason: IncompleteReason::UnrecognizedResultType,
+        },
+        "every message verifies and re-links; whether the call ENDED is what is unknown"
+    );
+}
+
+/// The same value at a NON-final hop is refused too. Here unknown-as-terminal would
+/// have produced `NonTerminalExpected` — an accurate-sounding label for the wrong
+/// reason, blaming the chain's shape for what is really an unreadable result type.
+#[test]
+fn an_unrecognized_result_type_mid_chain_is_named_for_what_it_is() {
+    const UNRECOGNIZED: &str = r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"partial"}}"#;
+
+    let (h0, r0, s0) = hop("n-m0", None, UNRECOGNIZED);
+    let (h1, _, _) = hop(
+        "n-m1",
+        Some(HttpContinuation::from_handles(
+            to_digest(&r0),
+            to_digest(&s0),
+            b"state-m",
+        )),
+        DONE,
+    );
+
+    assert_eq!(
+        reconstruct(&[h0, h1]),
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::UnrecognizedResultType,
+        },
+    );
+}
+
 // --- the record is verified as a record, not as live traffic (C033) ----------
 
 /// A chain whose turns span more than one freshness window, audited long after

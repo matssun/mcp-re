@@ -63,17 +63,23 @@ Application code calls `session.call_tool(...)` and never invokes sign/verify it
 every failure is delivered as a JSON-RPC error correlated to its request, so an
 unverifiable response can neither reach the application nor hang it.
 
-Two boundaries, stated rather than implied:
+The parts that used to be the caller's, now stated as shipped:
 
-- **Notifications are unsupported.** MCP-RE's evidence rides on the response, and a
-  one-way notification has none, so the adapter drops every client→server notification —
-  including `notifications/initialized` and `notifications/cancelled`. It is therefore
-  **not** a general standard-MCP transport. Whether MCP-RE signs one-way notifications,
-  rejects them, or formally declares a request/response-only subset is undecided (#418).
-- **Callers still supply the HTTP leg.** The adapter takes an injected `poster` that
-  performs the POST; the mTLS connection helper (`connect_mtls_http` / `connectMtlsHttp`)
-  is not built yet (#413), so establishing and hardening the connection remains the
-  caller's job.
+- **One-way notifications are carried and acknowledged** (#418). A `notifications/*`
+  message is its own signed POST, and the enforcement boundary answers it with a signed,
+  bodyless `202` bound to that exact transmission. The adapter verifies that
+  acknowledgement before treating the message as delivered, and fails closed when it does
+  not verify — so an unverifiable claim of acceptance is never taken on faith.
+- **A multi-round-trip call is driven to a terminal result** (#419). An ADR-MCPS-047
+  elicitation pauses a call rather than finishing it, so the adapter signs the answer leg
+  over the verified handles of the leg before it and continues until the server returns a
+  terminal result. Without an answer handler the pause fails closed; it is never delivered
+  up as though the call had completed.
+- **The HTTP leg is a verifying mTLS connection** (#413). `connect_mtls_http` /
+  `connectMtlsHttp` trust only the configured CA, require the proxy to prove the
+  configured server name, and present a client certificate — with no way to switch any of
+  that off. The injected `poster` remains available for a caller who wants a different
+  connection.
 
 The client-side proxy is the path that requires no application change at all.
 

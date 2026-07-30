@@ -16,12 +16,19 @@
       "types": "./dist/transport.d.ts",
       "default": "./dist/transport.js"
     },
+    "./mtls": {
+      "types": "./dist/mtls.d.ts",
+      "default": "./dist/mtls.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "transport": [
         "dist/transport.d.ts"
+      ],
+      "mtls": [
+        "dist/mtls.d.ts"
       ]
     }
   },

@@ -91,6 +91,11 @@ pub enum IncompleteReason {
     /// The last hop is still awaiting input: the record stops mid-call. A
     /// truncated chain is incomplete even though every hop in it verified.
     TerminalExpected,
+    /// The hop's response declares a `resultType` this reader does not recognize,
+    /// so whether that turn ended is unknown. The record is labeled incomplete AT
+    /// THAT HOP rather than assuming an answer: a chain whose shape rests on an
+    /// unread value is not a chain anyone verified.
+    UnrecognizedResultType,
     /// The reconstruction was handed no hops at all.
     EmptyChain,
     /// A message in this hop declares a `created` later than the audit instant.
@@ -140,7 +145,8 @@ pub struct HopEvidence {
     pub response_evidence: RequestEvidence,
 }
 
-/// Whether a hop's response was terminal or awaited client input.
+/// Whether a hop's response was terminal, awaited client input, or could not be
+/// classified at all.
 ///
 /// DERIVED from the response's protected body, never supplied alongside it. An
 /// earlier revision took this from a caller array parallel to `hops`, which was a
@@ -155,6 +161,9 @@ pub enum HopOutcome {
     InputRequired,
     /// A terminal result: the call ends here.
     Terminal,
+    /// A `resultType` this reader does not recognize, so whether the turn ended
+    /// is unknown.
+    Unrecognized,
 }
 
 /// Classify a VERIFIED response body through the single discriminator
@@ -162,21 +171,26 @@ pub enum HopOutcome {
 ///
 /// Only ever called on bytes whose signature and `content-digest` already
 /// verified, so the classification is a reading of protected content rather than
-/// a claim about it. Anything that is not the input-required discriminator is
-/// terminal — the conservative direction here, since mislabeling a terminal answer
-/// as non-terminal would make a COMPLETE chain look truncated (a false alarm),
-/// whereas the reverse would let a truncated chain pass as complete.
+/// a claim about it.
 ///
-/// A body that will not parse is terminal for the same reason, and reconstruction
-/// does not need the stricter reading [`crate::result_class::input_required_state`]
-/// gives a live exchange: an unparseable body cannot have verified in step 2, so
-/// this is never reached with one.
+/// An unrecognized `resultType` is reported as such rather than folded into
+/// terminal. Reconstruction is the one reader for which "unknown ⇒ terminal" is
+/// nearly defensible — mislabeling a terminal answer as non-terminal is only a
+/// false alarm, while the reverse lets a truncated chain pass as complete — but
+/// "nearly" is doing the work. If the last hop of a truncated chain carried an
+/// extension's non-terminal `resultType`, unknown-as-terminal would label that
+/// chain COMPLETE, which is precisely the laundering §9.3 forbids. An auditor is
+/// better served by "hop 2 declares a result type I cannot classify" than by a
+/// confident answer derived from a value nobody read.
+///
+/// A body that will not parse is terminal: an unparseable body cannot have
+/// verified in step 2, so this is never reached with one.
 fn classify_verified_response(body: &[u8]) -> HopOutcome {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
-    if crate::result_class::is_input_required(parsed.as_ref().and_then(|v| v.get("result"))) {
-        HopOutcome::InputRequired
-    } else {
-        HopOutcome::Terminal
+    match crate::result_class::classify_result_type(parsed.as_ref().and_then(|v| v.get("result"))) {
+        crate::result_class::ResultTypeClass::InputRequired => HopOutcome::InputRequired,
+        crate::result_class::ResultTypeClass::Complete => HopOutcome::Terminal,
+        crate::result_class::ResultTypeClass::Unrecognized => HopOutcome::Unrecognized,
     }
 }
 
@@ -307,6 +321,9 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         let outcome = classify_verified_response(&hop.response.body);
         let is_last = i + 1 == hops.len();
         match (is_last, outcome) {
+            (_, HopOutcome::Unrecognized) => {
+                return incomplete(hop_evidence, i, IncompleteReason::UnrecognizedResultType)
+            }
             (false, HopOutcome::Terminal) => {
                 return incomplete(hop_evidence, i, IncompleteReason::NonTerminalExpected)
             }

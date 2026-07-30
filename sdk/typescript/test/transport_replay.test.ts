@@ -29,7 +29,13 @@ import { describe, expect, it } from "vitest";
 import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 
 import { ContinuationHandles, Signer } from "../src/index.js";
-import { McpReHttpTransport, type HttpReply, type McpReConfig, type Poster } from "../src/transport.js";
+import {
+  McpReHttpTransport,
+  type HttpReply,
+  type InputRequired,
+  type McpReConfig,
+  type Poster,
+} from "../src/transport.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const FIXTURE = JSON.parse(
@@ -194,34 +200,46 @@ describe("McpReHttpTransport replaying a recorded delegated session", () => {
     ).rejects.toThrow(/mcp-re\./);
   });
 
-  it("surfaces the answer leg's handles for a verified input-required response", async () => {
-    // An elicitation is not the end of the exchange (ADR-MCPS-047). An
-    // `InputRequiredResult` is not a `CallToolResult`, so `Client` cannot carry it: the
-    // convention lives BELOW the session layer, which is where the adapter implements
-    // it. Drive the transport directly and assert it hands up the two evidence handles +
-    // opaque state the answer leg signs over, read only from the VERIFIED response.
-    const elicit = FIXTURE.elicitation;
-    const handles: ContinuationHandles[] = [];
-    const transport = new McpReHttpTransport(
-      config({ nonceFactory: () => elicit.nonce, onInputRequired: (h) => handles.push(h) }),
-      async (_m, _u, _h, body) => {
-        expect(
-          body.toString("base64"),
-          "the adapter's open-leg request bytes drifted from the recording " +
-            "(re-record with tools/gen_sdk_transport_fixture.py)",
-        ).toBe(elicit.exchange.request_body_b64);
-        return {
-          status: elicit.exchange.status,
-          headers: (elicit.exchange.headers as [string, string][]).map(([key, value]) => ({
-            key,
-            value,
-          })),
-          body: Buffer.from(elicit.exchange.body_b64, "base64"),
-        };
-      },
-    );
+  // --- ADR-MCPS-047: the continuation chain ---------------------------------------
+  //
+  // Mirrors `test_transport_replay.py`'s continuation group — same fixture, same
+  // assertions.
 
-    let reply: unknown;
+  const ELICIT = FIXTURE.elicitation;
+  const ANSWER = ELICIT.answer;
+
+  /** The open leg's nonce, then the answer leg's. A continuation turn is a fresh signed
+   * request with its own freshness (continuation profile §10.1). */
+  const elicitNonces = () => {
+    const nonces = [ELICIT.nonce, ANSWER.nonce];
+    let i = 0;
+    return () => nonces[i++];
+  };
+
+  /** Serve the recorded legs in order, refusing to serve one for a request the recording
+   * was not made against. */
+  const chainPoster = (legs: { request_body_b64: string; status: number; headers: [string, string][]; body_b64: string }[]) => {
+    let i = 0;
+    return async (_m: string, _u: string, _h: unknown, body: Buffer) => {
+      expect(i, "the adapter sent more legs than were recorded").toBeLessThan(legs.length);
+      const leg = legs[i++];
+      expect(
+        body.toString("base64"),
+        `leg ${i - 1}: the adapter's request bytes drifted from the recording ` +
+          "(re-record with tools/gen_sdk_transport_fixture.py)",
+      ).toBe(leg.request_body_b64);
+      return {
+        status: leg.status,
+        headers: leg.headers.map(([key, value]) => ({ key, value })),
+        body: Buffer.from(leg.body_b64, "base64"),
+      };
+    };
+  };
+
+  /** Run one `tools/call` through the adapter against the recorded legs. */
+  const drive = async (cfg: McpReConfig, legs: Parameters<typeof chainPoster>[0]) => {
+    const transport = new McpReHttpTransport(cfg, chainPoster(legs));
+    let reply: any;
     transport.onmessage = (m) => {
       reply = m;
     };
@@ -230,19 +248,118 @@ describe("McpReHttpTransport replaying a recorded delegated session", () => {
       jsonrpc: "2.0",
       id: 0,
       method: "tools/call",
-      params: { name: elicit.tool, arguments: {} },
+      params: { name: ELICIT.tool, arguments: {} },
     });
+    return { reply, transport };
+  };
+
+  it("drives the answer leg to a terminal result", async () => {
+    // The whole point of #419: a multi-round-trip tool is an ordinary call. An
+    // `InputRequiredResult` is not a `CallToolResult`, so `Client` cannot carry it — the
+    // convention lives BELOW the session layer, which is where the adapter implements
+    // it. So the adapter answers the elicitation itself: it signs the answer leg over the
+    // VERIFIED handles, posts it, verifies the reply, and hands up the terminal result.
+    //
+    // The recorded answer-leg request is the load-bearing assertion. Reproducing it
+    // byte-for-byte means the adapter built the continuation binding, echoed the opaque
+    // `requestState`, and carried `inputResponses` exactly as the profile specifies — the
+    // proxy accepted these very bytes when the fixture was recorded.
+    const handles: ContinuationHandles[] = [];
+    const prompts: InputRequired[] = [];
+    const { reply } = await drive(
+      config({
+        nonceFactory: elicitNonces(),
+        onInputRequired: (h) => handles.push(h),
+        answerInputRequired: (p) => {
+          prompts.push(p);
+          return ANSWER.responses;
+        },
+      }),
+      [ELICIT.exchange, ANSWER.exchange],
+    );
 
     expect(handles, "the adapter did not surface the elicitation").toHaveLength(1);
     expect({ ...handles[0] }).toMatchObject({
-      prevAlg: elicit.expect_handles.prev_alg,
-      prevValue: elicit.expect_handles.prev_value,
-      irrAlg: elicit.expect_handles.irr_alg,
-      irrValue: elicit.expect_handles.irr_value,
-      requestState: elicit.expect_handles.request_state,
+      prevAlg: ELICIT.expect_handles.prev_alg,
+      prevValue: ELICIT.expect_handles.prev_value,
+      irrAlg: ELICIT.expect_handles.irr_alg,
+      irrValue: ELICIT.expect_handles.irr_value,
+      requestState: ELICIT.expect_handles.request_state,
     });
-    // The open leg is genuine evidence and reaches the caller as a result, not an error.
-    expect((reply as { result: { resultType: string } }).result.resultType).toBe("input_required");
+
+    // The handler is asked with everything answering needs, read from the VERIFIED reply.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].method).toBe("tools/call");
+    expect(prompts[0].round).toBe(1);
+    expect(prompts[0].result.resultType).toBe("input_required");
+    expect(prompts[0].result.requestState).toBe(ELICIT.expect_handles.request_state);
+    expect(prompts[0].handles).toBe(handles[0]);
+
+    // A TERMINAL result, not the pause — and under the id the CALLER issued, not the
+    // answer leg's own `0/mrt-1`.
+    expect(reply.result).toEqual(ANSWER.expect_result);
+    expect(reply.id).toBe(ANSWER.expect_id);
+  });
+
+  it("refuses an unanswerable elicitation rather than delivering it as a result", async () => {
+    // A pause is not an outcome (continuation profile §5.2, §9.3). With no handler
+    // installed there is no answer leg to sign, so the call cannot complete. Delivering
+    // the `InputRequiredResult` up as the reply would present a call still waiting for
+    // input as one that finished.
+    const { reply } = await drive(config({ nonceFactory: elicitNonces() }), [ELICIT.exchange]);
+
+    expect(reply.error, "the pause was delivered as a completed call").toBeDefined();
+    expect(reply.error.message).toContain("no answerInputRequired handler");
+  });
+
+  it("refuses a declined elicitation", async () => {
+    // Declining is a decision not to continue, not a decision to accept the pause.
+    const { reply } = await drive(
+      config({ nonceFactory: elicitNonces(), answerInputRequired: () => null }),
+      [ELICIT.exchange],
+    );
+
+    expect(reply.error).toBeDefined();
+    expect(reply.error.message).toContain("declined");
+  });
+
+  it("enforces the continuation ceiling before asking the caller", async () => {
+    // A server decides how long a chain runs, so the client must bound it. The ceiling is
+    // checked BEFORE the handler: a call that has already spent its continuation budget
+    // must not prompt for an answer it cannot send.
+    const asked: InputRequired[] = [];
+    const { reply } = await drive(
+      config({
+        nonceFactory: elicitNonces(),
+        maxContinuationRounds: 0,
+        answerInputRequired: (p) => {
+          asked.push(p);
+          return {};
+        },
+      }),
+      [ELICIT.exchange],
+    );
+
+    expect(reply.error).toBeDefined();
+    expect(reply.error.message).toContain("maxContinuationRounds");
+    expect(asked, "the handler was asked for an answer that could not be sent").toHaveLength(0);
+  });
+
+  it("leaves no correlation entry outstanding after a completed chain", async () => {
+    // An open leg is associated, not consumed (ADR-MCPS-047), so something must retire
+    // it. Left outstanding, every elicitation would leak an entry for the life of the
+    // session — and a peer that can elicit could grow the store at will.
+    const { transport } = await drive(
+      config({ nonceFactory: elicitNonces(), answerInputRequired: () => ANSWER.responses }),
+      [ELICIT.exchange, ANSWER.exchange],
+    );
+    expect(transport.pendingCorrelations, "the chain left correlation state behind").toBe(0);
+  });
+
+  it("leaves no correlation entry outstanding after an unanswered elicitation", async () => {
+    // The same bound on the failure path, which is the one a peer can drive.
+    const { transport } = await drive(config({ nonceFactory: elicitNonces() }), [ELICIT.exchange]);
+    expect(transport.pendingCorrelations).toBe(0);
   });
 
   it("delivers a verified rejection receipt as an error, not a result", async () => {

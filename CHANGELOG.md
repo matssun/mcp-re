@@ -12,7 +12,61 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added
+- **Both SDKs drive the ADR-MCPS-047 answer leg** (#419). An `InputRequiredResult`
+  pauses a call rather than finishing it, so the transport adapter now signs the
+  answer leg over the *verified* handles of the leg before it, posts it, verifies
+  the reply, and repeats until a terminal result — which is what the caller's
+  single `await` resolves to. The decided surface is one handler at parity:
+  `answer_input_required` / `answerInputRequired`, returning the `inputResponses`
+  or nothing to decline; `on_input_required` stays a pure observer.
+
+  The answer leg is an independent request with its own JSON-RPC id (SEP-2322
+  §retry) and its own freshness (continuation profile §10.1); the terminal reply
+  is relabelled to the id the caller issued before delivery. That relabelling is
+  honest only because every hop verified inside the adapter, which is what makes
+  the delivered result a complete record under §9.3 rather than a spliced one.
+  `max_continuation_rounds` / `maxContinuationRounds` (default 4) bounds how long a
+  server may keep one call in an elicitation cycle, and is checked *before* the
+  handler runs so no answer is solicited that could not be sent.
+
+  Covered by a recorded two-leg chain in `sdk/fixtures/delegated_response_replay.json`
+  — the proxy accepted those exact answer-leg bytes when the fixture was recorded,
+  and both SDKs reproduce them byte-for-byte.
+- **Both SDKs ship the mTLS connect helper** (#413, slice 2). `connect_mtls_http` /
+  `connectMtlsHttp` build the adapter's HTTP leg as a verifying mutual-TLS
+  connection, mirroring the Rust client's `MtlsRemoteTransport`: only the configured
+  CA authenticates the proxy, the certificate must be valid for the configured
+  server name (kept separate from the address dialled), a client certificate is
+  presented, one connection per exchange, and every bound — connect/read timeout,
+  response ceiling — fails closed. There is no switch to disable verification.
+
+  Tested against a real TLS server with client-auth required, on X.509 minted at
+  test time by `tools/gen_mtls_test_material.py` (never committed —
+  `scripts/tracked_secrets_gate.py` forbids a tracked PEM key, and is right to).
+  The load-bearing cases are the refusals, including a certificate the trusted CA
+  *did* sign for a different name: a chain-of-trust-only client accepts that one.
+- **The `http_profile_proxy` example serves MRTR continuations**, with an in-memory
+  correlation store. The proof front previously passed no continuation context to
+  the dispatcher, so every answer leg failed closed on
+  `mcp-re.continuation_binding_failed` and the SDK harness could not exercise a
+  multi-round-trip call at all. Single-process only: a fleet wires the shared Redis
+  store, and the difference is the store, not the protocol.
+
 ### Changed
+- **BREAKING (SDK behaviour): an elicitation that cannot be answered is refused,
+  not delivered as a result** (#419). Both adapters previously handed a verified
+  `InputRequiredResult` up as the reply to `call_tool`, which presents a call still
+  waiting for input as one that finished — the continuation profile's §5.2 / §9.3
+  misrepresentation, and the same failure `unrecognized_result_type` already covered
+  from the other direction. It now fails closed as `ContinuationNotAnswered` when no
+  handler is installed, when the handler declines, or when the round ceiling is
+  reached. A caller who wants the old shape installs a handler and gets the terminal
+  result instead.
+- **A completed or abandoned continuation chain leaves no correlation state.** An
+  open leg is associated without being consumed (ADR-MCPS-047), and nothing retired
+  it: every elicitation leaked an entry until the transport closed, which a peer
+  able to elicit could drive.
 - **BREAKING (wire): the MCP-RE JSON-RPC error code moved from `-32003` to
   `-31000`** (#426). MCP 2026-07-28 is now the current protocol revision, and its
   final §Error Codes text partitions JSON-RPC's implementation-defined band
@@ -33,9 +87,25 @@ or wire-format compatibility while the design lines from
   (#426). Confirmed against the published specification: the SEP-2322
   `resultType: "input_required"` snake_case discriminator, `complete` as the
   terminal value, and the requirement that clients read an *absent* `resultType`
-  as complete. One divergence found and tracked separately (#495): the final text
-  requires an unrecognized `resultType` to be treated as invalid, while MCP-RE
-  reads it as terminal.
+  as complete.
+- **An unrecognized `resultType` fails closed instead of reading as a completed
+  call** (#495). MCP 2026-07-28 closes the set: unrecognized MUST be considered
+  invalid. Classification gains a third outcome — the danger is specific, not
+  theoretical, because an extension's *non-terminal* result read as terminal ends
+  the exchange, closes the correlation entry, signs no answer leg, and hands a
+  continuation to the application as a finished tool result.
+
+  The PEP refuses to sign such a reply (before signing, and whether or not the
+  deployment runs MRTR); chain reconstruction labels the record incomplete **at
+  that hop** rather than guessing whether the turn ended; both SDKs refuse one
+  arriving from a non-conformant server. Wire code
+  `mcp-re.continuation_type_unsupported` — the same frozen token an unrecognized
+  continuation `type` already used, for the same reason. Vector h51, and a
+  recorded fixture replayed in both SDKs.
+
+  Found by this: the reference inner backend
+  (`tools/fastmcp_inner_backend.py`) emitted `resultType: "completed"`. The
+  specification's terminal value is `complete`.
 
 ## [0.14.0] — 2026-07-28
 

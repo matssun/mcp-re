@@ -26,20 +26,29 @@ POST, and the acknowledgement it earns — a signed bodyless 202 bound to that e
 transmission — is verified before the adapter treats it as delivered. See
 :class:`NotificationNotAcknowledged` for what happens when it is not.
 
+**A multi-round-trip call is driven to a terminal result.** An ADR-MCPS-047 elicitation
+pauses a call rather than finishing it, so the adapter signs the answer leg over the
+verified handles of the leg before it and continues until the server returns a terminal
+result — that result, and only that, is what the session's await resolves to. Install
+:attr:`McpReConfig.answer_input_required` to supply the answers; without it an
+elicitation fails closed (:class:`ContinuationNotAnswered`) rather than reaching the
+application as if the call had completed.
+
 MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
-a ``poster`` so this layer stays transport-agnostic and testable; ``connect_mtls_http``
-(the mTLS construction helper) builds on top of it.
+a ``poster`` so this layer stays transport-agnostic and testable; :func:`connect_mtls_http
+<mcp_re_sdk.mtls.connect_mtls_http>` (the mTLS construction helper) builds on top of it.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import secrets
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, Union
 
 import anyio
 from mcp.shared.message import SessionMessage
@@ -59,7 +68,9 @@ from .custody import McpReError, McpReSdkError, Signer, SignerPolicy
 __all__ = [
     "ClientResponseUnsupported",
     "ConnectionClosed",
+    "ContinuationNotAnswered",
     "HttpReply",
+    "InputRequired",
     "McpReConfig",
     "NotificationNotAcknowledged",
     "mcp_re_http_transport",
@@ -114,6 +125,47 @@ class ConnectionClosed(McpReSdkError):
     mean the request never arrived or that already-dispatched remote work has stopped —
     only that this client will not process an answer to it.
     """
+
+
+class ContinuationNotAnswered(McpReSdkError):
+    """A verified elicitation could not be answered, so the call did not complete.
+
+    An ADR-MCPS-047 `InputRequiredResult` is a PAUSE, not an outcome. When no answer leg
+    can be driven — no ``answer_input_required`` handler, a handler that declined, or a
+    server that elicited past ``max_continuation_rounds`` — the exchange ends here.
+
+    It ends as an ERROR, never as a result. Handing the pause up as the reply to
+    ``call_tool`` would present a call that is still waiting for input as one that
+    finished, which is the misrepresentation the continuation profile's protected
+    non-terminal classification exists to make detectable (§5.2, §9.3).
+    """
+
+
+@dataclass(frozen=True)
+class InputRequired:
+    """A verified ADR-MCPS-047 elicitation, and everything answering it needs.
+
+    Everything here was read from the VERIFIED response — the signature, content digest
+    and request binding all checked out before this was built.
+    """
+
+    #: The two evidence handles + opaque state the answer leg signs over.
+    handles: ContinuationHandles
+    #: The MCP method being continued, unchanged across the chain.
+    method: str
+    #: The params of the leg that earned this elicitation.
+    params: Mapping[str, Any]
+    #: The verified `InputRequiredResult` — `requestState` plus whatever the server used
+    #: to describe what it wants (`elicitation` / `inputRequests`). Passed through
+    #: uninterpreted: what to ask, and how, is the application's decision.
+    result: Mapping[str, Any]
+    #: Which continuation round this is, counting from 1.
+    round: int
+
+
+#: What an ``answer_input_required`` handler returns: the `inputResponses` to continue
+#: with, or ``None`` to decline. May be a coroutine — eliciting from a human is I/O.
+InputAnswer = Union[Optional[Mapping[str, Any]], Awaitable[Optional[Mapping[str, Any]]]]
 
 
 #: The response-side body evidence block. Stripped before the result reaches the app:
@@ -262,8 +314,31 @@ class McpReConfig:
     on_notification_acknowledged: Optional[Callable[[str, str], None]] = None
 
     #: Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
-    #: handles its answer leg must sign over. The open leg stays outstanding.
+    #: handles its answer leg must sign over. Observability only: it fires once per
+    #: continuation round, and it does not decide anything. Answering is
+    #: :attr:`answer_input_required`'s job.
     on_input_required: Optional[Callable[[ContinuationHandles], None]] = None
+
+    #: Answers an elicitation, so the adapter can drive the ADR-MCPS-047 answer leg
+    #: itself. Return the `inputResponses` to continue with, or ``None`` to decline.
+    #: May be a coroutine.
+    #:
+    #: With a handler installed, a multi-round-trip tool is an ordinary ``call_tool``
+    #: from the application's side: the adapter signs the answer leg over the verified
+    #: handles, posts it, verifies the reply, and repeats until a terminal result — which
+    #: is what the caller's await resolves to. Without one, an elicitation cannot be
+    #: continued and the exchange fails closed with :class:`ContinuationNotAnswered`,
+    #: because a pause delivered as a result would read as a finished call.
+    answer_input_required: Optional[Callable[[InputRequired], InputAnswer]] = None
+
+    #: How many times one call may be elicited before the adapter gives up.
+    #:
+    #: A continuation chain is driven by whatever the server asks for, so it is the
+    #: server that decides how long it runs. Without a ceiling a hostile or looping peer
+    #: could keep one ``call_tool`` in an elicitation cycle indefinitely, re-prompting a
+    #: user each round. Four is well past any interactive tool's genuine need; raise it
+    #: for a workflow that really does have more steps.
+    max_continuation_rounds: int = 4
 
     def __post_init__(self) -> None:
         # Validated where the value first enters SDK-owned code. A bound of 0 is not a
@@ -273,6 +348,13 @@ class McpReConfig:
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
             raise McpReSdkError(
                 f"max_concurrent_exchanges must be a positive integer, got {n!r}"
+            )
+        # Zero rounds is a meaningful setting — it refuses continuation outright — so
+        # only a negative or non-integer bound is rejected here.
+        r = self.max_continuation_rounds
+        if isinstance(r, bool) or not isinstance(r, int) or r < 0:
+            raise McpReSdkError(
+                f"max_continuation_rounds must be a non-negative integer, got {r!r}"
             )
         # The delegation credential's nbf/exp window is only as strong as the skew
         # allowed around it: `now + skew < nbf` and `now - skew > exp` are how it is
@@ -350,10 +432,17 @@ def _authz_binding_digest(bindings_json: Optional[str]) -> Optional[str]:
     return "sha-256:" + base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
-def _strip_response_evidence(body: bytes) -> bytes:
-    """Remove MCP-RE's response evidence block; the app sees plain MCP.
+def _plain_mcp_reply(body: bytes, request_id) -> bytes:
+    """The verified reply as plain MCP: evidence block removed, id the session's own.
 
     Read only AFTER verification: the content-digest covered these bytes.
+
+    MCP-RE's own evidence is not part of the MCP result, so it is stripped. The id is
+    restored because an ADR-MCPS-047 answer leg is an independent request with its own
+    id (SEP-2322 §retry), while the session issued exactly one call and is awaiting the
+    id it chose. Relabelling is the adapter's job at that seam — every hop was verified
+    here, so the terminal result it hands up is a complete record (§9.3), not a spliced
+    one.
     """
     doc = json.loads(body)
     meta = doc.get("_meta")
@@ -361,7 +450,24 @@ def _strip_response_evidence(body: bytes) -> bytes:
         meta.pop(_RESPONSE_BLOCK_KEY)
         if not meta:
             doc.pop("_meta")
+    doc["id"] = request_id
     return json.dumps(doc).encode()
+
+
+def _verified_result(body: bytes) -> Mapping[str, Any]:
+    """The `result` object of a verified reply, for an answer-leg handler to read."""
+    result = json.loads(body).get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def _answer_leg_id(request_id, round_index: int) -> str:
+    """The JSON-RPC id for an answer leg.
+
+    SEP-2322 makes the retry an INDEPENDENT request with a new id, so the chain must not
+    re-use the one the session issued. Derived from it rather than drawn at random, so a
+    capture or log shows which call the leg belongs to.
+    """
+    return f"{request_id}/mrt-{round_index}"
 
 
 def _error_message(request_id, wire_code: str) -> SessionMessage:
@@ -381,77 +487,105 @@ async def _exchange(
     request: JSONRPCRequest,
     correlation: CorrelationStore,
 ) -> SessionMessage:
-    """Sign one request, POST it, verify the reply, and correlate it back.
+    """Run one logical call to a terminal result: sign, POST, verify, correlate.
 
-    Returns the plain-MCP message to hand the session — a result on success, or a
-    JSON-RPC error carrying the frozen wire code on any failure.
+    An ADR-MCPS-047 elicitation does not end the call — it pauses it. So this drives the
+    whole chain: every leg is signed, posted and verified here, and an answer leg binds
+    to the verified handles of the leg before it. What returns is the TERMINAL result the
+    session asked for, or a JSON-RPC error carrying the frozen wire code from whichever
+    hop failed.
+
+    Because every hop verified, handing up the terminal result is honest under §9.3 of
+    the continuation profile: a chain with an unverifiable middle hop never gets here.
     """
-    params = request.params if request.params is not None else {}
-    created = config.clock()
-    expires = created + config.request_ttl
-    bindings_json = _bindings_json(config, request.method)
-
-    signed = config.signer.sign_request(
-        id_json=json.dumps(request.id),
-        method=request.method,
-        params_json=json.dumps(params),
-        target_uri=config.target_uri,
-        audience_id=config.audience_id,
-        route=config.route,
-        dpop_token=config.dpop_token,
-        nonce=_checked_nonce(config.nonce_factory),
-        created=created,
-        expires=expires,
-        bindings_json=bindings_json,
-    )
-    correlation_id = correlation.record(
-        signed,
-        request_id=str(request.id),
-        nonce="",  # the nonce rode into the signature; the handle is the evidence digest
-        audience_id=config.audience_id,
-        expected_signer_id=config.issuer_key_id,
-        created=created,
-        expires=expires,
-        route=config.route,
-        authz_binding_digest=_authz_binding_digest(bindings_json),
-    )
+    params: Mapping[str, Any] = request.params if request.params is not None else {}
+    method = request.method
+    leg_id = request.id
+    cont: Optional[ContinuationHandles] = None
+    round_index = 0
+    # Correlation entries this call still holds. An open leg stays outstanding while its
+    # answer leg runs — ADR-MCPS-047 associates without consuming — so there can be more
+    # than one, and every entry left here when the call ends is retired below.
+    outstanding: set = set()
 
     try:
-        reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
+        while True:
+            created = config.clock()
+            expires = created + config.request_ttl
+            bindings_json = _bindings_json(config, method)
 
-        verified = _core.verify_response(
-            reply.status,
-            list(reply.headers),
-            reply.body,
-            signed.method,
-            signed.target_uri,
-            list(signed.headers),
-            signed.body(),
-            signed.evidence_digest_alg,
-            signed.evidence_digest_value,
-            config.issuer_key_id,
-            config.issuer_pubkey_b64url,
-            config.issuer_role,
-            config.issuer_trust_domain,
-            config.issuer_subject,
-            list(config.verifier_audiences),
-            config.expected_audience_hash,
-            list(config.accepted_epochs),
-            config.max_clock_skew,
-            list(config.revoked_identifiers),
-            config.clock(),
-        )
+            signed = config.signer.sign_request(
+                id_json=json.dumps(leg_id),
+                method=method,
+                params_json=json.dumps(params),
+                target_uri=config.target_uri,
+                audience_id=config.audience_id,
+                route=config.route,
+                dpop_token=config.dpop_token,
+                nonce=_checked_nonce(config.nonce_factory),
+                created=created,
+                expires=expires,
+                bindings_json=bindings_json,
+                **(cont.as_sign_kwargs() if cont is not None else {}),
+            )
+            correlation_id = correlation.record(
+                signed,
+                request_id=str(leg_id),
+                nonce="",  # the nonce rode into the signature; the handle is the digest
+                audience_id=config.audience_id,
+                expected_signer_id=config.issuer_key_id,
+                created=created,
+                expires=expires,
+                route=config.route,
+                authz_binding_digest=_authz_binding_digest(bindings_json),
+            )
+            outstanding.add(correlation_id)
 
-        # A verified rejection receipt is genuine evidence, but it is NOT an acceptance:
-        # it must reach the app as an error, never as a result.
-        if verified.outcome != "success":
-            correlation.take(correlation_id, now=config.clock())
-            return _error_message(request.id, verified.wire_code or "mcp-re.response_sig_invalid")
+            reply = await poster(signed.method, signed.target_uri, signed.headers, signed.body())
 
-        if verified.request_state is not None:
-            # ADR-MCPS-047: an elicitation does not end the exchange, so the open leg
-            # stays outstanding (associate, do not consume) until its answer leg
-            # terminates it.
+            verified = _core.verify_response(
+                reply.status,
+                list(reply.headers),
+                reply.body,
+                signed.method,
+                signed.target_uri,
+                list(signed.headers),
+                signed.body(),
+                signed.evidence_digest_alg,
+                signed.evidence_digest_value,
+                config.issuer_key_id,
+                config.issuer_pubkey_b64url,
+                config.issuer_role,
+                config.issuer_trust_domain,
+                config.issuer_subject,
+                list(config.verifier_audiences),
+                config.expected_audience_hash,
+                list(config.accepted_epochs),
+                config.max_clock_skew,
+                list(config.revoked_identifiers),
+                config.clock(),
+            )
+
+            # A verified rejection receipt is genuine evidence, but it is NOT an
+            # acceptance: it must reach the app as an error, never as a result.
+            if verified.outcome != "success":
+                correlation.take(correlation_id, now=config.clock())
+                outstanding.discard(correlation_id)
+                return _error_message(
+                    request.id, verified.wire_code or "mcp-re.response_sig_invalid"
+                )
+
+            if verified.request_state is None:
+                correlation.take(correlation_id, now=config.clock())
+                outstanding.discard(correlation_id)
+                return SessionMessage(
+                    jsonrpc_message_adapter.validate_json(
+                        _plain_mcp_reply(reply.body, request.id)
+                    )
+                )
+
+            # A pause. Associate without consuming — the open leg is answered by its
+            # answer leg, not by this response — and hand up the handles it signs over.
             handles = correlation.record_input_required(
                 correlation_id,
                 response_digest_alg=verified.resp_evidence_digest_alg,
@@ -461,19 +595,63 @@ async def _exchange(
             )
             if config.on_input_required is not None:
                 config.on_input_required(handles)
-        else:
-            correlation.take(correlation_id, now=config.clock())
-    except BaseException:
-        # This exchange produced no answer, so nothing will ever bind this entry.
-        # Everything that lands here is remotely triggerable — a reset connection, a
-        # reply that fails verification, a rejection whose own bookkeeping raised — so
-        # leaving the entry outstanding would let a peer grow the store one failed
-        # request at a time, for the life of the session. Retiring it is not a security
-        # decision: a response that arrives for it afterwards is refused either way.
-        correlation.abandon(correlation_id)
-        raise
 
-    return SessionMessage(jsonrpc_message_adapter.validate_json(_strip_response_evidence(reply.body)))
+            round_index += 1
+            # Checked BEFORE the handler runs: a call that has already used up its
+            # continuation budget must not prompt for an answer it cannot send.
+            if round_index > config.max_continuation_rounds:
+                raise ContinuationNotAnswered(
+                    f"'{method}' elicited {round_index} times, past the "
+                    f"max_continuation_rounds ceiling of {config.max_continuation_rounds}"
+                )
+            if config.answer_input_required is None:
+                raise ContinuationNotAnswered(
+                    f"'{method}' returned an ADR-MCPS-047 elicitation and no "
+                    f"answer_input_required handler is installed, so no answer leg can "
+                    f"be signed"
+                )
+
+            responses = config.answer_input_required(
+                InputRequired(
+                    handles=handles,
+                    method=method,
+                    params=params,
+                    result=_verified_result(reply.body),
+                    round=round_index,
+                )
+            )
+            if inspect.isawaitable(responses):
+                responses = await responses
+            if responses is None:
+                raise ContinuationNotAnswered(
+                    f"the elicitation from '{method}' was declined by "
+                    f"answer_input_required"
+                )
+            if not isinstance(responses, Mapping):
+                raise ContinuationNotAnswered(
+                    f"answer_input_required returned {type(responses).__name__}; the "
+                    f"MRTR answer leg carries `inputResponses` as a JSON object"
+                )
+
+            # The next leg: the same call, carrying the answers and echoing the opaque
+            # state back, bound to the handles of the exchange that asked for them.
+            params = {
+                **params,
+                "inputResponses": dict(responses),
+                "requestState": handles.request_state,
+            }
+            leg_id = _answer_leg_id(request.id, round_index)
+            cont = handles
+    finally:
+        # Whatever is still outstanding can never be bound now: a failed leg gets no
+        # answer, and an open leg's answer leg has either terminated the call or failed
+        # with it. Everything that lands here is remotely triggerable — a reset
+        # connection, an unverifiable reply, an elicitation nobody answers — so leaving
+        # entries outstanding would let a peer grow the store one call at a time, for
+        # the life of the session. Retiring them is not a security decision: a response
+        # arriving for one afterwards is refused either way.
+        for correlation_id in outstanding:
+            correlation.abandon(correlation_id)
 
 
 async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> None:

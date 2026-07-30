@@ -63,3 +63,7 @@ export type {
 // runtime dependency. The Python package draws the same line with its `mcp` extra.
 //
 //     import { McpReHttpTransport } from "@mcp-re/sdk/transport";
+//     import { connectMtlsHttp } from "@mcp-re/sdk/mtls";
+//
+// `@mcp-re/sdk/mtls` builds the transport's HTTP leg as a verifying mTLS connection, so
+// it inherits the same optional peer and ships beside it rather than here.

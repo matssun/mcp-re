@@ -27,12 +27,18 @@
  * transmission — is verified before the adapter treats it as delivered. See
  * {@link NotificationNotAcknowledged} for what happens when it is not.
  *
+ * **A multi-round-trip call is driven to a terminal result.** An ADR-MCPS-047 elicitation
+ * pauses a call rather than finishing it, so the adapter signs the answer leg over the
+ * verified handles of the leg before it and continues until the server returns a terminal
+ * result — that result, and only that, is what the caller's await resolves to. Supply
+ * {@link McpReConfig.answerInputRequired} to answer; without it an elicitation fails
+ * closed ({@link ContinuationNotAnswered}) rather than reaching the application as if the
+ * call had completed.
+ *
  * MCP-RE is HTTP-profile only: one signed POST per request. The POST itself is injected as
- * a `poster` so this layer stays transport-agnostic and testable, which also means
- * establishing and hardening the connection (mTLS, pooling, timeouts) is the caller's.
- * There is no mTLS construction helper in this SDK — see
- * {@link https://github.com/matssun/mcp-re/issues/413 | #413}. The Rust client leg ships
- * one (`mcp_re_transport::remote::MtlsRemoteTransport`).
+ * a `poster` so this layer stays transport-agnostic and testable. {@link connectMtlsHttp}
+ * builds the mTLS leg on top of it, mirroring the Rust client's
+ * `mcp_re_transport::remote::MtlsRemoteTransport`.
  */
 import { createHash, randomBytes } from "node:crypto";
 
@@ -43,7 +49,6 @@ import {
   verifyAccepted202,
   verifyResponse,
   type HttpHeader,
-  type SignedRequestJs,
 } from "../native/binding.js";
 import {
   bindingsJson as serializeBindings,
@@ -155,6 +160,49 @@ export class ConnectionClosed extends McpReSdkError {
     super(detail);
     this.name = "ConnectionClosed";
   }
+}
+
+/**
+ * A verified elicitation could not be answered, so the call did not complete.
+ *
+ * An ADR-MCPS-047 `InputRequiredResult` is a PAUSE, not an outcome. When no answer leg can
+ * be driven — no {@link McpReConfig.answerInputRequired}, a handler that declined, or a
+ * server that elicited past {@link McpReConfig.maxContinuationRounds} — the exchange ends
+ * here.
+ *
+ * It ends as an ERROR, never as a result. Handing the pause up as the reply to
+ * `callTool` would present a call that is still waiting for input as one that finished,
+ * which is the misrepresentation the continuation profile's protected non-terminal
+ * classification exists to make detectable (§5.2, §9.3).
+ */
+export class ContinuationNotAnswered extends McpReSdkError {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "ContinuationNotAnswered";
+  }
+}
+
+/**
+ * A verified ADR-MCPS-047 elicitation, and everything answering it needs.
+ *
+ * Everything here was read from the VERIFIED response — the signature, content digest and
+ * request binding all checked out before this was built.
+ */
+export interface InputRequired {
+  /** The two evidence handles + opaque state the answer leg signs over. */
+  handles: ContinuationHandles;
+  /** The MCP method being continued, unchanged across the chain. */
+  method: string;
+  /** The params of the leg that earned this elicitation. */
+  params: Record<string, unknown>;
+  /**
+   * The verified `InputRequiredResult` — `requestState` plus whatever the server used to
+   * describe what it wants (`elicitation` / `inputRequests`). Passed through
+   * uninterpreted: what to ask, and how, is the application's decision.
+   */
+  result: Record<string, unknown>;
+  /** Which continuation round this is, counting from 1. */
+  round: number;
 }
 
 /** What a {@link Poster} returns: the raw HTTP response, unparsed and unverified. */
@@ -270,23 +318,75 @@ export interface McpReConfig {
 
   /**
    * Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
-   * handles its answer leg must sign over. The open leg stays outstanding.
+   * handles its answer leg must sign over. Observability only: it fires once per
+   * continuation round and decides nothing. Answering is
+   * {@link answerInputRequired}'s job.
    */
   onInputRequired?: (handles: ContinuationHandles) => void;
+
+  /**
+   * Answers an elicitation, so the adapter can drive the ADR-MCPS-047 answer leg itself.
+   * Resolve with the `inputResponses` to continue with, or `null`/`undefined` to decline.
+   *
+   * With a handler installed, a multi-round-trip tool is an ordinary `callTool` from the
+   * application's side: the adapter signs the answer leg over the verified handles, posts
+   * it, verifies the reply, and repeats until a terminal result — which is what the
+   * caller's await resolves to. Without one, an elicitation cannot be continued and the
+   * exchange fails closed with {@link ContinuationNotAnswered}, because a pause delivered
+   * as a result would read as a finished call.
+   */
+  answerInputRequired?: (
+    prompt: InputRequired,
+  ) => Promise<Record<string, unknown> | null | undefined> | Record<string, unknown> | null | undefined;
+
+  /**
+   * How many times one call may be elicited before the adapter gives up. Defaults to 4.
+   *
+   * A continuation chain is driven by whatever the server asks for, so it is the server
+   * that decides how long it runs. Without a ceiling a hostile or looping peer could keep
+   * one `callTool` in an elicitation cycle indefinitely, re-prompting a user each round.
+   * Four is well past any interactive tool's genuine need; raise it for a workflow that
+   * really does have more steps.
+   */
+  maxContinuationRounds?: number;
 }
 
-/** Remove MCP-RE's response evidence block; the app sees plain MCP.
+/**
+ * The verified reply as plain MCP: evidence block removed, id the client's own.
  *
- * Read only AFTER verification: the content-digest covered these bytes. */
-function stripResponseEvidence(body: Buffer): unknown {
+ * Read only AFTER verification: the content-digest covered these bytes.
+ *
+ * MCP-RE's own evidence is not part of the MCP result, so it is stripped. The id is
+ * restored because an ADR-MCPS-047 answer leg is an independent request with its own id
+ * (SEP-2322 §retry), while the client issued exactly one call and is awaiting the id it
+ * chose. Relabelling is the adapter's job at that seam — every hop was verified here, so
+ * the terminal result it hands up is a complete record (§9.3), not a spliced one.
+ */
+function plainMcpReply(body: Buffer, requestId: RequestId): unknown {
   const doc = JSON.parse(body.toString("utf8"));
   const meta = doc?._meta;
   if (meta && typeof meta === "object" && RESPONSE_BLOCK_KEY in meta) {
     delete meta[RESPONSE_BLOCK_KEY];
     if (Object.keys(meta).length === 0) delete doc._meta;
   }
+  doc.id = requestId;
   return doc;
 }
+
+/** The `result` object of a verified reply, for an answer-leg handler to read. */
+function verifiedResult(body: Buffer): Record<string, unknown> {
+  const result = JSON.parse(body.toString("utf8"))?.result;
+  return result && typeof result === "object" && !Array.isArray(result) ? result : {};
+}
+
+/**
+ * The JSON-RPC id for an answer leg.
+ *
+ * SEP-2322 makes the retry an INDEPENDENT request with a new id, so the chain must not
+ * re-use the one the client issued. Derived from it rather than drawn at random, so a
+ * capture or log shows which call the leg belongs to.
+ */
+const answerLegId = (requestId: RequestId, round: number): string => `${requestId}/mrt-${round}`;
 
 /**
  * `sha-256:<b64url>` over the exact authorization-binding bytes that were signed.
@@ -377,6 +477,16 @@ export class McpReHttpTransport implements Transport {
       throw new McpReSdkError(
         `maxConcurrentExchanges must be a positive integer, got ${JSON.stringify(
           config.maxConcurrentExchanges,
+        )}`,
+      );
+    }
+    // Zero rounds is a meaningful setting — it refuses continuation outright — so only a
+    // negative or non-integer bound is rejected here.
+    const rounds = config.maxContinuationRounds ?? 4;
+    if (!Number.isInteger(rounds) || rounds < 0) {
+      throw new McpReSdkError(
+        `maxContinuationRounds must be a non-negative integer, got ${JSON.stringify(
+          config.maxContinuationRounds,
         )}`,
       );
     }
@@ -695,125 +805,182 @@ export class McpReHttpTransport implements Transport {
   }
 
   /**
-   * Sign one request, POST it, verify the reply, and correlate it back.
+   * Run one logical call to a terminal result: sign, POST, verify, correlate.
    *
-   * Returns the plain-MCP message to hand the client — a result on success, or a
-   * JSON-RPC error carrying the frozen wire code on any failure.
+   * An ADR-MCPS-047 elicitation does not end the call — it pauses it. So this drives the
+   * whole chain: every leg is signed, posted and verified here, and an answer leg binds
+   * to the verified handles of the leg before it. What returns is the TERMINAL result the
+   * client asked for, or a JSON-RPC error carrying the frozen wire code from whichever
+   * hop failed.
+   *
+   * Because every hop verified, handing up the terminal result is honest under §9.3 of
+   * the continuation profile: a chain with an unverifiable middle hop never gets here.
    */
   async #exchange(
     request: JSONRPCMessage & { method: string; id: RequestId },
   ): Promise<JSONRPCMessage> {
     const config = this.#config;
     const now = this.#clock;
-    const created = now();
-    const expires = created + (config.requestTtl ?? 300);
-    const params = "params" in request && request.params !== undefined ? request.params : {};
-    const bindingsJson = this.#bindingsJson(request.method);
-
-    const signed = config.signer.signRequest({
-      idJson: JSON.stringify(request.id),
-      method: request.method,
-      paramsJson: JSON.stringify(params),
-      targetUri: config.targetUri,
-      audienceId: config.audienceId,
-      route: config.route ?? null,
-      dpopToken: config.dpopToken,
-      nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
-      created,
-      expires,
-      bindingsJson,
-    });
-
-    const correlationId = this.#correlation.record(signed, {
-      requestId: String(request.id),
-      // The nonce rode into the signature; the handle is the evidence digest.
-      nonce: "",
-      audienceId: config.audienceId,
-      expectedSignerId: config.issuerKeyId,
-      created,
-      expires,
-      route: config.route ?? null,
-      authzBindingDigest: authzBindingDigest(bindingsJson),
-    });
+    const method = request.method;
+    let params: Record<string, unknown> =
+      "params" in request && request.params !== undefined
+        ? (request.params as Record<string, unknown>)
+        : {};
+    let legId: RequestId = request.id;
+    let cont: ContinuationHandles | null = null;
+    let round = 0;
+    // Correlation entries this call still holds. An open leg stays outstanding while its
+    // answer leg runs — ADR-MCPS-047 associates without consuming — so there can be more
+    // than one, and every entry left here when the call ends is retired below.
+    const outstanding = new Set<string>();
 
     try {
-      return await this.#exchangeBound(request, signed, correlationId);
-    } catch (e) {
-      // This exchange produced no answer, so nothing will ever bind this entry.
-      // Everything that lands here is remotely triggerable — a reset connection, a reply
-      // that fails verification, a rejection whose own bookkeeping threw — so leaving the
-      // entry outstanding would let a peer grow the store one failed request at a time,
-      // for the life of the session. Retiring it is not a security decision: a response
-      // that arrives for it afterwards is refused either way.
-      this.#correlation.abandon(correlationId);
-      throw e;
+      for (;;) {
+        const created = now();
+        const expires = created + (config.requestTtl ?? 300);
+        const bindingsJson = this.#bindingsJson(method);
+
+        const signed = config.signer.signRequest({
+          idJson: JSON.stringify(legId),
+          method,
+          paramsJson: JSON.stringify(params),
+          targetUri: config.targetUri,
+          audienceId: config.audienceId,
+          route: config.route ?? null,
+          dpopToken: config.dpopToken,
+          nonce: checkedNonce(config.nonceFactory ?? defaultNonce),
+          created,
+          expires,
+          bindingsJson,
+          ...(cont ? cont.asSignArgs() : {}),
+        });
+
+        const correlationId = this.#correlation.record(signed, {
+          requestId: String(legId),
+          // The nonce rode into the signature; the handle is the evidence digest.
+          nonce: "",
+          audienceId: config.audienceId,
+          expectedSignerId: config.issuerKeyId,
+          created,
+          expires,
+          route: config.route ?? null,
+          authzBindingDigest: authzBindingDigest(bindingsJson),
+        });
+        outstanding.add(correlationId);
+
+        const httpReply = await this.#poster(
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          signed.body,
+        );
+
+        const verified = verifyResponse(
+          httpReply.status,
+          httpReply.headers,
+          httpReply.body,
+          signed.method,
+          signed.targetUri,
+          signed.headers,
+          signed.body,
+          signed.evidenceDigestAlg,
+          signed.evidenceDigestValue,
+          config.issuerKeyId,
+          config.issuerPubkeyB64Url,
+          config.issuerRole ?? "server",
+          config.issuerTrustDomain,
+          config.issuerSubject,
+          [...config.verifierAudiences],
+          config.expectedAudienceHash,
+          [...config.acceptedEpochs],
+          config.maxClockSkew ?? 60,
+          [...(config.revokedIdentifiers ?? [])],
+          now(),
+        );
+
+        // A verified rejection receipt is genuine evidence, but it is NOT an acceptance:
+        // it must reach the app as an error, never as a result.
+        if (verified.outcome !== "success") {
+          this.#correlation.take(correlationId, now());
+          outstanding.delete(correlationId);
+          // An EMPTY wire code is substituted too, not just a missing one. A rejection
+          // receipt whose `error.data` carries no usable token yields `Some("")` from the
+          // core reader, and `??` would let that through as a JSON-RPC error with an empty
+          // message — an error the application cannot act on or log meaningfully. Python's
+          // truthiness check already substituted here; this is the side that diverged.
+          return errorMessage(
+            request.id,
+            verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+          );
+        }
+
+        if (verified.requestState === undefined || verified.requestState === null) {
+          this.#correlation.take(correlationId, now());
+          outstanding.delete(correlationId);
+          return JSONRPCMessageSchema.parse(plainMcpReply(httpReply.body, request.id));
+        }
+
+        // A pause. Associate without consuming — the open leg is answered by its answer
+        // leg, not by this response — and hand up the handles it signs over.
+        const handles = this.#correlation.recordInputRequired(correlationId, {
+          responseDigestAlg: verified.respEvidenceDigestAlg,
+          responseDigestValue: verified.respEvidenceDigestValue,
+          requestState: verified.requestState,
+          now: now(),
+        });
+        config.onInputRequired?.(handles);
+
+        round += 1;
+        // Checked BEFORE the handler runs: a call that has already used up its
+        // continuation budget must not prompt for an answer it cannot send.
+        if (round > (config.maxContinuationRounds ?? 4)) {
+          throw new ContinuationNotAnswered(
+            `'${method}' elicited ${round} times, past the maxContinuationRounds ceiling ` +
+              `of ${config.maxContinuationRounds ?? 4}`,
+          );
+        }
+        if (!config.answerInputRequired) {
+          throw new ContinuationNotAnswered(
+            `'${method}' returned an ADR-MCPS-047 elicitation and no answerInputRequired ` +
+              `handler is installed, so no answer leg can be signed`,
+          );
+        }
+
+        const responses = await config.answerInputRequired({
+          handles,
+          method,
+          params,
+          result: verifiedResult(httpReply.body),
+          round,
+        });
+        if (responses === null || responses === undefined) {
+          throw new ContinuationNotAnswered(
+            `the elicitation from '${method}' was declined by answerInputRequired`,
+          );
+        }
+        if (typeof responses !== "object" || Array.isArray(responses)) {
+          throw new ContinuationNotAnswered(
+            `answerInputRequired returned ${Array.isArray(responses) ? "an array" : typeof responses}; ` +
+              `the MRTR answer leg carries \`inputResponses\` as a JSON object`,
+          );
+        }
+
+        // The next leg: the same call, carrying the answers and echoing the opaque state
+        // back, bound to the handles of the exchange that asked for them.
+        params = { ...params, inputResponses: responses, requestState: handles.requestState };
+        legId = answerLegId(request.id, round);
+        cont = handles;
+      }
+    } finally {
+      // Whatever is still outstanding can never be bound now: a failed leg gets no
+      // answer, and an open leg's answer leg has either terminated the call or failed
+      // with it. Everything that lands here is remotely triggerable — a reset connection,
+      // an unverifiable reply, an elicitation nobody answers — so leaving entries
+      // outstanding would let a peer grow the store one call at a time, for the life of
+      // the session. Retiring them is not a security decision: a response arriving for
+      // one afterwards is refused either way.
+      for (const id of outstanding) this.#correlation.abandon(id);
     }
-  }
-
-  /** The part of an exchange that runs with the correlation entry already recorded. */
-  async #exchangeBound(
-    request: JSONRPCMessage & { method: string; id: RequestId },
-    signed: SignedRequestJs,
-    correlationId: string,
-  ): Promise<JSONRPCMessage> {
-    const config = this.#config;
-    const now = this.#clock;
-
-    const httpReply = await this.#poster(signed.method, signed.targetUri, signed.headers, signed.body);
-
-    const verified = verifyResponse(
-      httpReply.status,
-      httpReply.headers,
-      httpReply.body,
-      signed.method,
-      signed.targetUri,
-      signed.headers,
-      signed.body,
-      signed.evidenceDigestAlg,
-      signed.evidenceDigestValue,
-      config.issuerKeyId,
-      config.issuerPubkeyB64Url,
-      config.issuerRole ?? "server",
-      config.issuerTrustDomain,
-      config.issuerSubject,
-      [...config.verifierAudiences],
-      config.expectedAudienceHash,
-      [...config.acceptedEpochs],
-      config.maxClockSkew ?? 60,
-      [...(config.revokedIdentifiers ?? [])],
-      now(),
-    );
-
-    // A verified rejection receipt is genuine evidence, but it is NOT an acceptance: it
-    // must reach the app as an error, never as a result.
-    if (verified.outcome !== "success") {
-      this.#correlation.take(correlationId, now());
-      // An EMPTY wire code is substituted too, not just a missing one. A rejection
-      // receipt whose `error.data` carries no usable token yields `Some("")` from the
-      // core reader, and `??` would let that through as a JSON-RPC error with an empty
-      // message — an error the application cannot act on or log meaningfully. Python's
-      // truthiness check already substituted here; this is the side that diverged.
-      return errorMessage(
-        request.id,
-        verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
-      );
-    }
-
-    if (verified.requestState !== undefined && verified.requestState !== null) {
-      // ADR-MCPS-047: an elicitation does not end the exchange, so the open leg stays
-      // outstanding (associate, do not consume) until its answer leg terminates it.
-      const handles = this.#correlation.recordInputRequired(correlationId, {
-        responseDigestAlg: verified.respEvidenceDigestAlg,
-        responseDigestValue: verified.respEvidenceDigestValue,
-        requestState: verified.requestState,
-        now: now(),
-      });
-      config.onInputRequired?.(handles);
-    } else {
-      this.#correlation.take(correlationId, now());
-    }
-
-    return JSONRPCMessageSchema.parse(stripResponseEvidence(httpReply.body));
   }
 
   #bindingsJson(method: string): string | null {
