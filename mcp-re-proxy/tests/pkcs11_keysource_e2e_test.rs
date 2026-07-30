@@ -24,7 +24,7 @@
 //! The keygen-on-token flow (never import a private key) that the delegated-TLS
 //! tests rely on is preserved: the mock GENERATES the key, the test reads its public
 //! key back off the token and mints the matching leaf from it via a rcgen
-//! [`rcgen::RemoteKeyPair`] ([`TokenPublicKey`] / [`remote_subject_key_from_spki`]),
+//! [`rcgen::PublicKeyData`] ([`TokenPublicKey`] / [`remote_subject_key_from_spki`]),
 //! so the private key never leaves the token.
 #![cfg(feature = "pkcs11_keysource")]
 
@@ -277,49 +277,53 @@ fn gen_ed25519() -> KeyPair {
     KeyPair::generate_for(&rcgen::PKCS_ED25519).expect("ed25519 key")
 }
 
-/// A rcgen [`rcgen::RemoteKeyPair`] carrying ONLY the token's Ed25519 PUBLIC key.
+/// A rcgen SUBJECT key carrying ONLY the token's Ed25519 PUBLIC key.
 ///
 /// Minting a CA-signed leaf (`CertificateParams::signed_by`) signs the leaf with the
-/// ISSUER key and uses the subject key solely for its public key — it NEVER calls the
-/// subject key's `sign()`. So this holds only the owned 32-byte public key read off the
-/// token; `sign()` is unreachable. This is what lets a leaf's SPKI match the token TLS
-/// object WITHOUT importing a private key: the flow is keygen-on-token, read the public
-/// key, mint the cert from it. The private key never leaves the token.
+/// ISSUER key and takes the subject as `&impl PublicKeyData` — it cannot call a subject
+/// `sign()`, because the subject side of that API has none. So this holds only the
+/// owned 32-byte public key read off the token. This is what lets a leaf's SPKI match
+/// the token TLS object WITHOUT importing a private key: the flow is keygen-on-token,
+/// read the public key, mint the cert from it. The private key never leaves the token.
 struct TokenPublicKey {
-    /// 32-byte raw Edwards point — the format rcgen's `public_key_raw` expects.
+    /// 32-byte raw Edwards point — the format rcgen's SPKI serializer expects.
     raw: Vec<u8>,
 }
 
-impl rcgen::RemoteKeyPair for TokenPublicKey {
-    fn public_key(&self) -> &[u8] {
+impl rcgen::PublicKeyData for TokenPublicKey {
+    fn der_bytes(&self) -> &[u8] {
         &self.raw
-    }
-    fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
-        // Unreachable: a CA-signed leaf is signed by the ISSUER key, never the subject
-        // key. Fail loudly if a future rcgen ever changes that contract.
-        Err(rcgen::Error::RemoteKeyError)
     }
     fn algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
         &rcgen::PKCS_ED25519
     }
 }
 
-/// Build a rcgen SUBJECT `KeyPair` from the token's exported 44-byte RFC 8410 Ed25519
-/// SPKI (12-byte prefix + 32-byte point). The minted leaf's SPKI then equals the token
-/// TLS object, so the validated delegated build's cert↔signer match succeeds — with the
+/// Build a rcgen SUBJECT key from the token's exported 44-byte RFC 8410 Ed25519 SPKI
+/// (12-byte prefix + 32-byte point). The minted leaf's SPKI then equals the token TLS
+/// object, so the validated delegated build's cert↔signer match succeeds — with the
 /// private key never leaving the token.
-fn remote_subject_key_from_spki(spki: &[u8]) -> KeyPair {
+fn remote_subject_key_from_spki(spki: &[u8]) -> TokenPublicKey {
     assert_eq!(spki.len(), 44, "RFC 8410 Ed25519 SPKI is 12 + 32 bytes");
-    KeyPair::from_remote(Box::new(TokenPublicKey {
+    TokenPublicKey {
         raw: spki[12..].to_vec(),
-    }))
-    .expect("build a rcgen KeyPair from the token's exported public key")
+    }
 }
 
 /// A self-signed CA (rcgen) used to issue the client + server leaves below.
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
+    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
+    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
+    params: CertificateParams,
+}
+
+impl Ca {
+    /// The issuing state that minted `cert`, paired with the signing key.
+    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+        rcgen::Issuer::from_params(&self.params, &self.key)
+    }
 }
 
 fn make_ca() -> Ca {
@@ -329,13 +333,16 @@ fn make_ca() -> Ca {
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let cert = params.self_signed(&key).expect("self-signed CA");
-    Ca { cert, key }
+    Ca { cert, key, params }
 }
 
 /// Mint an Ed25519 server leaf for `localhost` from the SAME key resident on the
 /// token, signed by `ca`. The leaf's `SubjectPublicKeyInfo` therefore equals the
 /// token TLS object's public point.
-fn make_server_leaf_for(ca: &Ca, server_key: &KeyPair) -> CertificateDer<'static> {
+fn make_server_leaf_for(
+    ca: &Ca,
+    server_key: &impl rcgen::PublicKeyData,
+) -> CertificateDer<'static> {
     let mut params = CertificateParams::new(Vec::new()).expect("leaf params");
     params.subject_alt_names = vec![SanType::DnsName("localhost".try_into().expect("dns"))];
     params
@@ -343,7 +350,7 @@ fn make_server_leaf_for(ca: &Ca, server_key: &KeyPair) -> CertificateDer<'static
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params
-        .signed_by(server_key, &ca.cert, &ca.key)
+        .signed_by(server_key, &ca.issuer())
         .expect("server leaf signed")
         .der()
         .clone()
@@ -356,7 +363,7 @@ fn make_client_leaf(ca: &Ca, uri: &str) -> (Vec<CertificateDer<'static>>, Privat
     params.subject_alt_names = vec![SanType::URI(uri.try_into().expect("uri"))];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("client leaf signed");
     (
         vec![cert.der().clone()],

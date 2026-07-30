@@ -1333,7 +1333,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 mod lifetime_tests {
     //! MCPS-078 (audit gap G-5): `leaf_cert_lifetime_secs` is private, so the
     //! fail-closed behaviour on an inverted validity window is exercised here,
-    //! inline, over real DER minted with rcgen (mirroring the rcgen 0.13 idiom in
+    //! inline, over real DER minted with rcgen (mirroring the rcgen 0.14 idiom in
     //! `tests/tls_test.rs`). The caller `cert_lifetime_rejection` uses
     //! `leaf_cert_lifetime_secs(..).is_some_and(|l| l <= max)`; a `None` therefore
     //! fails closed (the cert is rejected), which is precisely what an

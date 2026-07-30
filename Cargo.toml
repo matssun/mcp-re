@@ -101,11 +101,12 @@ x509-parser = { version = "0.18", features = ["verify"] }
 asn1-rs = "0.7"
 # Test-only: mint a CA + server + client certs in-process for the mTLS round-trip
 # tests (no committed private-key fixtures, no secret-scanner exposure).
-# HELD AT 0.13 pending the 0.14 migration, tracked separately. 0.14 replaced
-# `signed_by(&key, &issuer_cert, &issuer_key)` with an `Issuer` type across 26 call
-# sites in the demo fixtures and mTLS suites. That migration is a change to the
-# fixture helpers in its own right and does not belong in a dependency-policy PR.
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# The CA fixtures retain the issuing `CertificateParams` alongside the key so an
+# `Issuer` can be borrowed per signature (`Issuer::from_params`). rcgen's
+# `x509-parser` feature stays OFF: `Issuer::from_ca_cert_der` would recover issuer
+# state by re-parsing a certificate minted three lines earlier, at the cost of a
+# wider dependency surface on a security-relevant crate.
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 # Test/demo-only: rcgen's cert validity fields are `time::OffsetDateTime`; the demo
 # fixtures need `now`-relative arithmetic to mint a short-lived (< strict 3600s
 # ceiling) client cert. Same `time` version rcgen already resolves — no new pin.

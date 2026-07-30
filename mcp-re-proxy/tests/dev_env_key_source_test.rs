@@ -20,7 +20,6 @@ use mcp_re_core::b64url_encode;
 use mcp_re_core::SigningKey;
 use mcp_re_proxy::key_source::EnvKeySource;
 use mcp_re_proxy::key_source::KeyError;
-use mcp_re_proxy::key_source::KeySource;
 
 const SEED: [u8; 32] = [7u8; 32];
 

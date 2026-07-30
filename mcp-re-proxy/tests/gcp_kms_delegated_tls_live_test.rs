@@ -56,7 +56,8 @@ use rcgen::ExtendedKeyUsagePurpose;
 use rcgen::IsCa;
 use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
-use rcgen::RemoteKeyPair;
+use rcgen::PublicKeyData;
+use rcgen::SigningKey;
 use rcgen::SanType;
 use rcgen::SignatureAlgorithm;
 
@@ -89,6 +90,16 @@ fn require_env(name: &str) -> String {
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
+    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
+    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
+    params: CertificateParams,
+}
+
+impl Ca {
+    /// The issuing state that minted `cert`, paired with the signing key.
+    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+        rcgen::Issuer::from_params(&self.params, &self.key)
+    }
 }
 
 fn make_ca() -> Ca {
@@ -100,7 +111,7 @@ fn make_ca() -> Ca {
         .distinguished_name
         .push(DnType::CommonName, "mcp-re-test-ca");
     let cert = params.self_signed(&key).expect("ca self-signed");
-    Ca { cert, key }
+    Ca { cert, key, params }
 }
 
 fn dns(value: &str) -> SanType {
@@ -118,7 +129,7 @@ fn make_client_leaf(ca: &Ca, san: &str) -> (Vec<CertificateDer<'static>>, Privat
     params.subject_alt_names = vec![uri(san)];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("client leaf signed");
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (vec![cert.der().clone()], key_der)
@@ -137,18 +148,22 @@ struct GcpRemoteKey {
     signer: Arc<GcpKmsEd25519Backend>,
 }
 
-impl RemoteKeyPair for GcpRemoteKey {
-    fn public_key(&self) -> &[u8] {
+impl PublicKeyData for GcpRemoteKey {
+    fn der_bytes(&self) -> &[u8] {
         &self.raw_public
-    }
-    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
-        // Honest delegation: if rcgen ever needs the subject key to sign, it goes
-        // to Cloud KMS — never a local key. (Not invoked for a CA-signed leaf.)
-        RawEd25519TlsSigner::sign_tls_ed25519(self.signer.as_ref(), msg)
-            .map_err(|_| rcgen::Error::RemoteKeyError)
     }
     fn algorithm(&self) -> &'static SignatureAlgorithm {
         &rcgen::PKCS_ED25519
+    }
+}
+
+impl SigningKey for GcpRemoteKey {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
+        // Honest delegation: if rcgen ever needs this key to sign, it goes to
+        // Cloud KMS — never a local key. (Not invoked for a CA-signed leaf, where
+        // only the subject's public key is read.)
+        RawEd25519TlsSigner::sign_tls_ed25519(self.signer.as_ref(), msg)
+            .map_err(|_| rcgen::Error::RemoteKeyError)
     }
 }
 
@@ -201,7 +216,6 @@ fn make_server_leaf_for_gcp_key(
         raw_public: raw_public.to_vec(),
         signer: backend,
     };
-    let subject_key = KeyPair::from_remote(Box::new(remote)).expect("rcgen from_remote");
     let mut params = CertificateParams::new(Vec::new()).expect("server params");
     params.subject_alt_names = vec![dns("localhost")];
     params
@@ -209,7 +223,7 @@ fn make_server_leaf_for_gcp_key(
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let cert = params
-        .signed_by(&subject_key, &ca.cert, &ca.key)
+        .signed_by(&remote, &ca.issuer())
         .expect("server leaf signed by CA over the GCP public key");
     cert.der().clone()
 }
@@ -351,7 +365,7 @@ fn gcp_kms_delegated_tls_wrong_key_binding_fails_closed() {
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let foreign_leaf = params
-        .signed_by(&foreign, &server_ca.cert, &server_ca.key)
+        .signed_by(&foreign, &server_ca.issuer())
         .expect("foreign leaf signed")
         .der()
         .clone();

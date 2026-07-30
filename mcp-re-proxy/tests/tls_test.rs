@@ -61,6 +61,16 @@ use rustls_pki_types::UnixTime;
 struct Ca {
     cert: rcgen::Certificate,
     key: KeyPair,
+    /// Retained so an `Issuer` can be borrowed per signature: rcgen derives the
+    /// issuer DN, key-identifier method and key usages from these, not from `cert`.
+    params: CertificateParams,
+}
+
+impl Ca {
+    /// The issuing state that minted `cert`, paired with the signing key.
+    fn issuer(&self) -> rcgen::Issuer<'_, &KeyPair> {
+        rcgen::Issuer::from_params(&self.params, &self.key)
+    }
 }
 
 fn make_ca() -> Ca {
@@ -72,7 +82,7 @@ fn make_ca() -> Ca {
         .distinguished_name
         .push(DnType::CommonName, "mcp-re-test-ca");
     let cert = params.self_signed(&key).expect("ca self-signed");
-    Ca { cert, key }
+    Ca { cert, key, params }
 }
 
 /// A leaf signed by `ca`, with the given SANs / CN and (client or server) EKU.
@@ -94,7 +104,7 @@ fn make_leaf(
         ExtendedKeyUsagePurpose::ServerAuth
     }];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("leaf signed by ca");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
@@ -120,9 +130,7 @@ fn make_leaf_with_validity(
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
-    let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
-        .expect("leaf signed");
+    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (der, key_der)
@@ -140,9 +148,7 @@ fn make_client_leaf_with_serial(
     params.subject_alt_names = vec![uri(san)];
     params.serial_number = Some(SerialNumber::from(serial));
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
-        .expect("leaf signed");
+    let cert = params.signed_by(&key, &ca.issuer()).expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (der, key_der)
@@ -186,9 +192,7 @@ fn make_crl_full(
         revoked_certs,
         key_identifier_method: KeyIdMethod::Sha256,
     };
-    let crl = params
-        .signed_by(&ca.cert, &ca.key)
-        .expect("crl signed by ca");
+    let crl = params.signed_by(&ca.issuer()).expect("crl signed by ca");
     crl.der().clone()
 }
 
@@ -412,7 +416,10 @@ fn non_ia5_unicode_uri_san_is_rejected_at_mint_time() {
     // identity. We assert the error path on the `try_into` directly (per the issue,
     // do not force a degenerate cert).
     let non_ia5 = "spiffe://example.org/agent-\u{00e9}"; // 'é' (U+00E9) > 0x7F
-    let result: Result<rcgen::Ia5String, _> = non_ia5.try_into();
+                                                         // The IA5 string type itself is not nameable (rcgen keeps it crate-private and
+                                                         // exposes it only through `SanType`), so the conversion is driven through the
+                                                         // `SanType::URI` constructor that mint sites actually use.
+    let result = non_ia5.try_into().map(SanType::URI);
     assert!(
         result.is_err(),
         "a non-IA5 (non-ASCII unicode) URI SAN value must be rejected by try_into, \
@@ -437,7 +444,7 @@ fn no_san_fails_closed_for_san_policies_cn_only_for_legacy() {
     let cn = extract_identity(leaf.as_ref(), IdentityPolicy::CnLegacy).expect("cn identity");
     assert_eq!(cn.value, "legacy-cn");
     assert_eq!(cn.source, IdentitySource::CommonName);
-    // NOTE: a truly CN-less leaf is not mintable via these rcgen 0.13 helpers —
+    // NOTE: a truly CN-less leaf is not mintable via these rcgen 0.14 helpers —
     // `self_signed`/`signed_by` inject a default CN ("rcgen self signed cert")
     // when no DN is supplied, so CnLegacy would read THAT, not None. That is a
     // fixture artifact (rcgen always emits a subject), not a fault in
@@ -694,7 +701,7 @@ fn make_ed25519_server_leaf(ca: &Ca) -> (CertificateDer<'static>, LocalEd25519Tl
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("ed25519 leaf signed");
     let der = cert.der().clone();
     let pkcs8 = key.serialize_der();
@@ -825,7 +832,7 @@ fn make_ecdsa_server_leaf(ca: &Ca) -> CertificateDer<'static> {
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("ecdsa leaf signed");
     cert.der().clone()
 }
@@ -1033,7 +1040,7 @@ fn make_ed25519_server_leaf_from_seed(ca: &Ca, seed: &[u8; 32]) -> CertificateDe
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let cert = params
-        .signed_by(&key, &ca.cert, &ca.key)
+        .signed_by(&key, &ca.issuer())
         .expect("ed25519 leaf signed");
     cert.der().clone()
 }

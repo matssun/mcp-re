@@ -14,6 +14,7 @@ use mcp_re_proxy::key_source::KeyError;
 use mcp_re_proxy::key_source::KeySource;
 
 use rcgen::CertificateParams;
+use rcgen::Issuer;
 use rcgen::KeyPair;
 
 const SEED: [u8; 32] = [7u8; 32];
@@ -21,14 +22,12 @@ const SEED: [u8; 32] = [7u8; 32];
 /// (signing-seed b64url, server cert PEM, server key PEM, client-CA PEM).
 fn material() -> (String, String, String, String) {
     let ca_key = KeyPair::generate().unwrap();
-    let ca = CertificateParams::new(Vec::new())
-        .unwrap()
-        .self_signed(&ca_key)
-        .unwrap();
+    let ca_params = CertificateParams::new(Vec::new()).unwrap();
+    let ca = ca_params.self_signed(&ca_key).unwrap();
     let leaf_key = KeyPair::generate().unwrap();
     let leaf = CertificateParams::new(vec!["localhost".to_string()])
         .unwrap()
-        .signed_by(&leaf_key, &ca, &ca_key)
+        .signed_by(&leaf_key, &Issuer::from_params(&ca_params, &ca_key))
         .unwrap();
     (
         b64url_encode(&SEED),

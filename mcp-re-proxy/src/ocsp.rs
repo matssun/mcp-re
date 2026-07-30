@@ -1330,8 +1330,8 @@ mod tests {
     }
 
     /// Mint a CA issuer (`IsCa::Ca` + `KeyCertSign`) able to SIGN child certs, and
-    /// return both the rcgen `Certificate` (for signing) and its DER.
-    fn mint_ca_issuer() -> (rcgen::Certificate, KeyPair, Vec<u8>) {
+    /// return both the rcgen `Issuer` (for signing) and the CA cert's DER.
+    fn mint_ca_issuer() -> (rcgen::Issuer<'static, KeyPair>, Vec<u8>) {
         let key = KeyPair::generate().expect("ca key");
         let mut params = CertificateParams::new(Vec::new()).expect("ca params");
         params
@@ -1341,15 +1341,14 @@ mod tests {
         params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
         let cert = params.self_signed(&key).expect("ca self-signed");
         let der = cert.der().as_ref().to_vec();
-        (cert, key, der)
+        (rcgen::Issuer::new(params, key), der)
     }
 
-    /// Mint a delegated OCSP responder cert SIGNED BY `issuer` (issuer key),
-    /// carrying the `id-kp-OCSPSigning` EKU, valid over `[nb_ymd, na_ymd)` (each a
+    /// Mint a delegated OCSP responder cert SIGNED BY `issuer`, carrying the
+    /// `id-kp-OCSPSigning` EKU, valid over `[nb_ymd, na_ymd)` (each a
     /// `(year, month, day)` triple).
     fn mint_delegated_responder(
-        issuer: &rcgen::Certificate,
-        issuer_key: &KeyPair,
+        issuer: &rcgen::Issuer<'_, KeyPair>,
         nb_ymd: (i32, u8, u8),
         na_ymd: (i32, u8, u8),
     ) -> Vec<u8> {
@@ -1365,7 +1364,7 @@ mod tests {
             .extended_key_usages
             .push(ExtendedKeyUsagePurpose::OcspSigning);
         let cert = params
-            .signed_by(&responder_key, issuer, issuer_key)
+            .signed_by(&responder_key, issuer)
             .expect("responder signed by issuer");
         cert.der().as_ref().to_vec()
     }
@@ -1376,10 +1375,9 @@ mod tests {
     /// validity-window check.
     #[test]
     fn delegated_responder_validity_window_enforced() {
-        let (issuer, issuer_key, issuer_der) = mint_ca_issuer();
+        let (issuer, issuer_der) = mint_ca_issuer();
         // Window: 2020-01-01 .. 2021-01-01.
-        let responder_der =
-            mint_delegated_responder(&issuer, &issuer_key, (2020, 1, 1), (2021, 1, 1));
+        let responder_der = mint_delegated_responder(&issuer, (2020, 1, 1), (2021, 1, 1));
 
         // now inside window → valid responder (EKU + issuer signature + lifetime).
         assert!(
@@ -1440,7 +1438,7 @@ mod tests {
     }
 
     /// Mint a leaf certificate carrying an AIA OCSP responder URL via a custom
-    /// extension (rcgen 0.13 supports raw custom extensions). The AIA value is a
+    /// extension (rcgen 0.14 supports raw custom extensions). The AIA value is a
     /// hand-built `AuthorityInfoAccessSyntax` with one `id-ad-ocsp` access
     /// description pointing at `ocsp_url`.
     fn mint_leaf_with_aia(ocsp_url: &str) -> Vec<u8> {

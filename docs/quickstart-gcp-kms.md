@@ -44,7 +44,7 @@ credits — ample for this proof (KMS crypto ops run ~$0.03 per 10,000).
 - A fully-validating rustls mTLS handshake completes **only** because a live KMS
   `asymmetricSign` produced the server's `CertificateVerify`.
 - The TLS server private key lives entirely in KMS: the leaf is minted over the
-  KMS *public* key (rcgen `RemoteKeyPair`), with no local private key.
+  KMS *public* key (rcgen `PublicKeyData`), with no local private key.
 
 **Fail-closed negative lanes** — every one must reject:
 
