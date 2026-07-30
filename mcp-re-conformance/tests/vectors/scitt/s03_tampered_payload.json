@@ -1,0 +1,9 @@
+{
+  "name": "s03_tampered_payload",
+  "description": "The committed chain label rewritten in the signed payload, at the same length so the CBOR still parses. The refusal must be the signature's, not the decoder's.",
+  "statement_cose_b64url": "0oRYZKQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBE5zY2l0dC1pc3N1ZXItMQ-jAW5zY2l0dC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWNGkcHJlcXVlc3RfZXZpZGVuY2V4KzU5bldnamFYd2QwUlRXTWt1ekJwWHB2VXRUaVh2MzU0SFBBeUQyZ3lLT0VxcmVzcG9uc2VfZXZpZGVuY2V4K25MTmRrcUVBQlpmREpMcGNUaU9CY185TmNmSEVOS1BtOVMtcFlqWjY5dndrY2hhaW5fbGFiZWxoY29tcGxldDNwY2hhaW5fY29tbWl0bWVudHgranl0Y3JuWnc2M1FNNF9XMGRHMVNpb0FSeWJqNi0zclU1dklMSHlkb21jVVhAdNy3VQ5FUl8Q6fqJuXoLmNe287oD_7mZOMk6aa0Vxpna62RQe4DFZ09aei-0nw13O3Ht58zrEgMyuy1pLc6DCg",
+  "receipt_cose_b64url": "0oRSowEnBEpzY2l0dC10cy0xOG4BoTjdgUSDAQCAWCBHD6Abo3y_Oq9tTu3c951NMX2yqlUaLjbdLtQpUNX3OlhAkcJqCOE0WVa_E8CK5KQYuVeA3Yfol5EVm-UIhSJqJYWDchlc8G51WN1VYCh7K8XZQ4spxB0zHwDVCv1ZonixDA",
+  "issuer_pubkey_b64url": "LISK2GZO5lHkiWwTqEqJopZKyl63eouIHmDe1cgbTp0",
+  "ts_pubkey_b64url": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+  "expect": "mcp-re.invalid_signature"
+}

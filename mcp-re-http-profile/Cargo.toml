@@ -18,6 +18,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+ciborium = "0.2"
+coset = "0.4"
 
 [lib]
 name = "mcp_re_http_profile"
