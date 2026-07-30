@@ -15,6 +15,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Before ANY stage: make `cargo`/`rustc` the toolchain pinned in rust-toolchain.toml
+# (the one CI and Bazel use), or refuse to run. A gate that builds with a different
+# compiler than CI proves nothing about CI, and the substitution is silent — a
+# non-rustup `cargo` earlier on PATH just ignores rust-toolchain.toml.
+. scripts/use_pinned_toolchain.sh || exit 1
+
 FROM=1
 LAST=4
 WITH_KIND=0

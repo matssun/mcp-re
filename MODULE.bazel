@@ -75,7 +75,7 @@ use_repo(
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
-    versions = ["1.94.1"],
+    versions = ["1.97.1"],
     # Cross-compile the production proxy artifact to the linux/amd64 image
     # platform from the darwin host (OCI packaging, Phase 1).
     extra_target_triples = ["x86_64-unknown-linux-gnu"],
