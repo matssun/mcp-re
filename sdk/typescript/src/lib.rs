@@ -18,7 +18,6 @@ use mcp_re_client_core::build_signed_notification;
 use mcp_re_client_core::build_signed_notification_with_signer;
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::build_signed_request_with_signer;
-use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::verify_delegated_accepted_202;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::ActorIdentity;
@@ -28,6 +27,7 @@ use mcp_re_client_core::AudienceTuple;
 use mcp_re_client_core::BindingType;
 use mcp_re_client_core::DelegationPolicy;
 use mcp_re_client_core::HttpContinuation;
+use mcp_re_client_core::HttpProfileError;
 use mcp_re_client_core::HttpRequest;
 use mcp_re_client_core::HttpResponse;
 use mcp_re_client_core::RequestEvidence;
@@ -44,11 +44,14 @@ use serde_json::Map;
 use serde_json::Value;
 
 fn parse_json(s: &str, what: &str) -> napi::Result<Value> {
-    serde_json::from_str(s).map_err(|e| napi::Error::from_reason(format!("invalid {what} json: {e}")))
+    serde_json::from_str(s)
+        .map_err(|e| napi::Error::from_reason(format!("invalid {what} json: {e}")))
 }
 fn seed_to_key(seed: &[u8]) -> napi::Result<SigningKey> {
     if seed.len() != 32 {
-        return Err(napi::Error::from_reason("signing seed must be exactly 32 bytes"));
+        return Err(napi::Error::from_reason(
+            "signing seed must be exactly 32 bytes",
+        ));
     }
     let mut s = [0u8; 32];
     s.copy_from_slice(seed);
@@ -153,8 +156,10 @@ fn signing_inputs(
     // DPoP stays the built-in, header-derived binding: its credential is the covered
     // `Authorization: Bearer` header, so it is never provider-supplied. Provider bindings
     // are appended after it.
-    let mut bindings =
-        vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, dpop_token.as_bytes())];
+    let mut bindings = vec![ArtifactBinding::opaque_digest(
+        ArtifactType::OauthDpop,
+        dpop_token.as_bytes(),
+    )];
     bindings.extend(extra_bindings);
     let mut inputs = RequestSigningInputs::new(
         key_id,
@@ -382,8 +387,9 @@ pub fn sign_request_with_signer(
         }
         Ok(sig)
     };
-    let signed = build_signed_request_with_signer(&id, &method, params, &target_uri, &inputs, sign_base)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    let signed =
+        build_signed_request_with_signer(&id, &method, params, &target_uri, &inputs, sign_base)
+            .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(to_signed_request(signed))
 }
 
@@ -503,8 +509,9 @@ pub fn sign_notification_with_signer(
         }
         Ok(sig)
     };
-    let signed = build_signed_notification_with_signer(&method, params, &target_uri, &inputs, sign_base)
-        .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    let signed =
+        build_signed_notification_with_signer(&method, params, &target_uri, &inputs, sign_base)
+            .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     Ok(to_signed_request(signed))
 }
 
@@ -572,7 +579,8 @@ pub fn verify_accepted_202(
         }),
         _ => None,
     };
-    let to_pairs = |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
+    let to_pairs =
+        |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
         status,
         headers: to_pairs(resp_headers),
@@ -680,7 +688,8 @@ pub fn verify_response(
         }),
         _ => None,
     };
-    let to_pairs = |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
+    let to_pairs =
+        |hs: Vec<HttpHeader>| hs.into_iter().map(|h| (h.key, h.value)).collect::<Vec<_>>();
     let response = HttpResponse {
         status,
         headers: to_pairs(resp_headers),
@@ -704,9 +713,15 @@ pub fn verify_response(
         max_clock_skew as i64,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let verified =
-        verify_delegated_response(&response, &resolve, &expectation, &policy, &revocation, now as i64)
-            .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
+    let verified = verify_delegated_response(
+        &response,
+        &resolve,
+        &expectation,
+        &policy,
+        &revocation,
+        now as i64,
+    )
+    .map_err(|e| napi::Error::from_reason(format!("mcp-re: {}", e.wire_code())))?;
     // A verified rejection receipt is genuine evidence but NOT an acceptance — surface
     // the outcome so the caller does not read a signed replay/trust rejection as a
     // success. (An unsigned / direct-root / forged answer never reaches here: it fails

@@ -435,6 +435,9 @@ mod tests {
 
     const T: i64 = 60;
     const NEG_TTL: i64 = 5;
+    // The negative TTL must be strictly shorter than the active window, or the
+    // "republished key is picked up early" tests below would prove nothing.
+    const _: () = assert!(NEG_TTL < T);
 
     /// A shared inner resolver wrapped so the cache owns one box while the test
     /// keeps a handle to drive/inspect it.
@@ -590,8 +593,6 @@ mod tests {
             .resolve("did:host", "key-1")
             .expect("a published key resolves after the short negative TTL");
         assert_eq!(resolved.to_bytes(), key_from(&SEED_A).to_bytes());
-        // And the short TTL is strictly less than the active window T.
-        assert!(NEG_TTL < T);
     }
 
     #[test]

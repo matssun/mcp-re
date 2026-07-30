@@ -315,13 +315,12 @@ impl HttpInnerPool {
                         return Some((i, true));
                     }
                 }
-                STATE_HALF_OPEN => {
+                STATE_HALF_OPEN
                     if b.probe_inflight
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok()
-                    {
-                        return Some((i, true));
-                    }
+                        .is_ok() =>
+                {
+                    return Some((i, true));
                 }
                 _ => {}
             }

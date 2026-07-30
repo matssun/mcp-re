@@ -125,8 +125,9 @@ pub struct ResolvedActor {
 /// `None` means NOT TRUSTED, which is what it always meant.
 #[derive(Debug, Clone)]
 pub enum ResolverOutcome {
-    /// The keyid resolves to this actor for the requested slot.
-    Resolved(ResolvedActor),
+    /// The keyid resolves to this actor for the requested slot. Boxed so the
+    /// negative outcomes do not each carry the resolved actor's footprint.
+    Resolved(Box<ResolvedActor>),
     /// A definitive negative from a HEALTHY resolver: no such trusted binding.
     /// → `mcp-re.actor_binding_failed`.
     NotTrusted,
@@ -146,7 +147,7 @@ impl ResolverOutcome {
     /// is called out here rather than left as a silent narrowing.
     pub fn resolved(self) -> Option<ResolvedActor> {
         match self {
-            ResolverOutcome::Resolved(actor) => Some(actor),
+            ResolverOutcome::Resolved(actor) => Some(*actor),
             ResolverOutcome::NotTrusted | ResolverOutcome::Unavailable => None,
         }
     }
@@ -155,7 +156,7 @@ impl ResolverOutcome {
 impl From<Option<ResolvedActor>> for ResolverOutcome {
     fn from(value: Option<ResolvedActor>) -> Self {
         match value {
-            Some(actor) => ResolverOutcome::Resolved(actor),
+            Some(actor) => ResolverOutcome::Resolved(Box::new(actor)),
             None => ResolverOutcome::NotTrusted,
         }
     }

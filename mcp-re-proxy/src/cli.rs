@@ -1351,12 +1351,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     //     `--ocsp-responder-url` without it would SILENTLY do nothing — a dangerous
     //     illusion of a revocation posture — so it is a hard error. (Online OCSP
     //     ALWAYS hard-fails on an indeterminate result; there is no soft-fail knob.)
-    if client_ocsp != OcspKind::Require {
-        if ocsp_responder_url.is_some() {
-            return Err(
-                "--ocsp-responder-url has no effect without --client-ocsp require".to_string(),
-            );
-        }
+    if client_ocsp != OcspKind::Require && ocsp_responder_url.is_some() {
+        return Err("--ocsp-responder-url has no effect without --client-ocsp require".to_string());
     }
     // (b) `--client-ocsp require` is refused unconditionally: the online-OCSP check is
     //     unreachable on the serving path. `ocsp_rejection` is called only from
@@ -2398,10 +2394,6 @@ pub fn build_cpstore_replay_cache(
     )
 }
 
-/// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
-/// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
-/// it carries both request-signer keys and authorization-issuer keys.
-
 /// Parse the trust file into `(signer, key_id, verification_key)` entries so the
 /// serving path can build the RFC 9421 [`mcp_re_http_profile::ResolvedActor`]
 /// resolver (keyid → structured actor). Same fail-closed duplicate rejection as
@@ -2433,6 +2425,9 @@ pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, Verificat
     Ok(out)
 }
 
+/// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
+/// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
+/// it carries both request-signer keys and authorization-issuer keys.
 pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
     let array = value.as_array().ok_or("trust file must be a JSON array")?;

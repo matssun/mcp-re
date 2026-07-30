@@ -212,7 +212,7 @@ impl ClientTlsConfig {
         server_ca_pem: &[u8],
     ) -> Result<Self, TransportError> {
         let client_chain =
-            certs_from_pem(client_cert_pem).map_err(|e| TransportError::BadClientMaterial(e))?;
+            certs_from_pem(client_cert_pem).map_err(TransportError::BadClientMaterial)?;
         if client_chain.is_empty() {
             return Err(TransportError::BadClientMaterial(
                 "no client certificate in PEM".to_string(),

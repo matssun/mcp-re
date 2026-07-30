@@ -81,11 +81,13 @@ pub fn build_actor_resolver(
     response_pub: mcp_re_core::VerificationKey,
 ) -> crate::ActorResolver {
     Box::new(move |kid: &str, slot: SignerSlot| match slot {
-        SignerSlot::Response if kid == response_kid => ResolverOutcome::Resolved(ResolvedActor {
-            identity: server_identity.clone(),
-            verification_key: response_pub.clone(),
-            slot,
-        }),
+        SignerSlot::Response if kid == response_kid => {
+            ResolverOutcome::Resolved(Box::new(ResolvedActor {
+                identity: server_identity.clone(),
+                verification_key: response_pub.clone(),
+                slot,
+            }))
+        }
         SignerSlot::Request => {
             // An unknown kid is a definitive negative from a healthy resolver.
             let Some(signer) = client_signers.get(kid) else {
@@ -103,7 +105,7 @@ pub fn build_actor_resolver(
                 }
                 Err(_) => return ResolverOutcome::NotTrusted,
             };
-            ResolverOutcome::Resolved(ResolvedActor {
+            ResolverOutcome::Resolved(Box::new(ResolvedActor {
                 identity: ActorIdentity {
                     role: "client".to_string(),
                     trust_domain: trust_domain.clone(),
@@ -112,7 +114,7 @@ pub fn build_actor_resolver(
                 },
                 verification_key: key,
                 slot,
-            })
+            }))
         }
         _ => ResolverOutcome::NotTrusted,
     })
@@ -155,7 +157,7 @@ fn process_gids() -> Vec<u32> {
         if count > 0 {
             let mut buf = vec![0 as libc::gid_t; count as usize];
             if libc::getgroups(count, buf.as_mut_ptr()) >= 0 {
-                gids.extend(buf.into_iter().map(|g| g as u32));
+                gids.extend(buf);
             }
         }
     }
@@ -761,16 +763,16 @@ pub fn run(
                  delegated-TLS path; retaining the static CRL snapshot (follow-up)"
             );
         } else if let Some(reload_key) = reload_key {
-            spawn_crl_reload_task(
-                Arc::clone(&config_snapshot),
-                reload_chain,
-                reload_key,
-                reload_client_ca,
-                reload_crl_paths,
-                reload_allow_unknown,
-                reload_secs,
-                Arc::clone(&shutdown),
-            );
+            spawn_crl_reload_task(CrlReloadTask {
+                snapshot: Arc::clone(&config_snapshot),
+                server_chain: reload_chain,
+                server_key: reload_key,
+                client_ca: reload_client_ca,
+                crl_paths: reload_crl_paths,
+                allow_unknown_status: reload_allow_unknown,
+                interval_secs: reload_secs,
+                shutdown: Arc::clone(&shutdown),
+            });
             eprintln!(
                 "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s; \
                  refreshed --client-crl honored without restart; failed reload keeps last-good)"
@@ -1102,8 +1104,10 @@ fn serve_fleet(
 /// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
 /// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
 /// is set with a non-empty `--client-crl` on the direct-TLS path.
-fn spawn_crl_reload_task(
+struct CrlReloadTask {
     snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
+    /// The immutable server key material the verifier is rebuilt from; a reload
+    /// re-reads only the CRLs, never these.
     server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
     server_key: rustls_pki_types::PrivateKeyDer<'static>,
     client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
@@ -1111,7 +1115,19 @@ fn spawn_crl_reload_task(
     allow_unknown_status: bool,
     interval_secs: u64,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
-) {
+}
+
+fn spawn_crl_reload_task(task: CrlReloadTask) {
+    let CrlReloadTask {
+        snapshot,
+        server_chain,
+        server_key,
+        client_ca,
+        crl_paths,
+        allow_unknown_status,
+        interval_secs,
+        shutdown,
+    } = task;
     std::thread::spawn(move || {
         // Nap in small increments so a shutdown signal is observed within one
         // increment rather than after a whole reload interval.
@@ -1241,7 +1257,7 @@ fn rotation_loop(
                         return;
                     }
                     // Poll the shared trust epoch ~every 500ms (10 * 50ms).
-                    if ticks % 10 == 0 {
+                    if ticks.is_multiple_of(10) {
                         if let Some(watch) = epoch_watch.as_ref() {
                             if matches!(watch.current_label(), Some(l) if l != last_label) {
                                 break;
@@ -1280,7 +1296,7 @@ fn rotation_loop(
                         ttl.unwrap_or(0),
                         backoff.as_millis(),
                     );
-                    if interruptible_sleep(backoff, &shutdown) {
+                    if interruptible_sleep(backoff, shutdown) {
                         return;
                     }
                     continue;
@@ -1313,7 +1329,7 @@ fn rotation_loop(
                                     consecutive_failures,
                                     backoff.as_millis(),
                                 );
-                                if interruptible_sleep(backoff, &shutdown) {
+                                if interruptible_sleep(backoff, shutdown) {
                                     return;
                                 }
                                 continue;
@@ -1334,7 +1350,7 @@ fn rotation_loop(
             // whole overlap window. The backoff below must cover it.
             let before_kid = signer.current(now_unix()).map(|a| a.delegated_kid.clone());
             match rotor.rotate(now_unix()) {
-                Ok(()) if !rotation_made_progress(&signer, &before_kid, overlap) => {
+                Ok(()) if !rotation_made_progress(signer, &before_kid, overlap) => {
                     consecutive_failures = signer.metrics().record_failure();
                     let ttl = signer.seconds_to_expiry(now_unix());
                     let backoff = rotation_backoff(consecutive_failures, ttl, rotation_jitter());
@@ -1347,7 +1363,7 @@ fn rotation_loop(
                         ttl.unwrap_or(0),
                         backoff.as_millis(),
                     );
-                    if interruptible_sleep(backoff, &shutdown) {
+                    if interruptible_sleep(backoff, shutdown) {
                         return;
                     }
                 }
@@ -1386,7 +1402,7 @@ fn rotation_loop(
                     );
                     // Interruptible backoff so a persistent root outage does not hot-spin;
                     // the hot path keeps signing off the current key until its exp.
-                    if interruptible_sleep(backoff, &shutdown) {
+                    if interruptible_sleep(backoff, shutdown) {
                         return;
                     }
                 }

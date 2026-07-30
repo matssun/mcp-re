@@ -19,8 +19,8 @@ cost, so the cheapest thing that can be wrong fails first.
 
 | Stage | What | Cost |
 |---|---|---|
-| 1 | Structural gates: image tags == `VERSION`, port registry, tracked secrets, Helm fail-closed guards, JCS vocabulary, SLO-harness invocation, SLO-gate self-test | seconds |
-| 2 | `cargo test --workspace` **and** the feature-gated backend lane (they are different builds) | minutes |
+| 1 | Structural gates: image tags == `VERSION`, port registry, tracked secrets, Helm fail-closed guards, JCS vocabulary, SLO-harness invocation, SLO-gate self-test, `cargo fmt --check` over all four manifests | seconds |
+| 2 | `cargo clippy -D warnings`, then `cargo test --workspace` **and** the feature-gated backend lane (they are different builds) | minutes |
 | 3 | `bazel test //...` + the Gazelle drift gate | minutes |
 | 4 | The ADR-MCPRE-051 §7 local SLO lane (`scripts/local_slo_lane.sh`) | ~5 min |
 | 5 | The four fleet proofs on a local kind cluster — identical harness, chart and images to GKE (opt-in) | ~15 min |
@@ -35,6 +35,13 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 2** — the default `cargo test --workspace` does **not** compile the
   non-default feature backends (KMS, PKCS#11, Redis, OCSP, etcd, `async_serve`). A
   change can be green on the default battery and not compile on the serving path.
+- **Stages 1-2, the lint half** — `--workspace` and `cargo fmt --all` reach only the
+  ROOT universe. `sdk/python`, `sdk/typescript` and `mcp-re-proxy/tests/mock-pkcs11`
+  have their own manifests, and the default feature set does not compile
+  `etcd_store.rs` or `redis_store.rs` at all. When these checks were advisory and
+  root-default-only, they under-reported the tree's warnings by 19 of 60 and never
+  noticed that all three extra manifests were unformatted. Both halves now name
+  every manifest, and both are blocking — locally and in CI.
 - **Stage 5** — running the *same* harness on kind before GKE found six deploy
   defects, three of which would have failed the cloud run outright.
 

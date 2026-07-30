@@ -12,6 +12,7 @@
 //!   * `PX <ttl_ms>` puts expiry on the SERVER (Redis evicts the key), mirroring
 //!     the `InMemoryAtomicReplayStore` retain-until window without a client-side
 //!     prune.
+//!
 //! Multi-node replay safety holds ONLY when every proxy node points at the SAME
 //! Redis (or a single logical Redis cluster); separate instances are separate
 //! replay universes.
@@ -208,10 +209,10 @@ pub(crate) fn compute_ttl_ms(expires_at_unix: i64, now_unix: i64) -> u64 {
 /// already-expired sighting.
 ///
 /// This enforces the ADR's explicit pre-store rejection AT THIS LAYER rather than
-/// depending solely on the upstream `mcp-re-core` freshness step (`now > expires_at
-/// + skew → reject`) running before replay; if that ordering ever regresses, this
-/// guard still fails closed instead of clamping an expired window to a minimal
-/// positive TTL and admitting the nonce.
+/// depending solely on the upstream `mcp-re-core` freshness step
+/// (`now > expires_at + skew → reject`) running before replay; if that ordering ever
+/// regresses, this guard still fails closed instead of clamping an expired window to
+/// a minimal positive TTL and admitting the nonce.
 pub(crate) fn is_nonpositive_ttl(expires_at_unix: i64, now_unix: i64) -> bool {
     expires_at_unix.saturating_sub(now_unix) <= 0
 }
@@ -1105,13 +1106,11 @@ mod tests {
         // Single-attempt op (no reconnect path): models the old code that retained
         // an unused `client` and never re-established the connection.
         let single_attempt = |conn: &mut FakeConn| -> Result<u32, ReplayStoreError> {
-            match (|c: &mut FakeConn| {
-                let _ = c;
-                OpAttempt::<u32>::Transient(ReplayStoreError::Unavailable {
-                    details: "fake: connection dropped".to_string(),
-                })
-            })(conn)
-            {
+            let _ = conn;
+            let attempt = OpAttempt::<u32>::Transient(ReplayStoreError::Unavailable {
+                details: "fake: connection dropped".to_string(),
+            });
+            match attempt {
                 OpAttempt::Done(v) => Ok(v),
                 OpAttempt::Transient(e) | OpAttempt::Fatal(e) => Err(e),
             }

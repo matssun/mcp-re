@@ -21,6 +21,7 @@
 //!   * `MOCK_PKCS11_OBJECTS`     — `;`-separated `label,keytype,id` entries, where
 //!     `keytype` is `ed25519` (a signable `CKK_EC_EDWARDS` key pair) or `ec` (a
 //!     `CKK_EC` object used only to prove a non-Ed25519 TLS key is rejected).
+//!
 //! Each entry materialises BOTH a `CKO_PRIVATE_KEY` and a `CKO_PUBLIC_KEY` object
 //! sharing that label/id, mirroring how a real token stores a generated key pair.
 
@@ -49,21 +50,21 @@ use cryptoki_sys::CKR_MECHANISM_INVALID;
 use cryptoki_sys::CKR_OBJECT_HANDLE_INVALID;
 use cryptoki_sys::CKR_OK;
 use cryptoki_sys::CKR_SLOT_ID_INVALID;
+use cryptoki_sys::CK_ATTRIBUTE;
 use cryptoki_sys::CK_ATTRIBUTE_TYPE;
+use cryptoki_sys::CK_FUNCTION_LIST;
 use cryptoki_sys::CK_KEY_TYPE;
+use cryptoki_sys::CK_MECHANISM;
 use cryptoki_sys::CK_MECHANISM_TYPE;
 use cryptoki_sys::CK_OBJECT_CLASS;
 use cryptoki_sys::CK_OBJECT_HANDLE;
 use cryptoki_sys::CK_RV;
 use cryptoki_sys::CK_SESSION_HANDLE;
 use cryptoki_sys::CK_SLOT_ID;
+use cryptoki_sys::CK_TOKEN_INFO;
 use cryptoki_sys::CK_ULONG;
 use cryptoki_sys::CK_USER_TYPE;
 use cryptoki_sys::CK_VERSION;
-use cryptoki_sys::CK_ATTRIBUTE;
-use cryptoki_sys::CK_FUNCTION_LIST;
-use cryptoki_sys::CK_MECHANISM;
-use cryptoki_sys::CK_TOKEN_INFO;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use sha2::Digest;
@@ -204,7 +205,10 @@ fn function_list_ptr() -> *mut CK_FUNCTION_LIST {
         // `CK_VERSION` (two bytes) — an all-zero bit pattern is a valid, fully-NULL
         // function list. We then fill in only the slots this mock implements.
         let mut list: CK_FUNCTION_LIST = unsafe { std::mem::zeroed() };
-        list.version = CK_VERSION { major: 2, minor: 40 };
+        list.version = CK_VERSION {
+            major: 2,
+            minor: 40,
+        };
         list.C_Initialize = Some(c_initialize);
         list.C_Finalize = Some(c_finalize);
         list.C_GetFunctionList = Some(c_get_function_list);
@@ -379,12 +383,10 @@ unsafe extern "C" fn c_find_objects_init(
                     want_key_type = Some(*(attr.pValue as *const CK_KEY_TYPE));
                 }
             }
-            t if t == CKA_LABEL => {
-                if !attr.pValue.is_null() {
-                    let bytes =
-                        std::slice::from_raw_parts(attr.pValue as *const u8, attr.ulValueLen as usize);
-                    want_label = Some(bytes.to_vec());
-                }
+            t if t == CKA_LABEL && !attr.pValue.is_null() => {
+                let bytes =
+                    std::slice::from_raw_parts(attr.pValue as *const u8, attr.ulValueLen as usize);
+                want_label = Some(bytes.to_vec());
             }
             _ => {}
         }
@@ -393,9 +395,13 @@ unsafe extern "C" fn c_find_objects_init(
     let matches: Vec<CK_OBJECT_HANDLE> = state
         .objects
         .iter()
-        .filter(|o| want_class.map_or(true, |c| c == o.class))
-        .filter(|o| want_key_type.map_or(true, |k| k == o.key_type))
-        .filter(|o| want_label.as_ref().map_or(true, |l| l.as_slice() == o.label.as_slice()))
+        .filter(|o| want_class.is_none_or(|c| c == o.class))
+        .filter(|o| want_key_type.is_none_or(|k| k == o.key_type))
+        .filter(|o| {
+            want_label
+                .as_ref()
+                .is_none_or(|l| l.as_slice() == o.label.as_slice())
+        })
         .map(|o| o.handle)
         .collect();
 

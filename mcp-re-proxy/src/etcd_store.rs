@@ -15,8 +15,10 @@
 //!     makes the absent-check + put one indivisible, linearizable step:
 //!       - `succeeded == true`  ⇒ the key was absent and we put it ⇒ `Fresh`;
 //!       - `succeeded == false` ⇒ the key already exists ⇒ `Replay`.
+//!
 //!     Two proxy nodes racing on the same nonce against the same etcd cluster
 //!     therefore cannot both observe it absent — etcd linearizes the txn.
+//!
 //! Multi-node replay safety holds ONLY when every proxy node points at the SAME
 //! etcd cluster (a single logical CP store); separate clusters are separate
 //! replay universes.

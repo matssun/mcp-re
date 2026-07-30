@@ -162,15 +162,16 @@ fn signing_inputs(
     // DPoP stays the built-in, header-derived binding: its credential is the covered
     // `Authorization: Bearer` header, so it is never provider-supplied. Provider bindings
     // are appended after it.
-    let mut bindings =
-        vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, dpop_token.as_bytes())];
+    let mut bindings = vec![ArtifactBinding::opaque_digest(
+        ArtifactType::OauthDpop,
+        dpop_token.as_bytes(),
+    )];
     bindings.extend(extra_bindings);
-    let mut inputs =
-        RequestSigningInputs::new(key_id, audience, bindings, nonce, created, expires)
-            .with_headers(vec![(
-                "Authorization".to_owned(),
-                format!("Bearer {dpop_token}"),
-            )]);
+    let mut inputs = RequestSigningInputs::new(key_id, audience, bindings, nonce, created, expires)
+        .with_headers(vec![(
+            "Authorization".to_owned(),
+            format!("Bearer {dpop_token}"),
+        )]);
     if let (Some(pa), Some(pv), Some(ia), Some(iv), Some(state)) = (
         cont_prev_alg,
         cont_prev_value,
@@ -323,7 +324,8 @@ fn sign_request(
             None => Vec::new(),
         },
     );
-    let signed = build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
+    let signed =
+        build_signed_request(&id, method, params, target_uri, &inputs, &key).map_err(err)?;
     Ok(to_signed_request(signed))
 }
 
@@ -505,8 +507,9 @@ fn sign_notification_with_signer(
         }
         Ok(sig)
     };
-    let signed = build_signed_notification_with_signer(method, params, target_uri, &inputs, sign_base)
-        .map_err(err)?;
+    let signed =
+        build_signed_notification_with_signer(method, params, target_uri, &inputs, sign_base)
+            .map_err(err)?;
     Ok(to_signed_request(signed))
 }
 
@@ -634,15 +637,9 @@ fn verify_accepted_202(
         max_clock_skew,
     );
     let revocation = StaticRevocationList::from_identifiers(revoked_identifiers);
-    let actor = verify_delegated_accepted_202(
-        &response,
-        &request,
-        &resolve,
-        &policy,
-        &revocation,
-        now,
-    )
-    .map_err(err)?;
+    let actor =
+        verify_delegated_accepted_202(&response, &request, &resolve, &policy, &revocation, now)
+            .map_err(err)?;
     Ok(PyAcceptedResult {
         ok: true,
         server_keyid: actor.identity.keyid,

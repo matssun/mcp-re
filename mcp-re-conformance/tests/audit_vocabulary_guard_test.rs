@@ -11,11 +11,11 @@
 //!      `McpReError::wire_code()` (a minted parallel token);
 //!   2. the success-event set is not EXACTLY the two-item allowlist
 //!      (`mcp-re.request.accepted`, `mcp-re.response.signed`);
-//!   2b. the key-lifecycle set is not EXACTLY the three-item allowlist
+//!   3. the key-lifecycle set is not EXACTLY the three-item allowlist
 //!      (`mcp-re.delegated_key.{issued,rotated,retired}`, ADR-MCPRE-052 §7);
-//!   3. an audit `event_type` collides with a frozen `wire_code()` token (a
+//!   4. an audit `event_type` collides with a frozen `wire_code()` token (a
 //!      rejection sub-name masquerading as an event type);
-//!   4. an `authorization_hash_mismatch` notion reappears as an audit reason
+//!   5. an `authorization_hash_mismatch` notion reappears as an audit reason
 //!      (Core binds, never interprets — ADR-MCPS-013).
 //!
 //! Both source files are delivered through Bazel `data` runfiles and read from

@@ -569,7 +569,7 @@ mod http_profile_full_stack {
                 (ROOT_KID, SignerSlot::Response) => ("server", root_key().public_key()),
                 _ => return ResolverOutcome::NotTrusted,
             };
-            ResolverOutcome::Resolved(ResolvedActor {
+            ResolverOutcome::Resolved(Box::new(ResolvedActor {
                 identity: ActorIdentity {
                     role: role.into(),
                     trust_domain: "example.com".into(),
@@ -578,7 +578,7 @@ mod http_profile_full_stack {
                 },
                 verification_key: key,
                 slot,
-            })
+            }))
         })
     }
 
