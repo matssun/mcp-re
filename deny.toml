@@ -88,6 +88,13 @@ allow = [
     # is already allowed above. Listed as the full expression rather than
     # widening the policy with `exceptions`.
     "Apache-2.0 WITH LLVM-exception",
+    # xxhash-rust, reached via redis 1.x (it hashes cluster slot keys). BSL-1.0 is
+    # OSI-approved and FSF Free/Libre, permissive, with no reciprocal/share-alike
+    # obligation and no binary-attribution requirement at all — strictly weaker
+    # obligations than the MIT and Apache-2.0 already allowed above. It is the
+    # crate's ONLY license (no dual-license alternative), so the id has to be
+    # allowed for the gate to see the tree.
+    "BSL-1.0",
 ]
 # `ring` is the well-known non-trivial case: its SPDX expression resolves to
 # "Apache-2.0 AND ISC" (Apache-2.0 for ring's own code, ISC/BoringSSL for the
@@ -99,13 +106,39 @@ allow = [
 # [bans] — duplicate-version and wildcard-dependency hygiene.
 # ---------------------------------------------------------------------------
 [bans]
-# Keep duplicates at "warn" rather than "deny": a transitive bump that pulls a
-# second major of e.g. getrandom should surface a warning, not block the gate on
-# a non-security issue. The tree currently carries one such duplicate —
-# webpki-roots 0.26.11 (a thin re-export shim) alongside webpki-roots 1.0.7,
-# both from ureq. Promote to "deny" with a documented skip-list if/when
-# duplicate-version policy is tightened.
+# Duplicates stay at "warn" IN GENERAL: a transitive bump that pulls a second
+# major of e.g. getrandom or thiserror should surface a warning, not block the
+# gate on a non-security issue. The tree carries several such duplicates —
+# webpki-roots 0.26.11 (a thin re-export shim) alongside 1.0.7 from ureq;
+# asn1-rs 0.6/0.7 from the two x509-parser generations; thiserror 1/2.
 multiple-versions = "warn"
+
+# ...but NOT for the crates that decide how MCP-RE hashes. `sha2` is the
+# implementation the canonical preimage runs through and `block-buffer` is its
+# internal buffer. Two versions of those in one graph does not mean "an old copy
+# lingers" — it means the signing binary links TWO independent SHA-256
+# implementations, and which one executes depends on which crate called it: our
+# preimage hashing with one while ed25519-dalek hashes internally with the other.
+# For a product whose entire claim is a reproducible signed preimage, that is a
+# split-brain in the one primitive the claim rests on. It must fail the gate
+# rather than scroll past in a warning list — which is exactly how it got in:
+# sha2 0.11 landed via an unattended Dependabot bump (PR #457) and forked all
+# four lockfiles with nothing going red.
+#
+# `digest` and `crypto-common` are the TRAIT crates of that generation and are
+# listed too, but with one documented exception below: `x509-ocsp` 0.2.1 (its
+# `builder` feature => digest + signature) has no digest-0.11 release, and it is
+# the last crate in the tree holding 0.10. The exception is scoped to its subtree
+# via `skip-tree`, NOT granted globally, because x509-ocsp hashes nothing we sign
+# — it uses those traits for OCSP CertID/DER machinery, and our own call site
+# deliberately avoids handing it our `Sha256` (see the hand-built CertID in
+# mcp-re-proxy/src/ocsp.rs). Delete the skip-tree the day x509-ocsp ships on
+# digest 0.11; `sha2` and `block-buffer` stay unconditionally single-version.
+#
+# The `[[bans.deny]]` array that carries this rule is at the END of this section:
+# every bare `[bans]` key has to precede it, or TOML binds the key to the last
+# array entry instead of to `[bans]`.
+#
 # Allow `path = "../x"` intra-workspace dependencies (which Cargo records as a
 # `*` version requirement). These are local path links, not registry wildcards,
 # so they carry no supply-chain risk. `allow-wildcard-paths` does NOT exempt them
@@ -117,6 +150,35 @@ multiple-versions = "warn"
 # crates ever gain `publish = false`.
 wildcards = "warn"
 allow-wildcard-paths = true
+
+# The RustCrypto hashing core, one generation only — rationale above.
+[[bans.deny]]
+name = "digest"
+deny-multiple-versions = true
+
+[[bans.deny]]
+name = "block-buffer"
+deny-multiple-versions = true
+
+[[bans.deny]]
+name = "crypto-common"
+deny-multiple-versions = true
+
+[[bans.deny]]
+name = "sha2"
+deny-multiple-versions = true
+
+# The single documented holdout — rationale above. `x509-ocsp` 0.2.1 is the latest
+# release and still pulls signature 2 / digest 0.10 / crypto-common 0.1 through its
+# `builder` feature. Scoped to that subtree so the duplicate cannot appear anywhere
+# else in the graph unnoticed. Remove when x509-ocsp publishes on digest 0.11.
+# depth 5 reaches crypto-common, the deepest node of the held-back generation
+# (x509-ocsp -> signature -> digest -> crypto-common). Kept bounded rather than
+# unlimited so the exception cannot silently swallow unrelated duplicates.
+[[bans.skip-tree]]
+name = "x509-ocsp"
+version = "=0.2.1"
+depth = 5
 
 # ---------------------------------------------------------------------------
 # [sources] — only crates.io is a trusted origin. Any crate from an unknown
