@@ -63,8 +63,15 @@ fn request_with(content_type: &str) -> HttpRequest {
         headers: vec![("Content-Type".into(), content_type.into())],
         body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
     };
-    sign_request(&mut r, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-json")
-        .expect("signing succeeds");
+    sign_request(
+        &mut r,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-json",
+    )
+    .expect("signing succeeds");
     r
 }
 
@@ -79,8 +86,15 @@ fn signed_sse_response() -> (HttpRequest, HttpResponse) {
         headers: vec![("Content-Type".into(), "text/event-stream".into())],
         body: b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n".to_vec(),
     };
-    sign_response(&mut rsp, &req, &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("the server really does sign it");
+    sign_response(
+        &mut rsp,
+        &req,
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("the server really does sign it");
     (req, rsp)
 }
 

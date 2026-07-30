@@ -43,18 +43,14 @@ use std::sync::Arc;
 use mcp_re_core::McpReError;
 use mcp_re_http_profile::build_delegated_rejection;
 use mcp_re_http_profile::build_delegated_rejection_preflight;
+use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::sign_delegated_accepted_202;
 use mcp_re_http_profile::sign_delegated_response_full;
-use mcp_re_http_profile::insert_verified_context;
 use mcp_re_http_profile::strip_proxy_owned_meta;
-use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::verify_request_full_with_policy;
-use mcp_re_http_profile::VerifierPolicy;
-use mcp_re_http_profile::VerifiedContext;
-use mcp_re_http_profile::VerifiedContextPolicy;
-use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::AudienceTuple;
+use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RejectionReason;
@@ -62,6 +58,10 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::VerifiedContext;
+use mcp_re_http_profile::VerifiedContextPolicy;
+use mcp_re_http_profile::VerifiedHttpRequestEvidence;
+use mcp_re_http_profile::VerifierPolicy;
 
 use crate::async_inner::AsyncInnerServer;
 use crate::async_serve::ServedHttpRequest;
@@ -144,7 +144,10 @@ impl HttpProfileProxy {
     /// Install the ADR-MCPS-035 audit sink. Without one the serving path emits no
     /// security record — which is what `docs/spec/security-boundary.md` S9 describes as
     /// delivered, so a deployment relying on that surface must install one.
-    pub fn with_audit_sink(mut self, sink: std::sync::Arc<dyn crate::audit_sink::AuditSink>) -> Self {
+    pub fn with_audit_sink(
+        mut self,
+        sink: std::sync::Arc<dyn crate::audit_sink::AuditSink>,
+    ) -> Self {
         self.audit = Some(sink);
         self
     }
@@ -318,12 +321,9 @@ impl HttpProfileProxy {
         };
         // Keyed by the actor the VERIFIER resolved, never by anything the request
         // asserts, so one peer cannot name another's continuation at all.
-        let answer_key = answer_state.as_ref().map(|state| {
-            continuation_key(
-                &verified.resolved_actor.actor_id(),
-                state.as_bytes(),
-            )
-        });
+        let answer_key = answer_state
+            .as_ref()
+            .map(|state| continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()));
         let retained = match (&self.continuation_store, &answer_key) {
             // `peek` has NO side effect: the entry is still there while the binding is
             // checked below, so a request that fails the binding cannot destroy a live
@@ -424,21 +424,23 @@ impl HttpProfileProxy {
 
         // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
-        let forwarded = match forwarded_body(
-            &http_req.body,
-            &verified,
-            self.verified_context_policy,
-            now,
-        ) {
-            Ok(b) => b,
-            // The trusted carrier is on but the context could not be written. The
-            // inner server would otherwise receive an ordinary-looking request
-            // carrying no verified context at all — fail closed rather than
-            // degrade into an unauthenticated call.
-            Err(e) => {
-                return self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
-            }
-        };
+        let forwarded =
+            match forwarded_body(&http_req.body, &verified, self.verified_context_policy, now) {
+                Ok(b) => b,
+                // The trusted carrier is on but the context could not be written. The
+                // inner server would otherwise receive an ordinary-looking request
+                // carrying no verified context at all — fail closed rather than
+                // degrade into an unauthenticated call.
+                Err(e) => {
+                    return self.rejection(
+                        &http_req,
+                        e.wire_code(),
+                        500,
+                        now,
+                        Some(&verified.evidence),
+                    )
+                }
+            };
         let inner_bytes = self.inner_async.dispatch(&forwarded).await;
 
         // Step 7 — sign the backend reply, bound to THIS request, with the delegated key
@@ -531,10 +533,7 @@ impl HttpProfileProxy {
                 };
                 if store
                     .store(
-                        &continuation_key(
-                            &verified.resolved_actor.actor_id(),
-                            state.as_bytes(),
-                        ),
+                        &continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()),
                         &bases,
                         self.continuation_ttl_secs,
                     )
@@ -698,7 +697,8 @@ fn forwarded_body(
     let stripped = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(mut v) => {
             strip_proxy_owned_meta(&mut v);
-            serde_json::to_vec(&v).map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))?
+            serde_json::to_vec(&v)
+                .map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))?
         }
         // A non-object body never verified as a full-profile request, so this is
         // unreachable on the served path; pass it through rather than invent bytes.

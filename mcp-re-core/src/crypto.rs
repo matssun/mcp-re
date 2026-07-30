@@ -370,7 +370,10 @@ mod tests {
                 break;
             }
         }
-        assert!(found, "expected at least one invalid 32-byte point encoding");
+        assert!(
+            found,
+            "expected at least one invalid 32-byte point encoding"
+        );
         assert_eq!(
             VerificationKey::from_bytes(&bad).unwrap_err(),
             McpReError::ActorBindingFailed

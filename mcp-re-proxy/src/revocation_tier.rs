@@ -106,17 +106,13 @@ impl RevocationTier {
         let mut parts = rest.split(':');
         // After the prefix the first split element is the empty string before ':'.
         if parts.next() != Some("") {
-            return Err(format!(
-                "{tier} requires ':<t_secs>' (got '{original}')"
-            ));
+            return Err(format!("{tier} requires ':<t_secs>' (got '{original}')"));
         }
         let t_secs = parts
             .next()
             .and_then(|t| t.parse::<i64>().ok())
             .filter(|t| *t >= 1)
-            .ok_or_else(|| {
-                format!("{tier} t_secs must be a positive integer (in '{original}')")
-            })?;
+            .ok_or_else(|| format!("{tier} t_secs must be a positive integer (in '{original}')"))?;
         if parts.next().is_some() {
             return Err(format!(
                 "{tier} takes exactly ':<t_secs>' (got '{original}')"

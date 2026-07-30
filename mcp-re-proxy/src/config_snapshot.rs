@@ -129,9 +129,15 @@ mod tests {
         let a = dummy_config();
         let b = dummy_config();
         let snapshot = ServerConfigSnapshot::new(Arc::clone(&a));
-        assert!(Arc::ptr_eq(&snapshot.load(), &a), "load returns the seeded config");
+        assert!(
+            Arc::ptr_eq(&snapshot.load(), &a),
+            "load returns the seeded config"
+        );
         snapshot.store(Arc::clone(&b));
-        assert!(Arc::ptr_eq(&snapshot.load(), &b), "load returns the swapped config");
+        assert!(
+            Arc::ptr_eq(&snapshot.load(), &b),
+            "load returns the swapped config"
+        );
     }
 
     #[test]
@@ -142,8 +148,14 @@ mod tests {
         // An in-flight handshake captured `a` before the swap.
         let in_flight = snapshot.load();
         snapshot.store(Arc::clone(&b));
-        assert!(Arc::ptr_eq(&in_flight, &a), "the captured handle is unaffected by the swap");
-        assert!(Arc::ptr_eq(&snapshot.load(), &b), "new connections see the swapped config");
+        assert!(
+            Arc::ptr_eq(&in_flight, &a),
+            "the captured handle is unaffected by the swap"
+        );
+        assert!(
+            Arc::ptr_eq(&snapshot.load(), &b),
+            "new connections see the swapped config"
+        );
     }
 
     #[test]
@@ -153,7 +165,10 @@ mod tests {
         let snapshot = ServerConfigSnapshot::new(Arc::clone(&a));
         let outcome = reload_once(&snapshot, || Ok(Arc::clone(&b)));
         assert_eq!(outcome, ReloadOutcome::Swapped);
-        assert!(Arc::ptr_eq(&snapshot.load(), &b), "a successful reload swaps in the new config");
+        assert!(
+            Arc::ptr_eq(&snapshot.load(), &b),
+            "a successful reload swaps in the new config"
+        );
     }
 
     #[test]

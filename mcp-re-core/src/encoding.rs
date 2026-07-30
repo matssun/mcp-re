@@ -68,19 +68,28 @@ mod tests {
         assert!(!encoded.contains('+'));
         assert!(!encoded.contains('/'));
         // round-trips back.
-        assert_eq!(b64url_decode(&encoded).expect("decode"), vec![0xFBu8, 0xFF, 0xBF]);
+        assert_eq!(
+            b64url_decode(&encoded).expect("decode"),
+            vec![0xFBu8, 0xFF, 0xBF]
+        );
     }
 
     #[test]
     fn decode_rejects_padding() {
         // The no-pad engine rejects an explicit '=' pad character.
-        assert_eq!(b64url_decode("aGk=").unwrap_err(), McpReError::SerializationFailed);
+        assert_eq!(
+            b64url_decode("aGk=").unwrap_err(),
+            McpReError::SerializationFailed
+        );
     }
 
     #[test]
     fn decode_rejects_non_alphabet() {
         // '*' is not in the URL-safe alphabet.
-        assert_eq!(b64url_decode("ab*c").unwrap_err(), McpReError::SerializationFailed);
+        assert_eq!(
+            b64url_decode("ab*c").unwrap_err(),
+            McpReError::SerializationFailed
+        );
     }
 
     #[test]

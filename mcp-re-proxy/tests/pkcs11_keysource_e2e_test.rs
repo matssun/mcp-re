@@ -113,8 +113,7 @@ fn build_mock_module() -> Option<String> {
         "libmock_pkcs11.so"
     };
     let path = mock_dir.join("target/debug").join(lib_name);
-    path.exists()
-        .then(|| path.to_string_lossy().into_owned())
+    path.exists().then(|| path.to_string_lossy().into_owned())
 }
 
 /// The decision for every test: a built mock module path, or `None` to self-skip.

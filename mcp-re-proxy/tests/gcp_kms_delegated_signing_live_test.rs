@@ -44,6 +44,7 @@ use mcp_re_http_profile::issue_delegation_credential_with_signer;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_delegated_response_full;
 use mcp_re_http_profile::verify_request_full;
+use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
@@ -60,7 +61,6 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::PROFILE_TAG;
 use mcp_re_proxy::GcpKmsConfig;
 use mcp_re_proxy::GcpKmsEd25519Backend;
@@ -102,7 +102,9 @@ fn require_env(name: &str) -> String {
 fn live_signer() -> KmsResponseSigner {
     let config = GcpKmsConfig {
         key_version_name: require_env("MCP_RE_GCP_KEY_VERSION"),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     if !use_metadata {
@@ -117,8 +119,8 @@ fn live_signer() -> KmsResponseSigner {
 /// a network round-trip — exercises the KMS-backend → custody-issuer wiring
 /// hermetically.
 fn offline_signer() -> KmsResponseSigner {
-    let backend = GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32])
-        .expect("local-seed KMS backend");
+    let backend =
+        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
     KmsResponseSigner::new(Box::new(backend))
 }
 
@@ -142,7 +144,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -154,7 +157,9 @@ fn no_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 /// (by its `issuer_kid`) for the Response slot — the credential's issuer is
 /// resolved for the Response slot. The DELEGATED key is NEVER enrolled here; it is
 /// authorized by the KMS-signed credential alone.
-fn resolver(root_pub: mcp_re_core::VerificationKey) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
+fn resolver(
+    root_pub: mcp_re_core::VerificationKey,
+) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
     let client_pub = client_key().public_key();
     move |key_id: &str, slot: SignerSlot| {
         let (role, key) = match (key_id, slot) {
@@ -185,7 +190,7 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidenc
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let ev = sign_request_full(
         &mut req,
@@ -197,8 +202,14 @@ fn signed_request() -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidenc
         "nonce-1",
     )
     .expect("sign request");
-    let verified = verify_request_full(&req, &audience(), &no_material(), &resolver_client_only(), NOW)
-        .expect("verify request");
+    let verified = verify_request_full(
+        &req,
+        &audience(),
+        &no_material(),
+        &resolver_client_only(),
+        NOW,
+    )
+    .expect("verify request");
     (req, ev, verified)
 }
 
@@ -352,9 +363,15 @@ fn run_delegated_custody_lane(signer: KmsResponseSigner) {
     custody
         .sign_response(after, &mut successor_rsp, &req, &ev)
         .expect("custody signs (rotation)");
-    let second_kid = custody.active_kid().expect("a successor key is active").to_owned();
+    let second_kid = custody
+        .active_kid()
+        .expect("a successor key is active")
+        .to_owned();
 
-    assert_ne!(first_kid, second_kid, "rotation must mint a distinct delegated key");
+    assert_ne!(
+        first_kid, second_kid,
+        "rotation must mint a distinct delegated key"
+    );
     assert_eq!(
         kms_calls.load(Ordering::SeqCst),
         2,

@@ -119,8 +119,8 @@ fn claims_from(kat: &ExternalKat) -> DelegationClaims {
 #[test]
 fn external_credential_verifies_under_our_verifier() {
     let kat = load();
-    let root_pub = VerificationKey::from_b64url(&kat.root_public_key_b64url)
-        .expect("root public key parses");
+    let root_pub =
+        VerificationKey::from_b64url(&kat.root_public_key_b64url).expect("root public key parses");
     let issuer_kid = kat.issuer_kid.clone();
 
     let audiences = [kat.verifier_audience.as_str()];

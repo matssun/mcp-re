@@ -17,6 +17,7 @@ use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_delegated_response_full;
 use mcp_re_http_profile::verify_request_full;
+use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::AudienceTuple;
@@ -32,7 +33,6 @@ use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
-use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::async_replay::AsyncReplayTier;
@@ -121,13 +121,18 @@ fn custody_cfg() -> CustodyConfig {
 fn build_proxy() -> HttpProfileProxy {
     let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
-    let issue = move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c));
+    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
     let mut n = 100u8;
     let factory = move || {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    let mut rotor = DelegatedRotor::new(DelegatedSigningCustody::new(custody_cfg(), issue, factory), Arc::clone(&signer));
+    let mut rotor = DelegatedRotor::new(
+        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
+        Arc::clone(&signer),
+    );
     rotor.rotate(NOW).expect("issue the first delegated key");
     let inner = Box::new(|_forwarded: &[u8]| -> Vec<u8> {
         br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
@@ -136,7 +141,10 @@ fn build_proxy() -> HttpProfileProxy {
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         inner,
         300,
         signer,
@@ -164,7 +172,7 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -173,15 +181,29 @@ fn signed_request(nonce: &str) -> (HttpRequest, RequestEvidence, VerifiedHttpReq
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-            .expect("client signs RFC 9421 request");
+    let evidence = sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified = verify_request_full(&req, &audience(), &no_material, &move |k: &str, s| r(k, s), NOW)
-        .expect("client's own request verifies (for response binding)");
+    let verified = verify_request_full(
+        &req,
+        &audience(),
+        &no_material,
+        &move |k: &str, s| r(k, s),
+        NOW,
+    )
+    .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 

@@ -35,9 +35,9 @@ use crate::ids::PROFILE_TAG;
 use crate::ids::REQUEST_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUEST_LABEL;
 use crate::ids::REQUIRED_REQUEST_COMPONENTS;
-use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::REQUIRED_RESPONSE_COMPONENTS;
 use crate::ids::REQUIRED_RESPONSE_REQ_COMPONENTS;
+use crate::ids::RESPONSE_EVIDENCE_BLOCK_KEY;
 use crate::ids::RESPONSE_LABEL;
 use crate::message::reject_content_encoding;
 use crate::message::require_json_media_type;
@@ -151,9 +151,7 @@ pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
         // (C079): during a store outage the previous seam reported "untrusted key",
         // which sends an operator to look at the caller's credentials instead of at
         // their trust store.
-        ResolverOutcome::Unavailable => {
-            return Err(HttpProfileError::TrustResolverUnavailable)
-        }
+        ResolverOutcome::Unavailable => return Err(HttpProfileError::TrustResolverUnavailable),
     };
     if actor.slot != slot {
         return Err(HttpProfileError::ActorSlotMismatch);
@@ -591,8 +589,8 @@ pub(crate) fn parse_signature_input_for(
     label: &str,
     what: &'static str,
 ) -> Result<ParsedSignatureInput, HttpProfileError> {
-    let input_header =
-        required_header(headers, "signature-input").map_err(|_| HttpProfileError::MissingEvidence(what))?;
+    let input_header = required_header(headers, "signature-input")
+        .map_err(|_| HttpProfileError::MissingEvidence(what))?;
     parse_signature_input(member_value(input_header, label)?)
 }
 
@@ -726,7 +724,8 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
         ));
     }
     require_conditional_coverage(&request.headers, &parsed.components)?;
-    let (created, expires, nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, true)?;
+    let (created, expires, nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, true)?;
 
     // 3. Trust resolution for the REQUEST slot: a keyid never introduces trust,
     //    and a key not trusted to sign requests fails actor_binding_failed.
@@ -825,8 +824,11 @@ pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
 
     // 2. Parse the request evidence block — protected because content-digest is a
     //    covered component of the signature just verified.
-    let block: HttpRequestEvidenceBlock =
-        extract_meta_block(&request.body, REQUEST_EVIDENCE_BLOCK_KEY, "request evidence block")?;
+    let block: HttpRequestEvidenceBlock = extract_meta_block(
+        &request.body,
+        REQUEST_EVIDENCE_BLOCK_KEY,
+        "request evidence block",
+    )?;
     block.validate(&verified.profile_id)?;
 
     // 3. Audience binding: block audience == expected, and the expected tuple's
@@ -911,11 +913,13 @@ pub fn verify_response_with_policy<R: Into<ResolverOutcome>>(
         &REQUIRED_RESPONSE_COMPONENTS,
         &REQUIRED_RESPONSE_REQ_COMPONENTS,
     )?;
-    let (_created, _expires, _nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
 
     // Trust resolution for the RESPONSE slot: a request-signer key presented on
     // a response fails actor_binding_failed.
-    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor =
+        resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,
@@ -1171,7 +1175,12 @@ pub fn verify_delegated_response_bound_full<R: Into<ResolverOutcome>>(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
+        |issuer_kid| {
+            resolve_actor(issuer_kid, SignerSlot::Response)
+                .into()
+                .resolved()
+                .map(|a| a.verification_key)
+        },
         |kid| is_revoked(kid),
     )?;
 
@@ -1296,7 +1305,12 @@ pub fn verify_delegated_response_unbound<R: Into<ResolverOutcome>>(
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| resolve_actor(issuer_kid, SignerSlot::Response).into().resolved().map(|a| a.verification_key),
+        |issuer_kid| {
+            resolve_actor(issuer_kid, SignerSlot::Response)
+                .into()
+                .resolved()
+                .map(|a| a.verification_key)
+        },
         |kid| is_revoked(kid),
     )?;
 
@@ -1374,9 +1388,11 @@ pub fn verify_response_unbound_with_policy<R: Into<ResolverOutcome>>(
             "req component without request context",
         ));
     }
-    let (_created, _expires, _nonce, key_id, algorithm) = check_params(&parsed.params, policy, now, false)?;
+    let (_created, _expires, _nonce, key_id, algorithm) =
+        check_params(&parsed.params, policy, now, false)?;
 
-    let resolved_server_actor = resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
+    let resolved_server_actor =
+        resolve_actor_for_slot(resolve_actor, &key_id, SignerSlot::Response)?;
     let base = signature_base(
         &parsed.components,
         &parsed.params,

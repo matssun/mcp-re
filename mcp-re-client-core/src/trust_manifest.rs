@@ -123,8 +123,8 @@ fn manifest_signing_preimage(
     manifest: &TrustAnchorManifest,
     signer_kid: &str,
 ) -> Result<Vec<u8>, TrustManifestError> {
-    let body =
-        serde_json::to_vec(manifest).map_err(|_| TrustManifestError::Malformed("manifest serialize"))?;
+    let body = serde_json::to_vec(manifest)
+        .map_err(|_| TrustManifestError::Malformed("manifest serialize"))?;
     let mut preimage =
         Vec::with_capacity(MANIFEST_SIGNING_DOMAIN.len() + 8 + signer_kid.len() + body.len());
     preimage.extend_from_slice(MANIFEST_SIGNING_DOMAIN);
@@ -252,15 +252,20 @@ pub fn load_signed_manifest(
     now: i64,
 ) -> Result<LoadedTrustAnchors, TrustManifestError> {
     // 1. Pin the manifest signer.
-    let org_key = resolve_manifest_signer(&signed.signer_kid)
-        .ok_or(TrustManifestError::UntrustedSigner)?;
+    let org_key =
+        resolve_manifest_signer(&signed.signer_kid).ok_or(TrustManifestError::UntrustedSigner)?;
 
     // 2. Verify the org signature over the canonical preimage — which COVERS the
     //    `signer_kid` used to select `org_key` in step 1, so the identity the manifest
     //    claims to be published under is the one that was signed for.
     let bytes = manifest_signing_preimage(&signed.manifest, &signed.signer_kid)?;
-    verify_ed25519_with(&bytes, &signed.signature, &org_key, McpReError::InvalidSignature)
-        .map_err(|_| TrustManifestError::BadSignature)?;
+    verify_ed25519_with(
+        &bytes,
+        &signed.signature,
+        &org_key,
+        McpReError::InvalidSignature,
+    )
+    .map_err(|_| TrustManifestError::BadSignature)?;
 
     // 3. Profile gate.
     if signed.manifest.profile != expected_profile {
@@ -287,11 +292,23 @@ pub fn load_signed_manifest(
     //    freshness + version gates above.)
     let mut set = TrustedIssuerSet::new();
     for iss in &signed.manifest.current_issuers {
-        set = set.with_current(actor_of(&iss.issuer_kid, &iss.public_key, &iss.role, &iss.trust_domain, &iss.subject)?);
+        set = set.with_current(actor_of(
+            &iss.issuer_kid,
+            &iss.public_key,
+            &iss.role,
+            &iss.trust_domain,
+            &iss.subject,
+        )?);
     }
     for r in &signed.manifest.retiring_issuers {
         set = set.with_retired(
-            actor_of(&r.issuer_kid, &r.public_key, &r.role, &r.trust_domain, &r.subject)?,
+            actor_of(
+                &r.issuer_kid,
+                &r.public_key,
+                &r.role,
+                &r.trust_domain,
+                &r.subject,
+            )?,
             r.valid_until,
         );
     }
@@ -387,7 +404,12 @@ mod tests {
         }
     }
 
-    fn manifest(version: u64, current: Vec<ManifestIssuer>, retiring: Vec<RetiringIssuer>, revoked: Vec<String>) -> TrustAnchorManifest {
+    fn manifest(
+        version: u64,
+        current: Vec<ManifestIssuer>,
+        retiring: Vec<RetiringIssuer>,
+        revoked: Vec<String>,
+    ) -> TrustAnchorManifest {
         TrustAnchorManifest {
             profile: PROFILE.into(),
             manifest_version: version,
@@ -415,9 +437,8 @@ mod tests {
         // material — an org-key rename, a rotation overlap — because then rewriting it
         // no longer breaks the signature.
         const ALIAS_KID: &str = "org-admin-root-renamed";
-        let two_kids_one_key = |kid: &str| {
-            (kid == ORG_KID || kid == ALIAS_KID).then(|| org_key().public_key())
-        };
+        let two_kids_one_key =
+            |kid: &str| (kid == ORG_KID || kid == ALIAS_KID).then(|| org_key().public_key());
 
         let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
         let signed = sign_manifest(&m, &org_key(), ORG_KID);
@@ -470,13 +491,24 @@ mod tests {
             subject: "did:example:issuer".into(),
             valid_until: 6_000,
         };
-        let m = manifest(2, vec![issuer("root-B", &root_b())], vec![retiring], vec!["root-X".into()]);
+        let m = manifest(
+            2,
+            vec![issuer("root-B", &root_b())],
+            vec![retiring],
+            vec!["root-X".into()],
+        );
         let signed = sign_manifest(&m, &org_key(), ORG_KID);
         let loaded = load_signed_manifest(&signed, org_resolver, PROFILE, 2, 5_500).expect("loads");
         // B current, A retiring (in window), X revoked.
         assert!(loaded.issuer_set.resolve_root("root-B", 5_500).is_some());
-        assert!(loaded.issuer_set.resolve_root("root-A", 5_500).is_some(), "A in window");
-        assert!(loaded.issuer_set.resolve_root("root-A", 6_001).is_none(), "A past valid_until");
+        assert!(
+            loaded.issuer_set.resolve_root("root-A", 5_500).is_some(),
+            "A in window"
+        );
+        assert!(
+            loaded.issuer_set.resolve_root("root-A", 6_001).is_none(),
+            "A past valid_until"
+        );
         assert!(mcp_re_client_core_is_revoked(&loaded.issuer_set, "root-X"));
     }
 
@@ -518,11 +550,14 @@ mod tests {
             &org_key(),
             ORG_KID,
         );
-        let loaded =
-            load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000)
-                .expect("v3 loads");
+        let loaded = load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000)
+            .expect("v3 loads");
         assert_eq!(loaded.version, 3);
-        assert_eq!(floor.min_version().unwrap(), 3, "the floor rose to the accepted version");
+        assert_eq!(
+            floor.min_version().unwrap(),
+            3,
+            "the floor rose to the accepted version"
+        );
 
         // The rollback: v2 revokes root-A. Accepting it would un-revoke nothing here, but
         // the reverse manifest (an OLD one that has not yet revoked a compromised root) is
@@ -534,17 +569,27 @@ mod tests {
         );
         assert_eq!(
             load_signed_manifest_with_floor(&v2, org_resolver, PROFILE, &mut floor, 5_000).err(),
-            Some(TrustManifestError::Stale { version: 2, min_version: 3 }),
+            Some(TrustManifestError::Stale {
+                version: 2,
+                min_version: 3
+            }),
         );
         // Re-offering v3 is fine (idempotent), and so is moving forward.
-        assert!(load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000).is_ok());
+        assert!(
+            load_signed_manifest_with_floor(&v3, org_resolver, PROFILE, &mut floor, 5_000).is_ok()
+        );
     }
 
     #[test]
     fn an_unreadable_floor_fails_closed_rather_than_defaulting_to_zero() {
         // "We do not know what we have accepted" must not collapse into "we have
         // accepted nothing" — the latter accepts any version.
-        let mut floor = BrittleFloor { floor: 9, read_fails: true, write_fails: false, recorded: vec![] };
+        let mut floor = BrittleFloor {
+            floor: 9,
+            read_fails: true,
+            write_fails: false,
+            recorded: vec![],
+        };
         let v1 = sign_manifest(
             &manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]),
             &org_key(),
@@ -554,7 +599,10 @@ mod tests {
             load_signed_manifest_with_floor(&v1, org_resolver, PROFILE, &mut floor, 5_000).err(),
             Some(TrustManifestError::FloorUnreadable("test")),
         );
-        assert!(floor.recorded.is_empty(), "nothing was recorded, because nothing was loaded");
+        assert!(
+            floor.recorded.is_empty(),
+            "nothing was recorded, because nothing was loaded"
+        );
     }
 
     #[test]
@@ -563,7 +611,12 @@ mod tests {
         // would mean using a trust picture whose version is recorded nowhere: a crash
         // before the next write leaves the old floor, and the superseded manifest is
         // accepted again. So the load fails, and the caller keeps whatever it had.
-        let mut floor = BrittleFloor { floor: 0, read_fails: false, write_fails: true, recorded: vec![] };
+        let mut floor = BrittleFloor {
+            floor: 0,
+            read_fails: false,
+            write_fails: true,
+            recorded: vec![],
+        };
         let v4 = sign_manifest(
             &manifest(4, vec![issuer("root-A", &root_a())], vec![], vec![]),
             &org_key(),
@@ -573,13 +626,19 @@ mod tests {
             load_signed_manifest_with_floor(&v4, org_resolver, PROFILE, &mut floor, 5_000).err(),
             Some(TrustManifestError::FloorNotPersisted("test")),
         );
-        assert_eq!(floor.recorded, vec![4], "the persist WAS attempted before giving up");
+        assert_eq!(
+            floor.recorded,
+            vec![4],
+            "the persist WAS attempted before giving up"
+        );
     }
 
     #[test]
     fn the_in_memory_floor_is_monotonic() {
         let mut floor = InMemoryVersionFloor::starting_at(5);
-        floor.record(2).expect("a lower version is a no-op, not an error");
+        floor
+            .record(2)
+            .expect("a lower version is a no-op, not an error");
         assert_eq!(floor.min_version().unwrap(), 5);
         floor.record(6).expect("record");
         assert_eq!(floor.min_version().unwrap(), 6);
@@ -637,7 +696,10 @@ mod tests {
         // The verifier has already accepted version 5; a version-3 replay is a rollback.
         assert_eq!(
             load_signed_manifest(&signed, org_resolver, PROFILE, 5, 5_000).unwrap_err(),
-            TrustManifestError::Stale { version: 3, min_version: 5 }
+            TrustManifestError::Stale {
+                version: 3,
+                min_version: 5
+            }
         );
         // The same version (idempotent re-apply) is accepted.
         load_signed_manifest(&signed, org_resolver, PROFILE, 3, 5_000).expect("same version ok");

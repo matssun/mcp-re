@@ -299,9 +299,9 @@ mod tests {
 
     use super::*;
     use crate::async_replay::AsyncAtomicReplayStore;
-    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
 
     const NOW: i64 = 1_779_998_100;
 
@@ -313,7 +313,9 @@ mod tests {
     /// black-holed gateway an operator actually meets (a dropped route, a firewall that
     /// discards rather than resets). Returns its address and the accept counter.
     async fn silent_gateway() -> (String, Arc<AtomicUsize>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let accepts = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&accepts);
@@ -412,16 +414,28 @@ mod tests {
             fixed_clock(),
             Duration::ZERO,
         );
-        assert_eq!(zero.op_timeout(), Duration::from_millis(1), "zero is raised, not honoured");
+        assert_eq!(
+            zero.op_timeout(),
+            Duration::from_millis(1),
+            "zero is raised, not honoured"
+        );
 
         let absurd = EtcdAsyncAtomicReplayStore::connect_with_timeout(
             "http://127.0.0.1:2379",
             fixed_clock(),
             Duration::from_secs(86_400),
         );
-        assert_eq!(absurd.op_timeout(), MAX_ETCD_OP_TIMEOUT, "clamped to the ceiling");
+        assert_eq!(
+            absurd.op_timeout(),
+            MAX_ETCD_OP_TIMEOUT,
+            "clamped to the ceiling"
+        );
 
         let default = EtcdAsyncAtomicReplayStore::connect("http://127.0.0.1:2379");
-        assert_eq!(default.op_timeout(), DEFAULT_ETCD_OP_TIMEOUT, "connect() is bounded too");
+        assert_eq!(
+            default.op_timeout(),
+            DEFAULT_ETCD_OP_TIMEOUT,
+            "connect() is bounded too"
+        );
     }
 }

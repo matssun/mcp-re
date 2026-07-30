@@ -27,13 +27,13 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 
+use mcp_re_core::SigningKey;
 use mcp_re_http_profile::ActiveDelegatedKey;
 use mcp_re_http_profile::CustodyError;
 use mcp_re_http_profile::DelegatedSigningCustody;
-use mcp_re_http_profile::KeyLifecycleEvent;
-use mcp_re_core::SigningKey;
 use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
+use mcp_re_http_profile::KeyLifecycleEvent;
 
 /// Cold-path rotation observability (ADR-MCPRE-052 §6, MCPRE-122). Plain atomic
 /// counters the single rotor owner writes and any observer (a logging line today, a
@@ -319,7 +319,13 @@ mod tests {
         }
     }
 
-    fn rotor() -> (DelegatedRotor<impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>, impl FnMut() -> SigningKey>, Arc<DelegatedServerSigner>) {
+    fn rotor() -> (
+        DelegatedRotor<
+            impl FnMut(&DelegationHeader, &DelegationClaims) -> Option<String>,
+            impl FnMut() -> SigningKey,
+        >,
+        Arc<DelegatedServerSigner>,
+    ) {
         let root = SigningKey::from_seed_bytes(&[33u8; 32]);
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
             Some(issue_delegation_credential(&root, h, c))
@@ -350,7 +356,9 @@ mod tests {
         assert_eq!(
             snap.delegated_kid,
             mcp_re_http_profile::jwk_thumbprint_ed25519(
-                &SigningKey::from_seed_bytes(&[101u8; 32]).public_key().to_b64url()
+                &SigningKey::from_seed_bytes(&[101u8; 32])
+                    .public_key()
+                    .to_b64url()
             )
         );
         assert_eq!(rotor.root_invocations(), 1);
@@ -363,7 +371,11 @@ mod tests {
         // pinned to the prior epoch reject the new credential across the fleet.
         let (mut rotor, signer) = rotor();
         rotor.rotate(NOW).expect("initial issue");
-        let first_kid = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
+        let first_kid = signer
+            .current(NOW)
+            .expect("K1 serves")
+            .delegated_kid
+            .clone();
         assert_eq!(rotor.trust_epoch(), "epoch-1");
 
         rotor
@@ -371,8 +383,15 @@ mod tests {
             .expect("re-issue under the advanced epoch");
         assert_eq!(rotor.trust_epoch(), "epoch-1#2");
         let snap = signer.current(NOW + 5).expect("a key is published");
-        assert_ne!(snap.delegated_kid, first_kid, "a fresh key under the new epoch");
-        assert_eq!(rotor.root_invocations(), 2, "root re-issued exactly once more");
+        assert_ne!(
+            snap.delegated_kid, first_kid,
+            "a fresh key under the new epoch"
+        );
+        assert_eq!(
+            rotor.root_invocations(),
+            2,
+            "root re-issued exactly once more"
+        );
     }
 
     #[test]
@@ -425,11 +444,17 @@ mod tests {
 
         // K1 issues and serves.
         rotor.rotate(NOW).expect("K1 issues");
-        let k1 = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
+        let k1 = signer
+            .current(NOW)
+            .expect("K1 serves")
+            .delegated_kid
+            .clone();
         assert_eq!(
             k1,
             mcp_re_http_profile::jwk_thumbprint_ed25519(
-                &SigningKey::from_seed_bytes(&[101u8; 32]).public_key().to_b64url()
+                &SigningKey::from_seed_bytes(&[101u8; 32])
+                    .public_key()
+                    .to_b64url()
             )
         );
 
@@ -441,18 +466,27 @@ mod tests {
             .rotate(in_overlap)
             .expect("K1 kept despite failed successor issuance");
         assert_eq!(
-            signer.current(in_overlap).expect("K1 still serves").delegated_kid,
+            signer
+                .current(in_overlap)
+                .expect("K1 still serves")
+                .delegated_kid,
             k1,
             "still the same key — no stale successor minted, no signing gap"
         );
-        assert!(signer.current(NOW + T - 1).is_some(), "…right up to just before exp");
+        assert!(
+            signer.current(NOW + T - 1).is_some(),
+            "…right up to just before exp"
+        );
 
         // At K1's own exp the hot path fails closed even though K1 was never retired.
         assert!(signer.current(NOW + T).is_none(), "fails closed at K1 exp");
 
         // Past exp with issuance still down, the rotor retires and surfaces the
         // fail-closed error — the hot path stays closed (no direct-root fallback).
-        assert_eq!(rotor.rotate(NOW + T + 1), Err(CustodyError::FailClosedIssuance));
+        assert_eq!(
+            rotor.rotate(NOW + T + 1),
+            Err(CustodyError::FailClosedIssuance)
+        );
         assert!(signer.current(NOW + T + 1).is_none());
     }
 

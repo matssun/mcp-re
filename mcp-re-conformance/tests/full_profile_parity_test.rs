@@ -141,7 +141,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -157,8 +158,16 @@ fn rar_material() -> impl Fn(&ArtifactBinding) -> Option<Vec<u8>> {
 
 fn signed_request(block: &HttpRequestEvidenceBlock, nonce: &str) -> (HttpRequest, RequestEvidence) {
     let mut req = base_request();
-    let ev = sign_request_full(&mut req, block, &client_key(), "client-key-1", CREATED, EXPIRES, nonce)
-        .expect("full sign");
+    let ev = sign_request_full(
+        &mut req,
+        block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("full sign");
     (req, ev)
 }
 
@@ -183,7 +192,8 @@ impl ReplayCache for DurableCache {
         nonce: &str,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        self.0.check_and_insert(signer, audience, nonce, expires_at_unix)
+        self.0
+            .check_and_insert(signer, audience, nonce, expires_at_unix)
     }
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable
@@ -210,8 +220,14 @@ fn full_exchange_activates_all_blocks() {
     // Request body block is active: audience + block surfaced by verification.
     let verified = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW)
         .expect("full request verifies");
-    assert!(verified.request_block.is_some(), "request body block must be active");
-    assert_eq!(verified.audience_hash.as_deref(), Some(audience().audience_hash()).as_deref());
+    assert!(
+        verified.request_block.is_some(),
+        "request body block must be active"
+    );
+    assert_eq!(
+        verified.audience_hash.as_deref(),
+        Some(audience().audience_hash()).as_deref()
+    );
 
     // Dispatcher drives replay + continuation over the verified evidence.
     let cache = strict_cache();
@@ -225,10 +241,23 @@ fn full_exchange_activates_all_blocks() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(&mut rsp, &req, &ev, &server_identity(), &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("full response sign");
-    let rv = verify_response_full(&rsp, &req, &verified, &resolver(), NOW).expect("full response verifies");
-    assert_eq!(rv.bound_request_evidence, rv.body_request_evidence, "response binds request evidence");
+    sign_response_full(
+        &mut rsp,
+        &req,
+        &ev,
+        &server_identity(),
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("full response sign");
+    let rv = verify_response_full(&rsp, &req, &verified, &resolver(), NOW)
+        .expect("full response verifies");
+    assert_eq!(
+        rv.bound_request_evidence, rv.body_request_evidence,
+        "response binds request evidence"
+    );
     assert_eq!(rv.server_signer.as_ref().unwrap().keyid, "server-key-1");
 }
 
@@ -241,7 +270,8 @@ fn body_tamper_fails_in_integrated_path() {
     // Flip a byte of the covered content after signing.
     let last = req.body.len() - 1;
     req.body[last] ^= 0x01;
-    let err = verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW).unwrap_err();
+    let err =
+        verify_request_full(&req, &audience(), &rar_material(), &resolver(), NOW).unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.digest_mismatch");
 }
 
@@ -258,16 +288,34 @@ fn response_splice_fails_in_integrated_path() {
     // differs from req_a's and the cryptographic floor (not just the body-evidence
     // comparison) rejects the splice.
     let mut req_b = base_request();
-    req_b.body = br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
-    let ev_b = sign_request_full(&mut req_b, &block, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-b")
-        .expect("sign b");
+    req_b.body =
+        br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    let ev_b = sign_request_full(
+        &mut req_b,
+        &block,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-b",
+    )
+    .expect("sign b");
     let mut rsp_b = HttpResponse {
         status: 200,
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(&mut rsp_b, &req_b, &ev_b, &server_identity(), &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("sign resp b");
+    sign_response_full(
+        &mut rsp_b,
+        &req_b,
+        &ev_b,
+        &server_identity(),
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign resp b");
 
     // Splice rsp_b onto req_a: the ;req cryptographic floor rejects.
     let err = verify_response_full(&rsp_b, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
@@ -293,8 +341,17 @@ fn response_evidence_mismatch_emits_request_binding_mismatch() {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: response_body(),
     };
-    sign_response_full(&mut rsp, &req_a, &ev_b, &server_identity(), &server_key(), "server-key-1", CREATED, EXPIRES)
-        .expect("sign");
+    sign_response_full(
+        &mut rsp,
+        &req_a,
+        &ev_b,
+        &server_identity(),
+        &server_key(),
+        "server-key-1",
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign");
     let err = verify_response_full(&rsp, &req_a, &verified_a, &resolver(), NOW).unwrap_err();
     assert_eq!(err.wire_code(), "mcp-re.request_binding_mismatch");
 }
@@ -347,7 +404,10 @@ fn continuation_mismatch_fails_in_integrated_path() {
         ..matching_ctx()
     };
     let err = dispatch_request(&verified, &cache, Some(bad_ctx), &strict_cfg()).unwrap_err();
-    assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
+    assert_eq!(
+        err,
+        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    );
     assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
 }
 

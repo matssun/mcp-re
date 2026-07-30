@@ -454,7 +454,11 @@ mod tests {
         cache.resolve("did:host", "key-1").expect("active");
         assert!(channel.drain_pending().is_empty());
         cache.resolve("did:host", "key-1").expect("cache hit");
-        assert_eq!(inner.calls(), 1, "no spurious re-resolve with an empty channel");
+        assert_eq!(
+            inner.calls(),
+            1,
+            "no spurious re-resolve with an empty channel"
+        );
     }
 
     #[test]
@@ -467,7 +471,9 @@ mod tests {
 
         cache.resolve("did:host", "key-1").expect("active cached");
         channel.push_revocation("did:host", "key-2");
-        cache.resolve("did:host", "key-1").expect("key-1 still a cache hit");
+        cache
+            .resolve("did:host", "key-1")
+            .expect("key-1 still a cache hit");
         assert_eq!(inner.calls(), 1, "an unrelated push does not evict key-1");
     }
 }

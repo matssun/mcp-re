@@ -210,7 +210,11 @@ mod tests {
             "Tier 2 sees a store revocation immediately on the next request"
         );
         // The inner store was consulted on BOTH requests (no positive caching).
-        assert_eq!(inner.calls(), 2, "Tier 2 round-trips the store every request");
+        assert_eq!(
+            inner.calls(),
+            2,
+            "Tier 2 round-trips the store every request"
+        );
     }
 
     #[test]

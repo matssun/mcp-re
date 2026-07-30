@@ -140,7 +140,9 @@ impl VerifierPolicy {
             }
         }
         if !(0..=Self::MAX_CLOCK_SKEW_BOUND).contains(&max_clock_skew) {
-            return Err(HttpProfileError::MalformedEvidence("clock skew out of bounds"));
+            return Err(HttpProfileError::MalformedEvidence(
+                "clock skew out of bounds",
+            ));
         }
         Ok(VerifierPolicy {
             algorithms: resolved,
@@ -152,7 +154,10 @@ impl VerifierPolicy {
 
     /// Attach an MCP transport/version contract (§4.1), enforced after signature
     /// verification against covered headers and the protected body.
-    pub fn with_mcp_transport(mut self, transport: crate::mcp_transport::McpTransportPolicy) -> Self {
+    pub fn with_mcp_transport(
+        mut self,
+        transport: crate::mcp_transport::McpTransportPolicy,
+    ) -> Self {
         self.mcp_transport = Some(transport);
         self
     }
@@ -181,10 +186,7 @@ impl VerifierPolicy {
     /// Narrow (or widen) the accepted signature-validity window. A non-positive value
     /// is refused: it would reject every message and reads as a misconfiguration
     /// rather than a policy.
-    pub fn with_max_signature_validity(
-        mut self,
-        secs: i64,
-    ) -> Result<Self, HttpProfileError> {
+    pub fn with_max_signature_validity(mut self, secs: i64) -> Result<Self, HttpProfileError> {
         if secs <= 0 {
             return Err(HttpProfileError::MalformedEvidence(
                 "max signature validity must be positive",
@@ -236,7 +238,9 @@ mod tests {
 
         for bad in [0, -1, -3600] {
             assert!(
-                VerifierPolicy::default().with_max_signature_validity(bad).is_err(),
+                VerifierPolicy::default()
+                    .with_max_signature_validity(bad)
+                    .is_err(),
                 "a non-positive ceiling rejects every message and must be refused"
             );
         }
@@ -246,8 +250,15 @@ mod tests {
     #[test]
     fn default_is_ed25519_only_with_bounded_skew() {
         let p = VerifierPolicy::default();
-        assert_eq!(p.accepted_algorithm("ed25519"), Some(ProfileAlgorithm::Ed25519));
-        assert_eq!(p.accepted_algorithm("Ed25519"), None, "the profile token is lowercase");
+        assert_eq!(
+            p.accepted_algorithm("ed25519"),
+            Some(ProfileAlgorithm::Ed25519)
+        );
+        assert_eq!(
+            p.accepted_algorithm("Ed25519"),
+            None,
+            "the profile token is lowercase"
+        );
         assert_eq!(p.max_clock_skew(), VerifierPolicy::DEFAULT_MAX_CLOCK_SKEW);
     }
 
@@ -286,6 +297,9 @@ mod tests {
         let p = VerifierPolicy::new(&["ed25519"], 30).expect("valid");
         assert_eq!(p.accepted_algorithm("ed25519").unwrap().token(), "ed25519");
         assert_eq!(p.accepted_algorithm("ml-dsa-65"), None);
-        assert!(VerifierPolicy::new(&["ed25519", "ed25519"], 30).is_ok(), "duplicates collapse");
+        assert!(
+            VerifierPolicy::new(&["ed25519", "ed25519"], 30).is_ok(),
+            "duplicates collapse"
+        );
     }
 }

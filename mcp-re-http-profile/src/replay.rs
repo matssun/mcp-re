@@ -147,11 +147,7 @@ mod tests {
         ];
         for (name, mutate) in variants {
             let cache = InMemoryReplayCache::new(0);
-            assert_eq!(
-                admit(&cache, &key()),
-                ReplayDecision::Fresh,
-                "{name}: seed"
-            );
+            assert_eq!(admit(&cache, &key()), ReplayDecision::Fresh, "{name}: seed");
             let mut other = key();
             mutate(&mut other);
             assert_eq!(

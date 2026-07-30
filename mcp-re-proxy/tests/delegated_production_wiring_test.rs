@@ -85,21 +85,36 @@ fn audience() -> AudienceTuple {
 /// files. A durable replay selection satisfies the parse-time unsafe-config checks.
 fn delegated_config() -> mcp_re_proxy::cli::Config {
     let args: Vec<String> = [
-        "--bind", "127.0.0.1:8443",
-        "--audience", AUDIENCE,
-        "--server-signer", "did:example:server",
-        "--server-key-id", ROOT_KID,
-        "--signing-key-seed", "/dev/null",
-        "--tls-cert", "/dev/null",
-        "--tls-key", "/dev/null",
-        "--client-ca", "/dev/null",
-        "--trust", "/dev/null",
-        "--inner-http-url", "http://127.0.0.1:9",
-        "--target-uri", TARGET,
-        "--route", "a",
-        "--replay-cache", "file",
-        "--replay-path", "/tmp/mcp-re-delegated-prod-test-replay",
-        "--delegated-trust-epoch", EPOCH,
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        AUDIENCE,
+        "--server-signer",
+        "did:example:server",
+        "--server-key-id",
+        ROOT_KID,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        TARGET,
+        "--route",
+        "a",
+        "--replay-cache",
+        "file",
+        "--replay-path",
+        "/tmp/mcp-re-delegated-prod-test-replay",
+        "--delegated-trust-epoch",
+        EPOCH,
     ]
     .iter()
     .map(|s| s.to_string())
@@ -159,7 +174,10 @@ fn build_proxy(
         actor_resolver(),
         expected_audience,
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         canned_inner(),
         300,
         Arc::clone(&wiring.signer),
@@ -184,7 +202,7 @@ fn signed_request_at(
             ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let mut req = HttpRequest {
         method: "POST".into(),
@@ -193,21 +211,37 @@ fn signed_request_at(
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
-    let evidence =
-        sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, created, expires, nonce)
-            .expect("client signs RFC 9421 request");
+    let evidence = sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        created,
+        expires,
+        nonce,
+    )
+    .expect("client signs RFC 9421 request");
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified =
-        verify_request_full(&req, &audience(), &no_material, &move |k: &str, s| r(k, s), verify_now)
-            .expect("client's own request verifies (for response binding)");
+    let verified = verify_request_full(
+        &req,
+        &audience(),
+        &no_material,
+        &move |k: &str, s| r(k, s),
+        verify_now,
+    )
+    .expect("client's own request verifies (for response binding)");
     (req, evidence, verified)
 }
 
 /// A request whose freshness window is centered on `at` (±100s).
-fn signed_request(nonce: &str, at: i64) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
+fn signed_request(
+    nonce: &str,
+    at: i64,
+) -> (HttpRequest, RequestEvidence, VerifiedHttpRequestEvidence) {
     signed_request_at(nonce, at - 100, at + 200, at)
 }
 
@@ -249,7 +283,9 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
 
     // Startup issuance (the binary does this before serving; fail closed if it errors).
     // key1 exp = NOW + TTL.
-    rotor.rotate(NOW).expect("startup: initial delegated key issued");
+    rotor
+        .rotate(NOW)
+        .expect("startup: initial delegated key issued");
 
     // --- success: a delegated-signed response verifies via the attestation chain ---
     let mut first_delegated_kid: Option<String> = None;
@@ -259,7 +295,9 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         assert_eq!(served.status, 200, "delegated-required request served");
         let resp = http_response(served);
         assert!(
-            String::from_utf8(resp.body.clone()).unwrap().contains("server_delegation"),
+            String::from_utf8(resp.body.clone())
+                .unwrap()
+                .contains("server_delegation"),
             "response carries the inline delegation credential"
         );
         let r = resolver();
@@ -285,7 +323,11 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     }
     let first_delegated_kid = first_delegated_kid.expect("the success loop ran");
     // Zero root ops on the request path: the root was touched ONLY at issuance.
-    assert_eq!(rotor.root_invocations(), 1, "root issuer off the request path");
+    assert_eq!(
+        rotor.root_invocations(),
+        1,
+        "root issuer off the request path"
+    );
 
     // --- bound rejection: a replay is rejected with a request-bound receipt --------
     let (req, _ev, verified_req) = signed_request("nonce-replay", NOW);
@@ -294,7 +336,9 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     assert_eq!(served.status, 409, "replay rejected");
     let resp = http_response(served);
     assert!(
-        String::from_utf8(resp.body.clone()).unwrap().contains("server_delegation"),
+        String::from_utf8(resp.body.clone())
+            .unwrap()
+            .contains("server_delegation"),
         "the rejection carries the inline delegation credential"
     );
     let r = resolver();
@@ -313,10 +357,17 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
     // The rotor wakes at key1.exp - overlap; rotate there → key2 (exp = ROT + TTL).
     let rot = NOW + TTL - OVERLAP + 10;
     rotor.rotate(rot).expect("rotation mints a successor");
-    assert_eq!(rotor.root_invocations(), 2, "one more root op for the successor");
+    assert_eq!(
+        rotor.root_invocations(),
+        2,
+        "one more root op for the successor"
+    );
     let (req, _ev, verified_req) = signed_request("nonce-after-rotate", rot);
     let served = proxy.handle(served_of(&req), rot).await;
-    assert_eq!(served.status, 200, "serving continues under the successor key");
+    assert_eq!(
+        served.status, 200,
+        "serving continues under the successor key"
+    );
     let resp = http_response(served);
     let r = resolver();
     let verified = verify_delegated_response_full(
@@ -359,7 +410,10 @@ async fn delegated_required_wiring_serves_verifies_and_rotates() {
         "fail-closed emits the frozen unavailable token, unsigned"
     );
     assert!(
-        !served.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
+        !served
+            .headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("signature-input")),
         "the fail-closed error is unsigned"
     );
 }

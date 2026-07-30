@@ -21,7 +21,6 @@
 //! silent "allow". The L1 is a pure optimization: an L1 miss or eviction only ever
 //! costs an authoritative L2 round-trip, never a false `Fresh`.
 
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -376,7 +375,10 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
             // Authoritative L2 — the ONLY source of Fresh. On any decision the key is
             // now present in L2, so cache it in L1 for future fast-reject. On an L2
             // error, fail closed and record NOTHING (the key's presence is unknown).
-            let decision = self.l2.atomic_insert_if_absent(key, expires_at_unix, now_unix).await?;
+            let decision = self
+                .l2
+                .atomic_insert_if_absent(key, expires_at_unix, now_unix)
+                .await?;
             self.l1_record(key);
             Ok(decision)
         })
@@ -402,11 +404,17 @@ mod tests {
         let store = InMemoryAsyncAtomicReplayStore::new();
         block(async {
             assert_eq!(
-                store.atomic_insert_if_absent("nonce-1", 100, 0).await.unwrap(),
+                store
+                    .atomic_insert_if_absent("nonce-1", 100, 0)
+                    .await
+                    .unwrap(),
                 ReplayDecision::Fresh
             );
             assert_eq!(
-                store.atomic_insert_if_absent("nonce-1", 100, 0).await.unwrap(),
+                store
+                    .atomic_insert_if_absent("nonce-1", 100, 0)
+                    .await
+                    .unwrap(),
                 ReplayDecision::Replay
             );
         });
@@ -480,7 +488,10 @@ mod tests {
             // A known replay is still reported as one at the ceiling: refusing to GROW
             // must not turn a known replay into an unknown.
             assert_eq!(
-                store.atomic_insert_if_absent("nonce-0", 9_000, 0).await.unwrap(),
+                store
+                    .atomic_insert_if_absent("nonce-0", 9_000, 0)
+                    .await
+                    .unwrap(),
                 ReplayDecision::Replay
             );
         });
@@ -492,14 +503,32 @@ mod tests {
         let l1 = L1FastRejectStore::with_capacity(InMemoryAsyncAtomicReplayStore::new(), 2);
         block(async {
             // First sight is authoritative Fresh (from L2); the repeat is an L1 hit.
-            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Fresh);
-            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Replay);
+            assert_eq!(
+                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                ReplayDecision::Fresh
+            );
+            assert_eq!(
+                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                ReplayDecision::Replay
+            );
             // Fill past capacity: 'a' is evicted from L1, but L2 still remembers it,
             // so a re-check is Replay (never a false Fresh — the load-bearing invariant).
-            assert_eq!(l1.atomic_insert_if_absent("b", 100, 0).await.unwrap(), ReplayDecision::Fresh);
-            assert_eq!(l1.atomic_insert_if_absent("c", 100, 0).await.unwrap(), ReplayDecision::Fresh);
-            assert_eq!(l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(), ReplayDecision::Replay);
+            assert_eq!(
+                l1.atomic_insert_if_absent("b", 100, 0).await.unwrap(),
+                ReplayDecision::Fresh
+            );
+            assert_eq!(
+                l1.atomic_insert_if_absent("c", 100, 0).await.unwrap(),
+                ReplayDecision::Fresh
+            );
+            assert_eq!(
+                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                ReplayDecision::Replay
+            );
         });
-        assert_eq!(l1.durability_class(), ReplayDurabilityClass::SingleProcessReference);
+        assert_eq!(
+            l1.durability_class(),
+            ReplayDurabilityClass::SingleProcessReference
+        );
     }
 }

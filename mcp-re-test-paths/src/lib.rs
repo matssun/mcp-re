@@ -81,9 +81,8 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcp-re-conformance/tests/object_suite_test.rs")
         }
         // MCPS-50 (#197): the discovery/enforcement conformance corpus source.
-        "MCP_RE_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE" => {
-            workspace_root.join("mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs")
-        }
+        "MCP_RE_SRC_DISCOVERY_ENFORCEMENT_CONFORMANCE" => workspace_root
+            .join("mcp-re-conformance/tests/discovery_enforcement_conformance_test.rs"),
         // ADR-MCPS-034: the two method-transparency proof artifacts.
         "MCP_RE_SRC_METHOD_TRANSPARENCY" => {
             workspace_root.join("mcp-re-conformance/tests/method_transparency_test.rs")
@@ -106,7 +105,9 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         "MCP_RE_SRC_DEV_ENV_KEY_SOURCE" => {
             workspace_root.join("mcp-re-proxy/tests/dev_env_key_source_test.rs")
         }
-        "MCP_RE_SRC_MTLS_CLIENT" => workspace_root.join("mcp-re-transport/tests/mtls_client_test.rs"),
+        "MCP_RE_SRC_MTLS_CLIENT" => {
+            workspace_root.join("mcp-re-transport/tests/mtls_client_test.rs")
+        }
         "MCP_RE_SRC_KEYSET_ADMISSION" => {
             workspace_root.join("mcp-re-proxy/tests/keyset_admission_test.rs")
         }

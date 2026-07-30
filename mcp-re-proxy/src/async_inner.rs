@@ -104,7 +104,10 @@ mod tests {
         ));
         assert_eq!(out["id"], serde_json::json!(7));
         assert_eq!(out["error"]["code"], serde_json::json!(-32603));
-        assert!(out.get("result").is_none(), "an error response carries no result");
+        assert!(
+            out.get("result").is_none(),
+            "an error response carries no result"
+        );
     }
 
     #[test]
@@ -123,7 +126,10 @@ mod tests {
             &b"not json at all"[..],
             &b""[..],
         ] {
-            assert_eq!(parse(&inner_unavailable_response(request))["id"], serde_json::Value::Null);
+            assert_eq!(
+                parse(&inner_unavailable_response(request))["id"],
+                serde_json::Value::Null
+            );
         }
     }
 

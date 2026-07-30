@@ -211,8 +211,8 @@ impl ClientTlsConfig {
         client_key_pem: &[u8],
         server_ca_pem: &[u8],
     ) -> Result<Self, TransportError> {
-        let client_chain = certs_from_pem(client_cert_pem)
-            .map_err(|e| TransportError::BadClientMaterial(e))?;
+        let client_chain =
+            certs_from_pem(client_cert_pem).map_err(|e| TransportError::BadClientMaterial(e))?;
         if client_chain.is_empty() {
             return Err(TransportError::BadClientMaterial(
                 "no client certificate in PEM".to_string(),
@@ -247,9 +247,10 @@ impl ClientTlsConfig {
                 .add(ca)
                 .map_err(|e| TransportError::BadServerCa(e.to_string()))?;
         }
-        let verifier = WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
-            .build()
-            .map_err(|e| TransportError::Verifier(e.to_string()))?;
+        let verifier =
+            WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                .build()
+                .map_err(|e| TransportError::Verifier(e.to_string()))?;
 
         // MCPS-071 fault injection ("test of the tests"). When — and ONLY when —
         // the `fault_accept_any_server` feature is compiled in (off by default,
@@ -436,7 +437,8 @@ impl MtlsClient {
         // Drive the handshake explicitly so server-authentication failure is
         // distinguishable from a later IO error and so we never send the body to
         // an unauthenticated peer.
-        conn.complete_io(&mut handshake_io).map_err(handshake_error)?;
+        conn.complete_io(&mut handshake_io)
+            .map_err(handshake_error)?;
 
         // The handshake is complete; reclaim the bare socket for the request/
         // response phase (which has its OWN aggregate deadline below).
@@ -513,8 +515,7 @@ fn read_response_bounded<R: Read>(
             }
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock
-                    || e.kind() == io::ErrorKind::TimedOut =>
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
             {
                 return Err(TransportError::Timeout(e.to_string()));
             }
@@ -653,20 +654,28 @@ fn io_or_handshake(e: io::Error) -> TransportError {
 /// set them could desynchronise the message boundary from what the peer parses —
 /// the classic request-smuggling shape — so supplying one fails closed rather
 /// than being silently dropped or duplicated.
-const TRANSPORT_OWNED_HEADERS: [&str; 4] = [
-    "host",
-    "content-length",
-    "connection",
-    "transfer-encoding",
-];
+const TRANSPORT_OWNED_HEADERS: [&str; 4] =
+    ["host", "content-length", "connection", "transfer-encoding"];
 
 /// RFC 9110 `tchar`: the characters a method or header name may contain.
 fn is_token_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric()
         || matches!(
             b,
-            b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_'
-                | b'`' | b'|' | b'~'
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
         )
 }
 
@@ -821,7 +830,9 @@ fn parse_status_line(line: &str) -> Result<u16, TransportError> {
         .ok_or_else(|| {
             TransportError::MalformedResponse(format!("unrecognised status line: {line:?}"))
         })?;
-    let code = rest.get(..3).filter(|c| c.bytes().all(|b| b.is_ascii_digit()));
+    let code = rest
+        .get(..3)
+        .filter(|c| c.bytes().all(|b| b.is_ascii_digit()));
     let code = code.ok_or_else(|| {
         TransportError::MalformedResponse(format!("status code is not three digits: {line:?}"))
     })?;
@@ -833,9 +844,8 @@ fn parse_status_line(line: &str) -> Result<u16, TransportError> {
             )))
         }
     }
-    code.parse().map_err(|_| {
-        TransportError::MalformedResponse(format!("unparsable status code: {line:?}"))
-    })
+    code.parse()
+        .map_err(|_| TransportError::MalformedResponse(format!("unparsable status code: {line:?}")))
 }
 
 /// MCPS-071 fault-injection module ("test of the tests"). Compiled ONLY under the
@@ -1097,8 +1107,7 @@ mod framing_tests {
     #[test]
     fn transport_owned_headers_are_refused() {
         for name in ["Host", "content-length", "Connection", "Transfer-Encoding"] {
-            let result =
-                build_request_head("POST", "/", "proxy.internal", &[header(name, "x")], 0);
+            let result = build_request_head("POST", "/", "proxy.internal", &[header(name, "x")], 0);
             assert!(
                 matches!(result, Err(TransportError::InvalidRequest(_))),
                 "{name} must not be caller-settable"

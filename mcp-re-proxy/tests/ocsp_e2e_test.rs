@@ -98,12 +98,12 @@ fn ocsp_env() -> Option<(String, String, String, String)> {
         }
         return None;
     };
-    let issuer = std::env::var("MCP_RE_TEST_OCSP_ISSUER_DER")
-        .unwrap_or_else(|_| "ca.der".to_string());
-    let good = std::env::var("MCP_RE_TEST_OCSP_GOOD_DER")
-        .unwrap_or_else(|_| "good.der".to_string());
-    let revoked = std::env::var("MCP_RE_TEST_OCSP_REVOKED_DER")
-        .unwrap_or_else(|_| "revoked.der".to_string());
+    let issuer =
+        std::env::var("MCP_RE_TEST_OCSP_ISSUER_DER").unwrap_or_else(|_| "ca.der".to_string());
+    let good =
+        std::env::var("MCP_RE_TEST_OCSP_GOOD_DER").unwrap_or_else(|_| "good.der".to_string());
+    let revoked =
+        std::env::var("MCP_RE_TEST_OCSP_REVOKED_DER").unwrap_or_else(|_| "revoked.der".to_string());
     Some((url, issuer, good, revoked))
 }
 
@@ -120,8 +120,8 @@ fn live_responder_reports_good_and_revoked_without_restart() {
 
     let issuer_der = std::fs::read(&issuer_path)
         .unwrap_or_else(|e| panic!("read issuer DER {issuer_path}: {e}"));
-    let good_der = std::fs::read(&good_path)
-        .unwrap_or_else(|e| panic!("read good leaf DER {good_path}: {e}"));
+    let good_der =
+        std::fs::read(&good_path).unwrap_or_else(|e| panic!("read good leaf DER {good_path}: {e}"));
     let revoked_der = std::fs::read(&revoked_path)
         .unwrap_or_else(|e| panic!("read revoked leaf DER {revoked_path}: {e}"));
 

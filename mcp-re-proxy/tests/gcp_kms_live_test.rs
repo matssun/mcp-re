@@ -40,7 +40,9 @@ fn require_env(name: &str) -> String {
 fn gcp_kms_signature_verifies_under_mcp_re_core() {
     let config = GcpKmsConfig {
         key_version_name: require_env("MCP_RE_GCP_KEY_VERSION"),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     if !use_metadata {
@@ -52,7 +54,9 @@ fn gcp_kms_signature_verifies_under_mcp_re_core() {
     let signer = KmsResponseSigner::new(Box::new(backend));
 
     let preimage = b"mcp-re canonical response preimage (live GCP KMS lane)";
-    let sig = signer.sign_response(preimage).expect("Cloud KMS asymmetricSign");
+    let sig = signer
+        .sign_response(preimage)
+        .expect("Cloud KMS asymmetricSign");
     let pubkey = signer.response_public_key().expect("Cloud KMS public key");
 
     verify_ed25519(preimage, &sig, &pubkey)
@@ -107,7 +111,9 @@ fn gcp_kms_non_ed25519_key_rejected() {
     require_env("MCP_RE_GCP_ACCESS_TOKEN");
     let config = GcpKmsConfig {
         key_version_name: rsa_version,
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     // Tighten beyond `is_err()`: the rejection must be the ALGORITHM check
     // (Malformed naming EC_SIGN_ED25519), not an unrelated auth/path failure that

@@ -632,7 +632,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             "--server-signer" => server_signer = Some(value.clone()),
             "--server-key-id" => server_key_id = Some(value.clone()),
             "--max-clock-skew" => {
-                max_clock_skew = value.parse().map_err(|_| "invalid --max-clock-skew".to_string())?;
+                max_clock_skew = value
+                    .parse()
+                    .map_err(|_| "invalid --max-clock-skew".to_string())?;
                 // Bounded at parse time, matching `VerifierPolicy::new`: a negative
                 // skew narrows the window asymmetrically and a skew above the bound
                 // stops the freshness gate being a freshness gate. Refused here so the
@@ -642,7 +644,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 {
                     return Err(format!(
                         "--max-clock-skew must be 0..={} seconds (§5.1 bounded skew), got {}",
-                        mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND, max_clock_skew
+                        mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+                        max_clock_skew
                     ));
                 }
             }
@@ -741,9 +744,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // be a positive whole number of seconds (0 or unparseable is a hard
             // parse error — fail closed rather than silently disable/spin).
             "--client-crl-reload-secs" => {
-                let secs: u64 = value
-                    .parse()
-                    .map_err(|_| "invalid --client-crl-reload-secs (expected a positive integer)".to_string())?;
+                let secs: u64 = value.parse().map_err(|_| {
+                    "invalid --client-crl-reload-secs (expected a positive integer)".to_string()
+                })?;
                 if secs == 0 {
                     return Err("--client-crl-reload-secs must be greater than 0".to_string());
                 }
@@ -768,9 +771,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 client_ocsp = match value.as_str() {
                     "off" => OcspKind::Off,
                     "require" => OcspKind::Require,
-                    other => {
-                        return Err(format!("unknown --client-ocsp '{other}' (off|require)"))
-                    }
+                    other => return Err(format!("unknown --client-ocsp '{other}' (off|require)")),
                 }
             }
             // #4030 AIA-override responder URL. Must be non-empty when present.
@@ -823,10 +824,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     // ADR-MCPS-023 §C (v0.10) Mode C: attested ingress. Strict-
                     // ADMITTED, explicit opt-in; still NOT end_to_end_mtls.
                     "attested-ingress" => BindingKind::AttestedIngress,
-                    other => return Err(format!(
-                        "unknown --transport-binding '{other}' \
+                    other => {
+                        return Err(format!(
+                            "unknown --transport-binding '{other}' \
                          (exact|lb-assertion|attested-ingress)"
-                    )),
+                        ))
+                    }
                 }
             }
             // ADR-MCPS-023 Tier 3 (issue #71): a trusted LB verification key for
@@ -872,7 +875,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // assertion whose `ingress_identity` is not in this set fails closed.
             "--ingress-identity" => {
                 if value.trim().is_empty() {
-                    return Err("--ingress-identity requires a non-empty ingress identity".to_string());
+                    return Err(
+                        "--ingress-identity requires a non-empty ingress identity".to_string()
+                    );
                 }
                 ingress_identities.push(value.clone());
             }
@@ -891,8 +896,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     "cn_legacy" => IdentityPolicy::CnLegacy,
                     other => {
                         return Err(format!(
-                            "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
-                        ))
+                        "unknown --transport-identity-source '{other}' (uri_san|dns_san|cn_legacy)"
+                    ))
                     }
                 }
             }
@@ -900,7 +905,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 // The trusted forwarded header name. Presence of this flag selects
                 // reverse-proxy ingress mode (mTLS terminated upstream).
                 if value.trim().is_empty() {
-                    return Err("--reverse-proxy-identity-header requires a non-empty header name".to_string());
+                    return Err(
+                        "--reverse-proxy-identity-header requires a non-empty header name"
+                            .to_string(),
+                    );
                 }
                 reverse_proxy_identity_header = Some(value.clone());
             }
@@ -923,12 +931,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
             }
             "--max-header-bytes" => {
-                limits.max_header_bytes =
-                    value.parse().map_err(|_| "invalid --max-header-bytes".to_string())?
+                limits.max_header_bytes = value
+                    .parse()
+                    .map_err(|_| "invalid --max-header-bytes".to_string())?
             }
             "--max-body-bytes" => {
-                limits.max_body_bytes =
-                    value.parse().map_err(|_| "invalid --max-body-bytes".to_string())?
+                limits.max_body_bytes = value
+                    .parse()
+                    .map_err(|_| "invalid --max-body-bytes".to_string())?
             }
             "--read-timeout-secs" => {
                 limits.read_timeout = parse_timeout(value, "--read-timeout-secs")?
@@ -944,8 +954,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 limits.write_timeout = parse_timeout(value, "--write-timeout-secs")?
             }
             "--max-connections" => {
-                let n: usize =
-                    value.parse().map_err(|_| "invalid --max-connections".to_string())?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|_| "invalid --max-connections".to_string())?;
                 if n == 0 {
                     return Err("--max-connections must be > 0".to_string());
                 }
@@ -959,15 +970,20 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // async_fleet divides evenly across cores (lock-free: each core enforces
             // only its own share). An explicit per-core ceiling wins.
             "--max-in-flight" => {
-                let n: usize = value.parse().map_err(|_| "invalid --max-in-flight".to_string())?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|_| "invalid --max-in-flight".to_string())?;
                 if n == 0 {
-                    return Err("--max-in-flight must be > 0 (omit the flag for no ceiling)".to_string());
+                    return Err(
+                        "--max-in-flight must be > 0 (omit the flag for no ceiling)".to_string()
+                    );
                 }
                 limits.max_in_flight_requests = Some(n);
             }
             "--max-in-flight-total" => {
-                let n: usize =
-                    value.parse().map_err(|_| "invalid --max-in-flight-total".to_string())?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|_| "invalid --max-in-flight-total".to_string())?;
                 if n == 0 {
                     return Err(
                         "--max-in-flight-total must be > 0 (omit the flag for no ceiling)"
@@ -976,30 +992,26 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
                 max_in_flight_total = Some(n);
             }
-            "--max-client-cert-lifetime" => {
-                max_client_cert_lifetime = parse_cert_lifetime(value)?
-            }
+            "--max-client-cert-lifetime" => max_client_cert_lifetime = parse_cert_lifetime(value)?,
             "--cores" => {
                 // ADR-MCPRE-051 §1: pin the per-core worker count. `0` = auto (one
                 // per core). An explicit count makes the 1→N linear-scaling
                 // benchmark reproducible and can cap workers below the core count.
-                cores = value.parse().map_err(|_| "invalid --cores (expected a non-negative integer; 0 = auto)".to_string())?;
+                cores = value.parse().map_err(|_| {
+                    "invalid --cores (expected a non-negative integer; 0 = auto)".to_string()
+                })?;
             }
             // ADR-MCPRE-052 §4 delegated-key TTL `T` (seconds).
             "--delegated-ttl-secs" => {
-                delegated_ttl_secs = Some(
-                    value
-                        .parse()
-                        .map_err(|_| "invalid --delegated-ttl-secs (expected a positive integer)".to_string())?,
-                );
+                delegated_ttl_secs = Some(value.parse().map_err(|_| {
+                    "invalid --delegated-ttl-secs (expected a positive integer)".to_string()
+                })?);
             }
             // ADR-MCPRE-052 §4 rotation-overlap window `O` (seconds; 0 < O < T).
             "--delegated-overlap-secs" => {
-                delegated_overlap_secs = Some(
-                    value
-                        .parse()
-                        .map_err(|_| "invalid --delegated-overlap-secs (expected a positive integer)".to_string())?,
-                );
+                delegated_overlap_secs = Some(value.parse().map_err(|_| {
+                    "invalid --delegated-overlap-secs (expected a positive integer)".to_string()
+                })?);
             }
             // ADR-MCPRE-052 §7 trust epoch minted into every credential (the hard
             // gate). Required under delegated-required; coordinated with verifiers.
@@ -1030,7 +1042,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         i += 2;
     }
 
-    let require = |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
+    let require =
+        |opt: Option<String>, name: &str| opt.ok_or_else(|| format!("missing required {name}"));
     if replay == ReplayKind::File && replay_path.is_none() {
         return Err("--replay-cache file requires --replay-path".to_string());
     }
@@ -1073,14 +1086,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // A `--cpstore-etcd-endpoint` set for any non-LINEARIZABLE configuration would
     // silently do nothing (a false belief that a CP store is in force), so reject it
     // (fail closed) — mirrors the dangling `--ocsp-responder-url` / KMS-TLS guards.
-    if cpstore_etcd_endpoint.is_some()
-        && !(replay == ReplayKind::Shared && tier_is_linearizable)
-    {
-        return Err(
-            "--cpstore-etcd-endpoint has no effect without \
+    if cpstore_etcd_endpoint.is_some() && !(replay == ReplayKind::Shared && tier_is_linearizable) {
+        return Err("--cpstore-etcd-endpoint has no effect without \
              --replay-cache shared --replay-durability-tier linearizable"
-                .to_string(),
-        );
+            .to_string());
     }
     // EnvKeySource is a dev/CI-only downgrade and is compiled in ONLY under the
     // `dev_env_key_source` feature; a production build cannot even parse
@@ -1114,9 +1123,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // other source would silently do nothing (a false belief that the TLS key is
     // token-resident), so reject it (fail closed).
     if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
-        return Err(
-            "--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string(),
-        );
+        return Err("--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string());
     }
     // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
     // selected (credentials come from AWS_* env vars; the endpoint is optional).
@@ -1136,17 +1143,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // would silently do nothing (a false belief that the TLS key is KMS-resident),
     // so reject it (fail closed) — mirrors the `--pkcs11-tls-key-label` guard.
     if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
-        return Err(
-            "--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string(),
-        );
+        return Err("--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string());
     }
     // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
     if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
-        return Err(
-            "--key-source gcp-kms requires --gcp-kms-key-version \
+        return Err("--key-source gcp-kms requires --gcp-kms-key-version \
              <projects/.../cryptoKeyVersions/N>"
-                .to_string(),
-        );
+            .to_string());
     }
     // #61: the TLS-key-version selects the SEPARATE Cloud KMS key version that
     // custodies the TLS key. It only has meaning for the GCP KMS source; a dangling
@@ -1204,8 +1207,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
     if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
         return Err(
-            "--ingress-lb-key has no effect without --transport-binding lb-assertion"
-                .to_string(),
+            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
         );
     }
     // (b) `lb-assertion` binding with NO trusted LB key can never verify any
@@ -1352,8 +1354,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if client_ocsp != OcspKind::Require {
         if ocsp_responder_url.is_some() {
             return Err(
-                "--ocsp-responder-url has no effect without --client-ocsp require"
-                    .to_string(),
+                "--ocsp-responder-url has no effect without --client-ocsp require".to_string(),
             );
         }
     }
@@ -1763,9 +1764,7 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // quorum/durability strength is enforced by the block above; here we only
     // reject the node-local KINDS, which is exactly what the `ReplayKind` seam
     // (not the injected cache's coarse durability CLASS) can distinguish.
-    if config.fleet
-        && (config.replay == ReplayKind::Memory || config.replay == ReplayKind::File)
-    {
+    if config.fleet && (config.replay == ReplayKind::Memory || config.replay == ReplayKind::File) {
         violations.push(format!(
             "--fleet requires a shared replay cache: --replay-cache {} is node-local, so a \
              request replayed to a peer verifier during the acceptance window would not be seen \
@@ -1900,9 +1899,8 @@ pub fn read_pkcs11_pin(path: &str) -> Result<SecretString, KeyError> {
             )));
         }
     }
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}"))
-    })?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| KeyError::NotFound(format!("--pkcs11-pin-file {path} cannot be read: {e}")))?;
     let pin = SecretString::new(raw.trim_end());
     if pin.expose().is_empty() {
         return Err(KeyError::NotFound(format!(
@@ -1953,9 +1951,9 @@ fn parse_cert_lifetime(value: &str) -> Result<Option<Duration>, String> {
             None => (value.strip_suffix('s').unwrap_or(value), 1),
         },
     };
-    let n: u64 = digits
-        .parse()
-        .map_err(|_| format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)"))?;
+    let n: u64 = digits.parse().map_err(|_| {
+        format!("invalid --max-client-cert-lifetime '{value}' (e.g. 1h, 30m, 3600, none)")
+    })?;
     Ok(if n == 0 {
         None
     } else {
@@ -2016,9 +2014,10 @@ pub fn build_attested_ingress_binding(
         IdentityPolicy::DnsSan => crate::transport::IdentitySource::DnsSan,
         IdentityPolicy::CnLegacy => crate::transport::IdentitySource::CommonName,
     };
-    let audience = config.ingress_audience.as_deref().ok_or(
-        "internal error: attested-ingress binding selected but no --ingress-audience set",
-    )?;
+    let audience = config
+        .ingress_audience
+        .as_deref()
+        .ok_or("internal error: attested-ingress binding selected but no --ingress-audience set")?;
     let mut binding = crate::transport::LbAssertionV2Binding::new(source, audience);
     for (key_id, key_b64) in &config.ingress_attestor_keys {
         let key = VerificationKey::from_b64url(key_b64).map_err(|_| {
@@ -2070,8 +2069,9 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
         #[cfg(feature = "pkcs11_keysource")]
         KeySourceKind::Pkcs11 => {
             let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
-                opt.clone()
-                    .ok_or_else(|| KeyError::NotFound(format!("--key-source pkcs11 requires {flag}")))
+                opt.clone().ok_or_else(|| {
+                    KeyError::NotFound(format!("--key-source pkcs11 requires {flag}"))
+                })
             };
             let module = require(&config.pkcs11_module, "--pkcs11-module")?;
             // Read the User PIN here, at the one point it is used, so it exists for as
@@ -2111,8 +2111,9 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
         #[cfg(feature = "aws_kms_keysource")]
         KeySourceKind::AwsKms => {
             let require = |opt: &Option<String>, flag: &str| -> Result<String, KeyError> {
-                opt.clone()
-                    .ok_or_else(|| KeyError::NotFound(format!("--key-source aws-kms requires {flag}")))
+                opt.clone().ok_or_else(|| {
+                    KeyError::NotFound(format!("--key-source aws-kms requires {flag}"))
+                })
             };
             let region = require(&config.aws_kms_region, "--aws-kms-region")?;
             let kms_config = crate::aws_kms_keysource::AwsKmsConfig {
@@ -2168,7 +2169,9 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
         #[cfg(feature = "gcp_kms_keysource")]
         KeySourceKind::GcpKms => {
             let key_version = config.gcp_kms_key_version.clone().ok_or_else(|| {
-                KeyError::NotFound("--key-source gcp-kms requires --gcp-kms-key-version".to_string())
+                KeyError::NotFound(
+                    "--key-source gcp-kms requires --gcp-kms-key-version".to_string(),
+                )
             })?;
             let kms_config = crate::gcp_kms_keysource::GcpKmsConfig {
                 key_version_name: key_version,
@@ -2277,15 +2280,18 @@ pub fn build_shared_replay_cache(
         ReplayDurabilityTier::RedisWaitQuorum { quorum, timeout_ms } => {
             store.with_wait_quorum(*quorum, *timeout_ms)
         }
-        ReplayDurabilityTier::RedisAsyncBounded
-        | ReplayDurabilityTier::SingleStoreFailClosed => store,
+        ReplayDurabilityTier::RedisAsyncBounded | ReplayDurabilityTier::SingleStoreFailClosed => {
+            store
+        }
         ReplayDurabilityTier::Linearizable => {
-            return Err("LINEARIZABLE durability tier requires a CP/linearizable store \
+            return Err(
+                "LINEARIZABLE durability tier requires a CP/linearizable store \
                         (the etcd backend); the Redis backend cannot provide a \
                         linearizable guarantee. Use redis-async, \
                         redis-wait-quorum:<quorum>:<timeout_ms>, or \
                         single-store-fail-closed."
-                .to_string());
+                    .to_string(),
+            );
         }
     };
     Ok(Box::new(crate::shared_replay::SharedReplayCache::new(
@@ -2305,12 +2311,20 @@ pub fn build_shared_replay_cache(
     write_timeout: Option<Duration>,
     tier: &crate::replay_tier::ReplayDurabilityTier,
 ) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (replay_redis_url, max_clock_skew, read_timeout, write_timeout, tier);
-    Err("shared replay cache backend is not yet available in this build (the Redis \
+    let _ = (
+        replay_redis_url,
+        max_clock_skew,
+        read_timeout,
+        write_timeout,
+        tier,
+    );
+    Err(
+        "shared replay cache backend is not yet available in this build (the Redis \
          adapter is behind the non-default redis_replay feature; the etcd \
          LINEARIZABLE backend is behind cpstore_etcd); use --replay-cache file for \
          single-node durability"
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Build the CP / LINEARIZABLE replay cache selected by
@@ -2369,12 +2383,19 @@ pub fn build_cpstore_replay_cache(
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
 ) -> Result<Box<dyn mcp_re_core::ReplayCache + Send + Sync>, String> {
-    let _ = (cpstore_etcd_endpoint, max_clock_skew, read_timeout, write_timeout);
-    Err("LINEARIZABLE durability tier needs the cpstore_etcd feature, which is not \
+    let _ = (
+        cpstore_etcd_endpoint,
+        max_clock_skew,
+        read_timeout,
+        write_timeout,
+    );
+    Err(
+        "LINEARIZABLE durability tier needs the cpstore_etcd feature, which is not \
          available in this build (rebuild with --features cpstore_etcd); the \
          LINEARIZABLE claim is forbidden without the CP/etcd backend and is NEVER \
          downgraded to Redis or in-memory"
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
@@ -2391,12 +2412,20 @@ pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, Verificat
     let mut out = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in array {
-        let signer = entry["signer"].as_str().ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"].as_str().ok_or("trust entry missing key_id")?;
+        let signer = entry["signer"]
+            .as_str()
+            .ok_or("trust entry missing signer")?;
+        let key_id = entry["key_id"]
+            .as_str()
+            .ok_or("trust entry missing key_id")?;
         if !seen.insert(key_id.to_string()) {
-            return Err(format!("trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"));
+            return Err(format!(
+                "trust file: duplicate key_id {key_id} (RFC 9421 resolver keys on key_id)"
+            ));
         }
-        let pk = entry["public_key"].as_str().ok_or("trust entry missing public_key")?;
+        let pk = entry["public_key"]
+            .as_str()
+            .ok_or("trust entry missing public_key")?;
         let key = VerificationKey::from_b64url(pk)
             .map_err(|_| format!("trust entry {signer}#{key_id}: invalid public_key"))?;
         out.push((signer.to_string(), key_id.to_string(), key));
@@ -2415,8 +2444,12 @@ pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     // applied elsewhere.
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for entry in array {
-        let signer = entry["signer"].as_str().ok_or("trust entry missing signer")?;
-        let key_id = entry["key_id"].as_str().ok_or("trust entry missing key_id")?;
+        let signer = entry["signer"]
+            .as_str()
+            .ok_or("trust entry missing signer")?;
+        let key_id = entry["key_id"]
+            .as_str()
+            .ok_or("trust entry missing key_id")?;
         if !seen.insert((signer.to_string(), key_id.to_string())) {
             return Err(format!(
                 "trust file: duplicate entry for {signer}#{key_id} (last-write-wins \
@@ -2474,14 +2507,9 @@ pub fn build_revocation_resolver_with_channel(
 ) -> Box<dyn mcp_re_core::TrustResolver + Send + Sync> {
     let negative_ttl_secs = crate::trust_cache::DEFAULT_NEGATIVE_TTL_SECS;
     match tier {
-        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => {
-            Box::new(crate::trust_cache::BoundedTrustCache::new(
-                base,
-                *t_secs,
-                negative_ttl_secs,
-                clock,
-            ))
-        }
+        crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => Box::new(
+            crate::trust_cache::BoundedTrustCache::new(base, *t_secs, negative_ttl_secs, clock),
+        ),
         crate::revocation_tier::RevocationTier::Live => {
             Box::new(crate::live_trust::LiveTrustResolver::new(base))
         }
@@ -2490,9 +2518,8 @@ pub fn build_revocation_resolver_with_channel(
             // source) when present; otherwise the in-process reference channel is
             // inert and the cache runs at its bounded-`T` fallback (the honest
             // guarantee when no push backend is wired).
-            let channel = push_channel.unwrap_or_else(|| {
-                Box::new(crate::push_trust::InMemoryInvalidationChannel::new())
-            });
+            let channel = push_channel
+                .unwrap_or_else(|| Box::new(crate::push_trust::InMemoryInvalidationChannel::new()));
             Box::new(crate::push_trust::PushInvalidationTrustCache::new(
                 base,
                 *t_secs,
@@ -2554,8 +2581,8 @@ pub fn load_client_crls(
 pub fn load_revocation_list(paths: &[String]) -> Result<Vec<String>, String> {
     let mut ids: Vec<String> = Vec::new();
     for path in paths {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("revocation list {path}: {e}"))?;
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("revocation list {path}: {e}"))?;
         let before = ids.len();
         for line in text.lines() {
             let id = line.trim();
@@ -2606,10 +2633,10 @@ mod tests {
     use super::AuthzKind;
     use super::BindingKind;
     use super::IdentityPolicy;
-    use super::ReverseProxyHeaderFormat;
     use super::KeySourceKind;
     use super::OcspKind;
     use super::ReplayKind;
+    use super::ReverseProxyHeaderFormat;
     use mcp_re_core::SigningKey;
     use mcp_re_core::TrustResolver;
     use std::sync::Arc;
@@ -2698,23 +2725,35 @@ mod tests {
 
     fn minimal() -> Vec<String> {
         args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--signing-key-seed", "/seed",
-            "--tls-cert", "/cert",
-            "--tls-key", "/key",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--signing-key-seed",
+            "/seed",
+            "--tls-cert",
+            "/cert",
+            "--tls-key",
+            "/key",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
             // The RFC 9421 @target-uri this deployment binds to. Required and
             // non-empty: an empty target makes the audience/target conjunction a
             // tautology, so it is refused at parse.
-            "--target-uri", "https://mcp.example.com/mcp",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
             // Delegated-signing is the only response mode; the trust epoch is required
             // for every config (ADR-MCPRE-052 §7).
-            "--delegated-trust-epoch", "epoch-min",
+            "--delegated-trust-epoch",
+            "epoch-min",
         ])
     }
 
@@ -2723,17 +2762,28 @@ mod tests {
     /// error).
     fn minimal_without_inner_command() -> Vec<String> {
         args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--signing-key-seed", "/seed",
-            "--tls-cert", "/cert",
-            "--tls-key", "/key",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--target-uri", "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch", "epoch-min",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--signing-key-seed",
+            "/seed",
+            "--tls-cert",
+            "/cert",
+            "--tls-key",
+            "/key",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
         ])
     }
 
@@ -2761,7 +2811,13 @@ mod tests {
 
     #[test]
     fn max_clock_skew_is_accepted_across_the_whole_bound() {
-        for skew in [0, 1, 30, 299, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND] {
+        for skew in [
+            0,
+            1,
+            30,
+            299,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        ] {
             let mut a = minimal_durable();
             a.push("--max-clock-skew".into());
             a.push(skew.to_string());
@@ -2789,9 +2845,7 @@ mod tests {
     /// `"" == ""` on every request. Refused at parse rather than served.
     #[test]
     fn empty_or_missing_target_uri_is_refused() {
-        let base: Vec<String> = minimal_durable()
-            .into_iter()
-            .collect::<Vec<_>>();
+        let base: Vec<String> = minimal_durable().into_iter().collect::<Vec<_>>();
         // The helper supplies --target-uri; drop it to prove it is required.
         let mut without = Vec::new();
         let mut skip = false;
@@ -2824,11 +2878,17 @@ mod tests {
     #[test]
     fn admission_ceilings_are_configurable_and_default_to_unbounded() {
         let config = parse_args(&minimal_durable()).expect("parse");
-        assert_eq!(config.limits.max_in_flight_requests, None, "unbounded by default");
+        assert_eq!(
+            config.limits.max_in_flight_requests, None,
+            "unbounded by default"
+        );
         assert_eq!(config.max_in_flight_total, None);
 
         let mut a = minimal_durable();
-        a.splice(0..0, args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]));
+        a.splice(
+            0..0,
+            args(&["--max-in-flight", "32", "--max-in-flight-total", "256"]),
+        );
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_in_flight_requests, Some(32));
         assert_eq!(config.max_in_flight_total, Some(256));
@@ -2854,7 +2914,10 @@ mod tests {
         a.push("--mcp-protocol-version".into());
         a.push("2025-06-18".into());
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.mcp_protocol_versions, vec!["2026-07-28", "2025-06-18"]);
+        assert_eq!(
+            config.mcp_protocol_versions,
+            vec!["2026-07-28", "2025-06-18"]
+        );
     }
 
     // --- ADR-MCPRE-052 (MCPRE-122) delegated-signing (the only mode) -----------
@@ -2876,17 +2939,30 @@ mod tests {
         // A config WITHOUT the required trust epoch (built by hand, since `minimal()`
         // now includes it) fails closed — the epoch is mandatory for every deployment.
         let a = args(&[
-            "--replay-cache", "file", "--replay-path", "/replay",
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--signing-key-seed", "/seed",
-            "--tls-cert", "/cert",
-            "--tls-key", "/key",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/replay",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--signing-key-seed",
+            "/seed",
+            "--tls-cert",
+            "/cert",
+            "--tls-key",
+            "/key",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
         ]);
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--delegated-trust-epoch"), "got: {err}");
@@ -2896,8 +2972,10 @@ mod tests {
     fn delegated_overlap_not_less_than_ttl_is_rejected() {
         let mut a = minimal_durable();
         a.extend(args(&[
-            "--delegated-ttl-secs", "100",
-            "--delegated-overlap-secs", "100",
+            "--delegated-ttl-secs",
+            "100",
+            "--delegated-overlap-secs",
+            "100",
         ]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("0 < overlap < ttl"), "got: {err}");
@@ -2949,12 +3027,7 @@ mod tests {
         // Only lifetimes at/below the strict ceiling parse (the proxy always runs
         // strict): `none`/`0` (disabled) and over-ceiling values are hard errors,
         // covered by the strict_rejects_* cert-lifetime tests.
-        let cases = [
-            ("30m", 1800),
-            ("60m", 3600),
-            ("90s", 90),
-            ("45", 45),
-        ];
+        let cases = [("30m", 1800), ("60m", 3600), ("90s", 90), ("45", 45)];
         for (input, expected) in cases {
             let mut a = minimal_durable();
             a.splice(0..0, args(&["--max-client-cert-lifetime", input]));
@@ -2971,7 +3044,9 @@ mod tests {
     fn unparseable_client_cert_lifetime_errors() {
         let mut a = minimal();
         a.splice(0..0, args(&["--max-client-cert-lifetime", "soon"]));
-        assert!(parse_args(&a).unwrap_err().contains("max-client-cert-lifetime"));
+        assert!(parse_args(&a)
+            .unwrap_err()
+            .contains("max-client-cert-lifetime"));
     }
 
     #[test]
@@ -2980,11 +3055,17 @@ mod tests {
         // deprecated cn_legacy is always rejected (strict_rejects_cn_legacy_...).
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "uri_san"]));
-        assert_eq!(parse_args(&a).expect("parse").identity_source, IdentityPolicy::UriSan);
+        assert_eq!(
+            parse_args(&a).expect("parse").identity_source,
+            IdentityPolicy::UriSan
+        );
 
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--transport-identity-source", "dns_san"]));
-        assert_eq!(parse_args(&a).expect("parse").identity_source, IdentityPolicy::DnsSan);
+        assert_eq!(
+            parse_args(&a).expect("parse").identity_source,
+            IdentityPolicy::DnsSan
+        );
     }
 
     #[test]
@@ -3003,7 +3084,10 @@ mod tests {
         // The default format is irrelevant when the header is unset, but it is
         // the safer XFCC (structured) shape rather than the trust-the-whole-value
         // plain shape.
-        assert_eq!(config.reverse_proxy_header_format, ReverseProxyHeaderFormat::Xfcc);
+        assert_eq!(
+            config.reverse_proxy_header_format,
+            ReverseProxyHeaderFormat::Xfcc
+        );
     }
 
     // NOTE: reverse-proxy identity-header ingress is a spoofable posture that the
@@ -3017,9 +3101,12 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--reverse-proxy-identity-header", "x-client-identity",
-                "--reverse-proxy-header-format", "der",
-                "--max-client-cert-lifetime", "none",
+                "--reverse-proxy-identity-header",
+                "x-client-identity",
+                "--reverse-proxy-header-format",
+                "der",
+                "--max-client-cert-lifetime",
+                "none",
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("der"));
@@ -3063,7 +3150,10 @@ mod tests {
         // A dangling `--ingress-lb-key` (without selecting the binding) would
         // silently do nothing — an illusion of request-bound ingress. Reject it.
         let mut a = minimal();
-        a.splice(0..0, args(&["--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64())]));
+        a.splice(
+            0..0,
+            args(&["--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64())]),
+        );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("has no effect"), "got: {err}");
     }
@@ -3075,8 +3165,10 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", "no-colon-here",
+                "--transport-binding",
+                "lb-assertion",
+                "--ingress-lb-key",
+                "no-colon-here",
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("keyid"));
@@ -3090,8 +3182,10 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", "lb-1:not-a-real-key",
+                "--transport-binding",
+                "lb-assertion",
+                "--ingress-lb-key",
+                "lb-1:not-a-real-key",
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("Ed25519 public key"));
@@ -3103,9 +3197,12 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
-                "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
+                "--transport-binding",
+                "lb-assertion",
+                "--ingress-lb-key",
+                &format!("lb-1:{}", lb_pub_b64()),
+                "--ingress-lb-key",
+                &format!("lb-1:{}", lb_pub_b64()),
             ]),
         );
         assert!(parse_args(&a).unwrap_err().contains("duplicate"));
@@ -3120,8 +3217,10 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "lb-assertion",
-                "--ingress-lb-key", &format!("lb-1:{}", lb_pub_b64()),
+                "--transport-binding",
+                "lb-assertion",
+                "--ingress-lb-key",
+                &format!("lb-1:{}", lb_pub_b64()),
             ]),
         );
         let err = parse_args(&a).unwrap_err();
@@ -3146,10 +3245,14 @@ mod tests {
     /// audience + pinned-mTLS ack). Prepend `--strict`/etc. as needed.
     fn attested_ingress_flags() -> Vec<String> {
         args(&[
-            "--transport-binding", "attested-ingress",
-            "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
-            "--ingress-identity", "spiffe://example.org/ingress-1",
-            "--ingress-audience", "did:example:server-1",
+            "--transport-binding",
+            "attested-ingress",
+            "--ingress-attestor-key",
+            &format!("attestor-1:{}", attestor_pub_b64()),
+            "--ingress-identity",
+            "spiffe://example.org/ingress-1",
+            "--ingress-audience",
+            "did:example:server-1",
             "--ingress-pinned-mtls",
         ])
     }
@@ -3162,11 +3265,19 @@ mod tests {
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.binding, BindingKind::AttestedIngress);
         assert_eq!(config.ingress_attestor_keys.len(), 1);
-        assert_eq!(config.ingress_identities, vec!["spiffe://example.org/ingress-1"]);
-        assert_eq!(config.ingress_audience.as_deref(), Some("did:example:server-1"));
+        assert_eq!(
+            config.ingress_identities,
+            vec!["spiffe://example.org/ingress-1"]
+        );
+        assert_eq!(
+            config.ingress_audience.as_deref(),
+            Some("did:example:server-1")
+        );
         assert!(config.ingress_pinned_mtls);
         // The verifier builds.
-        assert!(build_attested_ingress_binding(&config).expect("build").is_some());
+        assert!(build_attested_ingress_binding(&config)
+            .expect("build")
+            .is_some());
     }
 
     #[test]
@@ -3192,10 +3303,14 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "attested-ingress",
-                "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
-                "--ingress-identity", "spiffe://example.org/ingress-1",
-                "--ingress-audience", "did:example:server-1",
+                "--transport-binding",
+                "attested-ingress",
+                "--ingress-attestor-key",
+                &format!("attestor-1:{}", attestor_pub_b64()),
+                "--ingress-identity",
+                "spiffe://example.org/ingress-1",
+                "--ingress-audience",
+                "did:example:server-1",
                 // no --ingress-pinned-mtls
             ]),
         );
@@ -3207,25 +3322,33 @@ mod tests {
     fn attested_ingress_requires_attestor_key_identity_and_audience() {
         // Each missing piece fails closed with a precise error.
         let base = args(&[
-            "--transport-binding", "attested-ingress",
+            "--transport-binding",
+            "attested-ingress",
             "--ingress-pinned-mtls",
         ]);
         // Missing attestor key.
         let mut a = minimal();
         a.splice(0..0, base.clone());
-        assert!(parse_args(&a).unwrap_err().contains("--ingress-attestor-key"));
+        assert!(parse_args(&a)
+            .unwrap_err()
+            .contains("--ingress-attestor-key"));
         // Missing ingress identity.
         let mut a = minimal();
         let mut f = base.clone();
-        f.extend(args(&["--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64())]));
+        f.extend(args(&[
+            "--ingress-attestor-key",
+            &format!("attestor-1:{}", attestor_pub_b64()),
+        ]));
         a.splice(0..0, f);
         assert!(parse_args(&a).unwrap_err().contains("--ingress-identity"));
         // Missing audience.
         let mut a = minimal();
         let mut f = base.clone();
         f.extend(args(&[
-            "--ingress-attestor-key", &format!("attestor-1:{}", attestor_pub_b64()),
-            "--ingress-identity", "spiffe://example.org/ingress-1",
+            "--ingress-attestor-key",
+            &format!("attestor-1:{}", attestor_pub_b64()),
+            "--ingress-identity",
+            "spiffe://example.org/ingress-1",
         ]));
         a.splice(0..0, f);
         assert!(parse_args(&a).unwrap_err().contains("--ingress-audience"));
@@ -3235,8 +3358,14 @@ mod tests {
     fn attested_ingress_flags_dangle_without_binding() {
         // Each Mode-C flag has no effect outside attested-ingress → reject.
         for (flag, val) in [
-            ("--ingress-attestor-key", format!("attestor-1:{}", attestor_pub_b64())),
-            ("--ingress-identity", "spiffe://example.org/ingress-1".to_string()),
+            (
+                "--ingress-attestor-key",
+                format!("attestor-1:{}", attestor_pub_b64()),
+            ),
+            (
+                "--ingress-identity",
+                "spiffe://example.org/ingress-1".to_string(),
+            ),
             ("--ingress-audience", "did:example:server-1".to_string()),
         ] {
             let mut a = minimal();
@@ -3256,10 +3385,14 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--transport-binding", "attested-ingress",
-                "--ingress-attestor-key", "attestor-1:not-a-real-key",
-                "--ingress-identity", "spiffe://example.org/ingress-1",
-                "--ingress-audience", "did:example:server-1",
+                "--transport-binding",
+                "attested-ingress",
+                "--ingress-attestor-key",
+                "attestor-1:not-a-real-key",
+                "--ingress-identity",
+                "spiffe://example.org/ingress-1",
+                "--ingress-audience",
+                "did:example:server-1",
                 "--ingress-pinned-mtls",
             ]),
         );
@@ -3275,8 +3408,10 @@ mod tests {
         // A reverse-proxy header disables the local client-cert path, so acknowledge
         // that first — otherwise the cert-lifetime guard fires before the Mode-C one.
         flags.extend(args(&[
-            "--reverse-proxy-identity-header", "x-forwarded-client-cert",
-            "--max-client-cert-lifetime", "none",
+            "--reverse-proxy-identity-header",
+            "x-forwarded-client-cert",
+            "--max-client-cert-lifetime",
+            "none",
         ]));
         a.splice(0..0, flags);
         let err = parse_args(&a).unwrap_err();
@@ -3289,7 +3424,10 @@ mod tests {
         // reverse-proxy mode (mTLS terminated upstream) while it is still in force
         // is contradictory and must fail closed at parse time.
         let mut a = minimal();
-        a.splice(0..0, args(&["--reverse-proxy-identity-header", "x-forwarded-client-cert"]));
+        a.splice(
+            0..0,
+            args(&["--reverse-proxy-identity-header", "x-forwarded-client-cert"]),
+        );
         let err = parse_args(&a).unwrap_err();
         assert!(
             err.contains("reverse-proxy-identity-header")
@@ -3321,11 +3459,16 @@ mod tests {
     /// The four pkcs11 flags that `--key-source pkcs11` requires.
     fn pkcs11_flags() -> Vec<String> {
         args(&[
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
-            "--pkcs11-token-label", "mcp-re-test",
-            "--pkcs11-key-label", "mcp-re-response-signing",
+            "--key-source",
+            "pkcs11",
+            "--pkcs11-module",
+            "/opt/pkcs11/libmock_pkcs11.so",
+            "--pkcs11-pin-file",
+            "/etc/mcp-re/pkcs11-pin",
+            "--pkcs11-token-label",
+            "mcp-re-test",
+            "--pkcs11-key-label",
+            "mcp-re-response-signing",
         ])
     }
 
@@ -3364,12 +3507,18 @@ mod tests {
         ] {
             let mut flags = pkcs11_flags();
             // Remove the flag and its value.
-            let idx = flags.iter().position(|f| f == missing).expect("flag present");
+            let idx = flags
+                .iter()
+                .position(|f| f == missing)
+                .expect("flag present");
             flags.drain(idx..idx + 2);
             let mut a = minimal();
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
-            assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
+            assert!(
+                err.contains(missing),
+                "expected error to name {missing}; got: {err}"
+            );
         }
     }
 
@@ -3384,7 +3533,10 @@ mod tests {
         a.extend(args(&["--pkcs11-pin", "1234"]));
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--pkcs11-pin is refused"), "got: {err}");
-        assert!(err.contains("--pkcs11-pin-file"), "the replacement must be named: {err}");
+        assert!(
+            err.contains("--pkcs11-pin-file"),
+            "the replacement must be named: {err}"
+        );
         assert!(
             err.contains("compromised"),
             "the operator must be told the PIN already leaked: {err}"
@@ -3401,9 +3553,19 @@ mod tests {
         // field at all, but the type that carries it in transit must not leak either.
         let secret = super::SecretString::new("hunter2");
         let rendered = format!("{secret:?}");
-        assert!(!rendered.contains("hunter2"), "Debug leaked the value: {rendered}");
-        assert!(!rendered.contains('7'), "Debug leaked the length: {rendered}");
-        assert_eq!(secret.expose(), "hunter2", "the value is still retrievable on purpose");
+        assert!(
+            !rendered.contains("hunter2"),
+            "Debug leaked the value: {rendered}"
+        );
+        assert!(
+            !rendered.contains('7'),
+            "Debug leaked the length: {rendered}"
+        );
+        assert_eq!(
+            secret.expose(),
+            "hunter2",
+            "the value is still retrievable on purpose"
+        );
     }
 
     #[test]
@@ -3427,7 +3589,11 @@ mod tests {
         }
 
         let pin = super::read_pkcs11_pin(ok_path.to_str().unwrap()).expect("reads");
-        assert_eq!(pin.expose(), "1234", "the trailing newline is not part of the PIN");
+        assert_eq!(
+            pin.expose(),
+            "1234",
+            "the trailing newline is not part of the PIN"
+        );
         assert!(
             super::read_pkcs11_pin(empty_path.to_str().unwrap()).is_err(),
             "an empty PIN file must not yield a blank PIN"
@@ -3453,7 +3619,10 @@ mod tests {
             message.contains("group/world-accessible"),
             "expected a permission refusal, got: {message}"
         );
-        assert!(!message.contains("1234"), "the refusal must not echo the PIN: {message}");
+        assert!(
+            !message.contains("1234"),
+            "the refusal must not echo the PIN: {message}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -3482,7 +3651,8 @@ mod tests {
             .expect("default build must refuse a pkcs11 key source");
         let rendered = err.to_string();
         assert!(
-            rendered.contains("pkcs11_keysource") && rendered.contains("not available in this build"),
+            rendered.contains("pkcs11_keysource")
+                && rendered.contains("not available in this build"),
             "expected a clear feature-rebuild message; got: {rendered}"
         );
     }
@@ -3498,15 +3668,19 @@ mod tests {
     // ADR-MCPS-028 §B/§C: cloud-KMS key-source CLI wiring.
     fn aws_kms_flags() -> Vec<String> {
         args(&[
-            "--key-source", "aws-kms",
-            "--aws-kms-region", "us-east-1",
-            "--aws-kms-key-id", "alias/mcp-re-response-signing",
+            "--key-source",
+            "aws-kms",
+            "--aws-kms-region",
+            "us-east-1",
+            "--aws-kms-key-id",
+            "alias/mcp-re-response-signing",
         ])
     }
 
     fn gcp_kms_flags() -> Vec<String> {
         args(&[
-            "--key-source", "gcp-kms",
+            "--key-source",
+            "gcp-kms",
             "--gcp-kms-key-version",
             "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
         ])
@@ -3529,12 +3703,18 @@ mod tests {
     fn aws_kms_requires_region_and_key_id() {
         for missing in ["--aws-kms-region", "--aws-kms-key-id"] {
             let mut flags = aws_kms_flags();
-            let idx = flags.iter().position(|f| f == missing).expect("flag present");
+            let idx = flags
+                .iter()
+                .position(|f| f == missing)
+                .expect("flag present");
             flags.drain(idx..idx + 2);
             let mut a = minimal();
             a.splice(0..0, flags);
             let err = parse_args(&a).unwrap_err();
-            assert!(err.contains(missing), "expected error to name {missing}; got: {err}");
+            assert!(
+                err.contains(missing),
+                "expected error to name {missing}; got: {err}"
+            );
         }
     }
 
@@ -3545,19 +3725,32 @@ mod tests {
     /// appended last so proxy flags land before the inner tail.
     fn aws_kms_lead_no_tls_key() -> Vec<String> {
         args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "aws-kms",
-            "--aws-kms-region", "us-east-1",
-            "--aws-kms-key-id", "alias/mcp-re-response-signing",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--target-uri", "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch", "epoch-min",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--key-source",
+            "aws-kms",
+            "--aws-kms-region",
+            "us-east-1",
+            "--aws-kms-key-id",
+            "alias/mcp-re-response-signing",
+            "--signing-key-seed",
+            "/unused-seed",
+            "--tls-cert",
+            "/cert",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
         ])
     }
 
@@ -3643,19 +3836,30 @@ mod tests {
     /// `--inner-command` appended last so proxy flags land before the inner tail.
     fn gcp_kms_lead_no_tls_key() -> Vec<String> {
         args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "gcp-kms",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--key-source",
+            "gcp-kms",
             "--gcp-kms-key-version",
             "projects/p/locations/global/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--target-uri", "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch", "epoch-min",
+            "--signing-key-seed",
+            "/unused-seed",
+            "--tls-cert",
+            "/cert",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
         ])
     }
 
@@ -3730,7 +3934,10 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, args(&["--key-source", "azure-kv"]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("aws-kms") && err.contains("gcp-kms"), "got: {err}");
+        assert!(
+            err.contains("aws-kms") && err.contains("gcp-kms"),
+            "got: {err}"
+        );
     }
 
     // Default build (no cloud-KMS feature): the flags PARSE so the message is
@@ -3775,10 +3982,14 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--max-body-bytes", "1024",
-                "--max-connections", "8",
-                "--read-timeout-secs", "45",
-                "--request-deadline-secs", "12",
+                "--max-body-bytes",
+                "1024",
+                "--max-connections",
+                "8",
+                "--read-timeout-secs",
+                "45",
+                "--request-deadline-secs",
+                "12",
             ]),
         );
         let config = parse_args(&a).expect("parse");
@@ -3828,20 +4039,35 @@ mod tests {
     #[test]
     fn a_non_exporting_custody_does_not_require_a_signing_key_seed() {
         for (source, extra) in [
-            ("gcp-kms", vec!["--gcp-kms-key-version", "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"]),
-            ("aws-kms", vec!["--aws-kms-region", "us-east-1", "--aws-kms-key-id", "alias/k"]),
+            (
+                "gcp-kms",
+                vec![
+                    "--gcp-kms-key-version",
+                    "projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+                ],
+            ),
+            (
+                "aws-kms",
+                vec![
+                    "--aws-kms-region",
+                    "us-east-1",
+                    "--aws-kms-key-id",
+                    "alias/k",
+                ],
+            ),
         ] {
-            let mut a: Vec<String> = minimal_durable()
-                .into_iter()
-                .collect::<Vec<_>>();
+            let mut a: Vec<String> = minimal_durable().into_iter().collect::<Vec<_>>();
             // Drop `--signing-key-seed /seed` from the baseline args.
-            let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+            let i = a
+                .iter()
+                .position(|s| s == "--signing-key-seed")
+                .expect("baseline has it");
             a.drain(i..i + 2);
             a.splice(0..0, args(&["--key-source", source]));
             a.splice(0..0, args(&extra));
 
-            let config = parse_args(&a)
-                .unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
+            let config =
+                parse_args(&a).unwrap_or_else(|e| panic!("{source} must not require a seed: {e}"));
             assert_eq!(
                 config.signing_key_seed, "",
                 "{source}: an unsupplied seed stays empty rather than naming a phantom file"
@@ -3853,7 +4079,10 @@ mod tests {
     fn file_custody_still_requires_a_signing_key_seed() {
         // Where the seed IS read, omitting it must still fail closed at parse.
         let mut a = minimal_durable();
-        let i = a.iter().position(|s| s == "--signing-key-seed").expect("baseline has it");
+        let i = a
+            .iter()
+            .position(|s| s == "--signing-key-seed")
+            .expect("baseline has it");
         a.drain(i..i + 2);
         let err = parse_args(&a).expect_err("file custody reads the seed, so it is required");
         assert!(err.contains("--signing-key-seed"), "got: {err}");
@@ -3954,7 +4183,12 @@ mod tests {
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&["--replay-cache", "shared", "--replay-durability-tier", "redis-async"]),
+            args(&[
+                "--replay-cache",
+                "shared",
+                "--replay-durability-tier",
+                "redis-async",
+            ]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-redis-url"), "got: {err}");
@@ -3966,7 +4200,12 @@ mod tests {
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&["--replay-cache", "shared", "--replay-redis-url", "redis://127.0.0.1:6379"]),
+            args(&[
+                "--replay-cache",
+                "shared",
+                "--replay-redis-url",
+                "redis://127.0.0.1:6379",
+            ]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("--replay-durability-tier"), "got: {err}");
@@ -4274,7 +4513,10 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--client-crl", "/etc/mcp-re/clients.crl"]));
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.client_crl_paths, vec!["/etc/mcp-re/clients.crl".to_string()]);
+        assert_eq!(
+            config.client_crl_paths,
+            vec!["/etc/mcp-re/clients.crl".to_string()]
+        );
     }
 
     #[test]
@@ -4284,7 +4526,11 @@ mod tests {
         let config = parse_args(&a).expect("parse");
         assert_eq!(
             config.client_crl_paths,
-            vec!["/a.crl".to_string(), "/b.crl".to_string(), "/c.crl".to_string()]
+            vec![
+                "/a.crl".to_string(),
+                "/b.crl".to_string(),
+                "/c.crl".to_string()
+            ]
         );
     }
 
@@ -4319,14 +4565,22 @@ mod tests {
         a.extend(durable_replay());
         a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp"]));
         let config = parse_args(&a).expect("parse");
-        assert_eq!(config.cores, 0, "unset --cores means auto (0 = one worker per core)");
+        assert_eq!(
+            config.cores, 0,
+            "unset --cores means auto (0 = one worker per core)"
+        );
     }
 
     #[test]
     fn parses_explicit_cores() {
         let mut a = minimal_without_inner_command();
         a.extend(durable_replay());
-        a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp", "--cores", "4"]));
+        a.extend(args(&[
+            "--inner-http-url",
+            "http://10.0.0.1:8080/mcp",
+            "--cores",
+            "4",
+        ]));
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.cores, 4);
     }
@@ -4334,9 +4588,17 @@ mod tests {
     #[test]
     fn non_numeric_cores_fails_closed() {
         let mut a = minimal_without_inner_command();
-        a.extend(args(&["--inner-http-url", "http://10.0.0.1:8080/mcp", "--cores", "many"]));
+        a.extend(args(&[
+            "--inner-http-url",
+            "http://10.0.0.1:8080/mcp",
+            "--cores",
+            "many",
+        ]));
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--cores"), "non-numeric --cores must fail with a --cores message; got: {err}");
+        assert!(
+            err.contains("--cores"),
+            "non-numeric --cores must fail with a --cores message; got: {err}"
+        );
     }
 
     #[test]
@@ -4404,7 +4666,12 @@ mod tests {
         let mut a = minimal();
         a.splice(
             0..0,
-            args(&["--authz", "reference", "--revocation-list", "/etc/mcp-re/revoked"]),
+            args(&[
+                "--authz",
+                "reference",
+                "--revocation-list",
+                "/etc/mcp-re/revoked",
+            ]),
         );
         let err = parse_args(&a).unwrap_err();
         assert!(
@@ -4425,13 +4692,18 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(
             ids,
-            vec!["grant-1".to_string(), "grant-2".to_string(), "grant-3".to_string()]
+            vec![
+                "grant-1".to_string(),
+                "grant-2".to_string(),
+                "grant-3".to_string()
+            ]
         );
     }
 
     #[test]
     fn load_revocation_list_missing_file_fails_closed() {
-        let path = std::env::temp_dir().join(format!("mcp_re_rev_absent_{}.txt", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("mcp_re_rev_absent_{}.txt", std::process::id()));
         std::fs::remove_file(&path).ok();
         let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
         assert!(err.contains("revocation list"), "got: {err}");
@@ -4439,7 +4711,8 @@ mod tests {
 
     #[test]
     fn load_revocation_list_with_no_ids_fails_closed() {
-        let path = std::env::temp_dir().join(format!("mcp_re_rev_empty_{}.txt", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("mcp_re_rev_empty_{}.txt", std::process::id()));
         std::fs::write(&path, "# only comments\n\n   \n").expect("write");
         let err = load_revocation_list(&[path.to_string_lossy().into_owned()]).unwrap_err();
         std::fs::remove_file(&path).ok();
@@ -4474,8 +4747,8 @@ mod tests {
     fn missing_client_crl_file_fails_closed() {
         // A configured-but-unreadable CRL path is a hard error, never a silently
         // skipped revocation check.
-        let err = super::load_client_crls(&["/no/such/MCPS3839_MISSING.crl".to_string()])
-            .unwrap_err();
+        let err =
+            super::load_client_crls(&["/no/such/MCPS3839_MISSING.crl".to_string()]).unwrap_err();
         assert!(err.contains("MCPS3839_MISSING"), "got: {err}");
     }
 
@@ -4520,7 +4793,10 @@ mod tests {
         // happen is the defect this refusal removes.
         let err = parse_args(&a).expect_err("--client-ocsp require must fail closed");
         assert!(err.contains("cannot be honored"), "got: {err}");
-        assert!(err.contains("--client-crl"), "the error must name the working alternative; got: {err}");
+        assert!(
+            err.contains("--client-crl"),
+            "the error must name the working alternative; got: {err}"
+        );
     }
 
     #[test]
@@ -4547,7 +4823,10 @@ mod tests {
     #[test]
     fn empty_responder_url_errors() {
         let mut a = minimal();
-        a.splice(0..0, args(&["--client-ocsp", "require", "--ocsp-responder-url", "   "]));
+        a.splice(
+            0..0,
+            args(&["--client-ocsp", "require", "--ocsp-responder-url", "   "]),
+        );
         let err = parse_args(&a).unwrap_err();
         assert!(err.contains("non-empty URL"), "got: {err}");
     }
@@ -4589,7 +4868,9 @@ mod tests {
 
     #[test]
     fn loads_a_trust_file() {
-        let key = SigningKey::from_seed_bytes(&[1u8; 32]).public_key().to_b64url();
+        let key = SigningKey::from_seed_bytes(&[1u8; 32])
+            .public_key()
+            .to_b64url();
         let json = format!(
             r#"[{{"signer":"did:example:agent-1","key_id":"key-1","public_key":"{key}"}}]"#
         );
@@ -4609,13 +4890,18 @@ mod tests {
         // Audit LOW (ledger `54aadf7b6257f126`): two entries sharing (signer,key_id)
         // but DIFFERENT public_key must fail closed, not silently last-write-wins
         // (a key-substitution primitive via an appended entry).
-        let k1 = SigningKey::from_seed_bytes(&[1u8; 32]).public_key().to_b64url();
-        let k2 = SigningKey::from_seed_bytes(&[2u8; 32]).public_key().to_b64url();
+        let k1 = SigningKey::from_seed_bytes(&[1u8; 32])
+            .public_key()
+            .to_b64url();
+        let k2 = SigningKey::from_seed_bytes(&[2u8; 32])
+            .public_key()
+            .to_b64url();
         let json = format!(
             r#"[{{"signer":"s","key_id":"k","public_key":"{k1}"}},
                 {{"signer":"s","key_id":"k","public_key":"{k2}"}}]"#
         );
-        let err = load_trust(json.as_bytes()).expect_err("duplicate (signer,key_id) must be refused");
+        let err =
+            load_trust(json.as_bytes()).expect_err("duplicate (signer,key_id) must be refused");
         assert!(err.contains("duplicate entry"), "got: {err}");
     }
 
@@ -4623,7 +4909,9 @@ mod tests {
     fn trust_file_duplicate_same_key_is_also_rejected() {
         // Uniform posture: even an exact-duplicate entry is a malformed file, not a
         // silently-tolerated redundancy.
-        let k = SigningKey::from_seed_bytes(&[3u8; 32]).public_key().to_b64url();
+        let k = SigningKey::from_seed_bytes(&[3u8; 32])
+            .public_key()
+            .to_b64url();
         let json = format!(
             r#"[{{"signer":"s","key_id":"k","public_key":"{k}"}},
                 {{"signer":"s","key_id":"k","public_key":"{k}"}}]"#
@@ -4635,8 +4923,12 @@ mod tests {
     fn trust_file_same_signer_distinct_key_ids_is_fine() {
         // The dedup is on the (signer,key_id) PAIR — one signer legitimately holds
         // multiple key ids (rotation), which must still load.
-        let k1 = SigningKey::from_seed_bytes(&[4u8; 32]).public_key().to_b64url();
-        let k2 = SigningKey::from_seed_bytes(&[5u8; 32]).public_key().to_b64url();
+        let k1 = SigningKey::from_seed_bytes(&[4u8; 32])
+            .public_key()
+            .to_b64url();
+        let k2 = SigningKey::from_seed_bytes(&[5u8; 32])
+            .public_key()
+            .to_b64url();
         let json = format!(
             r#"[{{"signer":"s","key_id":"k1","public_key":"{k1}"}},
                 {{"signer":"s","key_id":"k2","public_key":"{k2}"}}]"#
@@ -4772,8 +5064,8 @@ mod tests {
     // verifier. The --fleet rejection must NOT fire here.
     #[test]
     fn single_node_accepts_file_replay_cache() {
-        let config = parse_args(&minimal_durable())
-            .expect("single-node must accept a durable file cache");
+        let config =
+            parse_args(&minimal_durable()).expect("single-node must accept a durable file cache");
         assert!(!config.fleet);
         assert!(
             unsafe_config_violations(&config)
@@ -4819,7 +5111,10 @@ mod tests {
             config.trust_epoch_redis_url.as_deref(),
             Some("redis://127.0.0.1:6379")
         );
-        assert_eq!(config.trust_epoch_key.as_deref(), Some("mcp-re:trust:epoch"));
+        assert_eq!(
+            config.trust_epoch_key.as_deref(),
+            Some("mcp-re:trust:epoch")
+        );
     }
 
     // #90 (ADR-MCPS-014/020): the DEFAULT replay backend is the non-durable
@@ -4972,8 +5267,10 @@ mod tests {
         a.splice(
             0..0,
             args(&[
-                "--max-client-cert-lifetime", "none",
-                "--transport-identity-source", "cn_legacy",
+                "--max-client-cert-lifetime",
+                "none",
+                "--transport-identity-source",
+                "cn_legacy",
             ]),
         );
         let err = parse_args(&a).unwrap_err();
@@ -5006,7 +5303,10 @@ mod tests {
             ]),
         );
         let err = parse_args(&a).unwrap_err();
-        assert!(err.contains("--reverse-proxy-identity-header"), "got: {err}");
+        assert!(
+            err.contains("--reverse-proxy-identity-header"),
+            "got: {err}"
+        );
     }
 
     // M11 — `--transport-binding none` is no longer a selectable value (the only
@@ -5025,12 +5325,30 @@ mod tests {
     fn key_file_mode_predicate_flags_group_and_world_bits() {
         // The pure file-perm predicate used by main.rs's strict key-file check:
         // owner-only (0600) is safe; any group/world bit is insecure.
-        assert!(!super::key_file_mode_is_insecure(0o600), "0600 owner-only is safe");
-        assert!(!super::key_file_mode_is_insecure(0o400), "0400 owner-read is safe");
-        assert!(super::key_file_mode_is_insecure(0o640), "group-readable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o604), "world-readable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o660), "group-writable is insecure");
-        assert!(super::key_file_mode_is_insecure(0o777), "world-everything is insecure");
+        assert!(
+            !super::key_file_mode_is_insecure(0o600),
+            "0600 owner-only is safe"
+        );
+        assert!(
+            !super::key_file_mode_is_insecure(0o400),
+            "0400 owner-read is safe"
+        );
+        assert!(
+            super::key_file_mode_is_insecure(0o640),
+            "group-readable is insecure"
+        );
+        assert!(
+            super::key_file_mode_is_insecure(0o604),
+            "world-readable is insecure"
+        );
+        assert!(
+            super::key_file_mode_is_insecure(0o660),
+            "group-writable is insecure"
+        );
+        assert!(
+            super::key_file_mode_is_insecure(0o777),
+            "world-everything is insecure"
+        );
     }
 
     // ---- C053b: the fsGroup-owned mount posture -------------------------------
@@ -5038,8 +5356,14 @@ mod tests {
     #[test]
     fn the_strict_posture_is_unchanged_by_default() {
         // No opt-in: the 0600/0400 floor behaves exactly as before.
-        assert_eq!(super::key_file_posture_violation(0o600, 1000, false, &[1000]), None);
-        assert_eq!(super::key_file_posture_violation(0o400, 1000, false, &[1000]), None);
+        assert_eq!(
+            super::key_file_posture_violation(0o600, 1000, false, &[1000]),
+            None
+        );
+        assert_eq!(
+            super::key_file_posture_violation(0o400, 1000, false, &[1000]),
+            None
+        );
         assert!(super::key_file_posture_violation(0o440, 1000, false, &[1000]).is_some());
     }
 
@@ -5105,21 +5429,36 @@ mod tests {
     /// plane). Tests append the #59 toggles and then an `--inner-http-url` inner.
     fn pkcs11_lead_no_tls_key() -> Vec<String> {
         args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--key-source", "pkcs11",
-            "--pkcs11-module", "/opt/pkcs11/libmock_pkcs11.so",
-            "--pkcs11-pin-file", "/etc/mcp-re/pkcs11-pin",
-            "--pkcs11-token-label", "mcp-re-test",
-            "--pkcs11-key-label", "mcp-re-response-signing",
-            "--signing-key-seed", "/unused-seed",
-            "--tls-cert", "/cert",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--target-uri", "https://mcp.example.com/mcp",
-            "--delegated-trust-epoch", "epoch-min",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--key-source",
+            "pkcs11",
+            "--pkcs11-module",
+            "/opt/pkcs11/libmock_pkcs11.so",
+            "--pkcs11-pin-file",
+            "/etc/mcp-re/pkcs11-pin",
+            "--pkcs11-token-label",
+            "mcp-re-test",
+            "--pkcs11-key-label",
+            "mcp-re-response-signing",
+            "--signing-key-seed",
+            "/unused-seed",
+            "--tls-cert",
+            "/cert",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
         ])
     }
 
@@ -5167,17 +5506,28 @@ mod tests {
     #[test]
     fn pkcs11_tls_label_without_pkcs11_source_is_rejected() {
         let a = args(&[
-            "--bind", "127.0.0.1:8443",
-            "--audience", "did:example:server-1",
-            "--server-signer", "did:example:server-1",
-            "--server-key-id", "server-key-1",
-            "--signing-key-seed", "/seed",
-            "--tls-cert", "/cert",
-            "--tls-key", "/key",
-            "--client-ca", "/ca",
-            "--trust", "/trust.json",
-            "--pkcs11-tls-key-label", "mcp-re-tls",
-            "--inner-http-url", "http://127.0.0.1:8080/mcp",
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--signing-key-seed",
+            "/seed",
+            "--tls-cert",
+            "/cert",
+            "--tls-key",
+            "/key",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--pkcs11-tls-key-label",
+            "mcp-re-tls",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
         ]);
         let err = parse_args(&a).expect_err("dangling TLS label must be rejected");
         assert!(
@@ -5203,14 +5553,14 @@ mod tests {
     // while Tier 1 (BoundedCache) caches within T. Uses the same ScriptedResolver
     // test-double style as `trust_cache` / `live_trust`.
 
-    use std::sync::atomic::AtomicI64;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering as AtomicOrdering;
-    use mcp_re_core::TrustResolverError;
-    use mcp_re_core::VerificationKey;
     use super::build_revocation_resolver;
     use crate::revocation_tier::RevocationTier;
     use crate::trust_cache::UnixClock;
+    use mcp_re_core::TrustResolverError;
+    use mcp_re_core::VerificationKey;
+    use std::sync::atomic::AtomicI64;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering as AtomicOrdering;
 
     const SEED_A_REV: [u8; 32] = [1u8; 32];
 
@@ -5281,7 +5631,9 @@ mod tests {
         let resolver =
             build_revocation_resolver(&RevocationTier::Live, base_over(inner.clone()), clock);
 
-        resolver.resolve("did:host", "key-1").expect("active resolves");
+        resolver
+            .resolve("did:host", "key-1")
+            .expect("active resolves");
         // Store flips to Revoked; NO clock advance (Live has no propagation window).
         inner.set(Err(TrustResolverError::Revoked));
         assert_eq!(
@@ -5310,7 +5662,9 @@ mod tests {
             clock,
         );
 
-        resolver.resolve("did:host", "key-1").expect("active resolves");
+        resolver
+            .resolve("did:host", "key-1")
+            .expect("active resolves");
         // A store revocation within T is NOT seen — the cached active entry holds.
         inner.set(Err(TrustResolverError::Revoked));
         resolver
@@ -5336,13 +5690,19 @@ mod tests {
             clock,
         );
 
-        resolver.resolve("did:host", "key-1").expect("active resolves");
+        resolver
+            .resolve("did:host", "key-1")
+            .expect("active resolves");
         inner.set(Err(TrustResolverError::Revoked));
         // Within T: still a cache hit (the inert channel delivers no push).
         resolver
             .resolve("did:host", "key-1")
             .expect("within T the bounded-T fallback serves the cached entry");
-        assert_eq!(inner.calls(), 1, "inert-channel Tier 3 is bounded-T (cache hit within T)");
+        assert_eq!(
+            inner.calls(),
+            1,
+            "inert-channel Tier 3 is bounded-T (cache hit within T)"
+        );
         // Past T: the bounded window caps exposure and the revocation is picked up.
         now.store(1000 + 60, AtomicOrdering::SeqCst);
         assert_eq!(
@@ -5365,7 +5725,9 @@ mod tests {
         );
         c.binding = BindingKind::LbAssertion;
         c.ingress_lb_keys = vec![("lb-1".to_string(), lb_pub_b64())];
-        assert!(super::build_lb_assertion_binding(&c).expect("build").is_some());
+        assert!(super::build_lb_assertion_binding(&c)
+            .expect("build")
+            .is_some());
         c.ingress_lb_keys = vec![("lb-x".to_string(), "not-a-key".to_string())];
         assert!(
             super::build_lb_assertion_binding(&c).is_err(),
@@ -5407,11 +5769,19 @@ mod tests {
         assert_eq!(parse_args(&a).expect("parse").authz, AuthzKind::Off);
         // Dropping any required (flag, value) pair fails closed naming the flag.
         for miss in [
-            "--audience", "--server-signer", "--server-key-id", "--tls-cert", "--tls-key",
-            "--client-ca", "--trust",
+            "--audience",
+            "--server-signer",
+            "--server-key-id",
+            "--tls-cert",
+            "--tls-key",
+            "--client-ca",
+            "--trust",
         ] {
             let mut a = minimal_durable();
-            let i = a.iter().position(|x| x == miss).expect("required flag present");
+            let i = a
+                .iter()
+                .position(|x| x == miss)
+                .expect("required flag present");
             a.drain(i..i + 2);
             let e = parse_args(&a).unwrap_err();
             assert!(e.contains(miss), "missing {miss} must be named; got: {e}");

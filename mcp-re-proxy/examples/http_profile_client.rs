@@ -22,11 +22,11 @@ use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
 
-use mcp_re_http_profile::verify_delegated_response_bound_full;
-use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::sign_request_full;
+use mcp_re_http_profile::verify_delegated_response_bound_full;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::DelegationExpectations;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
 use mcp_re_http_profile::HttpResponse;
@@ -86,7 +86,7 @@ fn main() {
             hpp_common::ACCESS_TOKEN.as_bytes(),
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let nonce = format!("nonce-{now}");
     let mut request = HttpRequest {
@@ -94,7 +94,10 @@ fn main() {
         target_uri: target.clone(),
         headers: vec![
             ("Content-Type".into(), "application/json".into()),
-            ("Authorization".into(), format!("Bearer {}", hpp_common::ACCESS_TOKEN)),
+            (
+                "Authorization".into(),
+                format!("Bearer {}", hpp_common::ACCESS_TOKEN),
+            ),
         ],
         body: serde_json::to_vec(&call).expect("serialize call"),
     };
@@ -152,7 +155,11 @@ fn main() {
     }
 
     // --- Leg 2: replay (same signed request, possibly a DIFFERENT replica) --
-    let cross = if post_b == post_a { "" } else { "  [CROSS-REPLICA]" };
+    let cross = if post_b == post_a {
+        ""
+    } else {
+        "  [CROSS-REPLICA]"
+    };
     eprintln!("leg 2  POST {post_b}  (SAME nonce -> replay){cross}");
     let resp2 = post(&agent, &post_b, &request);
     // A DELEGATED rejection receipt is verified through the SAME delegated path as an
@@ -188,7 +195,10 @@ fn main() {
             std::process::exit(1);
         }
         Err(e) => {
-            println!("leg 2  UNEXPECTED: rejection did not verify: {}", e.wire_code());
+            println!(
+                "leg 2  UNEXPECTED: rejection did not verify: {}",
+                e.wire_code()
+            );
             std::process::exit(1);
         }
     }

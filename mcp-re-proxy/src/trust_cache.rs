@@ -233,11 +233,7 @@ impl BoundedTrustCache {
     /// Look up a still-live cache entry. Returns the reconstructed result on a hit
     /// within the window, or `None` if absent/expired. A poisoned cache mutex is an
     /// operational failure (fail closed): surfaced as `Some(Err(Unavailable))`.
-    fn cached(
-        &self,
-        key: &str,
-        now: i64,
-    ) -> Option<Result<VerificationKey, TrustResolverError>> {
+    fn cached(&self, key: &str, now: i64) -> Option<Result<VerificationKey, TrustResolverError>> {
         let cache = match self.cache.lock() {
             Ok(c) => c,
             Err(e) => {
@@ -349,9 +345,12 @@ impl TrustResolver for BoundedTrustCache {
 
         // 3. Cache the answer per ADR-MCPS-021 classification.
         match &result {
-            Ok(verification_key) => {
-                self.store(key, CachedOutcome::Active(verification_key.clone()), now, self.t_secs)
-            }
+            Ok(verification_key) => self.store(
+                key,
+                CachedOutcome::Active(verification_key.clone()),
+                now,
+                self.t_secs,
+            ),
             Err(TrustResolverError::Revoked) => {
                 self.store(key, CachedOutcome::Revoked, now, self.t_secs)
             }
@@ -439,10 +438,7 @@ mod tests {
 
     /// A shared inner resolver wrapped so the cache owns one box while the test
     /// keeps a handle to drive/inspect it.
-    fn cache_over(
-        inner: Arc<ScriptedResolver>,
-        clock: UnixClock,
-    ) -> BoundedTrustCache {
+    fn cache_over(inner: Arc<ScriptedResolver>, clock: UnixClock) -> BoundedTrustCache {
         struct Shared(Arc<ScriptedResolver>);
         impl TrustResolver for Shared {
             fn resolve(
@@ -473,7 +469,11 @@ mod tests {
         // Past T every one of those is dead. The next write triggers the sweep.
         now.store(1000 + T + 1, Ordering::SeqCst);
         let _ = cache.resolve("did:host", "key-live");
-        assert_eq!(cache.len(), 1, "only the entry written after the sweep survives");
+        assert_eq!(
+            cache.len(),
+            1,
+            "only the entry written after the sweep survives"
+        );
     }
 
     #[test]
@@ -519,9 +519,15 @@ mod tests {
         let first = cache.resolve("did:host", "key-1").expect("active resolves");
         assert_eq!(first.to_bytes(), key_from(&SEED_A).to_bytes());
         // A second call within T is served from cache: inner consulted only once.
-        let second = cache.resolve("did:host", "key-1").expect("served from cache");
+        let second = cache
+            .resolve("did:host", "key-1")
+            .expect("served from cache");
         assert_eq!(second.to_bytes(), key_from(&SEED_A).to_bytes());
-        assert_eq!(inner.calls(), 1, "within T the inner resolver is not re-consulted");
+        assert_eq!(
+            inner.calls(),
+            1,
+            "within T the inner resolver is not re-consulted"
+        );
     }
 
     #[test]
@@ -535,9 +541,15 @@ mod tests {
         // up a rotated key.
         inner.set(Ok(key_from(&SEED_B)));
         now.store(1000 + T, Ordering::SeqCst); // exactly at expiry → no longer < expires_at
-        let rotated = cache.resolve("did:host", "key-1").expect("re-resolves past T");
+        let rotated = cache
+            .resolve("did:host", "key-1")
+            .expect("re-resolves past T");
         assert_eq!(rotated.to_bytes(), key_from(&SEED_B).to_bytes());
-        assert_eq!(inner.calls(), 2, "past T the inner resolver is consulted again");
+        assert_eq!(
+            inner.calls(),
+            2,
+            "past T the inner resolver is consulted again"
+        );
     }
 
     #[test]
@@ -584,9 +596,11 @@ mod tests {
 
     #[test]
     fn unavailable_is_not_cached_and_fails_closed() {
-        let inner = Arc::new(ScriptedResolver::new(Err(TrustResolverError::Unavailable {
-            details: "source down".to_string(),
-        })));
+        let inner = Arc::new(ScriptedResolver::new(Err(
+            TrustResolverError::Unavailable {
+                details: "source down".to_string(),
+            },
+        )));
         let (clock, _now) = controllable_clock(1000);
         let cache = cache_over(inner.clone(), clock);
 
@@ -597,7 +611,9 @@ mod tests {
         // Not cached: the next call consults the inner resolver again (no stale
         // "unavailable" decision is served).
         inner.set(Ok(key_from(&SEED_A)));
-        let resolved = cache.resolve("did:host", "key-1").expect("recovers when source returns");
+        let resolved = cache
+            .resolve("did:host", "key-1")
+            .expect("recovers when source returns");
         assert_eq!(resolved.to_bytes(), key_from(&SEED_A).to_bytes());
         assert_eq!(inner.calls(), 2, "Unavailable is never cached");
     }
@@ -619,7 +635,11 @@ mod tests {
             .resolve("did:host", "key-1")
             .expect("within T the cached active state is served despite the outage");
         assert_eq!(served.to_bytes(), key_from(&SEED_A).to_bytes());
-        assert_eq!(inner.calls(), 1, "within T the down source is not consulted");
+        assert_eq!(
+            inner.calls(),
+            1,
+            "within T the down source is not consulted"
+        );
     }
 
     #[test]
@@ -648,9 +668,11 @@ mod tests {
     fn restart_empty_cache_with_source_down_fails_closed() {
         // A fresh process has an empty cache. With the source unreachable it cannot
         // resurrect any trust — it fails closed (no stale-trust resurrection).
-        let inner = Arc::new(ScriptedResolver::new(Err(TrustResolverError::Unavailable {
-            details: "source down at startup".to_string(),
-        })));
+        let inner = Arc::new(ScriptedResolver::new(Err(
+            TrustResolverError::Unavailable {
+                details: "source down at startup".to_string(),
+            },
+        )));
         let (clock, _now) = controllable_clock(1000);
         let cache = cache_over(inner, clock);
 
@@ -721,14 +743,20 @@ mod tests {
 
         // Prime BOTH colliding-under-`#` pairs (the scripted inner returns the same
         // active key for either; what matters is that they occupy DISTINCT entries).
-        cache.resolve("a#b", "c").expect("(\"a#b\",\"c\") active cached");
-        cache.resolve("a", "b#c").expect("(\"a\",\"b#c\") active cached");
+        cache
+            .resolve("a#b", "c")
+            .expect("(\"a#b\",\"c\") active cached");
+        cache
+            .resolve("a", "b#c")
+            .expect("(\"a\",\"b#c\") active cached");
         assert_eq!(inner.calls(), 2, "two distinct pairs → two distinct misses");
 
         // Evicting one pair must report success and NOT touch the other.
         assert!(cache.evict("a#b", "c"), "the first pair's entry is present");
         // The other pair is still cached: a second resolve is a hit (no re-consult).
-        cache.resolve("a", "b#c").expect("the other pair is still cached");
+        cache
+            .resolve("a", "b#c")
+            .expect("the other pair is still cached");
         assert_eq!(
             inner.calls(),
             2,
@@ -755,7 +783,10 @@ mod tests {
         // After prune the entry is gone; a fresh resolve re-consults the inner
         // resolver (proven indirectly: it still returns the active key).
         assert_eq!(
-            cache.resolve("did:host", "key-1").expect("re-resolves").to_bytes(),
+            cache
+                .resolve("did:host", "key-1")
+                .expect("re-resolves")
+                .to_bytes(),
             key_from(&SEED_A).to_bytes()
         );
     }

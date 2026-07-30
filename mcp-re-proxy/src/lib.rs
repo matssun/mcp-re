@@ -69,10 +69,10 @@ pub mod durable_replay;
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.
+pub mod audit_sink;
 #[cfg(feature = "gcp_kms_keysource")]
 pub mod gcp_kms_keysource;
 pub mod key_source;
-pub mod audit_sink;
 pub mod log_sink;
 // Test / embedding helpers that drive the async serving path synchronously
 // (a private current-thread runtime per call). NOT a serving path — the
@@ -151,8 +151,8 @@ pub mod async_serve;
 // MCPRE-113 (ADR-MCPRE-051 §1): the per-core serving fleet — one worker thread per
 // core, each a current-thread tokio runtime with its own SO_REUSEPORT listener +
 // Linux CPU pinning, over one Proxy per core. THE production data plane.
-pub mod async_fleet;
 pub mod app;
+pub mod async_fleet;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
@@ -206,16 +206,16 @@ pub use delegated_tls::DelegatedCertResolver;
 pub use delegated_tls::DelegatedEd25519SigningKey;
 pub use delegated_tls::RawEd25519TlsSigner;
 // ADR-MCPS-028 §C: the GCP Cloud KMS Ed25519 backend (feature-gated).
-#[cfg(feature = "gcp_kms_keysource")]
-pub use gcp_kms_keysource::GcpKmsConfig;
-#[cfg(feature = "gcp_kms_keysource")]
-pub use gcp_kms_keysource::GcpKmsEd25519Backend;
-pub use durable_replay::DurableReplayCache;
 pub use audit_sink::AuditRecord;
 pub use audit_sink::AuditSink;
 pub use audit_sink::CollectingAuditSink;
 pub use audit_sink::NoAuditSink;
 pub use audit_sink::StderrAuditSink;
+pub use durable_replay::DurableReplayCache;
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsConfig;
+#[cfg(feature = "gcp_kms_keysource")]
+pub use gcp_kms_keysource::GcpKmsEd25519Backend;
 pub use log_sink::InnerLogEvent;
 pub use log_sink::InnerLogSink;
 pub use log_sink::StderrLogSink;
@@ -240,24 +240,24 @@ pub use ocsp::OcspChecker;
 #[cfg(feature = "online_ocsp")]
 pub use ocsp::OcspError;
 // Issue #4034: the PKCS#11 key source (feature-gated).
-#[cfg(feature = "pkcs11_keysource")]
-pub use pkcs11_keysource::Pkcs11KeySource;
 pub use http_profile_serve::ActorResolver;
 pub use http_profile_serve::HttpProfileProxy;
+#[cfg(feature = "pkcs11_keysource")]
+pub use pkcs11_keysource::Pkcs11KeySource;
 // Issue #4028: the Redis shared replay backend (feature-gated).
-#[cfg(feature = "cpstore_etcd")]
-pub use etcd_store::EtcdAtomicReplayStore;
-#[cfg(feature = "redis_replay")]
-pub use redis_store::RedisAtomicReplayStore;
 #[cfg(feature = "redis_replay")]
 pub use async_redis_store::RedisAsyncAtomicReplayStore;
+#[cfg(feature = "cpstore_etcd")]
+pub use etcd_store::EtcdAtomicReplayStore;
+pub use live_trust::LiveTrustResolver;
+pub use push_trust::InMemoryInvalidationChannel;
+pub use push_trust::InvalidationChannel;
+pub use push_trust::InvalidationEvent;
+pub use push_trust::PushInvalidationTrustCache;
 #[cfg(feature = "redis_replay")]
-pub use trust_epoch::redis_trust_epoch_source;
-#[cfg(feature = "redis_replay")]
-pub use trust_epoch::RedisEpochReader;
-pub use trust_epoch::EpochReader;
-pub use trust_epoch::TrustEpochSource;
+pub use redis_store::RedisAtomicReplayStore;
 pub use replay_tier::ReplayDurabilityTier;
+pub use revocation_tier::RevocationTier;
 pub use shared_replay::AtomicReplayStore;
 pub use shared_replay::InMemoryAtomicReplayStore;
 pub use shared_replay::ReplayStoreError;
@@ -265,28 +265,24 @@ pub use shared_replay::SharedReplayCache;
 pub use tls::build_server_config_delegated_validated;
 pub use tls::build_server_config_delegated_with_crls;
 pub use tls::extract_identity;
-pub use tls::IdentityStrategy;
 pub use tls::serve;
 pub use tls::serve_once;
 pub use tls::serve_once_with_assertion;
-pub use tls::MCP_INGRESS_ASSERTION_HEADER;
+pub use tls::IdentityStrategy;
 pub use tls::RustlsDirectProvider;
 pub use tls::ServerLimits;
 pub use tls::ServerOptions;
 pub use tls::TlsError;
+pub use tls::MCP_INGRESS_ASSERTION_HEADER;
 pub use transport::validate_asserted_identity_value;
 pub use transport::validate_routing_headers;
 pub use transport::AssertedIdentityRejection;
-pub use transport::RoutingHeaderRejection;
-pub use transport::MCP_METHOD_HEADER;
-pub use transport::MCP_NAME_HEADER;
-pub use transport::MAX_ASSERTED_IDENTITY_LEN;
-pub use transport::ExactMatchBinding;
-pub use transport::IdentityPolicy;
-pub use transport::IdentitySource;
 pub use transport::AttestedCertVerification;
 pub use transport::AttestedIngressVerified;
 pub use transport::AttestedRevocation;
+pub use transport::ExactMatchBinding;
+pub use transport::IdentityPolicy;
+pub use transport::IdentitySource;
 pub use transport::LbAssertion;
 pub use transport::LbAssertionBinding;
 pub use transport::LbAssertionRejection;
@@ -294,18 +290,22 @@ pub use transport::LbAssertionV2;
 pub use transport::LbAssertionV2Binding;
 pub use transport::LbAssertionV2Rejection;
 pub use transport::MappedBinding;
-pub use transport::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
 pub use transport::RequestHeaders;
 pub use transport::ReverseProxyHeaderFormat;
 pub use transport::ReverseProxyMtlsProvider;
-pub use trust_cache::BoundedTrustCache;
-pub use revocation_tier::RevocationTier;
-pub use live_trust::LiveTrustResolver;
-pub use push_trust::InMemoryInvalidationChannel;
-pub use push_trust::InvalidationChannel;
-pub use push_trust::InvalidationEvent;
-pub use push_trust::PushInvalidationTrustCache;
+pub use transport::RoutingHeaderRejection;
 pub use transport::StaticIdentityProvider;
 pub use transport::TransportBindingPolicy;
 pub use transport::TransportBindingProvider;
 pub use transport::TransportIdentity;
+pub use transport::DEFAULT_LB_ASSERTION_MAX_AGE_SECS;
+pub use transport::MAX_ASSERTED_IDENTITY_LEN;
+pub use transport::MCP_METHOD_HEADER;
+pub use transport::MCP_NAME_HEADER;
+pub use trust_cache::BoundedTrustCache;
+#[cfg(feature = "redis_replay")]
+pub use trust_epoch::redis_trust_epoch_source;
+pub use trust_epoch::EpochReader;
+#[cfg(feature = "redis_replay")]
+pub use trust_epoch::RedisEpochReader;
+pub use trust_epoch::TrustEpochSource;

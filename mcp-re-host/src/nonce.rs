@@ -68,7 +68,8 @@ impl NonceSource for SystemNonceSource {
         // considered and rejected (it would let a caller paper over the one
         // failure mode that must never be recovered from). Deterministic tests
         // inject the seeded source and never reach this path.
-        getrandom::getrandom(out).expect("OS CSPRNG (getrandom) must be available to sign requests");
+        getrandom::getrandom(out)
+            .expect("OS CSPRNG (getrandom) must be available to sign requests");
     }
 }
 
@@ -99,7 +100,11 @@ impl SeededNonceSource {
         SeededNonceSource {
             // A non-empty stream is required to fill any output; fall back to a
             // single zero byte for an empty seed so `fill` is always defined.
-            seed: if seed.is_empty() { vec![0u8] } else { seed.to_vec() },
+            seed: if seed.is_empty() {
+                vec![0u8]
+            } else {
+                seed.to_vec()
+            },
             offset: 0,
         }
     }

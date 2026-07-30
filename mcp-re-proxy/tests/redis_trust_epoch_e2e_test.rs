@@ -38,7 +38,9 @@ fn unique_epoch_key() -> String {
 #[test]
 fn epoch_advance_on_redis_is_detected_as_flush_all() {
     let Some(url) = redis_url() else {
-        eprintln!("SKIP epoch_advance_on_redis_is_detected_as_flush_all: MCP_RE_TEST_REDIS_URL unset");
+        eprintln!(
+            "SKIP epoch_advance_on_redis_is_detected_as_flush_all: MCP_RE_TEST_REDIS_URL unset"
+        );
         return;
     };
     let key = unique_epoch_key();
@@ -192,7 +194,11 @@ mod serving_path {
     }
 
     impl TrustResolver for AuthoritativeStore {
-        fn resolve(&self, _signer: &str, _key_id: &str) -> Result<VerificationKey, TrustResolverError> {
+        fn resolve(
+            &self,
+            _signer: &str,
+            _key_id: &str,
+        ) -> Result<VerificationKey, TrustResolverError> {
             if self.revoked.load(Ordering::SeqCst) {
                 return Err(TrustResolverError::Revoked);
             }
@@ -261,7 +267,10 @@ mod serving_path {
             resolve_actor,
             audience(),
             AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-            ProxyDispatchConfig { fleet_strict: false, tier: None },
+            ProxyDispatchConfig {
+                fleet_strict: false,
+                tier: None,
+            },
             Box::new(|_forwarded: &[u8]| -> Vec<u8> {
                 br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
             }),

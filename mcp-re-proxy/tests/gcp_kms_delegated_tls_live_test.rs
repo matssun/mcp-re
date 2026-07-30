@@ -49,22 +49,22 @@ use mcp_re_proxy::RawEd25519TlsSigner;
 use mcp_re_proxy::ServerOptions;
 use mcp_re_proxy::TlsError;
 
+use rcgen::BasicConstraints;
 use rcgen::CertificateParams;
 use rcgen::DnType;
 use rcgen::ExtendedKeyUsagePurpose;
 use rcgen::IsCa;
-use rcgen::BasicConstraints;
 use rcgen::KeyPair;
 use rcgen::KeyUsagePurpose;
 use rcgen::RemoteKeyPair;
 use rcgen::SanType;
 use rcgen::SignatureAlgorithm;
 
+use rustls::crypto::ring;
 use rustls::ClientConfig;
 use rustls::ClientConnection;
 use rustls::RootCertStore;
 use rustls::StreamOwned;
-use rustls::crypto::ring;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::PrivateKeyDer;
 use rustls_pki_types::PrivatePkcs8KeyDer;
@@ -117,7 +117,9 @@ fn make_client_leaf(ca: &Ca, san: &str) -> (Vec<CertificateDer<'static>>, Privat
     let mut params = CertificateParams::new(Vec::new()).expect("client params");
     params.subject_alt_names = vec![uri(san)];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("client leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("client leaf signed");
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (vec![cert.der().clone()], key_der)
 }
@@ -153,7 +155,9 @@ impl RemoteKeyPair for GcpRemoteKey {
 /// Extract the 32-byte raw Ed25519 point from an RFC 8410 SPKI (44 bytes: 12-byte
 /// prefix + 32-byte point), failing closed on any other shape.
 fn raw_point_from_spki(spki: &[u8]) -> [u8; 32] {
-    const ED25519_SPKI_PREFIX: [u8; 12] = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
+    const ED25519_SPKI_PREFIX: [u8; 12] = [
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
     assert!(
         spki.len() == 44 && spki.starts_with(&ED25519_SPKI_PREFIX),
         "expected an RFC 8410 Ed25519 SPKI (12-byte prefix + 32-byte point) from Cloud KMS, got {} bytes",
@@ -167,7 +171,9 @@ fn raw_point_from_spki(spki: &[u8]) -> [u8; 32] {
 fn gcp_tls_backend() -> (Arc<GcpKmsEd25519Backend>, [u8; 32]) {
     let tls_config = GcpKmsConfig {
         key_version_name: require_env("MCP_RE_GCP_KEY_VERSION_TLS"),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     if !use_metadata {
@@ -273,8 +279,7 @@ fn gcp_kms_delegated_tls_handshake_round_trip() {
     // Local PKI built AROUND the cloud key.
     let server_ca = make_ca();
     let client_ca = make_ca();
-    let server_leaf =
-        make_server_leaf_for_gcp_key(&server_ca, tls_backend.clone(), raw_public);
+    let server_leaf = make_server_leaf_for_gcp_key(&server_ca, tls_backend.clone(), raw_public);
 
     // Validated builder (issue #58): Ed25519-only + leaf-pubkey == signer-pubkey,
     // fail closed. A successful build PROVES the leaf binds the cloud key.
@@ -290,8 +295,7 @@ fn gcp_kms_delegated_tls_handshake_round_trip() {
         .expect("validated delegated server config (leaf must bind the KMS public key)"),
     );
 
-    let (client_chain, client_key) =
-        make_client_leaf(&client_ca, "spiffe://example.org/agent-1");
+    let (client_chain, client_key) = make_client_leaf(&client_ca, "spiffe://example.org/agent-1");
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -311,10 +315,7 @@ fn gcp_kms_delegated_tls_handshake_round_trip() {
     // asymmetricSign produced a valid Ed25519 CertificateVerify over the transcript.
     let response = client_round_trip(
         addr,
-        client_config_validating(
-            server_ca.cert.der().clone(),
-            (client_chain, client_key),
-        ),
+        client_config_validating(server_ca.cert.der().clone(), (client_chain, client_key)),
         b"{\"jsonrpc\":\"2.0\"}",
     )
     .expect("client round trip over a GCP-KMS-delegated TLS handshake");

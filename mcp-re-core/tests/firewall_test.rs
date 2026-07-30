@@ -69,13 +69,7 @@ const FORBIDDEN_ASYNC_NETWORKING_CRATES: &[&str] = &[
 /// (watchers, mmap, temp dirs, path walking) are a reliable proxy — none belongs
 /// in a networking/async/fs-free verification core.
 const FORBIDDEN_FS_CRATES: &[&str] = &[
-    "notify",
-    "memmap",
-    "memmap2",
-    "walkdir",
-    "tempfile",
-    "fs-err",
-    "fs_err",
+    "notify", "memmap", "memmap2", "walkdir", "tempfile", "fs-err", "fs_err",
 ];
 
 /// Higher MCP-RE crates. `mcp-re-core` is the BASE of the stack — it must depend on
@@ -172,7 +166,10 @@ fn mcp_re_core_stays_pure_no_networking_async_fs_or_upstack_dependencies() {
     // Positive sanity: the legitimate pure-crypto/serialization deps ARE present,
     // proving the tokenizer actually parsed the dependency declarations (a guard
     // that parses nothing would vacuously pass).
-    assert!(cargo_tokens.contains("serde_json"), "serde_json dep present");
+    assert!(
+        cargo_tokens.contains("serde_json"),
+        "serde_json dep present"
+    );
     assert!(
         cargo_tokens.contains("ed25519-dalek"),
         "ed25519-dalek dep present"

@@ -164,13 +164,25 @@ mod tests {
             r#"{{"jsonrpc":"2.0","_meta":{{"{VERIFIED_CONTEXT_BLOCK_KEY}":{{"actor_id":"admin"}},"{REQUEST_EVIDENCE_BLOCK_KEY}":{{"profile":"x"}},"application.example/trace":"abc","io.modelcontextprotocol/x":1}}}}"#
         ))
         .unwrap();
-        assert!(strip_proxy_owned_meta(&mut body), "the seeding attempt is reported");
+        assert!(
+            strip_proxy_owned_meta(&mut body),
+            "the seeding attempt is reported"
+        );
         assert!(body["_meta"].get(VERIFIED_CONTEXT_BLOCK_KEY).is_none());
         assert!(body["_meta"].get(REQUEST_EVIDENCE_BLOCK_KEY).is_none());
         // Not the PEP's data, not the PEP's business.
-        assert_eq!(body["_meta"]["application.example/trace"], serde_json::json!("abc"));
-        assert_eq!(body["_meta"]["io.modelcontextprotocol/x"], serde_json::json!(1));
-        assert!(!strip_proxy_owned_meta(&mut body), "idempotent; nothing left to report");
+        assert_eq!(
+            body["_meta"]["application.example/trace"],
+            serde_json::json!("abc")
+        );
+        assert_eq!(
+            body["_meta"]["io.modelcontextprotocol/x"],
+            serde_json::json!(1)
+        );
+        assert!(
+            !strip_proxy_owned_meta(&mut body),
+            "idempotent; nothing left to report"
+        );
     }
 
     #[test]
@@ -180,7 +192,10 @@ mod tests {
         ))
         .unwrap();
         strip_proxy_owned_meta(&mut body);
-        assert!(body.get("_meta").is_none(), "an emptied _meta is noise the caller never sent");
+        assert!(
+            body.get("_meta").is_none(),
+            "an emptied _meta is noise the caller never sent"
+        );
     }
 
     #[test]

@@ -147,7 +147,9 @@ fn make_ca(common_name: &str) -> Ca {
     // which `IsCa::Ca` already writes). rustls tolerates its absence, but OpenSSL
     // 3.x — used by the Python/Node SDK clients — fails chain building without it.
     params.use_authority_key_identifier_extension = true;
-    params.distinguished_name.push(DnType::CommonName, common_name);
+    params
+        .distinguished_name
+        .push(DnType::CommonName, common_name);
     let cert = params.self_signed(&key).expect("ca self-signed");
     Ca { cert, key }
 }
@@ -200,7 +202,9 @@ fn make_leaf_windowed(
     // so OpenSSL-based clients (the Python/Node SDKs) can build the chain; rustls
     // does not require it, which is why the Rust tiers passed without it.
     params.use_authority_key_identifier_extension = true;
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -282,12 +286,8 @@ impl DemoFixtures {
             now - time::Duration::seconds(60),
             now + time::Duration::seconds(SHORT_LIVED_CLIENT_CERT_SECS),
         );
-        let (mismatched_leaf, mismatched_leaf_key) = make_leaf(
-            &client_ca,
-            vec![uri(&spec.mismatched_identity)],
-            None,
-            true,
-        );
+        let (mismatched_leaf, mismatched_leaf_key) =
+            make_leaf(&client_ca, vec![uri(&spec.mismatched_identity)], None, true);
 
         // trust.json: the request signer the proxy trusts at the OBJECT layer.
         // The server signs responses with the server seed; the client trusts that
@@ -485,7 +485,10 @@ impl DemoFixtures {
         std::fs::write(&client_ca_path, &self.client_ca_pem)?;
         std::fs::write(&client_cert_path, &self.client_cert_pem)?;
         std::fs::write(&client_key_path, &self.client_key_pem)?;
-        std::fs::write(&mismatched_client_cert_path, &self.mismatched_client_cert_pem)?;
+        std::fs::write(
+            &mismatched_client_cert_path,
+            &self.mismatched_client_cert_pem,
+        )?;
         std::fs::write(&mismatched_client_key_path, &self.mismatched_client_key_pem)?;
         std::fs::write(&trust_path, &self.trust_json)?;
         std::fs::write(&signing_seed_path, &self.signing_seed_b64url)?;

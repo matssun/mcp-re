@@ -266,8 +266,15 @@ fn stale_window_fails_closed() {
 #[test]
 fn degenerate_window_fails_closed_regardless_of_skew() {
     let mut req = request();
-    sign_request(&mut req, &client_key(), "client-key-1", CREATED, CREATED, "n-degen")
-        .expect("signing succeeds");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        CREATED,
+        "n-degen",
+    )
+    .expect("signing succeeds");
     let err = verify_request(&req, &resolver(), CREATED).unwrap_err();
     assert_eq!(err, HttpProfileError::StaleWindow);
 }
@@ -289,8 +296,15 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     // for `expires == created`; asserted here at the exact instant the deleted gate called
     // fresh, to state the boundary rather than imply it.
     let mut req = request();
-    sign_request(&mut req, &client_key(), "client-key-1", CREATED, CREATED, "n-zero")
-        .expect("signs");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        CREATED,
+        "n-zero",
+    )
+    .expect("signs");
     assert_eq!(
         verify_request(&req, &resolver(), CREATED).unwrap_err(),
         HttpProfileError::StaleWindow,
@@ -314,8 +328,15 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     // retention. Checked skew-free: the width is the message's own property.
     let max = mcp_re_http_profile::VerifierPolicy::default().max_signature_validity();
     let mut wide = request();
-    sign_request(&mut wide, &client_key(), "client-key-1", CREATED, CREATED + max + 1, "n-wide")
-        .expect("signs");
+    sign_request(
+        &mut wide,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        CREATED + max + 1,
+        "n-wide",
+    )
+    .expect("signs");
     assert_eq!(
         verify_request(&wide, &resolver(), CREATED + 1).unwrap_err(),
         HttpProfileError::StaleWindow,
@@ -323,8 +344,15 @@ fn the_surviving_freshness_gate_is_strict_where_the_deleted_one_was_not() {
     );
     // Exactly at the ceiling is admitted, so the bound is the ceiling and not an off-by-one.
     let mut at_bound = request();
-    sign_request(&mut at_bound, &client_key(), "client-key-1", CREATED, CREATED + max, "n-bound")
-        .expect("signs");
+    sign_request(
+        &mut at_bound,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        CREATED + max,
+        "n-bound",
+    )
+    .expect("signs");
     verify_request(&at_bound, &resolver(), CREATED + 1).expect("a window AT the ceiling is fine");
 }
 

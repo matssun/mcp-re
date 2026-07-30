@@ -102,10 +102,14 @@ fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + Send + Syn
             }
             // A second trusted client — same role, different subject and keyid, so it
             // resolves to a DIFFERENT actor id.
-            (CLIENT_KEY_ID_2, SignerSlot::Request) => {
-                ("client", "did:example:host-b", second_client_key().public_key())
+            (CLIENT_KEY_ID_2, SignerSlot::Request) => (
+                "client",
+                "did:example:host-b",
+                second_client_key().public_key(),
+            ),
+            (ROOT_KID, SignerSlot::Response) => {
+                ("server", "did:example:server", root_key().public_key())
             }
-            (ROOT_KID, SignerSlot::Response) => ("server", "did:example:server", root_key().public_key()),
             _ => return None,
         };
         Some(ResolvedActor {
@@ -149,14 +153,18 @@ fn make_rotor(
     impl FnMut() -> SigningKey,
 > {
     let root = root_key();
-    let issue =
-        move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c));
+    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
     let mut n = 100u8;
     let factory = move || {
         n = n.wrapping_add(1);
         SigningKey::from_seed_bytes(&[n; 32])
     };
-    DelegatedRotor::new(DelegatedSigningCustody::new(custody_cfg(), issue, factory), signer)
+    DelegatedRotor::new(
+        DelegatedSigningCustody::new(custody_cfg(), issue, factory),
+        signer,
+    )
 }
 
 /// An ELICITING inner: a first call (no `inputResponses`/`requestState`) returns an
@@ -164,13 +172,15 @@ fn make_rotor(
 /// terminal result. Mirrors `tools/fastmcp_inner_backend.py`'s `confirm_action`.
 fn eliciting_inner(request_state: &'static str) -> Box<dyn AsyncInnerServer> {
     Box::new(move |forwarded: &[u8]| -> Vec<u8> {
-        let v: serde_json::Value = serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
+        let v: serde_json::Value =
+            serde_json::from_slice(forwarded).unwrap_or(serde_json::Value::Null);
         let is_answer = v
             .get("params")
             .map(|p| p.get("inputResponses").is_some() || p.get("requestState").is_some())
             .unwrap_or(false);
         if is_answer {
-            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"completed","confirmed":true}}"#.to_vec()
+            br#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"completed","confirmed":true}}"#
+                .to_vec()
         } else {
             format!(
                 r#"{{"jsonrpc":"2.0","id":1,"result":{{"resultType":"input_required","requestState":"{request_state}"}}}}"#
@@ -190,7 +200,10 @@ fn replica(
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         eliciting_inner(request_state),
         300,
         signer,
@@ -311,9 +324,14 @@ async fn open_on(
     // The client keeps its own request for response binding.
     let no_material = |_b: &ArtifactBinding| None;
     let r = resolver();
-    let verified_req =
-        verify_request_full(&req, &audience(), &no_material, &move |k: &str, s| r(k, s), NOW)
-            .expect("client's own open request verifies");
+    let verified_req = verify_request_full(
+        &req,
+        &audience(),
+        &no_material,
+        &move |k: &str, s| r(k, s),
+        NOW,
+    )
+    .expect("client's own open request verifies");
 
     let served = proxy.handle(served_of(&req), NOW).await;
     assert_eq!(served.status, 200, "open leg served an InputRequiredResult");
@@ -341,8 +359,8 @@ async fn open_on(
     assert_eq!(seen_state, request_state);
 
     (
-        as_digest(&open_ev),                                   // D_prev (client request handle)
-        as_digest(&verified.response_signature_base_digest),   // D_irr (verified response handle)
+        as_digest(&open_ev), // D_prev (client request handle)
+        as_digest(&verified.response_signature_base_digest), // D_irr (verified response handle)
         seen_state.to_owned(),
     )
 }
@@ -377,13 +395,20 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     let verified_answer = {
         let no_material = |_b: &ArtifactBinding| None;
         let r = resolver();
-        verify_request_full(&answer_req, &audience(), &no_material, &move |k: &str, s| r(k, s), NOW)
-            .expect("answer request verifies (for response binding)")
+        verify_request_full(
+            &answer_req,
+            &audience(),
+            &no_material,
+            &move |k: &str, s| r(k, s),
+            NOW,
+        )
+        .expect("answer request verifies (for response binding)")
     };
 
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(
-        served.status, 200,
+        served.status,
+        200,
         "continuation opened on A is honoured on B (got {})",
         wire_code_of(&served.body)
     );
@@ -407,10 +432,14 @@ async fn continuation_opened_on_a_is_honoured_on_b() {
     // regardless of the handles.
     let (p2, i2, _s2) = handles_of(STATE);
     let continuation2 = HttpContinuation::from_handles(p2, i2, state.as_bytes());
-    let (replay_req, _e) = signed_request("nonce-answer-2", &answer_body(&state), Some(continuation2));
+    let (replay_req, _e) =
+        signed_request("nonce-answer-2", &answer_body(&state), Some(continuation2));
     let served2 = b.handle(served_of(&replay_req), NOW).await;
     assert_eq!(served2.status, 409, "the continuation is one-shot");
-    assert_eq!(wire_code_of(&served2.body), "mcp-re.continuation_binding_failed");
+    assert_eq!(
+        wire_code_of(&served2.body),
+        "mcp-re.continuation_binding_failed"
+    );
 }
 
 /// Reconstruct the same handles `open_on` would, WITHOUT a store side effect — used to
@@ -442,7 +471,10 @@ async fn answer_without_a_shared_store_entry_fails_closed() {
     let (answer_req, _e) = signed_request("nonce-answer", &answer_body(&state), Some(continuation));
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "no retained bases → fail closed");
-    assert_eq!(wire_code_of(&served.body), "mcp-re.continuation_binding_failed");
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.continuation_binding_failed"
+    );
 }
 
 // --- a rejected answer leg must not destroy a live continuation --------------
@@ -465,8 +497,14 @@ async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
     let wrong = HttpContinuation::from_handles(d_prev.clone(), d_prev.clone(), state.as_bytes());
     let (bad_req, _e) = signed_request("nonce-bad-answer", &answer_body(&state), Some(wrong));
     let served_bad = b.handle(served_of(&bad_req), NOW).await;
-    assert_eq!(served_bad.status, 409, "a mismatched continuation is refused");
-    assert_eq!(wire_code_of(&served_bad.body), "mcp-re.continuation_binding_failed");
+    assert_eq!(
+        served_bad.status, 409,
+        "a mismatched continuation is refused"
+    );
+    assert_eq!(
+        wire_code_of(&served_bad.body),
+        "mcp-re.continuation_binding_failed"
+    );
 
     // The genuine answer still binds: the refusal cost the client one request, not its
     // continuation.
@@ -474,7 +512,8 @@ async fn an_answer_that_fails_the_binding_leaves_the_continuation_answerable() {
     let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
     let served_good = b.handle(served_of(&good_req), NOW).await;
     assert_eq!(
-        served_good.status, 200,
+        served_good.status,
+        200,
         "the refused answer must not have consumed the continuation (got {})",
         wire_code_of(&served_good.body)
     );
@@ -498,10 +537,18 @@ async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
     // A DIFFERENT verified actor names the first actor's requestState. It holds valid
     // trust-file credentials; it simply is not the actor that opened the leg.
     let intruder = HttpContinuation::from_handles(d_prev.clone(), d_irr.clone(), state.as_bytes());
-    let (intruder_req, _e) =
-        signed_request_as(CLIENT_KEY_ID_2, &second_client_key(), "nonce-intruder", &answer_body(&state), Some(intruder));
+    let (intruder_req, _e) = signed_request_as(
+        CLIENT_KEY_ID_2,
+        &second_client_key(),
+        "nonce-intruder",
+        &answer_body(&state),
+        Some(intruder),
+    );
     let served_intruder = b.handle(served_of(&intruder_req), NOW).await;
-    assert_eq!(served_intruder.status, 409, "another actor's answer is refused");
+    assert_eq!(
+        served_intruder.status, 409,
+        "another actor's answer is refused"
+    );
     assert_eq!(
         wire_code_of(&served_intruder.body),
         "mcp-re.continuation_binding_failed"
@@ -512,7 +559,8 @@ async fn a_second_actor_cannot_touch_the_first_actors_continuation() {
     let (good_req, _e) = signed_request("nonce-good-answer", &answer_body(&state), Some(good));
     let served_good = b.handle(served_of(&good_req), NOW).await;
     assert_eq!(
-        served_good.status, 200,
+        served_good.status,
+        200,
         "the intruder must not have destroyed the victim's continuation (got {})",
         wire_code_of(&served_good.body)
     );
@@ -532,11 +580,17 @@ async fn tampered_request_state_breaks_the_binding() {
     // carries a DIFFERENT requestState in params — the proxy keys the store on the wire
     // state (no entry) so the binding cannot be recovered.
     let continuation = HttpContinuation::from_handles(d_prev, d_irr, state.as_bytes());
-    let (answer_req, _e) =
-        signed_request("nonce-answer", &answer_body("state-token-TAMPERED"), Some(continuation));
+    let (answer_req, _e) = signed_request(
+        "nonce-answer",
+        &answer_body("state-token-TAMPERED"),
+        Some(continuation),
+    );
     let served = b.handle(served_of(&answer_req), NOW).await;
     assert_eq!(served.status, 409, "tampered requestState → fail closed");
-    assert_eq!(wire_code_of(&served.body), "mcp-re.continuation_binding_failed");
+    assert_eq!(
+        wire_code_of(&served.body),
+        "mcp-re.continuation_binding_failed"
+    );
 }
 
 // --- a malformed open leg must not be served as terminal (C059/C060) ---------
@@ -552,7 +606,10 @@ fn replica_with_inner(
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         inner,
         300,
         signer,
@@ -600,7 +657,10 @@ async fn an_open_leg_that_withholds_its_request_state_is_refused_not_served_as_t
             served.status, 200,
             "{malformed} was served as a successful reply"
         );
-        assert_eq!(served.status, 502, "a malformed inner reply is a bad gateway");
+        assert_eq!(
+            served.status, 502,
+            "a malformed inner reply is a bad gateway"
+        );
         assert_eq!(
             wire_code_of(&served.body),
             "mcp-re.malformed_envelope",
@@ -615,11 +675,7 @@ async fn an_open_leg_that_withholds_its_request_state_is_refused_not_served_as_t
 async fn a_well_formed_open_leg_is_still_served_and_recorded() {
     const STATE: &str = "state-token-wf";
     let store: Arc<dyn AsyncContinuationStore> = Arc::new(InMemoryContinuationStore::new());
-    let proxy = replica_with_inner(
-        ready_signer(),
-        Arc::clone(&store),
-        eliciting_inner(STATE),
-    );
+    let proxy = replica_with_inner(ready_signer(), Arc::clone(&store), eliciting_inner(STATE));
 
     let (_d_prev, _d_irr, state) = open_on(&proxy, STATE).await;
     assert_eq!(state, STATE);
@@ -781,7 +837,10 @@ fn write_malformed_elicitation_sdk_fixture() {
     // code produces, so a change to the signing path cannot silently leave both SDK
     // suites asserting against a stale recording.
     let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-        panic!("{} is missing — regenerate it (see this test's doc)", path.display())
+        panic!(
+            "{} is missing — regenerate it (see this test's doc)",
+            path.display()
+        )
     });
     assert_eq!(
         committed, rendered,

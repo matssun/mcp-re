@@ -26,8 +26,8 @@ use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::RequestEvidence;
 use mcp_re_http_profile::ResolvedActor;
-use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::ResolverOutcome;
+use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpResponseEvidence;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -170,8 +170,8 @@ pub fn verify_and_classify_response<R: Into<ResolverOutcome>>(
     now: i64,
 ) -> Result<ClassifiedResponse, HttpProfileError> {
     let verified = verify_signed_response(response, resolve_actor, expectation, now)?;
-    let body: Value =
-        serde_json::from_slice(&response.body).map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
+    let body: Value = serde_json::from_slice(&response.body)
+        .map_err(|_| HttpProfileError::MalformedEvidence("response body"))?;
     let class = classify_result(body.get("result"));
     Ok(ClassifiedResponse { verified, class })
 }
@@ -411,7 +411,10 @@ impl TrustedIssuerSet {
     /// `delegation_revoked` — the honest reason — rather than masking a revocation as
     /// an untrusted issuer. Private: it is only safe because the caller is this
     /// module, which wires both seams together by construction.
-    fn anchored_resolver(&self, now: i64) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
+    fn anchored_resolver(
+        &self,
+        now: i64,
+    ) -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> + '_ {
         move |kid: &str, slot: SignerSlot| match slot {
             SignerSlot::Response => self.resolve_root(kid, now),
             _ => None,
@@ -474,7 +477,10 @@ pub enum DelegatedOutcome {
     /// receipt (the server verified the request before a later fail-closed step)
     /// from a preflight-unbound one (the request never earned a trustworthy hash).
     /// `wire_code` is the server's frozen `mcp-re.*` reason from the verified body.
-    Rejection { bound: bool, wire_code: Option<String> },
+    Rejection {
+        bound: bool,
+        wire_code: Option<String>,
+    },
 }
 
 /// A verified delegated response: the verification evidence plus the outcome.
@@ -513,7 +519,11 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
     revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<VerifiedDelegatedResponse, HttpProfileError> {
-    let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
+    let audiences: Vec<&str> = policy
+        .verifier_audiences
+        .iter()
+        .map(String::as_str)
+        .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
         policy: mcp_re_http_profile::VerifierPolicy::default(),
@@ -666,7 +676,11 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
-    let audiences: Vec<&str> = policy.verifier_audiences.iter().map(String::as_str).collect();
+    let audiences: Vec<&str> = policy
+        .verifier_audiences
+        .iter()
+        .map(String::as_str)
+        .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
         policy: mcp_re_http_profile::VerifierPolicy::default(),
@@ -759,7 +773,12 @@ mod delegated_tests {
         }
     }
     fn policy() -> DelegationPolicy {
-        DelegationPolicy::new(vec![AUD.to_string()], AUD_SCOPE, vec![EPOCH.to_string()], 60)
+        DelegationPolicy::new(
+            vec![AUD.to_string()],
+            AUD_SCOPE,
+            vec![EPOCH.to_string()],
+            60,
+        )
     }
     fn custody_cfg() -> CustodyConfig {
         CustodyConfig {
@@ -782,7 +801,9 @@ mod delegated_tests {
     > {
         let root = root_key();
         let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
-            Some(mcp_re_http_profile::issue_delegation_credential(&root, h, c))
+            Some(mcp_re_http_profile::issue_delegation_credential(
+                &root, h, c,
+            ))
         };
         let mut n = 100u8;
         let factory = move || {
@@ -800,10 +821,16 @@ mod delegated_tests {
             CREATED,
             EXPIRES,
         );
-        let params: Map<String, Value> =
-            json!({ "name": "read" }).as_object().cloned().unwrap();
-        build_signed_request(&json!(1), "tools/call", params, TARGET, &inputs, &client_key())
-            .expect("client signs request")
+        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
+        build_signed_request(
+            &json!(1),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("client signs request")
     }
     fn expectation(signed: &crate::SignedRequest) -> ResponseExpectation {
         ResponseExpectation::new(signed.request().clone(), signed.evidence().clone())
@@ -1325,9 +1352,15 @@ mod delegated_tests {
             NOW + 600,
         );
         let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-        let signed =
-            build_signed_request(&json!(1), "tools/call", params, TARGET, &inputs, &client_key())
-                .expect("client signs request");
+        let signed = build_signed_request(
+            &json!(1),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("client signs request");
 
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue key/1");

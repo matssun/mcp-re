@@ -35,6 +35,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
+use cryptoki_sys::Pkcs11 as RawLoader;
 use cryptoki_sys::CKA_CLASS;
 use cryptoki_sys::CKA_EC_POINT;
 use cryptoki_sys::CKA_KEY_TYPE;
@@ -61,7 +62,6 @@ use cryptoki_sys::CK_SESSION_HANDLE;
 use cryptoki_sys::CK_SLOT_ID;
 use cryptoki_sys::CK_TOKEN_INFO;
 use cryptoki_sys::CK_ULONG;
-use cryptoki_sys::Pkcs11 as RawLoader;
 
 /// Length, in bytes, of a PKCS#11 token label field (`CK_TOKEN_INFO.label`).
 const CK_TOKEN_LABEL_LEN: usize = 32;
@@ -89,7 +89,10 @@ impl std::fmt::Display for Pkcs11Error {
         match self {
             Pkcs11Error::Load(msg) => write!(f, "{msg}"),
             Pkcs11Error::MissingFunction(name) => {
-                write!(f, "module does not export {name} (null function-list entry)")
+                write!(
+                    f,
+                    "module does not export {name} (null function-list entry)"
+                )
             }
             Pkcs11Error::Ck { op, rv } => write!(f, "{op}: CK_RV 0x{rv:08x}"),
             Pkcs11Error::Protocol(msg) => write!(f, "{msg}"),
@@ -128,9 +131,9 @@ fn check(rv: CK_RV, op: &str) -> Result<(), Pkcs11Error> {
 /// the module did not provide that entry, so calling it would be a null deref.
 macro_rules! func {
     ($list:expr, $field:ident) => {
-        (*$list).$field.ok_or_else(|| {
-            Pkcs11Error::MissingFunction(stringify!($field).to_string())
-        })?
+        (*$list)
+            .$field
+            .ok_or_else(|| Pkcs11Error::MissingFunction(stringify!($field).to_string()))?
     };
 }
 
@@ -155,9 +158,8 @@ impl Pkcs11Context {
         // arbitrary shared object and calls its initializers; `module_path` is an
         // operator-supplied trusted module path. No Rust invariants are at stake
         // in the call itself.
-        let loader = unsafe { RawLoader::new(module_path) }.map_err(|e| {
-            Pkcs11Error::Load(format!("load module '{module_path}': {e}"))
-        })?;
+        let loader = unsafe { RawLoader::new(module_path) }
+            .map_err(|e| Pkcs11Error::Load(format!("load module '{module_path}': {e}")))?;
 
         let mut function_list: CK_FUNCTION_LIST_PTR = ptr::null_mut();
         // SAFETY: `C_GetFunctionList` is the one symbol PKCS#11 modules must
@@ -411,11 +413,7 @@ impl<'ctx> Session<'ctx> {
     }
 
     /// Sign `data` under `key` with `CKM_EDDSA`. See [`sign_eddsa_raw`].
-    pub fn sign_eddsa(
-        &self,
-        key: CK_OBJECT_HANDLE,
-        data: &[u8],
-    ) -> Result<Vec<u8>, Pkcs11Error> {
+    pub fn sign_eddsa(&self, key: CK_OBJECT_HANDLE, data: &[u8]) -> Result<Vec<u8>, Pkcs11Error> {
         sign_eddsa_raw(self.function_list, self.handle, key, data)
     }
 
@@ -463,11 +461,7 @@ impl<'ctx> SessionRef<'ctx> {
     }
 
     /// Sign `data` under `key` with `CKM_EDDSA`. See [`sign_eddsa_raw`].
-    pub fn sign_eddsa(
-        &self,
-        key: CK_OBJECT_HANDLE,
-        data: &[u8],
-    ) -> Result<Vec<u8>, Pkcs11Error> {
+    pub fn sign_eddsa(&self, key: CK_OBJECT_HANDLE, data: &[u8]) -> Result<Vec<u8>, Pkcs11Error> {
         sign_eddsa_raw(self.function_list, self.handle, key, data)
     }
 

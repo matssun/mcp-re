@@ -110,17 +110,29 @@ fn signed_request_with_admission(binding: Option<AdmissionBinding>) -> HttpReque
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), "Bearer tok".into()),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     };
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"tok",
+        )],
         continuation: None,
         admission: binding,
     };
-    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, "n-adm")
-        .expect("signs");
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-adm",
+    )
+    .expect("signs");
     req
 }
 
@@ -161,9 +173,17 @@ fn verify_and_check(
 fn a_bound_current_admitted_call_passes() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
     let req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
-    let auth = AuthoritativeAdmission { generation: 5, status: AdmissionStatus::Admitted };
-    verify_and_check(&req, &issue(&claims), Some(&auth), &AdmissionPolicy::default())
-        .expect("a current admitted workload is served");
+    let auth = AuthoritativeAdmission {
+        generation: 5,
+        status: AdmissionStatus::Admitted,
+    };
+    verify_and_check(
+        &req,
+        &issue(&claims),
+        Some(&auth),
+        &AdmissionPolicy::default(),
+    )
+    .expect("a current admitted workload is served");
 }
 
 /// THE case. The admission binding is signed into the request, the assertion is
@@ -173,10 +193,18 @@ fn a_bound_current_admitted_call_passes() {
 fn a_bound_but_stale_generation_is_refused() {
     let claims = admission_claims(5, AdmissionStatus::Admitted);
     let req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
-    let auth = AuthoritativeAdmission { generation: 6, status: AdmissionStatus::Admitted };
+    let auth = AuthoritativeAdmission {
+        generation: 6,
+        status: AdmissionStatus::Admitted,
+    };
     assert_eq!(
-        verify_and_check(&req, &issue(&claims), Some(&auth), &AdmissionPolicy::default())
-            .unwrap_err(),
+        verify_and_check(
+            &req,
+            &issue(&claims),
+            Some(&auth),
+            &AdmissionPolicy::default()
+        )
+        .unwrap_err(),
         HttpProfileError::AdmissionNotCurrent,
     );
 }
@@ -189,10 +217,18 @@ fn tampering_the_admission_binding_breaks_the_signature() {
     let mut req = signed_request_with_admission(Some(AdmissionBinding::opaque_from(&claims)));
     // Rewrite the bound generation in the signed body.
     let body = String::from_utf8(req.body.clone()).unwrap();
-    req.body = body.replace("\"generation\":5", "\"generation\":6").into_bytes();
+    req.body = body
+        .replace("\"generation\":5", "\"generation\":6")
+        .into_bytes();
     assert!(
-        verify_request_full(&req, &audience(), &|_b: &ArtifactBinding| None, &resolver(), NOW)
-            .is_err(),
+        verify_request_full(
+            &req,
+            &audience(),
+            &|_b: &ArtifactBinding| None,
+            &resolver(),
+            NOW
+        )
+        .is_err(),
         "a tampered admission binding must fail the content-digest"
     );
 }
@@ -202,7 +238,13 @@ fn tampering_the_admission_binding_breaks_the_signature() {
 #[test]
 fn no_binding_verifies_when_admission_is_not_enforced() {
     let req = signed_request_with_admission(None);
-    let verified = verify_request_full(&req, &audience(), &|_b: &ArtifactBinding| None, &resolver(), NOW)
-        .expect("verifies");
+    let verified = verify_request_full(
+        &req,
+        &audience(),
+        &|_b: &ArtifactBinding| None,
+        &resolver(),
+        NOW,
+    )
+    .expect("verifies");
     assert!(verified.request_block.as_ref().unwrap().admission.is_none());
 }

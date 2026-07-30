@@ -28,9 +28,7 @@ use crate::delegation::JWK_KTY_OKP;
 /// requires an exact byte form — a serializer that reorders members or emits
 /// whitespace would silently change every derived keyid.
 fn canonical_ed25519_jwk(public_key_b64url: &str) -> String {
-    format!(
-        r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{public_key_b64url}"}}"#
-    )
+    format!(r#"{{"crv":"{JWK_CRV_ED25519}","kty":"{JWK_KTY_OKP}","x":"{public_key_b64url}"}}"#)
 }
 
 /// Derive the profile keyid for an Ed25519 public key: the base64url-no-pad

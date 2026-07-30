@@ -90,7 +90,10 @@ impl McpTransportPolicy {
     /// its consent, not the client's claim.
     pub fn mcp_2026_07_28(supported_versions: &[&str]) -> Self {
         McpTransportPolicy {
-            supported_protocol_versions: supported_versions.iter().map(|s| (*s).to_owned()).collect(),
+            supported_protocol_versions: supported_versions
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
             require_protocol_version_header: true,
             require_mcp_method: true,
             mcp_name_required: vec![
@@ -148,7 +151,9 @@ impl McpTransportPolicy {
             }
             None => {
                 if self.require_mcp_method && !legacy {
-                    return Err(HttpProfileError::McpTransportHeaderMissing(MCP_METHOD_HEADER));
+                    return Err(HttpProfileError::McpTransportHeaderMissing(
+                        MCP_METHOD_HEADER,
+                    ));
                 }
             }
         }
@@ -199,14 +204,10 @@ impl McpTransportPolicy {
                         // absent `params.name`/`params.uri` license an arbitrary
                         // covered name.
                         let Some(expected) = params.and_then(|p| source.extract(p)) else {
-                            return Err(HttpProfileError::McpTransportDivergence(
-                                MCP_NAME_HEADER,
-                            ));
+                            return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
                         };
                         if h.trim() != expected {
-                            return Err(HttpProfileError::McpTransportDivergence(
-                                MCP_NAME_HEADER,
-                            ));
+                            return Err(HttpProfileError::McpTransportDivergence(MCP_NAME_HEADER));
                         }
                     }
                     None => {
@@ -227,7 +228,11 @@ impl McpTransportPolicy {
     /// `params._meta`. Absent → agreement is not checkable (the header presence and
     /// supported-set checks still apply); this mirrors the method-divergence rule,
     /// which also does nothing when there is no body value to disagree with.
-    fn body_protocol_version<'a>(&self, body: &'a Value, params: Option<&'a Value>) -> Option<&'a str> {
+    fn body_protocol_version<'a>(
+        &self,
+        body: &'a Value,
+        params: Option<&'a Value>,
+    ) -> Option<&'a str> {
         let from = |v: &'a Value| -> Option<&'a str> {
             v.get("_meta")
                 .and_then(|m| m.get(&self.protocol_version_body_key))
@@ -267,7 +272,9 @@ mod tests {
             ],
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
         );
-        strict().enforce(&r).expect("all headers present, supported, and agreeing");
+        strict()
+            .enforce(&r)
+            .expect("all headers present, supported, and agreeing");
     }
 
     #[test]
@@ -286,7 +293,10 @@ mod tests {
     #[test]
     fn an_unsupported_version_is_rejected() {
         let r = req(
-            vec![("Mcp-Method", "initialize"), ("MCP-Protocol-Version", "2025-06-18")],
+            vec![
+                ("Mcp-Method", "initialize"),
+                ("MCP-Protocol-Version", "2025-06-18"),
+            ],
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
         );
         assert_eq!(
@@ -302,7 +312,10 @@ mod tests {
     #[test]
     fn header_body_version_divergence_is_rejected() {
         let r = req(
-            vec![("Mcp-Method", "initialize"), ("MCP-Protocol-Version", "2026-07-28")],
+            vec![
+                ("Mcp-Method", "initialize"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ],
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18"}}"#,
         );
         assert_eq!(
@@ -315,7 +328,10 @@ mod tests {
     fn mcp_name_required_and_must_agree() {
         // tools/call without Mcp-Name.
         let missing = req(
-            vec![("Mcp-Method", "tools/call"), ("MCP-Protocol-Version", "2026-07-28")],
+            vec![
+                ("Mcp-Method", "tools/call"),
+                ("MCP-Protocol-Version", "2026-07-28"),
+            ],
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
         );
         assert_eq!(
@@ -372,7 +388,9 @@ mod tests {
             vec![],
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#,
         );
-        policy.enforce(&bare).expect("legacy client omitting all headers is accepted");
+        policy
+            .enforce(&bare)
+            .expect("legacy client omitting all headers is accepted");
 
         // But a legacy-eligible deployment still rejects a PRESENT header that lies.
         let lying = req(

@@ -18,8 +18,7 @@ use std::collections::HashMap;
 /// actor for RFC 9421 response verification.
 /// The client route's trust seam. Returns a [`ResolverOutcome`] so a resolver outage is
 /// distinguishable from an unknown keyid (C079); both fail closed.
-pub type RouteActorResolver =
-    Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
+pub type RouteActorResolver = Box<dyn Fn(&str, SignerSlot) -> ResolverOutcome + Send + Sync>;
 
 /// How the proxy verifies the server's response for a route. Delegated-signing is the
 /// ONLY response mode (ADR-MCPRE-052, MCPRE-122): the client enforces the same
@@ -47,7 +46,11 @@ pub enum ClientVerification {
     /// The resolver receives no `now`, so it cannot express a time-bounded trust
     /// decision. Use [`ClientVerification::DelegatedAnchored`] for anything with an
     /// overlap window.
-    DelegatedRequired(DelegationPolicy, RouteActorResolver, Box<dyn RevocationSource>),
+    DelegatedRequired(
+        DelegationPolicy,
+        RouteActorResolver,
+        Box<dyn RevocationSource>,
+    ),
     /// Verify against a [`TrustedIssuerSet`] — the trust-anchor lifecycle: current
     /// roots, retiring roots with a `valid_until` overlap deadline, revoked roots.
     ///

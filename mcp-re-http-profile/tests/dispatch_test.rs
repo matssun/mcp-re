@@ -13,6 +13,7 @@ use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
+use mcp_re_core::SigningKey;
 use mcp_re_http_profile::dispatch_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::verify_request_full;
@@ -31,7 +32,6 @@ use mcp_re_http_profile::RetainedContinuation;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::VerifiedHttpRequestEvidence;
 use mcp_re_http_profile::PROFILE_TAG;
-use mcp_re_core::SigningKey;
 
 const CLIENT_A_SEED: [u8; 32] = [11u8; 32];
 const CLIENT_B_SEED: [u8; 32] = [33u8; 32];
@@ -83,7 +83,10 @@ fn audience(audience_id: &str) -> AudienceTuple {
     }
 }
 
-fn request_block(audience: AudienceTuple, continuation: Option<HttpContinuation>) -> HttpRequestEvidenceBlock {
+fn request_block(
+    audience: AudienceTuple,
+    continuation: Option<HttpContinuation>,
+) -> HttpRequestEvidenceBlock {
     HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience,
@@ -107,7 +110,8 @@ fn base_request() -> HttpRequest {
             ("Content-Type".into(), "application/json".into()),
             ("Authorization".into(), format!("Bearer {ACCESS_TOKEN}")),
         ],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -126,7 +130,8 @@ fn verified_request(
 ) -> VerifiedHttpRequestEvidence {
     let mut req = base_request();
     sign_request_full(&mut req, block, key, key_id, CREATED, EXPIRES, nonce).expect("full sign");
-    verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW).expect("full verify")
+    verify_request_full(&req, &block.audience, &no_material(), &resolver(), NOW)
+        .expect("full verify")
 }
 
 // ---------- replay ---------------------------------------------------------
@@ -192,7 +197,8 @@ impl ReplayCache for DurableTestCache {
         nonce: &str,
         expires_at_unix: i64,
     ) -> Result<ReplayDecision, ReplayCacheError> {
-        self.0.check_and_insert(signer, audience, nonce, expires_at_unix)
+        self.0
+            .check_and_insert(signer, audience, nonce, expires_at_unix)
     }
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable
@@ -248,8 +254,13 @@ fn continuation_round_trips_through_dispatch() {
     let ev = verified_request(&client_a_key(), "client-key-1", "nonce-1", &block);
     let cache = InMemoryReplayCache::new(0);
 
-    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &DispatchConfig::default())
-        .expect("continuation must verify");
+    let outcome = dispatch_request(
+        &ev,
+        &cache,
+        Some(matching_ctx()),
+        &DispatchConfig::default(),
+    )
+    .expect("continuation must verify");
     assert!(outcome.continuation_verified);
 }
 
@@ -266,7 +277,10 @@ fn continuation_changed_request_state_fails() {
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("changed requestState must fail");
-    assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
+    assert_eq!(
+        err,
+        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    );
     assert_eq!(err.wire_code(), "mcp-re.continuation_binding_failed");
 }
 
@@ -283,7 +297,10 @@ fn continuation_wrong_previous_request_evidence_fails() {
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("wrong previous-request evidence must fail");
-    assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
+    assert_eq!(
+        err,
+        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    );
 }
 
 /// Acceptance #7: a continuation with the wrong input-required response evidence fails.
@@ -299,7 +316,10 @@ fn continuation_wrong_input_required_response_evidence_fails() {
 
     let err = dispatch_request(&ev, &cache, Some(ctx), &DispatchConfig::default())
         .expect_err("wrong input-required response evidence must fail");
-    assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
+    assert_eq!(
+        err,
+        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    );
 }
 
 /// A request carrying a continuation but no retained context fails closed: an
@@ -312,7 +332,10 @@ fn continuation_without_retained_context_fails_closed() {
 
     let err = dispatch_request(&ev, &cache, None, &DispatchConfig::default())
         .expect_err("missing continuation context must fail closed");
-    assert_eq!(err, DispatchError::Profile(HttpProfileError::ContinuationBindingFailed));
+    assert_eq!(
+        err,
+        DispatchError::Profile(HttpProfileError::ContinuationBindingFailed)
+    );
 }
 
 /// A spliced continuation must NOT burn the nonce: the replay insert is last, so
@@ -331,7 +354,12 @@ fn failed_continuation_does_not_burn_the_nonce() {
     dispatch_request(&ev, &cache, Some(bad_ctx), &DispatchConfig::default())
         .expect_err("spliced continuation fails");
     // The good re-presentation still admits: the nonce was never burned.
-    let outcome = dispatch_request(&ev, &cache, Some(matching_ctx()), &DispatchConfig::default())
-        .expect("nonce must still be fresh after a failed continuation");
+    let outcome = dispatch_request(
+        &ev,
+        &cache,
+        Some(matching_ctx()),
+        &DispatchConfig::default(),
+    )
+    .expect("nonce must still be fresh after a failed continuation");
     assert!(outcome.continuation_verified);
 }

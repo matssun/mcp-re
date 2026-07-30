@@ -60,13 +60,19 @@ fn corpus(dir: &str) -> PathBuf {
             if let Ok(root) = std::env::var(key) {
                 let candidate = Path::new(&root).join(&rel);
                 if candidate.exists() {
-                    return candidate.parent().expect("manifest has a parent").to_path_buf();
+                    return candidate
+                        .parent()
+                        .expect("manifest has a parent")
+                        .to_path_buf();
                 }
             }
         }
         let candidate = PathBuf::from(&rel);
         if candidate.exists() {
-            return candidate.parent().expect("manifest has a parent").to_path_buf();
+            return candidate
+                .parent()
+                .expect("manifest has a parent")
+                .to_path_buf();
         }
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -177,11 +183,19 @@ fn adding_or_removing_a_vector_changes_the_corpus_digest() {
         file: "h99_smuggled.json".into(),
         sha256: hex_sha256(b"{}"),
     });
-    assert_ne!(baseline, corpus_digest(&with_extra), "an added vector must move the digest");
+    assert_ne!(
+        baseline,
+        corpus_digest(&with_extra),
+        "an added vector must move the digest"
+    );
 
     let mut without = with_extra;
     without.truncate(manifest.fixtures.len() - 1);
-    assert_ne!(baseline, corpus_digest(&without), "a removed vector must move the digest");
+    assert_ne!(
+        baseline,
+        corpus_digest(&without),
+        "a removed vector must move the digest"
+    );
 }
 
 /// The digest is a property of corpus CONTENT, not of the order the writer emitted
@@ -201,7 +215,11 @@ fn corpus_digest_is_order_independent() {
             sha256: e.sha256.clone(),
         })
         .collect();
-    assert_eq!(forward, corpus_digest(&reversed), "sorted: order must not matter");
+    assert_eq!(
+        forward,
+        corpus_digest(&reversed),
+        "sorted: order must not matter"
+    );
     reversed.reverse();
     assert_eq!(forward, corpus_digest(&reversed));
 }

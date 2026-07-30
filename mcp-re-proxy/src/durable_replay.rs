@@ -215,7 +215,11 @@ impl DurableReplayCache {
 
     /// Number of live entries (test/inspection aid).
     pub fn len(&self) -> usize {
-        self.state.lock().expect("replay mutex poisoned").entries.len()
+        self.state
+            .lock()
+            .expect("replay mutex poisoned")
+            .entries
+            .len()
     }
 
     /// Whether the cache holds no entries.
@@ -313,8 +317,8 @@ fn persist(path: &Path, entries: &BTreeMap<Key, i64>) -> io::Result<()> {
             })
         })
         .collect();
-    let bytes = serde_json::to_vec(&Value::Array(array))
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    let bytes =
+        serde_json::to_vec(&Value::Array(array)).map_err(|e| io::Error::other(e.to_string()))?;
 
     // Durable temp-file + atomic rename (MCPS-083 / audit M-8). std::fs::write +
     // rename gives a concurrent reader all-or-nothing visibility but NOT crash
@@ -345,9 +349,12 @@ fn load(path: &Path) -> io::Result<BTreeMap<Key, i64>> {
     let bytes = std::fs::read(path)?;
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|e| io::Error::other(e.to_string()))?;
-    let array = value
-        .as_array()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "replay cache is not a JSON array"))?;
+    let array = value.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "replay cache is not a JSON array",
+        )
+    })?;
 
     let mut entries = BTreeMap::new();
     for entry in array {
@@ -453,7 +460,10 @@ mod tests {
         let cache = DurableReplayCache::open(&path, 300).unwrap();
         cache.check_and_insert("s", "a", "n", 1000).unwrap();
 
-        assert!(path.exists(), "committed replay file must exist after insert");
+        assert!(
+            path.exists(),
+            "committed replay file must exist after insert"
+        );
         assert!(
             !tmp_sibling.exists(),
             "no .tmp sibling may remain after a committed insert"
@@ -552,7 +562,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let cache = DurableReplayCache::open(&path, 300).unwrap();
         for i in 0..25 {
-            cache.check_and_insert("s", "a", &format!("n{i}"), 1000).unwrap();
+            cache
+                .check_and_insert("s", "a", &format!("n{i}"), 1000)
+                .unwrap();
             let bytes = std::fs::read(&path).unwrap();
             let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert!(value.is_array(), "on-disk state stays a valid JSON array");
@@ -717,7 +729,9 @@ mod tests {
         let path = tmp("ceiling");
         let _ = std::fs::remove_file(&path);
         let cap = 8;
-        let cache = DurableReplayCache::open(&path, 0).unwrap().with_max_entries(cap);
+        let cache = DurableReplayCache::open(&path, 0)
+            .unwrap()
+            .with_max_entries(cap);
         // Fill to capacity with non-expiring (far-future) nonces.
         for i in 0..cap as i64 {
             assert_eq!(

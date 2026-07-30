@@ -103,7 +103,9 @@ impl ReplayDurabilityTier {
                     .and_then(|q| q.parse::<u32>().ok())
                     .filter(|q| *q >= 1)
                     .ok_or_else(|| {
-                        format!("redis-wait-quorum quorum must be a positive integer (in '{value}')")
+                        format!(
+                            "redis-wait-quorum quorum must be a positive integer (in '{value}')"
+                        )
                     })?;
                 let timeout_ms = parts
                     .next()

@@ -168,17 +168,24 @@ pub fn build_signed_request(
     inputs: &RequestSigningInputs,
     signing_key: &SigningKey,
 ) -> Result<SignedRequest, HttpProfileError> {
-    build_signed_request_with(Some(id), method, params, target_uri, inputs, |request, block| {
-        sign_request_full(
-            request,
-            block,
-            signing_key,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
-        )
-    })
+    build_signed_request_with(
+        Some(id),
+        method,
+        params,
+        target_uri,
+        inputs,
+        |request, block| {
+            sign_request_full(
+                request,
+                block,
+                signing_key,
+                &inputs.key_id,
+                inputs.created,
+                inputs.expires,
+                &inputs.nonce,
+            )
+        },
+    )
 }
 
 /// The shared request-construction core, generic over HOW the RFC 9421 message is
@@ -260,17 +267,24 @@ pub fn build_signed_request_with_signer(
 ) -> Result<SignedRequest, HttpProfileError> {
     // sign_request_with_signer signs but does NOT compose the evidence block; the
     // full-profile client composes the block first, then signs over it.
-    build_signed_request_with(Some(id), method, params, target_uri, inputs, |request, block| {
-        sign_request_full_with_signer(
-            request,
-            block,
-            sign_base,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
-        )
-    })
+    build_signed_request_with(
+        Some(id),
+        method,
+        params,
+        target_uri,
+        inputs,
+        |request, block| {
+            sign_request_full_with_signer(
+                request,
+                block,
+                sign_base,
+                &inputs.key_id,
+                inputs.created,
+                inputs.expires,
+                &inputs.nonce,
+            )
+        },
+    )
 }
 
 /// Construct and sign a one-way MCP **notification** — a JSON-RPC message with a
@@ -296,17 +310,24 @@ pub fn build_signed_notification(
     signing_key: &SigningKey,
 ) -> Result<SignedRequest, HttpProfileError> {
     reject_continuation_on_notification(inputs)?;
-    build_signed_request_with(None, method, params, target_uri, inputs, |request, block| {
-        sign_request_full(
-            request,
-            block,
-            signing_key,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
-        )
-    })
+    build_signed_request_with(
+        None,
+        method,
+        params,
+        target_uri,
+        inputs,
+        |request, block| {
+            sign_request_full(
+                request,
+                block,
+                signing_key,
+                &inputs.key_id,
+                inputs.created,
+                inputs.expires,
+                &inputs.nonce,
+            )
+        },
+    )
 }
 
 /// Non-exporting-custody variant of [`build_signed_notification`]. Wire-identical.
@@ -318,17 +339,24 @@ pub fn build_signed_notification_with_signer(
     sign_base: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
 ) -> Result<SignedRequest, HttpProfileError> {
     reject_continuation_on_notification(inputs)?;
-    build_signed_request_with(None, method, params, target_uri, inputs, |request, block| {
-        sign_request_full_with_signer(
-            request,
-            block,
-            sign_base,
-            &inputs.key_id,
-            inputs.created,
-            inputs.expires,
-            &inputs.nonce,
-        )
-    })
+    build_signed_request_with(
+        None,
+        method,
+        params,
+        target_uri,
+        inputs,
+        |request, block| {
+            sign_request_full_with_signer(
+                request,
+                block,
+                sign_base,
+                &inputs.key_id,
+                inputs.created,
+                inputs.expires,
+                &inputs.nonce,
+            )
+        },
+    )
 }
 
 fn reject_continuation_on_notification(
@@ -380,12 +408,21 @@ mod evidence_precondition_tests {
     }
 
     fn inputs(bindings: Vec<ArtifactBinding>) -> RequestSigningInputs {
-        RequestSigningInputs::new("client-key-1", audience(), bindings, "nonce-1", 1_000, 1_300)
+        RequestSigningInputs::new(
+            "client-key-1",
+            audience(),
+            bindings,
+            "nonce-1",
+            1_000,
+            1_300,
+        )
     }
 
     fn sign(bindings: Vec<ArtifactBinding>) -> Result<SignedRequest, HttpProfileError> {
-        let params: Map<String, Value> =
-            serde_json::json!({ "name": "read" }).as_object().cloned().unwrap();
+        let params: Map<String, Value> = serde_json::json!({ "name": "read" })
+            .as_object()
+            .cloned()
+            .unwrap();
         build_signed_request(
             &Value::from(1),
             "tools/call",
@@ -458,7 +495,9 @@ mod evidence_precondition_tests {
     fn signing_with_no_artifact_binding_is_refused_locally() {
         assert_eq!(
             sign(Vec::new()).err(),
-            Some(HttpProfileError::MalformedEvidence("empty artifact_bindings")),
+            Some(HttpProfileError::MalformedEvidence(
+                "empty artifact_bindings"
+            )),
             "the client refuses to sign what the verifier must reject, and reports the \
              SAME reason the verifier would — so the two ends cannot drift"
         );
@@ -482,7 +521,10 @@ mod evidence_precondition_tests {
         // The converse, so the precondition cannot be read as "bindings are broken".
         let ok = ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token");
         let signed = sign(vec![ok]).expect("a well-formed request signs");
-        assert!(!signed.headers().is_empty(), "the signed request carries RFC 9421 headers");
+        assert!(
+            !signed.headers().is_empty(),
+            "the signed request carries RFC 9421 headers"
+        );
     }
 }
 
@@ -508,7 +550,10 @@ mod notification_tests {
                 target_uri: TARGET.into(),
                 route: Some("a".into()),
             },
-            vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token")],
+            vec![ArtifactBinding::opaque_digest(
+                ArtifactType::OauthDpop,
+                b"access-token",
+            )],
             "nonce-notification-1",
             1_000,
             1_300,
@@ -589,8 +634,11 @@ mod notification_tests {
             digest_alg: "sha-256".into(),
             digest_value: "AAAA".into(),
         };
-        let with_continuation = inputs()
-            .with_continuation(HttpContinuation::from_handles(digest(), digest(), b"state-1"));
+        let with_continuation = inputs().with_continuation(HttpContinuation::from_handles(
+            digest(),
+            digest(),
+            b"state-1",
+        ));
         assert_eq!(
             build_signed_notification(
                 "notifications/cancelled",
@@ -600,7 +648,9 @@ mod notification_tests {
                 &key(),
             )
             .err(),
-            Some(HttpProfileError::MalformedEvidence("continuation on a notification")),
+            Some(HttpProfileError::MalformedEvidence(
+                "continuation on a notification"
+            )),
         );
     }
 

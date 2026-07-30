@@ -208,8 +208,8 @@ pub fn verify_delegation_credential(
     }
 
     // --- issuer → trusted root anchor (step 2) -------------------------------
-    let root_key = resolve_root(&claims.issuer_kid)
-        .ok_or(HttpProfileError::DelegationIssuerUntrusted)?;
+    let root_key =
+        resolve_root(&claims.issuer_kid).ok_or(HttpProfileError::DelegationIssuerUntrusted)?;
 
     // --- root signature over the JWS signing input (step 3) ------------------
     let signing_input = format!("{header_seg}.{payload_seg}");
@@ -275,8 +275,8 @@ pub fn verify_delegation_credential(
         // credential's delegated_kid) is an invalid credential.
         return Err(HttpProfileError::DelegationCredentialInvalid);
     }
-    let delegated_key =
-        VerificationKey::from_b64url(&jwk.x).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    let delegated_key = VerificationKey::from_b64url(&jwk.x)
+        .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
 
     Ok(VerifiedDelegation {
         delegated_key,
@@ -358,7 +358,8 @@ fn split_compact_jws(jws: &str) -> Result<(&str, &str, &str), HttpProfileError> 
 /// Decode a base64url-no-pad JWS segment and parse its JSON. Any failure ⇒ an
 /// invalid credential.
 fn decode_json<T: for<'de> Deserialize<'de>>(segment: &str) -> Result<T, HttpProfileError> {
-    let bytes = b64url_decode(segment).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
+    let bytes =
+        b64url_decode(segment).map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
     serde_json::from_slice(&bytes).map_err(|_| HttpProfileError::DelegationCredentialInvalid)
 }
 
@@ -538,7 +539,12 @@ mod tests {
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         // Verifier presents a different audience than the credential's `aud`.
         assert_eq!(
-            verify(&jws, &params(&["did:example:other"], &[EPOCH]), r.public_key()).unwrap_err(),
+            verify(
+                &jws,
+                &params(&["did:example:other"], &[EPOCH]),
+                r.public_key()
+            )
+            .unwrap_err(),
             HttpProfileError::DelegationAudienceMismatch
         );
     }
@@ -595,7 +601,8 @@ mod tests {
         let (r, d) = (root(), delegated());
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         // Explicit { current, previous } window includes the credential's epoch.
-        verify(&jws, &params(&[AUD], &["epoch-8", EPOCH]), r.public_key()).expect("accepted in window");
+        verify(&jws, &params(&[AUD], &["epoch-8", EPOCH]), r.public_key())
+            .expect("accepted in window");
     }
 
     #[test]
@@ -603,12 +610,9 @@ mod tests {
         let (r, d) = (root(), delegated());
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         let p = params(&[AUD], &[EPOCH]);
-        let err = verify_delegation_credential(
-            &jws,
-            &p,
-            resolver(r.public_key()),
-            |kid: &str| kid == DELEGATED_KID,
-        )
+        let err = verify_delegation_credential(&jws, &p, resolver(r.public_key()), |kid: &str| {
+            kid == DELEGATED_KID
+        })
         .unwrap_err();
         assert_eq!(err, HttpProfileError::DelegationRevoked);
     }
@@ -619,12 +623,9 @@ mod tests {
         let (r, d) = (root(), delegated());
         let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
         let p = params(&[AUD], &[EPOCH]);
-        let err = verify_delegation_credential(
-            &jws,
-            &p,
-            resolver(r.public_key()),
-            |id: &str| id == "evt-1",
-        )
+        let err = verify_delegation_credential(&jws, &p, resolver(r.public_key()), |id: &str| {
+            id == "evt-1"
+        })
         .unwrap_err();
         assert_eq!(err, HttpProfileError::DelegationRevoked);
     }
@@ -676,9 +677,12 @@ mod tests {
     #[test]
     fn seam_minted_credential_verifies_to_the_root() {
         let (r, d) = (root(), delegated());
-        let jws =
-            issue_delegation_credential_with_signer(&good_header(), &good_claims(&d.public_key()), kms_root(&r))
-                .expect("mint");
+        let jws = issue_delegation_credential_with_signer(
+            &good_header(),
+            &good_claims(&d.public_key()),
+            kms_root(&r),
+        )
+        .expect("mint");
         let v = verify(&jws, &params(&[AUD], &[EPOCH]), r.public_key()).expect("valid");
         assert_eq!(v.delegated_kid, DELEGATED_KID);
         assert_eq!(v.delegated_key.to_bytes(), d.public_key().to_bytes());
@@ -696,7 +700,11 @@ mod tests {
                 |_input| Ok(vec![0u8; bad_len]),
             )
             .unwrap_err();
-            assert_eq!(err, HttpProfileError::DelegationCredentialInvalid, "len {bad_len}");
+            assert_eq!(
+                err,
+                HttpProfileError::DelegationCredentialInvalid,
+                "len {bad_len}"
+            );
         }
     }
 

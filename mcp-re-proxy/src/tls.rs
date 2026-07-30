@@ -824,7 +824,10 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
 /// so this is anti-smuggling hygiene (ADR-MCPS-025 rule 4 applying the ADR-MCPS-023
 /// strict-header rules). A defect maps to `mcp-re.transport_binding_failed`, the same
 /// transport-boundary token the sibling cert-lifetime / OCSP rejections use.
-pub(crate) fn routing_header_rejection(headers: &RequestHeaders, request: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn routing_header_rejection(
+    headers: &RequestHeaders,
+    request: &[u8],
+) -> Option<Vec<u8>> {
     crate::transport::validate_routing_headers(headers)
         .err()
         .map(|_rejection| {
@@ -940,9 +943,12 @@ where
     // Adapt the 2-arg handler to the assertion-aware form (the assertion header is
     // ignored — this entry point predates Tier-3 and stays byte-for-byte for its
     // many callers). The Tier-3 serve path uses [`serve_once_with_assertion`].
-    serve_once_with_assertion(listener, config, options, |request, identity, _assertion| {
-        handler(request, identity)
-    })
+    serve_once_with_assertion(
+        listener,
+        config,
+        options,
+        |request, identity, _assertion| handler(request, identity),
+    )
 }
 
 /// As [`serve_once`], but the handler ALSO receives the raw Tier-3 ingress-assertion
@@ -1719,7 +1725,9 @@ mod aggregate_deadline_tests {
             ..ServerLimits::default()
         };
         let mut stream = DeadlineStream::new(
-            TricklingReader { per_read_sleep: Duration::from_millis(5) },
+            TricklingReader {
+                per_read_sleep: Duration::from_millis(5),
+            },
             &limits,
         );
 

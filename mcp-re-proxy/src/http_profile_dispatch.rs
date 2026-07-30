@@ -156,7 +156,9 @@ pub async fn dispatch_request_with_async_tier(
         //     prevent cross-node replays — refuse on the same frozen token, exactly
         //     as the sync core gate does beneath `dispatch_request`.
         if tier.durability_class() == ReplayDurabilityClass::SingleProcessReference {
-            return Err(ProxyDispatchError::Dispatch(DispatchError::NonSharedReplayTier));
+            return Err(ProxyDispatchError::Dispatch(
+                DispatchError::NonSharedReplayTier,
+            ));
         }
     }
 

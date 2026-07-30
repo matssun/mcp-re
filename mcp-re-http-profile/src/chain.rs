@@ -108,7 +108,10 @@ pub enum ChainLabel {
     /// The chain is not a complete record. `hop` is the zero-based index of the
     /// first hop that broke it — an auditor is told WHICH turn is unaccounted
     /// for, not merely that something is wrong.
-    Incomplete { hop: usize, reason: IncompleteReason },
+    Incomplete {
+        hop: usize,
+        reason: IncompleteReason,
+    },
 }
 
 impl ChainLabel {
@@ -292,11 +295,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
                     && c.input_required_response_evidence.digest_alg
                         == prev.response_evidence.digest_alg;
                 if !links {
-                    return incomplete(
-                        hop_evidence,
-                        i,
-                        IncompleteReason::ContinuationDoesNotLink,
-                    );
+                    return incomplete(hop_evidence, i, IncompleteReason::ContinuationDoesNotLink);
                 }
             }
         }
@@ -369,8 +368,8 @@ fn hop_instant(
     policy: &VerifierPolicy,
     now: i64,
 ) -> Result<i64, HopInstantError> {
-    let parsed = parse_signature_input_for(headers, label, what)
-        .map_err(HopInstantError::Unreadable)?;
+    let parsed =
+        parse_signature_input_for(headers, label, what).map_err(HopInstantError::Unreadable)?;
     let created = parsed
         .params
         .created

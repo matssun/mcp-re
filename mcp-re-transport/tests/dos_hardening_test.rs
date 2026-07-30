@@ -208,9 +208,8 @@ fn oversized_response_is_rejected_not_oom() {
         let _ = tls.conn.complete_io(&mut tls.sock);
         let mut scratch = [0u8; 1024];
         let _ = tls.read(&mut scratch);
-        let header = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {flood_len}\r\nConnection: close\r\n\r\n"
-        );
+        let header =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {flood_len}\r\nConnection: close\r\n\r\n");
         let _ = tls.write_all(header.as_bytes());
         let _ = tls.write_all(&vec![b'x'; flood_len]);
         let _ = tls.flush();

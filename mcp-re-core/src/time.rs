@@ -294,7 +294,10 @@ mod tests {
     #[test]
     fn garbage_and_wrong_separators_rejected() {
         assert_eq!(parse_rfc3339_utc(""), Err(McpReError::ExpiredRequest));
-        assert_eq!(parse_rfc3339_utc("not-a-date"), Err(McpReError::ExpiredRequest));
+        assert_eq!(
+            parse_rfc3339_utc("not-a-date"),
+            Err(McpReError::ExpiredRequest)
+        );
         assert_eq!(
             parse_rfc3339_utc("2026-05-28 20:00:00Z"),
             Err(McpReError::ExpiredRequest)

@@ -105,7 +105,9 @@ fn make_server_leaf_with_validity(
     params.not_before = rcgen::date_time_ymd(not_before.0, not_before.1, not_before.2);
     params.not_after = rcgen::date_time_ymd(not_after.0, not_after.1, not_after.2);
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     let der = cert.der().clone();
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
     (der, key_der)
@@ -165,7 +167,10 @@ fn spawn_server(
 
 /// Build the client config presenting a trusted client cert and trusting
 /// `server_ca` to authenticate the proxy.
-fn client_config_with_server_ca(client_ca: &Ca, server_ca_der: CertificateDer<'static>) -> ClientTlsConfig {
+fn client_config_with_server_ca(
+    client_ca: &Ca,
+    server_ca_der: CertificateDer<'static>,
+) -> ClientTlsConfig {
     let (client_cert, client_key) = make_leaf(client_ca, vec![uri(CLIENT_SPIFFE)], None, true);
     ClientTlsConfig::from_der(vec![client_cert], client_key, vec![server_ca_der])
         .expect("client config")
@@ -188,8 +193,7 @@ fn trusted_server_and_client_round_trip_succeeds() {
     let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = spawn_server(listener, config, reached.clone());
 
-    let client_config =
-        client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
+    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
     let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
     let response = client
         .round_trip(addr, b"{\"jsonrpc\":\"2.0\"}")
@@ -226,8 +230,7 @@ fn untrusted_server_cert_is_rejected() {
     let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = spawn_server(listener, config, reached.clone());
 
-    let client_config =
-        client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
+    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
     let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
     let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
 
@@ -264,8 +267,7 @@ fn wrong_server_identity_is_rejected() {
     let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = spawn_server(listener, config, reached.clone());
 
-    let client_config =
-        client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
+    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
     let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
     let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
 
@@ -302,8 +304,7 @@ fn expired_server_cert_is_rejected() {
     let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = spawn_server(listener, config, reached.clone());
 
-    let client_config =
-        client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
+    let client_config = client_config_with_server_ca(&client_ca, server_ca.cert.der().clone());
     let client = MtlsClient::new(client_config, SERVER_NAME).expect("client");
     let result = client.round_trip(addr, b"{\"jsonrpc\":\"2.0\"}");
 

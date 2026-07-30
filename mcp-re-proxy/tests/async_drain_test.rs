@@ -68,7 +68,9 @@ fn make_ca() -> Ca {
     let mut params = CertificateParams::new(Vec::new()).expect("ca params");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params.distinguished_name.push(DnType::CommonName, "mcp-re-drain-ca");
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "mcp-re-drain-ca");
     let cert = params.self_signed(&key).expect("ca self-signed");
     Ca { cert, key }
 }
@@ -84,7 +86,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
     } else {
         ExtendedKeyUsagePurpose::ServerAuth
     }];
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -272,7 +276,11 @@ impl Drop for AsyncServer {
     }
 }
 
-fn spawn_server<H>(config: Arc<rustls::ServerConfig>, options: ServerOptions, handler: H) -> AsyncServer
+fn spawn_server<H>(
+    config: Arc<rustls::ServerConfig>,
+    options: ServerOptions,
+    handler: H,
+) -> AsyncServer
 where
     H: Fn(&[u8], Option<TransportIdentity>, Option<&str>) -> Vec<u8> + Send + Sync + 'static,
 {
@@ -284,16 +292,20 @@ where
     // in `handle_request` spans this await, so a handler holding the request (the
     // HANDLER_HOLD sleep) keeps the drain's in-flight count > 0 exactly as before.
     let handler = Arc::new(handler);
-    let handle = std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(6)
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
-        rt.block_on(async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
-            tx.send(listener.local_addr().expect("addr")).expect("send addr");
-            let async_handler = move |req: async_serve::ServedHttpRequest|
+    let handle =
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(6)
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("bind");
+                tx.send(listener.local_addr().expect("addr"))
+                    .expect("send addr");
+                let async_handler = move |req: async_serve::ServedHttpRequest|
                   -> async_serve::HandlerResponseFuture {
                 let h = Arc::clone(&handler);
                 // The drain tests use SYNCHRONOUS handlers that block until the
@@ -309,19 +321,23 @@ where
                     async_serve::ServedHttpResponse { status: 200, headers: Vec::new(), body }
                 })
             };
-            async_serve::serve(
-                listener,
-                // The accept loop reads the serving config per connection from a
-                // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
-                Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(config)),
-                Arc::new(options),
-                Arc::new(async_handler),
-                shutdown_srv,
-            )
-            .await;
+                async_serve::serve(
+                    listener,
+                    // The accept loop reads the serving config per connection from a
+                    // snapshot (MCPRE-116 CRL hot-reload); this harness never swaps it.
+                    Arc::new(mcp_re_proxy::config_snapshot::ServerConfigSnapshot::new(
+                        config,
+                    )),
+                    Arc::new(options),
+                    Arc::new(async_handler),
+                    shutdown_srv,
+                )
+                .await;
+            });
         });
-    });
-    let addr = rx.recv_timeout(Duration::from_secs(30)).expect("server bound");
+    let addr = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("server bound");
     AsyncServer {
         addr,
         shutdown,
@@ -382,16 +398,25 @@ fn in_flight_request_completes_during_drain_zero_abandoned() {
     let addr = server.addr;
     let client = client_config(&client_ca);
     let status = std::thread::spawn(move || request_status(addr, &client, b"drain-me"));
-    wait_until(Duration::from_secs(30), || entered.load(Ordering::SeqCst) == 1);
+    wait_until(Duration::from_secs(30), || {
+        entered.load(Ordering::SeqCst) == 1
+    });
 
     // Signal shutdown WHILE the request is in flight. Graceful drain must let it finish
     // (200), not abandon it — the handler is still mid-HANDLER_HOLD.
     server.trigger_shutdown();
 
     let result = status.join().expect("client thread");
-    assert_eq!(result.expect("request completes"), 200, "the in-flight request drained cleanly (not abandoned)");
+    assert_eq!(
+        result.expect("request completes"),
+        200,
+        "the in-flight request drained cleanly (not abandoned)"
+    );
     let join_time = server.join();
-    assert!(join_time < Duration::from_secs(5), "drain returns promptly once the request finished, took {join_time:?}");
+    assert!(
+        join_time < Duration::from_secs(5),
+        "drain returns promptly once the request finished, took {join_time:?}"
+    );
 }
 
 #[test]
@@ -410,7 +435,10 @@ fn idle_drain_returns_promptly() {
 
     server.trigger_shutdown();
     let join_time = server.join();
-    assert!(join_time < Duration::from_secs(3), "an idle drain returns promptly, took {join_time:?}");
+    assert!(
+        join_time < Duration::from_secs(3),
+        "an idle drain returns promptly, took {join_time:?}"
+    );
 }
 
 #[test]
@@ -443,7 +471,9 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
         }));
     }
     // All n are in flight (entered their handlers, now holding).
-    wait_until(Duration::from_secs(30), || entered.load(Ordering::SeqCst) == n);
+    wait_until(Duration::from_secs(30), || {
+        entered.load(Ordering::SeqCst) == n
+    });
 
     // Shut down WHILE all n are in flight; the drain must let every one finish (200).
     server.trigger_shutdown();
@@ -453,7 +483,10 @@ fn saturated_drain_completes_all_in_flight_zero_abandoned() {
         assert_eq!(status, 200, "every in-flight request drained cleanly");
     }
     let join_time = server.join();
-    assert!(join_time < Duration::from_secs(5), "saturated drain completed within bound, took {join_time:?}");
+    assert!(
+        join_time < Duration::from_secs(5),
+        "saturated drain completed within bound, took {join_time:?}"
+    );
 }
 
 #[test]
@@ -473,7 +506,8 @@ fn stuck_request_cannot_delay_exit_past_grace() {
     // Open a request that stalls in the async body-read phase (promises 100 bytes,
     // sends 1) and hold it open — an in-flight request that will not finish on its own
     // within the grace.
-    let _stalled = open_stalled_body(server.addr, &client_config(&client_ca), 100, 1).expect("stalled open");
+    let _stalled =
+        open_stalled_body(server.addr, &client_config(&client_ca), 100, 1).expect("stalled open");
     // Let the server enter the body-read await for this request.
     std::thread::sleep(Duration::from_millis(150));
 
@@ -500,7 +534,8 @@ fn request_status_with_raw_header(
 ) -> std::io::Result<u16> {
     let mut stream = tls_connect(addr, config)?;
     let mut head =
-        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n".to_vec();
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\nConnection: close\r\n"
+            .to_vec();
     head.extend_from_slice(header_line);
     head.extend_from_slice(b"\r\n\r\n");
     stream.write_all(&head)?;
@@ -571,8 +606,8 @@ fn a_duplicated_non_utf8_header_is_refused_rather_than_silently_deduplicated() {
     let client = client_config(&client_ca);
     let mut line = b"X-Trusty: legitimate\r\nX-Trusty: ".to_vec();
     line.push(0x80); // a bare continuation byte — never valid on its own
-    let status = request_status_with_raw_header(server.addr, &client, &line)
-        .expect("the server answers");
+    let status =
+        request_status_with_raw_header(server.addr, &client, &line).expect("the server answers");
 
     assert_eq!(status, 400);
     assert_eq!(reached.load(Ordering::SeqCst), 0);
@@ -596,12 +631,9 @@ fn ordinary_header_values_still_reach_the_handler() {
     );
 
     let client = client_config(&client_ca);
-    let status = request_status_with_raw_header(
-        server.addr,
-        &client,
-        b"X-Plain: one\r\nX-Plain: two",
-    )
-    .expect("the server answers");
+    let status =
+        request_status_with_raw_header(server.addr, &client, b"X-Plain: one\r\nX-Plain: two")
+            .expect("the server answers");
 
     assert_eq!(status, 200);
     assert_eq!(reached.load(Ordering::SeqCst), 1);

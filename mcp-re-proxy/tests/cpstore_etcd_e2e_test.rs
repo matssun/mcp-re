@@ -195,22 +195,17 @@ fn live_lease_ttl_is_bounded_window_not_absolute_epoch() {
     let key_b64 = STANDARD.encode(composite_key(signer, AUD, nonce).as_bytes());
     let range = post_json(&url, "v3/kv/txn", &json!({})); // ensure gateway reachable
     drop(range);
-    let range_resp = post_json(
-        &url,
-        "v3/kv/range",
-        &json!({ "key": key_b64 }),
-    );
+    let range_resp = post_json(&url, "v3/kv/range", &json!({ "key": key_b64 }));
     let lease_str = range_resp["kvs"][0]["lease"]
         .as_str()
         .expect("the inserted key carries a lease (bounded TTL), not lease 0");
     let lease_id: i64 = lease_str.parse().expect("lease id is an integer string");
-    assert_ne!(lease_id, 0, "an unleased key would never expire (the now=0 DoS)");
-
-    let ttl_resp = post_json(
-        &url,
-        "v3/lease/timetolive",
-        &json!({ "ID": lease_id }),
+    assert_ne!(
+        lease_id, 0,
+        "an unleased key would never expire (the now=0 DoS)"
     );
+
+    let ttl_resp = post_json(&url, "v3/lease/timetolive", &json!({ "ID": lease_id }));
     let granted_ttl: i64 = ttl_resp["grantedTTL"]
         .as_str()
         .and_then(|s| s.parse().ok())

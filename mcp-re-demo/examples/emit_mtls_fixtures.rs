@@ -31,7 +31,7 @@ fn main() {
     write("client_ca.pem", fx.client_ca_pem()); // --client-ca
     write("trust.json", fx.trust_json()); // --trust
     write("signing_seed", fx.signing_seed_b64url()); // --signing-key-seed (b64url)
-    // Client (Python) inputs.
+                                                     // Client (Python) inputs.
     write("server_ca.pem", fx.server_ca_pem()); // verify the proxy's server cert
     write("client_cert.pem", fx.client_cert_pem()); // mTLS client cert (URI SAN == signer)
     write("client_key.pem", fx.client_key_pem());

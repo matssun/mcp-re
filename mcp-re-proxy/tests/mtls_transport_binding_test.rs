@@ -74,7 +74,9 @@ fn make_ca(common_name: &str) -> Ca {
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.use_authority_key_identifier_extension = true;
-    params.distinguished_name.push(DnType::CommonName, common_name);
+    params
+        .distinguished_name
+        .push(DnType::CommonName, common_name);
     let cert = params.self_signed(&key).expect("ca self-signed");
     Ca { cert, key }
 }
@@ -92,7 +94,9 @@ fn make_leaf(ca: &Ca, sans: Vec<SanType>, client_auth: bool) -> (rcgen::Certific
         ExtendedKeyUsagePurpose::ServerAuth
     }];
     params.use_authority_key_identifier_extension = true;
-    let cert = params.signed_by(&key, &ca.cert, &ca.key).expect("leaf signed");
+    let cert = params
+        .signed_by(&key, &ca.cert, &ca.key)
+        .expect("leaf signed");
     (cert, key)
 }
 
@@ -115,8 +119,7 @@ struct Pki {
 impl Pki {
     /// A server that REQUIRES + verifies a client cert chaining to `client_ca`.
     fn new(server_ca: &Ca, client_ca: &Ca) -> Self {
-        let (server_leaf, server_key) =
-            make_leaf(server_ca, vec![dns_san(SERVER_NAME)], false);
+        let (server_leaf, server_key) = make_leaf(server_ca, vec![dns_san(SERVER_NAME)], false);
         let server_config = RustlsDirectProvider::build_server_config(
             vec![server_leaf.der().clone()],
             key_der(&server_key),
@@ -221,7 +224,7 @@ fn signed_request_bound_to_cert(bound_cert_der: &[u8]) -> HttpRequest {
             bound_cert_der,
         )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
     let mut request = HttpRequest {
         method: "POST".into(),
@@ -261,8 +264,7 @@ fn mtls_material(presented_leaf: Option<Vec<u8>>) -> impl Fn(&ArtifactBinding) -
 fn request_over_its_own_mtls_channel_verifies() {
     let server_ca = make_ca("mcp-re test server CA");
     let client_ca = make_ca("mcp-re test client CA");
-    let (client_leaf, client_key) =
-        make_leaf(&client_ca, vec![uri_san(SIGNER_URI)], true);
+    let (client_leaf, client_key) = make_leaf(&client_ca, vec![uri_san(SIGNER_URI)], true);
     let client_leaf_der = client_leaf.der().as_ref().to_vec();
 
     let presented = handshake_capture_presented_leaf(
@@ -300,8 +302,11 @@ fn request_relayed_onto_a_different_mtls_channel_fails_closed() {
     let (leaf_a, _key_a) = make_leaf(&client_ca, vec![uri_san(SIGNER_URI)], true);
     let a_der = leaf_a.der().as_ref().to_vec();
     // Client B — a DIFFERENT identity under the same (trusted) client CA.
-    let (leaf_b, key_b) =
-        make_leaf(&client_ca, vec![uri_san("spiffe://example.org/agent-2")], true);
+    let (leaf_b, key_b) = make_leaf(
+        &client_ca,
+        vec![uri_san("spiffe://example.org/agent-2")],
+        true,
+    );
 
     // B completes a real handshake; the server captures B's leaf.
     let presented_b = handshake_capture_presented_leaf(
@@ -331,8 +336,7 @@ fn request_relayed_onto_a_different_mtls_channel_fails_closed() {
 fn mtls_bound_request_over_plain_http_fails_closed() {
     let server_ca = make_ca("mcp-re test server CA");
     let client_ca = make_ca("mcp-re test client CA");
-    let (client_leaf, _client_key) =
-        make_leaf(&client_ca, vec![uri_san(SIGNER_URI)], true);
+    let (client_leaf, _client_key) = make_leaf(&client_ca, vec![uri_san(SIGNER_URI)], true);
     let client_leaf_der = client_leaf.der().as_ref().to_vec();
     let _ = (&server_ca, &client_ca); // trust material minted, no handshake driven
 

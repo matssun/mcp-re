@@ -56,11 +56,10 @@ fn signed_declaring(alg: &str) -> HttpRequest {
         ],
         body,
     };
-    let comps: Vec<CoveredComponent> =
-        ["@method", "@target-uri", "content-digest", "content-type"]
-            .iter()
-            .map(|n| CoveredComponent::new(n))
-            .collect();
+    let comps: Vec<CoveredComponent> = ["@method", "@target-uri", "content-digest", "content-type"]
+        .iter()
+        .map(|n| CoveredComponent::new(n))
+        .collect();
     let params = SignatureParams {
         created: Some(CREATED),
         expires: Some(EXPIRES),
@@ -75,9 +74,15 @@ fn signed_declaring(alg: &str) -> HttpRequest {
     let sig_b64 = base64::engine::general_purpose::STANDARD.encode(&sig);
     r.headers.push((
         "Signature-Input".into(),
-        format!("mcp-re={}", params.serialize_with(&comps).expect("the test params are RFC 8941 strings")),
+        format!(
+            "mcp-re={}",
+            params
+                .serialize_with(&comps)
+                .expect("the test params are RFC 8941 strings")
+        ),
     ));
-    r.headers.push(("Signature".into(), format!("mcp-re=:{sig_b64}:")));
+    r.headers
+        .push(("Signature".into(), format!("mcp-re=:{sig_b64}:")));
     r
 }
 
@@ -100,8 +105,8 @@ fn a_policy_enabling_algorithm_confusion_cannot_be_constructed() {
 #[test]
 fn an_ed25519_signature_declaring_ml_dsa_is_rejected() {
     let r = signed_declaring("ml-dsa-65");
-    let err = verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW)
-        .unwrap_err();
+    let err =
+        verify_request_with_policy(&r, &resolver(), &VerifierPolicy::default(), NOW).unwrap_err();
     assert_eq!(err, HttpProfileError::UnsupportedAlgorithm);
     assert_eq!(err.wire_code(), "mcp-re.unsupported_version");
 }
@@ -119,8 +124,16 @@ fn the_same_signature_declaring_ed25519_verifies() {
 /// is the invariant that makes `accepted_algorithm` safe to dispatch on.
 #[test]
 fn only_implemented_algorithms_resolve() {
-    assert_eq!(ProfileAlgorithm::from_token("ed25519"), Some(ProfileAlgorithm::Ed25519));
-    for unimplemented in ["ml-dsa-65", "rsa-pss-sha512", "ecdsa-p256-sha256", "hmac-sha256"] {
+    assert_eq!(
+        ProfileAlgorithm::from_token("ed25519"),
+        Some(ProfileAlgorithm::Ed25519)
+    );
+    for unimplemented in [
+        "ml-dsa-65",
+        "rsa-pss-sha512",
+        "ecdsa-p256-sha256",
+        "hmac-sha256",
+    ] {
         assert_eq!(
             ProfileAlgorithm::from_token(unimplemented),
             None,

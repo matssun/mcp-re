@@ -134,7 +134,10 @@ fn zeroize_on_drop_invokes_zeroize() {
     let mut live = Spy { bytes: [0xA5; 32] };
     assert_eq!(live.bytes, [0xA5; 32], "sentinel set before zeroize");
     live.zeroize();
-    assert_eq!(live.bytes, [0u8; 32], "zeroize() must zero the bytes in place");
+    assert_eq!(
+        live.bytes, [0u8; 32],
+        "zeroize() must zero the bytes in place"
+    );
     assert!(ZEROIZED.load(Ordering::SeqCst), "zeroize() must have run");
 
     // (b) Dropping a Zeroizing<T> invokes Zeroize::zeroize on its payload.

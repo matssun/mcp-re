@@ -1170,9 +1170,11 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
 
     // Mismatch: leaf minted from one seed, KMS backend keyed to a DIFFERENT seed.
     let leaf = make_ed25519_server_leaf_from_seed(&server_ca, &[0x11u8; 32]);
-    let mismatched =
-        mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(&[0x22u8; 32], "alias/mcp-re-tls")
-            .expect("aws kms backend");
+    let mismatched = mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(
+        &[0x22u8; 32],
+        "alias/mcp-re-tls",
+    )
+    .expect("aws kms backend");
     let err = mcp_re_proxy::build_server_config_delegated_validated(
         vec![leaf],
         std::sync::Arc::new(mismatched),
@@ -1188,9 +1190,11 @@ fn aws_kms_delegated_build_rejects_mismatch_and_non_ed25519_leaf() {
 
     // Non-Ed25519 leaf (ECDSA P-256): the leaf SPKI is rejected first (Ed25519-only).
     let ecdsa_leaf = make_ecdsa_server_leaf(&server_ca);
-    let backend =
-        mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(&[0x33u8; 32], "alias/mcp-re-tls")
-            .expect("aws kms backend");
+    let backend = mcp_re_proxy::AwsKmsEd25519Backend::for_test_with_local_seed(
+        &[0x33u8; 32],
+        "alias/mcp-re-tls",
+    )
+    .expect("aws kms backend");
     let err = mcp_re_proxy::build_server_config_delegated_validated(
         vec![ecdsa_leaf],
         std::sync::Arc::new(backend),

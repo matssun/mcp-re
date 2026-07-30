@@ -10,6 +10,7 @@
 //! `verify_response_bound_full` and the RFC 9421 request evidence block on the HTTP
 //! message.
 
+use mcp_re_core::SigningKey;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_request_full;
@@ -24,7 +25,6 @@ use mcp_re_http_profile::HttpResponse;
 use mcp_re_http_profile::ResolvedActor;
 use mcp_re_http_profile::SignerSlot;
 use mcp_re_http_profile::PROFILE_TAG;
-use mcp_re_core::SigningKey;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
 const SERVER_SEED: [u8; 32] = [22u8; 32];
@@ -113,8 +113,16 @@ const CALL: &[u8] = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
 /// Sign a request and return (request, evidence).
 fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::RequestEvidence) {
     let mut req = base_request(body);
-    let ev = sign_request_full(&mut req, &block(), &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("sign");
+    let ev = sign_request_full(
+        &mut req,
+        &block(),
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("sign");
     (req, ev)
 }
 
@@ -123,9 +131,11 @@ fn signed(nonce: &str, body: &[u8]) -> (HttpRequest, mcp_re_http_profile::Reques
 fn tampered_request_body_is_rejected() {
     let (mut req, _) = signed("n-auth", CALL);
     // Control: the untampered request verifies.
-    verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("control verifies");
+    verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW)
+        .expect("control verifies");
     // Tamper the body AFTER signing → Content-Digest / signature must reject.
-    req.body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"WRITE"}}"#.to_vec();
+    req.body =
+        br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"WRITE"}}"#.to_vec();
     assert!(
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
         "a tampered request body must be rejected"
@@ -137,7 +147,8 @@ fn tampered_request_body_is_rejected() {
 fn mutated_payload_is_rejected() {
     let (mut req, _) = signed("n-int", CALL);
     // Mutate the JSON-RPC id (inside the signed body) → rejected.
-    req.body = br#"{"jsonrpc":"2.0","id":999,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
+    req.body =
+        br#"{"jsonrpc":"2.0","id":999,"method":"tools/call","params":{"name":"read"}}"#.to_vec();
     assert!(
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
         "a mutated JSON-RPC id in the signed payload must be rejected"
@@ -166,7 +177,10 @@ fn authorization_artifact_binding_is_bound_and_verified() {
     let verified =
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).expect("verifies");
     let bindings = &verified.request_block.expect("block").artifact_bindings;
-    assert!(!bindings.is_empty(), "the request carries a bound authorization artifact");
+    assert!(
+        !bindings.is_empty(),
+        "the request carries a bound authorization artifact"
+    );
     assert_eq!(bindings[0].artifact_type, ArtifactType::OauthDpop);
 }
 
@@ -229,13 +243,25 @@ fn request_within_the_skew_bound_is_accepted_but_beyond_it_is_not() {
 fn future_dated_request_within_the_skew_bound_is_accepted() {
     let (req, _) = signed("n-future", CALL);
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), CREATED - SKEW + 1)
-            .is_ok(),
+        verify_request_full(
+            &req,
+            &audience(),
+            &no_material(),
+            &resolver(),
+            CREATED - SKEW + 1
+        )
+        .is_ok(),
         "a slightly future-dated request is tolerated within the bound"
     );
     assert!(
-        verify_request_full(&req, &audience(), &no_material(), &resolver(), CREATED - SKEW - 1)
-            .is_err(),
+        verify_request_full(
+            &req,
+            &audience(),
+            &no_material(),
+            &resolver(),
+            CREATED - SKEW - 1
+        )
+        .is_err(),
         "beyond the bound, a future-dated request fails closed"
     );
 }
@@ -270,7 +296,10 @@ fn replayed_request_is_rejected_by_the_replay_tier() {
         .expect("dispatch prep")
         .0;
     let cache = InMemoryReplayCache::new(0);
-    assert_eq!(key.check_and_insert(&cache, EXPIRES).unwrap(), ReplayDecision::Fresh);
+    assert_eq!(
+        key.check_and_insert(&cache, EXPIRES).unwrap(),
+        ReplayDecision::Fresh
+    );
     assert_eq!(
         key.check_and_insert(&cache, EXPIRES).unwrap(),
         ReplayDecision::Replay,
@@ -295,8 +324,16 @@ fn untrusted_signer_key_is_rejected() {
 fn unauthorized_key_id_is_rejected() {
     // Sign with the client key but present a keyid the resolver does not admit.
     let mut req = base_request(CALL);
-    sign_request_full(&mut req, &block(), &client_key(), "unknown-key-99", CREATED, EXPIRES, "n-key")
-        .expect("sign");
+    sign_request_full(
+        &mut req,
+        &block(),
+        &client_key(),
+        "unknown-key-99",
+        CREATED,
+        EXPIRES,
+        "n-key",
+    )
+    .expect("sign");
     assert!(
         verify_request_full(&req, &audience(), &no_material(), &resolver(), NOW).is_err(),
         "a keyid outside the admitted set must be rejected"
@@ -321,17 +358,29 @@ fn transport_identity_binds_to_the_request_actor() {
 #[test]
 fn response_bound_to_the_wrong_request_is_rejected() {
     let (req_a, ev_a) = signed("n-respA", CALL);
-    let (req_b, _ev_b) = signed("n-respB", br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list"}}"#);
-    let verified_b =
-        verify_request_full(&req_b, &audience(), &no_material(), &resolver(), NOW).expect("verifies B");
+    let (req_b, _ev_b) = signed(
+        "n-respB",
+        br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list"}}"#,
+    );
+    let verified_b = verify_request_full(&req_b, &audience(), &no_material(), &resolver(), NOW)
+        .expect("verifies B");
     // Sign a response bound to request B.
     let mut resp = HttpResponse {
         status: 200,
         headers: vec![("content-type".into(), "application/json".into())],
         body: br#"{"jsonrpc":"2.0","id":2,"result":{"ok":true}}"#.to_vec(),
     };
-    sign_response_full(&mut resp, &req_b, &verified_b.evidence, &server_identity(), &server_key(), SERVER_KEY_ID, CREATED, EXPIRES)
-        .expect("sign response for B");
+    sign_response_full(
+        &mut resp,
+        &req_b,
+        &verified_b.evidence,
+        &server_identity(),
+        &server_key(),
+        SERVER_KEY_ID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("sign response for B");
     // The client that sent request A must NOT accept a response bound to B.
     assert!(
         verify_response_bound_full(&resp, &req_a, &ev_a, &resolver(), NOW).is_err(),

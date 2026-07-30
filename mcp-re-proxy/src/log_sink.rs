@@ -38,7 +38,10 @@ pub enum InnerLogEvent {
     Killed { reason: String },
     /// Captured inner stderr hit the configured byte/line bound and was
     /// truncated; the dropped tail is NOT retained.
-    StderrTruncated { captured_bytes: usize, cap_bytes: usize },
+    StderrTruncated {
+        captured_bytes: usize,
+        cap_bytes: usize,
+    },
     /// The inner server's stdout could not be parsed as a JSON-RPC frame the
     /// proxy expects (the protocol stream was dirty).
     ProtocolError { detail: String },
@@ -99,7 +102,11 @@ pub struct StderrLogSink;
 
 impl InnerLogSink for StderrLogSink {
     fn log(&self, inner_identity: &str, event: &InnerLogEvent) {
-        eprintln!("mcp-re-proxy: inner-event {} inner={inner_identity} {:?}", event.tag(), event);
+        eprintln!(
+            "mcp-re-proxy: inner-event {} inner={inner_identity} {:?}",
+            event.tag(),
+            event
+        );
     }
 }
 
@@ -114,17 +121,30 @@ mod tests {
             InnerLogEvent::SpawnFailed { reason: "x".into() }.tag(),
             "inner_spawn_failed"
         );
-        assert_eq!(InnerLogEvent::Exited { code: Some(0) }.tag(), "inner_exited");
-        assert_eq!(InnerLogEvent::Killed { reason: "x".into() }.tag(), "inner_killed");
         assert_eq!(
-            InnerLogEvent::StderrTruncated { captured_bytes: 4, cap_bytes: 4 }.tag(),
+            InnerLogEvent::Exited { code: Some(0) }.tag(),
+            "inner_exited"
+        );
+        assert_eq!(
+            InnerLogEvent::Killed { reason: "x".into() }.tag(),
+            "inner_killed"
+        );
+        assert_eq!(
+            InnerLogEvent::StderrTruncated {
+                captured_bytes: 4,
+                cap_bytes: 4
+            }
+            .tag(),
             "inner_stderr_truncated"
         );
         assert_eq!(
             InnerLogEvent::ProtocolError { detail: "x".into() }.tag(),
             "inner_protocol_error"
         );
-        assert_eq!(InnerLogEvent::RequestForwarded.tag(), "inner_request_forwarded");
+        assert_eq!(
+            InnerLogEvent::RequestForwarded.tag(),
+            "inner_request_forwarded"
+        );
         assert_eq!(InnerLogEvent::ResponseSigned.tag(), "inner_response_signed");
     }
 }

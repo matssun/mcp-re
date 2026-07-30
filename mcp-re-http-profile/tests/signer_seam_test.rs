@@ -36,10 +36,11 @@ fn server_key() -> SigningKey {
 /// The external-signer callback the seam expects: RFC 9421 base bytes in, raw
 /// 64-byte Ed25519 signature out. Here it wraps a local key (the KMS lane wraps
 /// `GcpKmsEd25519Backend::sign_raw_ed25519` through the identical contract).
-fn raw_ed25519_signer(key: &SigningKey) -> impl Fn(&[u8]) -> Result<Vec<u8>, HttpProfileError> + '_ {
+fn raw_ed25519_signer(
+    key: &SigningKey,
+) -> impl Fn(&[u8]) -> Result<Vec<u8>, HttpProfileError> + '_ {
     move |base: &[u8]| {
-        mcp_re_core::b64url_decode(&key.sign(base))
-            .map_err(|_| HttpProfileError::InvalidSignature)
+        mcp_re_core::b64url_decode(&key.sign(base)).map_err(|_| HttpProfileError::InvalidSignature)
     }
 }
 
@@ -68,7 +69,8 @@ fn base_request() -> HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -85,8 +87,15 @@ fn base_response() -> HttpResponse {
 #[test]
 fn external_signer_is_byte_identical_to_local_key() {
     let mut via_local = base_request();
-    sign_request(&mut via_local, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-1")
-        .expect("local sign");
+    sign_request(
+        &mut via_local,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("local sign");
 
     let mut via_seam = base_request();
     sign_request_with_signer(
@@ -99,7 +108,10 @@ fn external_signer_is_byte_identical_to_local_key() {
     )
     .expect("seam sign");
 
-    assert_eq!(via_local.headers, via_seam.headers, "seam must be wire-identical to local-key signing");
+    assert_eq!(
+        via_local.headers, via_seam.headers,
+        "seam must be wire-identical to local-key signing"
+    );
 }
 
 /// A seam-signed request verifies under the unmodified verifier.
@@ -122,7 +134,15 @@ fn external_signer_request_verifies() {
 #[test]
 fn external_signer_response_verifies() {
     let mut req = base_request();
-    sign_request(&mut req, &client_key(), "client-key-1", CREATED, EXPIRES, "nonce-1").expect("sign req");
+    sign_request(
+        &mut req,
+        &client_key(),
+        "client-key-1",
+        CREATED,
+        EXPIRES,
+        "nonce-1",
+    )
+    .expect("sign req");
 
     let mut rsp = base_response();
     sign_response_with_signer(
@@ -189,5 +209,8 @@ fn external_signer_wrong_key_does_not_verify() {
     )
     .expect("seam sign with foreign key");
     // Cryptographically valid signature, but not under the key the resolver trusts.
-    assert!(verify_request(&req, &resolver(), NOW).is_err(), "foreign-key signature must not verify");
+    assert!(
+        verify_request(&req, &resolver(), NOW).is_err(),
+        "foreign-key signature must not verify"
+    );
 }

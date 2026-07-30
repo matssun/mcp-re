@@ -106,10 +106,7 @@ impl CollectingAuditSink {
 
     /// Every record observed so far, in emission order.
     pub fn records(&self) -> Vec<AuditRecord> {
-        self.records
-            .lock()
-            .map(|r| r.clone())
-            .unwrap_or_default()
+        self.records.lock().map(|r| r.clone()).unwrap_or_default()
     }
 }
 

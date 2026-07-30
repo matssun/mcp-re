@@ -299,8 +299,7 @@ impl HttpInnerPool {
             match b.state.load(Ordering::Acquire) {
                 STATE_OPEN => {
                     if now_nanos >= b.reopen_at_nanos.load(Ordering::Acquire)
-                        && b
-                            .state
+                        && b.state
                             .compare_exchange(
                                 STATE_OPEN,
                                 STATE_HALF_OPEN,
@@ -317,8 +316,7 @@ impl HttpInnerPool {
                     }
                 }
                 STATE_HALF_OPEN => {
-                    if b
-                        .probe_inflight
+                    if b.probe_inflight
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                         .is_ok()
                     {
@@ -488,7 +486,10 @@ mod tests {
         HttpInnerPool::with_breaker_config(
             uris,
             Duration::from_secs(1),
-            BreakerConfig { failure_threshold: threshold, ejection_duration: Duration::from_secs(30) },
+            BreakerConfig {
+                failure_threshold: threshold,
+                ejection_duration: Duration::from_secs(30),
+            },
         )
         .expect("pool")
     }
@@ -513,9 +514,15 @@ mod tests {
         }
         assert_eq!(p.ejected_backend_count(), 0, "below threshold stays Closed");
         // Third failure trips it Open (ejected).
-        let (idx, probe) = p.select_backend(0).expect("still selectable at threshold-1");
+        let (idx, probe) = p
+            .select_backend(0)
+            .expect("still selectable at threshold-1");
         p.record_outcome(idx, probe, false, 0);
-        assert_eq!(p.ejected_backend_count(), 1, "threshold consecutive failures eject");
+        assert_eq!(
+            p.ejected_backend_count(),
+            1,
+            "threshold consecutive failures eject"
+        );
     }
 
     #[test]
@@ -527,12 +534,16 @@ mod tests {
         }
         let (i, pr) = p.select_backend(0).unwrap();
         p.record_outcome(i, pr, true, 0); // success resets the run
-        // Two more failures must NOT eject (run restarted at the success).
+                                          // Two more failures must NOT eject (run restarted at the success).
         for _ in 0..2 {
             let (i, pr) = p.select_backend(0).unwrap();
             p.record_outcome(i, pr, false, 0);
         }
-        assert_eq!(p.ejected_backend_count(), 0, "a success clears the consecutive-failure run");
+        assert_eq!(
+            p.ejected_backend_count(),
+            0,
+            "a success clears the consecutive-failure run"
+        );
     }
 
     #[test]
@@ -540,8 +551,11 @@ mod tests {
         let p = pool(1, 1); // one failure ejects
         let (i, pr) = p.select_backend(0).unwrap();
         p.record_outcome(i, pr, false, 0); // now Open with reopen_at = ejection_duration
-        // Before cooldown elapses, nothing is dispatchable — caller fails closed.
-        assert!(p.select_backend(1).is_none(), "an Open backend is not dispatched to before cooldown");
+                                           // Before cooldown elapses, nothing is dispatchable — caller fails closed.
+        assert!(
+            p.select_backend(1).is_none(),
+            "an Open backend is not dispatched to before cooldown"
+        );
         assert_eq!(p.ejected_backend_count(), 1);
     }
 
@@ -552,15 +566,23 @@ mod tests {
         p.record_outcome(i, pr, false, 0);
         let cooldown = DEFAULT_EJECTION_DURATION.as_nanos() as u64;
         // After the cooldown, selection admits exactly one Half-Open probe.
-        let (pi, is_probe) = p.select_backend(cooldown + 1).expect("probe admitted after cooldown");
+        let (pi, is_probe) = p
+            .select_backend(cooldown + 1)
+            .expect("probe admitted after cooldown");
         assert!(is_probe, "post-cooldown re-admission is a trial probe");
         // A concurrent second request finds the probe in flight and is turned away.
-        assert!(p.select_backend(cooldown + 1).is_none(), "only one probe in flight at a time");
+        assert!(
+            p.select_backend(cooldown + 1).is_none(),
+            "only one probe in flight at a time"
+        );
         // Probe success fully closes the breaker → back to normal traffic.
         p.record_outcome(pi, is_probe, true, cooldown + 2);
         assert_eq!(p.ejected_backend_count(), 0);
         let (_, back_to_normal) = p.select_backend(cooldown + 3).expect("healthy again");
-        assert!(!back_to_normal, "a recovered backend takes normal (non-probe) traffic");
+        assert!(
+            !back_to_normal,
+            "a recovered backend takes normal (non-probe) traffic"
+        );
     }
 
     #[test]
@@ -577,7 +599,10 @@ mod tests {
             "re-ejected backend waits a fresh cooldown, not immediately re-probed"
         );
         // Only after ANOTHER full cooldown is it probed again.
-        assert!(p.select_backend(2 * cooldown + 3).is_some(), "re-admitted after a second cooldown");
+        assert!(
+            p.select_backend(2 * cooldown + 3).is_some(),
+            "re-admitted after a second cooldown"
+        );
     }
 
     #[test]

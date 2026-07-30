@@ -94,7 +94,9 @@ fn read_floor(path: &Path) -> Result<u64, TrustManifestError> {
             .parse::<u64>()
             .map_err(|_| TrustManifestError::FloorUnreadable("trust-anchor floor is not a u64")),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(0),
-        Err(_) => Err(TrustManifestError::FloorUnreadable("read trust-anchor floor")),
+        Err(_) => Err(TrustManifestError::FloorUnreadable(
+            "read trust-anchor floor",
+        )),
     }
 }
 
@@ -125,7 +127,8 @@ mod tests {
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!("mcp-re-floor-{name}-{}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("mcp-re-floor-{name}-{}", std::process::id()));
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_file(path.with_extension("tmp"));
             Scratch(path)
@@ -143,7 +146,11 @@ mod tests {
     fn a_missing_file_is_floor_zero() {
         let scratch = Scratch::new("missing");
         let floor = FileManifestFloor::open(&scratch.0).expect("open");
-        assert_eq!(floor.min_version().unwrap(), 0, "never accepted a manifest yet");
+        assert_eq!(
+            floor.min_version().unwrap(),
+            0,
+            "never accepted a manifest yet"
+        );
     }
 
     #[test]
@@ -163,9 +170,13 @@ mod tests {
         let scratch = Scratch::new("monotonic");
         let mut floor = FileManifestFloor::open(&scratch.0).expect("open");
         floor.record(9).expect("record 9");
-        floor.record(4).expect("recording a lower version is a no-op, not an error");
+        floor
+            .record(4)
+            .expect("recording a lower version is a no-op, not an error");
         assert_eq!(floor.min_version().unwrap(), 9, "the floor never goes down");
-        floor.record(9).expect("re-recording the same version is a no-op");
+        floor
+            .record(9)
+            .expect("re-recording the same version is a no-op");
         assert_eq!(floor.min_version().unwrap(), 9);
     }
 
@@ -178,7 +189,9 @@ mod tests {
         std::fs::write(&scratch.0, b"not-a-number").expect("write garbage");
         assert_eq!(
             FileManifestFloor::open(&scratch.0).err(),
-            Some(TrustManifestError::FloorUnreadable("trust-anchor floor is not a u64")),
+            Some(TrustManifestError::FloorUnreadable(
+                "trust-anchor floor is not a u64"
+            )),
         );
     }
 
@@ -213,6 +226,12 @@ mod tests {
         );
         // And it will not walk it back.
         first.record(5).expect("no-op");
-        assert_eq!(FileManifestFloor::open(&scratch.0).unwrap().min_version().unwrap(), 11);
+        assert_eq!(
+            FileManifestFloor::open(&scratch.0)
+                .unwrap()
+                .min_version()
+                .unwrap(),
+            11
+        );
     }
 }

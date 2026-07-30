@@ -930,7 +930,8 @@ impl LbAssertionBinding {
         let key_id = decode_b64url_field(parts[0])?;
         let asserted_client_identity = decode_b64url_field(parts[1])?;
         let request_hash = decode_b64url_field(parts[2])?;
-        let validation_time_bytes = b64url_decode(parts[3]).map_err(|_| LbAssertionRejection::Malformed)?;
+        let validation_time_bytes =
+            b64url_decode(parts[3]).map_err(|_| LbAssertionRejection::Malformed)?;
         // Fixed 8-byte big-endian i64.
         let validation_time = i64::from_be_bytes(
             validation_time_bytes
@@ -1420,7 +1421,8 @@ impl LbAssertionV2Binding {
     /// Trust an ingress identity; an assertion whose `ingress_identity` is not in
     /// this set fails closed ([`LbAssertionV2Rejection::UntrustedIngressIdentity`]).
     pub fn permit_ingress_identity(&mut self, ingress_identity: impl Into<String>) {
-        self.allowed_ingress_identities.insert(ingress_identity.into());
+        self.allowed_ingress_identities
+            .insert(ingress_identity.into());
     }
 
     /// Look up a trusted attestor verification key by key id.
@@ -1450,7 +1452,8 @@ impl LbAssertionV2Binding {
         let asserted_client_identity = decode_v2_str(parts[2])?;
         let request_hash = decode_v2_str(parts[3])?;
         let audience = decode_v2_str(parts[4])?;
-        let cert_verification_result = decode_v2_enum(parts[5], AttestedCertVerification::from_discriminant)?;
+        let cert_verification_result =
+            decode_v2_enum(parts[5], AttestedCertVerification::from_discriminant)?;
         let revocation_result = decode_v2_enum(parts[6], AttestedRevocation::from_discriminant)?;
         let validation_time = decode_v2_i64(parts[7])?;
         let crl_next_update = decode_v2_i64(parts[8])?;
@@ -1579,7 +1582,10 @@ impl LbAssertionV2Binding {
             AttestedRevocation::StaleCrl => return Err(LbAssertionV2Rejection::StaleRevocation),
         }
         Ok(AttestedIngressVerified {
-            client_identity: TransportIdentity::new(assertion.asserted_client_identity, self.source),
+            client_identity: TransportIdentity::new(
+                assertion.asserted_client_identity,
+                self.source,
+            ),
             ingress_identity: assertion.ingress_identity,
             cert_verification_result: assertion.cert_verification_result,
             revocation_result: assertion.revocation_result,
@@ -1716,7 +1722,10 @@ mod tests {
         let req = req_with("x-CLIENT-identity", "  agent-1.example.org  ");
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent-1.example.org", IdentitySource::DnsSan))
+            Some(TransportIdentity::new(
+                "agent-1.example.org",
+                IdentitySource::DnsSan
+            ))
         );
     }
 
@@ -1747,10 +1756,16 @@ mod tests {
             ReverseProxyHeaderFormat::Xfcc,
             IdentityPolicy::DnsSan,
         );
-        let req = req_with("x-forwarded-client-cert", "Hash=abc;DNS=agent-1.example.org");
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "Hash=abc;DNS=agent-1.example.org",
+        );
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent-1.example.org", IdentitySource::DnsSan))
+            Some(TransportIdentity::new(
+                "agent-1.example.org",
+                IdentitySource::DnsSan
+            ))
         );
     }
 
@@ -1770,7 +1785,10 @@ mod tests {
         // direct-TLS CnLegacy extraction (the bare CN), NOT the whole RFC2253 DN.
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+            Some(TransportIdentity::new(
+                "agent-1",
+                IdentitySource::CommonName
+            ))
         );
     }
 
@@ -1788,7 +1806,10 @@ mod tests {
         );
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+            Some(TransportIdentity::new(
+                "agent-1",
+                IdentitySource::CommonName
+            ))
         );
     }
 
@@ -1807,7 +1828,10 @@ mod tests {
         );
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent,one", IdentitySource::CommonName))
+            Some(TransportIdentity::new(
+                "agent,one",
+                IdentitySource::CommonName
+            ))
         );
     }
 
@@ -1837,7 +1861,10 @@ mod tests {
         let req = req_with("x-forwarded-client-cert", "Hash=abc;CN=agent-1");
         assert_eq!(
             provider.verified_identity(&req),
-            Some(TransportIdentity::new("agent-1", IdentitySource::CommonName))
+            Some(TransportIdentity::new(
+                "agent-1",
+                IdentitySource::CommonName
+            ))
         );
     }
 
@@ -2099,7 +2126,10 @@ mod tests {
             IdentityPolicy::UriSan,
         );
         let req = RequestHeaders::from_pairs([
-            ("x-forwarded-client-cert", "URI=spiffe://example.org/agent-1"),
+            (
+                "x-forwarded-client-cert",
+                "URI=spiffe://example.org/agent-1",
+            ),
             ("x-forwarded-client-cert", "URI=spiffe://example.org/evil"),
         ]);
         assert_eq!(provider.verified_identity(&req), None);
@@ -2107,11 +2137,19 @@ mod tests {
 
     #[test]
     fn request_headers_parse_skips_request_line_and_is_case_insensitive() {
-        let block = "POST /mcp HTTP/1.1\r\nHost: proxy\r\nX-Forwarded-Client-Cert: URI=spiffe://x\r\n\r\n";
+        let block =
+            "POST /mcp HTTP/1.1\r\nHost: proxy\r\nX-Forwarded-Client-Cert: URI=spiffe://x\r\n\r\n";
         let headers = RequestHeaders::parse(block);
         assert_eq!(headers.first("host"), Some("proxy"));
-        assert_eq!(headers.first("X-Forwarded-Client-Cert"), Some("URI=spiffe://x"));
-        assert_eq!(headers.first("POST"), None, "the request line is not a header");
+        assert_eq!(
+            headers.first("X-Forwarded-Client-Cert"),
+            Some("URI=spiffe://x")
+        );
+        assert_eq!(
+            headers.first("POST"),
+            None,
+            "the request line is not a header"
+        );
         assert_eq!(headers.count("x-forwarded-client-cert"), 1);
     }
 
@@ -2125,7 +2163,10 @@ mod tests {
             ReverseProxyHeaderFormat::Xfcc,
             IdentityPolicy::UriSan,
         );
-        let req = req_with("x-forwarded-client-cert", "URI=spiffe://example.org/agent-1");
+        let req = req_with(
+            "x-forwarded-client-cert",
+            "URI=spiffe://example.org/agent-1",
+        );
         let identity = provider.verified_identity(&req);
         let policy = ExactMatchBinding::new();
         assert!(policy
@@ -2199,7 +2240,9 @@ mod tests {
         );
         let concrete = spiffe("spiffe://example.org/agent-1");
         assert_eq!(
-            policy.check("did:example:agent-1", Some(&concrete)).unwrap_err(),
+            policy
+                .check("did:example:agent-1", Some(&concrete))
+                .unwrap_err(),
             McpReError::TransportBindingFailed,
             "'*' must NOT act as a wildcard over concrete identities"
         );
@@ -2212,7 +2255,9 @@ mod tests {
         policy.permit("did:example:agent-1", "spiffe://example.org/agent-1");
         let differing_case = spiffe("spiffe://example.org/AGENT-1");
         assert_eq!(
-            policy.check("did:example:agent-1", Some(&differing_case)).unwrap_err(),
+            policy
+                .check("did:example:agent-1", Some(&differing_case))
+                .unwrap_err(),
             McpReError::TransportBindingFailed,
             "identity match is case-sensitive"
         );
@@ -2257,7 +2302,12 @@ mod tests {
     #[test]
     fn asserted_identity_rejects_control_characters() {
         // CR/LF (header smuggling / log injection), NUL, and a bare control char.
-        for bad in ["agent\r\nX-Spoof: y", "agent\nid", "agent\0id", "ag\u{7}ent"] {
+        for bad in [
+            "agent\r\nX-Spoof: y",
+            "agent\nid",
+            "agent\0id",
+            "ag\u{7}ent",
+        ] {
             assert_eq!(
                 super::validate_asserted_identity_value(bad),
                 Err(super::AssertedIdentityRejection::Malformed),
@@ -2277,10 +2327,8 @@ mod tests {
 
     #[test]
     fn routing_headers_well_formed_pass() {
-        let headers = super::RequestHeaders::from_pairs([
-            ("Mcp-Method", "tools/call"),
-            ("Mcp-Name", "echo"),
-        ]);
+        let headers =
+            super::RequestHeaders::from_pairs([("Mcp-Method", "tools/call"), ("Mcp-Name", "echo")]);
         assert_eq!(super::validate_routing_headers(&headers), Ok(()));
     }
 
@@ -2302,8 +2350,7 @@ mod tests {
     fn malformed_routing_header_fails_closed() {
         // A CRLF-laced routing header is a smuggling vector — fail closed even
         // though the proxy never routes on it.
-        let headers =
-            super::RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
+        let headers = super::RequestHeaders::from_pairs([("Mcp-Name", "echo\r\nX-Spoof: evil")]);
         assert_eq!(
             super::validate_routing_headers(&headers),
             Err(super::RoutingHeaderRejection::Malformed {
@@ -2392,13 +2439,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED);
         let now = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion = mint_assertion(
-            &lb,
-            "lb-1",
-            "spiffe://example.org/agent-1",
-            &rh,
-            now,
-        );
+        let assertion = mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, now);
         // The verified identity is yielded, then binds to the matching signer via
         // the SAME ExactMatchBinding the direct-TLS / Tier-2 paths use.
         let identity = binding
@@ -2450,11 +2491,12 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED);
         let now = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion =
-            mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, now);
+        let assertion = mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, now);
         let tampered_in_hand = sha256_hash_id(b"node holds a different request");
         assert_eq!(
-            binding.verify(&assertion, &tampered_in_hand, now).unwrap_err(),
+            binding
+                .verify(&assertion, &tampered_in_hand, now)
+                .unwrap_err(),
             LbAssertionRejection::RequestHashMismatch
         );
     }
@@ -2488,13 +2530,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED); // trusts the lb-1 == LB_SEED key
         let now = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion = mint_assertion(
-            &attacker,
-            "lb-1",
-            "spiffe://example.org/agent-1",
-            &rh,
-            now,
-        );
+        let assertion = mint_assertion(&attacker, "lb-1", "spiffe://example.org/agent-1", &rh, now);
         assert_eq!(
             binding.verify(&assertion, &rh, now).unwrap_err(),
             LbAssertionRejection::BadSignature
@@ -2510,8 +2546,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED);
         let now = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion =
-            mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, now);
+        let assertion = mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, now);
         let mut parts: Vec<&str> = assertion.split('.').collect();
         let forged_identity = b64url_encode(b"spiffe://example.org/admin");
         parts[1] = &forged_identity;
@@ -2529,8 +2564,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED); // default 30s window
         let signed_at = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion =
-            mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, signed_at);
+        let assertion = mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, signed_at);
         // The node evaluates it a full hour later.
         let now = signed_at + 3600;
         assert_eq!(
@@ -2551,8 +2585,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED);
         let rh = in_hand_request_hash();
         let signed_at = 1_000_000;
-        let assertion =
-            mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, signed_at);
+        let assertion = mint_assertion(&lb, "lb-1", "spiffe://example.org/agent-1", &rh, signed_at);
         let now = signed_at - 3600; // assertion claims to be from the future
         assert_eq!(
             binding.verify(&assertion, &rh, now).unwrap_err(),
@@ -2577,9 +2610,7 @@ mod tests {
         );
         // Non-base64url field.
         assert_eq!(
-            binding
-                .verify("!!!.!!!.!!!.!!!.!!!", &rh, now)
-                .unwrap_err(),
+            binding.verify("!!!.!!!.!!!.!!!.!!!", &rh, now).unwrap_err(),
             LbAssertionRejection::Malformed
         );
     }
@@ -2592,13 +2623,7 @@ mod tests {
         let binding = binding_with_lb_key(&LB_SEED);
         let now = 1_000_000;
         let rh = in_hand_request_hash();
-        let assertion = mint_assertion(
-            &lb,
-            "lb-1",
-            "agent\r\nX-Spoof: evil",
-            &rh,
-            now,
-        );
+        let assertion = mint_assertion(&lb, "lb-1", "agent\r\nX-Spoof: evil", &rh, now);
         assert_eq!(
             binding.verify(&assertion, &rh, now).unwrap_err(),
             LbAssertionRejection::Malformed
@@ -2739,7 +2764,9 @@ mod tests {
         let other = sha256_hash_id(b"a totally different request body");
         let wire = mint_v2(&attestor, &v2_assertion(&other, now));
         assert_eq!(
-            binding.verify(&wire, &in_hand_request_hash(), now).unwrap_err(),
+            binding
+                .verify(&wire, &in_hand_request_hash(), now)
+                .unwrap_err(),
             LbAssertionV2Rejection::RequestHashMismatch
         );
     }
@@ -2825,7 +2852,9 @@ mod tests {
         let mut expired = v2_assertion(&rh, now);
         expired.expires_at = Some(now - 1);
         assert_eq!(
-            binding.verify(&mint_v2(&attestor, &expired), &rh, now).unwrap_err(),
+            binding
+                .verify(&mint_v2(&attestor, &expired), &rh, now)
+                .unwrap_err(),
             LbAssertionV2Rejection::Expired
         );
         // A future expiry is fine.
@@ -2843,7 +2872,9 @@ mod tests {
         let mut a = v2_assertion(&rh, now);
         a.audience = "did:example:some-other-server".to_string();
         assert_eq!(
-            binding.verify(&mint_v2(&attestor, &a), &rh, now).unwrap_err(),
+            binding
+                .verify(&mint_v2(&attestor, &a), &rh, now)
+                .unwrap_err(),
             LbAssertionV2Rejection::AudienceMismatch
         );
     }
@@ -2857,7 +2888,9 @@ mod tests {
         let mut a = v2_assertion(&rh, now);
         a.ingress_identity = "spiffe://example.org/rogue-ingress".to_string();
         assert_eq!(
-            binding.verify(&mint_v2(&attestor, &a), &rh, now).unwrap_err(),
+            binding
+                .verify(&mint_v2(&attestor, &a), &rh, now)
+                .unwrap_err(),
             LbAssertionV2Rejection::UntrustedIngressIdentity
         );
     }
@@ -2875,19 +2908,29 @@ mod tests {
         let mut cert_failed = v2_assertion(&rh, now);
         cert_failed.cert_verification_result = AttestedCertVerification::Failed;
         assert_eq!(
-            binding.verify(&mint_v2(&attestor, &cert_failed), &rh, now).unwrap_err(),
+            binding
+                .verify(&mint_v2(&attestor, &cert_failed), &rh, now)
+                .unwrap_err(),
             LbAssertionV2Rejection::CertificateNotVerified
         );
 
         for (verdict, expected) in [
             (AttestedRevocation::Revoked, LbAssertionV2Rejection::Revoked),
-            (AttestedRevocation::Unknown, LbAssertionV2Rejection::RevocationUnknown),
-            (AttestedRevocation::StaleCrl, LbAssertionV2Rejection::StaleRevocation),
+            (
+                AttestedRevocation::Unknown,
+                LbAssertionV2Rejection::RevocationUnknown,
+            ),
+            (
+                AttestedRevocation::StaleCrl,
+                LbAssertionV2Rejection::StaleRevocation,
+            ),
         ] {
             let mut a = v2_assertion(&rh, now);
             a.revocation_result = verdict;
             assert_eq!(
-                binding.verify(&mint_v2(&attestor, &a), &rh, now).unwrap_err(),
+                binding
+                    .verify(&mint_v2(&attestor, &a), &rh, now)
+                    .unwrap_err(),
                 expected,
                 "revocation verdict {verdict:?} must fail closed"
             );
@@ -2945,7 +2988,9 @@ mod tests {
         };
         let v2 = v2_assertion(&rh, now);
         assert_ne!(v1.signing_preimage(), v2.signing_preimage());
-        assert!(v2.signing_preimage().starts_with(b"mcp-re/lb-ingress-assertion/v2"));
+        assert!(v2
+            .signing_preimage()
+            .starts_with(b"mcp-re/lb-ingress-assertion/v2"));
         assert!(!v2
             .signing_preimage()
             .starts_with(b"mcp-re/lb-ingress-assertion/v1"));
@@ -2970,7 +3015,10 @@ mod tests {
     fn v2_guarantee_is_attested_delegation_not_end_to_end() {
         // HONESTY (§C decision): Mode C is attested delegation and MUST NEVER be
         // surfaced as end-to-end client↔node mTLS.
-        assert_eq!(LbAssertionV2Binding::GUARANTEE, "attested_ingress_delegation");
+        assert_eq!(
+            LbAssertionV2Binding::GUARANTEE,
+            "attested_ingress_delegation"
+        );
         assert!(!LbAssertionV2Binding::GUARANTEE.contains("end_to_end"));
     }
 }

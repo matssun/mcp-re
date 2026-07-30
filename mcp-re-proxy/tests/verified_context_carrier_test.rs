@@ -68,29 +68,32 @@ fn audience() -> AudienceTuple {
 }
 
 fn actor_resolver() -> mcp_re_proxy::http_profile_serve::ActorResolver {
-    Box::new(|key_id: &str, slot: SignerSlot| match (key_id, slot) {
-        (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "client".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:client".into(),
-                keyid: key_id.into(),
-            },
-            verification_key: client_key().public_key(),
-            slot,
-        }),
-        (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
-            identity: ActorIdentity {
-                role: "server".into(),
-                trust_domain: "example.com".into(),
-                subject: "did:example:server".into(),
-                keyid: key_id.into(),
-            },
-            verification_key: root_key().public_key(),
-            slot,
-        }),
-        _ => None,
-    }.into())
+    Box::new(|key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: key_id.into(),
+                },
+                verification_key: client_key().public_key(),
+                slot,
+            }),
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: key_id.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
 }
 
 fn custody_cfg() -> CustodyConfig {
@@ -123,8 +126,9 @@ fn recording_inner(seen: Seen) -> Box<dyn mcp_re_proxy::async_inner::AsyncInnerS
 fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
     let signer = Arc::new(DelegatedServerSigner::new());
     let root = root_key();
-    let issue =
-        move |h: &DelegationHeader, c: &DelegationClaims| Some(issue_delegation_credential(&root, h, c));
+    let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+        Some(issue_delegation_credential(&root, h, c))
+    };
     let mut n = 100u8;
     let factory = move || {
         n = n.wrapping_add(1);
@@ -139,7 +143,10 @@ fn proxy(policy: VerifiedContextPolicy, seen: Seen) -> HttpProfileProxy {
         actor_resolver(),
         audience(),
         AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-        ProxyDispatchConfig { fleet_strict: false, tier: None },
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
         recording_inner(seen),
         300,
         signer,
@@ -181,12 +188,23 @@ fn signed_request(nonce: &str, seed_reserved: Option<serde_json::Value>) -> Http
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"tok",
+        )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
-    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("signing succeeds");
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("signing succeeds");
     req
 }
 
@@ -224,7 +242,10 @@ async fn trusted_channel_carries_the_peps_verified_context() {
     }
     .actor_id();
     assert_eq!(ctx.actor_id, expected_actor);
-    assert_ne!(ctx.actor_id, ctx.key_id, "actor_id is resolved, not the presented selector");
+    assert_ne!(
+        ctx.actor_id, ctx.key_id,
+        "actor_id is resolved, not the presented selector"
+    );
     assert_eq!(ctx.key_id, CLIENT_KEY_ID, "keyid is carried for audit only");
     assert_eq!(ctx.profile, PROFILE_TAG);
     assert_eq!(ctx.verified_at, NOW);
@@ -240,7 +261,10 @@ async fn disabled_by_default_the_inner_server_sees_clean_mcp() {
 
     let forwarded = seen.lock().unwrap()[0].clone();
     let v: serde_json::Value = serde_json::from_slice(&forwarded).unwrap();
-    assert!(v.get("_meta").is_none(), "no _meta at all on the clean path");
+    assert!(
+        v.get("_meta").is_none(),
+        "no _meta at all on the clean path"
+    );
     assert!(extract_verified_context(&forwarded).is_err());
 }
 
@@ -260,7 +284,10 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
         "verified_at": NOW
     });
 
-    for policy in [VerifiedContextPolicy::Trusted, VerifiedContextPolicy::Disabled] {
+    for policy in [
+        VerifiedContextPolicy::Trusted,
+        VerifiedContextPolicy::Disabled,
+    ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
         let req = signed_request("n-forge", Some(forged.clone()));
@@ -297,7 +324,10 @@ async fn a_caller_seeded_verified_context_never_reaches_the_inner_server() {
 /// pass through — caution about one key is not a licence to delete the rest.
 #[tokio::test]
 async fn unrelated_application_meta_survives_the_guard() {
-    for policy in [VerifiedContextPolicy::Trusted, VerifiedContextPolicy::Disabled] {
+    for policy in [
+        VerifiedContextPolicy::Trusted,
+        VerifiedContextPolicy::Disabled,
+    ] {
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let p = proxy(policy, Arc::clone(&seen));
         let req = signed_request("n-keep", Some(serde_json::json!({ "actor_id": "forged" })));
@@ -325,7 +355,6 @@ async fn unrelated_application_meta_survives_the_guard() {
     }
 }
 
-
 /// The MCP transport contract enforced on the REAL served path (#425). A proxy
 /// configured with the strict 2026-07-28 policy rejects a request that omits a
 /// required transport header, with a signed rejection — proving §4.1 reaches
@@ -345,7 +374,8 @@ async fn transport_contract_is_enforced_on_the_served_path() {
     let mut ok = signed_request("n-tx-ok", None);
     ok.headers.push(("Mcp-Method".into(), "tools/call".into()));
     ok.headers.push(("Mcp-Name".into(), "read".into()));
-    ok.headers.push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
+    ok.headers
+        .push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
     // Re-sign so the new headers are covered (present ⇒ covered).
     let ok = resign(ok, "n-tx-ok2");
     assert_eq!(p.handle(served(&ok), NOW).await.status, 200);
@@ -353,7 +383,9 @@ async fn transport_contract_is_enforced_on_the_served_path() {
     // A request OMITTING Mcp-Method is rejected before it reaches the inner server.
     let before = seen.lock().unwrap().len();
     let mut missing = signed_request("n-tx-miss", None);
-    missing.headers.push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
+    missing
+        .headers
+        .push(("MCP-Protocol-Version".into(), "2026-07-28".into()));
     let missing = resign(missing, "n-tx-miss2");
     let out = p.handle(served(&missing), NOW).await;
     assert_eq!(out.status, 403, "a required-header omission is refused");
@@ -386,11 +418,22 @@ fn resign(mut req: HttpRequest, nonce: &str) -> HttpRequest {
     let block = HttpRequestEvidenceBlock {
         profile: PROFILE_TAG.into(),
         audience: audience(),
-        artifact_bindings: vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"tok")],
+        artifact_bindings: vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"tok",
+        )],
         continuation: None,
-            admission: None,
+        admission: None,
     };
-    sign_request_full(&mut req, &block, &client_key(), CLIENT_KEY_ID, CREATED, EXPIRES, nonce)
-        .expect("re-sign");
+    sign_request_full(
+        &mut req,
+        &block,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("re-sign");
     req
 }

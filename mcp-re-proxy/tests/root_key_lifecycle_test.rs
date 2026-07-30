@@ -26,6 +26,8 @@
 //!    issuance_failure_serves_the_valid_key_then_fails_closed_at_expiry`.)
 
 use mcp_re_client_core::build_signed_request;
+use mcp_re_client_core::verify_delegated_response;
+use mcp_re_client_core::verify_delegated_response_anchored;
 use mcp_re_client_core::ActorIdentity;
 use mcp_re_client_core::ArtifactBinding;
 use mcp_re_client_core::ArtifactType;
@@ -39,10 +41,9 @@ use mcp_re_client_core::SignedRequest;
 use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::StaticRevocationList;
 use mcp_re_client_core::TrustedIssuerSet;
-use mcp_re_client_core::verify_delegated_response;
-use mcp_re_client_core::verify_delegated_response_anchored;
 
 use mcp_re_core::SigningKey;
+use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::CustodyConfig;
 use mcp_re_http_profile::CustodyError;
 use mcp_re_http_profile::DelegatedSigningCustody;
@@ -50,7 +51,6 @@ use mcp_re_http_profile::DelegationClaims;
 use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::HttpResponse;
-use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::PROFILE_TAG;
 
 use mcp_re_proxy::DelegatedRotor;
@@ -111,14 +111,24 @@ fn signed_request() -> SignedRequest {
     let inputs = RequestSigningInputs::new(
         CLIENT_KEY_ID.to_string(),
         audience(),
-        vec![ArtifactBinding::opaque_digest(ArtifactType::OauthDpop, b"access-token-xyz")],
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            b"access-token-xyz",
+        )],
         "nonce-root-lifecycle",
         CREATED,
         EXPIRES,
     );
     let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
-    build_signed_request(&json!(1), "tools/call", params, TARGET, &inputs, &client_key())
-        .expect("client signs request")
+    build_signed_request(
+        &json!(1),
+        "tools/call",
+        params,
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("client signs request")
 }
 
 fn expectation(signed: &SignedRequest) -> ResponseExpectation {
@@ -126,7 +136,12 @@ fn expectation(signed: &SignedRequest) -> ResponseExpectation {
 }
 
 fn policy() -> DelegationPolicy {
-    DelegationPolicy::new(vec![AUD.to_string()], AUD_SCOPE, vec![EPOCH.to_string()], 60)
+    DelegationPolicy::new(
+        vec![AUD.to_string()],
+        AUD_SCOPE,
+        vec![EPOCH.to_string()],
+        60,
+    )
 }
 
 /// Custody config for a given ROOT issuer_kid. The server-signer identity
@@ -151,7 +166,12 @@ fn custody_cfg(issuer_kid: &str) -> CustodyConfig {
 /// Mint a delegated 200 response whose credential chains to the given ROOT (by seed +
 /// issuer_kid), bound to `signed`. This is the server/issuer side using the SAME seam
 /// a KMS root plugs into.
-fn mint_under(root_seed: [u8; 32], issuer_kid: &str, signed: &SignedRequest, now: i64) -> HttpResponse {
+fn mint_under(
+    root_seed: [u8; 32],
+    issuer_kid: &str,
+    signed: &SignedRequest,
+    now: i64,
+) -> HttpResponse {
     let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
         let root = SigningKey::from_seed_bytes(&root_seed);
         Some(issue_delegation_credential(&root, h, c))
@@ -194,7 +214,10 @@ fn root_a_credential_accepted_while_a_is_current() {
     let signed = signed_request();
     let resp = mint_under(ROOT_A_SEED, ROOT_A_KID, &signed, NOW);
     let set = TrustedIssuerSet::new().with_current(root_actor(ROOT_A_KID, &ROOT_A_SEED));
-    assert_eq!(verify_with(&resp, &signed, &set, NOW).unwrap(), DelegatedOutcome::Success);
+    assert_eq!(
+        verify_with(&resp, &signed, &set, NOW).unwrap(),
+        DelegatedOutcome::Success
+    );
 }
 
 #[test]
@@ -389,7 +412,11 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
 
     // K1 mints and serves.
     rotor.rotate(NOW).expect("K1 mints via the root");
-    let k1 = signer.current(NOW).expect("K1 serves").delegated_kid.clone();
+    let k1 = signer
+        .current(NOW)
+        .expect("K1 serves")
+        .delegated_kid
+        .clone();
 
     // Successor cannot be minted (root down). K1 is KEPT (not retired) while valid — no
     // serving gap, no stale successor. (custody_cfg: ttl 300, overlap 60.)
@@ -398,19 +425,34 @@ fn root_issuance_failure_serves_until_delegated_key_expiry_then_fails_closed() {
         .rotate(in_overlap)
         .expect("K1 kept despite the failed successor issuance");
     assert_eq!(
-        signer.current(in_overlap).expect("K1 still serves").delegated_kid,
+        signer
+            .current(in_overlap)
+            .expect("K1 still serves")
+            .delegated_kid,
         k1,
         "still K1 — no stale successor minted, no signing gap"
     );
-    assert!(signer.current(NOW + 300 - 1).is_some(), "serves right up to just before exp");
+    assert!(
+        signer.current(NOW + 300 - 1).is_some(),
+        "serves right up to just before exp"
+    );
 
     // At K1's own exp: fail closed. No stale-key extension.
-    assert!(signer.current(NOW + 300).is_none(), "fails closed at K1 exp — K1 is never extended");
+    assert!(
+        signer.current(NOW + 300).is_none(),
+        "fails closed at K1 exp — K1 is never extended"
+    );
 
     // Past exp with the root still down: the rotor retires and surfaces the fail-closed
     // error; the hot path stays closed (there is no direct-root fallback).
-    assert_eq!(rotor.rotate(NOW + 300 + 1), Err(CustodyError::FailClosedIssuance));
-    assert!(signer.current(NOW + 300 + 1).is_none(), "stays fail-closed; no direct-root fallback");
+    assert_eq!(
+        rotor.rotate(NOW + 300 + 1),
+        Err(CustodyError::FailClosedIssuance)
+    );
+    assert!(
+        signer.current(NOW + 300 + 1).is_none(),
+        "stays fail-closed; no direct-root fallback"
+    );
 }
 
 #[test]

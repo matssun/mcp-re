@@ -64,7 +64,9 @@ fn require_env(name: &str) -> String {
 fn live_signer() -> KmsResponseSigner {
     let config = GcpKmsConfig {
         key_version_name: require_env("MCP_RE_GCP_KEY_VERSION"),
-        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT").ok().filter(|s| !s.is_empty()),
+        endpoint: std::env::var("MCP_RE_GCP_KMS_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let use_metadata = std::env::var("MCP_RE_GCP_USE_METADATA").is_ok_and(|v| v == "1");
     if !use_metadata {
@@ -78,8 +80,8 @@ fn live_signer() -> KmsResponseSigner {
 /// An offline signer over the SAME backend adapter, using a local seed instead
 /// of a network round-trip — exercises the KMS-backend → seam wiring hermetically.
 fn offline_signer() -> KmsResponseSigner {
-    let backend = GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32])
-        .expect("local-seed KMS backend");
+    let backend =
+        GcpKmsEd25519Backend::for_test_with_local_seed(&[7u8; 32]).expect("local-seed KMS backend");
     KmsResponseSigner::new(Box::new(backend))
 }
 
@@ -87,7 +89,9 @@ fn offline_signer() -> KmsResponseSigner {
 /// raw 64-byte Ed25519 signature out. Wraps the KMS signer (which returns
 /// base64url and self-verifies before returning).
 fn kms_sign_base(signer: &KmsResponseSigner, base: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
-    let b64url = signer.sign_response(base).map_err(|_| HttpProfileError::InvalidSignature)?;
+    let b64url = signer
+        .sign_response(base)
+        .map_err(|_| HttpProfileError::InvalidSignature)?;
     mcp_re_core::b64url_decode(&b64url).map_err(|_| HttpProfileError::InvalidSignature)
 }
 
@@ -120,7 +124,8 @@ fn base_request() -> HttpRequest {
         method: "POST".into(),
         target_uri: TARGET.into(),
         headers: vec![("Content-Type".into(), "application/json".into())],
-        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#.to_vec(),
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read"}}"#
+            .to_vec(),
     }
 }
 
@@ -178,8 +183,15 @@ fn run_response_lane(signer: &KmsResponseSigner) {
     // is not what this lane proves); the response is the KMS-signed artifact.
     let req_key = SigningKey::from_seed_bytes(&[0x11; 32]);
     let mut req = base_request();
-    sign_request(&mut req, &req_key, REQ_KEY_ID, CREATED, EXPIRES, "nonce-http-2")
-        .expect("sign bound request");
+    sign_request(
+        &mut req,
+        &req_key,
+        REQ_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "nonce-http-2",
+    )
+    .expect("sign bound request");
     let req_resolver = {
         let req_pub = req_key.public_key();
         let rsp_pub = pubkey.clone();

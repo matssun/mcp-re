@@ -90,7 +90,9 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     let expected = bases("one-shot");
 
     // OPEN on A.
-    a.store(&key, &expected, 300).await.expect("A records the open leg");
+    a.store(&key, &expected, 300)
+        .await
+        .expect("A records the open leg");
 
     // B — which never saw the open leg — reads it. Repeatedly: reading is what the
     // binding check does, and it must not consume, or a request about to be REJECTED
@@ -110,7 +112,10 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     let b_won = b.consume(&key).await.expect("B consumes");
     let a_won = a.consume(&key).await.expect("A consumes");
     assert!(b_won, "the first consume removed the live entry");
-    assert!(!a_won, "the second consume removed nothing — the continuation is one-shot");
+    assert!(
+        !a_won,
+        "the second consume removed nothing — the continuation is one-shot"
+    );
 
     assert_eq!(
         b.peek(&key).await.expect("peek"),
@@ -132,13 +137,21 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
     let state = format!("state-{}", run_id());
     let a_key = continuation_key(ACTOR_A, state.as_bytes());
     let b_key = continuation_key(ACTOR_B, state.as_bytes());
-    assert_ne!(a_key, b_key, "the same requestState under two actors is two keys");
+    assert_ne!(
+        a_key, b_key,
+        "the same requestState under two actors is two keys"
+    );
 
-    a.store(&a_key, &bases("scoped"), 300).await.expect("A records");
+    a.store(&a_key, &bases("scoped"), 300)
+        .await
+        .expect("A records");
 
     // The intruder can neither read nor destroy it.
     assert_eq!(b.peek(&b_key).await.expect("peek"), None);
-    assert!(!b.consume(&b_key).await.expect("consume"), "nothing to remove");
+    assert!(
+        !b.consume(&b_key).await.expect("consume"),
+        "nothing to remove"
+    );
     assert_eq!(
         a.peek(&a_key).await.expect("peek"),
         Some(bases("scoped")),
@@ -162,8 +175,14 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
     let state = format!("state-{}", run_id());
     let key = continuation_key(ACTOR_A, state.as_bytes());
 
-    store.store(&key, &bases("ttl"), 1).await.expect("records with a 1s TTL");
-    assert!(store.peek(&key).await.expect("peek").is_some(), "live immediately after");
+    store
+        .store(&key, &bases("ttl"), 1)
+        .await
+        .expect("records with a 1s TTL");
+    assert!(
+        store.peek(&key).await.expect("peek").is_some(),
+        "live immediately after"
+    );
 
     tokio::time::sleep(std::time::Duration::from_millis(1_400)).await;
     assert_eq!(

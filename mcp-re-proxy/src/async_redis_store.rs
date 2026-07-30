@@ -76,12 +76,13 @@ impl RedisAsyncAtomicReplayStore {
         let client = redis::Client::open(url).map_err(|e| ReplayStoreError::Unavailable {
             details: format!("open redis client: {e}"),
         })?;
-        let conn = client
-            .get_connection_manager()
-            .await
-            .map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("connect redis async: {e}"),
-            })?;
+        let conn =
+            client
+                .get_connection_manager()
+                .await
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("connect redis async: {e}"),
+                })?;
         Ok(RedisAsyncAtomicReplayStore {
             conn,
             clock,

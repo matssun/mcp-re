@@ -76,9 +76,7 @@ pub enum ReplayStoreError {
 impl From<ReplayStoreError> for ReplayCacheError {
     fn from(err: ReplayStoreError) -> ReplayCacheError {
         match err {
-            ReplayStoreError::Unavailable { details } => {
-                ReplayCacheError::Unavailable { details }
-            }
+            ReplayStoreError::Unavailable { details } => ReplayCacheError::Unavailable { details },
         }
     }
 }
@@ -368,9 +366,12 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         }
         // A poisoned mutex is an operational failure → fail closed (Unavailable),
         // never a silent "allow".
-        let mut map = self.seen.lock().map_err(|e| ReplayStoreError::Unavailable {
-            details: format!("shared store mutex poisoned: {e}"),
-        })?;
+        let mut map = self
+            .seen
+            .lock()
+            .map_err(|e| ReplayStoreError::Unavailable {
+                details: format!("shared store mutex poisoned: {e}"),
+            })?;
         if map.contains_key(key) {
             return Ok(ReplayDecision::Replay);
         }
@@ -402,9 +403,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
+    use super::is_stale_pre_store;
     use super::AtomicReplayStore;
     use super::InMemoryAtomicReplayStore;
-    use super::is_stale_pre_store;
     use super::ReplayStoreError;
     use super::SharedReplayCache;
     use mcp_re_core::McpReError;
@@ -454,9 +455,12 @@ mod tests {
             expires_at_unix: i64,
             _now_unix: i64,
         ) -> Result<ReplayDecision, ReplayStoreError> {
-            let mut map = self.seen.lock().map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("durable model store poisoned: {e}"),
-            })?;
+            let mut map = self
+                .seen
+                .lock()
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("durable model store poisoned: {e}"),
+                })?;
             if map.contains_key(key) {
                 return Ok(ReplayDecision::Replay);
             }
@@ -632,7 +636,11 @@ mod tests {
             .insert_if_absent("overflow", 1_000_000, 0)
             .expect_err("at capacity the store must fail closed, never grow unbounded");
         assert!(matches!(err, ReplayStoreError::Unavailable { .. }));
-        assert_eq!(store.len(), cap, "the refused key must NOT have been admitted");
+        assert_eq!(
+            store.len(),
+            cap,
+            "the refused key must NOT have been admitted"
+        );
 
         // Pruning past every entry's retain-until drains the backlog and frees
         // capacity again (the ceiling is a backstop, not a permanent wedge).
@@ -677,15 +685,33 @@ mod tests {
     /// reduces to rejecting a non-positive ABSOLUTE retain-until.
     #[test]
     fn nonpositive_window_is_flagged_stale_pre_store() {
-        assert!(is_stale_pre_store(1_000, 1_000), "exactly-now is non-positive → reject");
-        assert!(is_stale_pre_store(900, 1_000), "already-past is non-positive → reject");
-        assert!(!is_stale_pre_store(1_001, 1_000), "a positive window is admitted");
+        assert!(
+            is_stale_pre_store(1_000, 1_000),
+            "exactly-now is non-positive → reject"
+        );
+        assert!(
+            is_stale_pre_store(900, 1_000),
+            "already-past is non-positive → reject"
+        );
+        assert!(
+            !is_stale_pre_store(1_001, 1_000),
+            "a positive window is admitted"
+        );
         // With the vestigial now=0 the in-memory store actually receives: a real
         // future retain-until is a huge positive window (NOT stale); a degenerate
         // non-positive absolute retain-until IS stale.
-        assert!(!is_stale_pre_store(EXPIRES + SKEW, 0), "future retain-until is not stale");
-        assert!(is_stale_pre_store(0, 0), "retain-until at the epoch is stale");
-        assert!(is_stale_pre_store(-5, 0), "a negative absolute retain-until is stale");
+        assert!(
+            !is_stale_pre_store(EXPIRES + SKEW, 0),
+            "future retain-until is not stale"
+        );
+        assert!(
+            is_stale_pre_store(0, 0),
+            "retain-until at the epoch is stale"
+        );
+        assert!(
+            is_stale_pre_store(-5, 0),
+            "a negative absolute retain-until is stale"
+        );
     }
 
     /// MCPS-08 regression (finding #142) — WIRING proof through the real in-memory
@@ -708,7 +734,10 @@ mod tests {
             "a stale pre-store rejection must fail closed as Unavailable"
         );
         // It was NOT recorded: the store is empty and a later valid request is Fresh.
-        assert!(store.is_empty(), "a rejected stale request must leave NO entry behind");
+        assert!(
+            store.is_empty(),
+            "a rejected stale request must leave NO entry behind"
+        );
         assert_eq!(
             store.insert_if_absent("k", EXPIRES + SKEW, 0),
             Ok(ReplayDecision::Fresh),
@@ -732,6 +761,9 @@ mod tests {
             .expect_err("a stale request must fail closed, never be admitted as Fresh");
         assert!(matches!(err, ReplayCacheError::Unavailable { .. }));
         assert_eq!(McpReError::from(err), McpReError::ReplayCacheUnavailable);
-        assert!(store.is_empty(), "the stale request must not have been recorded");
+        assert!(
+            store.is_empty(),
+            "the stale request must not have been recorded"
+        );
     }
 }
