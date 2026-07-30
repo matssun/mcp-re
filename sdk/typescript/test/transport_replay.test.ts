@@ -25,7 +25,8 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+
+import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 
 import { ContinuationHandles, Signer } from "../src/index.js";
 import { McpReHttpTransport, type HttpReply, type McpReConfig, type Poster } from "../src/transport.js";
@@ -93,17 +94,55 @@ function replayingPoster(mutate?: (r: HttpReply) => HttpReply): Poster {
   };
 }
 
+/** The recorded `initialize`, built here rather than taken from `Client`.
+ *
+ * The recording pins exact request bytes, and the JSON-RPC id counter belongs to the
+ * session layer, not to this adapter. At MCP 2.0 the two official SDKs disagree about it:
+ * `mcp` (Python) numbers from 1 and adds an empty `params._meta`, while
+ * `@modelcontextprotocol/client` numbers from 0 and adds neither — so a recording
+ * captured through either session could not be replayed by both. Driving the script
+ * explicitly keeps the fixture a claim about the bytes THIS adapter signs. A real
+ * `Client` session is covered end-to-end in `transport_e2e.test.ts`.
+ *
+ * `initialize` params carry the MCP CLIENT LIBRARY's own identity and the negotiated
+ * protocol revision; both are read from the recording so the bytes match for reasons that
+ * have nothing to do with either SDK's defaults drifting.
+ */
+function initializeRequest(): JSONRPCMessage {
+  return {
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: {
+      capabilities: {},
+      clientInfo: FIXTURE.expect.client_info,
+      protocolVersion: FIXTURE.expect.protocol_version,
+    },
+  };
+}
+
+/** Drive the recorded script through the transport and return the tool result. */
 async function callTool(c: McpReConfig, poster: Poster) {
-  // `initialize` params carry the MCP CLIENT LIBRARY's own identity, so they must match
-  // what the recording's client announced or the request bytes differ for a reason that
-  // has nothing to do with MCP-RE. The fixture records the Python SDK's defaults.
-  const client = new Client(FIXTURE.expect.client_info);
-  await client.connect(new McpReHttpTransport(c, poster));
+  const replies: JSONRPCMessage[] = [];
+  const transport = new McpReHttpTransport(c, poster);
+  transport.onmessage = (m) => {
+    replies.push(m);
+  };
+  await transport.start();
   try {
-    return await client.callTool({ name: FIXTURE.tool.name, arguments: FIXTURE.tool.arguments });
+    await transport.send(initializeRequest());
+    await transport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await transport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: FIXTURE.tool.name, arguments: FIXTURE.tool.arguments },
+    });
   } finally {
-    await client.close();
+    await transport.close();
   }
+  const last = replies[replies.length - 1] as { result: Record<string, unknown> };
+  return last.result;
 }
 
 describe("McpReHttpTransport replaying a recorded delegated session", () => {

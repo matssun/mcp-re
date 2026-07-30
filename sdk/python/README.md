@@ -160,7 +160,7 @@ sdk/python/
     test_parity.py       # the frozen cross-language oracle (../fixtures/parity_vectors.json)
     test_transport.py    # the adapter, offline, with an injected poster
     test_transport_replay.py  # a RECORDED delegated session (../fixtures/delegated_response_replay.json)
-    test_transport_e2e.py     # the LIVE proxy + a real FastMCP backend; self-skips without them
+    test_transport_e2e.py     # the LIVE proxy + a real MCP SDK backend; self-skips without them
 ```
 
 ## Develop
@@ -193,7 +193,7 @@ the downloader lane, so it is a development-time proof rather than a standing ga
 | --- | --- | --- |
 | `test_transport.py` | injected `poster`, no network | always |
 | `test_transport_replay.py` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`sdk/fixtures/delegated_response_replay.json`) | always |
-| `test_transport_e2e.py` | the **live** `http_profile_proxy` + a real FastMCP backend | **no** — self-skips without the harness (incl. in CI) |
+| `test_transport_e2e.py` | the **live** `http_profile_proxy` + a real MCP SDK backend | **no** — self-skips without the harness (incl. in CI) |
 
 The replay fixture exists because the live test self-skips in the downloader lane — the
 one place the shipped artifact is gated — which would leave the verification path

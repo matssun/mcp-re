@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 
 import { bindingsJson } from "../src/authorization.js";
 import type { HttpHeader } from "../native/binding.js";

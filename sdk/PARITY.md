@@ -158,5 +158,5 @@ cd sdk/typescript && npm test                          # 90% gate in vitest.conf
 ```
 
 The live proxy e2e tests self-skip without their harness (a built
-`http_profile_proxy` + `fastmcp`), including in CI: **live interoperability is exercised;
+`http_profile_proxy` + the MCP SDK inner backend), including in CI: **live interoperability is exercised;
 the offline replay is what is continuously CI-gated.**

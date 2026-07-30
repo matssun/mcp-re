@@ -86,11 +86,11 @@ scheme = "tcp"
 description = "Shared Redis replay tier (primary; replicas provide WAIT quorum acks)."
 
 # The Streamable-HTTP inner MCP backend the proxy forwards to (ADR-MCPRE-051 §3).
-# A real HTTP MCP server (FastMCP) — the ALLOWED inner plane. NOT stdio: stdio is
+# A real HTTP MCP server (the upstream MCP SDK) — the ALLOWED inner plane. NOT stdio: stdio is
 # compat-only (out-of-TCB bridge) and never the production inner. Local dev runs it
 # on loopback; the proxy addresses it via --inner-http-url http://127.0.0.1:<port>/mcp/.
 [services.mcp_re_inner_backend]
 host = "127.0.0.1"
 port = 8620
 scheme = "http"
-description = "FastMCP Streamable-HTTP inner MCP backend (test/dev inner plane)."
+description = "MCP SDK Streamable-HTTP inner MCP backend (test/dev inner plane)."

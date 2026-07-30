@@ -247,6 +247,7 @@
     "client_info": {
       "name": "mcp",
       "version": "0.1.0"
-    }
+    },
+    "protocol_version": "2025-11-25"
   }
 }

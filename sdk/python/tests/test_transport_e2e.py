@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Live e2e: a real ``mcp.ClientSession`` through ``McpReHttpTransport`` against the
-real Rust ``http_profile_proxy`` and a real FastMCP Streamable-HTTP backend.
+real Rust ``http_profile_proxy`` and a real MCP SDK Streamable-HTTP backend.
 
 This is the claim the adapter exists to make: **application code calls
 ``session.call_tool(...)`` and nothing else** — no ``sign_request``, no
@@ -9,15 +9,16 @@ nothing, so the counterparty here is the project's own proof harness: it signs
 DELEGATED responses (ADR-MCPRE-052) and emits delegated rejection receipts, exactly as
 the production serving path does.
 
-Skips cleanly when the harness is unavailable (no `fastmcp`, or the examples are not
+Skips cleanly when the harness is unavailable (no MCP SDK server, or the examples are not
 built), so the Bazel-free downloader lane stays green without it.
 
 Prerequisites, from the repo root::
 
     cargo build -p mcp-re-proxy --example http_profile_proxy
-    brew install fastmcp
+    pip install "mcp>=2.0,<3" uvicorn
 """
 import base64
+import importlib.util
 import os
 import secrets
 import shutil
@@ -80,11 +81,15 @@ def _wait_port(port: int, timeout: float = 15.0) -> bool:
 
 @pytest.fixture(scope="module")
 def harness():
-    """The real proxy + real FastMCP backend, as the proof script stands them up."""
+    """The real proxy + real MCP SDK backend, as the proof script stands them up."""
     if not PROXY_BIN.exists():
         pytest.skip(f"{PROXY_BIN} not built (cargo build -p mcp-re-proxy --example http_profile_proxy)")
-    if shutil.which("fastmcp") is None:
-        pytest.skip("fastmcp not on PATH")
+    # This interpreter already has `mcp` (the adapter needs it); the backend additionally
+    # needs the server half and uvicorn.
+    if importlib.util.find_spec("mcp.server.mcpserver") is None:
+        pytest.skip("mcp>=2.0 (with mcp.server.mcpserver) is required for the inner backend")
+    if importlib.util.find_spec("uvicorn") is None:
+        pytest.skip("uvicorn is required to serve the inner backend")
 
     front, inner = _port("mcp_re_http_profile_proxy"), _port("mcp_re_inner_backend")
     target = f"http://127.0.0.1:{front}/mcp"
@@ -93,16 +98,19 @@ def harness():
     if not _wait_port(inner, 0.3):
         procs.append(
             subprocess.Popen(
-                ["fastmcp", "run", f"{BACKEND}:mcp", "--transport", "http", "--host", "127.0.0.1",
-                 "--port", str(inner), "--stateless", "--path", "/mcp/", "--no-banner"],
-                env={**os.environ, "FASTMCP_JSON_RESPONSE": "true", "FASTMCP_STATELESS_HTTP": "true"},
+                [sys.executable, str(BACKEND)],
+                env={
+                    **os.environ,
+                    "MCP_RE_INNER_BACKEND_PORT": str(inner),
+                    "MCP_RE_INNER_BACKEND_HOST": "127.0.0.1",
+                },
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         )
         if not _wait_port(inner):
             for p in procs:
                 p.kill()
-            pytest.skip("FastMCP backend did not come up")
+            pytest.skip("inner backend did not come up")
 
     procs.append(
         subprocess.Popen(
@@ -164,15 +172,15 @@ async def test_a_real_session_calls_a_tool_with_no_sign_verify_in_app_code(harne
         async with mcp_re_http_transport(config, _poster(http)) as (read, write):
             async with ClientSession(read, write) as session:
                 init = await session.initialize()
-                assert init.serverInfo.name == "mcp-re-inner-backend"
+                assert init.server_info.name == "mcp-re-inner-backend"
 
                 result = await session.call_tool("add", {"a": 2, "b": 40})
 
-                # The real FastMCP tool ran behind the real proxy.
+                # The real SDK-server tool ran behind the real proxy.
                 assert result.content[0].text == "42"
-                assert result.structuredContent == {"result": 42}
+                assert result.structured_content == {"result": 42}
                 # The app never saw MCP-RE's own evidence block.
-                assert "_meta" not in (result.structuredContent or {})
+                assert "_meta" not in (result.structured_content or {})
 
     # C055: the lifecycle notification went over the wire as a signed POST and the proxy's
     # signed bodyless 202 verified against the real credential chain — the acknowledgement

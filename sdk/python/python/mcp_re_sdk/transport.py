@@ -46,9 +46,9 @@ from mcp.shared.message import SessionMessage
 from mcp.types import (
     ErrorData,
     JSONRPCError,
-    JSONRPCMessage,
     JSONRPCNotification,
     JSONRPCRequest,
+    jsonrpc_message_adapter,
 )
 
 from . import _core
@@ -362,12 +362,10 @@ def _strip_response_evidence(body: bytes) -> bytes:
 def _error_message(request_id, wire_code: str) -> SessionMessage:
     """A JSON-RPC error correlated to the request, so the awaiting call raises."""
     return SessionMessage(
-        JSONRPCMessage(
-            JSONRPCError(
-                jsonrpc="2.0",
-                id=request_id,
-                error=ErrorData(code=_MCP_RE_ERROR_CODE, message=wire_code),
-            )
+        JSONRPCError(
+            jsonrpc="2.0",
+            id=request_id,
+            error=ErrorData(code=_MCP_RE_ERROR_CODE, message=wire_code),
         )
     )
 
@@ -470,7 +468,7 @@ async def _exchange(
         correlation.abandon(correlation_id)
         raise
 
-    return SessionMessage(JSONRPCMessage.model_validate_json(_strip_response_evidence(reply.body)))
+    return SessionMessage(jsonrpc_message_adapter.validate_json(_strip_response_evidence(reply.body)))
 
 
 async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> None:
@@ -604,26 +602,26 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
         # rather than failing to send on a closed stream.
         async with anyio.create_task_group() as tg:
             async for outgoing in write_reader:
-                root = outgoing.message.root
-                if isinstance(root, JSONRPCNotification):
+                message = outgoing.message
+                if isinstance(message, JSONRPCNotification):
                     # A one-way notification: its own signed POST, answered by a signed
                     # bodyless 202 rather than a JSON-RPC reply. It runs under the same
                     # concurrency bound as an exchange because it costs the same
                     # resources — a connection and a signing operation.
                     tg.start_soon(
-                        _one_notification, config, poster, root.method, root.params, limiter
+                        _one_notification, config, poster, message.method, message.params, limiter
                     )
                     continue
-                if not isinstance(root, JSONRPCRequest):
+                if not isinstance(message, JSONRPCRequest):
                     # A client->server RESPONSE or error. It has no `method`, so the
                     # notification path above could only carry it by signing a fabricated
                     # message; refuse it instead of inventing one.
                     raise ClientResponseUnsupported(
-                        f"{type(root).__name__} is a client->server response; MCP-RE "
+                        f"{type(message).__name__} is a client->server response; MCP-RE "
                         f"profiles a signed request and a signed notification, and a "
                         f"response is neither"
                     )
-                tg.start_soon(_one, config, poster, root, read_writer, limiter, correlation)
+                tg.start_soon(_one, config, poster, message, read_writer, limiter, correlation)
 
 
 @asynccontextmanager
