@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# The ALLOWED inner plane for the MCP-RE fleet (ADR-MCPRE-051 §3): a real FastMCP
+# The ALLOWED inner plane for the MCP-RE fleet (ADR-MCPRE-051 §3): a real MCP SDK
 # Streamable-HTTP MCP backend that the proxy forwards verified requests to over
 # `--inner-http-url`. This is the HTTP-profile replacement for the removed
 # stdio-bridge sidecar. Point the proxy chart at it with:
@@ -37,7 +37,7 @@ spec:
           ports:
             - name: http
               containerPort: 8620
-          # FastMCP's Python import + Uvicorn startup can take 30-60s on a cold
+          # The SDK server's Python import + Uvicorn startup can take 30-60s on a cold
           # Autopilot node (node provisioning + first boot). Give the LIVENESS probe
           # a 60s initialDelay + headroom so it never SIGKILLs the container mid-boot
           # (that crashloops the pod until the node happens to warm up); readiness
@@ -74,7 +74,7 @@ spec:
 # ClusterIP Service is reachable by every pod in the cluster, so any workload with
 # pod-network access could POST JSON-RPC straight to it — unsigned, unverified,
 # unreplay-checked — and bypass the proxy entirely. The backend cannot defend itself
-# (it is an unmodified FastMCP server, out of the TCB by design), so the restriction
+# (it is an unmodified MCP SDK server, out of the TCB by design), so the restriction
 # has to be enforced by the network layer.
 #
 # This policy makes the proxy the ONLY admitted ingress. It selects the inner backend

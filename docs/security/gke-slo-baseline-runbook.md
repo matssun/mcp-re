@@ -115,7 +115,7 @@ spec: { selector: { app: mcp-re-redis }, ports: [ { port: 6379, targetPort: 6379
 YAML
 ```
 
-## 3. Material + deploy the fleet (strict + exact binding + FastMCP inner)
+## 3. Material + deploy the fleet (strict + exact binding + MCP SDK inner)
 
 ```sh
 AR=us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re
@@ -130,7 +130,7 @@ kubectl -n mcp-re create secret generic mcp-re-proxy-material \
   --from-file=tls.crt=/tmp/gke_mat/server_cert.pem --from-file=tls.key=/tmp/gke_mat/server_key.pem \
   --from-file=client-ca.pem=/tmp/gke_mat/client_ca.pem --from-file=trust.json=/tmp/gke_mat/trust.json \
   --from-file=signing-seed=/tmp/gke_mat/signing_seed --dry-run=client -o yaml | kubectl apply -n mcp-re -f -
-# FastMCP inner (AR image). Match the repository, not the tag the manifest happens to
+# Inner backend (AR image). Match the repository, not the tag the manifest happens to
 # carry — a tag-anchored pattern silently no-ops once the two disagree, leaving the bare
 # local name in the applied YAML (unpullable on GKE).
 sed -E "s#image: [^[:space:]/]*mcp-re-inner-fastmcp:[^[:space:]]+#image: $AR/mcp-re-inner-fastmcp:$TAG#" \
@@ -139,7 +139,7 @@ sed -E "s#image: [^[:space:]/]*mcp-re-inner-fastmcp:[^[:space:]]+#image: $AR/mcp
 # {audience, targetUri, trustDomain} comes from the chart defaults, which MATCH what
 # emit_mtls_fixtures + mcp_re_gke_client.py sign (audience did:example:server-1,
 # target-uri https://proxy.internal:8600/mcp, trust-domain example.com). The inner path
-# ends WITH a trailing slash: FastMCP mounts Streamable HTTP at `/mcp/` and 307-redirects
+# ends WITH a trailing slash: the SDK server mounts Streamable HTTP at `/mcp/` and 307-redirects
 # `/mcp` -> `/mcp/`, and the proxy's inner client does not follow redirects (it maps any
 # non-2xx, the 307 included, to a fail-closed "inner unavailable"). The port is the
 # registry value config/ports.toml [services.mcp_re_inner_backend].port.

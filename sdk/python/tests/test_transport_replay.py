@@ -27,9 +27,8 @@ import pytest
 
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
 
-from mcp import ClientSession  # noqa: E402
 from mcp.shared.message import SessionMessage  # noqa: E402
-from mcp.types import JSONRPCMessage, JSONRPCRequest  # noqa: E402
+from mcp.types import CallToolResult, JSONRPCNotification, JSONRPCRequest  # noqa: E402
 
 from mcp_re_sdk import HttpReply, McpReConfig, Signer, mcp_re_http_transport  # noqa: E402
 
@@ -107,30 +106,71 @@ def _replaying_poster(mutate=None):
     return post
 
 
+def _initialize_request() -> JSONRPCRequest:
+    """The recorded `initialize`, built here rather than taken from `ClientSession`.
+
+    The recording pins exact request bytes, and the JSON-RPC id counter belongs to the
+    session layer, not to this adapter: `mcp` 2.0 numbers from 1 where 1.x numbered from
+    0, and adds an empty `params._meta`. Neither is a statement about MCP-RE, and the
+    TypeScript SDK at the same major still numbers from 0 — so a recording that captured
+    either one could not be replayed by both. Driving the script explicitly keeps the
+    fixture a claim about the bytes THIS adapter signs, replayable from both languages.
+    A real session is covered end-to-end in `test_transport_e2e.py`.
+    """
+    return JSONRPCRequest(
+        jsonrpc="2.0",
+        id=0,
+        method="initialize",
+        params={
+            "capabilities": {},
+            "clientInfo": FIXTURE["expect"]["client_info"],
+            "protocolVersion": FIXTURE["expect"]["protocol_version"],
+        },
+    )
+
+
 async def _call_tool(config, poster):
     async with mcp_re_http_transport(config, poster) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            return await session.call_tool(FIXTURE["tool"]["name"], FIXTURE["tool"]["arguments"])
+        await write.send(SessionMessage(_initialize_request()))
+        await read.receive()
+        await write.send(
+            SessionMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"))
+        )
+        await write.send(
+            SessionMessage(
+                JSONRPCRequest(
+                    jsonrpc="2.0",
+                    id=1,
+                    method="tools/call",
+                    params={
+                        "name": FIXTURE["tool"]["name"],
+                        "arguments": FIXTURE["tool"]["arguments"],
+                    },
+                )
+            )
+        )
+        reply = await read.receive()
+        return CallToolResult.model_validate(reply.message.result)
 
 
 async def _expect_refusal(config, poster) -> str:
-    """Run the session and return the wire code it failed with."""
+    """Drive the recorded open and return the wire code it failed with."""
     async with mcp_re_http_transport(config, poster) as (read, write):
-        async with ClientSession(read, write) as session:
-            with pytest.raises(Exception) as ei:
-                await session.initialize()
-            return str(ei.value)
+        await write.send(SessionMessage(_initialize_request()))
+        reply = await read.receive()
+        error = getattr(reply.message, "error", None)
+        assert error is not None, f"expected a delivered JSON-RPC error, got {reply.message!r}"
+        return error.message
 
 
 @pytest.mark.anyio
 async def test_a_recorded_delegated_session_verifies_and_reaches_the_app_as_plain_mcp():
     result = await _call_tool(_config(), _replaying_poster())
 
-    assert result.structuredContent == FIXTURE["expect"]["structured_content"]
+    assert result.structured_content == FIXTURE["expect"]["structured_content"]
     assert result.content[0].text == FIXTURE["expect"]["text"]
     # MCP-RE's own evidence is not part of the MCP result.
-    assert "_meta" not in (result.structuredContent or {})
+    assert "_meta" not in (result.structured_content or {})
 
 
 @pytest.mark.anyio
@@ -218,13 +258,11 @@ async def test_a_verified_input_required_response_surfaces_the_answer_legs_handl
     async with mcp_re_http_transport(config, _elicit_poster()) as (read, write):
         await write.send(
             SessionMessage(
-                JSONRPCMessage(
-                    JSONRPCRequest(
-                        jsonrpc="2.0",
-                        id=0,
-                        method="tools/call",
-                        params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
-                    )
+                JSONRPCRequest(
+                    jsonrpc="2.0",
+                    id=0,
+                    method="tools/call",
+                    params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
                 )
             )
         )
@@ -240,7 +278,7 @@ async def test_a_verified_input_required_response_surfaces_the_answer_legs_handl
     assert h.request_state == expect["request_state"]
 
     # The open leg is genuine evidence and reaches the caller as a result, not an error.
-    assert reply.message.root.result["resultType"] == "input_required"
+    assert reply.message.result["resultType"] == "input_required"
 
 
 @pytest.mark.anyio
@@ -266,18 +304,16 @@ async def test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_resul
     async with mcp_re_http_transport(config, post) as (read, write):
         await write.send(
             SessionMessage(
-                JSONRPCMessage(
-                    JSONRPCRequest(
-                        jsonrpc="2.0",
-                        id=0,
-                        method="tools/call",
-                        params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
-                    )
+                JSONRPCRequest(
+                    jsonrpc="2.0",
+                    id=0,
+                    method="tools/call",
+                    params={"name": FIXTURE["elicitation"]["tool"], "arguments": {}},
                 )
             )
         )
         reply = await read.receive()
 
-    error = reply.message.root.error
+    error = reply.message.error
     assert error.code == -32001
     assert error.message == rejection["expect_wire_code"]

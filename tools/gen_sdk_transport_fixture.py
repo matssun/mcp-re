@@ -39,9 +39,8 @@ import time
 import anyio
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from mcp import ClientSession
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage, JSONRPCRequest
+from mcp.types import JSONRPCNotification, JSONRPCRequest
 
 from mcp_re_sdk import HttpReply, McpReConfig, Signer, mcp_re_http_transport
 
@@ -53,11 +52,15 @@ OUT = pathlib.Path("sdk/fixtures/delegated_response_replay.json")
 
 TOOL = "add"
 TOOL_ARGS = {"a": 2, "b": 40}
+#: The client identity and protocol revision the recorded `initialize` announces. These
+#: belong to the MCP client LIBRARY, not to MCP-RE, and both languages' replays announce
+#: exactly these so the request bytes stay comparable across the two SDKs.
+CLIENT_INFO = {"name": "mcp", "version": "0.1.0"}
+PROTOCOL_VERSION = "2025-11-25"
 #: The ADR-MCPS-047 eliciting tool. Its OPEN leg returns an `InputRequiredResult`, which
 #: is not an ordinary `CallToolResult`, so it is driven through the transport's streams
-#: rather than `ClientSession.call_tool` — the elicitation convention lives below the
-#: session layer. Served by the backend's ConfirmActionShim (its direct-run entry point;
-#: `fastmcp run` bypasses the shim and never elicits).
+#: rather than a session call — the elicitation convention lives below the session layer.
+#: Served by the backend's ConfirmActionShim, which wraps the ASGI app the module builds.
 ELICIT_TOOL = "confirm_action"
 ELICIT_NONCE = "nonce-transport-fixture-elicit"
 
@@ -136,10 +139,43 @@ async def record(target: str, created: int) -> dict:
 
         config = base_config(target, created, nonce_sequence())
 
+        # Drive the script EXPLICITLY rather than through `ClientSession`. The recording
+        # pins exact request bytes, and the JSON-RPC id counter belongs to the session
+        # layer: at MCP 2.0 the two official SDKs disagree about it (`mcp` numbers from 1
+        # and adds an empty `params._meta`; `@modelcontextprotocol/client` numbers from 0
+        # and adds neither), so a recording captured through either session could not be
+        # replayed by the other. Both SDKs replay THIS fixture, so what it records has to
+        # be the bytes the ADAPTER produces for a fixed script.
         async with mcp_re_http_transport(config, poster) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                await session.call_tool(TOOL, TOOL_ARGS)
+            await write.send(
+                SessionMessage(
+                    JSONRPCRequest(
+                        jsonrpc="2.0",
+                        id=0,
+                        method="initialize",
+                        params={
+                            "capabilities": {},
+                            "clientInfo": CLIENT_INFO,
+                            "protocolVersion": PROTOCOL_VERSION,
+                        },
+                    )
+                )
+            )
+            await read.receive()
+            await write.send(
+                SessionMessage(
+                    JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized")
+                )
+            )
+            await write.send(
+                SessionMessage(
+                    JSONRPCRequest(
+                        jsonrpc="2.0", id=1, method="tools/call",
+                        params={"name": TOOL, "arguments": TOOL_ARGS},
+                    )
+                )
+            )
+            await read.receive()
 
         # --- the ADR-MCPS-047 open leg, recorded separately ------------------------
         #
@@ -178,13 +214,11 @@ async def record(target: str, created: int) -> dict:
         async with mcp_re_http_transport(elicit_config, elicit_poster) as (read, write):
             await write.send(
                 SessionMessage(
-                    JSONRPCMessage(
-                        JSONRPCRequest(
-                            jsonrpc="2.0",
-                            id=0,
-                            method="tools/call",
-                            params={"name": ELICIT_TOOL, "arguments": {}},
-                        )
+                    JSONRPCRequest(
+                        jsonrpc="2.0",
+                        id=0,
+                        method="tools/call",
+                        params={"name": ELICIT_TOOL, "arguments": {}},
                     )
                 )
             )
@@ -283,11 +317,12 @@ async def record(target: str, created: int) -> dict:
             "server_name": "mcp-re-inner-backend",
             "structured_content": {"result": 42},
             "text": "42",
-            # `initialize` params carry the MCP client LIBRARY's identity, not MCP-RE's.
-            # Recorded so the other language's replay can announce the same thing and the
-            # request bytes stay comparable — a difference here would say nothing about
-            # this SDK.
-            "client_info": {"name": "mcp", "version": "0.1.0"},
+            # `initialize` params carry the MCP client LIBRARY's identity and the
+            # negotiated protocol revision, not MCP-RE's. Recorded so BOTH languages'
+            # replays announce the same thing and the request bytes stay comparable — a
+            # difference here would say nothing about either SDK.
+            "client_info": CLIENT_INFO,
+            "protocol_version": PROTOCOL_VERSION,
         },
     }
 

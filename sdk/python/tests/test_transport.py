@@ -21,7 +21,7 @@ import pytest
 pytest.importorskip("mcp", reason="the transport adapter needs the upstream MCP SDK")
 
 from mcp.shared.message import SessionMessage  # noqa: E402
-from mcp.types import JSONRPCMessage, JSONRPCNotification, JSONRPCRequest  # noqa: E402
+from mcp.types import JSONRPCNotification, JSONRPCRequest  # noqa: E402
 
 from mcp_re_sdk import (  # noqa: E402
     AuthorizationBindingPolicy,
@@ -94,7 +94,7 @@ async def _send(config, poster, message, correlation=None):
 
     read_writer, read_stream = anyio.create_memory_object_stream(8)
     write_stream, write_reader = anyio.create_memory_object_stream(8)
-    await write_stream.send(SessionMessage(JSONRPCMessage(message)))
+    await write_stream.send(SessionMessage(message))
     await write_stream.aclose()
     await _pump(config, poster, write_reader, read_writer, correlation)
 
@@ -277,7 +277,7 @@ async def test_a_wire_failure_is_delivered_as_a_correlated_json_rpc_error():
         _throwing_poster(McpReError("mcp-re.replay_detected", "seen before")),
         _request(),
     )
-    error = out[0].message.root
+    error = out[0].message
     assert error.id == 7
     assert error.error.code == -32001
     assert error.error.message == "mcp-re.replay_detected"
@@ -288,7 +288,7 @@ async def test_a_local_signer_failure_is_delivered_without_claiming_a_wire_code(
     # The device broke on this side of the boundary; nothing was transmitted, so no peer
     # rejected anything. Reporting `mcp-re.invalid_signature` here would be a lie.
     out = await _send(_config(), _throwing_poster(SignerUnavailable("kms timeout")), _request())
-    message = out[0].message.root.error.message
+    message = out[0].message.error.message
     assert message.startswith("mcp-re-sdk:")
     assert not message.startswith("mcp-re.")
 
@@ -298,7 +298,7 @@ async def test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging(
     out = await _send(
         _config(), _throwing_poster(ValueError("mcp-re.response_sig_invalid")), _request()
     )
-    assert out[0].message.root.error.message == "mcp-re.response_sig_invalid"
+    assert out[0].message.error.message == "mcp-re.response_sig_invalid"
 
 
 def _flatten(exc: BaseException) -> list:
@@ -320,8 +320,8 @@ async def test_an_unexpected_exception_is_delivered_without_claiming_a_wire_code
     # that hit it, under the prefix that means "local condition".
     out = await _send(_config(), _throwing_poster(RuntimeError("boom")), _request())
 
-    message = out[0].message.root.error.message
-    assert out[0].message.root.id == 7
+    message = out[0].message.error.message
+    assert out[0].message.id == 7
     assert message.startswith("mcp-re-sdk: RuntimeError:")
     assert "boom" in message
     assert not message.startswith("mcp-re."), "a local defect must not claim a wire code"
@@ -348,7 +348,7 @@ async def test_one_exchanges_network_error_does_not_take_down_the_session():
     read_writer, read_stream = anyio.create_memory_object_stream(8)
     write_stream, write_reader = anyio.create_memory_object_stream(8)
     for rid in (1, 2, 3):
-        await write_stream.send(SessionMessage(JSONRPCMessage(_request(id=rid))))
+        await write_stream.send(SessionMessage(_request(id=rid)))
     await write_stream.aclose()
     await _pump(_config(), poster, write_reader, read_writer)
 
@@ -360,7 +360,7 @@ async def test_one_exchanges_network_error_does_not_take_down_the_session():
             break
 
     assert sorted(ids) == [1, 2, 3], "the reset must not cancel the other exchanges"
-    delivered = {m.message.root.id: m.message.root.error.message for m in out}
+    delivered = {m.message.id: m.message.error.message for m in out}
     assert delivered[1].startswith("mcp-re-sdk: ConnectionResetError:")
     assert delivered[2] == "mcp-re.replay_detected"
     assert delivered[3] == "mcp-re.replay_detected"
@@ -386,7 +386,7 @@ async def test_close_aborts_in_flight_work_rather_than_draining_it():
         raise McpReError("mcp-re.replay_detected")
 
     async with mcp_re_http_transport(_config(), slow) as (read, write):
-        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await write.send(SessionMessage(_request()))
         await anyio.sleep(0.05)
 
     assert started == [1], "the exchange must have begun"
@@ -409,9 +409,7 @@ async def test_close_aborts_an_in_flight_notification_too():
     async with mcp_re_http_transport(_config(), slow) as (read, write):
         await write.send(
             SessionMessage(
-                JSONRPCMessage(
-                    JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized")
-                )
+                JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized")
             )
         )
         await anyio.sleep(0.05)
@@ -429,7 +427,7 @@ async def test_close_refuses_further_work():
     # The streams are closed, so a signed request cannot leave a transport the caller has
     # already left. (Broken vs Closed depends on which end shut first; both refuse.)
     with pytest.raises((anyio.ClosedResourceError, anyio.BrokenResourceError)):
-        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await write.send(SessionMessage(_request()))
     assert posted == []
 
 
@@ -452,7 +450,7 @@ async def test_close_clears_abandoned_correlation_state():
         raise McpReError("mcp-re.replay_detected")
 
     async with mcp_re_http_transport(_config(), slow, correlation=store) as (read, write):
-        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await write.send(SessionMessage(_request()))
         await anyio.sleep(0.05)
         assert len(store) == 1, "the request must be outstanding"
 
@@ -475,11 +473,11 @@ async def test_correlation_state_belongs_to_the_transport_not_the_config():
         raise McpReError("mcp-re.replay_detected")
 
     async with mcp_re_http_transport(config, slow, correlation=second) as (_r2, w2):
-        await w2.send(SessionMessage(JSONRPCMessage(_request(id=2))))
+        await w2.send(SessionMessage(_request(id=2)))
         await anyio.sleep(0.05)
 
         async with mcp_re_http_transport(config, slow, correlation=first) as (_r1, w1):
-            await w1.send(SessionMessage(JSONRPCMessage(_request(id=1))))
+            await w1.send(SessionMessage(_request(id=1)))
             await anyio.sleep(0.05)
             assert len(first) == 1 and len(second) == 1
 
@@ -556,7 +554,7 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
         raise McpReError("mcp-re.replay_detected")
 
     async with mcp_re_http_transport(config, poster, correlation=store) as (read, write):
-        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await write.send(SessionMessage(_request()))
         await anyio.sleep(0.05)
         pending = next(iter(store))
         signed_bindings = json.dumps(
@@ -577,7 +575,7 @@ async def test_a_request_with_no_bindings_records_no_digest():
         raise McpReError("mcp-re.replay_detected")
 
     async with mcp_re_http_transport(_config(), poster, correlation=store) as (read, write):
-        await write.send(SessionMessage(JSONRPCMessage(_request())))
+        await write.send(SessionMessage(_request()))
         await anyio.sleep(0.05)
         assert next(iter(store)).authz_binding_digest is None
 
@@ -638,7 +636,7 @@ async def _drive(config, poster, count: int):
     read_writer, read_stream = anyio.create_memory_object_stream(64)
     write_stream, write_reader = anyio.create_memory_object_stream(64)
     for i in range(count):
-        await write_stream.send(SessionMessage(JSONRPCMessage(_request(id=i))))
+        await write_stream.send(SessionMessage(_request(id=i)))
     await write_stream.aclose()
     await _pump(config, poster, write_reader, read_writer)
 
@@ -694,7 +692,7 @@ def test_a_valid_bound_is_accepted():
 async def test_every_concurrent_reply_is_correlated_to_its_own_request():
     # Concurrency must not let one request's outcome land on another's id.
     replies = await _drive(_config(), _gated_poster({}), 4)
-    assert sorted(r.message.root.id for r in replies) == [0, 1, 2, 3]
+    assert sorted(r.message.id for r in replies) == [0, 1, 2, 3]
 
 
 @pytest.mark.anyio

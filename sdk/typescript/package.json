@@ -1,7 +1,7 @@
 {
   "name": "@mcp-re/sdk",
   "version": "0.1.1",
-  "description": "MCP-RE TypeScript SDK — runtime-evidence security (signed requests, verified responses) for the MCP TypeScript SDK, via a transport adapter over the audited mcp-re-client-core.",
+  "description": "MCP-RE TypeScript SDK \u2014 runtime-evidence security (signed requests, verified responses) for the MCP TypeScript SDK, via a transport adapter over the audited mcp-re-client-core.",
   "license": "Apache-2.0",
   "author": "Mats Sundvall",
   "type": "commonjs",
@@ -48,15 +48,20 @@
     "test": "npm run build && vitest run"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/sdk": ">=1.16.0 <2.0.0"
+    "@modelcontextprotocol/client": ">=2.0.0 <3.0.0",
+    "@modelcontextprotocol/core": ">=2.0.0 <3.0.0"
   },
   "peerDependenciesMeta": {
-    "@modelcontextprotocol/sdk": {
+    "@modelcontextprotocol/client": {
+      "optional": true
+    },
+    "@modelcontextprotocol/core": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/core": "^2.0.0",
     "@napi-rs/cli": "^3.8.1",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",

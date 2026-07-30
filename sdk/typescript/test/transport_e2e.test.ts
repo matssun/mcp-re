@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Live e2e: a real MCP `Client` through `McpReHttpTransport` against the real Rust
-// `http_profile_proxy` and a real FastMCP Streamable-HTTP backend.
+// `http_profile_proxy` and a real MCP SDK Streamable-HTTP backend.
 //
 // This is the claim the adapter exists to make: **application code calls
 // `client.callTool(...)` and nothing else** — no signRequest, no verifyResponse, no
@@ -11,21 +11,21 @@
 // serving path does. This is the TypeScript mirror of
 // `sdk/python/tests/test_transport_e2e.py` — same harness, same five proofs.
 //
-// Skips cleanly when the harness is unavailable (no `fastmcp`, or the examples are not
+// Skips cleanly when the harness is unavailable (no MCP SDK server, or the examples are not
 // built), so the Bazel-free downloader lane stays green without it.
 //
 // Prerequisites, from the repo root:
 //
 //     cargo build -p mcp-re-proxy --example http_profile_proxy
-//     brew install fastmcp
-import { spawn, type ChildProcess } from "node:child_process";
+//     pip install "mcp>=2.0,<3" uvicorn
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/client";
 
 import { McpReError, Signer, SignerPolicy } from "../src/index.js";
 import {
@@ -92,9 +92,16 @@ async function waitPort(p: number, timeoutMs = 15_000): Promise<boolean> {
   return false;
 }
 
-function haveFastmcp(): boolean {
-  const paths = (process.env.PATH ?? "").split(":");
-  return paths.some((d) => d && existsSync(join(d, "fastmcp")));
+/** The interpreter that runs the inner backend. It needs `mcp>=2.0` + uvicorn importable,
+ * which a bare system python3 usually does not have — set MCP_RE_PYTHON to a venv's
+ * interpreter to run the live lane instead of skipping it. */
+const PYTHON = process.env.MCP_RE_PYTHON ?? "python3";
+
+/** The inner backend is an MCP SDK server run by an interpreter, so what has to be
+ * present is one that can import it — not a CLI on PATH. */
+function haveInnerBackend(): boolean {
+  const r = spawnSync(PYTHON, ["-c", "import mcp.server.mcpserver, uvicorn"], { stdio: "ignore" });
+  return r.status === 0;
 }
 
 let procs: ChildProcess[] = [];
@@ -102,7 +109,7 @@ let target = "";
 let available = false;
 
 beforeAll(async () => {
-  if (!existsSync(PROXY_BIN) || !haveFastmcp()) return;
+  if (!existsSync(PROXY_BIN) || !haveInnerBackend()) return;
 
   const front = port("mcp_re_http_profile_proxy");
   const inner = port("mcp_re_inner_backend");
@@ -110,15 +117,14 @@ beforeAll(async () => {
 
   if (!(await probe(inner))) {
     procs.push(
-      spawn(
-        "fastmcp",
-        ["run", `${BACKEND}:mcp`, "--transport", "http", "--host", "127.0.0.1",
-         "--port", String(inner), "--stateless", "--path", "/mcp/", "--no-banner"],
-        {
-          env: { ...process.env, FASTMCP_JSON_RESPONSE: "true", FASTMCP_STATELESS_HTTP: "true" },
-          stdio: "ignore",
+      spawn(PYTHON, [BACKEND], {
+        env: {
+          ...process.env,
+          MCP_RE_INNER_BACKEND_PORT: String(inner),
+          MCP_RE_INNER_BACKEND_HOST: "127.0.0.1",
         },
-      ),
+        stdio: "ignore",
+      }),
     );
     if (!(await waitPort(inner))) return;
   }
@@ -180,7 +186,7 @@ const poster: Poster = async (method, targetUri, headers, body) => {
 
 const newClient = () => new Client({ name: "mcp-re-adapter-e2e", version: "0.1.0" });
 
-describe.runIf(existsSync(PROXY_BIN) && haveFastmcp())("McpReHttpTransport (live)", () => {
+describe.runIf(existsSync(PROXY_BIN) && haveInnerBackend())("McpReHttpTransport (live)", () => {
   it("lets a real MCP Client call a tool with no sign/verify in app code", async () => {
     expect(available).toBe(true);
     const acknowledged: [string, string][] = [];

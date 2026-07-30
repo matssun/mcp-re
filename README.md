@@ -163,7 +163,7 @@ in [`docs/adr/`](docs/adr/). In brief:
   external adapter (e.g. FastMCP). Both **SDKs are retargeted to the HTTP model** and
   exercised by live mTLS e2es against the real proxy. The fleet is proven on a **live
   GKE cluster** (cross-replica replay coherence + a rolling update over a real L4
-  LoadBalancer, fronting FastMCP), with live GCP-KMS custody lanes and an
+  LoadBalancer, fronting the MCP SDK inner backend), with live GCP-KMS custody lanes and an
   **ADR-051 §7 SLO baseline measured on real GKE hardware** (e2/c3-standard-8) — the
   targets flip from provisional to **declared**, gate-enforced.
 - **0.12** consolidates the proxy **serving path**: the RFC 9421 `HttpProfileProxy`

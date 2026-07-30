@@ -81,7 +81,7 @@ application code
 ```
 
 ```ts
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { Client } from "@modelcontextprotocol/client";
 import { McpReHttpTransport } from "@mcp-re/sdk/transport";
 
 const client = new Client({ name: "app", version: "1.0.0" });
@@ -207,7 +207,7 @@ sdk/typescript/
     parity.test.ts       # the frozen cross-language oracle (../../fixtures/parity_vectors.json)
     transport.test.ts    # the adapter, offline, with an injected poster
     transport_replay.test.ts  # a RECORDED delegated session (../../fixtures/delegated_response_replay.json)
-    transport_e2e.test.ts     # the LIVE proxy + a real FastMCP backend; self-skips without them
+    transport_e2e.test.ts     # the LIVE proxy + a real MCP SDK backend; self-skips without them
 ```
 
 ## Develop
@@ -238,7 +238,7 @@ the downloader lane, so it is a development-time proof rather than a standing ga
 | --- | --- | --- |
 | `transport.test.ts` | injected `poster`, no network | always |
 | `transport_replay.test.ts` | a **recorded** delegated session, elicitation open leg, and rejection receipt (`../fixtures/delegated_response_replay.json`) | always |
-| `transport_e2e.test.ts` | the **live** `http_profile_proxy` + a real FastMCP backend | **no** — self-skips without the harness (incl. in CI) |
+| `transport_e2e.test.ts` | the **live** `http_profile_proxy` + a real MCP SDK backend | **no** — self-skips without the harness (incl. in CI) |
 
 The replay fixture exists because the live test self-skips in the npm downloader lane —
 the one place the shipped artifact is gated — which would leave the verification path

@@ -67,18 +67,17 @@ for _ in $(seq 1 50); do
   echo -n "."; sleep 0.3
 done
 
-# --- 2. FastMCP inner backend ---------------------------------------------------
+# --- 2. MCP SDK inner backend ---------------------------------------------------
 if ! nc -z 127.0.0.1 "${INNER}" 2>/dev/null; then
-  command -v fastmcp >/dev/null || { echo "ERROR: fastmcp not on PATH"; exit 1; }
-  echo "inner: starting FastMCP on ${INNER}"
-  FASTMCP_JSON_RESPONSE=true FASTMCP_STATELESS_HTTP=true \
-    fastmcp run tools/fastmcp_inner_backend.py:mcp \
-      --transport http --host 127.0.0.1 --port "${INNER}" --stateless --path /mcp/ --no-banner \
-      >/tmp/hpp_fastmcp.log 2>&1 &
+  python3 -c 'import mcp.server.mcpserver, uvicorn' 2>/dev/null \
+    || { echo "ERROR: the MCP SDK (mcp>=2.0) and uvicorn must be importable by python3"; exit 1; }
+  echo "inner: starting inner backend on ${INNER}"
+  MCP_RE_INNER_BACKEND_PORT="${INNER}" MCP_RE_INNER_BACKEND_HOST=127.0.0.1 \
+    python3 tools/fastmcp_inner_backend.py >/tmp/hpp_inner_backend.log 2>&1 &
   pids+=($!)
-  wait_port "${INNER}" || { echo "ERROR: FastMCP did not come up"; exit 1; }
+  wait_port "${INNER}" || { echo "ERROR: inner backend did not come up"; exit 1; }
 else
-  echo "inner: FastMCP already running on ${INNER}"
+  echo "inner: inner backend already running on ${INNER}"
 fi
 
 # --- 3. Two proxy replicas on the SHARED redis tier -----------------------------

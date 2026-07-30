@@ -129,26 +129,30 @@ updates:
     groups:
       pip-minor-patch:
         update-types: ["minor", "patch"]
-    ignore:
-      # The upstream MCP SDK's MAJOR version fixes the protocol version the client
-      # advertises (1.x -> 2025-11-25, 2.0 -> 2026-07-28), and that version is part
-      # of the initialize bytes pinned by sdk/fixtures/delegated_response_replay.json
-      # — a fixture SHARED with the TypeScript SDK, which is capped
-      # `@modelcontextprotocol/sdk >=1.16.0 <2.0.0`. Bumping one SDK's major alone
-      # makes the two speak different protocol generations, and the only way to make
-      # the moved side pass is to re-record the shared fixture, which breaks the
-      # other. PR #469 did exactly this and cost 33 test failures on main.
-      #
-      # Both SDKs move to MCP 2.0 together, with the fixture re-recorded in the same
-      # change. Tracked in #479; drop this entry as part of it.
-      # Matched by VERSION RANGE, not update-type. Dependabot does not classify a
-      # pip requirement WIDENING (`<2.0` -> `<3.0`) as a semver-major update, so
-      # `update-types: [version-update:semver-major]` does not catch it — PR #482
-      # proposed exactly that widening within minutes of the cap being restored.
-      # `versions` blocks anything that would admit 2.0 regardless of how the change
-      # is classified.
-      - dependency-name: "mcp"
-        versions: [">=2.0.0"]
+    # The `mcp` major cap is GONE: both SDKs and the inner backend are on MCP 2.0.
+    #
+    # The cap's stated reason was wrong and is recorded here so it is not reinstated on
+    # the same reasoning. It claimed an SDK major fixes the advertised protocol version
+    # (1.x -> 2025-11-25, 2.0 -> 2026-07-28). It does not: `mcp_types.version` in
+    # `mcp` 2.0 puts 2026-07-28 in MODERN_PROTOCOL_VERSIONS (the stateless per-request
+    # envelope, reached via `server/discover`) while LATEST_HANDSHAKE_VERSION — what the
+    # client offers on `initialize` — is still 2025-11-25. TypeScript 2.0 agrees
+    # (`@modelcontextprotocol/core`: LATEST_PROTOCOL_VERSION = '2025-11-25'). The SDK
+    # major is a repackaging; the protocol revision moves on its own axis.
+    #
+    # What actually coupled the two SDKs was the JSON-RPC id counter, which belongs to
+    # the session layer: at 2.0 `mcp` numbers from 1 and adds an empty `params._meta`,
+    # while `@modelcontextprotocol/client` numbers from 0 and adds neither. A recording
+    # captured through either session was unreplayable by the other, which is what cost
+    # #469 its 33 failures. `sdk/fixtures/delegated_response_replay.json` no longer
+    # depends on either: both languages drive a FIXED script explicitly, so the fixture
+    # records the bytes the ADAPTER signs. A future SDK major cannot desynchronise them
+    # through the id counter again.
+    #
+    # Note for whoever reads a future TypeScript bump: `@modelcontextprotocol/sdk` will
+    # never go past 1.x. The name was retired at 2.0 in favour of
+    # `@modelcontextprotocol/client` + `/core`, so that move is an import-path migration
+    # Dependabot cannot propose as a version bump at all.
 
   # Workflow actions. These are currently referenced by moving major tags
   # (actions/checkout@v4, ...), so this is what keeps them current.

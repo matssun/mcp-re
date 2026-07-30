@@ -7,7 +7,7 @@
  * `verifyResponse` itself.
  *
  *     application code
- *       -> Client (@modelcontextprotocol/sdk)  plain MCP; unaware of MCP-RE
+ *       -> Client (@modelcontextprotocol/client)  plain MCP; unaware of MCP-RE
  *       -> McpReHttpTransport                  signs outbound bytes / verifies inbound
  *       -> ../native/binding (napi-rs)         the audited mcp-re-client-core, in Rust
  *       -> mcp-re-proxy (HTTP profile)         one signed mTLS POST per request
@@ -36,9 +36,8 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 
-import type { JSONRPCMessage, RequestId } from "@modelcontextprotocol/sdk/types.js";
-import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage, RequestId, Transport } from "@modelcontextprotocol/client";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/core";
 
 import {
   verifyAccepted202,

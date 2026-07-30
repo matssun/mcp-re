@@ -37,18 +37,19 @@ trap cleanup EXIT
 
 wait_port() { for _ in $(seq 1 50); do nc -z 127.0.0.1 "$1" 2>/dev/null && return 0; sleep 0.2; done; return 1; }
 
-# 1. FastMCP Streamable-HTTP inner backend (start it unless already up).
+# 1. MCP SDK Streamable-HTTP inner backend (start it unless already up).
+# Run the module directly: the MRTR ConfirmActionShim has to wrap the ASGI app, which
+# a `run`-style CLI entry point gives no seam for.
 if nc -z 127.0.0.1 "${INNER}" 2>/dev/null; then
-  echo "inner: FastMCP already running on ${INNER}"
+  echo "inner: inner backend already running on ${INNER}"
 else
-  command -v fastmcp >/dev/null || { echo "ERROR: fastmcp not on PATH (brew install fastmcp)"; exit 1; }
-  echo "inner: starting FastMCP on ${INNER}"
-  FASTMCP_JSON_RESPONSE=true FASTMCP_STATELESS_HTTP=true \
-    fastmcp run tools/fastmcp_inner_backend.py:mcp \
-      --transport http --host 127.0.0.1 --port "${INNER}" --stateless --path /mcp/ --no-banner \
-      >/tmp/hpp_fastmcp.log 2>&1 &
+  python3 -c 'import mcp.server.mcpserver, uvicorn' 2>/dev/null \
+    || { echo "ERROR: the MCP SDK (mcp>=2.0) and uvicorn must be importable by python3"; exit 1; }
+  echo "inner: starting inner backend on ${INNER}"
+  MCP_RE_INNER_BACKEND_PORT="${INNER}" MCP_RE_INNER_BACKEND_HOST=127.0.0.1 \
+    python3 tools/fastmcp_inner_backend.py >/tmp/hpp_inner_backend.log 2>&1 &
   pids+=($!)
-  wait_port "${INNER}" || { echo "ERROR: FastMCP did not come up"; cat /tmp/hpp_fastmcp.log; exit 1; }
+  wait_port "${INNER}" || { echo "ERROR: inner backend did not come up"; cat /tmp/hpp_inner_backend.log; exit 1; }
 fi
 
 # 2. Build + launch the HTTP-profile proxy front.
