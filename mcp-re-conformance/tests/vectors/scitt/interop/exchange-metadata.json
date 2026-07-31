@@ -1,0 +1,21 @@
+{
+  "peer": "@transmute/cose 0.3.0",
+  "peer_provenance": "npm, authored by the RFC 9942 editor (Orie Steele, Transmute)",
+  "peer_components_used": [
+    "log/Tree (RFC 9162)",
+    "encode_inclusion_proof",
+    "decode_inclusion_proof",
+    "cbor"
+  ],
+  "local_patch": "dist/**/{add_receipt,prepare_for_inclusion}.js import ../../../src (TypeScript, unloadable from the published dist); repointed to ../../index.js. Neither file is in the proof or decode path.",
+  "not_a_service": "This peer is a LIBRARY, not a transparency service. There is no HTTP registration; the exchange is statement -> their tree/proof/receipt -> our verifier. No registration request/response exists to record.",
+  "profiles_exercised": [
+    "RFC 9942 §5.2.1 receipt of inclusion",
+    "RFC 9162 inclusion proof",
+    "RFC 9052 §4.4 Sig_structure",
+    "RFC 9943 §6.1 signed statement"
+  ],
+  "their_verify_inclusion": true,
+  "their_decoder_reads_our_receipts": true,
+  "their_decoder_rejects_draft_labels": true
+}

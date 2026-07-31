@@ -35,10 +35,23 @@
 //! unprotected header, and the RFC 9162 Merkle Tree Hash as the payload. Conformance
 //! vectors are frozen from those octets in `mcp-re-conformance/tests/vectors/scitt/`.
 //!
-//! Interoperability with a real service additionally needs what this module does not
-//! yet do: receipts signed with ES256 (RFC 9942's own examples use it; this verifier
-//! requires EdDSA), and transparency-service keys resolved from a fetched-and-pinned
-//! key set rather than a caller-supplied `kid` map. That is #501's code half.
+//! **Two deliberate restrictions on what this verifier accepts**, both narrower than the
+//! RFC permits, and both stated here rather than left to be discovered:
+//!
+//! 1. **Attached payloads only.** RFC 9942 §4.4 allows a Receipt to carry a detached
+//!    payload — its own Figure 6 shows one — but this verifier checks the service's
+//!    signature over the Merkle root the payload carries. Verifying a detached receipt
+//!    would mean taking that root from the caller, and a caller-supplied root is a
+//!    caller-chosen answer. A detached receipt is refused as rootless.
+//! 2. **EdDSA and ES256 only.** Any other `alg` is refused rather than attempted, and the
+//!    resolved key must agree with the `alg` the protected header names.
+//!
+//! Interoperability has been demonstrated against `@transmute/cose` (authored by
+//! RFC 9942's editor): its RFC 9162 tree, proof encoder and CBOR produced a receipt that
+//! verifies here offline, and its decoder reads receipts produced here. The corpus is
+//! frozen in `mcp-re-conformance/tests/vectors/scitt/interop/`. That peer is a LIBRARY,
+//! not a transparency service — see #501 for what the demonstration does and does not
+//! license.
 //!
 //! The remaining stand-in, called out so nobody mistakes the prototype for the
 //! product: [`PrototypeTransparencyService`] is an in-process Merkle log, NOT a
@@ -55,6 +68,7 @@ use coset::CoseSign1Builder;
 use coset::HeaderBuilder;
 use coset::Label;
 use coset::TaggedCborSerializable;
+use mcp_re_core::b64url_decode;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519_with;
 use mcp_re_core::McpReError;
@@ -67,6 +81,7 @@ use sha2::Sha256;
 use crate::chain::ChainLabel;
 use crate::chain::ChainReconstruction;
 use crate::error::HttpProfileError;
+use crate::evidence::RequestEvidence;
 
 /// The MCP-RE evidence a receipt commits to (#415 §4.6), as HASH COMMITMENTS. Each
 /// field is a digest of externally-retained evidence, never the evidence itself.
@@ -350,8 +365,14 @@ pub struct Receipt {
     leaf_index: u64,
     /// Sibling hashes from leaf to root.
     inclusion_path: Vec<Vec<u8>>,
-    /// The Merkle root — the receipt's signed payload.
-    root: Vec<u8>,
+    /// The Merkle root the receipt signs, when it is ATTACHED as the payload.
+    ///
+    /// `None` for the detached form (RFC 9942 §4.4, and the shape its own Figure 6
+    /// shows). Detached is not a weaker receipt: the root is then re-derived from the
+    /// statement and the inclusion path, and the signature is checked over THAT — so the
+    /// receipt cannot even be verified without the statement it is about, which is a
+    /// tighter binding than a receipt carrying its own answer.
+    root: Option<Vec<u8>>,
 }
 
 impl Receipt {
@@ -445,12 +466,16 @@ impl Receipt {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let root = sign1
-            .payload
-            .as_deref()
-            .filter(|p| p.len() == 32)
-            .ok_or(HttpProfileError::MalformedEvidence("scitt receipt root"))?
-            .to_vec();
+        // Attached: the payload IS the Merkle Tree Hash, so it must be one. Detached
+        // (RFC 9942 §4.4): absent, and the root is re-derived at verify time. A payload
+        // that is present but not a 32-octet hash is neither form and is refused.
+        let root = match sign1.payload.as_deref() {
+            None => None,
+            Some(p) if p.len() == 32 => Some(p.to_vec()),
+            Some(_) => {
+                return Err(HttpProfileError::MalformedEvidence("scitt receipt root"));
+            }
+        };
         Ok(Receipt {
             cose: bytes.to_vec(),
             ts_kid,
@@ -470,11 +495,59 @@ fn as_u64(v: &Value) -> Result<u64, HttpProfileError> {
 
 /// The leaf hash of a signed statement (RFC 6962 leaf prefix `0x00`), over the
 /// statement's COSE bytes — the exact octets that were registered.
-fn leaf_hash(statement: &SignedStatement) -> [u8; 32] {
+fn leaf_hash(statement: &SignedStatement, profile: StatementLeafProfile) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update([0x00]);
-    h.update(statement.to_cose());
+    match profile {
+        StatementLeafProfile::StatementBytes => h.update(statement.to_cose()),
+        StatementLeafProfile::StatementDigest => h.update(Sha256::digest(statement.to_cose())),
+    }
     h.finalize().into()
+}
+
+/// WHICH bytes a transparency service logs as the Merkle entry for a Signed Statement.
+///
+/// RFC 9162 §2.1 defines the leaf hash as `SHA-256(0x00 ‖ d(i))` over the i-th ENTRY, and
+/// RFC 9943 says the service registers the Signed Statement — but neither document says
+/// whether the entry is the statement's octets or a digest of them. That gap is real, and
+/// two conforming services have been observed on opposite sides of it, so a verifier
+/// cannot deduce the answer from the receipt.
+///
+/// **Exactly one profile applies to any verification.** Trying both and accepting either
+/// would be strictly worse than picking wrong: it hands an attacker two chances at the
+/// fold, and it destroys the property the proof is for — that the receipt pins WHICH
+/// entry was logged. So the profile comes from the pinned service artifact, which an
+/// operator wrote down and reviewed, and never from the receipt being checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StatementLeafProfile {
+    /// The entry is the Signed Statement's own COSE octets: `SHA-256(0x00 ‖ statement)`.
+    ///
+    /// The default, and the more direct reading of RFC 9162 §2.1 composed with RFC 9943:
+    /// what the service registers is the statement, so the statement is the entry. The
+    /// RFC 9942 editor's own implementation (`@transmute/cose`) hashes this way.
+    #[default]
+    StatementBytes,
+    /// The entry is a digest of the statement: `SHA-256(0x00 ‖ SHA-256(statement))`.
+    ///
+    /// Used by services that log digests rather than documents — `capsule-anchor` does,
+    /// and its source calls it a deliberate exception to its own leaf rule. Verifiable,
+    /// but only if a verifier is told; it cannot be inferred.
+    StatementDigest,
+}
+
+/// A resolved transparency service: the key its receipts are verified with, and the leaf
+/// profile its log uses.
+///
+/// The two travel together because they are two halves of one question — "how do I check
+/// this service's receipts" — and separating them into independent parameters would let a
+/// caller pair a pinned key with a profile nobody pinned.
+#[derive(Debug, Clone)]
+pub struct ResolvedTransparencyService {
+    /// The key that verifies the service's receipt signatures.
+    pub key: CoseVerificationKey,
+    /// Which bytes this service's log hashes as the Merkle entry.
+    pub leaf_profile: StatementLeafProfile,
 }
 
 /// An interior Merkle node hash (RFC 6962 node prefix `0x01`).
@@ -498,8 +571,8 @@ fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
 pub fn verify_receipt_offline(
     statement: &SignedStatement,
     receipt: &Receipt,
-    resolve_issuer: impl Fn(&str) -> Option<VerificationKey>,
-    resolve_ts: impl Fn(&str) -> Option<VerificationKey>,
+    resolve_issuer: impl Fn(&str) -> Option<CoseVerificationKey>,
+    resolve_ts: impl Fn(&str) -> Option<ResolvedTransparencyService>,
 ) -> Result<(), HttpProfileError> {
     // 1. Issuer signature over the statement's own Sig_structure.
     let issuer =
@@ -509,7 +582,8 @@ pub fn verify_receipt_offline(
     // 2. Inclusion proof: fold the leaf up through the sibling path and require the
     //    result to equal the root the receipt commits to. The index bits pick the
     //    left/right position at each level, exactly as RFC 9162 defines.
-    let mut computed = leaf_hash(statement).to_vec();
+    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
+    let mut computed = leaf_hash(statement, ts.leaf_profile).to_vec();
     let mut index = receipt.leaf_index;
     for sibling in &receipt.inclusion_path {
         computed = if index & 1 == 0 {
@@ -519,37 +593,395 @@ pub fn verify_receipt_offline(
         };
         index >>= 1;
     }
-    if computed != receipt.root {
-        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    if let Some(root) = &receipt.root {
+        if &computed != root {
+            return Err(HttpProfileError::ReceiptInclusionInvalid);
+        }
     }
 
-    // 3. The receipt's own signature. Its payload is the root the fold just
-    //    reproduced, so a verified receipt is the service's statement that THIS leaf
-    //    is in a tree it signed.
-    let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
-    verify_cose_sign1(receipt.to_cose(), &ts)?;
+    // 3. The receipt's own signature, over the root the fold just reproduced — so a
+    //    verified receipt is the service's statement that THIS leaf is in a tree it
+    //    signed.
+    //
+    //    For a detached receipt the fold's output IS the payload the signature is
+    //    checked against, which is why no separate root comparison is needed above: a
+    //    wrong fold produces a different payload and the signature simply fails. The
+    //    root is never taken from the caller — it is derived from the statement under
+    //    verification.
+    verify_cose_sign1_with_payload(
+        receipt.to_cose(),
+        &ts.key,
+        receipt.root.is_none(),
+        &computed,
+    )?;
     Ok(())
+}
+
+/// A key a `COSE_Sign1` in the SCITT profile may be verified with.
+///
+/// Two algorithms, for two different reasons. MCP-RE issues its own Signed Statements
+/// with Ed25519. A transparency service is not ours and signs with what it signs with:
+/// RFC 9942's own receipt examples use `ES256`, and every running implementation
+/// observed uses a P-256 or P-384 key. Verifying a receipt therefore requires ECDSA,
+/// while MCP-RE's request and response signing stays Ed25519-only — `mcp-re-core`
+/// still refuses `ES256` for message signatures, and nothing here changes that.
+///
+/// The key names the algorithm, so a message cannot. A verifier that took the
+/// algorithm from the message and then looked for any key that might work is the
+/// classic COSE/JOSE algorithm-confusion shape; here the resolved key and the
+/// protected `alg` must agree or verification is refused.
+#[derive(Debug, Clone)]
+pub enum CoseVerificationKey {
+    /// Ed25519, for `alg: EdDSA` (-8).
+    Ed25519(VerificationKey),
+    /// ECDSA on NIST P-256, for `alg: ES256` (-7), as uncompressed affine coordinates.
+    EcdsaP256 {
+        /// The `x` coordinate, exactly 32 octets (COSE `EC2` key parameter -2).
+        x: [u8; 32],
+        /// The `y` coordinate, exactly 32 octets (COSE `EC2` key parameter -3).
+        y: [u8; 32],
+    },
+}
+
+impl From<VerificationKey> for CoseVerificationKey {
+    fn from(key: VerificationKey) -> Self {
+        CoseVerificationKey::Ed25519(key)
+    }
+}
+
+impl CoseVerificationKey {
+    /// Build a P-256 key from COSE `EC2` affine coordinates.
+    ///
+    /// Both coordinates must be exactly 32 octets. RFC 9053 §7.1.1 requires the
+    /// fixed-width, leading-zero-preserving form, so a 31-octet `x` is not a small
+    /// number to be left-padded — it is a different encoding, and accepting it would
+    /// mean two byte strings naming one key. The point is then checked to be on the
+    /// curve: an off-curve "public key" has no discrete log to verify against, and
+    /// feeding one to a verifier is how invalid-curve attacks start.
+    pub fn from_ec2_p256(x: &[u8], y: &[u8]) -> Result<Self, HttpProfileError> {
+        let x: [u8; 32] = x.try_into().map_err(|_| {
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 x coordinate width")
+        })?;
+        let y: [u8; 32] = y.try_into().map_err(|_| {
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 y coordinate width")
+        })?;
+        let key = CoseVerificationKey::EcdsaP256 { x, y };
+        key.p256_public_key()?;
+        Ok(key)
+    }
+
+    /// Decode the P-256 point, refusing anything not on the curve.
+    fn p256_public_key(&self) -> Result<p256::ecdsa::VerifyingKey, HttpProfileError> {
+        let CoseVerificationKey::EcdsaP256 { x, y } = self else {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt cose algorithm key mismatch",
+            ));
+        };
+        // SEC1 uncompressed: 0x04 || X || Y.
+        let mut sec1 = [0u8; 65];
+        sec1[0] = 0x04;
+        sec1[1..33].copy_from_slice(x);
+        sec1[33..].copy_from_slice(y);
+        p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt ec2 p256 point not on curve"))
+    }
 }
 
 /// Verify a tagged `COSE_Sign1`'s signature over its own `Sig_structure`.
 ///
-/// The algorithm is read from the PROTECTED header and must be EdDSA: accepting
-/// whatever the message named would let a peer choose the verification algorithm,
-/// which is the classic COSE/JOSE algorithm-confusion shape.
-fn verify_cose_sign1(cose: &[u8], key: &VerificationKey) -> Result<(), HttpProfileError> {
+/// The algorithm is read from the PROTECTED header and must be one this verifier
+/// implements AND must match the resolved key's algorithm. Both halves matter: an
+/// unrecognized `alg` is refused rather than guessed at, and an `alg` that disagrees
+/// with the key is refused rather than resolved in the message's favour.
+fn verify_cose_sign1(cose: &[u8], key: &CoseVerificationKey) -> Result<(), HttpProfileError> {
+    verify_cose_sign1_with_payload(cose, key, false, &[])
+}
+
+/// Verify a tagged `COSE_Sign1`, optionally supplying a DETACHED payload.
+///
+/// When `detached` is set the message carries no payload and `payload` is the value the
+/// `Sig_structure` is built with. For a receipt that value is the Merkle root the
+/// verifier re-derived from the statement, never anything a caller chose.
+fn verify_cose_sign1_with_payload(
+    cose: &[u8],
+    key: &CoseVerificationKey,
+    detached: bool,
+    payload: &[u8],
+) -> Result<(), HttpProfileError> {
     let sign1 = CoseSign1::from_tagged_slice(cose).map_err(|_| HttpProfileError::ReceiptInvalid)?;
-    if sign1.protected.header.alg
-        != Some(coset::RegisteredLabelWithPrivate::Assigned(
-            iana::Algorithm::EdDSA,
-        ))
-    {
-        return Err(HttpProfileError::ReceiptInvalid);
+    let alg = match &sign1.protected.header.alg {
+        Some(coset::RegisteredLabelWithPrivate::Assigned(alg)) => *alg,
+        _ => {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt cose unsupported algorithm",
+            ))
+        }
+    };
+    match (alg, key) {
+        (iana::Algorithm::EdDSA, CoseVerificationKey::Ed25519(ed)) => {
+            let check = |sig: &[u8], data: &[u8]| {
+                verify_ed25519_with(data, &b64url_encode(sig), ed, McpReError::InvalidSignature)
+            };
+            if detached {
+                sign1.verify_detached_signature(payload, &[], check)
+            } else {
+                sign1.verify_signature(&[], check)
+            }
+            .map_err(|_| HttpProfileError::ReceiptInvalid)
+        }
+        (iana::Algorithm::ES256, CoseVerificationKey::EcdsaP256 { .. }) => {
+            let verifying = key.p256_public_key()?;
+            let check = |sig: &[u8], data: &[u8]| verify_es256(&verifying, sig, data);
+            if detached {
+                sign1.verify_detached_signature(payload, &[], check)
+            } else {
+                sign1.verify_signature(&[], check)
+            }
+            .map_err(|_| HttpProfileError::ReceiptInvalid)
+        }
+        (iana::Algorithm::EdDSA | iana::Algorithm::ES256, _) => Err(
+            HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
+        ),
+        _ => Err(HttpProfileError::MalformedEvidence(
+            "scitt cose unsupported algorithm",
+        )),
     }
-    sign1
-        .verify_signature(&[], |sig, data| {
-            verify_ed25519_with(data, &b64url_encode(sig), key, McpReError::InvalidSignature)
-        })
-        .map_err(|_| HttpProfileError::ReceiptInvalid)
+}
+
+/// Verify an `ES256` COSE signature: fixed-width `r || s`, 64 octets, over SHA-256.
+///
+/// RFC 9053 §2.1 requires the fixed-width concatenation, NOT the ASN.1/DER `SEQUENCE`
+/// that most TLS and X.509 tooling emits. Accepting DER here would be a real hazard
+/// rather than leniency: DER is variable-length and admits multiple encodings of the
+/// same signature, so a verifier taking both loses the property that one signature has
+/// one byte string — and `Sig_structure` verification is built on exact octets.
+fn verify_es256(
+    key: &p256::ecdsa::VerifyingKey,
+    signature: &[u8],
+    signed: &[u8],
+) -> Result<(), McpReError> {
+    let signature: &[u8; 64] = signature
+        .try_into()
+        .map_err(|_| McpReError::InvalidSignature)?;
+    let signature =
+        p256::ecdsa::Signature::from_slice(signature).map_err(|_| McpReError::InvalidSignature)?;
+    p256::ecdsa::signature::Verifier::verify(key, signed, &signature)
+        .map_err(|_| McpReError::InvalidSignature)
+}
+
+/// The digest that names one retained-evidence object — the handle a Signed Statement
+/// commits to.
+///
+/// Content-addressed on purpose: the name IS the digest, so a store cannot return
+/// different bytes than the ones asked for without the name changing. There is no
+/// separate integrity check to forget.
+///
+/// This is the STORE's address, not the commitment's handle — the handle a Signed
+/// Statement carries is role-labelled (see [`verify_retained_evidence`]). Keeping the
+/// object store role-agnostic is what lets the same bytes be retained once and
+/// referenced from whichever role committed to them.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EvidenceDigest(String);
+
+impl EvidenceDigest {
+    /// The digest of `evidence` — SHA-256, base64url, matching the commitment form.
+    pub fn of(evidence: &[u8]) -> Self {
+        EvidenceDigest(b64url_encode(&Sha256::digest(evidence)))
+    }
+
+    /// The digest as the base64url token a commitment carries.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A content-addressed store for the evidence a receipt COMMITS to but does not carry.
+///
+/// The split is §4.6's: a receipt is small and portable and reveals nothing, while the
+/// full request/response bytes stay retained. An auditor needs both — the receipt to
+/// know a record was registered, the retained bytes to know WHAT was registered. A
+/// receipt alone is not the evidence, and this trait exists so that distinction has a
+/// place in the code rather than only in prose.
+///
+/// Deliberately two methods. This is the narrow interface the SCITT commitment needs,
+/// not an evidence platform: `put`/`get` over immutable content-addressed objects is
+/// implementable over a filesystem now and an object store later without either
+/// implementation knowing about the other.
+pub trait RetainedEvidenceStore {
+    /// The store's own error, so an implementation can surface its transport's faults.
+    type Error;
+
+    /// Retain `evidence` and return its digest. Storing the same bytes twice is not an
+    /// error and yields the same digest — content addressing makes writes idempotent.
+    fn put(&mut self, evidence: &[u8]) -> Result<EvidenceDigest, Self::Error>;
+
+    /// The bytes for `digest`, or `None` if this store does not hold them.
+    ///
+    /// Absence is `None` rather than an error: a store legitimately does not hold every
+    /// object in existence, and the caller — not the store — decides whether a missing
+    /// object is fatal for the verification it is attempting.
+    fn get(&self, digest: &EvidenceDigest) -> Result<Option<Vec<u8>>, Self::Error>;
+}
+
+/// Check that retained evidence reproduces what a statement committed to.
+///
+/// This is the step that makes the retained/committed split mean something. A verified
+/// receipt says a statement was registered; it says nothing about whether the bytes
+/// somebody hands you later are the ones that statement was about. Recomputing the
+/// handles is what connects them, and a missing or altered object must fail here rather
+/// than be waved through because the receipt verified.
+///
+/// **Two different digests, deliberately.** The store addresses an object by a plain
+/// SHA-256 of its bytes; a commitment names it by the §7.1 ROLE-LABELLED handle,
+/// `sha256(label ‖ 0x00 ‖ bytes)`. They are not interchangeable, and the labelling is
+/// not decoration: the identical signature base in a request role and a response role
+/// must be two different values, or a response handle could be presented as a request
+/// handle. So the handles here are derived through [`RequestEvidence`], the same code
+/// the serving path uses, rather than recomputed from a formula copied to this module —
+/// a copy could drift, and a drifted copy would silently accept the wrong bytes.
+pub fn verify_retained_evidence(
+    commitment: &EvidenceCommitment,
+    request_signature_base: &[u8],
+    response_signature_base: &[u8],
+) -> Result<(), HttpProfileError> {
+    let request = RequestEvidence::from_signature_base(request_signature_base);
+    if request.digest_value != commitment.request_evidence {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained request evidence does not match the commitment",
+        ));
+    }
+    let response = RequestEvidence::from_response_signature_base(response_signature_base);
+    if response.digest_value != commitment.response_evidence {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained response evidence does not match the commitment",
+        ));
+    }
+    Ok(())
+}
+
+/// A pinned transparency-service verification key, recorded from a discovery document
+/// at a moment in time (`ScittServiceTrustPinV1`).
+///
+/// **What a pin does and does not establish.** It does NOT say the service is
+/// trustworthy, that its log is append-only, or that its operator is independent. It
+/// records exactly WHICH key an interoperability run verified against, and where that
+/// key came from, so the run is reproducible and auditable after the service is gone.
+/// That is the whole claim, and it is worth having: without it, "the receipt verified"
+/// is unfalsifiable, because the key it verified against was fetched live and never
+/// written down.
+///
+/// **Why the fetch is not here.** This crate is pure — no networking, async or fs — so
+/// discovery lives in tooling (`tools/scitt_fetch_service_key.py`) and the verifier
+/// receives the pinned artifact. That split is the point of the offline property: once
+/// pinned, verification contacts nobody, which is exactly what an auditor holding
+/// only the archived bytes can reproduce.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScittServiceTrustPin {
+    /// The schema token, so a reader of the artifact knows what it is holding.
+    pub schema: String,
+    /// How the deployment names this service — free-form, for humans reading a corpus.
+    pub service_identifier: String,
+    /// How the key was discovered (for example `well-known-scitt-keys`).
+    pub discovery_method: String,
+    /// The exact URI the key came from.
+    pub discovery_uri: String,
+    /// When it was fetched, RFC 3339. Not a validity claim: keys rotate, and a pin is
+    /// a record of one moment rather than a promise about later ones.
+    pub fetched_at: String,
+    /// The `kid` the receipt names and this key answers to.
+    pub kid: String,
+    /// The COSE algorithm this key is for — `EdDSA` or `ES256`.
+    pub algorithm: String,
+    /// The public key: `x`/`y` base64url for `ES256`, `x` alone for `EdDSA`.
+    pub public_key: PinnedPublicKey,
+    /// SHA-256 over the canonical COSE_Key (RFC 9679 thumbprint), base64url. A short
+    /// value a human can compare across a corpus, a report and a log.
+    pub public_key_thumbprint: String,
+    /// SHA-256 over the discovery document's exact bytes, base64url — so a later reader
+    /// can tell whether the document it fetches is the one the pin was cut from.
+    pub discovery_document_digest: String,
+    /// Which bytes this service's log hashes as the Merkle entry. Absent means the
+    /// default: the statement's own octets. Recorded in the PIN because it cannot be
+    /// inferred from a receipt, and because an operator should have to write it down
+    /// before MCP-RE will fold a service's log any other way.
+    #[serde(default)]
+    pub leaf_profile: StatementLeafProfile,
+}
+
+/// The key material inside a pin.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedPublicKey {
+    /// The `x` coordinate (`ES256`) or the public key (`EdDSA`), base64url.
+    pub x: String,
+    /// The `y` coordinate, base64url. `ES256` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<String>,
+}
+
+/// The schema token a pin must carry.
+pub const TRUST_PIN_SCHEMA: &str = "mcp-re-scitt-service-trust-pin/v1";
+
+impl ScittServiceTrustPin {
+    /// The verification key this pin holds.
+    ///
+    /// The algorithm comes from the PIN, never from the receipt: the pin is what the
+    /// operator recorded and reviewed, and letting an incoming receipt nominate the
+    /// algorithm to verify itself with is the confusion this whole seam avoids.
+    pub fn verification_key(&self) -> Result<CoseVerificationKey, HttpProfileError> {
+        if self.schema != TRUST_PIN_SCHEMA {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt trust pin schema",
+            ));
+        }
+        let x = b64url_decode(&self.public_key.x)
+            .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin key encoding"))?;
+        match self.algorithm.as_str() {
+            "ES256" => {
+                let y = self
+                    .public_key
+                    .y
+                    .as_deref()
+                    .ok_or(HttpProfileError::MalformedEvidence("scitt trust pin ec2 y"))?;
+                let y = b64url_decode(y).map_err(|_| {
+                    HttpProfileError::MalformedEvidence("scitt trust pin key encoding")
+                })?;
+                CoseVerificationKey::from_ec2_p256(&x, &y)
+            }
+            "EdDSA" => {
+                // An `EdDSA` pin carrying a `y` is not an Ed25519 key with a harmless
+                // extra field — it is an ES256 key mislabelled, or a pin built by
+                // something that did not know which curve it had.
+                if self.public_key.y.is_some() {
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "scitt trust pin eddsa carries an ec2 y coordinate",
+                    ));
+                }
+                let key = VerificationKey::from_b64url(&self.public_key.x)
+                    .map_err(|_| HttpProfileError::MalformedEvidence("scitt trust pin ed25519"))?;
+                let _ = &x;
+                Ok(CoseVerificationKey::Ed25519(key))
+            }
+            _ => Err(HttpProfileError::MalformedEvidence(
+                "scitt trust pin unsupported algorithm",
+            )),
+        }
+    }
+
+    /// Resolve `kid` against this pin, for [`verify_receipt_offline`].
+    ///
+    /// A `kid` that does not match returns nothing: a pin answers for the one key it
+    /// pinned, and a receipt naming a different key has not been pinned at all.
+    pub fn resolve(&self, kid: &str) -> Option<ResolvedTransparencyService> {
+        (kid == self.kid)
+            .then(|| self.verification_key().ok())
+            .flatten()
+            .map(|key| ResolvedTransparencyService {
+                key,
+                leaf_profile: self.leaf_profile,
+            })
+    }
 }
 
 /// A minimal in-process Merkle transparency log — the PROTOTYPE stand-in for a real
@@ -580,7 +1012,8 @@ impl PrototypeTransparencyService {
         sign_tree_head: impl FnOnce(&[u8]) -> Result<Vec<u8>, HttpProfileError>,
     ) -> Result<Receipt, HttpProfileError> {
         let leaf_index = self.leaves.len() as u64;
-        self.leaves.push(leaf_hash(statement));
+        self.leaves
+            .push(leaf_hash(statement, StatementLeafProfile::StatementBytes));
 
         let (root, path) = self.root_and_path(leaf_index as usize);
         let tree_size = self.leaves.len() as u64;
@@ -708,11 +1141,26 @@ mod tests {
         .expect("issue")
     }
 
-    fn ir() -> impl Fn(&str) -> Option<VerificationKey> {
-        |k: &str| (k == ISSUER_KID).then(|| issuer().public_key())
+    fn ir() -> impl Fn(&str) -> Option<CoseVerificationKey> {
+        |k: &str| (k == ISSUER_KID).then(|| issuer().public_key().into())
     }
-    fn tr() -> impl Fn(&str) -> Option<VerificationKey> {
-        |k: &str| (k == TS_KID).then(|| ts().public_key())
+    fn tr() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        |k: &str| {
+            (k == TS_KID).then(|| ResolvedTransparencyService {
+                key: ts().public_key().into(),
+                leaf_profile: StatementLeafProfile::StatementBytes,
+            })
+        }
+    }
+
+    /// A resolver for a service using `key`, with the default leaf profile.
+    fn ts_with(key: CoseVerificationKey) -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        move |k: &str| {
+            (k == TS_KID).then(|| ResolvedTransparencyService {
+                key: key.clone(),
+                leaf_profile: StatementLeafProfile::StatementBytes,
+            })
+        }
     }
 
     fn register(svc: &mut PrototypeTransparencyService, st: &SignedStatement) -> Receipt {
@@ -940,10 +1388,11 @@ mod tests {
             "inclusion-path is [ + bstr ]"
         );
 
-        // The payload is the Merkle Tree Hash, and nothing else.
+        // This service attaches the root, so the payload is the Merkle Tree Hash and
+        // nothing else. (A detached receipt carries no payload; see the Figure 6 test.)
         assert_eq!(
             sign1.payload.as_deref().expect("attached payload"),
-            receipt.root.as_slice(),
+            receipt.root.as_deref().expect("attached root"),
         );
 
         // The draft-era labels must be absent, or a verifier reading only the RFC's
@@ -960,6 +1409,77 @@ mod tests {
                 "no header at draft label {stale}"
             );
         }
+    }
+
+    /// RFC 9942 §5.2.1 Figure 6 — the RFC's OWN illustrated receipt — read against this
+    /// parser. A third anchor: neither this implementation nor the third-party peer
+    /// authored the figure, so agreement with it is not two readings of the spec
+    /// agreeing with each other.
+    ///
+    /// The structure the figure shows — ES256, `vds` 395 in the protected header,
+    /// `vdp` 396 → `inclusion-proof` −1 → bstr of `[20, 17, [3 hashes]]` — parses here in
+    /// both the attached and the DETACHED form the figure itself uses.
+    #[test]
+    fn the_rfc9942_figure_6_shape_parses_in_both_attached_and_detached_form() {
+        let proof = {
+            let mut bytes = Vec::new();
+            ciborium::into_writer(
+                &Value::Array(vec![
+                    Value::Integer(20.into()),
+                    Value::Integer(17.into()),
+                    Value::Array(vec![
+                        Value::Bytes(vec![0xfc; 32]),
+                        Value::Bytes(vec![0xbd; 32]),
+                        Value::Bytes(vec![0xd6; 32]),
+                    ]),
+                ]),
+                &mut bytes,
+            )
+            .expect("encode");
+            bytes
+        };
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ES256)
+            .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+            .build();
+        let unprotected = HeaderBuilder::new()
+            .value(
+                HEADER_VDP,
+                Value::Map(vec![(
+                    Value::Integer(PROOF_INCLUSION.into()),
+                    Value::Array(vec![Value::Bytes(proof)]),
+                )]),
+            )
+            .build();
+        let build = |payload: Option<Vec<u8>>| {
+            let mut builder = CoseSign1Builder::new()
+                .protected(protected.clone())
+                .unprotected(unprotected.clone())
+                .signature(vec![0u8; 64]);
+            if let Some(p) = payload {
+                builder = builder.payload(p);
+            }
+            builder.build().to_tagged_vec().expect("encode")
+        };
+
+        // Both forms parse, and both report the same proof.
+        for (label, receipt) in [
+            ("attached", build(Some(vec![0xAB; 32]))),
+            ("detached, as the figure itself shows", build(None)),
+        ] {
+            let parsed = Receipt::from_cose(&receipt).unwrap_or_else(|e| {
+                panic!("figure 6 shape ({label}) must parse, got {e:?}");
+            });
+            assert_eq!(parsed.tree_size(), 20, "{label}");
+            assert_eq!(parsed.leaf_index(), 17, "{label}");
+            assert_eq!(parsed.inclusion_path.len(), 3, "{label}");
+        }
+
+        // A payload that is present but is not a tree hash is neither form.
+        assert_eq!(
+            Receipt::from_cose(&build(Some(vec![0xAB; 31]))).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt receipt root"),
+        );
     }
 
     /// RFC 9942 §5.2 quoting RFC 9162: `leaf_index >= tree_size` fails verification.
@@ -1004,6 +1524,329 @@ mod tests {
         assert_eq!(
             Receipt::from_cose(&bytes).unwrap_err(),
             HttpProfileError::MalformedEvidence("scitt inclusion proof leaf index outside tree"),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Retained evidence — what the receipt commits to but does not carry.
+    // -----------------------------------------------------------------------
+
+    /// The retained bytes reproduce the commitment, and altering either side breaks it.
+    #[test]
+    fn retained_evidence_reproduces_the_commitment() {
+        let (req, rsp) = (b"req-0".as_slice(), b"rsp-0".as_slice());
+        let commitment =
+            EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None);
+
+        verify_retained_evidence(&commitment, req, rsp).expect("the retained bytes match");
+
+        assert_eq!(
+            verify_retained_evidence(&commitment, b"req-tampered", rsp).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained request evidence does not match the commitment"
+            ),
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, req, b"rsp-tampered").unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained response evidence does not match the commitment"
+            ),
+        );
+    }
+
+    /// The two roles are distinct values over the same bytes. Presenting the response
+    /// base as the request base must fail — that is what the domain separation buys,
+    /// and without this test the labelling could be dropped and everything else would
+    /// still pass.
+    #[test]
+    fn the_two_evidence_roles_are_not_interchangeable() {
+        let same = b"identical-signature-base".as_slice();
+        let commitment = EvidenceCommitment {
+            request_evidence: RequestEvidence::from_signature_base(same).digest_value,
+            response_evidence: RequestEvidence::from_response_signature_base(same).digest_value,
+            bindings_commitment: None,
+            verified_context_commitment: None,
+            chain_label: "complete".into(),
+            chain_commitment: String::new(),
+        };
+        assert_ne!(
+            commitment.request_evidence, commitment.response_evidence,
+            "the same bytes in two roles are two different handles"
+        );
+        verify_retained_evidence(&commitment, same, same).expect("each role in its own place");
+    }
+
+    /// A verified receipt is NOT evidence retention. The receipt verifies with no
+    /// retained bytes present at all, and the retained check is a separate refusal —
+    /// so a caller cannot present "the receipt verified" as "the evidence is held".
+    #[test]
+    fn a_verified_receipt_does_not_imply_the_evidence_is_retained() {
+        let commitment =
+            EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None);
+        let st = statement(commitment.clone());
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let receipt = register(&mut svc, &st);
+
+        // The receipt verifies knowing nothing about the underlying evidence.
+        verify_receipt_offline(&st, &receipt, ir(), tr()).expect("receipt verifies");
+
+        // And the evidence check still fails when the bytes are not the committed ones.
+        assert!(verify_retained_evidence(&commitment, b"not the evidence", b"nor this").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Trust pins — which key an interoperability run actually used.
+    // -----------------------------------------------------------------------
+
+    fn pin(algorithm: &str, x: &str, y: Option<&str>) -> ScittServiceTrustPin {
+        ScittServiceTrustPin {
+            schema: TRUST_PIN_SCHEMA.to_owned(),
+            service_identifier: "test-service".into(),
+            discovery_method: "well-known-scitt-keys".into(),
+            discovery_uri: "https://example.test/.well-known/scitt-keys".into(),
+            fetched_at: "2026-07-31T00:00:00Z".into(),
+            kid: TS_KID.into(),
+            algorithm: algorithm.to_owned(),
+            public_key: PinnedPublicKey {
+                x: x.to_owned(),
+                y: y.map(str::to_owned),
+            },
+            public_key_thumbprint: "unused-by-this-test".into(),
+            discovery_document_digest: "unused-by-this-test".into(),
+            leaf_profile: StatementLeafProfile::StatementBytes,
+        }
+    }
+
+    /// A pinned ES256 key verifies a real ES256 receipt, resolved by `kid`.
+    #[test]
+    fn a_pinned_es256_key_verifies_a_receipt() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let receipt = Receipt::from_cose(&es256_receipt(&st)).expect("parses");
+        let point = ts_p256().verifying_key().to_sec1_point(false);
+        let pinned = pin(
+            "ES256",
+            &b64url_encode(point.x().expect("x")),
+            Some(&b64url_encode(point.y().expect("y"))),
+        );
+
+        verify_receipt_offline(&st, &receipt, ir(), |kid| pinned.resolve(kid))
+            .expect("the pinned key verifies the receipt");
+
+        // A receipt naming a different kid is not covered by this pin.
+        assert!(pinned.resolve("some-other-kid").is_none());
+    }
+
+    /// A pin whose schema, algorithm or key material is wrong yields no key at all,
+    /// rather than a key that happens to parse. The pin is the reviewed artifact; if it
+    /// is not the shape that was reviewed, it is not usable.
+    #[test]
+    fn a_malformed_pin_yields_no_key() {
+        let x = b64url_encode(&[7u8; 32]);
+
+        let mut wrong_schema = pin("EdDSA", &x, None);
+        wrong_schema.schema = "something-else/v1".into();
+        assert_eq!(
+            wrong_schema.verification_key().unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt trust pin schema"),
+        );
+
+        assert_eq!(
+            pin("RS256", &x, None).verification_key().unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt trust pin unsupported algorithm"),
+        );
+
+        assert_eq!(
+            pin("ES256", &x, None).verification_key().unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt trust pin ec2 y"),
+        );
+
+        // An Ed25519 pin carrying a y coordinate is a mislabelled EC2 key, not an
+        // Ed25519 key with a spare field.
+        assert_eq!(
+            pin("EdDSA", &x, Some(&x)).verification_key().unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "scitt trust pin eddsa carries an ec2 y coordinate"
+            ),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ES256 receipts — what a real transparency service signs with.
+    // -----------------------------------------------------------------------
+
+    /// A fixed P-256 key pair. The scalar is a constant so the test is deterministic;
+    /// it is a test key and appears nowhere outside these tests.
+    fn ts_p256() -> p256::ecdsa::SigningKey {
+        p256::ecdsa::SigningKey::from_slice(&[0x42u8; 32]).expect("a valid P-256 scalar")
+    }
+
+    fn ts_p256_key() -> CoseVerificationKey {
+        let point = ts_p256().verifying_key().to_sec1_point(false);
+        CoseVerificationKey::from_ec2_p256(point.x().expect("x"), point.y().expect("y"))
+            .expect("a point on the curve")
+    }
+
+    /// Re-sign a receipt's `Sig_structure` with ES256, as a foreign service would:
+    /// same tree, same proof, `alg: ES256` in the protected header.
+    fn es256_receipt(statement: &SignedStatement) -> Vec<u8> {
+        let leaf = leaf_hash(statement, StatementLeafProfile::StatementBytes);
+        let mut proof = Vec::new();
+        ciborium::into_writer(
+            &Value::Array(vec![
+                Value::Integer(1.into()),
+                Value::Integer(0.into()),
+                Value::Array(vec![]),
+            ]),
+            &mut proof,
+        )
+        .expect("encode proof");
+        let protected = HeaderBuilder::new()
+            .algorithm(iana::Algorithm::ES256)
+            .key_id(TS_KID.as_bytes().to_vec())
+            .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+            .build();
+        let unprotected = HeaderBuilder::new()
+            .value(
+                HEADER_VDP,
+                Value::Map(vec![(
+                    Value::Integer(PROOF_INCLUSION.into()),
+                    Value::Array(vec![Value::Bytes(proof)]),
+                )]),
+            )
+            .build();
+        CoseSign1Builder::new()
+            .protected(protected)
+            .unprotected(unprotected)
+            .payload(leaf.to_vec())
+            .create_signature(&[], |pt| {
+                use p256::ecdsa::signature::Signer;
+                let sig: p256::ecdsa::Signature = ts_p256().sign(pt);
+                sig.to_bytes().to_vec()
+            })
+            .build()
+            .to_tagged_vec()
+            .expect("encode")
+    }
+
+    /// An ES256 receipt verifies. This is the capability #501 needs: MCP-RE issues its
+    /// statements with Ed25519, and the service that countersigns them does not.
+    #[test]
+    fn an_es256_receipt_from_a_foreign_service_verifies() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let receipt = Receipt::from_cose(&es256_receipt(&st)).expect("parses");
+        verify_receipt_offline(&st, &receipt, ir(), ts_with(ts_p256_key()))
+            .expect("an ES256 receipt over a single-leaf tree verifies");
+    }
+
+    /// The message does not get to choose the algorithm. An ES256 receipt presented
+    /// against an Ed25519 key is refused as a mismatch rather than resolved in the
+    /// message's favour — the algorithm-confusion shape.
+    #[test]
+    fn an_algorithm_that_disagrees_with_the_resolved_key_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let receipt = Receipt::from_cose(&es256_receipt(&st)).expect("parses");
+        assert_eq!(
+            verify_receipt_offline(&st, &receipt, ir(), tr()).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
+        );
+
+        // And the converse: an EdDSA receipt against a P-256 key.
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let eddsa = register(&mut svc, &st);
+        assert_eq!(
+            verify_receipt_offline(&st, &eddsa, ir(), ts_with(ts_p256_key())).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt cose algorithm key mismatch"),
+        );
+    }
+
+    /// RFC 9053 §2.1 requires fixed-width `r || s`. A DER `SEQUENCE` — what most X.509
+    /// and TLS tooling emits, and the same signature mathematically — is refused,
+    /// because admitting both would mean one signature has more than one valid byte
+    /// string while `Sig_structure` verification rests on exact octets.
+    #[test]
+    fn a_der_encoded_es256_signature_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let cose = es256_receipt(&st);
+        let sign1 = CoseSign1::from_tagged_slice(&cose).expect("parses");
+        let fixed = p256::ecdsa::Signature::from_slice(&sign1.signature).expect("fixed width");
+
+        let mut der = sign1.clone();
+        der.signature = fixed.to_der().as_bytes().to_vec();
+        assert_ne!(der.signature.len(), 64, "DER is a different length");
+        let receipt =
+            Receipt::from_cose(&der.to_tagged_vec().expect("re-encode")).expect("still parses");
+        assert_eq!(
+            verify_receipt_offline(&st, &receipt, ir(), ts_with(ts_p256_key())).unwrap_err(),
+            HttpProfileError::ReceiptInvalid,
+        );
+    }
+
+    /// Coordinates must be exactly 32 octets, and the point must be on the curve. A
+    /// short coordinate is a different encoding rather than a small number to pad, and
+    /// an off-curve point has no discrete log to verify against at all.
+    #[test]
+    fn a_malformed_p256_key_is_refused_at_construction() {
+        let point = ts_p256().verifying_key().to_sec1_point(false);
+        let (x, y) = (point.x().expect("x"), point.y().expect("y"));
+
+        assert_eq!(
+            CoseVerificationKey::from_ec2_p256(&x[1..], y).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 x coordinate width"),
+        );
+        assert_eq!(
+            CoseVerificationKey::from_ec2_p256(x, &y[..31]).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 y coordinate width"),
+        );
+        // Right widths, wrong curve point.
+        let mut off = y.to_vec();
+        off[31] ^= 0x01;
+        assert_eq!(
+            CoseVerificationKey::from_ec2_p256(x, &off).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt ec2 p256 point not on curve"),
+        );
+    }
+
+    /// An algorithm this verifier does not implement is refused, never attempted with
+    /// whatever key happened to resolve.
+    #[test]
+    fn an_unsupported_algorithm_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let cose = es256_receipt(&st);
+        let sign1 = CoseSign1::from_tagged_slice(&cose).expect("parses");
+        let mut es512 = sign1.clone();
+        es512.protected = coset::ProtectedHeader {
+            original_data: None,
+            header: HeaderBuilder::new()
+                .algorithm(iana::Algorithm::ES512)
+                .key_id(TS_KID.as_bytes().to_vec())
+                .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+                .build(),
+        };
+        let receipt =
+            Receipt::from_cose(&es512.to_tagged_vec().expect("re-encode")).expect("parses");
+        assert_eq!(
+            verify_receipt_offline(&st, &receipt, ir(), ts_with(ts_p256_key())).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt cose unsupported algorithm"),
         );
     }
 

@@ -269,6 +269,36 @@ jobs:
       - name: Cross-verify delegation (external → us) under the Rust verifier
         run: cargo test -p mcp-re-conformance --test delegation_cross_verification_test
 
+      # MCPRE-501: the same two-direction gate for SCITT, against RFC 9942/9943 AS
+      # PUBLISHED. Its absence is why a non-conforming receipt encoding shipped: the
+      # receipt used the pre-publication draft labels -111/-222 instead of vds=395 /
+      # vdp=396, and every test stayed green, because the suite ran our encoder against
+      # our own decoder — which agrees with itself whatever labels it picks.
+      # Direction 1: our committed corpus, decoded by cbor2 and verified by
+      # python-cryptography, checked against the RFC's literal header labels.
+      - name: Cross-verify the SCITT corpus (ours → external)
+        run: python3 mcp-re-conformance/tools/scitt_cross_verify.py
+
+      - name: External SCITT vector is up to date
+        run: |
+          python3 mcp-re-conformance/tools/scitt_cross_verify.py --emit-external-kat
+          git diff --exit-code mcp-re-conformance/tests/vectors/scitt/external_kat.json
+
+      # Direction 2: statements and receipts BUILT by the independent implementation
+      # must verify under the Rust verifier, and each refusal a conforming verifier owes
+      # must be refused — including a draft-labelled receipt, so a regression to those
+      # labels fails here instead of shipping.
+      - name: Cross-verify SCITT (external → us) under the Rust verifier
+        run: cargo test -p mcp-re-conformance --test scitt_cross_verification_test
+
+      # MCPRE-501 slice 4: the frozen third-party interoperability corpus — a receipt
+      # produced by @transmute/cose (RFC 9942's editor's implementation: its RFC 9162
+      # tree, its proof encoder, its CBOR) verified offline here, plus the mutations of
+      # that receipt MCP-RE must refuse. No network and no peer install: the corpus is
+      # committed octets, which is what makes the offline claim reproducible.
+      - name: Third-party SCITT interoperability corpus (offline verification)
+        run: cargo test -p mcp-re-conformance --test scitt_interop_test
+
   cargo-features:
     name: cargo test (feature-gated backends, 1.97.1)
     runs-on: ubuntu-latest

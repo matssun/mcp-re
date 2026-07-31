@@ -45,10 +45,13 @@ use mcp_re_http_profile::chain::HopEvidence;
 use mcp_re_http_profile::chain::IncompleteReason;
 use mcp_re_http_profile::scitt::issue_signed_statement;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
+use mcp_re_http_profile::scitt::CoseVerificationKey;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
 use mcp_re_http_profile::scitt::PrototypeTransparencyService;
 use mcp_re_http_profile::scitt::Receipt;
+use mcp_re_http_profile::scitt::ResolvedTransparencyService;
 use mcp_re_http_profile::scitt::SignedStatement;
+use mcp_re_http_profile::scitt::StatementLeafProfile;
 use mcp_re_http_profile::HttpProfileError;
 use mcp_re_http_profile::RequestEvidence;
 use serde::Deserialize;
@@ -430,8 +433,11 @@ fn build_fixtures() -> Vec<Fixture> {
     out
 }
 
-fn resolve(kid: &str, expected: &str, key: VerificationKey) -> Option<VerificationKey> {
-    (kid == expected).then_some(key)
+/// Resolve `kid` to the Ed25519 key this corpus pins. The corpus is Ed25519 on both
+/// sides; ES256 receipt verification is exercised by the unit tests, which can mint a
+/// P-256 key pair without freezing one into the vectors.
+fn resolve(kid: &str, expected: &str, key: VerificationKey) -> Option<CoseVerificationKey> {
+    (kid == expected).then(|| key.into())
 }
 
 /// Run one fixture exactly as a third party would: from the frozen octets alone.
@@ -453,7 +459,14 @@ fn verdict(f: &Fixture) -> String {
         &statement,
         &receipt,
         |kid| resolve(kid, ISSUER_KID, issuer_key.clone()),
-        |kid| resolve(kid, TS_KID, ts_key.clone()),
+        |kid| {
+            resolve(kid, TS_KID, ts_key.clone()).map(|key| ResolvedTransparencyService {
+                key,
+                // This corpus is produced by the in-process prototype log, which hashes
+                // the statement's own octets as the entry.
+                leaf_profile: StatementLeafProfile::StatementBytes,
+            })
+        },
     ) {
         Ok(()) => "verify_ok".to_owned(),
         Err(e) => e.wire_code().to_owned(),
@@ -558,7 +571,13 @@ fn the_corpus_directory_holds_no_unpinned_vector() {
     for entry in std::fs::read_dir(&root).expect("corpus dir") {
         let name = entry.expect("dir entry").file_name();
         let name = name.to_string_lossy();
-        if name == "manifest.json" || !name.ends_with(".json") {
+        // `external_kat.json` is the external → us corpus, built by
+        // `tools/scitt_cross_verify.py` rather than by this writer, and pinned by the
+        // CI drift guard that regenerates it and diffs. It is deliberately not in this
+        // manifest: a corpus MCP-RE produced and a corpus MCP-RE must merely accept are
+        // different artifacts, and freezing the second here would let our own encoder
+        // define what "external" means.
+        if name == "manifest.json" || name == "external_kat.json" || !name.ends_with(".json") {
             continue;
         }
         assert!(

@@ -1,0 +1,14 @@
+{
+  "schema": "mcp-re-scitt-service-trust-pin/v1",
+  "service_identifier": "transmute-cose-local",
+  "discovery_method": "local-implementation-key",
+  "discovery_uri": "npm:@transmute/cose@0.3.0",
+  "fetched_at": "2026-07-31T00:00:00Z",
+  "kid": "external-transmute-ts-1",
+  "algorithm": "EdDSA",
+  "public_key": {
+    "x": "DXVQdU4IAKXSN-71gmA1dmubPloVhoqUCrKJlYeI47A"
+  },
+  "public_key_thumbprint": "eQkBuCqJ_lBbX5jit78o46dPmkDxpWHJ01P4X2HMNqI",
+  "discovery_document_digest": "AmQJMu9n8U3BN853WMnzTXZzptknzXqYwsMHYo2O4HY"
+}

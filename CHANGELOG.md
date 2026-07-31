@@ -66,11 +66,86 @@ or wire-format compatibility while the design lines from
   validated only by the encoder that produced it agrees with itself whatever labels it
   picks.
 
+- **ES256 receipt verification, scoped so it is not a signing-policy change** (#501). A
+  transparency service is not ours and signs receipts with `ES256` (RFC 9942's own
+  examples do), so `CoseVerificationKey` adds ECDSA P-256 to the SCITT receipt verifier.
+  The key names the algorithm and the protected `alg` must agree with it — a message that
+  chose its own verification algorithm is the COSE/JOSE confusion shape. Refused:
+  algorithm/key mismatch, unsupported algorithms, off-curve points, coordinates that are
+  not exactly 32 octets (RFC 9053 §7.1.1 is fixed-width, so a 31-octet `x` is a different
+  encoding rather than a number to left-pad), and DER-encoded ECDSA signatures — DER is
+  variable-length and admits several encodings of one signature, which would break the
+  one-signature-one-byte-string property `Sig_structure` rests on.
+
+  MCP-RE's own request and response signing is untouched and stays Ed25519-only;
+  `mcp-re-core` still refuses `ES256` by name and does not depend on `p256` at all.
+  `scripts/es256_containment_gate.py` machine-checks that separation — `p256` confined to
+  one crate and one module, absent from the signing core — because the quiet failure is
+  someone reaching for the verifier already in the workspace to "support ES256 clients",
+  widening MCP-RE's signing policy with no decision recorded.
+- **Transparency-service trust pins** (#501). `ScittServiceTrustPin`
+  (`mcp-re-scitt-service-trust-pin/v1`) records which key an interoperability run
+  verified against, and where it came from: kid, algorithm, key, RFC 9679 COSE Key
+  thumbprint, discovery URI and a digest of the discovery document's exact bytes. The
+  algorithm comes from the pin, never from the receipt. `tools/scitt_fetch_service_key.py`
+  does the fetch, because `mcp-re-http-profile` is pure and a verifier that called the
+  service at verify time would not be verifying offline. A pin does not say the service
+  is trustworthy, its log append-only, or its operator independent — it makes the run
+  reproducible, which "the receipt verified" against a key nobody wrote down is not.
+- **A content-addressed retained-evidence store** (#501). `RetainedEvidenceStore` +
+  `EvidenceDigest` in the pure crate, `FsRetainedEvidenceStore` in `mcp-re-proxy` where
+  fs access belongs. Narrow on purpose — `put`/`get` over immutable SHA-256-named blobs,
+  no lifecycle or index; an evidence-retention platform is not what closing an
+  interoperability issue calls for. `verify_retained_evidence` connects the halves, and
+  keeps two digests distinct: the store addresses objects by a plain SHA-256, while a
+  commitment names them by the §7.1 ROLE-LABELLED handle
+  `sha256(label ‖ 0x00 ‖ bytes)` — so the same signature base in a request and a
+  response role are two different values and cannot be swapped. A verified receipt is not
+  retention, and a test pins that: the receipt verifies with no retained bytes present.
+
   What an interoperability *claim* still needs (#501): receipts signed with ES256 —
   RFC 9942's own examples use it, and this verifier requires EdDSA — and
-  transparency-service keys resolved from a fetched-and-pinned key set rather than a
-  caller-supplied `kid` map. Those are code, in this repository, not an external
-  dependency.
+  transparency-service keys resolved from a fetched-and-pinned key set — both now done,
+  above.
+
+- **Interoperability demonstrated against two independent implementations, and a leaf
+  profile qualifier because they disagree** (#501). `@transmute/cose` (npm, authored by
+  RFC 9942's editor) reads receipts produced here, and a receipt built by its RFC 9162
+  tree and proof encoder verifies here offline. `capsule-anchor` (action-state-group,
+  Apache-2.0), a real SCITT Transparency Service run locally, accepted the exact frozen
+  `s01` Signed Statement over `POST /transparency/register-statement` and returned a
+  detached-payload receipt that verifies here with its service stopped. Both corpora are
+  frozen under `tests/vectors/scitt/interop/`.
+
+  The two peers disagree about the Merkle LEAF PREIMAGE. RFC 9162 §2.1 hashes the i-th
+  ENTRY and RFC 9943 says the service registers the Signed Statement, but neither says
+  whether the entry is the statement's octets or a digest of them — a real gap, and the
+  two implementations sit on opposite sides of it. So `StatementLeafProfile` is a
+  qualifier on the PINNED service artifact: `statement-bytes` (the default, and the more
+  direct reading, which `@transmute/cose` uses) or `statement-digest` (which
+  `capsule-anchor` uses and its own source calls an exception to its own leaf rule).
+  Exactly one profile applies to a verification and there is no fallback — trying both
+  and accepting either would hand an attacker two chances at the fold and destroy the
+  property the proof exists for, which is pinning WHICH entry was logged. The profile
+  comes from the pin an operator wrote down, never from the receipt being checked; a test
+  pins that the same real receipt is REFUSED under the wrong profile.
+- **Detached-payload receipts verify** (#501). RFC 9942 §4.4 permits a Receipt to carry no
+  payload — its own §5.2.1 Figure 6 shows one, and `capsule-anchor` emits one — and this
+  was previously refused. Detached is a tighter binding, not a looser one: the root is
+  re-derived from the statement and the inclusion path and the signature is checked over
+  THAT, so the receipt cannot be verified without the statement it is about. The root is
+  never taken from the caller.
+
+  What the peer exchange still waits on. Measured, not assumed: the
+  `scitt-community/scitt-api-emulator` is archived, expects CWT claims at label **14**
+  (the pre-registry placeholder; RFC 9597/9943 assign **15**) and so rejects a conforming
+  statement outright, and its receipts are a bare two-element CCF countersignature array
+  with no `vds`, no `vdp` and no COSE tag. `microsoft/scitt-ccf-ledger` targets
+  Architecture draft 11 with CCF tree-algorithm profile draft 3; DataTrails advertises
+  draft 10 and MMRIVER, which RFC 9942's registry does not list. RFC 9943 published in
+  June 2026 and no available implementation has caught up, so exchanging bytes with one
+  today would mean emitting statements at label 14 and accepting non-RFC receipts — the
+  fix above, reverted. The peer exchange is deferred rather than faked.
 - **The §7 admission-currency check is on the serving path** (#493). ADR-MCPRE-053
   built the evidence — an authority-signed admission assertion and the binding that
   ties a call to it — and `check_admission` verified both. Nothing called it: every
