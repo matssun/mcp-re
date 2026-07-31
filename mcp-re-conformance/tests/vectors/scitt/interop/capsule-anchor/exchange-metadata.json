@@ -2,6 +2,7 @@
   "leaf_profile": "statement-digest",
   "leaf_profile_reason": "capsule-anchor logs SHA256(0x00||SHA256(statement)); its source calls this a deliberate exception to its own leaf rule. RFC 9162 \u00a72.1 defines the leaf over the ENTRY and RFC 9943 does not say whether the entry is the statement's octets or a digest of them, so this cannot be inferred from the receipt and is recorded in the pin.",
   "limits": "A LOCAL run of an open-source service. Says nothing about production operation, operator independence, split-view resistance, or witnessed transparency.",
+  "log_shape": "two entries: an unrelated filler registered first, so this statement's inclusion proof has a real sibling to walk. A single-leaf log makes the leaf the root and folds nothing, which no forged-path negative can be built from.",
   "peer": "capsule-anchor (action-state-group), Apache-2.0, commit a918ba8",
   "peer_kind": "SCITT Transparency Service (HTTP), run locally in in-memory dev mode",
   "receipt_form": "detached payload (RFC 9942 \u00a74.4); vds=395:1; vdp=396:{-1:[bstr]}",
@@ -14,8 +15,8 @@
   },
   "registration_response": {
     "entry_hash": "e380c1c4b623fb4556b0baa6e6ef1696ae8e493a19166d91ed356d7533fbc092",
-    "leaf_index": 0,
-    "tree_size": 1
+    "leaf_index": 1,
+    "tree_size": 2
   },
   "verified_offline_after_service_stopped": true
 }

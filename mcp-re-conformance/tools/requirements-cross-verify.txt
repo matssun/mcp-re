@@ -8,4 +8,4 @@ cryptography==49.0.0
 # MCPRE-501: the SCITT cross-verification gate additionally needs a CBOR
 # implementation independent of the Rust `ciborium` the corpus is encoded with, so
 # agreement on COSE structure is a genuine cross-implementation check.
-cbor2==5.7.0
+cbor2==6.1.3

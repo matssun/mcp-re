@@ -393,3 +393,230 @@ fn the_capsule_anchor_corpus_records_the_exchange_and_its_limits() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// verification-report.json — emitted by the verifier, re-checked by a test.
+// ---------------------------------------------------------------------------
+
+/// One corpus's report: what was verified, by what, and the verdict reached.
+///
+/// Written by the verifier itself rather than by hand, because a hand-written report is
+/// a claim about a run and this has to be a record OF one. The check below re-derives
+/// every field, so a report that drifts from what the verifier now does fails.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct VerificationReport {
+    schema: String,
+    peer: String,
+    verifier: String,
+    /// The test that emits and re-checks this file.
+    generated_by: String,
+    /// Artifact name → base64url SHA-256, over the bytes on disk.
+    artifacts: std::collections::BTreeMap<String, String>,
+    /// The verdict on the positive case: `verify_ok`, or the refusing wire code.
+    positive_verdict: String,
+    /// Each mutation and the wire code it was refused with.
+    refusals: std::collections::BTreeMap<String, String>,
+    /// Why a forged inclusion path refuses the way it does for this receipt form.
+    ///
+    /// On an ATTACHED receipt the fold and the signature are separable, so a forged path
+    /// is refused as an inclusion mismatch while the service's signature stays valid —
+    /// which is what shows SCITT receipt verification rather than mere COSE signature
+    /// checking. On a DETACHED receipt they are one check by construction, because the
+    /// fold's output IS the signed payload; the refusal is then a signature failure and
+    /// cannot be exhibited with a valid signature.
+    refusal_note: String,
+}
+
+/// Whether a tagged `COSE_Sign1`'s payload slot is CBOR `null` — the detached form.
+/// Read from the octets rather than from a parsed view, so it reports what is on the wire.
+fn cbor_payload_is_absent(receipt: &[u8]) -> bool {
+    Receipt::from_cose(receipt).expect("receipt parses");
+    // The payload is the third element; `f6` is CBOR null. Scanning for the marker that
+    // precedes the 64-octet signature (`58 40`) keeps this independent of header sizes.
+    receipt.windows(3).any(|w| w == [0xf6, 0x58, 0x40])
+}
+
+fn digest_of(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    mcp_re_core::b64url_encode(&sha2::Sha256::digest(bytes))
+}
+
+/// Verdict as the report records it: `verify_ok` or the wire code.
+fn verdict_token(outcome: Result<(), HttpProfileError>) -> String {
+    match outcome {
+        Ok(()) => "verify_ok".to_owned(),
+        Err(e) => e.wire_code().to_owned(),
+    }
+}
+
+/// Build the report for one corpus directory by actually running the verification.
+fn build_report(dir: &std::path::Path, peer: &str) -> VerificationReport {
+    let read = |n: &str| std::fs::read(dir.join(n)).unwrap_or_else(|e| panic!("{n}: {e}"));
+    let statement = SignedStatement::from_cose(&read("signed-statement.cbor")).expect("statement");
+    let receipt = Receipt::from_cose(&read("receipt.cbor")).expect("receipt");
+    let pin: ScittServiceTrustPin =
+        serde_json::from_slice(&read("service-key-pin.json")).expect("pin");
+    let issuer = issuer();
+    let verify = |s: &SignedStatement, r: &Receipt, p: &ScittServiceTrustPin| {
+        verify_receipt_offline(s, r, |_| Some(issuer.clone().into()), |kid| p.resolve(kid))
+    };
+
+    let mut artifacts = std::collections::BTreeMap::new();
+    for name in [
+        "signed-statement.cbor",
+        "receipt.cbor",
+        "retained-evidence.bin",
+        "service-key-pin.json",
+        "exchange-metadata.json",
+    ] {
+        artifacts.insert(name.to_owned(), digest_of(&read(name)));
+    }
+
+    // Whether this service emits detached receipts decides how a forged path refuses.
+    let detached = cbor_payload_is_absent(&read("receipt.cbor"));
+
+    let mut refusals = std::collections::BTreeMap::new();
+
+    // A pinned key that is not the signer.
+    let mut wrong_key = pin.clone();
+    wrong_key.public_key.x = mcp_re_core::b64url_encode(
+        &mcp_re_core::SigningKey::from_seed_bytes(&[0xAB; 32])
+            .public_key()
+            .to_bytes(),
+    );
+    refusals.insert(
+        "wrong-pinned-service-key".to_owned(),
+        verdict_token(verify(&statement, &receipt, &wrong_key)),
+    );
+
+    // A pin that answers for a different kid.
+    let mut wrong_kid = pin.clone();
+    wrong_kid.kid = "not-the-receipts-kid".into();
+    refusals.insert(
+        "kid-not-covered-by-the-pin".to_owned(),
+        verdict_token(verify(&statement, &receipt, &wrong_kid)),
+    );
+
+    // The other leaf profile — exactly one can be right.
+    let mut other_profile = pin.clone();
+    other_profile.leaf_profile = match pin.leaf_profile {
+        mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes => {
+            mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest
+        }
+        mcp_re_http_profile::scitt::StatementLeafProfile::StatementDigest => {
+            mcp_re_http_profile::scitt::StatementLeafProfile::StatementBytes
+        }
+    };
+    refusals.insert(
+        "wrong-leaf-profile".to_owned(),
+        verdict_token(verify(&statement, &receipt, &other_profile)),
+    );
+
+    // A sibling hash flipped in the unprotected inclusion path — the service's own
+    // signature stays valid, so only the fold refuses it.
+    let bytes = read("receipt.cbor");
+    let head: [u8; 4] = [0x83, bytes[0], 0x00, 0x00]; // placeholder, replaced below
+    let _ = head;
+    let proof_at = (0..bytes.len().saturating_sub(6)).find(|&i| {
+        bytes[i] == 0x83 && bytes[i + 3] == 0x81 && bytes[i + 4] == 0x58 && bytes[i + 5] == 0x20
+    });
+    if let Some(at) = proof_at {
+        let mut forged = bytes.clone();
+        forged[at + 6 + 31] ^= 0x01;
+        let outcome = Receipt::from_cose(&forged).and_then(|r| verify(&statement, &r, &pin));
+        refusals.insert(
+            "forged-inclusion-path-valid-service-signature".to_owned(),
+            verdict_token(outcome),
+        );
+    }
+
+    VerificationReport {
+        schema: "mcp-re-scitt-verification-report/v1".to_owned(),
+        peer: peer.to_owned(),
+        verifier: "mcp-re-http-profile::scitt::verify_receipt_offline (offline; no service contacted)"
+            .to_owned(),
+        generated_by: "mcp-re-conformance/tests/scitt_interop_test.rs::write_verification_reports"
+            .to_owned(),
+        artifacts,
+        positive_verdict: verdict_token(verify(&statement, &receipt, &pin)),
+        refusals,
+        refusal_note: if detached {
+            "detached payload: the re-derived root IS the signed payload, so a forged              inclusion path is refused as a signature failure — the fold and the              signature are one check and cannot be separated"
+        } else {
+            "attached payload: a forged inclusion path is refused as an inclusion              mismatch while the service's signature remains valid — the fold is doing              the work, not the signature check"
+        }
+        .to_owned(),
+    }
+}
+
+fn corpora() -> Vec<(PathBuf, String)> {
+    let transmute: serde_json::Value =
+        serde_json::from_slice(&artifact("manifest.json")).expect("manifest");
+    let capsule: serde_json::Value =
+        serde_json::from_slice(&capsule("manifest.json")).expect("manifest");
+    vec![
+        (
+            interop_dir(),
+            transmute["peer"].as_str().expect("peer").to_owned(),
+        ),
+        (
+            capsule_dir(),
+            capsule["peer"].as_str().expect("peer").to_owned(),
+        ),
+    ]
+}
+
+#[test]
+#[ignore = "golden writer: regenerates the committed verification reports"]
+fn write_verification_reports() {
+    for (dir, peer) in corpora() {
+        let report = build_report(&dir, &peer);
+        std::fs::write(
+            dir.join("verification-report.json"),
+            serde_json::to_string_pretty(&report).expect("serialize") + "\n",
+        )
+        .expect("write report");
+    }
+}
+
+/// The committed report is a record of what the verifier does NOW. Every verdict is
+/// re-derived and every artifact re-hashed, so a report left behind by an older verifier
+/// fails here instead of standing as evidence for behaviour that changed.
+#[test]
+fn the_committed_verification_reports_match_a_fresh_run() {
+    for (dir, peer) in corpora() {
+        let committed: VerificationReport = serde_json::from_slice(
+            &std::fs::read(dir.join("verification-report.json"))
+                .expect("verification-report.json committed"),
+        )
+        .expect("report parses");
+        let fresh = build_report(&dir, &peer);
+
+        assert_eq!(committed.schema, fresh.schema);
+        assert_eq!(committed.peer, fresh.peer, "peer drifted");
+        assert_eq!(
+            committed.positive_verdict, "verify_ok",
+            "the recorded positive must be a verification, not a refusal"
+        );
+        assert_eq!(
+            committed.positive_verdict, fresh.positive_verdict,
+            "the verifier no longer reaches the recorded verdict"
+        );
+        assert_eq!(
+            committed.artifacts, fresh.artifacts,
+            "artifact digests drifted"
+        );
+        assert_eq!(
+            committed.refusals, fresh.refusals,
+            "recorded refusals drifted"
+        );
+        assert!(
+            committed.refusals.values().all(|v| v != "verify_ok"),
+            "a refusal that verifies is not a refusal"
+        );
+        assert!(
+            committed.refusals.len() >= 4,
+            "the refusals are the substance of the report"
+        );
+    }
+}
