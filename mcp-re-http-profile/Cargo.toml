@@ -25,7 +25,7 @@ coset = "0.4"
 # verifier: MCP-RE request and response signing remain Ed25519-only, and
 # `mcp-re-core` still refuses ES256 for message signatures. Pure crypto — no
 # networking, async or fs, so the crate's purity rule holds.
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 
 [lib]
 name = "mcp_re_http_profile"

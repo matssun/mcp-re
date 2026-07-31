@@ -1626,7 +1626,7 @@ mod tests {
             None,
         ));
         let receipt = Receipt::from_cose(&es256_receipt(&st)).expect("parses");
-        let point = ts_p256().verifying_key().to_encoded_point(false);
+        let point = ts_p256().verifying_key().to_sec1_point(false);
         let pinned = pin(
             "ES256",
             &b64url_encode(point.x().expect("x")),
@@ -1685,7 +1685,7 @@ mod tests {
     }
 
     fn ts_p256_key() -> CoseVerificationKey {
-        let point = ts_p256().verifying_key().to_encoded_point(false);
+        let point = ts_p256().verifying_key().to_sec1_point(false);
         CoseVerificationKey::from_ec2_p256(point.x().expect("x"), point.y().expect("y"))
             .expect("a point on the curve")
     }
@@ -1802,7 +1802,7 @@ mod tests {
     /// an off-curve point has no discrete log to verify against at all.
     #[test]
     fn a_malformed_p256_key_is_refused_at_construction() {
-        let point = ts_p256().verifying_key().to_encoded_point(false);
+        let point = ts_p256().verifying_key().to_sec1_point(false);
         let (x, y) = (point.x().expect("x"), point.y().expect("y"));
 
         assert_eq!(

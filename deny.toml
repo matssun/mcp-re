@@ -87,6 +87,11 @@ allow = [
     # requirement), so allowing it grants nothing beyond plain Apache-2.0, which
     # is already allowed above. Listed as the full expression rather than
     # widening the policy with `exceptions`.
+    # Required by `target-lexicon` (via pyo3) in the sdk/python graph ONLY. The other
+    # three manifests therefore report `license-not-encountered` for it — that warning is
+    # inherent to one policy file covering four different dependency graphs, and is not a
+    # sign of dead configuration. Removing this line to silence the warning makes
+    # `cargo deny --manifest-path sdk/python/Cargo.toml check licenses` FAIL outright.
     "Apache-2.0 WITH LLVM-exception",
     # xxhash-rust, reached via redis 1.x (it hashes cluster slot keys). BSL-1.0 is
     # OSI-approved and FSF Free/Libre, permissive, with no reciprocal/share-alike
