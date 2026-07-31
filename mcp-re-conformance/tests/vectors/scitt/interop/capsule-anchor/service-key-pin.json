@@ -1,0 +1,15 @@
+{
+  "algorithm": "EdDSA",
+  "discovery_document_digest": "EMTbeM4feC-4y3tzLfYwOtcfndTHj1FglqTLb9H2xKk",
+  "discovery_method": "authority-pubkey-endpoint",
+  "discovery_uri": "http://127.0.0.1:8129/anchor/authority-pubkey",
+  "fetched_at": "2026-07-31T00:00:00Z",
+  "kid": "",
+  "leaf_profile": "statement-digest",
+  "public_key": {
+    "x": "94sdqbPfs_o6PlTEPnk4nS8E1rzLYphPKL1vkXmKdQ0"
+  },
+  "public_key_thumbprint": "G-jgp3efyQlWlYuoTrnSbjNkxs8RPADsdHQTlX00Eik",
+  "schema": "mcp-re-scitt-service-trust-pin/v1",
+  "service_identifier": "capsule-anchor (local, in-memory)"
+}

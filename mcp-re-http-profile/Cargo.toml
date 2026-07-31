@@ -20,6 +20,12 @@ sha2 = { workspace = true }
 base64 = { workspace = true }
 ciborium = "0.2"
 coset = "0.4"
+# MCPRE-501 slice 1: a transparency service signs receipts with ES256 (RFC 9942's
+# own examples use it), so the SCITT receipt verifier needs P-256. Scoped to that
+# verifier: MCP-RE request and response signing remain Ed25519-only, and
+# `mcp-re-core` still refuses ES256 for message signatures. Pure crypto — no
+# networking, async or fs, so the crate's purity rule holds.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 
 [lib]
 name = "mcp_re_http_profile"

@@ -276,6 +276,53 @@ nt_rust_test(
 # MCPRE-494: the SCITT Signed Statement + COSE Receipt wire form (RFC 9052/9942/9943),
 # frozen from the REAL CBOR encoding. Could not exist while the prototype serialized
 # JSON — pinning those bytes would have certified a non-wire format.
+# MCPRE-501 slice 4: offline verification of a receipt produced by a THIRD-PARTY
+# implementation of RFC 9942 (@transmute/cose, authored by the RFC's editor) — its
+# RFC 9162 tree, its proof encoder, its CBOR. The peer is a library, not a service, and
+# the corpus records that; the negatives mutate the third party's own receipt so MCP-RE
+# is shown to enforce the contract rather than trust it.
+nt_rust_test(
+    name = "scitt_interop_test",
+    srcs = ["tests/scitt_interop_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/scitt/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_SCITT_INTEROP_MANIFEST": "$(rlocationpath tests/vectors/scitt/interop/manifest.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:sha2",
+    ],
+)
+
+# MCPRE-501: external → us. Statements and receipts BUILT by an independent
+# implementation of RFC 9942/9943 as published (cbor2 + python-cryptography, emitted by
+# tools/scitt_cross_verify.py) must verify here, and every refusal a conforming verifier
+# owes must be refused — including a receipt carrying the pre-publication draft labels.
+# The round-trip corpus below cannot catch a wrong label, because it runs our encoder
+# against our own decoder; this target is what compares our bytes to the standard.
+nt_rust_test(
+    name = "scitt_cross_verification_test",
+    srcs = ["tests/scitt_cross_verification_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = glob(["tests/vectors/scitt/**"]),
+    edition = "2021",
+    env = {
+        "MCP_RE_SCITT_EXTERNAL_KAT": "$(rlocationpath tests/vectors/scitt/external_kat.json)",
+    },
+    deps = [
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+    ],
+)
+
 nt_rust_test(
     name = "scitt_vectors_test",
     srcs = ["tests/scitt_vectors_test.rs"],

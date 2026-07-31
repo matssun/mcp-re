@@ -1,0 +1,190 @@
+{
+  "cases": [
+    {
+      "description": "An EdDSA Receipt of Inclusion built by an independent implementation from RFC 9942 \u00a75.2.1. MCP-RE must accept it.",
+      "expect": "verify_ok",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x01_external_eddsa_receipt",
+      "receipt_cose_b64url": "0oRWowEnBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAfWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hAaiMv9ABrhizqZ6KTq0hf3PurfCTyaF4hKArmoYFuQ3HxjOdT-V0LJgzeERo-zElkoHQwxfVBXuFHajiXz9eEAQ",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "The same receipt signed with ES256 (RFC 6979 deterministic), which is what a real transparency service signs with. MCP-RE must accept it.",
+      "expect": "verify_ok",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x02_external_es256_receipt",
+      "receipt_cose_b64url": "0oRWowEmBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAfWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hAYODSuwc4tdzFS2S1u5o78EP8IK0UOyRvciTKDO0QGrv2XZATOQrPHKm1tAxdNI7GUai7d5cjER6ktkanAzSW7Q",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "ES256",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "vhJnpW9nKLM97DLALfbT7BdplfKNcgeFUQN5KLX91YA",
+          "y": "8vP-M5MjOPoE4dd86uvTfLN6ypsNG9zv9_uSeSMJp6Q"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "A receipt using the pre-publication draft labels -111/-222 instead of vds=395/vdp=396. This is the exact defect that shipped; MCP-RE must refuse it, so a regression to those labels fails here.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x03_draft_era_labels_refused",
+      "receipt_cose_b64url": "0oRVowEnBE1leHRlcm5hbC10cy0xOG4BoTjdoSCBWCaDAgGBWCDrX2WmJ7XIJdZH1J6VUP05DOyyK6sCpDo_RhXrnIjgH1ggqplvvoGQCsNjhUncxOBHvU79MN2NyY0eutKC9xV5wZNYQKmHgWzl8hX2F6t6hO3ls6IiptNeS0hyWofHVZMJZMthNik483z4gJpvQHWyg9dIVBr0SH18g-N-GQg2Q56JwQM",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "A vds naming a structure MCP-RE does not implement. It must be refused, never walked as if it were RFC9162_SHA256.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x04_unsupported_vds_refused",
+      "receipt_cose_b64url": "0oRXowEnBE1leHRlcm5hbC10cy0xGQGLGGOhGQGMoSCBWCaDAgGBWCDrX2WmJ7XIJdZH1J6VUP05DOyyK6sCpDo_RhXrnIjgH1ggqplvvoGQCsNjhUncxOBHvU79MN2NyY0eutKC9xV5wZNYQGFSkpVVFlCqNGBB65SYbhs7o9ClBki30yxs9QWNKGnd59HVDOfAqCy_hxMUdWLhewh0Ad2XjiTUUl4rfwvSKQA",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "A sibling hash altered in the unprotected path. The service signature stays valid, so only re-deriving the root refuses it.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x05_forged_inclusion_path_refused",
+      "receipt_cose_b64url": "0oRWowEnBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAeWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hAaiMv9ABrhizqZ6KTq0hf3PurfCTyaF4hKArmoYFuQ3HxjOdT-V0LJgzeERo-zElkoHQwxfVBXuFHajiXz9eEAQ",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "leaf-index == tree-size. RFC 9942 \u00a75.2 requires failing the proof; the tree-head signature is untouched.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x06_leaf_index_outside_tree_refused",
+      "receipt_cose_b64url": "0oRWowEnBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAoFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAfWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hAaiMv9ABrhizqZ6KTq0hf3PurfCTyaF4hKArmoYFuQ3HxjOdT-V0LJgzeERo-zElkoHQwxfVBXuFHajiXz9eEAQ",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "An ES256 signature in ASN.1/DER instead of RFC 9053 \u00a72.1 fixed-width r||s. The same signature mathematically, a different byte string; it must be refused.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x07_der_es256_signature_refused",
+      "receipt_cose_b64url": "0oRWowEmBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAfWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hHMEUCIGDg0rsHOLXcxUtktbuaO_BD_CCtFDskb3IkygztEBq7AiEA9l2QEzkKzxyptbQMXTSOxlGou3eXIxEepLZGpwM0lu0",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWJeka2NoYWluX2xhYmVsaGNvbXBsZXRlcGNoYWluX2NvbW1pdG1lbnR4GWV4dGVybmFsLWNoYWluLWNvbW1pdG1lbnRwcmVxdWVzdF9ldmlkZW5jZXdleHRlcm5hbC1yZXF1ZXN0LWhhbmRsZXFyZXNwb25zZV9ldmlkZW5jZXgYZXh0ZXJuYWwtcmVzcG9uc2UtaGFuZGxlWECQd06F5MwsiZV50bwTwnWfGFEYa-I5v1zjzKp4IQ2UxFltDZhgx6lCz9FoqZXYZJt4pHciO7GSXnrrWXQ8p_cA",
+      "ts_trust_pin": {
+        "algorithm": "ES256",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "vhJnpW9nKLM97DLALfbT7BdplfKNcgeFUQN5KLX91YA",
+          "y": "8vP-M5MjOPoE4dd86uvTfLN6ypsNG9zv9_uSeSMJp6Q"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    },
+    {
+      "description": "A genuine receipt for a different statement in the same log. Both signatures verify; the proof does not re-derive the root from THIS statement's leaf.",
+      "expect": "verify_fail",
+      "issuer_pubkey_b64url": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
+      "name": "x08_receipt_for_another_statement_refused",
+      "receipt_cose_b64url": "0oRWowEnBE1leHRlcm5hbC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIOtfZaYntcgl1kfUnpVQ_TkM7LIrqwKkOj9GFeuciOAfWCCqmW--gZAKw2OFSdzE4Ee9Tv0w3Y3JjR660oL3FXnBk1hAaiMv9ABrhizqZ6KTq0hf3PurfCTyaF4hKArmoYFuQ3HxjOdT-V0LJgzeERo-zElkoHQwxfVBXuFHajiXz9eEAQ",
+      "statement_cose_b64url": "0oRYaqQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBFFleHRlcm5hbC1pc3N1ZXItMQ-jAXFleHRlcm5hbC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWLCka2NoYWluX2xhYmVseCBpbmNvbXBsZXRlOjE6TWlzc2luZ0NvbnRpbnVhdGlvbnBjaGFpbl9jb21taXRtZW50eBlleHRlcm5hbC1jaGFpbi1jb21taXRtZW50cHJlcXVlc3RfZXZpZGVuY2V3ZXh0ZXJuYWwtcmVxdWVzdC1oYW5kbGVxcmVzcG9uc2VfZXZpZGVuY2V4GGV4dGVybmFsLXJlc3BvbnNlLWhhbmRsZVhA_j6GXwIW7aOvyWR2BurB1uF-yG_KjjgqkqUljodl69yQpAjXtBakPk-ySgKwXikBg5Z9BcLeUEjRptEG9L9LAw",
+      "ts_trust_pin": {
+        "algorithm": "EdDSA",
+        "discovery_document_digest": "HlEJBXeMLpMv8fXSB4u8hlqjD35nTaESyoumZ2a3LKo",
+        "discovery_method": "well-known-scitt-keys",
+        "discovery_uri": "https://external.invalid/.well-known/scitt-keys",
+        "fetched_at": "2026-07-31T00:00:00Z",
+        "kid": "external-ts-1",
+        "public_key": {
+          "x": "oJql9HpnWYAv-VX43C0qFKXJnSO-l_hkEn_5ODRVpPA"
+        },
+        "public_key_thumbprint": "EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV-Y",
+        "schema": "mcp-re-scitt-service-trust-pin/v1",
+        "service_identifier": "external-cross-verify"
+      }
+    }
+  ],
+  "produced_by": "mcp-re-conformance/tools/scitt_cross_verify.py (cbor2 + cryptography)",
+  "profiles": [
+    "RFC 9943 \u00a76.1",
+    "RFC 9942 \u00a75.2.1",
+    "RFC 9162",
+    "RFC 9052 \u00a74.4"
+  ],
+  "schema": "mcp-re-scitt-external-kat/v1"
+}

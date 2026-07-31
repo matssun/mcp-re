@@ -1,0 +1,13 @@
+{
+  "schema": "mcp-re-scitt-interop/v1",
+  "produced_by": "@transmute/cose 0.3.0 + node crypto Ed25519",
+  "peer": "@transmute/cose 0.3.0",
+  "expected_verdict": "verify_ok",
+  "artifacts": {
+    "signed-statement.cbor": "44DBxLYj-0VWsLqm5u8Wlq6OSToZFm2R7TVtdTP7wJI",
+    "receipt.cbor": "vqkJb9MCzZzdpxO34ANOeNyBF8lCR64uLBB3csq4Oiw",
+    "retained-evidence.bin": "f6jNh2YQ_6oOYkG-mKPdIP1I-kRQ2c09CIBQ8RTFOQQ",
+    "service-key-pin.json": "101pCBzYK_ga-dHOH5IYeUy-2xFuq1QaDaDXA4Q61Co",
+    "exchange-metadata.json": "8OlaASQdEvUfVOAkdieWhWs2buUOwzWD_KzUfB7Dk-Y"
+  }
+}

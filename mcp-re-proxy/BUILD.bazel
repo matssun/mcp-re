@@ -52,6 +52,7 @@ _PROXY_LIB_SRCS = [
     # non-exporting device/KMS). Generic mechanism, always compiled.
     "src/delegated_tls.rs",
     "src/durable_replay.rs",
+    "src/retained_evidence.rs",
     "src/key_source.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
