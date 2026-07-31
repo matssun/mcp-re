@@ -173,6 +173,32 @@ deny-multiple-versions = true
 name = "sha2"
 deny-multiple-versions = true
 
+# `rand_core` cannot be unified today, so it is constrained rather than left loose.
+# The 0.6.4 instance sits inside the `x509-ocsp` skip-tree below and so needs no skip of
+# its own — verified: adding one changed nothing. This rule therefore catches a
+# rand_core appearing anywhere OUTSIDE that subtree, which is the case worth failing on.
+#
+# Both sides are forced by upstream and neither is ours to move:
+#
+#   0.10.1  p256["ecdsa"] -> ecdsa/algorithm -> HARD dep:rfc6979 -> crypto-bigint
+#           /rand_core. `rand_core` is optional in crypto-bigint, but ecdsa 0.17 has
+#           no verify-only feature — `algorithm` is the umbrella and enables rfc6979
+#           unconditionally — so no feature combination reaches P-256 verification
+#           without it.
+#   0.6.4   x509-ocsp 0.2.1 -> signature 2.2.0. 0.2.1 is the latest release; there is
+#           nothing to bump to.
+#
+# Unifying would mean giving up either ES256 receipt verification (MCPRE-501) or OCSP.
+# `rand_core` is a trait crate, so two copies mean two trait definitions rather than
+# two RNG implementations, and no MCP-RE signing path uses either: Ed25519 signing goes
+# through ed25519-dalek, and the P-256 code verifies only.
+#
+# Revisit when x509-ocsp publishes against signature 3, or ecdsa exposes verification
+# without rfc6979 — at which point this whole block should be deleted, not widened.
+[[bans.deny]]
+name = "rand_core"
+deny-multiple-versions = true
+
 # The single documented holdout — rationale above. `x509-ocsp` 0.2.1 is the latest
 # release and still pulls signature 2 / digest 0.10 / crypto-common 0.1 through its
 # `builder` feature. Scoped to that subtree so the duplicate cannot appear anywhere
