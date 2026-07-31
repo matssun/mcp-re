@@ -1,0 +1,21 @@
+{
+  "schema": "mcp-re-scitt-verification-report/v1",
+  "peer": "@transmute/cose 0.3.0",
+  "verifier": "mcp-re-http-profile::scitt::verify_receipt_offline (offline; no service contacted)",
+  "generated_by": "mcp-re-conformance/tests/scitt_interop_test.rs::write_verification_reports",
+  "artifacts": {
+    "exchange-metadata.json": "8OlaASQdEvUfVOAkdieWhWs2buUOwzWD_KzUfB7Dk-Y",
+    "receipt.cbor": "vqkJb9MCzZzdpxO34ANOeNyBF8lCR64uLBB3csq4Oiw",
+    "retained-evidence.bin": "f6jNh2YQ_6oOYkG-mKPdIP1I-kRQ2c09CIBQ8RTFOQQ",
+    "service-key-pin.json": "101pCBzYK_ga-dHOH5IYeUy-2xFuq1QaDaDXA4Q61Co",
+    "signed-statement.cbor": "44DBxLYj-0VWsLqm5u8Wlq6OSToZFm2R7TVtdTP7wJI"
+  },
+  "positive_verdict": "verify_ok",
+  "refusals": {
+    "forged-inclusion-path-valid-service-signature": "mcp-re.request_binding_mismatch",
+    "kid-not-covered-by-the-pin": "mcp-re.actor_binding_failed",
+    "wrong-leaf-profile": "mcp-re.request_binding_mismatch",
+    "wrong-pinned-service-key": "mcp-re.invalid_signature"
+  },
+  "refusal_note": "attached payload: a forged inclusion path is refused as an inclusion              mismatch while the service's signature remains valid — the fold is doing              the work, not the signature check"
+}

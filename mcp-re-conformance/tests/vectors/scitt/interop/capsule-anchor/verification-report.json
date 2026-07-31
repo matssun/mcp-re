@@ -1,0 +1,21 @@
+{
+  "schema": "mcp-re-scitt-verification-report/v1",
+  "peer": "capsule-anchor (action-state-group), Apache-2.0, commit a918ba8",
+  "verifier": "mcp-re-http-profile::scitt::verify_receipt_offline (offline; no service contacted)",
+  "generated_by": "mcp-re-conformance/tests/scitt_interop_test.rs::write_verification_reports",
+  "artifacts": {
+    "exchange-metadata.json": "4QUQgRQ0KXmuzmD1OQ-KdhC51NKy6TPMMPgom-4tjhk",
+    "receipt.cbor": "Ldz8Oc7e5MomJYTeklXo5FBFpqyg6VTvseTzprUq-9A",
+    "retained-evidence.bin": "zN2Cu_MHwLJUAoEBwAv7ZudMbJLuL8W-JewkvY71VLE",
+    "service-key-pin.json": "260yZrJZ8xrLciwttam5z67DJUuLdAGM_KfOw_XdYmE",
+    "signed-statement.cbor": "44DBxLYj-0VWsLqm5u8Wlq6OSToZFm2R7TVtdTP7wJI"
+  },
+  "positive_verdict": "verify_ok",
+  "refusals": {
+    "forged-inclusion-path-valid-service-signature": "mcp-re.invalid_signature",
+    "kid-not-covered-by-the-pin": "mcp-re.actor_binding_failed",
+    "wrong-leaf-profile": "mcp-re.invalid_signature",
+    "wrong-pinned-service-key": "mcp-re.invalid_signature"
+  },
+  "refusal_note": "detached payload: the re-derived root IS the signed payload, so a forged              inclusion path is refused as a signature failure — the fold and the              signature are one check and cannot be separated"
+}
