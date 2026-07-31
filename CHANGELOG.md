@@ -20,11 +20,21 @@ or wire-format compatibility while the design lines from
 
   A Signed Statement is now a tagged `COSE_Sign1` (RFC 9052 §4.2) whose protected
   header carries the RFC 9943 CWT claims (`iss`/`sub`/`iat`), the algorithm, the kid
-  and the content type, and whose payload is the CBOR evidence commitment. A Receipt
-  is a tagged `COSE_Sign1` whose payload is the Merkle root and whose **unprotected**
-  header carries the RFC 9942 inclusion proof over an RFC 9162 SHA-256 tree — correct
-  rather than lax: the proof is the path a verifier walks, not a claim the service
-  signs, so forging it cannot forge inclusion, only fail to re-derive the signed root.
+  and the content type, and whose payload is the CBOR evidence commitment — the RFC 9943
+  §6.1 CDDL. A Receipt is a tagged `COSE_Sign1` satisfying RFC 9942 §5.2.1: `vds`
+  (label **395**) in the protected header, because the structure identifier selects how
+  the proof is read and a verifier steered by unprotected data could be pointed at the
+  wrong walk; the proof under `vdp` (label **396**) → `inclusion-proof` (label **-1**)
+  in the **unprotected** header, as an array of bstr-wrapped
+  `[tree-size, leaf-index, inclusion-path]`; and the RFC 9162 Merkle Tree Hash as the
+  payload. Unprotected is correct rather than lax: the proof is the path a verifier
+  walks, not a claim the service signs, so forging it cannot forge inclusion, only fail
+  to re-derive the signed root.
+
+  Two normative checks the walk depends on: a `vds` this verifier does not implement is
+  refused at parse rather than walked as if it were RFC9162_SHA256, and a `leaf-index`
+  at or beyond `tree-size` fails the proof (RFC 9942 §5.2, quoting RFC 9162) — a tree of
+  size N has no leaf N, and arithmetic settles it before any hashing.
 
   Verification now runs over the **received** octets rather than reconstructing them.
   That removes a canonicalization dependency: re-deriving the signed bytes would have
@@ -37,11 +47,30 @@ or wire-format compatibility while the design lines from
   verifies and stays labelled incomplete, a same-length payload tamper that must fail
   as a *signature* rather than a decode, a genuine receipt paired with a different
   genuine statement (the substitution a verifier that checked signatures alone would
-  accept), and a statement naming an unresolvable issuer. Per-file SHA-256 plus a
-  corpus digest, and a determinism test that regenerating reproduces the octets.
+  accept), and a statement naming an unresolvable issuer. Three more pin what a
+  conforming verifier must REFUSE while the service's signature stays valid: a sibling
+  hash flipped inside the unprotected inclusion path, a `leaf-index` equal to
+  `tree-size`, and a `vds` naming a structure this verifier does not implement. Each
+  receipt is registered into a log that already holds an entry, so every vector pins a
+  proof that has to be walked — a single-leaf log yields an empty path, which
+  `inclusion-path = [ + bstr ]` does not admit and which folds nothing.
 
-  The interoperability *claim* still waits on #501 — registering against a real
-  external Transparency Service. The encoding no longer waits on it.
+  Per-file SHA-256 plus a corpus digest, a determinism test that regenerating reproduces
+  the octets, and a guard that the corpus directory holds no vector the manifest does
+  not list. The digest catches a deleted fixture; nothing caught an extra one, and an
+  unlisted vector is read by no test, so its expectation drifts out of date invisibly.
+
+  `tools/scitt_independent_verify.py` checks the corpus with **no MCP-RE code**: cbor2
+  for CBOR, `cryptography` for Ed25519, and the RFC 9052 §4.4 `Sig_structure`, the
+  RFC 9942 §5.2.1 header shape and the RFC 9162 fold built from the RFC text. A corpus
+  validated only by the encoder that produced it agrees with itself whatever labels it
+  picks.
+
+  What an interoperability *claim* still needs (#501): receipts signed with ES256 —
+  RFC 9942's own examples use it, and this verifier requires EdDSA — and
+  transparency-service keys resolved from a fetched-and-pinned key set rather than a
+  caller-supplied `kid` map. Those are code, in this repository, not an external
+  dependency.
 - **The §7 admission-currency check is on the serving path** (#493). ADR-MCPRE-053
   built the evidence — an authority-signed admission assertion and the binding that
   ties a call to it — and `check_admission` verified both. Nothing called it: every

@@ -1,9 +1,9 @@
 {
-  "name": "s01_complete_record",
-  "description": "A two-hop COMPLETE call record, registered and offline-verifiable: issuer COSE_Sign1 signature, RFC 9162 inclusion proof, and the service's signature over the root the proof re-derives.",
+  "name": "s08_leaf_index_outside_tree",
+  "description": "leaf-index equal to tree-size. RFC 9942 §5.2 requires failing such a proof; the signature over the tree head is untouched and still valid, so only the bounds check refuses it.",
   "statement_cose_b64url": "0oRYZKQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBE5zY2l0dC1pc3N1ZXItMQ-jAW5zY2l0dC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWNGkcHJlcXVlc3RfZXZpZGVuY2V4KzU5bldnamFYd2QwUlRXTWt1ekJwWHB2VXRUaVh2MzU0SFBBeUQyZ3lLT0VxcmVzcG9uc2VfZXZpZGVuY2V4K25MTmRrcUVBQlpmREpMcGNUaU9CY185TmNmSEVOS1BtOVMtcFlqWjY5dndrY2hhaW5fbGFiZWxoY29tcGxldGVwY2hhaW5fY29tbWl0bWVudHgranl0Y3JuWnc2M1FNNF9XMGRHMVNpb0FSeWJqNi0zclU1dklMSHlkb21jVVhAdNy3VQ5FUl8Q6fqJuXoLmNe287oD_7mZOMk6aa0Vxpna62RQe4DFZ09aei-0nw13O3Ht58zrEgMyuy1pLc6DCg",
-  "receipt_cose_b64url": "0oRTowEnBEpzY2l0dC10cy0xGQGLAaEZAYyhIIFYJoMCAYFYIKLbCRpQ7Y8348SysyBSHgmX13hp7JRz6WVoqzlywWQOWCBb78ECdPT-U0SU_JtuhWoc4Fogrvs0Wr8OArVIQAXX3VhAJZITHlQ_0dwTBnggDxVlyshVTurzeLqrp13rc8bErVUxmJuc00AxVw4U2X_GiaR3fPQ6DmM_VQ3uVUiPOPWdDQ",
+  "receipt_cose_b64url": "0oRTowEnBEpzY2l0dC10cy0xGQGLAaEZAYyhIIFYJoMCAoFYIKLbCRpQ7Y8348SysyBSHgmX13hp7JRz6WVoqzlywWQOWCBb78ECdPT-U0SU_JtuhWoc4Fogrvs0Wr8OArVIQAXX3VhAJZITHlQ_0dwTBnggDxVlyshVTurzeLqrp13rc8bErVUxmJuc00AxVw4U2X_GiaR3fPQ6DmM_VQ3uVUiPOPWdDQ",
   "issuer_pubkey_b64url": "LISK2GZO5lHkiWwTqEqJopZKyl63eouIHmDe1cgbTp0",
   "ts_pubkey_b64url": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
-  "expect": "verify_ok"
+  "expect": "mcp-re.malformed_envelope"
 }

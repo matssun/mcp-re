@@ -28,11 +28,17 @@
 //! the label it commits to says which hop was missing.
 //!
 //! **What is real here, and the one thing that is not.** The wire form is the real
-//! one (MCPRE-494): a Signed Statement is a tagged `COSE_Sign1` (RFC 9052 §4.2) whose
-//! protected header carries the RFC 9943 CWT claims, and a Receipt is a tagged
-//! `COSE_Sign1` whose payload is the Merkle root and whose unprotected header carries
-//! the RFC 9942 inclusion proof over an RFC 9162 SHA-256 tree. Conformance vectors are
-//! frozen from those octets in `mcp-re-conformance/tests/vectors/scitt/`.
+//! one (MCPRE-494): a Signed Statement is a tagged `COSE_Sign1` satisfying the RFC 9943
+//! §6.1 CDDL — CWT claims (RFC 9597 label 15) carrying `iss` and `sub` in the PROTECTED
+//! header — and a Receipt is a tagged `COSE_Sign1` satisfying RFC 9942 §5.2.1: `vds` in
+//! the protected header, the inclusion proof under `vdp` → `inclusion-proof` in the
+//! unprotected header, and the RFC 9162 Merkle Tree Hash as the payload. Conformance
+//! vectors are frozen from those octets in `mcp-re-conformance/tests/vectors/scitt/`.
+//!
+//! Interoperability with a real service additionally needs what this module does not
+//! yet do: receipts signed with ES256 (RFC 9942's own examples use it; this verifier
+//! requires EdDSA), and transparency-service keys resolved from a fetched-and-pinned
+//! key set rather than a caller-supplied `kid` map. That is #501's code half.
 //!
 //! The remaining stand-in, called out so nobody mistakes the prototype for the
 //! product: [`PrototypeTransparencyService`] is an in-process Merkle log, NOT a
@@ -151,13 +157,22 @@ const CWT_ISS: i64 = 1;
 const CWT_SUB: i64 = 2;
 const CWT_IAT: i64 = 6;
 
-/// COSE header label for the verifiable-data-structure a Receipt proves inclusion
-/// in (RFC 9942 §3.1), in the PROTECTED header.
-const HEADER_VERIFIABLE_DATA_STRUCTURE: i64 = -111;
+/// `vds`: COSE header label for the verifiable-data-structure a Receipt proves
+/// inclusion in (RFC 9942 §5.2.1, Figure 4), in the PROTECTED header. It is covered
+/// by the signature because it tells the verifier how to READ the proof — a verifier
+/// that took the structure identifier from unprotected data could be steered into
+/// walking a proof with the wrong algorithm.
+const HEADER_VDS: i64 = 395;
 
-/// COSE header label for the inclusion proofs of a Receipt (RFC 9942 §3.2), in the
-/// UNPROTECTED header — a proof is not signed by the tree head it proves against.
-const HEADER_INCLUSION_PROOFS: i64 = -222;
+/// `vdp`: COSE header label for the Verifiable Data Structure Proofs of a Receipt
+/// (RFC 9942 §5.2.1, Figure 5), in the UNPROTECTED header — a proof is not signed by
+/// the tree head it proves against.
+const HEADER_VDP: i64 = 396;
+
+/// `inclusion-proof`: the proof-type key inside the `vdp` map (RFC 9942 §5.2.1). The
+/// map is keyed by proof type because one Receipt may carry inclusion AND consistency
+/// proofs; the label selects which, and its value is an array of proofs.
+const PROOF_INCLUSION: i64 = -1;
 
 /// `RFC9162_SHA256`: the RFC 9162 binary Merkle tree, SHA-256 (RFC 9942 §5).
 const VDS_RFC9162_SHA256: i64 = 1;
@@ -371,7 +386,7 @@ impl Receipt {
             .header
             .rest
             .iter()
-            .find(|(label, _)| *label == Label::Int(HEADER_VERIFIABLE_DATA_STRUCTURE))
+            .find(|(label, _)| *label == Label::Int(HEADER_VDS))
             .and_then(|(_, v)| v.as_integer())
             .and_then(|i| i64::try_from(i).ok())
             .ok_or(HttpProfileError::MalformedEvidence("scitt receipt vds"))?;
@@ -380,11 +395,20 @@ impl Receipt {
                 "scitt receipt verifiable data structure unsupported",
             ));
         }
+        // The proof lives at `vdp` → `inclusion-proof` → array of bstr, each holding
+        // CBOR `inclusion-proof-content`. Only the first is read: a Receipt carrying
+        // several inclusion proofs proves inclusion of several entries, and this
+        // verifier is asked about exactly one statement.
         let proof = sign1
             .unprotected
             .rest
             .iter()
-            .find(|(label, _)| *label == Label::Int(HEADER_INCLUSION_PROOFS))
+            .find(|(label, _)| *label == Label::Int(HEADER_VDP))
+            .and_then(|(_, v)| v.as_map())
+            .and_then(|vdp| {
+                vdp.iter()
+                    .find(|(k, _)| k.as_integer().is_some_and(|i| i == PROOF_INCLUSION.into()))
+            })
             .and_then(|(_, v)| v.as_array())
             .and_then(|proofs| proofs.first())
             .and_then(|p| p.as_bytes())
@@ -403,6 +427,14 @@ impl Receipt {
         };
         let tree_size = as_u64(tree_size)?;
         let leaf_index = as_u64(leaf_index)?;
+        // RFC 9942 §5.2, quoting RFC 9162: a leaf index at or beyond the tree size
+        // fails proof verification. Refused at parse so no fold is ever attempted over
+        // an index the signed tree head cannot contain.
+        if leaf_index >= tree_size {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt inclusion proof leaf index outside tree",
+            ));
+        }
         let inclusion_path = path
             .as_array()
             .ok_or(HttpProfileError::MalformedEvidence("scitt inclusion path"))?
@@ -553,8 +585,8 @@ impl PrototypeTransparencyService {
         let (root, path) = self.root_and_path(leaf_index as usize);
         let tree_size = self.leaves.len() as u64;
 
-        // RFC 9942 §3.2: an inclusion proof is a bstr-wrapped
-        // `[tree_size, leaf_index, [path...]]`.
+        // RFC 9942 §5.2 Figure 3: `inclusion-proof-content` is
+        // `[tree-size, leaf-index, inclusion-path]`, carried as a bstr of that CBOR.
         let proof = Value::Array(vec![
             Value::Integer(tree_size.into()),
             Value::Integer(leaf_index.into()),
@@ -567,15 +599,17 @@ impl PrototypeTransparencyService {
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
             .key_id(self.kid.as_bytes().to_vec())
-            .value(
-                HEADER_VERIFIABLE_DATA_STRUCTURE,
-                Value::Integer(VDS_RFC9162_SHA256.into()),
-            )
+            .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
             .build();
+        // `vdp` is a map keyed by proof type (RFC 9942 §5.2.1 Figure 5), so a Receipt
+        // can carry inclusion and consistency proofs side by side.
         let unprotected = HeaderBuilder::new()
             .value(
-                HEADER_INCLUSION_PROOFS,
-                Value::Array(vec![Value::Bytes(proof_bytes)]),
+                HEADER_VDP,
+                Value::Map(vec![(
+                    Value::Integer(PROOF_INCLUSION.into()),
+                    Value::Array(vec![Value::Bytes(proof_bytes)]),
+                )]),
             )
             .build();
 
@@ -836,6 +870,141 @@ mod tests {
             verify_receipt_offline(&st, &receipt, ir(), tr()).unwrap_err(),
             HttpProfileError::ReceiptInclusionInvalid | HttpProfileError::ReceiptInvalid,
         ));
+    }
+
+    /// The emitted Receipt matches RFC 9942 §5.2.1 Figures 4 and 5 read as raw CBOR,
+    /// not as re-parsed by this module's own decoder.
+    ///
+    /// Round-tripping through our encoder and decoder agrees with itself whatever
+    /// labels it picks, so it cannot detect using the wrong ones — which is how
+    /// draft-era `vds`/`vdp` labels survive until a foreign implementation rejects
+    /// everything we emit. These assertions name the numbers the RFC names.
+    #[test]
+    fn a_receipt_carries_the_rfc9942_header_labels_and_nesting() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 2),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        // Two leaves, so the inclusion path is non-empty as `[ + bstr ]` requires.
+        let receipt = {
+            let other = statement(EvidenceCommitment::from_reconstruction(
+                &recon(ChainLabel::Complete, 1),
+                None,
+                None,
+            ));
+            register(&mut svc, &other);
+            register(&mut svc, &st)
+        };
+
+        let sign1 = CoseSign1::from_tagged_slice(receipt.to_cose()).expect("tagged COSE_Sign1");
+
+        // vds (395) is PROTECTED: it selects how the proof is read.
+        let vds = sign1
+            .protected
+            .header
+            .rest
+            .iter()
+            .find(|(l, _)| *l == Label::Int(395))
+            .and_then(|(_, v)| v.as_integer())
+            .expect("vds at protected label 395");
+        assert_eq!(i64::try_from(vds).expect("small"), 1, "RFC9162_SHA256");
+
+        // vdp (396) is UNPROTECTED and is a MAP keyed by proof type, whose
+        // inclusion-proof (-1) value is an array of bstr.
+        let vdp = sign1
+            .unprotected
+            .rest
+            .iter()
+            .find(|(l, _)| *l == Label::Int(396))
+            .and_then(|(_, v)| v.as_map())
+            .expect("vdp map at unprotected label 396");
+        let proofs = vdp
+            .iter()
+            .find(|(k, _)| k.as_integer().is_some_and(|i| i == (-1).into()))
+            .and_then(|(_, v)| v.as_array())
+            .expect("inclusion-proof array at -1");
+        let content: Value = ciborium::from_reader(
+            proofs
+                .first()
+                .and_then(|p| p.as_bytes())
+                .expect("bstr-wrapped proof content")
+                .as_slice(),
+        )
+        .expect("inclusion-proof-content CBOR");
+        let parts = content.as_array().expect("array");
+        assert_eq!(parts.len(), 3, "[tree-size, leaf-index, inclusion-path]");
+        assert!(
+            !parts[2].as_array().expect("path").is_empty(),
+            "inclusion-path is [ + bstr ]"
+        );
+
+        // The payload is the Merkle Tree Hash, and nothing else.
+        assert_eq!(
+            sign1.payload.as_deref().expect("attached payload"),
+            receipt.root.as_slice(),
+        );
+
+        // The draft-era labels must be absent, or a verifier reading only the RFC's
+        // labels would see a receipt with two conflicting descriptions of its proof.
+        for stale in [-111, -222] {
+            assert!(
+                !sign1
+                    .protected
+                    .header
+                    .rest
+                    .iter()
+                    .chain(sign1.unprotected.rest.iter())
+                    .any(|(l, _)| *l == Label::Int(stale)),
+                "no header at draft label {stale}"
+            );
+        }
+    }
+
+    /// RFC 9942 §5.2 quoting RFC 9162: `leaf_index >= tree_size` fails verification.
+    /// A tree of size N cannot contain leaf N, so the claim is refuted by arithmetic
+    /// before any hashing — and a verifier that folded anyway would be walking a path
+    /// for a leaf the signed tree head does not cover.
+    #[test]
+    fn a_leaf_index_outside_the_tree_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let receipt = register(&mut svc, &st);
+
+        // Re-encode the receipt's proof with the leaf index pushed past the tree size,
+        // leaving everything else — including the service's signature — untouched.
+        let sign1 = CoseSign1::from_tagged_slice(receipt.to_cose()).expect("parses");
+        let mut proof = Vec::new();
+        ciborium::into_writer(
+            &Value::Array(vec![
+                Value::Integer(receipt.tree_size().into()),
+                Value::Integer(receipt.tree_size().into()),
+                Value::Array(vec![]),
+            ]),
+            &mut proof,
+        )
+        .expect("encode");
+        let mut forged = sign1.clone();
+        forged.unprotected = HeaderBuilder::new()
+            .value(
+                HEADER_VDP,
+                Value::Map(vec![(
+                    Value::Integer(PROOF_INCLUSION.into()),
+                    Value::Array(vec![Value::Bytes(proof)]),
+                )]),
+            )
+            .build();
+        let bytes = forged.to_tagged_vec().expect("re-encode");
+
+        assert_eq!(
+            Receipt::from_cose(&bytes).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt inclusion proof leaf index outside tree"),
+        );
     }
 
     #[test]

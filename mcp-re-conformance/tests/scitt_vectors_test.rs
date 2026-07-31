@@ -16,8 +16,18 @@
 //! The negatives matter more than the positive. A corpus that only proves a good
 //! receipt verifies says nothing about what an implementation must REFUSE, and every
 //! interesting SCITT failure is a refusal: a tampered payload, a forged inclusion
-//! path, an untrusted issuer, a verifiable-data-structure this verifier does not
-//! implement.
+//! path, an untrusted issuer, a leaf index the signed tree cannot contain, a
+//! verifiable-data-structure this verifier does not implement.
+//!
+//! Three of those negatives leave the transparency service's signature VALID and are
+//! caught by nothing else — the inclusion path and the leaf index ride in the
+//! unprotected header, so a verifier that checked the two signatures and skipped the
+//! fold would accept them.
+//!
+//! These tests cannot see whether the labels are the RIGHT ones: they run the encoder
+//! against its own decoder, which agrees with itself whatever numbers it picks.
+//! `tools/scitt_independent_verify.py` is the outside opinion, built from the RFC text
+//! with no MCP-RE code, and it is what to run when the encoding changes.
 //!
 //! Regenerate (and re-pin) with:
 //!   cargo test -p mcp-re-conformance --test scitt_vectors_test \
@@ -163,12 +173,31 @@ fn statement(commitment: EvidenceCommitment, key: &SigningKey) -> SignedStatemen
     .expect("issue")
 }
 
+/// Register `statement` into a log that already holds one unrelated entry, and return
+/// its receipt.
+///
+/// The preceding entry is not decoration. A single-leaf log yields an EMPTY inclusion
+/// path, which `inclusion-path = [ + bstr ]` (RFC 9942 §5.2, Figure 3) does not admit
+/// and which exercises no folding at all — the leaf would be the root. With a sibling
+/// present, every vector pins a proof that actually has to be walked.
 fn register(statement: &SignedStatement) -> Receipt {
     let mut svc = PrototypeTransparencyService::new(TS_KID);
-    svc.register(statement, |th| {
-        b64url_decode(&ts().sign(th)).map_err(|_| HttpProfileError::InvalidSignature)
-    })
-    .expect("register")
+    let filler = self::statement(
+        EvidenceCommitment::from_reconstruction(
+            &reconstruction(ChainLabel::Complete, 4),
+            None,
+            None,
+        ),
+        &issuer(),
+    );
+    svc.register(&filler, sign_tree_head).expect("filler entry");
+    svc.register(statement, sign_tree_head).expect("register")
+}
+
+/// The transparency service's tree-head signer. A fn item rather than a closure so it
+/// can be handed to more than one `register` call.
+fn sign_tree_head(head: &[u8]) -> Result<Vec<u8>, HttpProfileError> {
+    b64url_decode(&ts().sign(head)).map_err(|_| HttpProfileError::InvalidSignature)
 }
 
 fn fixture(
@@ -192,6 +221,38 @@ fn fixture(
 /// The first occurrence of `needle` in `haystack`.
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// The offset of the one and only occurrence of `needle`. Panics if the pattern is
+/// absent or repeated, because a corpus writer that patched the wrong copy of an
+/// ambiguous byte string would freeze a vector testing something else entirely.
+fn find_once(haystack: &[u8], needle: &[u8]) -> usize {
+    let at = find(haystack, needle).unwrap_or_else(|| panic!("pattern {needle:02x?} not found"));
+    assert!(
+        find(&haystack[at + 1..], needle).is_none(),
+        "pattern {needle:02x?} is not unique"
+    );
+    at
+}
+
+/// CBOR head of `inclusion-proof-content` for a two-leaf log proving leaf 1:
+/// `array(3), 2, 1, array(1), bstr(32)` (RFC 9942 §5.2 Figure 3).
+const PROOF_HEAD: [u8; 6] = [0x83, 0x02, 0x01, 0x81, 0x58, 0x20];
+
+/// CBOR for the protected-header entry `vds(395) => 1` — `uint16 395`, then `1`.
+const VDS_ENTRY: [u8; 4] = [0x19, 0x01, 0x8b, 0x01];
+
+/// Replace `needle` with `replacement` of the SAME length, at its unique occurrence.
+///
+/// Equal length matters for more than convenience: it keeps every surrounding CBOR
+/// length header valid, so the receipt still parses and the vector tests the check it
+/// names rather than the decoder.
+fn splice(bytes: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
+    assert_eq!(needle.len(), replacement.len(), "same-length patch");
+    let at = find_once(bytes, needle);
+    let mut out = bytes.to_vec();
+    out[at..at + needle.len()].copy_from_slice(replacement);
+    out
 }
 
 fn build_fixtures() -> Vec<Fixture> {
@@ -300,6 +361,71 @@ fn build_fixtures() -> Vec<Fixture> {
         &foreign_receipt,
         "mcp-re.actor_binding_failed",
     ));
+
+    // s06 — a sibling hash altered inside the inclusion path. The path rides in the
+    // UNPROTECTED header, so this tamper leaves the service's signature over the root
+    // perfectly valid: the ONLY thing that catches it is re-deriving the root from
+    // this statement's leaf. A verifier that trusted a valid receipt signature and
+    // skipped the fold would accept a forged path.
+    let forged_path = {
+        let at = find_once(receipt.to_cose(), &PROOF_HEAD) + PROOF_HEAD.len();
+        let mut bytes = receipt.to_cose().to_vec();
+        bytes[at + 31] ^= 0x01;
+        bytes
+    };
+    out.push(Fixture {
+        name: "s06_forged_inclusion_path".into(),
+        description: "One sibling hash flipped inside the inclusion path. The proof is \
+                      unprotected, so the service's signature over the root still \
+                      verifies; only re-deriving the root from this leaf refuses it."
+            .into(),
+        receipt_cose_b64url: b64url_encode(&forged_path),
+        ..fixture(
+            "",
+            "",
+            &complete,
+            &receipt,
+            "mcp-re.request_binding_mismatch",
+        )
+    });
+
+    // s07 — a verifiable data structure this verifier does not implement. RFC 9942
+    // registers only RFC9162_SHA256 (1); anything else names a proof format whose
+    // walk is undefined here. The refusal must come from the structure check, BEFORE
+    // any signature is verified — walking an unknown proof format and only then asking
+    // about signatures would be the wrong order.
+    out.push(Fixture {
+        name: "s07_unsupported_vds".into(),
+        description: "The vds in the protected header names a structure this verifier \
+                      does not implement. It must be refused for that reason, at parse, \
+                      before any signature is checked — never walked as if it were \
+                      RFC9162_SHA256."
+            .into(),
+        receipt_cose_b64url: b64url_encode(&splice(
+            receipt.to_cose(),
+            &VDS_ENTRY,
+            &[0x19, 0x01, 0x8b, 0x02],
+        )),
+        ..fixture("", "", &complete, &receipt, "mcp-re.malformed_envelope")
+    });
+
+    // s08 — a leaf index at the tree size. RFC 9942 §5.2, quoting RFC 9162: fail the
+    // proof. The index is in the unprotected proof, so the tree-head signature stays
+    // valid; a tree of size 2 simply has no leaf 2, and arithmetic settles it before
+    // any hashing.
+    out.push(Fixture {
+        name: "s08_leaf_index_outside_tree".into(),
+        description: "leaf-index equal to tree-size. RFC 9942 §5.2 requires failing \
+                      such a proof; the signature over the tree head is untouched and \
+                      still valid, so only the bounds check refuses it."
+            .into(),
+        receipt_cose_b64url: b64url_encode(&splice(
+            receipt.to_cose(),
+            &PROOF_HEAD,
+            &[0x83, 0x02, 0x02, 0x81, 0x58, 0x20],
+        )),
+        ..fixture("", "", &complete, &receipt, "mcp-re.malformed_envelope")
+    });
 
     out
 }
@@ -416,6 +542,30 @@ fn the_corpus_digest_pins_the_whole_set() {
         manifest.corpus_digest,
         "the corpus digest does not cover the committed fixture set"
     );
+}
+
+#[test]
+fn the_corpus_directory_holds_no_unpinned_vector() {
+    // The digest catches a deleted fixture; neither it nor the per-file hashes can see
+    // an EXTRA one. An unlisted vector is read by no test, so its expectation drifts
+    // out of date invisibly — and a reader who finds it in the corpus has no way to
+    // tell it is stale. The corpus is exactly what the manifest lists.
+    let root = vectors_root();
+    let manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(root.join("manifest.json")).expect("manifest"))
+            .expect("manifest parses");
+    let pinned: Vec<&str> = manifest.fixtures.iter().map(|e| e.file.as_str()).collect();
+    for entry in std::fs::read_dir(&root).expect("corpus dir") {
+        let name = entry.expect("dir entry").file_name();
+        let name = name.to_string_lossy();
+        if name == "manifest.json" || !name.ends_with(".json") {
+            continue;
+        }
+        assert!(
+            pinned.contains(&name.as_ref()),
+            "{name} is in the corpus but not in the manifest"
+        );
+    }
 }
 
 #[test]

@@ -1,9 +1,9 @@
 {
-  "name": "s04_forged_inclusion_path",
-  "description": "A tampered inclusion proof. It is unprotected by design — the proof is the path a verifier walks, not a claim the service signs — so forging it cannot forge inclusion, only fail to re-derive the signed root.",
+  "name": "s07_unsupported_vds",
+  "description": "The vds in the protected header names a structure this verifier does not implement. It must be refused for that reason, at parse, before any signature is checked — never walked as if it were RFC9162_SHA256.",
   "statement_cose_b64url": "0oRYZKQBJwN4IGFwcGxpY2F0aW9uL21jcC1yZS1ldmlkZW5jZStjYm9yBE5zY2l0dC1pc3N1ZXItMQ-jAW5zY2l0dC1pc3N1ZXItMQJ0bWNwLXJlOmNhbGwtZXZpZGVuY2UGGmVT8QCgWNGkcHJlcXVlc3RfZXZpZGVuY2V4KzU5bldnamFYd2QwUlRXTWt1ekJwWHB2VXRUaVh2MzU0SFBBeUQyZ3lLT0VxcmVzcG9uc2VfZXZpZGVuY2V4K25MTmRrcUVBQlpmREpMcGNUaU9CY185TmNmSEVOS1BtOVMtcFlqWjY5dndrY2hhaW5fbGFiZWxoY29tcGxldGVwY2hhaW5fY29tbWl0bWVudHgranl0Y3JuWnc2M1FNNF9XMGRHMVNpb0FSeWJqNi0zclU1dklMSHlkb21jVVhAdNy3VQ5FUl8Q6fqJuXoLmNe287oD_7mZOMk6aa0Vxpna62RQe4DFZ09aei-0nw13O3Ht58zrEgMyuy1pLc6DCg",
-  "receipt_cose_b64url": "0oRSowEnBEpzY2l0dC10cy0xOG4BoTjdgUSDAQCAWCBHD6Abo3y_Oq9tTu3c951NMX2yqlUaLjbdLtQpUNX3OlhAkcJqCOE0WVa_E8CK5KQYuVeA3Yfol5EVm-UIhSJqJYWDchlc8G51WN1VYCh7K8XZQ4spxB0zHwDVCv1ZonixDA",
+  "receipt_cose_b64url": "0oRTowEnBEpzY2l0dC10cy0xGQGLAqEZAYyhIIFYJoMCAYFYIKLbCRpQ7Y8348SysyBSHgmX13hp7JRz6WVoqzlywWQOWCBb78ECdPT-U0SU_JtuhWoc4Fogrvs0Wr8OArVIQAXX3VhAJZITHlQ_0dwTBnggDxVlyshVTurzeLqrp13rc8bErVUxmJuc00AxVw4U2X_GiaR3fPQ6DmM_VQ3uVUiPOPWdDQ",
   "issuer_pubkey_b64url": "LISK2GZO5lHkiWwTqEqJopZKyl63eouIHmDe1cgbTp0",
   "ts_pubkey_b64url": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
-  "expect": "mcp-re.request_binding_mismatch"
+  "expect": "mcp-re.malformed_envelope"
 }
