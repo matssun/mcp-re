@@ -322,6 +322,24 @@ fn every_serving_path_wire_code_is_a_frozen_wire_code() {
         "these HttpProfileError wire codes are emitted as audit reasons but are NOT \
          members of the frozen McpReError taxonomy: {strays:?}"
     );
+
+    // THE THIRD PRODUCER. `HttpProfileProxy::rejection` / `response_rejection` are fed
+    // by three `wire_code()` sources, not one: `HttpProfileError` (above),
+    // `McpReError` (trivially contained — it IS the taxonomy), and
+    // `ProxyDispatchError`, which the replay-tier gate raises. Scanning only the first
+    // left the tier gate's tokens unchecked, so a token minted there could reach an
+    // audit log without ever meeting this guard.
+    let dispatch = frozen_wire_codes(&read("MCP_RE_PROXY_SRC_DISPATCH"));
+    assert!(
+        !dispatch.is_empty(),
+        "no wire codes parsed from the proxy dispatch taxonomy — did `fn wire_code` move?"
+    );
+    let strays: Vec<&String> = dispatch.difference(&frozen).collect();
+    assert!(
+        strays.is_empty(),
+        "these ProxyDispatchError wire codes reach the audit stream but are NOT \
+         members of the frozen McpReError taxonomy: {strays:?}"
+    );
 }
 
 #[test]

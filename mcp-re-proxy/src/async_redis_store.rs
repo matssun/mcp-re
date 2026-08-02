@@ -35,6 +35,7 @@
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use redis::aio::ConnectionManager;
+use std::time::Duration;
 
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
@@ -62,6 +63,11 @@ pub struct RedisAsyncAtomicReplayStore {
     wait_quorum: Option<WaitQuorum>,
 }
 
+/// Headroom added to a declared `WAIT` timeout when sizing the client-side response
+/// timeout, so the SERVER's timeout is the one that decides and the client only cuts
+/// in on a genuinely wedged connection.
+const WAIT_RESPONSE_HEADROOM_MS: u64 = 2_000;
+
 impl RedisAsyncAtomicReplayStore {
     /// Connect to `url` (e.g. `redis://host:port`) with the production system
     /// clock. Fails closed ([`ReplayStoreError::Unavailable`]) if the client
@@ -73,16 +79,33 @@ impl RedisAsyncAtomicReplayStore {
     /// Connect with an injected clock (deterministic tests reuse the sync store's
     /// clock-injection pattern).
     pub async fn connect_with(url: &str, clock: UnixClock) -> Result<Self, ReplayStoreError> {
+        Self::connect_with_wait_timeout(url, clock, None).await
+    }
+
+    /// Connect with the connection manager's response timeout sized for a declared
+    /// `WAIT` timeout — see [`response_timeout_for`](Self::response_timeout_for).
+    ///
+    /// `None` keeps the library default, which is correct for the tiers that issue no
+    /// `WAIT`.
+    pub async fn connect_with_wait_timeout(
+        url: &str,
+        clock: UnixClock,
+        wait_timeout_ms: Option<u64>,
+    ) -> Result<Self, ReplayStoreError> {
         let client = redis::Client::open(url).map_err(|e| ReplayStoreError::Unavailable {
             details: format!("open redis client: {e}"),
         })?;
-        let conn =
-            client
-                .get_connection_manager()
-                .await
-                .map_err(|e| ReplayStoreError::Unavailable {
-                    details: format!("connect redis async: {e}"),
-                })?;
+        let config = match wait_timeout_ms {
+            Some(timeout_ms) => redis::aio::ConnectionManagerConfig::new()
+                .set_response_timeout(Some(Self::response_timeout_for(timeout_ms))),
+            None => redis::aio::ConnectionManagerConfig::new(),
+        };
+        let conn = client
+            .get_connection_manager_with_config(config)
+            .await
+            .map_err(|e| ReplayStoreError::Unavailable {
+                details: format!("connect redis async: {e}"),
+            })?;
         Ok(RedisAsyncAtomicReplayStore {
             conn,
             clock,
@@ -98,6 +121,23 @@ impl RedisAsyncAtomicReplayStore {
     pub fn with_wait_quorum(mut self, quorum: u32, timeout_ms: u64) -> Self {
         self.wait_quorum = Some(WaitQuorum { quorum, timeout_ms });
         self
+    }
+
+    /// The client-side response timeout the connection manager needs so a declared
+    /// `WAIT` timeout is the one that actually applies.
+    ///
+    /// `redis`'s `ConnectionManager` defaults to a 500 ms per-command response
+    /// timeout, and `WAIT <quorum> <timeout_ms>` is an ordinary command — so the
+    /// shipped `redis-wait-quorum:2:2000` tier could never wait 2000 ms: any replica
+    /// ack slower than 500 ms aborted the command CLIENT-side and failed the request
+    /// closed. The deployment declared a durability tier it was not running, and the
+    /// symptom (spurious `replay_cache_unavailable` under replica lag) looks like a
+    /// Redis problem rather than a client bound.
+    ///
+    /// The bound must be strictly larger than the declared `WAIT` timeout, with
+    /// headroom for the round trip itself.
+    fn response_timeout_for(timeout_ms: u64) -> Duration {
+        Duration::from_millis(timeout_ms.saturating_add(WAIT_RESPONSE_HEADROOM_MS))
     }
 }
 

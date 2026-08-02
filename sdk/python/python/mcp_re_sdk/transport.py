@@ -45,6 +45,7 @@ import hashlib
 import inspect
 import json
 import secrets
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -232,7 +233,11 @@ def _checked_nonce(factory: Callable[[], str]) -> str:
     """
     nonce = factory()
     if not isinstance(nonce, str) or len(nonce) < MIN_NONCE_CHARS:
-        raise McpReError(
+        # `McpReSdkError`, not `McpReError`: this is a LOCAL misconfiguration, and
+        # `McpReError.wire_code` is documented as a frozen `mcp-re.*` token a caller can
+        # branch on without parsing prose. Raising it with an English sentence in that
+        # position invented a token, and the sentence then travelled as one.
+        raise McpReSdkError(
             f"mcp-re-sdk: nonce_factory returned {len(nonce) if isinstance(nonce, str) else type(nonce).__name__} "
             f"characters; a nonce must be at least {MIN_NONCE_CHARS} (128 bits base64url)"
         )
@@ -411,14 +416,37 @@ def _binding_context(config: McpReConfig, method: str) -> BindingRequestContext:
 
 
 def _bindings_json(config: McpReConfig, method: str) -> Optional[str]:
+    """The provider specs, serialized CANONICALLY (compact separators, sorted keys).
+
+    Byte-identical to the TypeScript twin's ``bindingsJson``. It was not: ``json.dumps``
+    defaults to ``", "``/``": "`` separators and ``JSON.stringify`` emits none, so the
+    same bindings produced two different ``authz_binding_digest`` values and an audit
+    pipeline reconciling records across the two SDKs saw a false "artifact binding
+    changed" on byte-identical requests. Neither SDK's own test could see it — each
+    recomputed the expectation with its own serializer — and the parity fixture replays
+    the Python string verbatim.
+
+    The wire is unaffected either way: the native core re-parses this structurally and
+    digests the decoded material, never this text.
+    """
     if not config.authorization:
         return None
     ctx = _binding_context(config, method)
-    return json.dumps([p.spec(ctx) for p in config.authorization])
+    return json.dumps(
+        [p.spec(ctx) for p in config.authorization],
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _authz_binding_digest(bindings_json: Optional[str]) -> Optional[str]:
-    """``sha-256:<b64url>`` over the exact authorization-binding bytes that were signed.
+    """``sha-256:<b64url>`` over the canonical serialization of the binding specs.
+
+    NOT over the signed evidence bytes: the core digests the artifact MATERIAL and this
+    is a digest of the spec JSON, so the two are different values and this one cannot be
+    recomputed from a captured request. It identifies WHICH artefacts a request was
+    bound to, for reconciliation against another client's record of the same call —
+    which is why it has to be byte-identical across SDKs (see :func:`_bindings_json`).
 
     ADR-MCPS-044 enumerates this among the fields a conforming client keeps per
     outstanding request. It is retained for audit only and never re-interpreted
@@ -759,13 +787,55 @@ async def _one_notification(config: McpReConfig, poster: Poster, method: str, pa
                             limiter) -> None:
     """Run one notification to completion under the concurrency bound.
 
-    Unlike :func:`_one`, a failure here is NOT converted into a delivered message: there
-    is no request id to correlate it to and no caller awaiting a reply, so it propagates
-    out of the pump's task group and closes the transport. That asymmetry is the shape of
-    a one-way message, not a difference in how strictly the two are checked.
+    A notification has no request id and no caller awaiting a reply, so a failure cannot
+    be DELIVERED as a JSON-RPC error the way :func:`_one` delivers one. It must still not
+    take the session with it.
+
+    Letting it propagate did exactly that: notifications are started with
+    ``tg.start_soon`` in the SAME task group that runs every concurrent exchange, so one
+    unverifiable signed 202 — for a routine ``notifications/initialized``, from a proxy
+    whose delegated key is merely past ``exp`` or whose trust epoch is stale — cancelled
+    every other in-flight tool call and tore the transport down. That is the
+    remotely-triggerable session kill round 5 fixed on the request path, and the peer
+    controls the trigger. The TypeScript twin fails only the one ``send()``.
+
+    So the failure is contained and reported on the diagnostic channel instead. The
+    notification is NOT treated as delivered — nothing acknowledges it, which is the
+    honest outcome for a message whose acknowledgement did not verify — and unrelated
+    exchanges continue.
+
+    ``BaseException`` is deliberately not caught: cancellation must still propagate, or
+    ``close()`` could not abort an in-flight notification.
     """
     async with limiter:
-        await _notify(config, poster, method, params)
+        try:
+            await _notify(config, poster, method, params)
+        except Exception as e:  # noqa: BLE001 - see the docstring
+            _report_notification_failure(method, e)
+
+
+def _report_notification_failure(method: str, error: BaseException) -> None:
+    """Surface a contained notification failure without ending the session.
+
+    A hook rather than a bare ``print`` so an embedder can route it: there is no reply
+    channel for a one-way message, so this is the only place the outcome can be
+    observed, and swallowing it entirely would be its own defect. Assign
+    ``mcp_re_sdk.transport.on_notification_failure`` to override.
+    """
+    on_notification_failure(method, error)
+
+
+def _default_notification_failure(method: str, error: BaseException) -> None:
+    print(
+        f"mcp-re-sdk: notification {method!r} was not acknowledged: "
+        f"{type(error).__name__}: {error}",
+        file=sys.stderr,
+    )
+
+
+#: Called when a notification's acknowledgement did not verify. Replaceable by an
+#: embedder that wants the event routed somewhere other than stderr.
+on_notification_failure = _default_notification_failure
 
 
 async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,

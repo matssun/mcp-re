@@ -16,6 +16,7 @@
 //! The interface is the seam that keeps an object-store implementation possible later:
 //! nothing in the SCITT path knows a filesystem is behind it.
 
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -59,6 +60,30 @@ impl FsRetainedEvidenceStore {
     }
 }
 
+/// Create `path` readable and writable by the OWNER ONLY.
+///
+/// Retained evidence is the request and response signature bases of real calls —
+/// enough to reconstruct who asked for what — and the store wrote them at whatever
+/// the process umask happened to allow, typically world-readable. Every other
+/// sensitive file this proxy touches is permission-checked; this one was not.
+#[cfg(unix)]
+fn open_private(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_private(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
 impl RetainedEvidenceStore for FsRetainedEvidenceStore {
     type Error = std::io::Error;
 
@@ -73,9 +98,24 @@ impl RetainedEvidenceStore for FsRetainedEvidenceStore {
         // Write to a temporary name and rename, so a crash mid-write cannot leave a
         // SHORT file under a digest that promises the full content. A reader would
         // otherwise get bytes that do not hash to the name they asked for.
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, evidence)?;
+        // A UNIQUE temp name per write: a fixed `<digest>.tmp` is shared by every
+        // concurrent writer of the same object, and they would truncate each other's
+        // inode before either renamed.
+        let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+        {
+            let mut file = open_private(&tmp)?;
+            file.write_all(evidence)?;
+            // Durability barrier before the rename: without it a power loss can publish
+            // the renamed name with unflushed contents, and a reader then gets bytes
+            // that do not hash to the digest they asked for — the one property a
+            // content-addressed store has.
+            file.sync_all()?;
+        }
         std::fs::rename(&tmp, &path)?;
+        // And fsync the directory, or the rename itself can be lost.
+        if let Ok(dir) = std::fs::File::open(&self.root) {
+            let _ = dir.sync_all();
+        }
         Ok(digest)
     }
 

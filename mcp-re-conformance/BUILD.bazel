@@ -88,12 +88,15 @@ nt_rust_test(
         "//mcp-re-core:src/error.rs",
         "//mcp-re-core:src/audit.rs",
         "//mcp-re-http-profile:src/error.rs",
+        "//mcp-re-proxy:src/http_profile_dispatch.rs",
     ],
     edition = "2021",
     env = {
         "MCP_RE_CORE_SRC_ERROR": "$(rlocationpath //mcp-re-core:src/error.rs)",
         "MCP_RE_CORE_SRC_AUDIT": "$(rlocationpath //mcp-re-core:src/audit.rs)",
         "MCP_RE_PROFILE_SRC_ERROR": "$(rlocationpath //mcp-re-http-profile:src/error.rs)",
+        # The third producer feeding `request_rejected_code`: the replay-tier gate.
+        "MCP_RE_PROXY_SRC_DISPATCH": "$(rlocationpath //mcp-re-proxy:src/http_profile_dispatch.rs)",
     },
     deps = [
         "//mcp-re-test-paths:mcp_re_test_paths",

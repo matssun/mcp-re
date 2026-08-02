@@ -1,6 +1,15 @@
 //! RFC 3339 UTC timestamp parsing and freshness checking (MCP_RE_SPEC §5 / ADR-006,
 //! and the `verify_request` order §9 step 9).
 //!
+//! **NOT the live freshness gate.** Under ADR-MCPRE-050 the RFC 9421 + RFC 9530 HTTP
+//! evidence carrier is the sole carrier, and its `created`/`expires` are sf-integers
+//! in the `Signature-Input` header — parsed and bounded by
+//! `mcp_re_http_profile::verify`, which is what every served request goes through.
+//! Nothing on that path calls this module. It is retained as the parser for the
+//! RFC 3339 timestamps that appear in evidence ARTIFACTS (manifests, pins, retained
+//! records), and re-exported for embedders; describing it as the gate would send a
+//! reader looking for the enforcement in the wrong crate.
+//!
 //! Core MUST stay pure and deterministic: it does NOT read the system clock.
 //! Freshness is evaluated against a `now_unix` value supplied by the caller, so
 //! every check is reproducible and testable.

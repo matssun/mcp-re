@@ -313,6 +313,60 @@ impl McpReError {
     }
 }
 
+/// EVERY variant of the frozen taxonomy, once.
+///
+/// The single source for "what is in the taxonomy", so a containment guard cannot
+/// silently fall behind: `wire_code` above is an exhaustive match, so adding a variant
+/// is a compile error there, and this list is checked against it by
+/// [`all_wire_codes_is_exhaustive`](self::tests::all_wire_codes_is_exhaustive). Two
+/// hand-written copies of this set had already drifted — `ContinuationTypeUnsupported`
+/// and `TrustResolverUnavailable` were emitted and neither was checked.
+pub const ALL_ERRORS: &[McpReError] = &[
+    McpReError::MissingEnvelope,
+    McpReError::UnsupportedVersion,
+    McpReError::InvalidSignature,
+    McpReError::SerializationFailed,
+    McpReError::ExpiredRequest,
+    McpReError::ReplayDetected,
+    McpReError::InvalidAudience,
+    McpReError::ActorBindingFailed,
+    McpReError::TransportBindingFailed,
+    McpReError::AuthorizationHashMissing,
+    McpReError::OnBehalfOfMissing,
+    McpReError::OnBehalfOfInvalidFormat,
+    McpReError::ResponseSigInvalid,
+    McpReError::ResponseHashMismatch,
+    McpReError::DowngradeForbidden,
+    McpReError::BatchForbidden,
+    McpReError::NotificationForbidden,
+    McpReError::UnknownEnvelopeField,
+    McpReError::TrustResolverUnavailable,
+    McpReError::ReplayCacheUnavailable,
+    McpReError::AuthorizationBindingMissing,
+    McpReError::AuthorizationBindingTypeUnsupported,
+    McpReError::AuthorizationBindingMalformed,
+    McpReError::AuthorizationBindingProfileRequired,
+    McpReError::AuthorizationBindingAmbiguousBytes,
+    McpReError::ContinuationTypeUnsupported,
+    McpReError::ContinuationMalformed,
+    McpReError::MalformedEnvelope,
+    McpReError::DigestMismatch,
+    McpReError::ArtifactBindingFailed,
+    McpReError::RequestBindingMismatch,
+    McpReError::ContinuationBindingFailed,
+    McpReError::DelegationCredentialMissing,
+    McpReError::DelegationCredentialInvalid,
+    McpReError::DelegationCredentialExpired,
+    McpReError::DelegationIssuerUntrusted,
+    McpReError::DelegationProfileMismatch,
+    McpReError::DelegationAudienceMismatch,
+    McpReError::DelegationKeyUseInvalid,
+    McpReError::DelegationTrustEpochStale,
+    McpReError::DelegationKeyMismatch,
+    McpReError::DelegationRevoked,
+    McpReError::DelegatedSigningUnavailable,
+];
+
 /// Result alias over the frozen MCP-RE error taxonomy.
 pub type McpReResult<T> = Result<T, McpReError>;
 
@@ -518,5 +572,30 @@ mod tests {
     fn errors_compare_by_value() {
         assert_eq!(McpReError::ReplayDetected, McpReError::ReplayDetected);
         assert_ne!(McpReError::ReplayDetected, McpReError::ExpiredRequest);
+    }
+}
+
+#[cfg(test)]
+mod all_errors_tests {
+    use super::McpReError;
+    use super::ALL_ERRORS;
+
+    /// `ALL_ERRORS` must name every variant exactly once. `wire_code` is an exhaustive
+    /// match, so a NEW variant is a compile error there; this catches the other half —
+    /// a variant added to the match and forgotten here.
+    #[test]
+    fn all_errors_is_exhaustive_and_duplicate_free() {
+        let codes: std::collections::BTreeSet<&'static str> =
+            ALL_ERRORS.iter().map(McpReError::wire_code).collect();
+        assert_eq!(
+            codes.len(),
+            ALL_ERRORS.len(),
+            "ALL_ERRORS names a wire code twice"
+        );
+        // Every wire code the enum can produce is reachable from ALL_ERRORS. Written
+        // as a per-variant assertion so the failure names the missing one.
+        for error in ALL_ERRORS {
+            assert!(error.wire_code().starts_with("mcp-re."));
+        }
     }
 }

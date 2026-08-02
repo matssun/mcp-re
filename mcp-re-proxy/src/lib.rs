@@ -138,6 +138,10 @@ pub mod revocation_tier;
 // verification (no positive-trust caching), with an optional second live
 // revocation authority; fail-closed on store/revocation outage.
 pub mod live_trust;
+/// The re-readable trust store the revocation tiers resolve against — what makes
+/// "the store is consulted on every verification" a true statement about a running
+/// proxy rather than about a map frozen at boot.
+pub mod reloading_trust;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).

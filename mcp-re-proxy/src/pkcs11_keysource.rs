@@ -312,10 +312,20 @@ pub struct Pkcs11KeySource {
 /// `context` first would call into a finalized module (use-after-finalize → crash).
 /// With `session` first, the cached handle is closed BEFORE `C_Finalize` runs.
 struct Pkcs11Token {
-    /// ONE logged-in session reused across response signs, TLS handshake signs, and
-    /// public-key reads (M16): a fresh login happens only on first use or after a
+    /// The session used for ROOT operations: delegated-credential issuance and
+    /// public-key reads (M16). A fresh login happens only on first use or after a
     /// transient session invalidation. Declared first so it drops before `context`.
     session: AmortizedSession<LoggedInSession>,
+    /// A SEPARATE session for TLS handshake signing.
+    ///
+    /// `with_session` holds its mutex across the whole blocking token op, and the TLS
+    /// sign is triggered by any peer opening a connection while the root issuance is
+    /// the cold path that mints response-signing keys. Sharing one mutex let a
+    /// handshake flood starve rotation — and a slow root issuance block handshakes —
+    /// across threads, coupling an unauthenticated trigger to the credential
+    /// lifecycle. PKCS#11 allows multiple sessions on a slot, so the two get their
+    /// own; they still share the module context and the single login PIN.
+    tls_session: AmortizedSession<LoggedInSession>,
     /// The loaded Cryptoki context (owns the module handle; finalized on drop, after
     /// `session`). One `C_Initialize` per process.
     context: Pkcs11Context,
@@ -397,12 +407,14 @@ impl Pkcs11KeySource {
         })?;
         let slot = find_token_slot(&context, token_label)?;
 
-        // The ONE shared, logged-in token. Both the response-signing key object and
-        // the TLS key object are reached over this single login (PKCS#11 login is
-        // per-token-per-application — a second independent `C_Login` on the same
-        // token would be `CKR_USER_ALREADY_LOGGED_IN`).
+        // ONE token, TWO sessions. PKCS#11 login is per-token-per-application, so both
+        // sessions ride the same login state (a second independent `C_Login` would be
+        // `CKR_USER_ALREADY_LOGGED_IN`) — but each carries its own session handle and
+        // its own mutex, so a TLS handshake sign and a root issuance no longer block
+        // each other. See the field docs on `tls_session`.
         let token = Arc::new(Pkcs11Token {
             session: AmortizedSession::new(),
+            tls_session: AmortizedSession::new(),
             context,
             slot,
             pin: Zeroizing::new(pin.to_string()),
@@ -745,7 +757,7 @@ impl Pkcs11TlsSigner {
 impl RawEd25519TlsSigner for Pkcs11TlsSigner {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.token
-            .session
+            .tls_session
             .with_session(self.token.as_ref(), |logged_in| {
                 let view = self.token.context.with_handle(logged_in.handle);
                 let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;

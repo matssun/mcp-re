@@ -225,11 +225,30 @@ export class AuthorizationBindingPolicy {
   }
 }
 
-/** Serialize provider specs for the native `bindingsJson` parameter. */
+/**
+ * Serialize provider specs for the native `bindingsJson` parameter, CANONICALLY:
+ * compact separators and sorted keys.
+ *
+ * Byte-identical to the Python twin's `_bindings_json`. It was not: `json.dumps`
+ * defaults to `", "`/`": "` separators and `JSON.stringify` emits none, so the same
+ * bindings produced two different `authzBindingDigest` values and an audit pipeline
+ * reconciling records across the two SDKs saw a false "artifact binding changed" on
+ * byte-identical requests. Neither SDK's own test could see it — each recomputed the
+ * expectation with its own serializer.
+ *
+ * The wire is unaffected either way: the native core re-parses this structurally and
+ * digests the decoded material, never this text.
+ */
 export function bindingsJson(
   providers: readonly AuthorizationBindingProvider[],
   context: BindingRequestContext,
 ): string | null {
   if (providers.length === 0) return null;
-  return JSON.stringify(providers.map((p) => p.spec(context)));
+  const canonical = providers.map((p) => {
+    const spec = p.spec(context) as unknown as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(spec).sort()) sorted[key] = spec[key];
+    return sorted;
+  });
+  return JSON.stringify(canonical);
 }

@@ -65,7 +65,11 @@ pub struct AwsCredentials {
     pub secret_access_key: Zeroizing<String>,
     /// Present only for temporary credentials (STS). When set it is signed in and
     /// sent as `X-Amz-Security-Token`.
-    pub session_token: Option<String>,
+    /// The STS session token. `Zeroizing` like `secret_access_key`, and for the same
+    /// reason: on its own it authorizes KMS `Sign`/`GetPublicKey` for the token's
+    /// lifetime, so leaving it as a plain `String` cloned once per KMS call left copies
+    /// of a live bearer credential scattered through freed heap.
+    pub session_token: Option<Zeroizing<String>>,
 }
 
 /// The minimal SigV4 signer, bound to a region + service (always `kms` here).
@@ -83,10 +87,21 @@ pub struct SignedAuth {
     /// `X-Amz-Date` (`YYYYMMDDTHHMMSSZ`).
     pub amz_date: String,
     /// `X-Amz-Security-Token` value iff temporary credentials were used.
-    pub security_token: Option<String>,
+    /// The session token to send as `x-amz-security-token`, `Zeroizing` for the same
+    /// reason it is on [`AwsCredentials`]: it is a live bearer credential.
+    pub security_token: Option<Zeroizing<String>>,
 }
 
 impl SigV4Signer {
+    /// Replace the credentials this signer uses.
+    ///
+    /// Temporary (STS/IRSA) credentials expire, and a signer that captured them once
+    /// at process start would fail every call from that moment on. The caller re-reads
+    /// the environment — where a projected token refresh writes — and hands them here.
+    pub fn set_credentials(&mut self, credentials: AwsCredentials) {
+        self.credentials = credentials;
+    }
+
     pub fn new(credentials: AwsCredentials, region: String, service: String) -> Self {
         SigV4Signer {
             credentials,
@@ -161,7 +176,7 @@ impl SigV4Signer {
         if let Some(token) = &self.credentials.session_token {
             headers.push(Header {
                 name: "x-amz-security-token".to_string(),
-                value: token.clone(),
+                value: token.to_string(),
             });
         }
 
@@ -312,7 +327,7 @@ mod tests {
             AwsCredentials {
                 access_key_id: "AKIDEXAMPLE".to_string(),
                 secret_access_key: Zeroizing::new("secret".to_string()),
-                session_token: Some("tok123".to_string()),
+                session_token: Some(Zeroizing::new("tok123".to_string())),
             },
             "us-east-1".to_string(),
             "kms".to_string(),
@@ -325,7 +340,10 @@ mod tests {
             b"{}",
             "20150830T123600Z",
         );
-        assert_eq!(auth.security_token.as_deref(), Some("tok123"));
+        assert_eq!(
+            auth.security_token.as_deref().map(String::as_str),
+            Some("tok123")
+        );
         assert!(auth.authorization.contains("x-amz-security-token"));
     }
 }

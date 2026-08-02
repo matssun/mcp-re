@@ -124,6 +124,8 @@ fn server_config() -> mcp_re_proxy::cli::Config {
         "/tmp/mcp-re-client-server-e2e-replay",
         "--delegated-trust-epoch",
         EPOCH,
+        "--trust-domain",
+        "mcp.example.com",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -341,7 +343,10 @@ fn client_proxy_anchored(
         )],
         extra_headers: vec![("Authorization".into(), format!("Bearer {ACCESS_TOKEN}"))],
         expected_server_keyid: None,
-        verification: ClientVerification::DelegatedAnchored(delegation_policy(), issuers),
+        verification: ClientVerification::DelegatedAnchored(
+            delegation_policy(),
+            std::sync::Arc::new(mcp_re_client_proxy::AnchorSnapshot::new(issuers)),
+        ),
     };
     ClientProxy::new(
         RouteRegistry::new().register(route),
@@ -425,9 +430,11 @@ fn plain_request() -> serde_json::Value {
     })
 }
 
+/// Test nonces are padded to the 128-bit emission floor the client core enforces —
+/// the floor is a property under test elsewhere, not something to work around here.
 fn params(nonce: &str) -> CallParams {
     CallParams {
-        nonce: nonce.to_string(),
+        nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW - 100,
         expires: NOW + 200,
         now_unix: NOW,
@@ -509,7 +516,8 @@ fn one_exchange(
             ArtifactType::OauthDpop,
             ACCESS_TOKEN.as_bytes(),
         )],
-        nonce,
+        // Padded to the 128-bit emission floor the client core enforces.
+        format!("{nonce}-padded-to-the-128-bit-floor"),
         at,
         at + 60,
     )

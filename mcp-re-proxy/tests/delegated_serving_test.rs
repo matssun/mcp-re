@@ -713,7 +713,7 @@ async fn the_client_cores_own_notification_envelope_earns_a_202() {
             ArtifactType::OauthDpop,
             ACCESS_TOKEN.as_bytes(),
         )],
-        "nonce-sdk-envelope-1",
+        "nonce-sdk-envelope-1-padded-to-floor",
         CREATED,
         EXPIRES,
     )

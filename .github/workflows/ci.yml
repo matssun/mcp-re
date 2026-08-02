@@ -154,6 +154,15 @@ jobs:
       - name: Helm chart render gate (fail-closed guards must refuse)
         run: python3 scripts/helm_render_gate.py
 
+      # ES256 containment (ADR-MCPRE-054): ECDSA P-256 is admitted for SCITT receipt
+      # verification and nowhere else — request and response signing stay Ed25519.
+      # This was the one stage-1 structural gate that ran only in `local_gate.sh`, so
+      # a PR that never ran the local gate could widen the containment unnoticed.
+      - name: ES256 containment gate
+        run: |
+          python3 scripts/es256_containment_gate.py --selftest
+          python3 scripts/es256_containment_gate.py
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.

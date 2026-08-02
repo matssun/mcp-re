@@ -147,12 +147,24 @@ impl RedisAdmissionSource {
         })?;
         match raw {
             None => Ok(None),
+            // A MALFORMED record is a definitive negative, not an outage.
+            //
+            // Reporting it as `Unavailable` sent it to the §5.2 degraded fork, which
+            // serves on the caller's own assertion within P — so overwriting a
+            // `revoked` record with garbage RESTORED service to the revoked workload
+            // under `--admission-allow-degraded true`. Corrupting a record must never
+            // be a cheaper way to un-revoke than issuing a new one. `Ok(None)` is the
+            // authority saying it has no valid record for this workload, which the
+            // gate refuses outright.
             Some(value) => {
-                decode(&value)
-                    .map(Some)
-                    .ok_or_else(|| AdmissionSourceError::Unavailable {
-                        details: format!("malformed admission record in shared store: {value:?}"),
-                    })
+                if decode(&value).is_none() {
+                    eprintln!(
+                        "mcp-re-proxy: malformed admission record for a workload in the shared \
+                         store; treating it as NOT ADMITTED (a corrupt record is not an outage). \
+                         Raw value withheld."
+                    );
+                }
+                Ok(decode(&value))
             }
         }
     }

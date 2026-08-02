@@ -49,8 +49,9 @@ use crate::message::HttpRequest;
 use crate::message::HttpResponse;
 use crate::policy::VerifierPolicy;
 use crate::verify::parse_signature_input_for;
+use crate::verify::verify_delegated_response_bound_full;
 use crate::verify::verify_request_with_policy;
-use crate::verify::verify_response_bound_full_with_policy;
+use crate::verify::DelegationExpectations;
 
 /// The retained evidence for ONE hop (§9.2): the complete request and response
 /// messages as they went over the wire.
@@ -214,12 +215,26 @@ fn classify_verified_response(body: &[u8]) -> HopOutcome {
 /// broken hop: past that point the record is already not complete, and continuing
 /// would invite reporting later hops as "fine" when nothing links them to a
 /// beginning.
+/// `expect` and `is_revoked` are the ADR-MCPRE-052 delegated-verification inputs.
+///
+/// They are not optional and there is no direct-root fallback, because there is no
+/// direct-root evidence to reconstruct: delegated-required is the only response-signing
+/// mode the serving path has. Verifying hop responses through the pre-052 path — as an
+/// earlier revision did — meant reconstruction could not verify the evidence MCP-RE
+/// actually emits (every hop failed on an unresolvable delegated kid), and an auditor
+/// who worked around that by vouching for delegated kids at the trust seam would have
+/// skipped the credential's expiry, revocation, audience scope, key use, trust epoch
+/// and root binding for the audit verdict. That verdict is not local: the label is
+/// embedded in the SCITT Signed Statement, so a receipt could commit to a COMPLETE call
+/// record established without any delegation chain ever being checked.
 pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     hops: &[RetainedHop],
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
-    policy: &VerifierPolicy,
+    expect: &DelegationExpectations<'_>,
+    is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
 ) -> ChainReconstruction {
+    let policy = &expect.policy;
     let mut hop_evidence: Vec<HopEvidence> = Vec::with_capacity(hops.len());
 
     if hops.is_empty() {
@@ -277,12 +292,13 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
             };
 
         // 2. The hop's response must verify AND be bound to that request.
-        let verified_rsp = match verify_response_bound_full_with_policy(
+        let verified_rsp = match verify_delegated_response_bound_full(
             &hop.response,
             &hop.request,
             &verified_req.evidence,
             resolve_actor,
-            policy,
+            expect,
+            is_revoked,
             response_at,
         ) {
             Ok(v) => v,

@@ -148,6 +148,18 @@ fn authority_resolver() -> AdmissionAuthorityResolver {
     Arc::new(|kid: &str| (kid == AUTHORITY_KID).then(|| authority_key().public_key()))
 }
 
+/// The actor id the PEP's verifier resolves for the signing client — the value an
+/// assertion must name so it cannot be presented by anyone else.
+fn client_actor_id() -> String {
+    ActorIdentity {
+        role: "client".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:host-a".into(),
+        keyid: CLIENT_KEY_ID.into(),
+    }
+    .actor_id()
+}
+
 fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> AdmissionClaims {
     AdmissionClaims {
         iss: "did:example:admission".into(),
@@ -158,6 +170,7 @@ fn admission_claims(generation: u64, status: AdmissionStatus, iat: i64) -> Admis
         aud: Audience::One(VERIFIER_AUD.into()),
         mcp_re_profile: PROFILE_TAG.into(),
         mcp_re_admission_id: WORKLOAD.into(),
+        mcp_re_admitted_actor: client_actor_id(),
         mcp_re_admission_generation: generation,
         mcp_re_admitted_state_digest: b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
         mcp_re_admission_status: status,
@@ -349,6 +362,41 @@ fn a_current_admitted_workload_is_served() {
         String::from_utf8_lossy(&served.body)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+/// A BORROWED assertion does not admit its holder.
+///
+/// Every field of the binding is derivable from the assertion itself
+/// (`AdmissionBinding::opaque_from`), and the assertion is carried in a request body
+/// the caller signs — so without a presenter binding, anyone whose own key the PEP
+/// resolves could copy an admitted peer's assertion into its own evidence block and
+/// pass §7. The assertion here is genuine, current, and signed by the real authority:
+/// the ONLY thing wrong with it is that it was issued to somebody else.
+#[test]
+fn an_assertion_issued_to_another_actor_does_not_admit_this_caller() {
+    let source = Arc::new(InMemoryAdmissionSource::new());
+    source.admit(WORKLOAD, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy = replica(
+        source,
+        strict_policy(),
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    );
+    let mut claims = admission_claims(5, AdmissionStatus::Admitted, CREATED);
+    claims.mcp_re_admitted_actor = "client:example.com:did:example:host-b:client-key-2".into();
+    let req = signed_call(Some((&claims, &authority_key())), "n-borrowed");
+
+    let served = block_on(proxy.handle(served_of(&req), NOW));
+    assert_eq!(
+        served.status, 403,
+        "an assertion naming another actor must not admit this one"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "the tool ran on a borrowed admission"
+    );
 }
 
 /// THE case #493 exists for. The assertion is fresh, correctly bound, and says

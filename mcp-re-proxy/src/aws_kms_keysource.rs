@@ -90,6 +90,7 @@ impl AwsCredentials {
             access_key_id,
             secret_access_key: Zeroizing::new(secret_access_key),
             session_token: std::env::var("AWS_SESSION_TOKEN")
+                .map(Zeroizing::new)
                 .ok()
                 .filter(|s| !s.is_empty()),
         })
@@ -107,7 +108,15 @@ pub(crate) trait KmsHttpClient {
 
 /// Production [`KmsHttpClient`]: SigV4-signs and sends over `ureq` (rustls HTTPS).
 pub(crate) struct UreqKmsClient {
-    signer: SigV4Signer,
+    /// Behind a lock so credentials can be RE-READ from the environment.
+    ///
+    /// They were captured once at process start and never refreshed, while temporary
+    /// (session-token) credentials are an explicitly supported mode: under IRSA or any
+    /// STS-issued pair the token expires — typically within the hour — and from that
+    /// moment every KMS call fails, so the whole fleet loses response signing
+    /// permanently and only a restart recovers it. The environment is what a projected
+    /// token refresh updates, so re-reading it is the refresh.
+    signer: std::sync::RwLock<SigV4Signer>,
     agent: ureq::Agent,
     url: String,
     authority: String,
@@ -125,7 +134,7 @@ impl UreqKmsClient {
         let authority = authority_of(&url)?;
         let signer = SigV4Signer::new(credentials, config.region.clone(), "kms".to_string());
         Ok(UreqKmsClient {
-            signer,
+            signer: std::sync::RwLock::new(signer),
             agent: ureq::AgentBuilder::new().build(),
             url,
             authority,
@@ -135,10 +144,24 @@ impl UreqKmsClient {
 
 impl KmsHttpClient for UreqKmsClient {
     fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
+        // Re-read the environment before signing. Cheap (a `getenv`, on the cold KMS
+        // path only — the root is off the request path), and it is what lets a
+        // refreshed STS/IRSA credential take effect without a restart. A read that
+        // fails leaves the last-good credentials in place: a transient failure to read
+        // must not be worse than not looking.
+        if let Ok(refreshed) = AwsCredentials::from_env() {
+            if let Ok(mut signer) = self.signer.write() {
+                signer.set_credentials(refreshed);
+            }
+        }
+        let signer = self
+            .signer
+            .read()
+            .map_err(|_| KeyError::NotFound("aws-kms: credential lock poisoned".to_string()))?;
         let amz_date = format_amz_date(now_unix());
         // Headers that are SIGNED (host, content-type, x-amz-target). x-amz-date and
         // the session token are added by the signer.
-        let signed = self.signer.sign(
+        let signed = signer.sign(
             vec![
                 Header {
                     name: "host".to_string(),

@@ -242,11 +242,33 @@ const MIN_NONCE_CHARS = 22;
  * from. Enforced only where a nonce is EMITTED, so the accepted wire language is
  * unchanged — no cross-implementation coordination, no fixture regeneration.
  */
+/**
+ * The frozen `mcp-re.*` token in a thrown core error's message, or `null`.
+ *
+ * The napi binding formats every core failure as `"mcp-re: mcp-re.<token>"`, and the
+ * test used to be `/^mcp-re\.[a-z0-9_]+$/` against the whole message — which cannot
+ * match a string starting with `"mcp-re: "`. So EVERY genuine peer-evidence failure
+ * (a forged signature, an unbound response, a revoked credential) was relabelled
+ * `mcp-re-sdk: Error: ...`, i.e. reported to the application as a local condition,
+ * and the Python twin delivered the bare token for the same event.
+ *
+ * Both spellings are accepted, since the prefix is a binding detail: the token is what
+ * the taxonomy pins.
+ */
+const peerWireCode = (message: string): string | null => {
+  const token = message.startsWith("mcp-re: ") ? message.slice("mcp-re: ".length) : message;
+  return /^mcp-re\.[a-z0-9_]+$/.test(token) ? token : null;
+};
+
 const checkedNonce = (factory: () => string): string => {
   const nonce = factory();
   if (typeof nonce !== "string" || nonce.length < MIN_NONCE_CHARS) {
     const got = typeof nonce === "string" ? `${nonce.length} characters` : typeof nonce;
-    throw new Error(
+    // `McpReSdkError`, matching the Python twin: a local misconfiguration is not a
+    // protocol verdict, so it must not be an `McpReError` carrying an invented
+    // `wireCode` — and it must not be an untyped `Error` either, or a caller cannot
+    // catch it the same way in both SDKs.
+    throw new McpReSdkError(
       `mcp-re-sdk: nonceFactory returned ${got}; a nonce must be at least ${MIN_NONCE_CHARS} (128 bits base64url)`,
     );
   }
@@ -663,12 +685,7 @@ export class McpReHttpTransport implements Transport {
         // that otherwise only ever holds something the peer said, so only a message that
         // IS a frozen token is passed through as one. Everything else is delivered under
         // the prefix that means "local condition", named, exactly as Python does it.
-        reply = errorMessage(
-          request.id,
-          /^mcp-re\.[a-z0-9_]+$/.test(e.message)
-            ? e.message
-            : `mcp-re-sdk: ${e.name}: ${e.message}`,
-        );
+        reply = errorMessage(request.id, peerWireCode(e.message) ?? `mcp-re-sdk: ${e.name}: ${e.message}`);
       } else {
         throw e;
       }

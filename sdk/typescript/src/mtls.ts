@@ -106,6 +106,33 @@ export interface MtlsOptions {
 }
 
 /** The name to prove, the port, and the host to dial. */
+/**
+ * Refuse TLS material that Node would silently treat as "not supplied".
+ *
+ * `createSecureContext` branches on truthiness: a falsy `ca` installs the bundled
+ * public root store, and a falsy `cert`/`key` omits the client certificate. Neither
+ * produces an error, so the failure is a working connection with the wrong trust.
+ * A Buffer of length 0 and an empty (or whitespace-only) string are both that case.
+ */
+function assertTlsMaterial(
+  field: string,
+  value: string | Buffer | Array<string | Buffer> | undefined,
+  purpose: string,
+): void {
+  const empty = (v: string | Buffer): boolean =>
+    typeof v === "string" ? v.trim().length === 0 : v.length === 0;
+  const missing =
+    value === undefined ||
+    (Array.isArray(value) ? value.length === 0 || value.every(empty) : empty(value));
+  if (missing) {
+    throw new McpReSdkError(
+      `${field} is empty, so there is nothing to ${purpose}. Node treats absent TLS material ` +
+        `as "not supplied" — an empty CA falls back to the bundled public roots and an empty ` +
+        `client certificate is simply not sent, both without an error.`,
+    );
+  }
+}
+
 function endpoint(
   targetUri: string,
   options: MtlsOptions,
@@ -128,6 +155,9 @@ function endpoint(
     throw new McpReSdkError(`targetUri has no host to authenticate: ${JSON.stringify(targetUri)}`);
   }
   const port = options.connectPort ?? (url.port ? Number(url.port) : 443);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new McpReSdkError(`connectPort must be a TCP port in 1..65535, got ${JSON.stringify(port)}`);
+  }
   return {
     serverName,
     port,
@@ -154,7 +184,37 @@ export function mtlsPoster(config: McpReConfig, options: MtlsOptions): Poster {
       `maxResponseBytes must be a positive integer, got ${JSON.stringify(options.maxResponseBytes)}`,
     );
   }
+  // Node treats `timeout: 0` as NO timeout, and `??` only substitutes for null and
+  // undefined — so a caller writing `timeoutMs: config.timeout ?? 0`, or reading a
+  // numeric config that defaults to 0, silently removed the bound instead of getting
+  // the default. Each exchange also holds a transport semaphore slot, so a handful of
+  // stalls with no timeout wedge the whole client. `null` is the ONLY way to ask for
+  // no bound, and it has to be written deliberately. The Python twin refuses `<= 0`
+  // at construction; this is the same refusal.
+  if (
+    options.timeoutMs !== undefined &&
+    options.timeoutMs !== null &&
+    (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 1)
+  ) {
+    throw new McpReSdkError(
+      `timeoutMs must be a positive number, or null for no bound, got ${JSON.stringify(options.timeoutMs)}`,
+    );
+  }
   const timeoutMs = options.timeoutMs === null ? undefined : (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  // TLS MATERIAL. Node's `createSecureContext` documents ca/cert/key as PERMITTED TO BE
+  // FALSY, and takes the `else` branch for each: an empty `ca` installs Node's ~150
+  // bundled public roots INSTEAD of the pinned CA, and an empty `cert`/`key` sends no
+  // client certificate at all. Both handshake, both report success, and both are the
+  // opposite of what this module's own docs promise ("Node's bundled roots are
+  // replaced, not extended"; "There is no way to turn verification off").
+  //
+  // The realistic way in is not a hostile caller: it is `process.env.PROXY_CA ?? ""`,
+  // an unpopulated secret mount, or `readFileSync` of a zero-byte file. So it is
+  // refused here rather than documented.
+  assertTlsMaterial("serverCa", options.serverCa, "authenticate the proxy");
+  assertTlsMaterial("clientCert", options.clientCert, "prove this client's identity");
+  assertTlsMaterial("clientKey", options.clientKey, "prove this client's identity");
 
   return (method: string, _targetUri: string, headers: HttpHeader[], body: Buffer) =>
     new Promise<HttpReply>((resolve, reject) => {
@@ -217,7 +277,21 @@ export function mtlsPoster(config: McpReConfig, options: MtlsOptions): Poster {
       // `setHeader` refuses a CR/LF in a value, so a header that would split the request
       // into two never reaches the socket.
       try {
-        for (const { key, value } of headers) req.setHeader(key, value);
+        // Grouped by name before emitting: `setHeader` REPLACES a header of the same
+        // name, so two fields with one name would transmit only the last — dropping
+        // bytes the RFC 9421 signature covers, and producing a request whose own
+        // signature base no longer matches. The core emits no repeated names today;
+        // this keeps the leg correct if the profile ever covers one, which is what the
+        // Python twin already does by writing header by header.
+        const grouped = new Map<string, string[]>();
+        for (const { key, value } of headers) {
+          const existing = grouped.get(key);
+          if (existing) existing.push(value);
+          else grouped.set(key, [value]);
+        }
+        for (const [key, values] of grouped) {
+          req.setHeader(key, values.length === 1 ? values[0] : values);
+        }
       } catch (e) {
         reject(new MtlsTransportError(`refusing to emit a malformed header: ${String(e)}`));
         req.destroy();

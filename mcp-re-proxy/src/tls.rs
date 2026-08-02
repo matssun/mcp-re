@@ -101,6 +101,22 @@ pub struct ServerLimits {
     /// Idle keep-alive connections carry no in-flight request and do not extend the
     /// drain — an idle drain returns promptly.
     pub drain_grace: Duration,
+    /// The maximum age of a single mTLS connection before it is gracefully closed,
+    /// forcing the peer to re-handshake.
+    ///
+    /// This is what bounds CRL-revocation latency for an ALREADY-ESTABLISHED peer.
+    /// Client-certificate chain validation and CRL consultation happen at the
+    /// handshake and nowhere else; a keep-alive or HTTP/2 connection then serves every
+    /// later request without ever consulting the verifier again. Without an age bound
+    /// a peer whose certificate is added to a reloaded CRL keeps full authenticated
+    /// access simply by not reconnecting — the hot-reload path (`--client-crl-reload-secs`)
+    /// would reach only new connections, and the posture line's `stale_crl_policy` and
+    /// `exposure_window` claims would not hold for the one peer that matters.
+    ///
+    /// Graceful: in-flight requests on the connection finish; only new requests are
+    /// refused, and the peer reconnects transparently. `None` disables the bound,
+    /// which restores the unbounded behaviour and is refused under `--fleet`.
+    pub max_connection_age: Option<Duration>,
 }
 
 impl Default for ServerLimits {
@@ -112,10 +128,29 @@ impl Default for ServerLimits {
             request_deadline: Some(Duration::from_secs(30)),
             write_timeout: Some(Duration::from_secs(30)),
             max_concurrent_connections: 256,
-            max_in_flight_requests: None,
+            // A DEFENSIBLE per-core ceiling rather than the unbounded historical
+            // default. Unbounded meant one peer holding a valid client certificate
+            // could multiplex unbounded HTTP/2 streams, each buffering up to
+            // `max_body_bytes` BEFORE the verify gate — attacker-controlled memory
+            // with zero authenticated requests, and it also left hyper's HTTP/2
+            // `max_concurrent_streams` unset.
+            //
+            // MATCHED TO `max_concurrent_connections` on purpose. That cap already
+            // admitted 256 concurrent connections per core, so one in-flight request
+            // per admitted connection tightens nothing that was previously allowed —
+            // it just stops the H2 multiplexer exceeding it. A smaller number would be
+            // a throughput policy rather than a memory bound, and it would shed inside
+            // the ADR-MCPRE-051 §7 envelope (concurrency 128), which is a load-shaping
+            // decision no default should make silently.
+            max_in_flight_requests: Some(256),
             // >= request_deadline (so every admitted request can finish) and, in
             // production, < k8s terminationGracePeriodSeconds.
             drain_grace: Duration::from_secs(30),
+            // Bounds how long a peer keeps serving on a certificate validated only at
+            // its handshake. 300s is well inside the 1h `max_client_cert_lifetime`
+            // ceiling and short enough that a CRL reload takes effect within one
+            // cadence, while being long enough that re-handshake cost is negligible.
+            max_connection_age: Some(Duration::from_secs(300)),
         }
     }
 }
@@ -201,6 +236,22 @@ pub struct ServerOptions {
     /// verifier checks it against the request evidence block's audience tuple. Empty
     /// when unset (the audience/target check then fails closed).
     pub target_uri: String,
+    /// Whether producing the handshake signature may BLOCK — set when the TLS server
+    /// key is delegated to a KMS or a PKCS#11 token (ADR-MCPS-028 §G).
+    ///
+    /// rustls' `Signer::sign` is synchronous, so on those custody paths the
+    /// CertificateVerify signature is a blocking HTTPS round trip or an FFI `C_Sign`
+    /// executed inside a single `poll`. On the per-core `current_thread` runtime that
+    /// freezes the WHOLE core — its accept loop, its keep-alive connections and every
+    /// in-flight request — for the duration, and `tokio::time::timeout` cannot preempt
+    /// it because the timer never gets to run. Any peer opening connections triggers
+    /// it; a stalled KMS costs seconds per connection and a wedged token is unbounded.
+    ///
+    /// When set, the handshake is run on the blocking pool instead of the runtime
+    /// thread (see `async_serve::serve_connection`). Left `false` for the exported-key
+    /// path, where signing is in-memory and the async handshake is both correct and
+    /// cheaper.
+    pub tls_signing_may_block: bool,
 }
 
 /// Errors building the TLS server configuration.
@@ -312,8 +363,41 @@ impl RustlsDirectProvider {
             .with_single_cert(server_chain, server_key)
             .map_err(|e| TlsError::Config(e.to_string()));
 
-        server_config
+        server_config.map(refuse_session_resumption)
     }
+}
+
+/// Turn OFF TLS session resumption on a server config that requires client
+/// certificates.
+///
+/// rustls runs client authentication — chain building, the CRL consultation, and the
+/// certificate's own validity window — on a FULL handshake only. A resumed session
+/// restores the stored peer certificate chain verbatim and skips it, so a peer that
+/// completed one good handshake keeps an authenticated, identity-bearing channel for
+/// the life of the cached session (rustls' stateful ticket lifetime is 24h by
+/// default) even after its certificate expires or is revoked by a reloaded CRL. The
+/// `ExactMatchBinding` still matches, because the restored identity is the original
+/// one.
+///
+/// That defeats the whole Mode-A revocation posture, which rests on short-lived
+/// client certificates plus CRL refresh. The cost of refusing resumption is a full
+/// handshake per connection — which is exactly what re-runs the checks — and it is
+/// paid at most once per [`ServerLimits::max_connection_age`] window.
+///
+/// **That cost is measurable and it moves the ADR-MCPRE-051 §7 baseline.** On the §7
+/// envelope (1 core / concurrency 128 / 8000 requests / COLD, i.e. a fresh connection
+/// per request) it is worth about 17% of throughput: 5451 rps with resumption, 4547
+/// without, measured A/B on one box. The §7 envelope is the worst case for this — every
+/// request pays a handshake — and a deployment with keep-alive pays it once per
+/// connection instead.
+///
+/// The old number was measuring a proxy that skipped client-certificate verification on
+/// ~7999 of those 8000 handshakes, so it was never a measurement of the posture the ADR
+/// claims. Re-baselining is an owner declaration, not something this module can make.
+fn refuse_session_resumption(mut config: ServerConfig) -> ServerConfig {
+    config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
+    config.send_tls13_tickets = 0;
+    config
 }
 
 /// Build the fail-closed WebPKI client-certificate verifier shared by the
@@ -477,7 +561,7 @@ pub fn build_server_config_delegated_with_crls(
         .map_err(|e| TlsError::Config(e.to_string()))?
         .with_client_cert_verifier(verifier)
         .with_cert_resolver(cert_resolver);
-    Ok(server_config)
+    Ok(refuse_session_resumption(server_config))
 }
 
 /// Extract the 32 raw Ed25519 public-key bytes from a leaf certificate's
@@ -684,8 +768,9 @@ pub(crate) fn connection_rejection_for_leaf(
     leaf_der: Option<&[u8]>,
     options: &ServerOptions,
     request: &[u8],
+    now: i64,
 ) -> Option<Vec<u8>> {
-    cert_lifetime_rejection_for_leaf(leaf_der, options, request)
+    cert_lifetime_rejection_for_leaf(leaf_der, options, request, now)
 }
 
 /// Extract the raw Tier-3 ingress-assertion header value to hand to the
@@ -722,18 +807,25 @@ pub(crate) fn assertion_header<'a>(
 /// `is_some_and(|l| l <= max)` yield `false`, so `cert_lifetime_rejection` fails
 /// closed (G-5) rather than silently admitting a cert whose negative span would
 /// trivially satisfy any `<= max` bound.
-fn leaf_cert_lifetime_secs(leaf_der: &[u8]) -> Option<i64> {
+/// The leaf's validity window as `(not_before, not_after)`, or `None` if it cannot be
+/// parsed OR the window is negative/degenerate (`not_after <= not_before`).
+///
+/// ONE parse for both facts the ceiling needs. The span check and the current-validity
+/// check are separate questions but the same certificate, and parsing X.509 DER twice
+/// per request is measurable on the §7 envelope — it cost ~18% of throughput when this
+/// was two functions.
+///
+/// A degenerate window is treated exactly like an unparseable certificate: `None`
+/// makes the caller fail closed (G-5) rather than admit a cert whose negative span
+/// would trivially satisfy any `<= max` bound.
+fn leaf_validity(leaf_der: &[u8]) -> Option<(i64, i64)> {
     let (_, cert) = X509Certificate::from_der(leaf_der).ok()?;
     let not_before = cert.validity().not_before.timestamp();
     let not_after = cert.validity().not_after.timestamp();
-    // Fail closed on a negative OR degenerate (zero-length) validity window:
-    // `not_after <= not_before` would otherwise yield <= 0, which the caller's
-    // `is_some_and(|l| l <= max)` treats as within ANY max lifetime, admitting an
-    // inverted or instant-lifetime cert. `None` routes it to the rejection path.
     if not_after <= not_before {
         return None;
     }
-    Some(not_after - not_before)
+    Some((not_before, not_after))
 }
 
 /// Enforce the configured maximum client-certificate lifetime (the v1 revocation
@@ -756,7 +848,20 @@ fn cert_lifetime_rejection(
         .peer_certificates()
         .and_then(|chain| chain.first())
         .map(|leaf| leaf.as_ref());
-    cert_lifetime_rejection_for_leaf(leaf, options, request)
+    cert_lifetime_rejection_for_leaf(leaf, options, request, wall_clock_unix())
+}
+
+/// Wall-clock Unix seconds for the transport-layer certificate-validity check.
+///
+/// The serving path's own `now` is threaded from `app.rs` for every EVIDENCE
+/// decision; this one is read here because the check runs at the transport layer,
+/// below the request pipeline, and a pre-epoch fault clamps to 0 — which fails every
+/// validity window closed.
+pub(crate) fn wall_clock_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// Leaf-DER core of [`cert_lifetime_rejection`], shared by the blocking serve loop
@@ -770,6 +875,7 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
     leaf_der: Option<&[u8]>,
     options: &ServerOptions,
     request: &[u8],
+    now: i64,
 ) -> Option<Vec<u8>> {
     let max = options.max_client_cert_lifetime?;
     // An ABSENT leaf is treated exactly like an unparseable one. Only a leaf that
@@ -778,9 +884,22 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
     // span — falls through to the rejection below. Returning `None` for a missing
     // leaf would waive the very check the ceiling exists to perform, and would do
     // it one line before an unparseable cert fails closed.
+    //
+    // The SPAN bound and the CURRENT-VALIDITY bound are both required, and neither
+    // implies the other: a short-lived certificate satisfies the ceiling for the
+    // rest of time, so without the `now` check a peer that keeps one connection
+    // open keeps serving under an expired credential — the exposure window the
+    // ceiling exists to bound would not close.
     let within_limit = leaf_der
-        .and_then(leaf_cert_lifetime_secs)
-        .is_some_and(|lifetime| lifetime <= max.as_secs() as i64);
+        .and_then(leaf_validity)
+        .is_some_and(|(not_before, not_after)| {
+            // SPAN within the ceiling, AND the certificate valid right now. Neither
+            // implies the other: a short-lived certificate satisfies the ceiling for
+            // the rest of time, so without the `now` comparison a peer that keeps one
+            // connection open keeps serving under an expired credential — the exposure
+            // window the ceiling exists to bound would never close.
+            not_after - not_before <= max.as_secs() as i64 && now >= not_before && now < not_after
+        });
     if within_limit {
         return None;
     }
@@ -913,6 +1032,21 @@ fn connection_rejection(
 /// assertions), extracted with `options.identity_policy`.
 ///
 /// Blocking; the caller owns the accept loop policy (see [`serve`]).
+///
+/// # NOT an MCP-RE serving path
+///
+/// This loop frames every reply as a literal `HTTP/1.1 200 OK` with a fixed header
+/// set ([`write_http_response`]): the handler signature carries no status and no
+/// headers, so there is nowhere for them to come from. Under ADR-MCPRE-050 the RFC
+/// 9421 `Signature`/`Signature-Input`, the RFC 9530 `Content-Digest` and the STATUS
+/// LINE are the evidence carrier — so a response written here can never be verified,
+/// and a signed 403 rejection receipt would be flattened to a 200.
+///
+/// It exists as an mTLS TERMINATION + identity-extraction harness (the transport
+/// crate's client tests run against it), and the shipped proxy does not use it:
+/// `app.rs` serves on the async fleet, where `HttpProfileProxy` owns the status and
+/// the headers. An integrator wanting a verifiable MCP-RE endpoint wants that path,
+/// not this one.
 pub fn serve_once<H>(
     listener: &TcpListener,
     config: Arc<ServerConfig>,
@@ -1261,6 +1395,10 @@ fn read_http_request<S: Read>(stream: &mut S, limits: &ServerLimits) -> io::Resu
 }
 
 /// Write a minimal HTTP/1.1 JSON response carrying `body`.
+///
+/// Fixed `200 OK` and a fixed header set: this is the mTLS harness path, not an
+/// MCP-RE serving path — see [`serve_once`]. Nothing here can carry RFC 9421
+/// evidence, and no caller on the shipped proxy reaches it.
 fn write_http_response<S: Write>(stream: &mut S, body: &[u8]) -> io::Result<()> {
     let header = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -1314,15 +1452,15 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod lifetime_tests {
-    //! MCPS-078 (audit gap G-5): `leaf_cert_lifetime_secs` is private, so the
+    //! MCPS-078 (audit gap G-5): `leaf_validity` is private, so the
     //! fail-closed behaviour on an inverted validity window is exercised here,
     //! inline, over real DER minted with rcgen (mirroring the rcgen 0.14 idiom in
     //! `tests/tls_test.rs`). The caller `cert_lifetime_rejection` uses
-    //! `leaf_cert_lifetime_secs(..).is_some_and(|l| l <= max)`; a `None` therefore
+    //! `leaf_validity(..).is_some_and(..)`; a `None` therefore
     //! fails closed (the cert is rejected), which is precisely what an
     //! inverted/degenerate span must produce.
 
-    use super::leaf_cert_lifetime_secs;
+    use super::leaf_validity;
 
     use rcgen::CertificateParams;
     use rcgen::ExtendedKeyUsagePurpose;
@@ -1345,7 +1483,9 @@ mod lifetime_tests {
     fn normal_validity_window_yields_positive_span() {
         // not_before (2020) < not_after (2021): a well-formed ~1y window.
         let der = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
-        let span = leaf_cert_lifetime_secs(&der).expect("a normal cert has a parseable span");
+        let span = leaf_validity(&der)
+            .map(|(nb, na)| na - nb)
+            .expect("a normal cert has a parseable span");
         assert!(
             span > 0,
             "a well-formed validity window must yield a positive lifetime, got {span}"
@@ -1359,7 +1499,7 @@ mod lifetime_tests {
         // false and `cert_lifetime_rejection` fails closed (rejects the cert).
         let der = mint_leaf_der((2021, 1, 1), (2020, 1, 1));
         assert!(
-            leaf_cert_lifetime_secs(&der).is_none(),
+            leaf_validity(&der).is_none(),
             "an inverted validity window must yield None (fail closed), not a negative span"
         );
     }
@@ -1369,7 +1509,7 @@ mod lifetime_tests {
         // Not a certificate at all → unparseable → None (fail closed).
         let garbage = b"this is definitely not a DER X.509 certificate";
         assert!(
-            leaf_cert_lifetime_secs(garbage).is_none(),
+            leaf_validity(garbage).is_none(),
             "unparseable bytes must yield None"
         );
     }
@@ -1412,7 +1552,7 @@ mod lifetime_tests {
             max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
             ..Default::default()
         };
-        let rejected = super::cert_lifetime_rejection_for_leaf(None, &options, req)
+        let rejected = super::cert_lifetime_rejection_for_leaf(None, &options, req, 0)
             .expect("an absent leaf must be rejected when a ceiling is configured");
         let value: serde_json::Value =
             serde_json::from_slice(&rejected).expect("json error object");
@@ -1431,7 +1571,7 @@ mod lifetime_tests {
             ..Default::default()
         };
         assert!(
-            super::cert_lifetime_rejection_for_leaf(None, &options, req).is_none(),
+            super::cert_lifetime_rejection_for_leaf(None, &options, req, 0).is_none(),
             "with no ceiling configured there is no lifetime decision to make"
         );
     }
@@ -1448,7 +1588,7 @@ mod lifetime_tests {
         // ~1 year span — far over a 1h ceiling.
         let long = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&long), &options, req).is_some(),
+            super::cert_lifetime_rejection_for_leaf(Some(&long), &options, req, IN_2020).is_some(),
             "a 1-year cert must be rejected under a 1-hour ceiling"
         );
         // Day granularity is the coarsest this fixture mints, so admit-side coverage
@@ -1459,8 +1599,43 @@ mod lifetime_tests {
         };
         let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&short), &generous, req).is_none(),
+            super::cert_lifetime_rejection_for_leaf(Some(&short), &generous, req, IN_2020)
+                .is_none(),
             "a 1-day cert must be admitted under a 2-day ceiling"
+        );
+    }
+
+    /// 2020-01-01T01:00:00Z — inside the `mint_leaf_der((2020,1,1), (2020,1,2))`
+    /// window used by the admit-side fixtures.
+    const IN_2020: i64 = 1_577_836_800 + 3600;
+
+    #[test]
+    fn a_leaf_past_not_after_is_rejected_however_short_its_span() {
+        // The SPAN check alone admits this forever: a 1-day certificate satisfies a
+        // 2-day ceiling in 2020 and equally in 2030. On a keep-alive or HTTP/2
+        // connection the leaf is captured once at handshake, so this per-request
+        // clock comparison is the only thing that ever notices the expiry.
+        let req = br#"{"jsonrpc":"2.0","id":"req-10","method":"tools/call"}"#;
+        let options = super::ServerOptions {
+            max_client_cert_lifetime: Some(std::time::Duration::from_secs(48 * 3600)),
+            ..Default::default()
+        };
+        let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020).is_none(),
+            "inside its validity window the cert is admitted"
+        );
+        // One day later — same certificate, same span, same ceiling.
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020 + 86_400)
+                .is_some(),
+            "past not_after the cert must be refused even though its span is small"
+        );
+        // And before it is valid.
+        assert!(
+            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020 - 86_400)
+                .is_some(),
+            "before not_before the cert must be refused"
         );
     }
 
@@ -1473,7 +1648,7 @@ mod lifetime_tests {
         // documented "negative OR degenerate span is rejected" contract.
         let der = mint_leaf_der((2021, 1, 1), (2021, 1, 1));
         assert!(
-            leaf_cert_lifetime_secs(&der).is_none(),
+            leaf_validity(&der).is_none(),
             "a zero-length validity window must yield None (fail closed)"
         );
     }

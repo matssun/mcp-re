@@ -34,6 +34,7 @@ import base64
 import datetime
 import hashlib
 import json
+import os
 import sys
 import urllib.request
 
@@ -57,7 +58,25 @@ def b64u_decode(text: str) -> bytes:
 
 
 def fetch(uri: str) -> bytes:
-    with urllib.request.urlopen(uri, timeout=30) as response:  # noqa: S310 - operator-supplied
+    """Fetch the key set over HTTPS only.
+
+    The pin is the ONE thing that says which key an interoperability run verified
+    against, so whoever controls the network at pin time chooses that key. A bare
+    `urlopen` with no scheme restriction accepted `http://` and `file://` — the first
+    hands the choice to anyone on the path, the second to anyone who can drop a file
+    where the operator points the tool.
+
+    TLS is not a claim about the SERVICE (see the closing note the tool prints); it is
+    what makes the pin a record of the key that service published rather than of the
+    key an on-path party substituted.
+    """
+    if not uri.lower().startswith("https://"):
+        raise SystemExit(
+            f"refusing to fetch a trust pin over {uri.split(':', 1)[0]!r}: the pin records "
+            "WHICH key was trusted, so an unauthenticated fetch lets whoever controls the "
+            "network choose it. Use https://."
+        )
+    with urllib.request.urlopen(uri, timeout=30) as response:  # noqa: S310 - checked above
         return response.read()
 
 
@@ -154,6 +173,12 @@ def main() -> int:
                     help="accept the only key in the set when receipts carry no kid")
     ap.add_argument("--service-identifier", help="how this deployment names the service")
     ap.add_argument("--out", required=True, help="where to write the pin")
+    ap.add_argument("--expect-thumbprint",
+                    help="the RFC 9679 COSE key thumbprint confirmed OUT OF BAND; the fetch "
+                         "is refused unless it matches. Without it the pin is trust-on-first-use "
+                         "and the network chose the key.")
+    ap.add_argument("--replace-pin", action="store_true",
+                    help="allow overwriting an existing pin that names a different key")
     args = ap.parse_args()
 
     if args.method == "well-known-scitt-keys":
@@ -195,12 +220,35 @@ def main() -> int:
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
+        # An EMPTY kid is written only for a service whose receipts genuinely carry
+        # none (`--any-single-key`), and `ScittServiceTrustPin::resolve` treats it as
+        # "matches an unlabelled receipt". Writing it for any other reason would make
+        # the pin match receipts it was never fetched for.
         "kid": kid if kid is not None else "",
         "algorithm": fields["algorithm"],
         "public_key": fields["public_key"],
         "public_key_thumbprint": fields["thumbprint"],
         "discovery_document_digest": document_digest,
     }
+    # Never SILENTLY replace an existing pin. Re-running the tool is how a pin gets
+    # rotated, and it was also how a pin got swapped: the file was truncated
+    # unconditionally, so a second run under an attacker's network chose the trust
+    # anchor with no trace. An existing pin must be removed deliberately, or its
+    # replacement acknowledged with --replace-pin.
+    if os.path.exists(args.out) and not args.replace_pin:
+        existing = json.load(open(args.out, encoding="utf-8"))
+        if existing.get("public_key_thumbprint") != fields["thumbprint"]:
+            raise SystemExit(
+                f"{args.out} already pins a DIFFERENT key "
+                f"(thumbprint {existing.get('public_key_thumbprint')!r}); refusing to "
+                "overwrite it. Pass --replace-pin to rotate deliberately, having "
+                "confirmed the new thumbprint out of band."
+            )
+    if args.expect_thumbprint and args.expect_thumbprint != fields["thumbprint"]:
+        raise SystemExit(
+            f"fetched key thumbprint {fields['thumbprint']} does not match the expected "
+            f"{args.expect_thumbprint}: refusing to write a pin for a key nobody confirmed."
+        )
     with open(args.out, "w", encoding="utf-8") as handle:
         json.dump(pin, handle, indent=2, sort_keys=True)
         handle.write("\n")

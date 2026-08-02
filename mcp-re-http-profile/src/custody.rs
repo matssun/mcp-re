@@ -197,13 +197,49 @@ where
     /// Force an immediate issuance under the CURRENT config, regardless of the
     /// rotation-overlap window — the epoch-advance path (a sibling bumped the shared
     /// trust epoch), so the node swaps to the new epoch within the bounded poll window
-    /// rather than waiting for the next scheduled rotation. The prior key is dropped
-    /// first: it was minted under the now-superseded epoch and MUST NOT keep serving.
-    /// Fails closed exactly like [`ensure_active`](Self::ensure_active) if the root
-    /// cannot issue.
+    /// rather than waiting for the next scheduled rotation.
+    ///
+    /// **The successor is minted BEFORE the predecessor is dropped.** Clearing
+    /// `active` first and only then attempting issuance meant a transient root blip at
+    /// exactly that instant left the node with no signing key at all — every response
+    /// failing `delegated_signing_unavailable` until the root came back — which is the
+    /// opposite of the rotation contract, where a failed issuance keeps serving the
+    /// still-valid key until its own `exp`. An epoch advance is a scheduled event; a
+    /// root blip is not, and the two must not compose into an outage.
+    ///
+    /// The predecessor is superseded, so once the successor exists it is retired
+    /// immediately rather than kept for an overlap window: it was minted under an epoch
+    /// verifiers have stopped accepting.
     pub fn reissue(&mut self, now: i64) -> Result<(), CustodyError> {
-        self.active = None;
-        self.ensure_active(now)
+        // RETIRE the predecessor explicitly. `self.active = None` dropped it silently,
+        // which broke the §7 contract this module states at the top — "every issue /
+        // rotate / retire is a `mcp-re.delegated_key.*` event". The one site that emits
+        // a retire is guarded on `self.active.take()`, so clearing the field first made
+        // that branch unreachable, and an operator auditing the key lifecycle saw a key
+        // appear with no record of the one it displaced. It also made `is_rotation`
+        // false, so the successor was labelled `issued` rather than `rotated`.
+        let previous_kid = self.active.as_ref().map(|a| a.delegated_kid.clone());
+        // Mint first. `issue_now` does not consult the overlap window, so this is an
+        // unconditional issuance attempt; a failure leaves `active` untouched and the
+        // node keeps serving on the superseded key until its own `exp` — bounded,
+        // and strictly better than no key at all.
+        self.issue_now(now)?;
+        // Success: the predecessor is gone from `active` (replaced), so record its
+        // retirement. Matched by kid so a failed attempt above cannot log one.
+        if let Some(kid) = previous_kid {
+            if self.active.as_ref().is_some_and(|a| a.delegated_kid != kid) {
+                self.audit.push(KeyLifecycleEvent {
+                    event_type: event_type::DELEGATED_KEY_RETIRED,
+                    delegated_kid: kid,
+                    issuer_kid: self.cfg.issuer_kid.clone(),
+                    nbf: 0,
+                    exp: now,
+                    jti: String::new(),
+                    at: now,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Ensure a usable delegated key exists at `now`, issuing or rotating as
@@ -215,6 +251,16 @@ where
             // Rotate once we enter the overlap window before expiry, or if expired.
             Some(a) => now >= a.exp - self.cfg.overlap,
         };
+        self.issue_if(needs, now)
+    }
+
+    /// Issue unconditionally, whatever the overlap window says — the epoch-advance
+    /// path. Shares [`ensure_active`]'s issuance body so the two cannot drift.
+    fn issue_now(&mut self, now: i64) -> Result<(), CustodyError> {
+        self.issue_if(true, now)
+    }
+
+    fn issue_if(&mut self, needs: bool, now: i64) -> Result<(), CustodyError> {
         if needs {
             let is_rotation = self.active.as_ref().map(|a| now < a.exp).unwrap_or(false);
 
@@ -496,12 +542,35 @@ mod tests {
 
     /// Successive issuances within ONE process must also stay distinct — including a
     /// re-issuance that mints over the same instant.
+    ///
+    /// Also pins the ORDER, which is the epoch-advance safety property: mint, then
+    /// retire. Retiring first meant a transient root failure at that instant left the
+    /// node with no signing key at all.
     #[test]
     fn successive_issuances_in_one_process_have_distinct_credential_ids() {
         let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
         c.ensure_active(1_000).expect("issue");
         c.reissue(1_000).expect("re-issue at the SAME instant");
-        let ids: Vec<&String> = c.audit().iter().map(|e| &e.jti).collect();
+        // issued, ROTATED (the successor is minted while the predecessor is still
+        // valid — that is what keeps a root blip from leaving the node with no key at
+        // all), then RETIRED for the key the advance superseded. The retire is the §7
+        // event `reissue` used to skip entirely by clearing `active` first.
+        let events: Vec<&'static str> = c.audit().iter().map(|e| e.event_type).collect();
+        assert_eq!(
+            events,
+            vec![
+                event_type::DELEGATED_KEY_ISSUED,
+                event_type::DELEGATED_KEY_ROTATED,
+                event_type::DELEGATED_KEY_RETIRED,
+            ],
+            "every issue / rotate / retire is an event — including the displaced key"
+        );
+        let ids: Vec<&String> = c
+            .audit()
+            .iter()
+            .filter(|e| e.event_type != event_type::DELEGATED_KEY_RETIRED)
+            .map(|e| &e.jti)
+            .collect();
         assert_eq!(ids.len(), 2);
         assert_ne!(
             ids[0], ids[1],

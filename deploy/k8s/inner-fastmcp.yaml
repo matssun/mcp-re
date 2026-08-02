@@ -25,10 +25,35 @@ spec:
       labels:
         app.kubernetes.io/name: mcp-re-inner-fastmcp
     spec:
+      # The inner backend is the component that EXECUTES tool code, and it is out of
+      # the TCB by design — so it gets at least the hardening the proxy applies to
+      # itself. It had none: root uid, no capability drop, no seccomp, no limits.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: fastmcp
           image: mcp-re-inner-fastmcp:0.14.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # A memory limit bounds the blast radius of tool code that allocates without
+          # bound: without one the node's OOM killer picks a victim, which may be a
+          # different pod.
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              memory: "1Gi"
           env:
             - name: MCP_RE_INNER_BACKEND_HOST
               value: "0.0.0.0"

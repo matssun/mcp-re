@@ -238,6 +238,62 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "not both",
     ),
+    # The drain invariant. The kubelet's clock starts at pod DELETION, so the preStop
+    # delay is spent inside terminationGracePeriodSeconds; get it wrong and in-flight
+    # requests are SIGKILLed with no signed response and no rejection evidence.
+    (
+        "preStop + proxy drain >= kubelet grace is refused",
+        merged({"drainPreStopSeconds": 6, "proxyDrainGraceSeconds": 30,
+                "drainGracePeriodSeconds": 30}),
+        False,
+        "SIGKILLs",
+    ),
+    (
+        "a proxy drain below the 30s request deadline is refused",
+        merged({"proxyDrainGraceSeconds": 10}),
+        False,
+        "request deadline",
+    ),
+    (
+        "a drain budget that fits renders",
+        merged({"drainPreStopSeconds": 6, "proxyDrainGraceSeconds": 30,
+                "drainGracePeriodSeconds": 45}),
+        True,
+        "",
+    ),
+    # The connection-age bound is the only re-check of an established peer's
+    # certificate against an expiry or a reloaded CRL.
+    (
+        "a disabled connection-age bound is refused",
+        merged({"maxConnectionAgeSeconds": 0}),
+        False,
+        "keeps one connection open",
+    ),
+    (
+        "a connection outliving the cert lifetime is refused",
+        merged({"maxConnectionAgeSeconds": 7200, "maxClientCertLifetimeSeconds": 3600}),
+        False,
+        "outlive the certificate",
+    ),
+    (
+        "a live revocation tier without a trust reload cadence is refused",
+        merged({"revocation": {"tier": "live", "trustEpochRedisUrl": "", "trustEpochKey": "",
+                               "trustReloadSeconds": ""}}),
+        False,
+        "trustReloadSeconds",
+    ),
+    (
+        "an unknown auditSink is refused",
+        merged({"auditSink": "syslog"}),
+        False,
+        "auditSink",
+    ),
+    (
+        "an unknown verifiedContextCarrier is refused",
+        merged({"verifiedContextCarrier": "yes"}),
+        False,
+        "verifiedContextCarrier",
+    ),
 ]
 
 # (name, values, args that MUST appear as an adjacent pair, args that must NOT appear)
@@ -259,6 +315,40 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         merged({"admission": {"maxInFlight": "", "maxInFlightTotal": 256}}),
         [("--max-in-flight-total", "256")],
         ["--max-in-flight"],
+    ),
+    # ADR-MCPS-035: a chart-rendered pod must carry the per-request security record,
+    # and the revocation flags the posture claims must actually be emitted.
+    (
+        "the audit sink and revocation bounds are rendered by default",
+        merged(),
+        [("--audit-sink", "stderr"), ("--max-connection-age-secs", "300"),
+         ("--drain-grace-secs", "30")],
+        ["--verified-context-carrier"],
+    ),
+    (
+        "the trust reload cadence is rendered by default",
+        merged(),
+        [("--trust-reload-secs", "60")],
+        [],
+    ),
+    (
+        "clientCrl paths render the CRL flags",
+        merged({"clientCrl": {"paths": ["/etc/mcp-re/client-crl.pem"], "reloadSeconds": 300}}),
+        [("--client-crl", "/etc/mcp-re/client-crl.pem"),
+         ("--client-crl-reload-secs", "300")],
+        [],
+    ),
+    (
+        "no CRL paths means no CRL flags at all",
+        merged({"clientCrl": {"paths": [], "reloadSeconds": 300}}),
+        [],
+        ["--client-crl", "--client-crl-reload-secs"],
+    ),
+    (
+        "the trusted verified-context carrier is opt-in and rendered when asked",
+        merged({"verifiedContextCarrier": "trusted"}),
+        [("--verified-context-carrier", "trusted")],
+        [],
     ),
     (
         "gcpKms custody never passes a signing-key seed",

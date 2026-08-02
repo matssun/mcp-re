@@ -5,3 +5,28 @@ target/
 .git/
 **/*.rs.bk
 *.log
+
+# CREDENTIAL EXCLUSIONS. Every Dockerfile here does `COPY . .` from the repo root,
+# and the CodeBuild path additionally uploads the whole tree to S3 as source.zip —
+# so anything reachable from the context lands in a pushed image layer, readable by
+# every principal with registry pull rights.
+#
+# `work/` is where the runbooks and the `scripts/test-*-cloud.sh.example` headers
+# tell an operator to keep FILLED-IN cloud credential scripts, precisely because it
+# is gitignored. That also makes `tracked_secrets_gate.py` blind to it by
+# construction: that gate scans TRACKED files. This list is the only thing standing
+# between those files and a published image.
+work/
+**/work/
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*-seed
+**/*seed.txt
+**/kubeconfig
+.aws/
+.gcloud/
+.kube/

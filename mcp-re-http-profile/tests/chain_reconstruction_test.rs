@@ -8,13 +8,20 @@
 
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::block::AudienceTuple;
+use mcp_re_http_profile::issue_delegation_credential;
 use mcp_re_http_profile::reconstruct_chain;
+use mcp_re_http_profile::sign_delegated_response_full;
 use mcp_re_http_profile::sign_request_full;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
+use mcp_re_http_profile::Audience;
 use mcp_re_http_profile::ChainLabel;
+use mcp_re_http_profile::Cnf;
+use mcp_re_http_profile::DelegatedJwk;
+use mcp_re_http_profile::DelegationClaims;
+use mcp_re_http_profile::DelegationExpectations;
+use mcp_re_http_profile::DelegationHeader;
 use mcp_re_http_profile::HttpContinuation;
 use mcp_re_http_profile::HttpRequest;
 use mcp_re_http_profile::HttpRequestEvidenceBlock;
@@ -28,26 +35,102 @@ use mcp_re_http_profile::VerifierPolicy;
 use mcp_re_http_profile::PROFILE_TAG;
 
 const CLIENT_SEED: [u8; 32] = [11u8; 32];
-const SERVER_SEED: [u8; 32] = [22u8; 32];
+/// The ROOT issuer: the credential signer, off the request path. Delegated-required
+/// is the only response-signing mode, so a reconstruction that could not verify a
+/// delegated response could not verify any evidence the proxy actually emits.
+const ROOT_SEED: [u8; 32] = [22u8; 32];
+const DELEGATED_SEED: [u8; 32] = [44u8; 32];
 const CREATED: i64 = 1_700_000_000;
 const EXPIRES: i64 = 1_700_000_300;
 const NOW: i64 = 1_700_000_100;
 const CLIENT_KEY_ID: &str = "client-key-1";
-const SERVER_KEY_ID: &str = "server-key-1";
+const ROOT_KID: &str = "server-key-1";
+const DELEGATED_KID: &str = "server-key-1/delegated/1";
 const TARGET: &str = "https://mcp.example.com/mcp";
+const VERIFIER_AUD: &str = "did:example:server";
+const AUD_SCOPE: &str = "aud-scope-1";
+const EPOCH: &str = "epoch-1";
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&CLIENT_SEED)
 }
-fn server_key() -> SigningKey {
-    SigningKey::from_seed_bytes(&SERVER_SEED)
+fn root_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&ROOT_SEED)
+}
+fn delegated_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&DELEGATED_SEED)
+}
+
+/// The delegation credential every hop response carries inline. Minted over the
+/// hop's own window so a chain whose turns sit at different times still verifies at
+/// each hop's own instant.
+fn credential(created: i64, expires: i64) -> String {
+    let d = delegated_key();
+    let header = DelegationHeader {
+        typ: mcp_re_http_profile::DELEGATION_TYP.into(),
+        alg: mcp_re_http_profile::DELEGATION_ALG.into(),
+        kid: ROOT_KID.into(),
+    };
+    let claims = DelegationClaims {
+        iss: "did:example:server".into(),
+        iat: created,
+        nbf: created,
+        exp: expires,
+        jti: format!("evt-{created}"),
+        aud: Audience::One(VERIFIER_AUD.into()),
+        mcp_re_profile: PROFILE_TAG.into(),
+        mcp_re_audience_hash: AUD_SCOPE.into(),
+        mcp_re_server_signer: server_signer().actor_id(),
+        mcp_re_key_use: mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING.into(),
+        delegated_kid: DELEGATED_KID.into(),
+        issuer_kid: ROOT_KID.into(),
+        trust_epoch: EPOCH.into(),
+        cnf: Cnf {
+            jwk: DelegatedJwk {
+                kty: mcp_re_http_profile::JWK_KTY_OKP.into(),
+                crv: mcp_re_http_profile::JWK_CRV_ED25519.into(),
+                kid: DELEGATED_KID.into(),
+                x: d.public_key().to_b64url(),
+            },
+        },
+    };
+    issue_delegation_credential(&root_key(), &header, &claims)
+}
+
+/// The delegated-verification inputs. Nothing is revoked in these chains; the
+/// revocation seam is exercised by the delegation suite.
+fn expectations() -> DelegationExpectations<'static> {
+    DelegationExpectations {
+        policy: VerifierPolicy::default(),
+        verifier_audiences: &[VERIFIER_AUD],
+        expected_audience_hash: AUD_SCOPE,
+        accepted_epochs: &[EPOCH],
+        max_clock_skew: 60,
+    }
+}
+
+fn nothing_revoked(_: &str) -> bool {
+    false
+}
+
+/// [`expectations`] with a caller-supplied signature policy, for the cases that vary
+/// the RFC 9421 acceptance window.
+fn expectations_with(policy: &VerifierPolicy) -> DelegationExpectations<'static> {
+    DelegationExpectations {
+        policy: policy.clone(),
+        ..expectations()
+    }
 }
 
 fn resolver() -> impl Fn(&str, SignerSlot) -> Option<ResolvedActor> {
     move |key_id: &str, slot: SignerSlot| {
         let (role, key) = match (key_id, slot) {
             (CLIENT_KEY_ID, SignerSlot::Request) => ("client", client_key()),
-            (SERVER_KEY_ID, SignerSlot::Response) => ("server", server_key()),
+            // The ROOT issuer, not the ephemeral delegated key: under
+            // delegated-required the trust seam pins the root the credential chains
+            // to, and the delegated key is authorized BY the credential rather than
+            // enrolled.
+            (ROOT_KID, SignerSlot::Response) => ("server", root_key()),
             _ => return None,
         };
         Some(ResolvedActor {
@@ -76,7 +159,7 @@ fn server_signer() -> ActorIdentity {
         role: "server".into(),
         trust_domain: "example.com".into(),
         subject: "did:example:server".into(),
-        keyid: SERVER_KEY_ID.into(),
+        keyid: DELEGATED_KID.into(),
     }
 }
 
@@ -131,13 +214,14 @@ fn hop_with_bad_window(created: i64, expires: i64, nonce: &str) -> RetainedHop {
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: DONE.as_bytes().to_vec(),
     };
-    sign_response_full(
+    sign_delegated_response_full(
         &mut response,
         &request,
         &req_evidence,
         &server_signer(),
-        &server_key(),
-        SERVER_KEY_ID,
+        &credential(created, expires),
+        &delegated_key(),
+        DELEGATED_KID,
         created,
         expires,
     )
@@ -177,13 +261,14 @@ fn hop_at(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_response_full(
+    sign_delegated_response_full(
         &mut response,
         &request,
         &req_evidence,
         &server_signer(),
-        &server_key(),
-        SERVER_KEY_ID,
+        &credential(created, expires),
+        &delegated_key(),
+        DELEGATED_KID,
         created,
         expires,
     )
@@ -193,11 +278,13 @@ fn hop_at(
     // digest of this response's signature base — recomputed by verifying, exactly
     // as the reconstruction will. Verified at the hop's own `created`, which is
     // inside its own window whatever that window is.
-    let verified_rsp = mcp_re_http_profile::verify_response_bound_full(
+    let verified_rsp = mcp_re_http_profile::verify_delegated_response_bound_full(
         &response,
         &request,
         &req_evidence,
         &resolver(),
+        &expectations(),
+        &nothing_revoked,
         created,
     )
     .expect("response verifies");
@@ -246,7 +333,7 @@ fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest 
 }
 
 fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
-    reconstruct_chain(hops, &resolver(), &VerifierPolicy::default(), NOW).label
+    reconstruct_chain(hops, &resolver(), &expectations(), &nothing_revoked, NOW).label
 }
 
 // --- positives ---------------------------------------------------------------
@@ -271,7 +358,7 @@ fn single_terminal_hop_reconstructs_complete() {
 #[test]
 fn complete_chain_reports_every_hops_evidence() {
     let hops = three_hop_chain();
-    let out = reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), NOW);
+    let out = reconstruct_chain(&hops, &resolver(), &expectations(), &nothing_revoked, NOW);
     assert!(out.label.is_complete());
     assert_eq!(
         out.hop_evidence.len(),
@@ -305,11 +392,13 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
     for h in &truncated {
         let v = mcp_re_http_profile::verify_request(&h.request, &resolver(), NOW)
             .expect("the retained request verifies on its own");
-        mcp_re_http_profile::verify_response_bound_full(
+        mcp_re_http_profile::verify_delegated_response_bound_full(
             &h.response,
             &h.request,
             &v.evidence,
             &resolver(),
+            &expectations(),
+            &nothing_revoked,
             NOW,
         )
         .expect("the retained response verifies and is bound to its request");
@@ -334,7 +423,13 @@ fn missing_middle_hop_is_incomplete_not_a_complete_terminal() {
 fn per_hop_validity_does_not_imply_a_complete_chain() {
     let all = three_hop_chain();
     let truncated = vec![all[0].clone(), all[2].clone()];
-    let out = reconstruct_chain(&truncated, &resolver(), &VerifierPolicy::default(), NOW);
+    let out = reconstruct_chain(
+        &truncated,
+        &resolver(),
+        &expectations(),
+        &nothing_revoked,
+        NOW,
+    );
     assert!(!out.label.is_complete());
     // The verified prefix is still reported: hop 0 IS accounted for. An auditor
     // learns which part of the record stands, not merely that it failed.
@@ -634,7 +729,13 @@ const AUDIT_LATER: i64 = CREATED + 31_536_000;
 #[test]
 fn an_aged_multi_hop_record_still_reconstructs_complete() {
     let hops = aged_chain();
-    let out = reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), AUDIT_LATER);
+    let out = reconstruct_chain(
+        &hops,
+        &resolver(),
+        &expectations(),
+        &nothing_revoked,
+        AUDIT_LATER,
+    );
     assert_eq!(
         out.label,
         ChainLabel::Complete,
@@ -667,7 +768,14 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
     // Audit as of a moment between hop 0 and hop 1: hop 1 has not happened yet.
     let audit_at = CREATED + 3_600;
     assert_eq!(
-        reconstruct_chain(&hops, &resolver(), &VerifierPolicy::default(), audit_at).label,
+        reconstruct_chain(
+            &hops,
+            &resolver(),
+            &expectations(),
+            &nothing_revoked,
+            audit_at
+        )
+        .label,
         ChainLabel::Incomplete {
             hop: 1,
             reason: IncompleteReason::HopAfterAuditInstant,
@@ -685,14 +793,28 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
 
     let within = CREATED - policy.max_clock_skew();
     assert_eq!(
-        reconstruct_chain(std::slice::from_ref(&h0), &resolver(), &policy, within).label,
+        reconstruct_chain(
+            std::slice::from_ref(&h0),
+            &resolver(),
+            &expectations_with(&policy),
+            &nothing_revoked,
+            within
+        )
+        .label,
         ChainLabel::Complete,
         "a hop one skew ahead of the auditor's clock is honest disagreement"
     );
 
     let beyond = CREATED - policy.max_clock_skew() - 1;
     assert_eq!(
-        reconstruct_chain(&[h0], &resolver(), &policy, beyond).label,
+        reconstruct_chain(
+            &[h0],
+            &resolver(),
+            &expectations_with(&policy),
+            &nothing_revoked,
+            beyond
+        )
+        .label,
         ChainLabel::Incomplete {
             hop: 0,
             reason: IncompleteReason::HopAfterAuditInstant,
@@ -713,7 +835,15 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
         CREATED + policy.max_signature_validity() + 1,
         "wide",
     );
-    match reconstruct_chain(&[h0], &resolver(), &policy, AUDIT_LATER).label {
+    match reconstruct_chain(
+        &[h0],
+        &resolver(),
+        &expectations_with(&policy),
+        &nothing_revoked,
+        AUDIT_LATER,
+    )
+    .label
+    {
         ChainLabel::Incomplete {
             hop: 0,
             reason:
@@ -731,7 +861,15 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
 #[test]
 fn a_degenerate_window_is_still_refused_in_an_aged_record() {
     let h0 = hop_with_bad_window(CREATED, CREATED, "degenerate");
-    match reconstruct_chain(&[h0], &resolver(), &VerifierPolicy::default(), AUDIT_LATER).label {
+    match reconstruct_chain(
+        &[h0],
+        &resolver(),
+        &expectations(),
+        &nothing_revoked,
+        AUDIT_LATER,
+    )
+    .label
+    {
         ChainLabel::Incomplete {
             hop: 0,
             reason:

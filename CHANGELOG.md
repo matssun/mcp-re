@@ -12,6 +12,48 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Security — round-6 audit remediation (BREAKING for some deployments)
+
+A file-by-file pass over the round-6 security audit: 126 findings fixed, including all
+25 high-severity ones. The operator-visible changes:
+
+- **`--trust-domain` is now REQUIRED.** It defaulted to the `example.com` placeholder
+  the Helm chart refuses outright, so the binary silently accepted the one value the
+  chart exists to reject, and two installs that both left it unset shared an identity
+  coordinate.
+- **`--revocation-tier live|push` now requires `--trust-reload-secs`.** Both tiers state
+  their revocation window in terms of consulting the trust store, and `--trust` was read
+  once at startup — so revoking a request-signer key needed a restart of every replica
+  while the startup line advertised a near-zero window. The store is now a snapshot a
+  reload task swaps atomically.
+- **The shared trust-epoch key must EXIST before the proxy starts** (`SET <key> 0`). An
+  absent key read as epoch 0, indistinguishable from a live counter — which left the
+  Tier-3 kill switch silently inert, or let a restarted replica re-mint under an epoch
+  the operator had already revoked.
+- **A per-core in-flight ceiling now applies by default** (64). Unbounded in-flight
+  requests are attacker-controlled buffering ahead of the verify gate, and it also left
+  HTTP/2 `max_concurrent_streams` unset.
+- **mTLS connections are closed at a bounded age** (`--max-connection-age-secs`, default
+  300s) and **TLS session resumption is refused**. The client certificate's chain, CRL
+  status and validity window are checked at the handshake and nowhere else, so a peer
+  that never reconnected kept full access after expiry or revocation — and a RESUMED
+  TLS 1.3 session restores the stored peer chain without re-running client auth at all.
+
+  **This moves the ADR-MCPRE-051 §7 throughput baseline by ~17%** on the §7 envelope
+  (1 core / concurrency 128 / cold, a fresh handshake per request): 5451 rps with
+  resumption, 4547 without, measured A/B on one box with every other round-6 change in
+  place. The envelope is the worst case — a deployment with keep-alive pays a full
+  handshake once per connection, not once per request. The prior number was measuring a
+  proxy that skipped client-certificate verification on ~7999 of those 8000 handshakes.
+  Re-baselining §7 is an owner declaration and has NOT been done.
+- **Admission assertions must name the actor they were issued to**
+  (`mcp_re_admitted_actor`). Without it an assertion was a bearer token any verifying
+  peer could present. This is a wire-format change to an unratified surface.
+- **The Rust signing seam enforces the 128-bit nonce floor** both SDKs already had, and
+  refuses `expires <= created`.
+- **New:** `--audit-sink none|stderr` (the ADR-MCPS-035 record had no deployment surface
+  at all), `--verified-context-carrier disabled|trusted`, `--drain-grace-secs`.
+
 ### Added
 - **SCITT statements and receipts are real CBOR/`COSE_Sign1`** (#494). The prototype
   serialized JSON as an explicit stand-in, which meant nothing on the wire was
@@ -60,7 +102,8 @@ or wire-format compatibility while the design lines from
   not list. The digest catches a deleted fixture; nothing caught an extra one, and an
   unlisted vector is read by no test, so its expectation drifts out of date invisibly.
 
-  `tools/scitt_independent_verify.py` checks the corpus with **no MCP-RE code**: cbor2
+  `mcp-re-conformance/tools/scitt_cross_verify.py` checks the corpus with **no MCP-RE
+  code**: cbor2
   for CBOR, `cryptography` for Ed25519, and the RFC 9052 §4.4 `Sig_structure`, the
   RFC 9942 §5.2.1 header shape and the RFC 9162 fold built from the RFC text. A corpus
   validated only by the encoder that produced it agrees with itself whatever labels it

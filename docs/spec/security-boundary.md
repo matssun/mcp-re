@@ -423,7 +423,18 @@ as post-0.5 work.
 
 ## 11. Strict-mode ingress postures (ADR-MCPS-023 §C amendment, v0.10)
 
-Strict mode admits **two** ingress postures, with **different, honestly-labelled
+> **Delivery status.** Only posture **(A)** is reachable on the shipped RFC 9421
+> serving path. `--transport-binding attested-ingress` (and `lb-assertion`) parse, and
+> are then **refused at startup** — rebinding an owner-signed ingress assertion to the
+> request-evidence digest is pending owner authorization. The Mode-C verification code
+> (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
+> `AttestedIngressVerified`) exists and is unit-tested, and has **no non-test caller**.
+> The rest of this section is therefore the specified design, not a delivered posture:
+> no deployment can run Mode C today, and the three §C2 audit trust facts below are
+> emitted by nothing. Fail-closed — a chart or command line that selects it does not
+> start.
+
+Strict mode specifies **two** ingress postures, with **different, honestly-labelled
 trust properties**:
 
 - **(A) `end_to_end_mtls` (default).** End-to-end client↔node mTLS: the node

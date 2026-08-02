@@ -41,6 +41,19 @@ const CLIENT_KEY_ID: &str = "client-key-1";
 const ISSUER_KID: &str = "admission-root-1";
 const TARGET: &str = "https://mcp.example.com/mcp";
 const AUD: &str = "mcp.example.com";
+/// The actor an assertion is issued to. `check_admission` compares it against the
+/// verifier-resolved presenter, so an assertion naming anyone else is refused.
+/// Derived through `actor_id()` rather than hand-written: the encoding escapes its
+/// fields, and a hand-written copy would drift from it silently.
+fn test_actor() -> String {
+    ActorIdentity {
+        role: "client".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:client".into(),
+        keyid: CLIENT_KEY_ID.into(),
+    }
+    .actor_id()
+}
 
 fn client_key() -> SigningKey {
     SigningKey::from_seed_bytes(&[11u8; 32])
@@ -86,6 +99,7 @@ fn admission_claims(generation: u64, status: AdmissionStatus) -> AdmissionClaims
         aud: mcp_re_http_profile::Audience::One(AUD.into()),
         mcp_re_profile: PROFILE_TAG.into(),
         mcp_re_admission_id: "workload-7".into(),
+        mcp_re_admitted_actor: test_actor(),
         mcp_re_admission_generation: generation,
         mcp_re_admitted_state_digest: b64url_encode(&Sha256::digest(b"admitted-state")),
         mcp_re_admission_status: status,
@@ -162,6 +176,7 @@ fn verify_and_check(
     check_admission(
         &binding,
         assertion,
+        &verified.resolved_actor.actor_id(),
         authoritative,
         PROFILE_TAG,
         &[AUD],

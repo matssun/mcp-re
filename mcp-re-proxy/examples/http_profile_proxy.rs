@@ -262,9 +262,13 @@ async fn handle(
         .as_ref()
         .and_then(|b| b.continuation.as_ref())
         .and_then(|_| extract_request_state(&http_req.body));
-    let answer_key = answer_state
-        .as_ref()
-        .map(|state| continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()));
+    let answer_key = answer_state.as_ref().map(|state| {
+        continuation_key(
+            &expected_audience.audience_id,
+            &verified.resolved_actor.actor_id(),
+            state.as_bytes(),
+        )
+    });
     let retained = match &answer_key {
         Some(key) => state.continuations.peek(key).await.ok().flatten(),
         None => None,
@@ -394,6 +398,7 @@ async fn handle(
                     input_required_response_base: response_base,
                 };
                 let key = continuation_key(
+                    &expected_audience.audience_id,
                     &verified.resolved_actor.actor_id(),
                     request_state.as_bytes(),
                 );

@@ -380,15 +380,16 @@ impl TrustedIssuerSet {
     /// rejects it as `delegation_revoked` (the honest reason), rather than masking a
     /// revocation as an untrusted-issuer error.
     pub fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
-        if let Some(actor) = self.current.get(issuer_kid) {
-            return Some(actor.clone());
-        }
+        // RETIREMENT WINS. A kid listed as both current and retiring is a contradiction
+        // in the manifest, and reading `current` first resolved it in the permissive
+        // direction: the root stayed trusted unconditionally and its `valid_until`
+        // cutover was never evaluated — so a retirement an org published could be
+        // undone by leaving the same kid in the current list. Checking the deadline
+        // first makes the contradiction fail safe: past `valid_until` nothing resolves.
         if let Some((actor, valid_until)) = self.retired.get(issuer_kid) {
-            if now <= *valid_until {
-                return Some(actor.clone());
-            }
+            return (now <= *valid_until).then(|| actor.clone());
         }
-        None
+        self.current.get(issuer_kid).cloned()
     }
 
     /// A `resolve_actor` closure for [`verify_delegated_response`] that anchors the
@@ -458,11 +459,29 @@ pub struct DelegationPolicy {
     /// The accepted trust-epoch set (default `{ current }`, optionally
     /// `{ current, previous }` in a bounded rollout window).
     pub accepted_epochs: Vec<String>,
-    /// Clock-skew tolerance for credential freshness, seconds.
+    /// Clock-skew tolerance, seconds. Governs BOTH the credential window and the RFC
+    /// 9421 response-signature freshness gate.
+    ///
+    /// It used to reach only the credential: both entry points built their
+    /// `DelegationExpectations` with `VerifierPolicy::default()`, pinning the
+    /// signature gate at the built-in 30s whatever the operator configured. A
+    /// deployment that widened the skew for a real clock spread got it on one of the
+    /// two windows and silently not the other.
     pub max_clock_skew: i64,
 }
 
 impl DelegationPolicy {
+    /// The RFC 9421 signature-acceptance policy this delegation policy implies.
+    ///
+    /// One configured skew drives both windows. A skew outside the profile's bound
+    /// falls back to the default rather than failing the verification: the value was
+    /// already accepted into this struct, and refusing here would turn a
+    /// misconfiguration into an unverifiable response.
+    fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], self.max_clock_skew)
+            .unwrap_or_default()
+    }
+
     /// Build a delegation policy.
     pub fn new(
         verifier_audiences: Vec<String>,
@@ -539,7 +558,7 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
         .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
+        policy: policy.verifier_policy(),
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
@@ -696,7 +715,7 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         .collect();
     let epochs: Vec<&str> = policy.accepted_epochs.iter().map(String::as_str).collect();
     let expect = DelegationExpectations {
-        policy: mcp_re_http_profile::VerifierPolicy::default(),
+        policy: policy.verifier_policy(),
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
@@ -830,7 +849,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-1",
+            "nonce-1-padded-to-the-128-bit-floor",
             CREATED,
             EXPIRES,
         );
@@ -1360,7 +1379,7 @@ mod delegated_tests {
             CLIENT_KEY_ID.to_string(),
             audience(),
             bindings(),
-            "nonce-rot",
+            "nonce-rot-padded-to-the-128-bit-floor",
             CREATED,
             NOW + 600,
         );

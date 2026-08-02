@@ -65,13 +65,79 @@ replay:
 # read from this key drives credential minting, so an attacker who can write it
 # forces every replica to re-mint under an epoch verifiers reject — a fleet-wide
 # response-signing outage. `replay.allowPlaintextRedis` governs both URLs.
+# How often the proxy re-reads the mounted trust.json, in seconds. REQUIRED by the
+# `live` and `push` tiers: both state their revocation window in terms of consulting
+# the trust store, and with the file read once at startup the store cannot change —
+# revoking a request-signer key would need a restart of every replica while the
+# startup line claimed a near-zero window. The proxy refuses those tiers without it.
+#
+# Note the k8s side: a Secret/ConfigMap volume update propagates on the kubelet's own
+# sync period (~60s by default), so the end-to-end revocation latency is that plus
+# this cadence.
 revocation:
   tier: "push:60"
   trustEpochRedisUrl: "rediss://mcp-re-redis:6379"
+  # The key MUST EXIST before the proxy starts (`SET mcp-re:trust:epoch 0`, then
+  # `INCR` to revoke). An absent key is refused at startup rather than read as
+  # epoch 0: a key that was never created, points at the wrong database, or was
+  # lost to a restore or an eviction is indistinguishable from a live counter at 0,
+  # and reading it as a baseline leaves the kill switch inert — or lets a restarted
+  # replica re-mint under an epoch the operator had already revoked.
   trustEpochKey: "mcp-re:trust:epoch"
+  trustReloadSeconds: 60
 
-# Client-certificate lifetime ceiling (short-lived-cert revocation posture).
+# Client-certificate revocation (ADR-MCPS-023 §A1, security-boundary.md §8 Axis 2).
+#
+# The posture has THREE parts and all three are rendered from here. The lifetime
+# ceiling alone is not the posture the docs describe: it bounds how long a
+# certificate is valid, not how long a peer that already holds one keeps serving.
+#
+#   maxClientCertLifetimeSeconds  the ceiling a client cert's validity span may not
+#                                 exceed (the proxy refuses > 3600).
+#   maxConnectionAgeSeconds       how long ONE mTLS connection may serve before it is
+#                                 gracefully closed and the peer must re-handshake.
+#                                 The chain, the CRL and the validity window are
+#                                 checked at the handshake and NOWHERE else, so
+#                                 without this a peer that never reconnects is never
+#                                 re-checked — a revoked certificate keeps full
+#                                 access. This is what bounds CRL-revocation latency
+#                                 for an established peer.
+#   clientCrlPaths                the CRL(s) themselves. Without at least one the pod
+#                                 runs `dynamic_revocation=false`: there is no way to
+#                                 revoke a certificate before its own expiry, which is
+#                                 the tier the fleet deployment guide presents as
+#                                 available. Mount them from the material Secret.
 maxClientCertLifetimeSeconds: 3600
+maxConnectionAgeSeconds: 300
+clientCrl:
+  # Paths INSIDE the container (mount the CRL files via tls.secretName). Empty means
+  # no CRL tier — lifetime expiry is then the only revocation mechanism.
+  paths: []
+  #  - "/etc/mcp-re/client-crl.pem"
+  # Re-read cadence in seconds. Empty = read once at startup, so a refreshed CRL
+  # needs a restart. With a cadence the reload is picked up by the next handshake,
+  # which the connection-age bound above forces within maxConnectionAgeSeconds.
+  reloadSeconds: 300
+
+# §4.1 MCP transport contract (RQ-06). Each entry adds an accepted
+# `Mcp-Protocol-Version`; with none declared there is NO transport contract, so
+# required-header presence and Mcp-Name/params.name agreement are not asserted.
+mcpProtocolVersions: []
+#  - "2026-07-28"
+
+# ADR-MCPS-035 per-request security record: `none` | `stderr`. `none` means this
+# deployment keeps NO per-request attribution — which actor was admitted, which calls
+# were refused and under which frozen wire code — and an incident cannot be
+# reconstructed afterwards.
+auditSink: stderr
+
+# #415 rev 2 §10 verified-context carrier: `disabled` | `trusted`. Caller-seeded
+# context is stripped either way. `trusted` additionally writes the PEP's OWN resolved
+# context into the forwarded body, and asserts that NOTHING but this proxy can reach
+# the inner server — the carrier is unsigned, so that assertion is the entire basis
+# for the inner server trusting it and nothing can check it. Leave disabled unless the
+# inner backend is a same-pod sidecar you control.
+verifiedContextCarrier: disabled
 
 # Per-request ADMISSION control (MCPRE-114). With no ceiling the proxy accepts
 # in-flight requests without bound, so ONE client holding a valid mTLS certificate
@@ -79,10 +145,9 @@ maxClientCertLifetimeSeconds: 3600
 # --max-body-bytes. Over the ceiling the proxy answers 503 BEFORE the handler, so
 # the inner plane is never reached.
 #
-# Both are empty by default and the flags are then omitted, which means UNBOUNDED.
-# That is the proxy's own default and is deliberately preserved here so upgrading
-# the chart cannot start shedding load on an existing release — but it is not a
-# defensible production posture. Set one of these.
+# Leaving both empty no longer means UNBOUNDED: the proxy carries a fail-safe
+# per-core ceiling (64) that applies when neither flag is rendered. Set one of these
+# to size the boundary against your own inner plane rather than take that default.
 #
 #   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
 #   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
@@ -209,17 +274,41 @@ tls:
   secretName: "mcp-re-proxy-material"
   mountPath: "/etc/mcp-re"
 
-# Graceful drain: the proxy stops accepting on SIGTERM and finishes the in-flight
-# request (MCPS-88). Give the kubelet headroom over the request deadline.
-drainGracePeriodSeconds: 30
+# Graceful drain (MCPS-88 / ADR-MCPRE-051 §6). Three values, and the whole point is
+# that they compose — the kubelet's clock starts at pod DELETION, not at SIGTERM:
+#
+#   t=0                        pod deleted; preStop sleep begins
+#   t=drainPreStopSeconds      SIGTERM delivered; the proxy stops accepting and
+#                              drains for proxyDrainGraceSeconds
+#   t=drainGracePeriodSeconds  SIGKILL, unconditionally
+#
+# So the invariant is  drainPreStopSeconds + proxyDrainGraceSeconds < drainGracePeriodSeconds.
+# The render gate enforces it. Getting it wrong SIGKILLs requests mid-flight: the
+# client gets a truncated connection with neither a signed response nor a signed
+# rejection, which is exactly what the §6 zero-abandoned gate claims cannot happen.
+#
+# proxyDrainGraceSeconds must also be >= the proxy's request deadline (30s), so an
+# admitted request can finish inside the window.
+drainGracePeriodSeconds: 45
+proxyDrainGraceSeconds: 30
 
 # preStop delay (seconds) before the proxy is sent SIGTERM on pod deletion. Keeps
 # the pod serving while an L4 LoadBalancer removes it from rotation, closing the
 # endpoint-propagation race that can drop a single new connection at the instant a
-# rolling update terminates a replica. Must be < drainGracePeriodSeconds. 0 = off.
+# rolling update terminates a replica. 0 = off.
 drainPreStopSeconds: 6
 
-resources: {}
+# Container resources. A memory LIMIT is security-relevant, not just capacity
+# planning: every admitted request buffers up to --max-body-bytes before the verify
+# gate, so without a cgroup limit a peer driving the in-flight ceiling grows the pod
+# until the node's OOM killer picks a victim — which may be a different pod. With a
+# limit the blast radius is this container.
+resources:
+  requests:
+    cpu: "500m"
+    memory: "256Mi"
+  limits:
+    memory: "1Gi"
 podAnnotations: {}
 nodeSelector: {}
 tolerations: []

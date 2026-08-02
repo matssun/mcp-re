@@ -200,9 +200,18 @@ fn component_value(
             found = Some(v.trim());
         }
     }
-    found
-        .map(str::to_owned)
-        .ok_or(HttpProfileError::MissingCoveredComponent(component.name))
+    let value = found.ok_or(HttpProfileError::MissingCoveredComponent(component.name))?;
+    // CR/LF in a covered value would make the base non-injective: components are
+    // joined one per line, so a value containing a newline can forge a second
+    // component line inside the base, and two different messages then produce the same
+    // signature base. RFC 9110 forbids these bytes in a field value anyway, so nothing
+    // legitimate is refused.
+    if value.bytes().any(|b| b == b'\r' || b == b'\n') {
+        return Err(HttpProfileError::MalformedEvidence(
+            "covered field value contains CR or LF",
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 /// `host[:port]` from an absolute URI, lowercased (RFC 9421 `@authority`).

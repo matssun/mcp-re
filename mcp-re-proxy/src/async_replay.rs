@@ -10,6 +10,8 @@
 //!     request path; the in-memory [`InMemoryAsyncAtomicReplayStore`] is the
 //!     default-build reference.
 //!   * [`L1FastRejectStore`] — a PER-CORE L1 optimization in front of the shared L2.
+//!     **Defined, not wired**: `app.rs` installs the L2 directly, so this is not what
+//!     runs today. See the type's own docs.
 //!     It may FAST-REJECT a key it already knows is present (returning `Replay`
 //!     without touching L2), but it can NEVER answer `Fresh`: **`Fresh` is only ever
 //!     produced by a winning L2 insert.** This "L1-never-Fresh" property is enforced
@@ -156,9 +158,10 @@ impl InMemoryAsyncAtomicReplayStore {
         self
     }
 
-    /// Number of retained entries (test/inspection aid).
+    /// Number of retained entries (test/inspection aid). A poisoned lock reports 0
+    /// rather than panicking — this is an inspection aid, not a decision.
     pub fn len(&self) -> usize {
-        self.inner.lock().expect("replay state lock").seen.len()
+        self.inner.lock().map(|s| s.seen.len()).unwrap_or(0)
     }
 
     /// Whether the store retains no entries.
@@ -173,8 +176,36 @@ impl InMemoryAsyncAtomicReplayStore {
         &self,
         key: &str,
         retain_until: i64,
+        now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
-        let mut state = self.inner.lock().expect("replay state lock");
+        // MCPS-08: an already-past `retain_until` is refused BEFORE recording, at the
+        // store layer, rather than relying solely on the upstream freshness step
+        // having run first. Recording it would write an entry the next prune drops,
+        // making the nonce replayable while this call reported `Fresh`. Every other
+        // store in the tree refuses it here; this one is the DEFAULT, so its being the
+        // exception was the wrong way round.
+        // Against the CALLER's `now` — the same clock the freshness gate used — as the
+        // five sibling stores do. The store's own clock is the PRUNE anchor and only
+        // that: pruning must not be driven by a caller-supplied value, and staleness
+        // must not be judged against a clock the verifier never saw.
+        if crate::shared_replay::is_stale_pre_store(retain_until, now_unix) {
+            return Err(ReplayStoreError::Unavailable {
+                details: "replay retain_until is already past; refusing to record a nonce \
+                          that would not be retained"
+                    .to_string(),
+            });
+        }
+        // A poisoned mutex is an OPERATIONAL failure — fail closed on the frozen
+        // `mcp-re.replay_cache_unavailable` token, never a panic. Panicking here bricks
+        // the replica for its lifetime (poison is sticky) and the fault never reaches
+        // the audit stream as a reason, which is exactly what the sync twin refuses to
+        // do.
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|e| ReplayStoreError::Unavailable {
+                details: format!("in-memory async replay store lock poisoned: {e}"),
+            })?;
         if state.seen.contains_key(key) {
             return Ok(ReplayDecision::Replay);
         }
@@ -211,12 +242,12 @@ impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
         &'a self,
         key: &'a str,
         expires_at_unix: i64,
-        _now_unix: i64,
+        now_unix: i64,
     ) -> ReplayDecisionFuture<'a> {
         // `expires_at_unix` is the skew-folded retain-until the tier computed. The
         // decision is a lock-guarded insert, wrapped in a ready future so it satisfies
         // the async contract without ever blocking a runtime worker.
-        Box::pin(async move { self.insert_locked(key, expires_at_unix) })
+        Box::pin(async move { self.insert_locked(key, expires_at_unix, now_unix) })
     }
 }
 
@@ -325,6 +356,13 @@ pub const DEFAULT_L1_CAPACITY: usize = 65_536;
 /// `Replay`), the key is now present in L2, so it is recorded in L1 to fast-reject
 /// future duplicates. Because the L1 lookup can only ever yield `Replay` or "miss",
 /// the L1 can NEVER manufacture a `Fresh` — it is a pure latency optimization.
+/// **Not on the shipped serving path.** `app.rs` wires the L2 store directly, with no
+/// L1 wrapper, on every backend — so the two-tier architecture the module header
+/// describes is not what runs today, and every request pays a full L2 round trip. The
+/// type is exercised only by `async_replay_test`. There is no security consequence
+/// (the L1 can only fast-REJECT and never manufactures `Fresh`), but an SLO claim
+/// resting on "per-core L1 fast-reject" would be unbacked. Wiring it needs per-core
+/// state, and one `HttpProfileProxy` is shared by every core.
 pub struct L1FastRejectStore<L2> {
     l2: L2,
     l1: Mutex<BoundedKeySet>,
@@ -493,6 +531,33 @@ mod tests {
                     .await
                     .unwrap(),
                 ReplayDecision::Replay
+            );
+        });
+    }
+
+    /// MCPS-08: an already-past `retain_until` is refused BEFORE recording. Every
+    /// sibling store does this; the DEFAULT store was the exception, so it would have
+    /// recorded a nonce the next prune drops and reported `Fresh` for it.
+    #[test]
+    fn an_already_stale_retain_until_is_refused_pre_store() {
+        let store = InMemoryAsyncAtomicReplayStore::new();
+        block(async {
+            let err = store
+                .atomic_insert_if_absent("stale", 100, 100)
+                .await
+                .expect_err("retain_until == now is not retained");
+            assert!(matches!(err, ReplayStoreError::Unavailable { .. }));
+            assert!(store
+                .atomic_insert_if_absent("stale", 99, 100)
+                .await
+                .is_err());
+            // One second of retention IS retention.
+            assert_eq!(
+                store
+                    .atomic_insert_if_absent("live", 101, 100)
+                    .await
+                    .expect("a future retain_until records"),
+                ReplayDecision::Fresh
             );
         });
     }
