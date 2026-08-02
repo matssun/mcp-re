@@ -91,6 +91,23 @@ pub struct AdmissionClaims {
     pub mcp_re_profile: String,
     /// The admitted workload's stable id.
     pub mcp_re_admission_id: String,
+    /// The ACTOR this assertion was issued to — the `actor_id` the PEP's verifier
+    /// resolves for the presenting request signature.
+    ///
+    /// Without it an assertion is a BEARER TOKEN. Every other field is derivable
+    /// from the assertion itself (`AdmissionBinding::opaque_from` computes the whole
+    /// binding from these claims), so anyone holding a credential the PEP's
+    /// `resolve_actor` accepts — a lower-privilege tenant, a compromised sibling
+    /// workload, anything that read one admitted request body or request log — could
+    /// copy an admitted peer's assertion into its own signed evidence block, derive
+    /// the matching binding, and pass the §7 gate. The gate then proved only "some
+    /// admitted workload exists", not "this caller is admitted", and a workload whose
+    /// own admission had been revoked evaded it by borrowing a peer's.
+    ///
+    /// Required, not optional: an assertion that names no presenter cannot be checked
+    /// against one, and a check that is skipped when a field is absent is a check an
+    /// attacker omits.
+    pub mcp_re_admitted_actor: String,
     /// The monotonic admission generation — the anti-rollback counter. A currency
     /// check compares the call's bound generation against the authoritative one;
     /// an older generation is stale even if the assertion has not expired.
@@ -304,11 +321,20 @@ pub fn verify_admission_assertion(
     // Freshness: within [nbf, exp] ± skew, AND not older than the declared budget
     // N (§5.2). The TTL alone is the issuer's choice; N is the verifier's own cap
     // on how stale a snapshot it will act on.
+    // SATURATING throughout, matching the primary freshness gate (verify.rs). These
+    // operands come straight out of a JWS payload, so `now - claims.iat` with an
+    // extreme `iat` wraps in a release build — silently passing the staleness cap the
+    // expression exists to enforce — and panics on the serving path in any build with
+    // overflow checks. Two divergent implementations of one window is the bug; this is
+    // the audited form.
     let skew = policy.max_clock_skew;
-    if claims.nbf - skew > now || claims.exp + skew <= now || claims.exp <= claims.nbf {
+    if claims.nbf.saturating_sub(skew) > now
+        || claims.exp.saturating_add(skew) <= now
+        || claims.exp <= claims.nbf
+    {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
-    if now - claims.iat > policy.max_assertion_age + skew {
+    if now.saturating_sub(claims.iat) > policy.max_assertion_age.saturating_add(skew) {
         return Err(HttpProfileError::AdmissionAssertionExpired);
     }
     Ok(claims)
@@ -343,6 +369,7 @@ fn s_seg_to_b64url(s_seg: &str) -> Result<String, HttpProfileError> {
 pub fn check_admission(
     binding: &AdmissionBinding,
     assertion_jws: &str,
+    presenter_actor_id: &str,
     authoritative: Option<&AuthoritativeAdmission>,
     expected_profile: &str,
     verifier_audiences: &[&str],
@@ -358,6 +385,15 @@ pub fn check_admission(
         now,
         resolve_issuer,
     )?;
+
+    // The assertion must have been issued TO THIS CALLER. `presenter_actor_id` is the
+    // actor the verifier RESOLVED from the request signature — never anything the
+    // request asserts — so a borrowed assertion names a different actor and is
+    // refused. This is what makes the gate say "this caller is admitted" rather than
+    // "an admitted workload exists somewhere".
+    if claims.mcp_re_admitted_actor != presenter_actor_id {
+        return Err(HttpProfileError::AdmissionBindingMismatch);
+    }
 
     // The call's binding must describe THIS assertion: same workload, same
     // generation, and committing to the same admitted state.
@@ -399,7 +435,11 @@ pub fn check_admission(
             if !policy.allow_degraded_mode {
                 return Err(HttpProfileError::AdmissionStateUnavailable);
             }
-            if now - claims.iat > policy.degraded_propagation_bound + policy.max_clock_skew {
+            if now.saturating_sub(claims.iat)
+                > policy
+                    .degraded_propagation_bound
+                    .saturating_add(policy.max_clock_skew)
+            {
                 // Past P: a revocation could have propagated by now and we would not
                 // know. Stop serving on the stale snapshot.
                 return Err(HttpProfileError::AdmissionStateUnavailable);
@@ -436,12 +476,17 @@ mod tests {
             aud: Audience::One("mcp.example.com".into()),
             mcp_re_profile: crate::ids::PROFILE_TAG.into(),
             mcp_re_admission_id: "workload-7".into(),
+            mcp_re_admitted_actor: TEST_ACTOR.into(),
             mcp_re_admission_generation: generation,
             mcp_re_admitted_state_digest: b64url_encode(&Sha256::digest(b"admitted-state")),
             mcp_re_admission_status: status,
             issuer_kid: ISSUER_KID.into(),
         }
     }
+
+    /// The actor an assertion is issued to. `check_admission` compares it against the
+    /// verifier-resolved presenter, so a borrowed assertion names someone else.
+    const TEST_ACTOR: &str = "client:example.com:did:example:host-a:client-key-1";
 
     fn issue(c: &AdmissionClaims) -> String {
         issue_admission_assertion(c, |input| {
@@ -472,6 +517,7 @@ mod tests {
         check_admission(
             &binding,
             &jws,
+            TEST_ACTOR,
             auth,
             crate::ids::PROFILE_TAG,
             &["mcp.example.com"],
@@ -559,6 +605,7 @@ mod tests {
             check_admission(
                 &binding,
                 &jws,
+                TEST_ACTOR,
                 None,
                 crate::ids::PROFILE_TAG,
                 &["mcp.example.com"],
@@ -586,6 +633,7 @@ mod tests {
             check_admission(
                 &binding,
                 &jws,
+                TEST_ACTOR,
                 Some(&auth),
                 crate::ids::PROFILE_TAG,
                 &["mcp.example.com"],

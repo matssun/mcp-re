@@ -691,13 +691,60 @@ describe("McpReHttpTransport signing inputs", () => {
       method: "tools/list",
       route: null,
     });
-    const expected = `sha-256:${createHash("sha256").update(signedBindings, "utf8").digest("base64url")}`;
 
-    expect((await inspectPending(config)).authzBindingDigest).toBe(expected);
+    // LITERALS, not a recomputation. Recomputing the expectation with each SDK's own
+    // serializer is what let the two drift: Python's `json.dumps` defaults to `", "`
+    // / `": "` separators and `JSON.stringify` emits none, so identical bindings
+    // produced different digests and an audit pipeline reconciling records across the
+    // two saw a false "artifact binding changed". The Python twin pins these same two
+    // strings — that is the point of writing them down.
+    expect(signedBindings).toBe(
+      '[{"artifact_type":"pdp-decision","form":"opaque-bytes","material_b64url":"ZG9j"}]',
+    );
+    expect((await inspectPending(config)).authzBindingDigest).toBe(
+      "sha-256:czwnl9p6eDzBuZBaI8aHsupsVpiCErQAcahWFp2z7ZI",
+    );
   });
 
   it("records no binding digest for a request that carries no bindings", async () => {
     expect((await inspectPending(minimalConfig())).authzBindingDigest).toBeNull();
+  });
+});
+
+describe("McpReHttpTransport peer wire codes", () => {
+  // The napi binding formats every core failure as `mcp-re: mcp-re.<token>`, so a
+  // regex applied to the WHOLE message could never match one — every genuine
+  // peer-evidence failure was relabelled as a local `mcp-re-sdk:` condition, and the
+  // Python twin delivered the bare token for the same event.
+  it("delivers a core failure as its frozen token, not as a local SDK error", async () => {
+    const poster: Poster = async () => {
+      throw new Error("mcp-re: mcp-re.response_sig_invalid");
+    };
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    const delivered: JSONRPCMessage[] = [];
+    transport.onmessage = (m) => delivered.push(m);
+    await transport.start();
+    await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" } as JSONRPCMessage);
+    await transport.close();
+
+    expect(delivered).toHaveLength(1);
+    const error = (delivered[0] as { error: { message: string } }).error;
+    expect(error.message).toBe("mcp-re.response_sig_invalid");
+  });
+
+  it("still labels a genuine local failure as one", async () => {
+    const poster: Poster = async () => {
+      throw new Error("socket hang up");
+    };
+    const transport = new McpReHttpTransport(minimalConfig(), poster);
+    const delivered: JSONRPCMessage[] = [];
+    transport.onmessage = (m) => delivered.push(m);
+    await transport.start();
+    await transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" } as JSONRPCMessage);
+    await transport.close();
+
+    const error = (delivered[0] as { error: { message: string } }).error;
+    expect(error.message).toMatch(/^mcp-re-sdk: Error: socket hang up$/);
   });
 });
 

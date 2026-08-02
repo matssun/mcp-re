@@ -286,10 +286,30 @@ impl ReplayCache for SharedReplayCache {
 /// unbounded; an explicit `prune` drains the backlog as entries expire.
 const MAX_ATOMIC_STORE_ENTRIES: usize = 1_000_000;
 
+/// How often the in-memory shared store evicts expired entries inline.
+///
+/// Bounded cadence rather than every insert: the sweep is O(n) over the map, and the
+/// ceiling only needs headroom to reappear, not to be exact.
+const PRUNE_EVERY_N_INSERTS: usize = 64;
+
+/// Wall-clock Unix seconds for the inline eviction anchor.
+///
+/// The `AtomicReplayStore` trait carries no clock — `now_unix` is vestigial and
+/// callers pass `0` — so a store that must expire its own entries reads one.
+fn wall_clock_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Clone)]
 pub struct InMemoryAtomicReplayStore {
     /// `composite_key -> retain_until` (absolute Unix seconds).
     seen: Arc<Mutex<BTreeMap<String, i64>>>,
+    /// Inserts since the last inline eviction pass, under the same lock as `seen`.
+    /// Clones share it, because they share the map.
+    inserts_since_prune: Arc<Mutex<usize>>,
     /// Fail-closed entry ceiling (defaults to [`MAX_ATOMIC_STORE_ENTRIES`]). Held
     /// as a field so tests can exercise the ceiling cheaply; production always
     /// uses the default.
@@ -307,6 +327,7 @@ impl InMemoryAtomicReplayStore {
     pub fn new() -> Self {
         InMemoryAtomicReplayStore {
             seen: Arc::new(Mutex::new(BTreeMap::new())),
+            inserts_since_prune: Arc::new(Mutex::new(0)),
             max_entries: MAX_ATOMIC_STORE_ENTRIES,
         }
     }
@@ -375,14 +396,31 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         if map.contains_key(key) {
             return Ok(ReplayDecision::Replay);
         }
+        // INLINE EVICTION, on a bounded cadence, anchored on the caller's `now_unix`.
+        //
+        // The ceiling below is fail-closed, but nothing scheduled a prune: `prune` is
+        // an explicit method no production caller invokes, so once the map filled the
+        // store returned `Unavailable` for every subsequent nonce FOREVER — a
+        // permanent brick, not a backpressure window, because the expired entries that
+        // would have made room were never removed. Evicting here is what makes the
+        // ceiling a bound rather than a terminal state.
+        //
+        // The anchor is the store's OWN clock: the trait's `now_unix` is documented as
+        // vestigial (callers pass `0`), and pruning against `0` would evict nothing.
+        if let Ok(mut since) = self.inserts_since_prune.lock() {
+            *since = since.saturating_add(1);
+            if *since >= PRUNE_EVERY_N_INSERTS {
+                *since = 0;
+                let now = wall_clock_unix();
+                map.retain(|_, &mut until| until > now);
+            }
+        }
         // Fail-closed ceiling (finding #140): this reference store has no
-        // server-side TTL and no production prune scheduler (the trait carries no
-        // clock), so without a cap a peer streaming distinct fresh nonces grows
-        // the map without bound. Past the ceiling, refuse with Unavailable
+        // server-side TTL, so past the ceiling it refuses with Unavailable
         // (→ `mcp-re.replay_cache_unavailable`, fail closed) rather than grow
-        // unbounded — never a silent "allow". An explicit `prune` drains the
-        // backlog as entries expire. (A genuinely durable/cross-process backend —
-        // Redis/etcd — instead self-evicts via a server-side TTL and is exempt.)
+        // unbounded — never a silent "allow". (A genuinely durable/cross-process
+        // backend — Redis/etcd — instead self-evicts via a server-side TTL and is
+        // exempt.)
         if map.len() >= self.max_entries {
             return Err(ReplayStoreError::Unavailable {
                 details: format!(
@@ -408,6 +446,43 @@ mod tests {
     use super::InMemoryAtomicReplayStore;
     use super::ReplayStoreError;
     use super::SharedReplayCache;
+    use super::PRUNE_EVERY_N_INSERTS;
+
+    /// The ceiling must be a BACKPRESSURE window, not a terminal state. Without an
+    /// inline sweep nothing ever removed an expired entry — `prune` is an explicit
+    /// method no production caller invokes — so once the map filled, every subsequent
+    /// nonce got `Unavailable` for the life of the process.
+    #[test]
+    fn a_full_store_recovers_once_its_entries_expire() {
+        let store = InMemoryAtomicReplayStore::new().with_max_entries(4);
+        // Fill it with entries whose retain-until is already in the past (relative to
+        // the store's own clock, which is what the sweep anchors on). The pre-store
+        // staleness guard only refuses a NON-POSITIVE absolute value here, so a small
+        // positive one records and is then reclaimable.
+        for i in 0..4 {
+            store
+                .insert_if_absent(&format!("k{i}"), 1, 0)
+                .expect("fills");
+        }
+        assert!(
+            store.insert_if_absent("overflow", 1, 0).is_err(),
+            "the ceiling refuses before the sweep has run"
+        );
+        // The sweep runs on a bounded cadence, so drive enough attempts to reach it.
+        // Every attempt before the pass is refused; none ever admits a replay.
+        let mut admitted = None;
+        for i in 0..PRUNE_EVERY_N_INSERTS * 2 {
+            if let Ok(decision) = store.insert_if_absent(&format!("later{i}"), 1, 0) {
+                admitted = Some(decision);
+                break;
+            }
+        }
+        assert_eq!(
+            admitted,
+            Some(ReplayDecision::Fresh),
+            "expired entries must be reclaimed so the store recovers"
+        );
+    }
     use mcp_re_core::McpReError;
     use mcp_re_core::ReplayCache;
     use mcp_re_core::ReplayCacheError;

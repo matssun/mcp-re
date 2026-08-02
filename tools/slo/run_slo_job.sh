@@ -2,18 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # ADR-MCPRE-051 §7 SLO baseline — run one load-harness measurement as a K8s Job
-# pinned to a declared GKE machine class, then extract the machine-readable report.
+# pinned to a declared machine class, then extract the machine-readable report.
 #
 # The Job runs the mcp-re-slo-bench image (deploy/docker/Dockerfile.bench), which
 # runs tls_load_harness_bench — spawning the REAL mcp-re-proxy async fleet at
 # MCP_RE_LOADGEN_CORES cores against an in-process echo backend over mTLS — under
 # the pinned envelope (docs/bench/adr-051-benchmark-envelope.json).
 #
+# PROVIDER selects the CLUSTER SUBSTRATE — and nothing else. The Job spec, envelope
+# and report are identical on all three; only the node-pinning label and the image
+# registry differ.
+#
 # Usage:
-#   tools/slo/run_slo_job.sh <node-pool> <hw-class-label> <cores> <out.json>
-# e.g.
-#   tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 1 e2_1core.json
-#   tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
+#   PROVIDER=gke tools/slo/run_slo_job.sh <node-pool> <hw-class-label> <cores> <out.json>
+#     tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
+#
+#   PROVIDER=eks ECR_REGISTRY=<acct>.dkr.ecr.<region>.amazonaws.com \
+#     tools/slo/run_slo_job.sh <nodegroup> <hw-class-label> <cores> <out.json>
+#     PROVIDER=eks tools/slo/run_slo_job.sh ng-m7i2x m7i.2xlarge 8 m7i_8core.json
+#
+#   PROVIDER=kind tools/slo/run_slo_job.sh - kind-local 1 kind_1core.json
+#     PLUMBING DRY-RUN ONLY. kind is a single unpinned node on a developer box; its
+#     numbers are NOT a declarable baseline and the gate must never be fed them.
+#     Use it to prove the Job spec, sidecars, image and report extraction work.
 #
 # Then gate the pair (see docs/security/gke-slo-baseline-runbook.md):
 #   python3 scripts/slo_gate.py --report e2_8core.json \
@@ -21,22 +32,66 @@
 #     --targets docs/bench/adr-051-slo-targets.json
 #
 # Env (override the defaults for another project/region/registry):
-#   NS         (default mcp-re)          — namespace
-#   BENCH_IMG  (default AR path below)   — the mcp-re-slo-bench image
+#   PROVIDER     (default gke)             — gke | eks | kind
+#   NS           (default mcp-re)          — namespace
+#   BENCH_IMG    (default per PROVIDER)    — the mcp-re-slo-bench image
+#   ECR_REGISTRY (PROVIDER=eks)            — <acct>.dkr.ecr.<region>.amazonaws.com
+#   CPU_REQUEST  (default 6)               — Job cpu request; lower it only for a
+#                plumbing dry-run (kind, or a free-tier EKS node). A declared-hardware
+#                measurement keeps 6 so the pod owns the class it is named after.
+#   MEM_REQUEST  (default 2Gi)             — Job memory request; same rule. A 2 GiB
+#                node cannot admit a 2Gi request at all (kubelet reserves some), so a
+#                dry-run on one has to lower it or the pod stays Pending forever.
+#   REDIS_IMG    (default redis:7-alpine)  — the sidecar image. Point it at a registry
+#                mirror when the nodes cannot reach Docker Hub or would be rate-limited.
 set -euo pipefail
 
 NS="${NS:-mcp-re}"
+PROVIDER="${PROVIDER:-gke}"
+CPU_REQUEST="${CPU_REQUEST:-6}"
+MEM_REQUEST="${MEM_REQUEST:-2Gi}"
+REDIS_IMG="${REDIS_IMG:-redis:7-alpine}"
 # The tag is READ FROM VERSION, never restated: deploy/cloudbuild/mcp-re-images.yaml pushes
 # the image at whatever VERSION says, so a literal here goes stale on the next bump and
-# the Job then references a tag Artifact Registry does not hold (ImagePullBackOff on a
+# the Job then references a tag the registry does not hold (ImagePullBackOff on a
 # cluster that is already costing money).
 BENCH_TAG="$(tr -d '[:space:]' < "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/VERSION")"
-BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:$BENCH_TAG}"
 
 POOL="${1:?usage: run_slo_job.sh <node-pool> <hw-class> <cores> <out.json>}"
 HW="${2:?hw-class label, e.g. e2-standard-8}"
 CORES="${3:?cores, e.g. 1 or 8}"
 OUT="${4:?output report path}"
+
+# Substrate-specific pinning + registry. The node label is the ONE thing that cannot
+# be shared: each managed control plane stamps its own pool key onto nodes. kind is a
+# single unpinned node, so it carries no selector and the image is side-loaded.
+PULL_POLICY="IfNotPresent"
+case "$PROVIDER" in
+  gke)
+    NODE_SELECTOR=$'      nodeSelector:\n        cloud.google.com/gke-nodepool: '"$POOL"
+    BENCH_IMG="${BENCH_IMG:-us-central1-docker.pkg.dev/project-b19bbb5e-9be8-4fcb-a2f/mcp-re/mcp-re-slo-bench:$BENCH_TAG}"
+    ;;
+  eks)
+    NODE_SELECTOR=$'      nodeSelector:\n        eks.amazonaws.com/nodegroup: '"$POOL"
+    if [ -z "${BENCH_IMG:-}" ]; then
+      : "${ECR_REGISTRY:?PROVIDER=eks needs ECR_REGISTRY=<acct>.dkr.ecr.<region>.amazonaws.com (or set BENCH_IMG)}"
+      BENCH_IMG="$ECR_REGISTRY/mcp-re-slo-bench:$BENCH_TAG"
+    fi
+    ;;
+  kind)
+    NODE_SELECTOR=""
+    BENCH_IMG="${BENCH_IMG:-mcp-re-slo-bench:$BENCH_TAG}"
+    # The image is loaded with `kind load docker-image`, never pulled: a registry
+    # round-trip would fail on a cluster with no registry credentials.
+    PULL_POLICY="Never"
+    printf '\n*** PROVIDER=kind — PLUMBING DRY-RUN ONLY ***\n'
+    printf 'A single unpinned node on a developer box is not a declared hardware class.\n'
+    printf 'This report proves the Job spec runs; it is NOT a baseline and must never\n'
+    printf 'be fed to scripts/slo_gate.py as one.\n\n'
+    ;;
+  *)
+    echo "PROVIDER must be gke|eks|kind (got '$PROVIDER')" >&2; exit 2 ;;
+esac
 
 JOB="slo-$(echo "$HW" | tr -d '.-' | tr 'A-Z' 'a-z')-${CORES}c"
 kubectl -n "$NS" delete job "$JOB" >/dev/null 2>&1 || true
@@ -51,8 +106,7 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      nodeSelector:
-        cloud.google.com/gke-nodepool: $POOL
+$NODE_SELECTOR
       # The async per-core serving plane refuses node-local replay, so the bench needs
       # a shared primary+2-replica Redis (WAIT 2 durability tier). Docker is unavailable
       # in a Job pod, so provide it as native sidecars (initContainers restartPolicy:
@@ -60,20 +114,21 @@ spec:
       # via MCP_RE_LOADGEN_REDIS_URL. Sidecars are torn down when the bench container exits.
       initContainers:
         - name: redis-primary
-          image: redis:7-alpine
+          image: $REDIS_IMG
           restartPolicy: Always
           args: ["redis-server","--port","6379","--appendonly","yes"]
         - name: redis-r1
-          image: redis:7-alpine
+          image: $REDIS_IMG
           restartPolicy: Always
           args: ["redis-server","--port","6380","--replicaof","127.0.0.1","6379","--appendonly","yes"]
         - name: redis-r2
-          image: redis:7-alpine
+          image: $REDIS_IMG
           restartPolicy: Always
           args: ["redis-server","--port","6381","--replicaof","127.0.0.1","6379","--appendonly","yes"]
       containers:
         - name: bench
           image: $BENCH_IMG
+          imagePullPolicy: $PULL_POLICY
           workingDir: /build
           # The image ENTRYPOINT uses a login shell that drops cargo from PATH; override
           # with an explicit PATH. Wait for the two replicas to report online (so WAIT 2
@@ -90,10 +145,10 @@ spec:
             - { name: MCP_RE_LOADGEN_CONCURRENCY, value: "${CONCURRENCY:-128}" }
             - { name: MCP_RE_LOADGEN_REQUESTS, value: "${REQUESTS:-8000}" }
           resources:
-            requests: { cpu: "6", memory: "2Gi" }
+            requests: { cpu: "$CPU_REQUEST", memory: "$MEM_REQUEST" }
 YAML
 
-echo "[$JOB] pool=$POOL hw=$HW cores=$CORES — waiting for completion..."
+echo "[$JOB] provider=$PROVIDER pool=$POOL hw=$HW cores=$CORES — waiting for completion..."
 # 600s: the v2 canonical envelope runs 8000 requests/run (4x the old v1 2000), so a
 # 1-core run needs a wider completion window than the old lane.
 kubectl -n "$NS" wait --for=condition=complete "job/$JOB" --timeout=600s 2>/dev/null \

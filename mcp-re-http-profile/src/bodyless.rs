@@ -469,8 +469,12 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     let (_c, _e, _n, key_id, algorithm) =
         crate::verify::check_params_for(&parsed.params, &expect.policy, now, false)?;
 
-    // The credential's own root-signed server_signer is authoritative here (no body
-    // to declare a competing one). Read it, then verify the whole chain against it.
+    // There is no body block here to declare a server signer, so the credential's own
+    // `mcp_re_server_signer` is the only value available — and feeding it back in as
+    // `expected_server_signer` makes the §3 step-5 scope comparison `x != x`, a check
+    // that cannot fail. It is passed for shape; the SUBSTANTIVE cross-check is below,
+    // against a field the credential does not get to choose freely: the delegated kid
+    // the response actually signed under.
     let server_signer = credential_server_signer(&credential)?;
     let params = crate::delegation::DelegationVerifyParams {
         now,
@@ -481,21 +485,55 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         expected_server_signer: &server_signer,
         accepted_epochs: expect.accepted_epochs,
     };
+    // Root resolution through the SAME seam every other path uses, so a trust-store
+    // OUTAGE is reported as `mcp-re.trust_resolver_unavailable` rather than collapsed
+    // into "issuer untrusted", and a resolver returning a Request-slot actor for a
+    // Response-slot question is refused. See the matching note in `verify.rs`.
+    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
+        std::cell::RefCell::new(None);
     let verified = crate::delegation::verify_delegation_credential(
         &credential,
         &params,
         |issuer_kid| {
-            resolve_actor(issuer_kid, SignerSlot::Response)
-                .into()
-                .resolved()
-                .map(|a| a.verification_key)
+            match crate::verify::resolve_actor_for_slot(
+                resolve_actor,
+                issuer_kid,
+                SignerSlot::Response,
+            ) {
+                Ok(actor) => Some(actor.verification_key),
+                // A definitive "not trusted" stays the credential layer's verdict; only
+                // an outage and a wrong-slot actor are propagated. See `verify.rs`.
+                Err(HttpProfileError::UnresolvedKeyId) => None,
+                Err(e) => {
+                    *resolve_failure.borrow_mut() = Some(e);
+                    None
+                }
+            }
         },
         |id| is_revoked(id),
-    )?;
+    );
+    let verified = match verified {
+        Ok(v) => v,
+        Err(e) => return Err(resolve_failure.into_inner().unwrap_or(e)),
+    };
 
     // The response keyid is the delegated key, and the response signature verifies
     // under cnf.jwk over the base that COVERS the credential header.
     if key_id != verified.delegated_kid {
+        return Err(HttpProfileError::DelegationKeyMismatch);
+    }
+    // And the credential's scope names THAT key. The bodied path gets this from the
+    // block (`block.server_signer.keyid != verified.delegated_kid`); here the actor id
+    // is the credential's own, so the check is on its keyid field — the last
+    // `:`-separated component of the ROOT-SIGNED `mcp_re_server_signer`. A credential
+    // scoped to one server signer but presented for a different delegated key is
+    // refused, which is the property the scope gate exists for and which comparing the
+    // value against itself could never establish.
+    let scoped_keyid = server_signer
+        .rsplit(':')
+        .next()
+        .ok_or(HttpProfileError::DelegationProfileMismatch)?;
+    if unescape_actor_field(scoped_keyid) != verified.delegated_kid {
         return Err(HttpProfileError::DelegationKeyMismatch);
     }
     let base = signature_base(
@@ -529,6 +567,14 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
 /// WITHOUT verifying it — the value is used only as the `expected_server_signer`
 /// the full verification then re-derives and roots. Reading it here does not trust
 /// it; `verify_delegation_credential` proves the whole payload against the root.
+/// Reverse `block::field_escape` for one `actor_id` field.
+fn unescape_actor_field(field: &str) -> String {
+    field
+        .replace("%1F", "\u{1F}")
+        .replace("%3A", ":")
+        .replace("%25", "%")
+}
+
 fn credential_server_signer(compact_jws: &str) -> Result<String, HttpProfileError> {
     let payload_seg = compact_jws
         .split('.')

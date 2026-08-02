@@ -19,8 +19,13 @@ use std::time::Instant;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
+use mcp_re_proxy::async_replay::ReplayInsert;
 use mcp_re_proxy::RedisAtomicReplayStore;
 use mcp_re_proxy::SharedReplayCache;
+
+/// Every entry in this file is charged to one signer; the per-actor budget is
+/// exercised by its own test in `async_replay.rs`.
+const TEST_ACTOR: &str = "did:example:test-signer";
 
 const AUD: &str = "did:example:verifier";
 
@@ -549,8 +554,12 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
     });
 
     // (1) Healthy: the attached replica satisfies WAIT 1 → Fresh.
-    let healthy =
-        rt.block_on(store.atomic_insert_if_absent(&key_of("async-nonce-healthy"), expires_at, 0));
+    let healthy = rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(
+        &key_of("async-nonce-healthy"),
+        TEST_ACTOR,
+        expires_at,
+        0,
+    )));
     assert_eq!(
         healthy,
         Ok(ReplayDecision::Fresh),
@@ -567,8 +576,12 @@ fn async_wait_quorum_shortfall_fails_closed_against_a_replica() {
         primary_connected_slaves(&mut primary) == 0
     });
 
-    let shortfall =
-        rt.block_on(store.atomic_insert_if_absent(&key_of("async-nonce-shortfall"), expires_at, 0));
+    let shortfall = rt.block_on(store.atomic_insert_if_absent(ReplayInsert::new(
+        &key_of("async-nonce-shortfall"),
+        TEST_ACTOR,
+        expires_at,
+        0,
+    )));
     assert!(
         matches!(shortfall, Err(ReplayStoreError::Unavailable { .. })),
         "an async WAIT-quorum shortfall must fail closed as Unavailable, got {shortfall:?}"

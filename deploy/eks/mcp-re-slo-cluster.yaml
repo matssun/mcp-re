@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-051 §7 SLO baseline — the EKS substrate.
+#
+# eksctl renders this to CloudFormation, so the cluster is infrastructure-as-code
+# and `eksctl delete cluster -f <this file>` removes every stack it created. That
+# matters more here than elsewhere: this cluster exists only for the duration of a
+# measurement and must leave nothing billable behind.
+#
+#   eksctl create cluster -f deploy/eks/mcp-re-slo-cluster.yaml
+#   eksctl delete  cluster -f deploy/eks/mcp-re-slo-cluster.yaml --disable-nodegroup-eviction
+#
+# WHY TWO NODEGROUPS, 8 vCPU EACH. The §7 gate needs a 1-core AND an N-core report
+# from the SAME declared hardware class, and a floor is only credible if it is the
+# weaker of at least two classes. m7g (general purpose) and c7g (compute optimised)
+# are the AWS analogues of the GKE e2-standard-8 / c3-standard-8 pair. 8 + 8 = 16
+# vCPU against the account's 32-vCPU L-1216C47A quota, so both classes can run
+# concurrently with headroom.
+#
+# WHY GRAVITON (arm64). The bench image is a from-source Rust build. Built natively
+# on an Apple-silicon developer box it takes minutes; cross-built to amd64 under
+# QEMU it takes the better part of an hour and exercises an emulated CPU. arm64
+# nodes let the SAME image that stage 5 of scripts/local_gate.sh already ran on kind
+# be the image that runs here.
+#
+# The SLO Job is SELF-CONTAINED — tls_load_harness_bench spawns its own mcp-re-proxy
+# fleet and echo backend inside the Job pod. No fleet Deployment, Service, load
+# balancer or shared Redis is needed for the measurement, which is why this cluster
+# carries nodegroups and nothing else.
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: mcp-re-slo
+  region: eu-north-1
+  tags:
+    project: mcp-re
+    purpose: adr-mcpre-051-slo-baseline
+    ephemeral: "true"
+
+# No default nodegroup: every vCPU on this cluster belongs to a declared machine
+# class, so an unpinned pool cannot quietly absorb a measurement.
+managedNodeGroups:
+  - name: ng-m7g2x
+    instanceType: m7g.2xlarge
+    amiFamily: AmazonLinux2023
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 1
+    # The bench image carries a warmed cargo target/ so the Job runs with no
+    # recompile; that makes it large. A default 20 GiB root volume fills during the
+    # pull and the Job then fails on a cluster that is already billing.
+    volumeSize: 100
+    volumeType: gp3
+    privateNetworking: false
+    labels:
+      mcp-re/slo-class: m7g.2xlarge
+    tags:
+      project: mcp-re
+      ephemeral: "true"
+
+  - name: ng-c7g2x
+    instanceType: c7g.2xlarge
+    amiFamily: AmazonLinux2023
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 1
+    volumeSize: 100
+    volumeType: gp3
+    privateNetworking: false
+    labels:
+      mcp-re/slo-class: c7g.2xlarge
+    tags:
+      project: mcp-re
+      ephemeral: "true"
+
+# Managed nodegroups get the AmazonEC2ContainerRegistryReadOnly policy by default,
+# so the nodes can pull the bench image from ECR in this account with no extra
+# credential wiring.
+iam:
+  withOIDC: true
+
+# No NAT gateway. eksctl provisions one by default, and it bills per hour plus per
+# GiB processed for the whole life of the cluster. Both nodegroups set
+# privateNetworking: false, so their nodes sit in public subnets and reach ECR and
+# the control plane through the internet gateway. Nothing on this cluster runs in a
+# private subnet, so the NAT would be paid for and never used.
+vpc:
+  nat:
+    gateway: Disable
+  # The control-plane endpoint. eksctl leaves `publicAccessCIDRs` at 0.0.0.0/0, so
+  # the Kubernetes API of this cluster is reachable from the whole internet for the
+  # life of the run — authenticated, but exposed to every credential-stuffing and
+  # zero-day attempt on the way past.
+  #
+  # It cannot simply be made private: the nodes sit in PUBLIC subnets by design (see
+  # the NAT note above), and the operator drives the run with kubectl from outside the
+  # VPC, so `publicAccess: false` would make the cluster undrivable. The bound that
+  # fits is a CIDR allowlist.
+  #
+  # REQUIRED before `eksctl create cluster`. Substitute the operator's own address:
+  #
+  #   sed -i "s|OPERATOR_CIDR|$(curl -fsS https://checkip.amazonaws.com)/32|" \
+  #     deploy/eks/mcp-re-slo-cluster.yaml
+  #
+  # Left as a literal placeholder rather than 0.0.0.0/0 so `eksctl` fails on it: an
+  # unset allowlist must not silently mean "everyone".
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  publicAccessCIDRs:
+    - OPERATOR_CIDR

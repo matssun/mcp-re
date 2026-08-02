@@ -42,6 +42,7 @@ pub use encoding::b64url_decode;
 pub use encoding::b64url_encode;
 pub use error::McpReError;
 pub use error::McpReResult;
+pub use error::ALL_ERRORS;
 pub use hash::parse_hash_id;
 pub use hash::sha256_hash_id;
 pub use ids::EXTENSION_ID;

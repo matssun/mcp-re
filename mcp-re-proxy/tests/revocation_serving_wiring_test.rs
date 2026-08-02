@@ -69,15 +69,20 @@ impl TrustResolver for ScriptedResolver {
     }
 }
 
-fn signers() -> std::collections::HashMap<String, String> {
-    let mut m = std::collections::HashMap::new();
-    m.insert(CLIENT_KID.to_string(), CLIENT_SIGNER.to_string());
-    m
+/// The trust snapshot the actor seam reads its `kid -> signer` coordinate from. The
+/// resolver under test is the SCRIPTED one; this only has to enrol the kid.
+fn trust_store(kid: &str, signer: &str) -> Arc<mcp_re_proxy::reloading_trust::ReloadingTrustStore> {
+    let mut signers = std::collections::HashMap::new();
+    signers.insert(kid.to_string(), signer.to_string());
+    Arc::new(mcp_re_proxy::reloading_trust::ReloadingTrustStore::new(
+        mcp_re_core::InMemoryTrustResolver::default(),
+        signers,
+    ))
 }
 
 fn resolver_over(trust: Arc<dyn TrustResolver + Send + Sync>) -> mcp_re_proxy::ActorResolver {
     build_actor_resolver(
-        signers(),
+        trust_store(CLIENT_KID, CLIENT_SIGNER),
         trust,
         "example.com".to_string(),
         ROOT_KID.to_string(),
@@ -283,10 +288,7 @@ fn the_production_resolver_surfaces_a_store_outage() {
     }
 
     let resolve = mcp_re_proxy::app::build_actor_resolver(
-        std::collections::HashMap::from([(
-            CLIENT_KID.to_string(),
-            "did:example:client".to_string(),
-        )]),
+        trust_store(CLIENT_KID, "did:example:client"),
         std::sync::Arc::new(DownStore),
         "example.com".to_string(),
         "server-key-1".to_string(),

@@ -1,6 +1,6 @@
 {
   "schema": "mcp-re-scitt-conformance/v1",
-  "corpus_digest": "84df9f9a5bc40cb539316b84a3256874b797637cf05a2dc870bedb24ce371d65",
+  "corpus_digest": "e17227dd4a8800639e9f44dc722e9cf0e3690a1debb72f0e6d7cafd697f5ca75",
   "fixtures": [
     {
       "file": "s01_complete_record.json",
@@ -33,6 +33,10 @@
     {
       "file": "s08_leaf_index_outside_tree.json",
       "sha256": "8e4bd6c9a87e9b0a7c304e4d4435679be566005467a1fa6a99b00c86f8bc2aca"
+    },
+    {
+      "file": "s09_right_edge_leaf_of_a_three_leaf_log.json",
+      "sha256": "2ab8b37b811532134f9c707581634c69b7045ebf25c4afdc85d8723ed4a9514e"
     }
   ]
 }

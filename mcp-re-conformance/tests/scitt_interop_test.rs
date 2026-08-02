@@ -35,6 +35,10 @@ use std::path::PathBuf;
 
 use mcp_re_core::b64url_decode;
 use mcp_re_core::VerificationKey;
+use mcp_re_http_profile::chain::ChainLabel;
+use mcp_re_http_profile::chain::ChainReconstruction;
+use mcp_re_http_profile::chain::HopEvidence;
+use mcp_re_http_profile::evidence::RequestEvidence;
 use mcp_re_http_profile::scitt::verify_receipt_offline;
 use mcp_re_http_profile::scitt::verify_retained_evidence;
 use mcp_re_http_profile::scitt::Receipt;
@@ -67,6 +71,36 @@ fn interop_dir() -> PathBuf {
 
 fn artifact(name: &str) -> Vec<u8> {
     std::fs::read(interop_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+/// Parse `retained-evidence.bin` into the chain reconstruction an auditor would hold.
+///
+/// The artifact records EVERY hop's signature bases, because the statement's
+/// `chain_commitment` covers every hop: a retained set that stopped at hop 0 could not
+/// reproduce it.
+fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
+    let retained: serde_json::Value = serde_json::from_slice(bytes).expect("retained parses");
+    assert_eq!(
+        retained["chain_label"].as_str(),
+        Some("complete"),
+        "the corpus record is a complete chain"
+    );
+    ChainReconstruction {
+        label: ChainLabel::Complete,
+        hop_evidence: retained["hops"]
+            .as_array()
+            .expect("hops")
+            .iter()
+            .map(|hop| HopEvidence {
+                request_evidence: RequestEvidence::from_signature_base(
+                    hop["request"].as_str().expect("request base").as_bytes(),
+                ),
+                response_evidence: RequestEvidence::from_response_signature_base(
+                    hop["response"].as_str().expect("response base").as_bytes(),
+                ),
+            })
+            .collect(),
+    }
 }
 
 fn pin() -> ScittServiceTrustPin {
@@ -129,23 +163,27 @@ fn a_third_party_receipt_verifies_offline_under_mcp_re() {
 #[test]
 fn the_retained_evidence_reproduces_the_committed_handles() {
     let statement = statement();
-    let retained: serde_json::Value =
-        serde_json::from_slice(&artifact("retained-evidence.bin")).expect("retained parses");
-    let request = retained["request"].as_str().expect("request base");
-    let response = retained["response"].as_str().expect("response base");
+    let retained = retained_chain(&artifact("retained-evidence.bin"));
 
-    verify_retained_evidence(
-        statement.commitment(),
-        request.as_bytes(),
-        response.as_bytes(),
-    )
-    .expect("the retained bytes match the commitment");
+    // The statement commits to a TWO-hop record, so the retained artifact carries both
+    // hops. `verify_retained_evidence` compares the whole reconstruction — every hop's
+    // handles, the chain label, and the chain shape — not just hop 0. An artifact that
+    // held only the first hop used to pass this, which is the whole reason the check
+    // now takes a reconstruction.
+    verify_retained_evidence(statement.commitment(), &retained, None, None)
+        .expect("the retained bytes match the commitment");
 
     // Altered retained evidence is refused, even though the receipt still verifies.
-    assert!(
-        verify_retained_evidence(statement.commitment(), b"req-tampered", response.as_bytes())
-            .is_err()
-    );
+    let mut tampered = retained.clone();
+    tampered.hop_evidence[0].request_evidence =
+        RequestEvidence::from_signature_base(b"req-tampered");
+    assert!(verify_retained_evidence(statement.commitment(), &tampered, None, None).is_err());
+
+    // And so is a chain truncated after the first hop — the case a hop-0-only check
+    // could not see.
+    let mut truncated = retained.clone();
+    truncated.hop_evidence.truncate(1);
+    assert!(verify_retained_evidence(statement.commitment(), &truncated, None, None).is_err());
 }
 
 /// A pin for a different key does not verify the receipt. The pin is what a run records;

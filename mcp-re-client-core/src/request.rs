@@ -220,6 +220,12 @@ pub fn build_signed_request(
 /// clean JSON-RPC) and the evidence block, composes + signs, and returns the
 /// [`RequestEvidence`]. This is the single seam every signing mechanism (in-process
 /// key, KMS/HSM via [`sign_request_with_signer`], delegated service) flows through.
+/// The shortest nonce this core will SIGN: 128 bits of base64url is 22 characters.
+///
+/// A floor on emission only — the verifier's accepted language is unchanged, so this
+/// needs no cross-implementation coordination. Matches the two SDKs' own floors.
+pub const MIN_NONCE_CHARS: usize = 22;
+
 pub(crate) fn build_signed_request_with(
     id: Option<&Value>,
     method: &str,
@@ -236,6 +242,24 @@ pub(crate) fn build_signed_request_with(
     // fail closed rather than emit evidence that can never verify.
     if target_uri != inputs.audience.target_uri {
         return Err(HttpProfileError::AudienceMismatch);
+    }
+    // The FRESHNESS TRIPLE, at the seam every signing mechanism flows through.
+    //
+    // Both SDKs enforce a 128-bit nonce floor at sign time; this shared Rust core and
+    // the client proxy did not, so an embedder using them directly could sign and emit
+    // a request with an empty or guessable nonce — exactly as replayable as the case
+    // the SDK floor exists to prevent — or with `expires <= created`, a window no
+    // verifier can accept. Enforced where a nonce is EMITTED, so the accepted wire
+    // language is unchanged and no fixture moves.
+    if inputs.nonce.len() < MIN_NONCE_CHARS {
+        return Err(HttpProfileError::MalformedEvidence(
+            "nonce is below the 128-bit entropy floor",
+        ));
+    }
+    if inputs.expires <= inputs.created {
+        return Err(HttpProfileError::MalformedEvidence(
+            "signature window expires at or before created",
+        ));
     }
 
     // `params._meta` is ORDINARY MCP metadata (`progressToken` and friends) and is
@@ -439,7 +463,7 @@ mod evidence_precondition_tests {
             "client-key-1",
             audience(),
             bindings,
-            "nonce-1",
+            "nonce-1-padded-to-the-128-bit-floor",
             1_000,
             1_300,
         )
@@ -581,7 +605,7 @@ mod notification_tests {
                 ArtifactType::OauthDpop,
                 b"access-token",
             )],
-            "nonce-notification-1",
+            "nonce-notification-1-padded-to-floor",
             1_000,
             1_300,
         )

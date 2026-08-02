@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "4d26ab39a50cfecc48ac8951e62f8d51d7981a006d3afb095f948ccb603ffdc4",
+  "corpus_digest": "6aad7cf9d45efd10b626894801bb903de3979827da1e04c051a814a77ac7a10e",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -137,23 +137,23 @@
     },
     {
       "file": "h42_admission_current_admitted.json",
-      "sha256": "86e49e01d5a2e5dd734c916f1e611b6d6b5508d4e0c6d1876367f4339817bcd8"
+      "sha256": "70ac27c2b4e942be4784501e296b18c3be64852156ca5b5aaadfd1f5ad5af385"
     },
     {
       "file": "h43_admission_stale_generation.json",
-      "sha256": "4129a244a7ad7f246c8a2e854d3991e67e4797e44330fd967299a2a27f63d16e"
+      "sha256": "eef248e2da66082b3cd45cc9348df77737ff6f1d4930f94eaa41a94ba221f8e1"
     },
     {
       "file": "h44_admission_revoked_after_issuance.json",
-      "sha256": "6c16a90cc2d40c01a0a9c699999fbeb11d3a7bd0d5789eb042f5aa832c3fb955"
+      "sha256": "5d6f1a84d39bf01b571e0d7f87bb245f3febf2de0af247ec8b1b63d40d8f868e"
     },
     {
       "file": "h45_admission_state_unreachable_failclosed.json",
-      "sha256": "3a58999ae293ca4a2f678e7239017d8f80336e7e5a9c6e1e7a14b567660915d9"
+      "sha256": "01f047835b6075a526d7a0ffa005c43c9fa0b84fb3af5b7e865086a5dfebb37d"
     },
     {
       "file": "h46_admission_degraded_within_bound.json",
-      "sha256": "5cca5a0e6b30434d5171410be6f0e26e8cf86550d3ad40b738173abc4d4abfec"
+      "sha256": "1948e5287254355cddbbd9f95b2e063472607a4a671be652c4522fab75688ed4"
     },
     {
       "file": "h30_response_sse_on_covered_exchange.json",
@@ -161,31 +161,31 @@
     },
     {
       "file": "h24_chain_multi_hop_complete.json",
-      "sha256": "448f9a64cc87258255ca6408d68b2e84b8477a57ac2a5e2fc01e311f982d43ed"
+      "sha256": "9a7479434a2ec052507db22b0d428626c9b06f88662f5a5f25930ab4e6b9d6d7"
     },
     {
       "file": "h25_chain_missing_middle_hop_incomplete.json",
-      "sha256": "b28491ac0cbc1e3bca2c743ead28ba1a5ee2abfb34fe730527bb964688ada11a"
+      "sha256": "0a805fef565bf798f85e0dfd3a6feeec6cd1d985824f4b4f6c3e8420fcda6bc2"
     },
     {
       "file": "h26_chain_truncated_incomplete.json",
-      "sha256": "ba1fe4a946b051030313ae5c3cf1d1ef06bab83f4da4abc861f635fbeaac5ae8"
+      "sha256": "041eb4005fb5c18c5747a33f6eb619bc993c54e4365b7d095279b1944acf9901"
     },
     {
       "file": "h27_chain_foreign_continuation_incomplete.json",
-      "sha256": "85d128b478ad68bc2bc404ad8580d4c3645ce7ee3b4df49c82d5ab708e6906f0"
+      "sha256": "5fed31e15cc083fc9d92d48db4f7634c8fe13be286fc9a315986e93df4938345"
     },
     {
       "file": "h28_chain_role_swapped_handles_incomplete.json",
-      "sha256": "354cfaaad53f6cc80a4ddce67535e0b7b5dc390bdebb13d7dc3d57f499afdd31"
+      "sha256": "caa8b5644c26b603c3a6b035ee67d0bb76e61faf2ef6dc8dfdc65630244fcc8e"
     },
     {
       "file": "h29_chain_terminal_spliced_incomplete.json",
-      "sha256": "82b062ea68d6b1278cc63b8fef018a2ee4ca5b4eacb06d86e59d925894904538"
+      "sha256": "b26daa51e8ee220a74aedfbabedb4274dc29ef139917ceb6c68a1a5ea7c272ad"
     },
     {
       "file": "h51_chain_unrecognized_result_type_incomplete.json",
-      "sha256": "53469bfef9e7e115bed8de9c74279e1093466b056a7077deb586fe75c7c97201"
+      "sha256": "11a982af013639fa17bd3c37c31bc855ffb14ad62c4aefc20630d03593b370d8"
     },
     {
       "file": "h18_rejection_bound_valid.json",

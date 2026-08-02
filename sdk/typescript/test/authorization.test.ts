@@ -48,7 +48,7 @@ function sign(providers: AuthorizationBindingProvider[] = [], bj?: string | null
     "did:example:server-1",
     null,
     "dpop-token",
-    "nonce-authz-0001",
+    "nonce-authz-0001-128bit",
     1000,
     2000,
     null,

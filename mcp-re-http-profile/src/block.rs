@@ -70,7 +70,15 @@ impl ActorIdentity {
 /// Escape a single actor-id component so `:` joins stay unambiguous. `%` first
 /// (so the escape is reversible), then `:`.
 fn field_escape(s: &str) -> String {
-    s.replace('%', "%25").replace(':', "%3A")
+    // `%` first (so its own escape is not re-escaped), then EVERY separator any
+    // consumer of this string uses. `:` joins the actor-id fields here; U+001F joins
+    // the HTTP replay-key components downstream, and leaving it unescaped meant the
+    // injectivity that key's construction ASSERTS was not enforced — an actor id
+    // containing U+001F could produce the same joined key as a different
+    // (actor, audience, nonce) triple.
+    s.replace('%', "%25")
+        .replace(':', "%3A")
+        .replace('\u{1F}', "%1F")
 }
 
 /// The signing slot a keyid is resolved FOR. Passed INTO the trust seam so

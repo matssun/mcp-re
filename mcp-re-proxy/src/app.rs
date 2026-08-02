@@ -36,6 +36,14 @@ use mcp_re_http_profile::ResolverOutcome;
 use mcp_re_http_profile::SignerSlot;
 use std::collections::HashMap;
 
+/// How often the trust-epoch counter is polled, in seconds.
+///
+/// The Tier-3 guarantee is "flush within one poll interval of an advance", so this is
+/// the revocation latency the push tier actually delivers. Kept well inside the
+/// bounded-`T` fallback so the push tier is still the faster of the two.
+#[cfg(feature = "redis_replay")]
+const TRUST_EPOCH_POLL_SECS: u64 = 5;
+
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -66,14 +74,17 @@ fn trust_clock() -> crate::trust_cache::UnixClock {
 /// rotation rather than by a trust-store entry.
 ///
 /// The Request slot resolves through `request_trust` — the ADR-MCPS-021
-/// revocation-tier resolver — on EVERY request. `client_signers` supplies only the
+/// revocation-tier resolver — on EVERY request. `trust_store` supplies only the
 /// `kid -> signer` identity coordinate; deliberately not the key, since caching the
-/// key here would re-freeze trust at process start and silently bypass the tier.
+/// key here would re-freeze trust at process start and silently bypass the tier. It
+/// is read through the SNAPSHOT rather than a captured `HashMap` for the same reason:
+/// a kid removed from the trust file has to leave the request-signer set at the same
+/// instant it stops resolving, or the two disagree for a whole reload cadence.
 /// Every non-active outcome (`Revoked`, `NotFound`, `MalformedKey`, `Unavailable`)
 /// yields no actor, which the verifier surfaces as `actor_binding_failed`; an
 /// operational failure is never softened into an allow.
 pub fn build_actor_resolver(
-    client_signers: HashMap<String, String>,
+    trust_store: Arc<crate::reloading_trust::ReloadingTrustStore>,
     request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
     trust_domain: String,
     response_kid: String,
@@ -90,7 +101,7 @@ pub fn build_actor_resolver(
         }
         SignerSlot::Request => {
             // An unknown kid is a definitive negative from a healthy resolver.
-            let Some(signer) = client_signers.get(kid) else {
+            let Some(signer) = trust_store.signer_for(kid) else {
                 return ResolverOutcome::NotTrusted;
             };
             // C079: `.ok()?` used to throw this error away, so a store OUTAGE and an
@@ -98,7 +109,7 @@ pub fn build_actor_resolver(
             // `actor_binding_failed`. `mcp-re-core` has always modelled the difference
             // (`TrustResolverError::Unavailable`); it simply could not cross the seam.
             // Both still fail closed — only the reported reason changes.
-            let key = match request_trust.resolve(signer, kid) {
+            let key = match request_trust.resolve(&signer, kid) {
                 Ok(key) => key,
                 Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {
                     return ResolverOutcome::Unavailable
@@ -109,7 +120,7 @@ pub fn build_actor_resolver(
                 identity: ActorIdentity {
                     role: "client".to_string(),
                     trust_domain: trust_domain.clone(),
-                    subject: signer.clone(),
+                    subject: signer,
                     keyid: kid.to_string(),
                 },
                 verification_key: key,
@@ -299,9 +310,22 @@ pub fn run(
         Some(_) => None,
         None => Some(key_source.tls_server_key().map_err(|e| e.to_string())?),
     };
-    let trust_bytes =
-        std::fs::read(&config.trust_path).map_err(|e| format!("{}: {e}", config.trust_path))?;
-    let base_resolver = cli::load_trust(&trust_bytes)?;
+    // ADR-MCPS-021 Axis 2: the base trust store the revocation tiers resolve against.
+    //
+    // It is a SNAPSHOT the reload task can swap, not a map deserialised once and
+    // frozen for the process lifetime. Every tier describes itself in terms of "the
+    // store" — Tier 2 consults it per verification, Tier 3 evicts and forces a
+    // re-resolve against it — and none of those descriptions was a true statement
+    // about the deployment while the store could not change: revoking a client
+    // signing key meant editing the file and restarting every replica, so the
+    // exposure window was unbounded while the startup line advertised near-zero.
+    // The response kid is the deployment's own issuer key id; it is excluded from the
+    // request-signer set so the root can never be presented as a client credential.
+    let response_kid = config
+        .delegated_issuer_kid
+        .clone()
+        .unwrap_or_else(|| config.server_key_id.clone());
+    let trust_store = Arc::new(load_trust_snapshot(&config.trust_path, &response_kid)?);
 
     // ADR-MCPS-021 Axis 2: surface the DECLARED revocation tier and its honest
     // guarantee at startup. The proxy emits the tier's OWN guarantee string — never
@@ -319,7 +343,7 @@ pub fn run(
     // line above would be a claim the resolver does not enforce.
     // MCPS-84: connect the networked trust-epoch invalidation channel if one is
     // configured (only under --revocation-tier push; enforced at parse time).
-    let push_channel = build_trust_epoch_channel(&config)?;
+    let push_channel = build_trust_epoch_channel(&config, Arc::clone(&shutdown))?;
     if let RevocationTier::Push { .. } = config.revocation_tier {
         if push_channel.is_none() {
             // Honesty (Tier 3): with no networked source wired, the in-process
@@ -336,10 +360,32 @@ pub fn run(
     }
     let resolver = cli::build_revocation_resolver_with_channel(
         &config.revocation_tier,
-        Box::new(base_resolver),
+        Box::new(crate::reloading_trust::SharedTrustStore(Arc::clone(
+            &trust_store,
+        ))),
         trust_clock(),
         push_channel,
     );
+    // Re-read `--trust` on a cadence so a key removed from the file stops resolving on
+    // a RUNNING replica. Without it the tier wrappers above wrap an immutable map and
+    // the guarantee printed a few lines up is not one the data plane can keep.
+    if let Some(interval_secs) = config.trust_reload_secs {
+        spawn_trust_reload_task(
+            Arc::clone(&trust_store),
+            config.trust_path.clone(),
+            response_kid.clone(),
+            interval_secs,
+            Arc::clone(&shutdown),
+        );
+        eprintln!(
+            "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed              from {} stops resolving within one cadence, with no restart.",
+            config.trust_path
+        );
+    } else {
+        eprintln!(
+            "mcp-re-proxy: trust store reload OFF: --trust is read once at startup, so              revoking a request-signer key requires restarting every replica. The              revocation-tier guarantee above bounds CACHING, not the store itself. Set              --trust-reload-secs to bound it."
+        );
+    }
 
     // ADR-MCPRE-051 §3: the inner MCP server is reached over the ASYNC HTTP inner
     // plane — a stateless Streamable-HTTP backend fronted by the pooled hyper
@@ -367,7 +413,6 @@ pub fn run(
     // serving a key. The trust file supplies only the kid -> signer identity
     // coordinate; the KEY comes from the resolver on every request.
     let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
-    let trust_entries = cli::load_trust_entries(&trust_bytes)?;
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
     // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
@@ -375,10 +420,6 @@ pub fn run(
     // by the credential alone). The root key source is only borrowed here (for its
     // public key); it is moved into the issuer at proxy build, so KMS-rooted delegated
     // signing works on the async serving path.
-    let response_kid = config
-        .delegated_issuer_kid
-        .clone()
-        .unwrap_or_else(|| config.server_key_id.clone());
     let response_pub = key_source
         .response_public_key()
         .map_err(|e| e.to_string())?;
@@ -388,16 +429,8 @@ pub fn run(
         subject: config.server_signer.clone(),
         keyid: response_kid.clone(),
     };
-    // kid -> signer only. The verification key is deliberately NOT captured here:
-    // caching it would re-freeze trust at boot and bypass the revocation tier.
-    let mut client_signers: HashMap<String, String> = HashMap::new();
-    for (signer, key_id, _key) in trust_entries {
-        if key_id != response_kid {
-            client_signers.insert(key_id, signer);
-        }
-    }
     let resolve_actor = build_actor_resolver(
-        client_signers,
+        Arc::clone(&trust_store),
         Arc::clone(&resolver),
         config.trust_domain.clone(),
         response_kid.clone(),
@@ -505,8 +538,21 @@ pub fn run(
                         .enable_all()
                         .build()
                         .map_err(|e| format!("build replay control runtime: {e}"))?;
+                    // The client-side response timeout is sized for the DECLARED WAIT
+                    // timeout before connecting: the library defaults to 500ms per
+                    // command, and `WAIT` is an ordinary command — so a declared
+                    // `redis-wait-quorum:2:2000` could never wait 2000ms, and any
+                    // replica ack slower than 500ms failed the request closed while the
+                    // startup line advertised the fuller window.
+                    let wait_timeout_ms = tier_kind.wait_quorum_params().map(|(_, ms)| ms);
                     let mut store = rt
-                        .block_on(crate::RedisAsyncAtomicReplayStore::connect(&url))
+                        .block_on(
+                            crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
+                                &url,
+                                crate::redis_store::system_clock(),
+                                wait_timeout_ms,
+                            ),
+                        )
                         .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
                     // Apply the DECLARED durability tier to the store that actually
                     // serves. `startup_audit_line` above promises "WAIT timeout or
@@ -636,6 +682,19 @@ pub fn run(
             Some(d) => format!("{}s", d.as_secs()),
             None => "unbounded".to_string(),
         };
+        // The exposure window above is only true because these two bounds hold: the
+        // certificate is re-checked against the clock on EVERY request (not just at
+        // the handshake), and a connection is closed at a bounded age so the peer must
+        // re-handshake through the current CRL. Stated alongside the window it makes
+        // honest.
+        eprintln!(
+            "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
+             tls_session_resumption=refused",
+            match config.limits.max_connection_age {
+                Some(d) => format!("{}s", d.as_secs()),
+                None => "unbounded".to_string(),
+            }
+        );
         if client_crls.is_empty() {
             let max_lifetime = match config.max_client_cert_lifetime {
                 Some(d) => format!("{}s", d.as_secs()),
@@ -707,15 +766,40 @@ pub fn run(
     // exported); the validated builder fails closed at construction if the leaf cert
     // is not Ed25519 or its key does not match the signer. Otherwise the exported-key
     // path is used verbatim.
-    // ADR-MCPRE-051 §6 (MCPRE-116): capture the direct-TLS rebuild inputs BEFORE the
-    // match consumes them, so the opt-in CRL hot-reload task can rebuild the verifier
-    // from a refreshed `--client-crl` without a restart. Only the direct
-    // (exported-key) path is reloadable in this increment; delegated-TLS reload is a
-    // tracked follow-up.
+    // ADR-MCPRE-051 §6 (MCPRE-116): capture the rebuild inputs BEFORE the match
+    // consumes them, so the opt-in CRL hot-reload task can rebuild the verifier from a
+    // refreshed `--client-crl` without a restart.
+    //
+    // BOTH custody paths are reloadable. The delegated path used to warn and keep a
+    // static snapshot, which put the weakest revocation posture on the deployments
+    // with the STRONGEST key custody: a client certificate revoked after startup kept
+    // authenticating for the whole process lifetime, silently, on exactly the
+    // configurations that took the most care with keys. The signer is an `Arc` and the
+    // certificate material is immutable, so a rebuild needs nothing the exported path
+    // does not also need.
+    // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
+    // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
+    // shape has to account for a blocking signer (see `async_fleet`).
     let is_delegated_tls = tls_delegated_signer.is_some();
+    if is_delegated_tls {
+        eprintln!(
+            "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
+             KMS/PKCS#11 call inside rustls' synchronous signer, so each core serves on a \
+             small worker pool rather than the single-threaded share-nothing default. A \
+             stalled signer then costs one worker instead of a whole core."
+        );
+    }
     let reload_chain = server_chain.clone();
     let reload_client_ca = client_ca.clone();
-    let reload_key = server_key.as_ref().map(|k| k.clone_key());
+    let reload_material = match &tls_delegated_signer {
+        Some(signer) => TlsKeyMaterial::Delegated(Arc::clone(signer)),
+        None => TlsKeyMaterial::Exported(
+            server_key
+                .as_ref()
+                .map(|k| k.clone_key())
+                .ok_or_else(|| "internal error: no TLS key on the exported path".to_string())?,
+        ),
+    };
     let reload_crl_paths = config.client_crl_paths.clone();
     // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
     // is no relax knob. `false` = deny-unknown, threaded to every verifier builder.
@@ -757,16 +841,12 @@ pub fn run(
                 "mcp-re-proxy: --client-crl-reload-secs set but no --client-crl configured; \
                  no CRL reload scheduled"
             );
-        } else if is_delegated_tls {
-            eprintln!(
-                "mcp-re-proxy: --client-crl-reload-secs is not yet supported on the \
-                 delegated-TLS path; retaining the static CRL snapshot (follow-up)"
-            );
-        } else if let Some(reload_key) = reload_key {
+        } else {
+            let custody = reload_material.label();
             spawn_crl_reload_task(CrlReloadTask {
                 snapshot: Arc::clone(&config_snapshot),
                 server_chain: reload_chain,
-                server_key: reload_key,
+                material: reload_material,
                 client_ca: reload_client_ca,
                 crl_paths: reload_crl_paths,
                 allow_unknown_status: reload_allow_unknown,
@@ -774,8 +854,9 @@ pub fn run(
                 shutdown: Arc::clone(&shutdown),
             });
             eprintln!(
-                "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s; \
-                 refreshed --client-crl honored without restart; failed reload keeps last-good)"
+                "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
+                 {custody} TLS custody; refreshed --client-crl honored without restart; \
+                 failed reload keeps last-good)"
             );
         }
     }
@@ -840,6 +921,9 @@ pub fn run(
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
         target_uri: config.target_uri.clone(),
+        // The delegated-TLS custody paths sign the handshake through a KMS or a
+        // PKCS#11 token, synchronously, inside rustls' `Signer::sign`.
+        tls_signing_may_block: is_delegated_tls,
     };
 
     // ADR-MCPRE-051 §3: the async inner plane — a per-core pooled hyper client to
@@ -850,6 +934,29 @@ pub fn run(
         .read_timeout
         .unwrap_or_else(|| Duration::from_secs(30));
     let pool = HttpInnerPool::from_url_strs(config.inner_http_urls.clone(), inner_timeout)?;
+    // The pool is PROCESS-WIDE (one instance behind the `Arc` every core shares), so
+    // its in-flight bound must not sit below the fleet's aggregate admission ceiling.
+    // If it did, requests that passed every security gate would be answered with a
+    // signed `inner server unavailable` at a capacity cliff no configured flag names —
+    // and the shedding decision would move from the admission gate, where it is
+    // deliberate, to the inner pool, where it is an accident of core count.
+    let cores = crate::async_fleet::resolve_core_count(config.cores);
+    let aggregate_ceiling = config
+        .limits
+        .max_in_flight_requests
+        .map(|per_core| per_core.saturating_mul(cores))
+        .or(config.max_in_flight_total);
+    let pool = match aggregate_ceiling {
+        Some(ceiling) if ceiling > crate::http_inner::DEFAULT_MAX_IN_FLIGHT => {
+            eprintln!(
+                "mcp-re-proxy: inner-plane in-flight bound raised to {ceiling} to stay at or \
+                 above the fleet admission ceiling ({cores} cores); the admission gate sheds, \
+                 not the inner pool."
+            );
+            pool.with_max_in_flight(ceiling)
+        }
+        _ => pool,
+    };
 
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner
     // plane, the authoritative replay tier, and the optional Mode-A channel binding.
@@ -970,6 +1077,43 @@ pub fn run(
     proxy = proxy.with_verifier_policy(verifier_policy);
     if let Some(binding) = transport_binding {
         proxy = proxy.with_transport_binding(binding);
+    }
+
+    // ADR-MCPS-035: install the per-request security record. Stated at startup in
+    // both directions — a deployment without a sink has NO per-request attribution,
+    // and finding that out after an incident is too late.
+    match config.audit_sink {
+        cli::AuditSinkKind::Stderr => {
+            proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::StderrAuditSink));
+            eprintln!(
+                "mcp-re-proxy: security audit record = STDERR (ADR-MCPS-035): one line per \
+                 accepted / rejected / signed decision, carrying the verifier-resolved actor \
+                 and the frozen mcp-re.* wire code."
+            );
+        }
+        cli::AuditSinkKind::None => {
+            proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::NoAuditSink));
+            eprintln!(
+                "mcp-re-proxy: security audit record = NONE: no per-request accepted/rejected \
+                 record is emitted, so this deployment has no attribution surface for a later \
+                 incident. Pass --audit-sink stderr to enable it."
+            );
+        }
+    }
+
+    // #415 rev 2 §10: the verified-context carrier. Caller-seeded context is stripped
+    // regardless; this decides only whether the PEP writes its OWN context in its
+    // place, and `trusted` is an operator assertion about the inner channel that
+    // nothing here can verify.
+    if config.verified_context == cli::VerifiedContextKind::Trusted {
+        proxy = proxy
+            .with_verified_context_carrier(mcp_re_http_profile::VerifiedContextPolicy::Trusted);
+        eprintln!(
+            "mcp-re-proxy: verified-context carrier = TRUSTED (#415 §10): the PEP writes its \
+             resolved actor into the forwarded body. The carrier is UNSIGNED — this asserts \
+             that nothing but this proxy can reach the inner server, and nothing here can \
+             check that."
+        );
     }
 
     // ADR-MCPS-047: wire the MRTR continuation correlation store on the SAME shared
@@ -1177,12 +1321,65 @@ fn serve_fleet(
 /// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
 /// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
 /// is set with a non-empty `--client-crl` on the direct-TLS path.
+/// The TLS server key the verifier is rebuilt around, under either custody.
+///
+/// A CRL reload re-reads only the CRLs; this is carried verbatim across the rebuild.
+/// Both variants exist so the reload does not depend on which custody the deployment
+/// chose — a revocation control that works only on the weaker custody is the wrong way
+/// round.
+enum TlsKeyMaterial {
+    /// The exported private key read from disk.
+    Exported(rustls_pki_types::PrivateKeyDer<'static>),
+    /// A non-exporting device/KMS signer (PKCS#11, AWS KMS, Cloud KMS).
+    Delegated(Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>),
+}
+
+impl TlsKeyMaterial {
+    /// The custody word for the operator-facing startup line.
+    fn label(&self) -> &'static str {
+        match self {
+            TlsKeyMaterial::Exported(_) => "exported-key",
+            TlsKeyMaterial::Delegated(_) => "delegated",
+        }
+    }
+
+    /// Rebuild the serving config around `crls`, under whichever custody applies.
+    fn rebuild(
+        &self,
+        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
+        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
+        allow_unknown_status: bool,
+    ) -> Result<rustls::ServerConfig, String> {
+        match self {
+            TlsKeyMaterial::Exported(key) => {
+                tls::RustlsDirectProvider::build_server_config_with_crls(
+                    server_chain,
+                    key.clone_key(),
+                    client_ca,
+                    crls,
+                    allow_unknown_status,
+                )
+                .map_err(|e| e.to_string())
+            }
+            TlsKeyMaterial::Delegated(signer) => tls::build_server_config_delegated_validated(
+                server_chain,
+                Arc::clone(signer),
+                client_ca,
+                crls,
+                allow_unknown_status,
+            )
+            .map_err(|e| e.to_string()),
+        }
+    }
+}
+
 struct CrlReloadTask {
     snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     /// The immutable server key material the verifier is rebuilt from; a reload
     /// re-reads only the CRLs, never these.
     server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-    server_key: rustls_pki_types::PrivateKeyDer<'static>,
+    material: TlsKeyMaterial,
     client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
     crl_paths: Vec<String>,
     allow_unknown_status: bool,
@@ -1190,11 +1387,84 @@ struct CrlReloadTask {
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Read `--trust` and build the snapshot the revocation tiers resolve against.
+///
+/// Two things come out of one read so they can never disagree: the
+/// [`InMemoryTrustResolver`](mcp_re_core::InMemoryTrustResolver) that answers
+/// `resolve`, and the `kid -> signer` map the actor seam uses as the identity
+/// coordinate. `response_kid` is excluded from the request-signer map: the
+/// deployment's own issuer key must never be presentable as a client credential.
+fn load_trust_snapshot(
+    trust_path: &str,
+    response_kid: &str,
+) -> Result<crate::reloading_trust::ReloadingTrustStore, String> {
+    let (resolver, signers) = read_trust_file(trust_path, response_kid)?;
+    Ok(crate::reloading_trust::ReloadingTrustStore::new(
+        resolver, signers,
+    ))
+}
+
+/// The file read shared by startup and every reload.
+fn read_trust_file(
+    trust_path: &str,
+    response_kid: &str,
+) -> Result<(mcp_re_core::InMemoryTrustResolver, HashMap<String, String>), String> {
+    let bytes = std::fs::read(trust_path).map_err(|e| format!("{trust_path}: {e}"))?;
+    let resolver = cli::load_trust(&bytes)?;
+    // Slot-scoped: only entries this file enrols for the REQUEST slot become client
+    // request signers. A key carried here for another purpose is not one.
+    let signers = cli::load_trust_request_signers(&bytes, response_kid)?;
+    Ok((resolver, signers))
+}
+
+/// Re-read `--trust` on a cadence and swap the snapshot atomically.
+///
+/// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
+/// revocation mechanism that needs a restart is not one an operator can use during an
+/// incident. A FAILED read keeps the last-good store — a truncated file caught
+/// mid-write must not empty the trust map, because an empty map rejects every request
+/// and would turn an editor's save into a fleet-wide outage.
+fn spawn_trust_reload_task(
+    store: Arc<crate::reloading_trust::ReloadingTrustStore>,
+    trust_path: String,
+    response_kid: String,
+    interval_secs: u64,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+) {
+    std::thread::spawn(move || {
+        // Nap in small increments so a shutdown signal is observed within one
+        // increment rather than after a whole reload interval.
+        let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
+        loop {
+            for _ in 0..ticks {
+                if shutdown.load(Ordering::SeqCst) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            match read_trust_file(&trust_path, &response_kid) {
+                Ok((resolver, signers)) => {
+                    let enrolled = signers.len();
+                    store.store(resolver, signers);
+                    eprintln!(
+                        "mcp-re-proxy: trust store reloaded; {enrolled} request-signer key(s)                          live"
+                    );
+                }
+                Err(reason) => {
+                    eprintln!(
+                        "mcp-re-proxy: trust store reload FAILED, keeping last-good store:                          {reason}"
+                    );
+                }
+            }
+        }
+    });
+}
+
 fn spawn_crl_reload_task(task: CrlReloadTask) {
     let CrlReloadTask {
         snapshot,
         server_chain,
-        server_key,
+        material,
         client_ca,
         crl_paths,
         allow_unknown_status,
@@ -1214,14 +1484,12 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
                 let crls = cli::load_client_crls(&crl_paths)?;
-                let rebuilt = tls::RustlsDirectProvider::build_server_config_with_crls(
+                let rebuilt = material.rebuild(
                     server_chain.clone(),
-                    server_key.clone_key(),
                     client_ca.clone(),
                     crls,
                     allow_unknown_status,
-                )
-                .map_err(|e| e.to_string())?;
+                )?;
                 Ok(Arc::new(rebuilt))
             });
             match outcome {
@@ -1548,6 +1816,7 @@ fn rotation_jitter() -> u64 {
 #[cfg(feature = "redis_replay")]
 fn build_trust_epoch_channel(
     config: &cli::Config,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
     match &config.trust_epoch_redis_url {
         Some(url) => {
@@ -1555,14 +1824,29 @@ fn build_trust_epoch_channel(
                 .trust_epoch_key
                 .as_deref()
                 .unwrap_or(crate::trust_epoch::DEFAULT_TRUST_EPOCH_KEY);
-            let source = crate::trust_epoch::redis_trust_epoch_source(url, key)
-                .map_err(|e| format!("trust-epoch source: {e}"))?;
+            let source = std::sync::Arc::new(
+                crate::trust_epoch::redis_trust_epoch_source(url, key)
+                    .map_err(|e| format!("trust-epoch source: {e}"))?,
+            );
+            // The epoch read is a blocking network round trip behind ONE connection
+            // mutex, and the resolver that would trigger it runs before signature
+            // verification on every request. Polled from a dedicated thread instead,
+            // so the request path costs a mutex acquisition and the whole per-core
+            // fleet is not serialized on one Redis connection.
+            crate::trust_epoch::spawn_trust_epoch_poller(
+                std::sync::Arc::clone(&source),
+                TRUST_EPOCH_POLL_SECS,
+                shutdown,
+            );
             eprintln!(
                 "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
-                 epoch key {key:?}); the trust cache flushes on an epoch advance and reverts to \
-                 the bounded-T guarantee on a read outage."
+                 epoch key {key:?}, polled every {TRUST_EPOCH_POLL_SECS}s off the request path); \
+                 the trust cache flushes within one poll interval of an epoch advance and \
+                 reverts to the bounded-T guarantee on a read outage."
             );
-            Ok(Some(Box::new(source)))
+            Ok(Some(Box::new(crate::trust_epoch::SharedEpochChannel(
+                source,
+            ))))
         }
         None => Ok(None),
     }
@@ -1571,6 +1855,7 @@ fn build_trust_epoch_channel(
 #[cfg(not(feature = "redis_replay"))]
 fn build_trust_epoch_channel(
     config: &cli::Config,
+    _shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
     if config.trust_epoch_redis_url.is_some() {
         return Err(
@@ -1785,6 +2070,8 @@ mod key_file_perm_tests {
             "/replay",
             "--key-source",
             name,
+            "--trust-domain",
+            "mcp.example.com",
         ];
         argv.append(&mut extra);
         if !seed.is_empty() {

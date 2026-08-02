@@ -67,6 +67,11 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
         // audit sink, so the vocabulary guard has to check THIS taxonomy is contained
         // in the frozen one — otherwise it only checks a vocabulary nothing emits.
         "MCP_RE_PROFILE_SRC_ERROR" => workspace_root.join("mcp-re-http-profile/src/error.rs"),
+        // The THIRD producer feeding `request_rejected_code`: the replay-tier gate.
+        // Scanning only the profile taxonomy left these tokens unchecked.
+        "MCP_RE_PROXY_SRC_DISPATCH" => {
+            workspace_root.join("mcp-re-proxy/src/http_profile_dispatch.rs")
+        }
         "MCP_RE_PHASE5" => workspace_root.join("mcp-re-policy/tests/vectors/phase5_vectors.json"),
         // Per-crate BUILD.bazel (read by drift / traceability guards)
         "MCP_RE_BUILD_CONFORMANCE" => workspace_root.join("mcp-re-conformance/BUILD.bazel"),

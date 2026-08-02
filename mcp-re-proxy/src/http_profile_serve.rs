@@ -85,6 +85,14 @@ use crate::transport::TransportBindingPolicy;
 /// [`HttpProfileProxy::with_continuation_store`].
 pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
 
+/// How many times the Step-8 open-leg record is attempted before the leg is failed.
+///
+/// Bounded and small: the shared tier answered the replay admission moments earlier,
+/// so the only failure this can absorb is a transient one, and retrying past that
+/// would put an unbounded stall in front of a response the backend has already
+/// produced.
+const CONTINUATION_RECORD_ATTEMPTS: usize = 3;
+
 /// The trust seam: resolve a presented keyid FOR a signing slot to a structured
 /// actor (identity + verification key). A key not trusted for `slot` resolves to
 /// `None` (fail closed). `Send + Sync` so one `HttpProfileProxy` serves every core.
@@ -336,6 +344,7 @@ impl HttpProfileProxy {
         &self,
         http_req: &HttpRequest,
         verified: &VerifiedHttpRequestEvidence,
+        actor_id: &str,
         now: i64,
     ) -> Option<ServedHttpResponse> {
         let enforcer = self.admission.as_ref()?;
@@ -355,6 +364,7 @@ impl HttpProfileProxy {
                         403,
                         now,
                         Some(&verified.evidence),
+                        Some(actor_id.to_owned()),
                     ));
                 }
                 return None;
@@ -374,6 +384,7 @@ impl HttpProfileProxy {
                     403,
                     now,
                     Some(&verified.evidence),
+                    Some(actor_id.to_owned()),
                 ))
             }
             Err(_) => None,
@@ -383,6 +394,10 @@ impl HttpProfileProxy {
         match check_admission(
             binding,
             assertion,
+            // The VERIFIER-RESOLVED actor, never anything the request asserts. An
+            // assertion issued to another workload names a different actor and is
+            // refused here, so possession alone no longer satisfies the gate.
+            actor_id,
             authoritative.as_ref(),
             mcp_re_http_profile::PROFILE_TAG,
             &[self.expected_audience.audience_id.as_str()],
@@ -399,9 +414,14 @@ impl HttpProfileProxy {
             // confirmed one. That is a real gap in the record, named here rather
             // than closed by quietly widening a pinned vocabulary.
             Ok(_) => None,
-            Err(e) => {
-                Some(self.rejection(http_req, e.wire_code(), 403, now, Some(&verified.evidence)))
-            }
+            Err(e) => Some(self.rejection(
+                http_req,
+                e.wire_code(),
+                403,
+                now,
+                Some(&verified.evidence),
+                Some(actor_id.to_owned()),
+            )),
         }
     }
 
@@ -432,17 +452,19 @@ impl HttpProfileProxy {
         ) {
             Ok(v) => v,
             // Preflight failure: the request never verified, so there is no
-            // trustworthy request hash — the rejection is signed unbound.
-            Err(e) => return self.rejection(&http_req, e.wire_code(), 403, now, None),
+            // trustworthy request hash — the rejection is signed unbound, and there is
+            // no resolved actor to attribute it to.
+            Err(e) => return self.rejection(&http_req, e.wire_code(), 403, now, None, None),
         };
+        // The verifier-resolved actor, carried into every audit record from here on:
+        // a denial that happens after resolution knows who was denied, and dropping
+        // that is dropping the attribution the surface exists for.
+        let actor_id = verified.resolved_actor.actor_id();
 
         // Step 3 — Mode-A transport binding: the verified request actor must match
         // the mTLS peer identity. Fail closed on mismatch.
         if let Some(binding) = &self.transport_binding {
-            if binding
-                .check(&verified.resolved_actor.actor_id(), req.identity.as_ref())
-                .is_err()
-            {
+            if binding.check(&actor_id, req.identity.as_ref()).is_err() {
                 // Request-bound failure: the request verified, so bind the
                 // rejection to it via `;req`.
                 return self.rejection(
@@ -451,13 +473,17 @@ impl HttpProfileProxy {
                     403,
                     now,
                     Some(&verified.evidence),
+                    Some(actor_id),
                 );
             }
         }
 
         // Step 3b — §7 admission currency (ADR-MCPRE-053). Before replay admission
         // and the inner round trip, both of which are irreversible.
-        if let Some(rejection) = self.admission_gate(&http_req, &verified, now).await {
+        if let Some(rejection) = self
+            .admission_gate(&http_req, &verified, &actor_id, now)
+            .await
+        {
             return rejection;
         }
 
@@ -479,9 +505,13 @@ impl HttpProfileProxy {
         };
         // Keyed by the actor the VERIFIER resolved, never by anything the request
         // asserts, so one peer cannot name another's continuation at all.
-        let answer_key = answer_state
-            .as_ref()
-            .map(|state| continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()));
+        let answer_key = answer_state.as_ref().map(|state| {
+            continuation_key(
+                &self.expected_audience.audience_id,
+                &actor_id,
+                state.as_bytes(),
+            )
+        });
         let retained = match (&self.continuation_store, &answer_key) {
             // `peek` has NO side effect: the entry is still there while the binding is
             // checked below, so a request that fails the binding cannot destroy a live
@@ -515,7 +545,14 @@ impl HttpProfileProxy {
         )
         .await
         {
-            return self.rejection(&http_req, e.wire_code(), 409, now, Some(&verified.evidence));
+            return self.rejection(
+                &http_req,
+                e.wire_code(),
+                409,
+                now,
+                Some(&verified.evidence),
+                Some(actor_id),
+            );
         }
 
         // Step 5a — can this request be ANSWERED at all? The delegated key is what makes
@@ -528,7 +565,6 @@ impl HttpProfileProxy {
         //
         // The snapshot is taken ONCE and signs the reply below: `now` is fixed for the
         // whole request, so a key valid here is valid there.
-        let expires = now + self.sig_ttl_secs;
         let a = match self.signer.current(now) {
             Some(a) => a,
             // The frozen signer-side availability token (never a client verification
@@ -540,9 +576,16 @@ impl HttpProfileProxy {
                     503,
                     now,
                     Some(&verified.evidence),
+                    Some(actor_id),
                 )
             }
         };
+        // The advertised signature window never outlives the delegated credential that
+        // authorizes it. `sig_ttl_secs` alone would let a response signed shortly
+        // before the credential's `exp` claim a validity the verifier refuses seconds
+        // later (`mcp-re.delegation_credential_expired`), so the two are reconciled
+        // here — the response states the window it can actually be verified in.
+        let expires = (now + self.sig_ttl_secs).min(a.exp);
 
         // Step 5b — the answer leg is admitted, so NOW retire its continuation. This is
         // where one-shot is enforced: `consume` reports whether this call removed the
@@ -561,6 +604,7 @@ impl HttpProfileProxy {
                         409,
                         now,
                         Some(&verified.evidence),
+                        Some(actor_id),
                     )
                 }
             }
@@ -571,11 +615,15 @@ impl HttpProfileProxy {
         // here rather than straight after signature verification so `accepted` and
         // `rejected` are MUTUALLY EXCLUSIVE per request: a signature-valid request that
         // then loses replay admission is a rejection, and a record claiming both would
-        // make the surface useless for the attribution it exists to provide. This is
-        // also the first point at which the actor id is verifier-resolved.
+        // make the surface useless for the attribution it exists to provide.
+        //
+        // Every exit BELOW this line records `mcp-re.response.rejected` instead, for
+        // the same reason: the request was admitted, so a `request.rejected` record
+        // would contradict this one — and the fault is on the response side anyway
+        // (the backend's reply, its signature, or making it answerable).
         self.audit(
             mcp_re_core::audit::AuditEvent::request_accepted(),
-            Some(verified.resolved_actor.actor_id()),
+            Some(actor_id.clone()),
             200,
             now,
         );
@@ -584,18 +632,35 @@ impl HttpProfileProxy {
         // block) so the backend sees clean MCP, then forward through the async inner.
         let forwarded =
             match forwarded_body(&http_req.body, &verified, self.verified_context_policy, now) {
-                Ok(b) => b,
+                Ok(Forwarded { body, seeded }) => {
+                    if seeded {
+                        // The caller had in fact seeded the reserved verified-context key
+                        // — the §10 guard normalised it away, but a deliberate attempt to
+                        // assert one's own authentication context to the inner server is
+                        // exactly the event this surface exists to detect. The frozen
+                        // audit vocabulary has no event for it (ADR-MCPS-035 §3 admits no
+                        // third success event), so it is named on the proxy's diagnostic
+                        // channel rather than left with no trace at all.
+                        eprintln!(
+                            "mcp-re-proxy: warning: request from actor {actor_id} seeded the \
+                         reserved verified-context `_meta` key; stripped before forwarding \
+                         (the inner server never saw it)"
+                        );
+                    }
+                    body
+                }
                 // The trusted carrier is on but the context could not be written. The
                 // inner server would otherwise receive an ordinary-looking request
                 // carrying no verified context at all — fail closed rather than
                 // degrade into an unauthenticated call.
                 Err(e) => {
-                    return self.rejection(
+                    return self.response_rejection(
                         &http_req,
                         e.wire_code(),
                         500,
                         now,
                         Some(&verified.evidence),
+                        Some(actor_id),
                     )
                 }
             };
@@ -624,18 +689,25 @@ impl HttpProfileProxy {
                 expires,
             ) {
                 Ok(ack) => {
-                    // The signed bodyless 202 IS the signed response for a notification.
+                    // The signed bodyless 202 IS the signed response for a notification,
+                    // and it is returned on this line — so the record describes bytes the
+                    // client actually receives.
                     self.audit(
                         mcp_re_core::audit::AuditEvent::response_signed(),
-                        Some(verified.resolved_actor.actor_id()),
+                        Some(actor_id),
                         202,
                         now,
                     );
                     served(ack)
                 }
-                Err(e) => {
-                    self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
-                }
+                Err(e) => self.response_rejection(
+                    &http_req,
+                    e.wire_code(),
+                    500,
+                    now,
+                    Some(&verified.evidence),
+                    Some(actor_id),
+                ),
             };
         }
 
@@ -650,12 +722,13 @@ impl HttpProfileProxy {
             classify_result_type(&response.body),
             Some(ResultTypeClass::Unrecognized)
         ) {
-            return self.rejection(
+            return self.response_rejection(
                 &http_req,
                 HttpProfileError::UnrecognizedResultType.wire_code(),
                 502,
                 now,
                 Some(&verified.evidence),
+                Some(actor_id),
             );
         }
 
@@ -670,17 +743,16 @@ impl HttpProfileProxy {
             now,
             expires,
         ) {
-            Ok(base) => {
-                self.audit(
-                    mcp_re_core::audit::AuditEvent::response_signed(),
-                    Some(verified.resolved_actor.actor_id()),
-                    response.status,
-                    now,
-                );
-                base
-            }
+            Ok(base) => base,
             Err(e) => {
-                return self.rejection(&http_req, e.wire_code(), 500, now, Some(&verified.evidence))
+                return self.response_rejection(
+                    &http_req,
+                    e.wire_code(),
+                    500,
+                    now,
+                    Some(&verified.evidence),
+                    Some(actor_id),
+                )
             }
         };
 
@@ -695,12 +767,13 @@ impl HttpProfileProxy {
             let open_leg_state = match input_required_state(&response.body) {
                 Ok(s) => s,
                 Err(e) => {
-                    return self.rejection(
+                    return self.response_rejection(
                         &http_req,
                         e.wire_code(),
                         502,
                         now,
                         Some(&verified.evidence),
+                        Some(actor_id),
                     )
                 }
             };
@@ -709,26 +782,106 @@ impl HttpProfileProxy {
                     previous_request_base: verified.request_signature_base.clone(),
                     input_required_response_base: response_base,
                 };
-                if store
-                    .store(
-                        &continuation_key(&verified.resolved_actor.actor_id(), state.as_bytes()),
-                        &bases,
-                        self.continuation_ttl_secs,
-                    )
-                    .await
-                    .is_err()
-                {
-                    return self.rejection(
+                let key = continuation_key(
+                    &self.expected_audience.audience_id,
+                    &actor_id,
+                    state.as_bytes(),
+                );
+                // Retried, briefly, before failing the leg. Reaching here means the
+                // backend has ALREADY run: the shared tier answered the replay
+                // admission at Step 5 microseconds ago, so a failure now is a
+                // transient blip rather than the outage Step 5 already fails closed
+                // on, and absorbing it is what keeps a retryable 503 — which
+                // re-executes the tool call — off a path that has side effects.
+                let mut recorded = false;
+                for _ in 0..CONTINUATION_RECORD_ATTEMPTS {
+                    if store
+                        .store(&key, &bases, self.continuation_ttl_secs)
+                        .await
+                        .is_ok()
+                    {
+                        recorded = true;
+                        break;
+                    }
+                }
+                if !recorded {
+                    return self.response_rejection(
                         &http_req,
                         McpReError::ReplayCacheUnavailable.wire_code(),
                         503,
                         now,
                         Some(&verified.evidence),
+                        Some(actor_id),
                     );
                 }
             }
         }
+        // Emitted HERE, not at signing time: everything above can still discard this
+        // response, and a `response.signed` record for bytes the client never received
+        // is exactly the kind of contradiction that makes an audit stream unusable.
+        self.audit(
+            mcp_re_core::audit::AuditEvent::response_signed(),
+            Some(actor_id),
+            response.status,
+            now,
+        );
         served(response)
+    }
+
+    /// A PRE-ACCEPTANCE rejection — recorded as `mcp-re.request.rejected`.
+    ///
+    /// Used by every exit that runs BEFORE the `mcp-re.request.accepted` record is
+    /// emitted, so `accepted` and `request.rejected` stay mutually exclusive per
+    /// request (ADR-MCPS-035). `wire_code` is already the frozen token; the record
+    /// carries it verbatim, never a parallel sub-name.
+    ///
+    /// `actor_id` is the VERIFIER-RESOLVED actor when one was established before this
+    /// exit, and `None` when the request was refused before resolution — the
+    /// distinction `AuditRecord` documents, and the reason a denial that carries
+    /// attribution must not discard it.
+    fn rejection(
+        &self,
+        request: &HttpRequest,
+        wire_code: &'static str,
+        status: u16,
+        now: i64,
+        bound: Option<&RequestEvidence>,
+        actor_id: Option<String>,
+    ) -> ServedHttpResponse {
+        self.audit(
+            mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
+            actor_id,
+            status,
+            now,
+        );
+        self.signed_rejection(request, wire_code, status, now, bound)
+    }
+
+    /// A POST-ACCEPTANCE rejection — recorded as `mcp-re.response.rejected`.
+    ///
+    /// The request was admitted (an `accepted` record already names it) and the fault
+    /// is on the RESPONSE side: the forwarded body, the backend's reply class, the
+    /// response signature, or recording the continuation that makes the reply
+    /// answerable. Emitting `request.rejected` here would contradict the `accepted`
+    /// record for the same request and attribute a backend fault to the caller;
+    /// `mcp-re.response.rejected` is the frozen token the §9 taxonomy splits out for
+    /// exactly this.
+    fn response_rejection(
+        &self,
+        request: &HttpRequest,
+        wire_code: &'static str,
+        status: u16,
+        now: i64,
+        bound: Option<&RequestEvidence>,
+        actor_id: Option<String>,
+    ) -> ServedHttpResponse {
+        self.audit(
+            mcp_re_core::audit::AuditEvent::response_rejected_code(wire_code),
+            actor_id,
+            status,
+            now,
+        );
+        self.signed_rejection(request, wire_code, status, now, bound)
     }
 
     /// Build a signed rejection receipt bound to `request` (or preflight-unbound),
@@ -739,7 +892,11 @@ impl HttpProfileProxy {
     /// preflight-unbound when `None` (the request never earned a trustworthy hash).
     /// Never root-signed. If no valid delegated key exists, a last-resort UNSIGNED
     /// error is emitted rather than a bogus signature.
-    fn rejection(
+    ///
+    /// Carries no audit emission of its own: the two callers above choose the frozen
+    /// event type, because which one is correct depends on whether the request had
+    /// already been admitted.
+    fn signed_rejection(
         &self,
         request: &HttpRequest,
         wire_code: &'static str,
@@ -747,24 +904,16 @@ impl HttpProfileProxy {
         now: i64,
         bound: Option<&RequestEvidence>,
     ) -> ServedHttpResponse {
-        // ADR-MCPS-035: EVERY rejection exit in `handle` funnels through here, so this
-        // is the one site that makes the documented `mcp-re.request.rejected` surface
-        // complete. `wire_code` is already the frozen token — the record carries it
-        // verbatim, never a parallel sub-name. No actor id: a rejection can happen
-        // before one is resolved, and the conformance guard forbids inventing one.
-        self.audit(
-            mcp_re_core::audit::AuditEvent::request_rejected_code(wire_code),
-            None,
-            status,
-            now,
-        );
         let reason = RejectionReason {
             wire_code,
             message: format!("mcp-re http-profile proxy rejected: {wire_code}"),
         };
-        let expires = now + self.sig_ttl_secs;
         let resp = match self.signer.current(now) {
             Some(a) => {
+                // Never advertise validity past the credential that authorizes the
+                // signature: a verifier refuses the whole receipt once the delegated
+                // credential's own window closes.
+                let expires = (now + self.sig_ttl_secs).min(a.exp);
                 let built = match bound {
                     Some(ev) => build_delegated_rejection(
                         request,
@@ -885,10 +1034,11 @@ fn forwarded_body(
     verified: &VerifiedHttpRequestEvidence,
     policy: VerifiedContextPolicy,
     now: i64,
-) -> Result<Vec<u8>, HttpProfileError> {
+) -> Result<Forwarded, HttpProfileError> {
+    let mut seeded = false;
     let stripped = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(mut v) => {
-            strip_proxy_owned_meta(&mut v);
+            seeded = strip_proxy_owned_meta(&mut v);
             serde_json::to_vec(&v)
                 .map_err(|_| HttpProfileError::MalformedEvidence("body reserialize"))?
         }
@@ -896,13 +1046,24 @@ fn forwarded_body(
         // unreachable on the served path; pass it through rather than invent bytes.
         Err(_) => body.to_vec(),
     };
-    match policy {
-        VerifiedContextPolicy::Disabled => Ok(stripped),
+    let body = match policy {
+        VerifiedContextPolicy::Disabled => stripped,
         VerifiedContextPolicy::Trusted => {
             let ctx = VerifiedContext::from_verified(verified, now);
-            insert_verified_context(&stripped, &ctx)
+            insert_verified_context(&stripped, &ctx)?
         }
-    }
+    };
+    Ok(Forwarded { body, seeded })
+}
+
+/// The body forwarded to the inner server, plus the §10 guard's detection signal.
+struct Forwarded {
+    /// The clean JSON-RPC bytes the inner server receives.
+    body: Vec<u8>,
+    /// Whether the caller had seeded the reserved verified-context key. The value was
+    /// stripped either way; this is the only trace the attempt leaves, so the serving
+    /// path names it rather than discarding it.
+    seeded: bool,
 }
 
 /// A last-resort unsigned error body when even the signed rejection cannot be built

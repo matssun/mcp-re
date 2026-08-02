@@ -20,7 +20,7 @@ cost, so the cheapest thing that can be wrong fails first.
 | Stage | What | Cost |
 |---|---|---|
 | 1 | Structural gates: image tags == `VERSION`, port registry, tracked secrets, Helm fail-closed guards, JCS vocabulary, SLO-harness invocation, SLO-gate self-test, `cargo fmt --check` over all four manifests | seconds |
-| 2 | `cargo clippy -D warnings`, then `cargo test --workspace` **and** the feature-gated backend lane (they are different builds) | minutes |
+| 2 | `cargo clippy -D warnings`, then `cargo test --workspace` **and** the feature-gated backend lane (they are different builds), the local demo, and both SDK downloader suites (maturin wheel + napi package, each with its coverage bar and the parity-oracle regeneration) | minutes |
 | 3 | `bazel test //...` + the Gazelle drift gate | minutes |
 | 4 | The ADR-MCPRE-051 §7 local SLO lane (`scripts/local_slo_lane.sh`) | ~5 min |
 | 5 | The four fleet proofs on a local kind cluster — identical harness, chart and images to GKE (opt-in) | ~15 min |
@@ -35,6 +35,14 @@ It is not hygiene. Each stage exists because skipping it has already cost someth
 - **Stage 2** — the default `cargo test --workspace` does **not** compile the
   non-default feature backends (KMS, PKCS#11, Redis, OCSP, etcd, `async_serve`). A
   change can be green on the default battery and not compile on the serving path.
+- **Stage 2, the SDK half** — the two downloader artefacts are their own Cargo
+  workspaces, and their suites drive the bindings from Python and Node. No cargo or
+  Bazel lane reaches them. A nonce-length floor added to `build_signed_request_with`
+  therefore passed every local stage and arrived in CI with both downloader jobs red:
+  every SDK test nonce and all six frozen parity vectors were below the new floor.
+  The gate now builds and runs both, and regenerates the parity oracle from the
+  freshly built core — a binding that drifts from the core surfaces as a diff in a
+  committed fixture rather than as a test nobody wrote.
 - **Stages 1-2, the lint half** — `--workspace` and `cargo fmt --all` reach only the
   ROOT universe. `sdk/python`, `sdk/typescript` and `mcp-re-proxy/tests/mock-pkcs11`
   have their own manifests, and the default feature set does not compile

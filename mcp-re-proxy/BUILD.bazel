@@ -5,13 +5,19 @@ load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# Read from disk by the ADR-MCPS-035 audit-vocabulary drift guard: the replay-tier
+# gate is one of the three `wire_code()` producers feeding `request_rejected_code`.
+exports_files(["src/http_profile_dispatch.rs"])
+
 # ADR-MCPS-048 / MCPS-69 — these HITL live-cloud KMS tests are intentionally
 # cargo-only (no Bazel target): each is `#![cfg(feature = "…kms…")]` + `#[ignore]`
 # and runs ONLY in the manual live-infra lane (`cargo test --features … --
 # --ignored` against real AWS/GCP KMS):
-#   tests/aws_kms_live_test.rs, tests/gcp_kms_live_test.rs,
-#   tests/gcp_kms_draft02_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
-#   tests/gcp_kms_delegated_signing_live_test.rs
+#   tests/aws_kms_live_test.rs, tests/aws_kms_delegated_required_live_test.rs,
+#   tests/gcp_kms_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
+#   tests/gcp_kms_delegated_signing_live_test.rs,
+#   tests/gcp_kms_delegated_required_live_test.rs,
+#   tests/gcp_kms_http_profile_live_test.rs, tests/gcp_kms_root_rotation_live_test.rs
 # NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
 # Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
 # will always PROPOSE a target for each in `-mode diff`. This is a documented
@@ -102,6 +108,7 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPS-021 Tier 2: live strong trust check (no positive caching, optional
     # second live revocation authority, fail-closed on outage).
     "src/live_trust.rs",
+    "src/reloading_trust.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",

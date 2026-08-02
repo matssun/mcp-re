@@ -13,6 +13,7 @@ comes, and a hang is a worse failure mode than a raise.
 """
 import base64
 import hashlib
+import contextlib
 import json
 
 import anyio
@@ -39,7 +40,8 @@ from mcp_re_sdk import (  # noqa: E402
     SigningDevice,
     mcp_re_http_transport,
 )
-from mcp_re_sdk.transport import _binding_context, _pump  # noqa: E402
+from mcp_re_sdk.transport import _binding_context
+from mcp_re_sdk.transport import _bindings_json, _pump  # noqa: E402
 
 CLIENT_SEED = bytes([11]) * 32
 TARGET = "https://proxy.internal:8600/mcp"
@@ -155,9 +157,10 @@ async def test_a_notification_is_transmitted_as_a_signed_post():
     / C019b), so the message is carried and its acknowledgement is checked.
     """
     posted = []
-    with pytest.raises(BaseException):
-        # The capturing poster never returns a 202, so the ack check below fails closed;
-        # what this test reads is the request that DID reach the wire.
+    # The capturing poster never returns a 202, so the ack check fails closed; the
+    # failure is contained rather than ending the session, and what this test reads is
+    # the request that DID reach the wire.
+    with _capturing_notification_failures([]):
         await _send(
             _config(),
             _capturing_poster(posted),
@@ -179,24 +182,29 @@ async def test_a_notification_is_transmitted_as_a_signed_post():
 async def test_an_unsigned_acknowledgement_fails_the_transport_closed():
     """A 202 with no evidence establishes nothing, so it must not pass as delivery.
 
-    There is no request id to correlate an error to and no caller awaiting a reply, so
-    failing closed means tearing the transport down. The alternative is continuing a
-    session in which an unverifiable claim of acceptance was accepted.
+    Failing closed means the notification is NOT treated as delivered — and, since
+    round 6, that it does not take the session with it. Notifications are started in
+    the same task group as every concurrent exchange, so letting the failure escape
+    cancelled unrelated in-flight tool calls and tore the transport down on a trigger
+    the PEER controls: one unverifiable acknowledgement for a routine
+    `notifications/initialized`, from a proxy whose delegated key is merely past `exp`.
+    That is the remotely-triggerable session kill round 5 fixed on the request path.
     """
     async def unsigned(method, target_uri, headers, body):
         return HttpReply(status=202, headers=[], body=b"")
 
-    with pytest.raises(BaseException) as ei:
-        await _send(
+    seen = []
+    with _capturing_notification_failures(seen):
+        out = await _send(
             _config(),
             unsigned,
             JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
         )
 
-    leaves = _flatten(ei.value)
-    assert [type(e) for e in leaves] == [NotificationNotAcknowledged]
-    assert leaves[0].method == "notifications/initialized"
-    assert "mcp-re." in leaves[0].wire_code
+    assert out == [], "an unverifiable acknowledgement delivers nothing to the session"
+    assert [type(e) for _, e in seen] == [NotificationNotAcknowledged]
+    assert seen[0][0] == "notifications/initialized"
+    assert "mcp-re." in seen[0][1].wire_code
 
 
 @pytest.mark.anyio
@@ -210,13 +218,15 @@ async def test_a_non_202_answer_to_a_notification_fails_closed():
             body=b'{"jsonrpc":"2.0","id":null,"result":{"ok":true}}',
         )
 
-    with pytest.raises(BaseException) as ei:
-        await _send(
+    seen = []
+    with _capturing_notification_failures(seen):
+        out = await _send(
             _config(),
             bodied,
             JSONRPCNotification(jsonrpc="2.0", method="notifications/cancelled"),
         )
-    assert [type(e) for e in _flatten(ei.value)] == [NotificationNotAcknowledged]
+    assert out == [], "a bodied 200 is not an acknowledgement"
+    assert [type(e) for _, e in seen] == [NotificationNotAcknowledged]
 
 
 @pytest.mark.anyio
@@ -245,13 +255,14 @@ async def test_a_sub_floor_nonce_override_is_refused_before_a_notification_is_si
     the message the caller cares least about.
     """
     posted = []
-    with pytest.raises(BaseException) as ei:
+    seen = []
+    with _capturing_notification_failures(seen):
         await _send(
             _config(nonce_factory=lambda: "short"),
             _capturing_poster(posted),
             JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
         )
-    assert any("at least 22" in str(e) for e in _flatten(ei.value))
+    assert any("at least 22" in str(e) for _, e in seen)
     assert posted == [], "nothing may reach the wire under a sub-floor nonce"
 
 
@@ -299,6 +310,24 @@ async def test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging(
         _config(), _throwing_poster(ValueError("mcp-re.response_sig_invalid")), _request()
     )
     assert out[0].message.error.message == "mcp-re.response_sig_invalid"
+
+
+@contextlib.contextmanager
+def _capturing_notification_failures(sink: list):
+    """Capture contained notification failures instead of printing them.
+
+    A one-way message has no reply channel, so this hook is the only place the outcome
+    is observable — which is exactly why it exists rather than the failure being
+    swallowed.
+    """
+    import mcp_re_sdk.transport as t
+
+    previous = t.on_notification_failure
+    t.on_notification_failure = lambda method, error: sink.append((method, error))
+    try:
+        yield
+    finally:
+        t.on_notification_failure = previous
 
 
 def _flatten(exc: BaseException) -> list:
@@ -544,8 +573,14 @@ async def test_the_signed_body_is_the_request_the_caller_described():
 
 @pytest.mark.anyio
 async def test_the_correlation_entry_records_the_authorization_binding_digest():
-    # ADR-MCPS-044 enumerates it; retained for audit only, never re-interpreted. It must
-    # be the digest of the bytes that were SIGNED, not of anything recomputed later.
+    # ADR-MCPS-044 enumerates it; retained for audit only, never re-interpreted.
+    #
+    # The expected value is a LITERAL, not a recomputation. Recomputing it with the
+    # SDK's own serializer is what let Python and TypeScript drift: `json.dumps`
+    # defaults to `", "`/`": "` separators and `JSON.stringify` emits none, so identical
+    # bindings produced different digests and an audit pipeline reconciling the two saw
+    # a false "artifact binding changed". The TypeScript twin's test pins this SAME
+    # string — that is the point of writing it down.
     store = CorrelationStore()
     config = _config(authorization=[OpaqueBytesProvider("pdp-decision", b"doc")])
 
@@ -557,13 +592,17 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
         await write.send(SessionMessage(_request()))
         await anyio.sleep(0.05)
         pending = next(iter(store))
-        signed_bindings = json.dumps(
-            [p.spec(_binding_context(config, "tools/list")) for p in config.authorization]
+        canonical = (
+            '[{"artifact_type":"pdp-decision","form":"opaque-bytes",'
+            '"material_b64url":"ZG9j"}]'
         )
-        expected = "sha-256:" + base64.urlsafe_b64encode(
-            hashlib.sha256(signed_bindings.encode()).digest()
-        ).decode().rstrip("=")
-        assert pending.authz_binding_digest == expected
+        assert _bindings_json(config, "tools/list") == canonical, (
+            "compact separators, sorted keys — byte-identical to JSON.stringify"
+        )
+        assert (
+            pending.authz_binding_digest
+            == "sha-256:czwnl9p6eDzBuZBaI8aHsupsVpiCErQAcahWFp2z7ZI"
+        )
 
 
 @pytest.mark.anyio

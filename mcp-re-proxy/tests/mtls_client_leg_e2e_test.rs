@@ -206,6 +206,8 @@ fn server_config_args() -> mcp_re_proxy::cli::Config {
         "/tmp/mcp-re-mtls-client-leg-e2e-replay",
         "--delegated-trust-epoch",
         EPOCH,
+        "--trust-domain",
+        "mcp.example.com",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -416,9 +418,10 @@ fn client_proxy(transport: MtlsRemoteTransport) -> ClientProxy {
     )
 }
 
+/// Test nonces are padded to the 128-bit emission floor the client core enforces.
 fn call_params(nonce: &str) -> CallParams {
     CallParams {
-        nonce: nonce.to_string(),
+        nonce: format!("{nonce}-padded-to-the-128-bit-floor"),
         created: NOW,
         expires: NOW + 60,
         now_unix: NOW,

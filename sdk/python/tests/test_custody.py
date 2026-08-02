@@ -32,7 +32,7 @@ ARGS = dict(
     audience_id="did:example:server-1",
     route=None,
     dpop_token="dpop-token",
-    nonce="nonce-custody-0001",
+    nonce="nonce-custody-0001-128bit",
     created=1000,
     expires=2000,
 )

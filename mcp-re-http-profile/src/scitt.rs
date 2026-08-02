@@ -35,16 +35,22 @@
 //! unprotected header, and the RFC 9162 Merkle Tree Hash as the payload. Conformance
 //! vectors are frozen from those octets in `mcp-re-conformance/tests/vectors/scitt/`.
 //!
-//! **Two deliberate restrictions on what this verifier accepts**, both narrower than the
-//! RFC permits, and both stated here rather than left to be discovered:
+//! **What this verifier accepts**, stated here rather than left to be discovered:
 //!
-//! 1. **Attached payloads only.** RFC 9942 §4.4 allows a Receipt to carry a detached
-//!    payload — its own Figure 6 shows one — but this verifier checks the service's
-//!    signature over the Merkle root the payload carries. Verifying a detached receipt
-//!    would mean taking that root from the caller, and a caller-supplied root is a
-//!    caller-chosen answer. A detached receipt is refused as rootless.
+//! 1. **Both payload forms, and neither takes the root from the caller.** For an
+//!    ATTACHED receipt the payload is the Merkle Tree Hash, and the fold's output must
+//!    equal it. For a DETACHED one (RFC 9942 §4.4) there is no payload: the fold's
+//!    output IS the payload the signature is checked against, so a wrong fold produces
+//!    a different `Sig_structure` and the signature simply fails. Either way the root
+//!    is DERIVED from the statement under verification, never supplied. Detached is
+//!    the form the real-service interop run produced.
 //! 2. **EdDSA and ES256 only.** Any other `alg` is refused rather than attempted, and the
 //!    resolved key must agree with the `alg` the protected header names.
+//! 3. **MCP-RE statements only.** A Signed Statement must carry the RFC 9943 §6.1 CWT
+//!    claims with `iss` equal to the signing `kid`, `sub` equal to
+//!    [`STATEMENT_SUBJECT`], and the [`STATEMENT_CONTENT_TYPE`] content type — so a
+//!    statement cannot attribute itself to a party other than the key that signed it,
+//!    and no other COSE_Sign1 the issuer key produces can be read as call evidence.
 //!
 //! Interoperability has been demonstrated against `@transmute/cose` (authored by
 //! RFC 9942's editor): its RFC 9162 tree, proof encoder and CBOR produced a receipt that
@@ -81,7 +87,6 @@ use sha2::Sha256;
 use crate::chain::ChainLabel;
 use crate::chain::ChainReconstruction;
 use crate::error::HttpProfileError;
-use crate::evidence::RequestEvidence;
 
 /// The MCP-RE evidence a receipt commits to (#415 §4.6), as HASH COMMITMENTS. Each
 /// field is a digest of externally-retained evidence, never the evidence itself.
@@ -254,6 +259,44 @@ impl SignedStatement {
             .and_then(|v| v.as_integer())
             .and_then(|i| i64::try_from(i).ok())
             .ok_or(HttpProfileError::MalformedEvidence("scitt statement iat"))?;
+        // RFC 9943 §6.1 REQUIRES `iss` and `sub` in the protected header, and they
+        // have to be read, not merely written at issuance.
+        //
+        // `iss` must equal the `kid`. The kid is the selector this verifier resolves
+        // trust through; `iss` is the identity an RFC 9943 consumer reads. Left
+        // unbound, one signer can mint a statement that names a THIRD PARTY as issuer
+        // — MCP-RE attributes it to the kid, a conforming reader attributes it to
+        // `iss`, and two correct readers of an audit artifact disagree about who said
+        // it. This is the same binding `admission.rs` makes between its header kid and
+        // its claims issuer, for the same reason.
+        let iss = cwt_claim(&sign1.protected.header, CWT_ISS)
+            .and_then(|v| v.as_text().map(str::to_owned))
+            .ok_or(HttpProfileError::MalformedEvidence("scitt statement iss"))?;
+        if iss != issuer_kid {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt statement iss does not match the signing kid",
+            ));
+        }
+        // `sub` and the content type are the TYPE TAG. Without them, any other
+        // COSE_Sign1 the same issuer key signs is accepted as MCP-RE call evidence as
+        // soon as its payload happens to CBOR-decode into an `EvidenceCommitment` —
+        // cross-protocol type confusion at the issuer-key seam.
+        let sub = cwt_claim(&sign1.protected.header, CWT_SUB)
+            .and_then(|v| v.as_text().map(str::to_owned))
+            .ok_or(HttpProfileError::MalformedEvidence("scitt statement sub"))?;
+        if sub != STATEMENT_SUBJECT {
+            return Err(HttpProfileError::MalformedEvidence(
+                "scitt statement sub is not mcp-re call evidence",
+            ));
+        }
+        match &sign1.protected.header.content_type {
+            Some(coset::ContentType::Text(t)) if t == STATEMENT_CONTENT_TYPE => {}
+            _ => {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "scitt statement content type is not the mcp-re evidence media type",
+                ))
+            }
+        }
         let payload = sign1
             .payload
             .as_deref()
@@ -559,6 +602,69 @@ fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// The RFC 9162 §2.1.3.2 inclusion-proof verification algorithm, verbatim.
+///
+/// Returns the Merkle Tree Hash the proof re-derives, or an error if the proof does
+/// not fit `(leaf_index, tree_size)`.
+///
+/// **Why the whole algorithm and not an index-bit fold.** An `index & 1` walk that
+/// shifts the index right once per sibling is right only when the tree size is a
+/// power of two. Two things break otherwise:
+///
+///   * **Wrong answer.** In a non-power-of-two tree the right-hand subtree is short,
+///     so a node on the right edge is PROMOTED past levels rather than paired. RFC
+///     9162's `fn`/`sn` pair is what tracks that: `sn` is the last index at the
+///     current level, and `fn == sn` means "right edge, combine as the right child
+///     and keep climbing". Without it a conforming receipt for a 3-leaf log folds
+///     its operands in the wrong order and is rejected.
+///   * **Nothing is bound.** With only the low bits of `leaf_index` consulted and
+///     `tree_size` unused, the trailing bits of the index and the size itself are
+///     unconstrained — and both ride in the UNSIGNED `vdp` header. A relayer could
+///     restate a 2-entry prototype log's receipt as entry 21 of a large one and it
+///     still verified, so `Receipt::tree_size()` and `leaf_index()` were reporting
+///     attacker-chosen values on a receipt this function had returned `Ok` for.
+///     The terminal `sn == 0` requirement plus the per-step `sn != 0` check is what
+///     makes the path length, the index and the size all load-bearing.
+///
+/// An EMPTY path is admitted only for `tree_size == 1`, which is the one case RFC
+/// 9162 defines it for (`PATH(0, D[1]) = {}`); for any larger tree `sn` is non-zero
+/// with no siblings left to consume, and the proof is refused.
+fn rfc9162_root_from_inclusion_proof(
+    leaf: &[u8; 32],
+    leaf_index: u64,
+    tree_size: u64,
+    path: &[Vec<u8>],
+) -> Result<[u8; 32], HttpProfileError> {
+    if leaf_index >= tree_size {
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+    let mut fnode = leaf_index;
+    let mut snode = tree_size - 1;
+    let mut r = *leaf;
+    for sibling in path {
+        if snode == 0 {
+            // More siblings than the tree has levels for this leaf.
+            return Err(HttpProfileError::ReceiptInclusionInvalid);
+        }
+        if !fnode.is_multiple_of(2) || fnode == snode {
+            r = node_hash(sibling, &r);
+            while fnode != 0 && fnode.is_multiple_of(2) {
+                fnode /= 2;
+                snode /= 2;
+            }
+        } else {
+            r = node_hash(&r, sibling);
+        }
+        fnode /= 2;
+        snode /= 2;
+    }
+    if snode != 0 {
+        // Fewer siblings than the tree requires: the proof does not reach the root.
+        return Err(HttpProfileError::ReceiptInclusionInvalid);
+    }
+    Ok(r)
+}
+
 /// Verify a receipt OFFLINE — the acceptance-criterion property. No transparency
 /// service is contacted: given the statement, the receipt, the issuer key, and the
 /// TS key, this checks
@@ -579,25 +685,23 @@ pub fn verify_receipt_offline(
         resolve_issuer(statement.issuer_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
     verify_cose_sign1(statement.to_cose(), &issuer)?;
 
-    // 2. Inclusion proof: fold the leaf up through the sibling path and require the
-    //    result to equal the root the receipt commits to. The index bits pick the
-    //    left/right position at each level, exactly as RFC 9162 defines.
+    // 2. Inclusion proof: run the RFC 9162 §2.1.3.2 verification algorithm, which
+    //    consumes the leaf index AND the tree size, and require the result to equal
+    //    the root the receipt commits to.
     let ts = resolve_ts(receipt.ts_kid()).ok_or(HttpProfileError::ReceiptIssuerUntrusted)?;
-    let mut computed = leaf_hash(statement, ts.leaf_profile).to_vec();
-    let mut index = receipt.leaf_index;
-    for sibling in &receipt.inclusion_path {
-        computed = if index & 1 == 0 {
-            node_hash(&computed, sibling).to_vec()
-        } else {
-            node_hash(sibling, &computed).to_vec()
-        };
-        index >>= 1;
-    }
+    let leaf = leaf_hash(statement, ts.leaf_profile);
+    let computed = rfc9162_root_from_inclusion_proof(
+        &leaf,
+        receipt.leaf_index,
+        receipt.tree_size,
+        &receipt.inclusion_path,
+    )?;
     if let Some(root) = &receipt.root {
-        if &computed != root {
+        if computed.as_slice() != root.as_slice() {
             return Err(HttpProfileError::ReceiptInclusionInvalid);
         }
     }
+    let computed = computed.to_vec();
 
     // 3. The receipt's own signature, over the root the fold just reproduced — so a
     //    verified receipt is the service's statement that THIS leaf is in a tree it
@@ -839,21 +943,65 @@ pub trait RetainedEvidenceStore {
 /// handle. So the handles here are derived through [`RequestEvidence`], the same code
 /// the serving path uses, rather than recomputed from a formula copied to this module —
 /// a copy could drift, and a drifted copy would silently accept the wrong bytes.
+///
+/// **The WHOLE record, not the first hop.** An earlier revision compared only
+/// `request_evidence` and `response_evidence`, which
+/// [`EvidenceCommitment::from_reconstruction`] takes from `hop_evidence.first()`. On a
+/// multi-hop call that proved hop 0 and nothing else: `chain_commitment` — the field
+/// whose documented job is to commit to the SHAPE of the retained chain — had no
+/// reader anywhere in the workspace, so an archivist could retain hop 0 honestly and
+/// drop or substitute every hop after it and still pass. That is exactly the quiet
+/// truncation the §9 chain seam exists to prevent, so the check now takes the
+/// reconstruction and compares EVERY field.
+///
+/// The comparison is made by REBUILDING the commitment through the same constructor
+/// the issuer used and comparing the results, rather than by re-deriving each field
+/// here. A second implementation of the same rule is a second thing to keep in sync,
+/// and a drifted copy accepts the wrong bytes silently.
+///
+/// `bindings_commitment` / `verified_context_commitment` are passed back in because
+/// the issuer supplied them as digests: this module never saw the artifact bytes and
+/// so cannot recompute them. Passing `None` for a commitment that carries `Some`
+/// fails — an absent artifact is a mismatch, not a waiver.
 pub fn verify_retained_evidence(
     commitment: &EvidenceCommitment,
-    request_signature_base: &[u8],
-    response_signature_base: &[u8],
+    reconstruction: &ChainReconstruction,
+    bindings_commitment: Option<String>,
+    verified_context_commitment: Option<String>,
 ) -> Result<(), HttpProfileError> {
-    let request = RequestEvidence::from_signature_base(request_signature_base);
-    if request.digest_value != commitment.request_evidence {
+    let recomputed = EvidenceCommitment::from_reconstruction(
+        reconstruction,
+        bindings_commitment,
+        verified_context_commitment,
+    );
+    if recomputed.request_evidence != commitment.request_evidence {
         return Err(HttpProfileError::MalformedEvidence(
             "retained request evidence does not match the commitment",
         ));
     }
-    let response = RequestEvidence::from_response_signature_base(response_signature_base);
-    if response.digest_value != commitment.response_evidence {
+    if recomputed.response_evidence != commitment.response_evidence {
         return Err(HttpProfileError::MalformedEvidence(
             "retained response evidence does not match the commitment",
+        ));
+    }
+    if recomputed.chain_commitment != commitment.chain_commitment {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained chain does not match the committed chain shape",
+        ));
+    }
+    if recomputed.chain_label != commitment.chain_label {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained chain label does not match the commitment",
+        ));
+    }
+    if recomputed.bindings_commitment != commitment.bindings_commitment {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained artifact bindings do not match the commitment",
+        ));
+    }
+    if recomputed.verified_context_commitment != commitment.verified_context_commitment {
+        return Err(HttpProfileError::MalformedEvidence(
+            "retained verified context does not match the commitment",
         ));
     }
     Ok(())
@@ -1068,33 +1216,64 @@ impl PrototypeTransparencyService {
         Receipt::from_cose(&cose)
     }
 
-    /// The Merkle root and the inclusion path for `target` over the current leaf
-    /// set, using the RFC 6962 layering (duplicate the last node on odd levels).
+    /// The Merkle root and the inclusion path for `target`, per RFC 9162 §2.1.1
+    /// (`MTH`) and §2.1.3.1 (`PATH`).
+    ///
+    /// The split is at the LARGEST POWER OF TWO strictly below `n`, never at the
+    /// midpoint, and the last node is never duplicated. Those are different trees for
+    /// every size that is not a power of two: for leaves `[A, B, C]` the two
+    /// constructions produce different roots, so a log built by duplication cannot
+    /// produce a receipt any RFC 9162 verifier accepts — while the receipt's own
+    /// protected `vds` declares `RFC9162_SHA256` and this parser refuses anything
+    /// else. Both corpora happened to be recorded at `tree_size = 2`, where the two
+    /// agree, which is why the divergence went unmeasured.
     fn root_and_path(&self, target: usize) -> ([u8; 32], Vec<[u8; 32]>) {
-        let mut level: Vec<[u8; 32]> = self.leaves.clone();
-        let mut idx = target;
         let mut path = Vec::new();
-        while level.len() > 1 {
-            let mut next = Vec::with_capacity(level.len().div_ceil(2));
-            let mut i = 0;
-            while i < level.len() {
-                let left = level[i];
-                let right = if i + 1 < level.len() {
-                    level[i + 1]
-                } else {
-                    level[i]
-                };
-                if i == idx || i + 1 == idx {
-                    let sibling = if idx & 1 == 0 { right } else { left };
-                    path.push(sibling);
+        let root = mth_and_path(&self.leaves, Some(target), &mut path);
+        (root, path)
+    }
+}
+
+/// `MTH(D[n])` (RFC 9162 §2.1.1), accumulating `PATH(target, D[n])` (§2.1.3.1) into
+/// `path` when `target` is `Some`.
+///
+/// The two are computed together because they are the same recursion: the audit path
+/// is exactly the sequence of sibling subtree roots skipped while descending to the
+/// target leaf. `None` means "this subtree contains no target" — it contributes its
+/// root and nothing to the path.
+///
+/// Entries are pushed LEAF-TO-ROOT: the targeted half recurses first, so everything
+/// it contributes is already in `path` before this level's sibling is appended.
+fn mth_and_path(leaves: &[[u8; 32]], target: Option<usize>, path: &mut Vec<[u8; 32]>) -> [u8; 32] {
+    match leaves.len() {
+        // `MTH({}) = SHA-256()`. Unreachable from the log (a receipt is only issued
+        // for a registered leaf), but defined so the recursion is total.
+        0 => Sha256::new().finalize().into(),
+        1 => leaves[0],
+        n => {
+            // k = the largest power of two STRICTLY less than n.
+            let k = 1usize << (usize::BITS - 1 - (n - 1).leading_zeros());
+            let (left_leaves, right_leaves) = leaves.split_at(k);
+            match target {
+                Some(t) if t < k => {
+                    let left = mth_and_path(left_leaves, Some(t), path);
+                    let right = mth_and_path(right_leaves, None, path);
+                    path.push(right);
+                    node_hash(&left, &right)
                 }
-                next.push(node_hash(&left, &right));
-                i += 2;
+                Some(t) => {
+                    let left = mth_and_path(left_leaves, None, path);
+                    let right = mth_and_path(right_leaves, Some(t - k), path);
+                    path.push(left);
+                    node_hash(&left, &right)
+                }
+                None => {
+                    let left = mth_and_path(left_leaves, None, path);
+                    let right = mth_and_path(right_leaves, None, path);
+                    node_hash(&left, &right)
+                }
             }
-            idx /= 2;
-            level = next;
         }
-        (level[0], path)
     }
 }
 
@@ -1528,30 +1707,202 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // RFC 9162 conformance — the tree and the fold.
+    // -----------------------------------------------------------------------
+
+    /// The RFC 9162 §2.1.1 known answer for a NON-power-of-two tree.
+    ///
+    /// `MTH(D[3]) = HASH(0x01 ‖ MTH(D[0:2]) ‖ MTH(D[2:3]))` — the split is at the
+    /// largest power of two BELOW 3, i.e. 2, and the last leaf is never duplicated.
+    /// The duplicate-last-node construction this replaced computed
+    /// `node(node(a,b), node(c,c))` instead, which is a different root for every size
+    /// that is not a power of two.
+    #[test]
+    fn the_tree_hash_is_the_rfc_9162_split_not_a_duplicated_last_node() {
+        let leaves: Vec<[u8; 32]> = (0u8..3).map(|i| [i; 32]).collect();
+        let mut path = Vec::new();
+        let root = mth_and_path(&leaves, None, &mut path);
+
+        let expected = node_hash(&node_hash(&leaves[0], &leaves[1]), &leaves[2]);
+        assert_eq!(root, expected, "MTH(D[3]) per RFC 9162 §2.1.1");
+
+        let duplicated = node_hash(
+            &node_hash(&leaves[0], &leaves[1]),
+            &node_hash(&leaves[2], &leaves[2]),
+        );
+        assert_ne!(
+            root, duplicated,
+            "the two constructions must be visibly different, or this test proves nothing"
+        );
+    }
+
+    /// EVERY leaf of a non-power-of-two log verifies. Leaf 2 of a 3-leaf tree sits on
+    /// the short right edge, and the old index-bit fold combined its operands in the
+    /// wrong order — so a conforming receipt from any real log whose size is not a
+    /// power of two was rejected.
+    #[test]
+    fn every_leaf_of_a_three_leaf_log_verifies() {
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let mut issued = Vec::new();
+        for hops in 1..=3 {
+            let st = statement(EvidenceCommitment::from_reconstruction(
+                &recon(ChainLabel::Complete, hops),
+                None,
+                None,
+            ));
+            let receipt = register(&mut svc, &st);
+            issued.push((st, receipt));
+        }
+        // The last receipt is over the 3-leaf tree; re-register nothing, just check it.
+        let (st, receipt) = issued.last().expect("three registered");
+        assert_eq!(receipt.tree_size(), 3);
+        assert_eq!(receipt.leaf_index(), 2, "the right-edge leaf");
+        verify_receipt_offline(st, receipt, ir(), tr())
+            .expect("a right-edge leaf of a 3-leaf tree verifies");
+    }
+
+    /// `tree_size` and `leaf_index` ride in the UNSIGNED `vdp` header, so they are
+    /// only bound if verification consumes them. It now does: the RFC 9162 walk
+    /// requires `sn == 0` at the end, so a restated size or index no longer folds to
+    /// the same root.
+    #[test]
+    fn restating_the_log_position_no_longer_verifies() {
+        let leaf = [7u8; 32];
+        let sibling = vec![9u8; 32];
+        // The honest proof: leaf 1 of a 2-leaf tree, one sibling.
+        let root = rfc9162_root_from_inclusion_proof(&leaf, 1, 2, std::slice::from_ref(&sibling))
+            .expect("the honest position verifies");
+        assert_eq!(root, node_hash(&sibling, &leaf));
+
+        // The same single-sibling proof restated at other positions: every one of
+        // these folded identically under the index-bit walk.
+        for (index, size) in [(3u64, 4u64), (7, 8), (21, 32), (1, 4)] {
+            assert!(
+                rfc9162_root_from_inclusion_proof(
+                    &leaf,
+                    index,
+                    size,
+                    std::slice::from_ref(&sibling)
+                )
+                .is_err(),
+                "leaf_index {index} of a {size}-leaf tree needs a different path length"
+            );
+        }
+    }
+
+    /// An EMPTY inclusion path is admitted only for the single-leaf tree RFC 9162
+    /// defines it for. For any larger tree it proves nothing — the fold would collapse
+    /// to `root == leaf hash`, so any signature a service made over an ENTRY hash
+    /// rather than a tree head would read as a receipt carrying an arbitrary,
+    /// unauthenticated size and index.
+    #[test]
+    fn an_empty_inclusion_path_is_only_valid_for_a_single_leaf_tree() {
+        let leaf = [3u8; 32];
+        assert_eq!(
+            rfc9162_root_from_inclusion_proof(&leaf, 0, 1, &[]).expect("PATH(0, D[1]) = {}"),
+            leaf,
+            "a one-leaf tree's root IS its leaf hash"
+        );
+        for size in [2u64, 3, 8] {
+            assert!(
+                rfc9162_root_from_inclusion_proof(&leaf, 0, size, &[]).is_err(),
+                "an empty path cannot reach the root of a {size}-leaf tree"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Retained evidence — what the receipt commits to but does not carry.
     // -----------------------------------------------------------------------
 
-    /// The retained bytes reproduce the commitment, and altering either side breaks it.
+    /// The retained chain reproduces the commitment, and altering any hop breaks it.
     #[test]
     fn retained_evidence_reproduces_the_commitment() {
-        let (req, rsp) = (b"req-0".as_slice(), b"rsp-0".as_slice());
-        let commitment =
-            EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None);
+        let retained = recon(ChainLabel::Complete, 1);
+        let commitment = EvidenceCommitment::from_reconstruction(&retained, None, None);
 
-        verify_retained_evidence(&commitment, req, rsp).expect("the retained bytes match");
+        verify_retained_evidence(&commitment, &retained, None, None)
+            .expect("the retained bytes match");
 
+        let mut tampered_request = retained.clone();
+        tampered_request.hop_evidence[0].request_evidence =
+            RequestEvidence::from_signature_base(b"req-tampered");
         assert_eq!(
-            verify_retained_evidence(&commitment, b"req-tampered", rsp).unwrap_err(),
+            verify_retained_evidence(&commitment, &tampered_request, None, None).unwrap_err(),
             HttpProfileError::MalformedEvidence(
                 "retained request evidence does not match the commitment"
             ),
         );
+
+        let mut tampered_response = retained.clone();
+        tampered_response.hop_evidence[0].response_evidence =
+            RequestEvidence::from_response_signature_base(b"rsp-tampered");
         assert_eq!(
-            verify_retained_evidence(&commitment, req, b"rsp-tampered").unwrap_err(),
+            verify_retained_evidence(&commitment, &tampered_response, None, None).unwrap_err(),
             HttpProfileError::MalformedEvidence(
                 "retained response evidence does not match the commitment"
             ),
         );
+    }
+
+    /// The defect this check exists for: retain hop 0 honestly, drop the rest. The
+    /// first-hop handles still match, so only `chain_commitment` — the field that had
+    /// no reader at all — can catch it.
+    #[test]
+    fn a_truncated_chain_is_refused_even_though_hop_zero_matches() {
+        let full = recon(ChainLabel::Complete, 3);
+        let commitment = EvidenceCommitment::from_reconstruction(&full, None, None);
+
+        let mut truncated = full.clone();
+        truncated.hop_evidence.truncate(1);
+        assert_eq!(
+            truncated.hop_evidence[0], full.hop_evidence[0],
+            "hop 0 is retained honestly — the old check compared only this"
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &truncated, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained chain does not match the committed chain shape"
+            ),
+        );
+
+        // Substituting a later hop is the same defect in the other direction.
+        let mut substituted = full.clone();
+        substituted.hop_evidence[2].request_evidence =
+            RequestEvidence::from_signature_base(b"req-substituted");
+        assert!(verify_retained_evidence(&commitment, &substituted, None, None).is_err());
+    }
+
+    /// A commitment that names artifact bindings or a verified context is not
+    /// satisfied by retained evidence that omits them.
+    #[test]
+    fn absent_bindings_do_not_satisfy_a_commitment_that_names_them() {
+        let retained = recon(ChainLabel::Complete, 1);
+        let commitment = EvidenceCommitment::from_reconstruction(
+            &retained,
+            Some("bindings-digest".into()),
+            Some("context-digest".into()),
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &retained, None, None).unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained artifact bindings do not match the commitment"
+            ),
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &retained, Some("bindings-digest".into()), None)
+                .unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "retained verified context does not match the commitment"
+            ),
+        );
+        verify_retained_evidence(
+            &commitment,
+            &retained,
+            Some("bindings-digest".into()),
+            Some("context-digest".into()),
+        )
+        .expect("both artifacts present and matching");
     }
 
     /// The two roles are distinct values over the same bytes. Presenting the response
@@ -1561,19 +1912,20 @@ mod tests {
     #[test]
     fn the_two_evidence_roles_are_not_interchangeable() {
         let same = b"identical-signature-base".as_slice();
-        let commitment = EvidenceCommitment {
-            request_evidence: RequestEvidence::from_signature_base(same).digest_value,
-            response_evidence: RequestEvidence::from_response_signature_base(same).digest_value,
-            bindings_commitment: None,
-            verified_context_commitment: None,
-            chain_label: "complete".into(),
-            chain_commitment: String::new(),
+        let retained = ChainReconstruction {
+            label: ChainLabel::Complete,
+            hop_evidence: vec![HopEvidence {
+                request_evidence: RequestEvidence::from_signature_base(same),
+                response_evidence: RequestEvidence::from_response_signature_base(same),
+            }],
         };
+        let commitment = EvidenceCommitment::from_reconstruction(&retained, None, None);
         assert_ne!(
             commitment.request_evidence, commitment.response_evidence,
             "the same bytes in two roles are two different handles"
         );
-        verify_retained_evidence(&commitment, same, same).expect("each role in its own place");
+        verify_retained_evidence(&commitment, &retained, None, None)
+            .expect("each role in its own place");
     }
 
     /// A verified receipt is NOT evidence retention. The receipt verifies with no
@@ -1591,7 +1943,8 @@ mod tests {
         verify_receipt_offline(&st, &receipt, ir(), tr()).expect("receipt verifies");
 
         // And the evidence check still fails when the bytes are not the committed ones.
-        assert!(verify_retained_evidence(&commitment, b"not the evidence", b"nor this").is_err());
+        let other = recon(ChainLabel::Complete, 2);
+        assert!(verify_retained_evidence(&commitment, &other, None, None).is_err());
     }
 
     // -----------------------------------------------------------------------

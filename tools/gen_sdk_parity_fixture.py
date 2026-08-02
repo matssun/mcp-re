@@ -49,7 +49,7 @@ BASE = dict(
     audience_id="did:example:server-1",
     route=None,
     dpop_token="dpop-token",
-    nonce="nonce-parity-0001",
+    nonce="nonce-parity-0001-128bit",
     created=1700000000,
     expires=1700000300,
 )
@@ -89,7 +89,7 @@ def build() -> dict:
         method="tools/call",
         route="route-a",
         id_json='"req-7"',
-        nonce="nonce-parity-0002",
+        nonce="nonce-parity-0002-128bit",
     )
     cases["software_tools_call_routed"] = case(
         mcp_re_sdk.sign_request(SEED, KEY_ID, **routed), {**routed, **meta}
@@ -103,7 +103,7 @@ def build() -> dict:
     # An ADR-MCPS-047 MRTR answer leg carrying a signed continuation.
     cont = dict(
         BASE,
-        nonce="nonce-parity-0003",
+        nonce="nonce-parity-0003-128bit",
         cont_prev_alg="sha-256",
         cont_prev_value="cHJldi1oYW5kbGU",
         cont_irr_alg="sha-256",
@@ -122,7 +122,7 @@ def build() -> dict:
         method=BASE["method"],
     )
     opaque = OpaqueBytesProvider("pdp-decision", ARTIFACT_MATERIAL)
-    opaque_args = dict(BASE, nonce="nonce-parity-0004")
+    opaque_args = dict(BASE, nonce="nonce-parity-0004-128bit")
     cases["binding_opaque_bytes"] = case(
         mcp_re_sdk.sign_request(
             SEED, KEY_ID, **opaque_args, bindings_json=json.dumps([opaque.spec(ctx)])
@@ -137,7 +137,7 @@ def build() -> dict:
         reference_scheme_id="scheme-1",
         reference_value="grant-123",
     )
-    ref_args = dict(BASE, nonce="nonce-parity-0005")
+    ref_args = dict(BASE, nonce="nonce-parity-0005-128bit")
     cases["binding_authz_system_reference"] = case(
         mcp_re_sdk.sign_request(
             SEED, KEY_ID, **ref_args, bindings_json=json.dumps([reference.spec(ctx)])
@@ -157,7 +157,7 @@ def build() -> dict:
         audience_id=BASE["audience_id"],
         route=None,
         dpop_token=BASE["dpop_token"],
-        nonce="nonce-parity-0006",
+        nonce="nonce-parity-0006-128bit",
         created=BASE["created"],
         expires=BASE["expires"],
     )

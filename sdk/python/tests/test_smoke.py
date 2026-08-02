@@ -32,7 +32,7 @@ def test_sign_request_produces_rfc9421_signed_request():
         "did:example:server-1",  # audience_id
         None,  # route
         "dpop-token",  # dpop_token
-        "nonce-smoke-0001",  # nonce
+        "nonce-smoke-0001-128bit",  # nonce
         1000,  # created (unix secs)
         2000,  # expires (unix secs)
     )

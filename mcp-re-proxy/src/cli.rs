@@ -100,6 +100,39 @@ pub enum AdmissionKind {
     Required,
 }
 
+/// Where the ADR-MCPS-035 per-request security record goes.
+///
+/// The record is the deployment's only per-request attribution surface: which actor
+/// was admitted, which calls were refused and under exactly which frozen `mcp-re.*`
+/// wire code. A deployment that wants it must say so — and a deployment that does
+/// not gets a startup line saying it has none, rather than discovering the absence
+/// after an incident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditSinkKind {
+    /// No per-request security record is emitted.
+    None,
+    /// One structured `key=value` line per decision on the proxy's stderr diagnostic
+    /// channel — the same channel the startup lines and rotation warnings use.
+    Stderr,
+}
+
+/// Whether the PEP writes its own verified context into the body forwarded to the
+/// inner server (#415 rev 2 §10).
+///
+/// The caller-supplied reserved key is stripped either way; this selects only
+/// whether the PEP's own context is then written in its place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifiedContextKind {
+    /// Forward the stripped body with no verified context. The inner server makes no
+    /// authorization decision on PEP-resolved identity.
+    Disabled,
+    /// Write the PEP's verified context into the forwarded body. Selecting this
+    /// ASSERTS that nothing but this PEP can reach the inner server — the carrier is
+    /// unsigned, so the channel is the only thing making it trustworthy, and no check
+    /// here can confirm that property.
+    Trusted,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayKind {
     /// In-memory (lost on restart).
@@ -273,6 +306,19 @@ pub struct Config {
     /// authority fails closed. Enabling it trades a bounded window of stale-admission
     /// risk for availability, and that is a deployment's call to make explicitly.
     pub admission_allow_degraded: bool,
+    /// ADR-MCPS-021 Axis 2: how often `--trust` is re-read, in seconds. `None` means
+    /// read once at startup — under which no revocation tier can revoke a
+    /// request-signer key on a running replica, because every tier resolves against
+    /// that one snapshot. Enabling it bounds the exposure window at the cadence.
+    pub trust_reload_secs: Option<u64>,
+    /// ADR-MCPS-035: where the per-request security record goes. `None` by default —
+    /// the record is a write on every request, so it is a deployment's choice; the
+    /// startup line states which posture is in force either way.
+    pub audit_sink: AuditSinkKind,
+    /// #415 rev 2 §10: whether the PEP writes its own verified context into the body
+    /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
+    /// an unverifiable property of the inner channel.
+    pub verified_context: VerifiedContextKind,
     /// MCPS-84 (ADR-MCPS-049 W2): Redis URL for the networked trust-epoch
     /// invalidation source (ADR-021 Tier 3 / `--revocation-tier push`). When set,
     /// the Push tier watches this Redis's monotonic epoch key and flushes the trust
@@ -533,7 +579,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // profiles) so an omitted flag preserves back-compat with draft-01 clients;
     // `--expected-version-policy draft-02-only` tightens it.
     let mut target_uri: Option<String> = None;
-    let mut trust_domain = "example.com".to_string();
+    let mut trust_domain: Option<String> = None;
     let mut route: Option<String> = None;
     let mut key_source = KeySourceKind::File;
     let mut signing_key_seed = None;
@@ -549,6 +595,11 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
     let mut max_in_flight_total: Option<usize> = None;
+    // Whether `--max-in-flight` was given. `ServerLimits::max_in_flight_requests` now
+    // carries a fail-safe DEFAULT, so its being `Some` no longer means the operator
+    // stated a per-core ceiling — and a default must not out-rank an explicit
+    // `--max-in-flight-total`.
+    let mut max_in_flight_explicit = false;
     let mut client_crl_reload_secs: Option<u64> = None;
     // #4030 online OCSP revocation: off by default; responder-URL override
     // optional; hard-fail (deny on indeterminate) by default.
@@ -561,6 +612,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut admission_redis_url: Option<String> = None;
     let mut admission_degraded_bound_secs: i64 = 0;
     let mut admission_allow_degraded = false;
+    let mut trust_reload_secs: Option<u64> = None;
+    let mut audit_sink = AuditSinkKind::None;
+    let mut verified_context = VerifiedContextKind::Disabled;
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
     let mut replay_redis_url = None;
@@ -697,7 +751,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // accepted `Mcp-Protocol-Version`. Absent = no transport contract.
             "--mcp-protocol-version" => mcp_protocol_versions.push(value.clone()),
             "--target-uri" => target_uri = Some(value.clone()),
-            "--trust-domain" => trust_domain = value.clone(),
+            "--trust-domain" => trust_domain = Some(value.clone()),
             "--route" => route = Some(value.clone()),
             "--key-source" => {
                 key_source = match value.as_str() {
@@ -846,6 +900,43 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     other => {
                         return Err(format!(
                             "--admission must be off|optional|required, got {other:?}"
+                        ))
+                    }
+                }
+            }
+            // ADR-MCPS-021 Axis 2: re-read the trust store on a cadence, so removing
+            // a compromised request-signer key from `--trust` takes effect without
+            // restarting every replica. `0` disables, which is the historical
+            // read-once-at-startup posture.
+            "--trust-reload-secs" => {
+                let secs: u64 = value
+                    .parse()
+                    .map_err(|_| "invalid --trust-reload-secs".to_string())?;
+                trust_reload_secs = (secs > 0).then_some(secs);
+            }
+            // ADR-MCPS-035: the per-request security record. Without this the
+            // emission points exist and nothing consumes them, so a deployment has no
+            // per-request attribution at all.
+            "--audit-sink" => {
+                audit_sink = match value.as_str() {
+                    "none" => AuditSinkKind::None,
+                    "stderr" => AuditSinkKind::Stderr,
+                    other => {
+                        return Err(format!("--audit-sink must be none|stderr, got {other:?}"))
+                    }
+                }
+            }
+            // #415 rev 2 §10: the verified-context carrier. `trusted` asserts that
+            // nothing but this PEP can reach the inner server — the carrier is
+            // unsigned, so that assertion is the entire basis for the inner server
+            // trusting it, and nothing here can check it.
+            "--verified-context-carrier" => {
+                verified_context = match value.as_str() {
+                    "disabled" => VerifiedContextKind::Disabled,
+                    "trusted" => VerifiedContextKind::Trusted,
+                    other => {
+                        return Err(format!(
+                            "--verified-context-carrier must be disabled|trusted, got {other:?}"
                         ))
                     }
                 }
@@ -1039,23 +1130,50 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 }
                 limits.max_concurrent_connections = n;
             }
-            // MCPRE-114: bounded per-request ADMISSION control. Without a ceiling the
-            // proxy queues in-flight requests without bound, so one client holding a
-            // valid mTLS certificate can drive unbounded concurrent work (each request
-            // buffering up to --max-body-bytes). `--max-in-flight` sets the per-core
-            // ceiling directly; `--max-in-flight-total` sets a fleet-wide target that
-            // async_fleet divides evenly across cores (lock-free: each core enforces
-            // only its own share). An explicit per-core ceiling wins.
+            // MCPRE-114: bounded per-request ADMISSION control. A ceiling always
+            // applies — `ServerLimits::default()` carries a per-core one — because
+            // without it a single client holding a valid mTLS certificate drives
+            // unbounded concurrent work, each request buffering up to
+            // --max-body-bytes BEFORE the verify gate. `--max-in-flight` overrides the
+            // per-core ceiling directly; `--max-in-flight-total` sets a fleet-wide
+            // target that async_fleet divides evenly across cores (lock-free: each
+            // core enforces only its own share). An EXPLICIT per-core ceiling wins.
             "--max-in-flight" => {
                 let n: usize = value
                     .parse()
                     .map_err(|_| "invalid --max-in-flight".to_string())?;
                 if n == 0 {
-                    return Err(
-                        "--max-in-flight must be > 0 (omit the flag for no ceiling)".to_string()
-                    );
+                    return Err("--max-in-flight must be > 0; there is no \"no ceiling\" \
+                                setting, because unbounded in-flight requests are \
+                                attacker-controlled buffering ahead of the verify gate"
+                        .to_string());
                 }
                 limits.max_in_flight_requests = Some(n);
+                max_in_flight_explicit = true;
+            }
+            // MCPRE-116 / ADR-MCPS-023 §A1: how long one mTLS connection may serve
+            // before it is gracefully closed and the peer must re-handshake. The
+            // client-cert chain, its CRL status and its validity window are checked at
+            // the handshake and NOWHERE else, so this is what bounds revocation
+            // latency for a peer that simply keeps its connection open.
+            "--max-connection-age-secs" => {
+                limits.max_connection_age = parse_timeout(value, "--max-connection-age-secs")?;
+            }
+            // MCPRE-115 (ADR-MCPRE-051 §6): the bounded drain window. Exposed because
+            // the k8s side of the invariant
+            // (`request_deadline <= drain_grace < terminationGracePeriodSeconds`,
+            // minus any preStop delay) cannot be satisfied from the chart alone while
+            // this value is a hardcoded constant.
+            "--drain-grace-secs" => {
+                let secs: u64 = value
+                    .parse()
+                    .map_err(|_| "invalid --drain-grace-secs".to_string())?;
+                if secs == 0 {
+                    return Err("--drain-grace-secs must be > 0: a zero drain window \
+                                abandons every in-flight request on SIGTERM"
+                        .to_string());
+                }
+                limits.drain_grace = Duration::from_secs(secs);
             }
             "--max-in-flight-total" => {
                 let n: usize = value
@@ -1063,7 +1181,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                     .map_err(|_| "invalid --max-in-flight-total".to_string())?;
                 if n == 0 {
                     return Err(
-                        "--max-in-flight-total must be > 0 (omit the flag for no ceiling)"
+                        "--max-in-flight-total must be > 0 (omit it to keep the per-core \
+                         default ceiling)"
                             .to_string(),
                     );
                 }
@@ -1117,6 +1236,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             other => return Err(format!("unknown flag {other}")),
         }
         i += 2;
+    }
+
+    // A fleet-wide target divides across cores only when no explicit per-core ceiling
+    // was given (`derived_per_core_ceiling`). Clearing the DEFAULT here is what keeps
+    // that contract: without it the built-in per-core value would silently win over an
+    // operator's `--max-in-flight-total`.
+    if max_in_flight_total.is_some() && !max_in_flight_explicit {
+        limits.max_in_flight_requests = None;
     }
 
     let require =
@@ -1588,9 +1715,36 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                         .to_string(),
                 );
             }
+            // ABSOLUTE form is required, and this is the check `async_serve`'s
+            // `origin_form_of` says already exists. It did not: a relative or
+            // scheme-less target (`/mcp`, `host/mcp`) yields no origin form, which
+            // makes the received-vs-configured path comparison return "consistent"
+            // for every request and disables the reconstruction check silently. The
+            // verifier's own audience comparison cannot catch it either — both sides
+            // are the same configured string.
+            if !uri.contains("://") {
+                return Err(format!(
+                    "--target-uri {uri:?} is not an absolute URI: it must be \
+                     <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
+                     A scheme-less target disables the request-target reconstruction check \
+                     entirely, so an ingress fanning several paths into one process would \
+                     verify signatures over a @target-uri the request never arrived at"
+                ));
+            }
             uri
         },
-        trust_domain,
+        // REQUIRED. It used to default to the placeholder `example.com`, which the
+        // Helm chart refuses outright as a shared-identity hazard — so the binary
+        // silently accepted the one value the chart exists to reject, and a
+        // hand-rolled or scripted deployment inherited an identity coordinate shared
+        // with every other install that also never set it.
+        trust_domain: {
+            let value = require(trust_domain, "--trust-domain")?;
+            if value.trim().is_empty() {
+                return Err("--trust-domain must not be empty".to_string());
+            }
+            value
+        },
         route,
         key_source,
         // Required only where the seed is actually READ. Under a non-exporting
@@ -1637,6 +1791,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         admission_redis_url,
         admission_degraded_bound_secs,
         admission_allow_degraded,
+        trust_reload_secs,
+        audit_sink,
+        verified_context,
         replay_redis_url,
         trust_epoch_redis_url,
         trust_epoch_key,
@@ -1800,6 +1957,45 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
             MAX_CLIENT_CERT_LIFETIME.as_secs(),
         )),
         Some(_) => {}
+    }
+    // A client certificate's chain, CRL status and validity window are checked at the
+    // TLS handshake and never again on an established connection. Without a
+    // connection-age bound a peer holding a stolen or revoked certificate keeps full
+    // authenticated access for as long as it keeps one connection open — so the
+    // `--max-client-cert-lifetime` ceiling above and the CRL reload cadence both stop
+    // being true statements about the deployment.
+    match config.limits.max_connection_age {
+        None => violations.push(
+            "--max-connection-age-secs 0 disables the connection-age bound: the client \
+             certificate is validated only at the handshake, so a peer that never \
+             reconnects is never re-checked against an expiry or a reloaded CRL. Set a \
+             bounded age (default 300s)"
+                .to_string(),
+        ),
+        Some(age) if age > MAX_CLIENT_CERT_LIFETIME => violations.push(format!(
+            "--max-connection-age-secs {}s exceeds the client-cert lifetime ceiling of {}s: \
+             a connection would outlive the credential that authenticated it",
+            age.as_secs(),
+            MAX_CLIENT_CERT_LIFETIME.as_secs(),
+        )),
+        Some(_) => {}
+    }
+    // ADR-MCPS-021 Axis 2: LIVE and PUSH both advertise a revocation window measured
+    // in the store being consulted or re-consulted. With `--trust` read once at
+    // startup there is nothing behind either: a Tier-3 flush evicts entries that
+    // immediately re-resolve to the identical key, and Tier 2's per-request round trip
+    // hits a frozen map. Refused rather than warned, because the operator asked for a
+    // near-zero window and would otherwise be told at startup that they had one.
+    if matches!(
+        config.revocation_tier,
+        crate::revocation_tier::RevocationTier::Live
+            | crate::revocation_tier::RevocationTier::Push { .. }
+    ) && config.trust_reload_secs.is_none()
+    {
+        violations.push(
+            "--revocation-tier live|push requires --trust-reload-secs: both tiers state a              revocation window in terms of consulting the trust store, but with --trust read              once at startup the store cannot change, so revoking a request-signer key would              need a restart of every replica while the startup line claims otherwise"
+                .to_string(),
+        );
     }
     // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
     // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
@@ -2548,9 +2744,78 @@ pub fn load_trust_entries(bytes: &[u8]) -> Result<Vec<(String, String, Verificat
     Ok(out)
 }
 
+/// The `kid -> signer` map for keys this file enrols FOR THE REQUEST SLOT.
+///
+/// The SignerSlot type exists so trust resolution — not a role string read after the
+/// fact — decides which slot a key may sign in. That only means something if the trust
+/// file can express it. Previously it could not: every entry whose `key_id` was not
+/// the response kid was granted the request slot unconditionally, so a key enrolled
+/// for another purpose (this same file carries authorization-issuer keys) silently
+/// became a full request-signing credential, and its resolved actor id then flowed
+/// into the replay key, the Mode-A transport binding and the audit record.
+///
+/// An entry may now declare `"slots": ["request"]`. The rules:
+///
+///   * `slots` present  — authoritative. A key that does not list `request` is not a
+///     request signer, whatever else it is in the file for.
+///   * `slots` absent   — treated as `["request"]`, which is exactly the historical
+///     behaviour, so an existing trust file keeps working. Declaring slots is how an
+///     operator NARROWS a key; it is not a new requirement.
+///
+/// `response_kid` is excluded either way: the deployment's own issuer key must never
+/// be presentable as a client credential.
+pub fn load_trust_request_signers(
+    bytes: &[u8],
+    response_kid: &str,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
+    let array = value.as_array().ok_or("trust file must be a JSON array")?;
+    let mut out = std::collections::HashMap::new();
+    for entry in array {
+        let signer = entry["signer"]
+            .as_str()
+            .ok_or("trust entry missing signer")?;
+        let key_id = entry["key_id"]
+            .as_str()
+            .ok_or("trust entry missing key_id")?;
+        if key_id == response_kid {
+            continue;
+        }
+        let request_slot = match entry.get("slots") {
+            None => true,
+            Some(slots) => {
+                let listed = slots.as_array().ok_or_else(|| {
+                    format!("trust entry {signer}#{key_id}: slots must be an array")
+                })?;
+                let mut found = false;
+                for slot in listed {
+                    match slot.as_str() {
+                        Some("request") => found = true,
+                        // Named so a typo is a startup failure rather than a silently
+                        // narrower key that then fails every request at verify time.
+                        Some(other) if other == "response" || other == "authorization-issuer" => {}
+                        _ => {
+                            return Err(format!(
+                                "trust entry {signer}#{key_id}: unknown slot {slot}                                  (request|response|authorization-issuer)"
+                            ))
+                        }
+                    }
+                }
+                found
+            }
+        };
+        if request_slot {
+            out.insert(key_id.to_string(), signer.to_string());
+        }
+    }
+    Ok(out)
+}
+
 /// Load a JSON trust file into an [`InMemoryTrustResolver`]. The file is an array
-/// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad);
-/// it carries both request-signer keys and authorization-issuer keys.
+/// of `{ "signer", "key_id", "public_key" }` (the public key Base64URL-no-pad) with an
+/// optional `"slots"` array; it carries both request-signer keys and
+/// authorization-issuer keys, and `slots` is what separates them (see
+/// [`load_trust_request_signers`]).
 pub fn load_trust(bytes: &[u8]) -> Result<InMemoryTrustResolver, String> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| format!("trust file: {e}"))?;
     let array = value.as_array().ok_or("trust file must be a JSON array")?;
@@ -2872,6 +3137,11 @@ mod tests {
             // for every config (ADR-MCPRE-052 §7).
             "--delegated-trust-epoch",
             "epoch-min",
+            // Required: it used to default to the `example.com` placeholder the Helm
+            // chart refuses, so the binary accepted the one value the chart exists to
+            // reject.
+            "--trust-domain",
+            "mcp.example.com",
         ])
     }
 
@@ -2902,6 +3172,8 @@ mod tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
+            "--trust-domain",
+            "mcp.example.com",
         ])
     }
 
@@ -3109,13 +3381,16 @@ mod tests {
 
     /// MCPRE-114: the bounded-admission ceiling exists in `async_serve`/`async_fleet`
     /// but had NO CLI flag, so no shipped configuration could enable it — the proxy
-    /// always ran unbounded in-flight. Both knobs must reach the config.
+    /// always ran unbounded in-flight. Both knobs must reach the config, and the
+    /// no-flags case must be BOUNDED: unbounded in-flight is attacker-controlled
+    /// buffering ahead of the verify gate.
     #[test]
-    fn admission_ceilings_are_configurable_and_default_to_unbounded() {
+    fn admission_ceilings_are_configurable_and_bounded_by_default() {
         let config = parse_args(&minimal_durable()).expect("parse");
         assert_eq!(
-            config.limits.max_in_flight_requests, None,
-            "unbounded by default"
+            config.limits.max_in_flight_requests,
+            Some(256),
+            "a per-core ceiling applies with no flags at all"
         );
         assert_eq!(config.max_in_flight_total, None);
 
@@ -3127,6 +3402,40 @@ mod tests {
         let config = parse_args(&a).expect("parse");
         assert_eq!(config.limits.max_in_flight_requests, Some(32));
         assert_eq!(config.max_in_flight_total, Some(256));
+    }
+
+    /// The per-core DEFAULT must not out-rank an explicit fleet-wide target: with
+    /// only `--max-in-flight-total`, the per-core ceiling is cleared so
+    /// `derived_per_core_ceiling` divides the target across cores.
+    #[test]
+    fn a_fleet_wide_target_alone_clears_the_per_core_default() {
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-in-flight-total", "256"]));
+        let config = parse_args(&a).expect("parse");
+        assert_eq!(
+            config.limits.max_in_flight_requests, None,
+            "the default must yield to an explicit global target"
+        );
+        assert_eq!(config.max_in_flight_total, Some(256));
+    }
+
+    /// The connection-age bound is what re-checks a client certificate against an
+    /// expiry or a reloaded CRL; disabling it is an unsafe configuration.
+    #[test]
+    fn the_connection_age_bound_is_defaulted_and_zero_is_refused() {
+        let config = parse_args(&minimal_durable()).expect("parse");
+        assert_eq!(
+            config.limits.max_connection_age,
+            Some(std::time::Duration::from_secs(300))
+        );
+        assert!(unsafe_config_violations(&config).is_empty());
+
+        // `parse_args` applies `unsafe_config_violations` unconditionally, so
+        // disabling the bound never produces a Config at all.
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--max-connection-age-secs", "0"]));
+        let err = parse_args(&a).expect_err("a disabled connection-age bound is refused");
+        assert!(err.contains("--max-connection-age-secs"), "got: {err}");
     }
 
     /// Zero would silently mean "admit nothing"; refuse it rather than serve a proxy
@@ -3986,6 +4295,8 @@ mod tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
+            "--trust-domain",
+            "mcp.example.com",
         ])
     }
 
@@ -4095,6 +4406,8 @@ mod tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
+            "--trust-domain",
+            "mcp.example.com",
         ])
     }
 
@@ -4618,10 +4931,32 @@ mod tests {
             ),
         ] {
             let mut a = minimal_durable();
-            a.splice(0..0, args(&["--revocation-tier", flag]));
+            // LIVE and PUSH both state their window in terms of consulting the trust
+            // store, so both require a reload cadence to make that true.
+            a.splice(
+                0..0,
+                args(&["--revocation-tier", flag, "--trust-reload-secs", "60"]),
+            );
             let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
             assert_eq!(config.revocation_tier, expected, "flag {flag}");
         }
+    }
+
+    /// A tier that advertises a near-zero window must have a store that can change.
+    /// Read-once `--trust` makes both LIVE and PUSH claims the binary cannot keep.
+    #[test]
+    fn live_and_push_tiers_require_a_trust_reload_cadence() {
+        for flag in ["live", "push:30"] {
+            let mut a = minimal_durable();
+            a.splice(0..0, args(&["--revocation-tier", flag]));
+            let err = parse_args(&a).expect_err("must be refused without a reload cadence");
+            assert!(err.contains("--trust-reload-secs"), "got: {err}");
+        }
+        // Tier 1 makes no such claim: its window is the cache bound T, which holds
+        // whether or not the file is re-read.
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--revocation-tier", "bounded-cache:90"]));
+        parse_args(&a).expect("bounded-cache does not require a reload cadence");
     }
 
     #[test]
@@ -5339,6 +5674,8 @@ mod tests {
                 "redis://127.0.0.1:6379",
                 "--trust-epoch-key",
                 "mcp-re:trust:epoch",
+                "--trust-reload-secs",
+                "60",
             ]),
         );
         let config = parse_args(&a).expect("push + trust-epoch must parse");
@@ -5694,6 +6031,8 @@ mod tests {
             "https://mcp.example.com/mcp",
             "--delegated-trust-epoch",
             "epoch-min",
+            "--trust-domain",
+            "mcp.example.com",
         ])
     }
 

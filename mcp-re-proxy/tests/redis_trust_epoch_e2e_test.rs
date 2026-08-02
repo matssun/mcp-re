@@ -60,7 +60,9 @@ fn epoch_advance_on_redis_is_detected_as_flush_all() {
     // The source is a SEPARATE connection, as a sibling replica would be.
     let source = redis_trust_epoch_source(&url, &key).expect("connect trust-epoch source");
 
-    // First poll establishes the baseline (epoch=1): no flush.
+    // First poll establishes the baseline (epoch=1): no flush. `poll_once` is the
+    // read; `drain_pending` is the queue the request path takes, and it does no I/O.
+    source.poll_once();
     assert!(
         source.drain_pending().is_empty(),
         "baseline poll must not flush"
@@ -74,12 +76,14 @@ fn epoch_advance_on_redis_is_detected_as_flush_all() {
         .expect("INCR epoch -> 2");
 
     // The source, on its own connection, detects the advance and flushes.
+    source.poll_once();
     assert_eq!(
         source.drain_pending(),
         vec![InvalidationEvent::FlushAll],
         "an epoch advance on another connection must surface as FlushAll"
     );
     // Steady epoch: no further flush.
+    source.poll_once();
     assert!(
         source.drain_pending().is_empty(),
         "a steady epoch must not flush again"
@@ -90,17 +94,27 @@ fn epoch_advance_on_redis_is_detected_as_flush_all() {
         .arg(&key)
         .query(&mut admin)
         .expect("INCR epoch -> 3");
+    source.poll_once();
     assert_eq!(
         source.drain_pending(),
         vec![InvalidationEvent::FlushAll],
         "a second epoch advance must flush again"
     );
 
-    // Cleanup.
+    // An ABSENT key is a read FAILURE, never a live epoch 0: reading it as a baseline
+    // left the push kill switch silently inert whenever the key was never created,
+    // pointed at the wrong database, or lost to a restore or an eviction.
     let _: () = redis::cmd("DEL")
         .arg(&key)
         .query(&mut admin)
         .expect("DEL epoch key");
+    let Err(err) = redis_trust_epoch_source(&url, &key) else {
+        panic!("an absent epoch key must fail closed, not read as epoch 0");
+    };
+    assert!(
+        err.contains("does not exist"),
+        "the refusal must name the absent key so the operator can seed it: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +162,9 @@ mod serving_path {
     use mcp_re_proxy::async_serve::ServedHttpRequest;
     use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
     use mcp_re_proxy::trust_epoch::redis_trust_epoch_source;
+    use mcp_re_proxy::trust_epoch::RedisEpochReader;
+    use mcp_re_proxy::trust_epoch::SharedEpochChannel;
+    use mcp_re_proxy::trust_epoch::TrustEpochSource;
     use mcp_re_proxy::DelegatedRotor;
     use mcp_re_proxy::DelegatedServerSigner;
     use mcp_re_proxy::HttpProfileProxy;
@@ -209,19 +226,33 @@ mod serving_path {
     /// A replica wired the way `app.rs` wires the production serving path: the
     /// Request slot resolves through a Tier-3 push cache fed by the LIVE Redis
     /// trust-epoch source, on its OWN connection, as a sibling replica would.
-    fn replica(url: &str, epoch_key: &str, revoked: Arc<AtomicBool>) -> HttpProfileProxy {
-        let source = redis_trust_epoch_source(url, epoch_key).expect("connect trust-epoch source");
+    /// The replica plus the handle its epoch POLLER runs on. The poll is off the
+    /// request path in production (a blocking Redis GET inline on the async serve path
+    /// serialized the whole fleet on one connection), so the test drives it explicitly
+    /// where a request used to trigger it.
+    struct Replica {
+        proxy: HttpProfileProxy,
+        epoch: Arc<TrustEpochSource<RedisEpochReader>>,
+    }
+
+    fn replica(url: &str, epoch_key: &str, revoked: Arc<AtomicBool>) -> Replica {
+        let source =
+            Arc::new(redis_trust_epoch_source(url, epoch_key).expect("connect trust-epoch source"));
         let cache = PushInvalidationTrustCache::new(
             Box::new(AuthoritativeStore { revoked }),
             T_SECS,
             T_SECS,
             Box::new(now),
-            Box::new(source),
+            Box::new(SharedEpochChannel(Arc::clone(&source))),
         );
         let mut client_signers = HashMap::new();
         client_signers.insert(CLIENT_KEY_ID.to_string(), CLIENT_SIGNER.to_string());
-        let resolve_actor = build_actor_resolver(
+        let trust_store = Arc::new(mcp_re_proxy::reloading_trust::ReloadingTrustStore::new(
+            mcp_re_core::InMemoryTrustResolver::default(),
             client_signers,
+        ));
+        let resolve_actor = build_actor_resolver(
+            trust_store,
             Arc::new(cache),
             "example.com".to_string(),
             ROOT_KID.to_string(),
@@ -263,20 +294,23 @@ mod serving_path {
         );
         rotor.rotate(now()).expect("issue the first delegated key");
 
-        HttpProfileProxy::new_delegated(
-            resolve_actor,
-            audience(),
-            AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
-            ProxyDispatchConfig {
-                fleet_strict: false,
-                tier: None,
-            },
-            Box::new(|_forwarded: &[u8]| -> Vec<u8> {
-                br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
-            }),
-            300,
-            signer,
-        )
+        Replica {
+            proxy: HttpProfileProxy::new_delegated(
+                resolve_actor,
+                audience(),
+                AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+                ProxyDispatchConfig {
+                    fleet_strict: false,
+                    tier: None,
+                },
+                Box::new(|_forwarded: &[u8]| -> Vec<u8> {
+                    br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec()
+                }),
+                300,
+                signer,
+            ),
+            epoch: source,
+        }
     }
 
     fn signed_request(nonce: &str, now: i64) -> HttpRequest {
@@ -348,6 +382,8 @@ mod serving_path {
 
         let revoked = Arc::new(AtomicBool::new(false));
         let sibling = replica(&url, &epoch_key, Arc::clone(&revoked));
+        // Establish the baseline, exactly as the production poller's first tick does.
+        sibling.epoch.poll_once();
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -360,7 +396,7 @@ mod serving_path {
             // 1. Trust is live: the sibling serves the request.
             let ok = signed_request(&format!("{prefix}-1"), now);
             assert_eq!(
-                sibling.handle(served(&ok), now).await.status,
+                sibling.proxy.handle(served(&ok), now).await.status,
                 200,
                 "an unrevoked binding is served"
             );
@@ -371,8 +407,9 @@ mod serving_path {
             //    green step 3 would prove nothing about the epoch.
             revoked.store(true, Ordering::SeqCst);
             let stale = signed_request(&format!("{prefix}-2"), now);
+            sibling.epoch.poll_once();
             assert_eq!(
-                sibling.handle(served(&stale), now).await.status,
+                sibling.proxy.handle(served(&stale), now).await.status,
                 200,
                 "NEGATIVE CONTROL: the sibling serves stale trust until the epoch advances"
             );
@@ -383,10 +420,11 @@ mod serving_path {
                 .query(&mut admin)
                 .expect("INCR epoch -> 2");
 
-            // 4. The sibling flushes on its next request, re-resolves live, and
-            //    rejects — cross-replica revocation coherence.
+            // 4. The sibling's poller observes the advance, the next request flushes,
+            //    re-resolves live, and rejects — cross-replica revocation coherence.
+            sibling.epoch.poll_once();
             let after = signed_request(&format!("{prefix}-3"), now);
-            let status = sibling.handle(served(&after), now).await.status;
+            let status = sibling.proxy.handle(served(&after), now).await.status;
             assert_ne!(
                 status, 200,
                 "the sibling must reject the revoked binding once the epoch advanced"

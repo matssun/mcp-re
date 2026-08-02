@@ -22,7 +22,12 @@ use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
 use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
 use mcp_re_proxy::async_replay::L1FastRejectStore;
 use mcp_re_proxy::async_replay::ReplayDecisionFuture;
+use mcp_re_proxy::async_replay::ReplayInsert;
 use mcp_re_proxy::shared_replay::ReplayStoreError;
+
+/// Every entry in this file is charged to one signer; the per-actor budget is
+/// exercised by its own test in `async_replay.rs`.
+const TEST_ACTOR: &str = "did:example:test-signer";
 
 /// A multi-thread runtime for the concurrency tests.
 fn rt() -> tokio::runtime::Runtime {
@@ -43,15 +48,9 @@ struct CountingL2 {
 }
 
 impl AsyncAtomicReplayStore for CountingL2 {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .atomic_insert_if_absent(key, expires_at_unix, now_unix)
+        self.inner.atomic_insert_if_absent(insert)
     }
 }
 
@@ -62,12 +61,7 @@ struct FaultInjectingL2 {
 }
 
 impl AsyncAtomicReplayStore for FaultInjectingL2 {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
         if self.fail.load(Ordering::SeqCst) {
             Box::pin(async {
                 Err(ReplayStoreError::Unavailable {
@@ -75,8 +69,7 @@ impl AsyncAtomicReplayStore for FaultInjectingL2 {
                 })
             })
         } else {
-            self.inner
-                .atomic_insert_if_absent(key, expires_at_unix, now_unix)
+            self.inner.atomic_insert_if_absent(insert)
         }
     }
 }
@@ -94,7 +87,10 @@ fn l1_fast_rejects_known_replay_without_consulting_l2_again() {
         let tier = L1FastRejectStore::new(l2);
 
         // First sight of the key: L1 miss ⇒ L2 consulted ⇒ Fresh.
-        let first = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
+        let first = tier
+            .atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
+            .await
+            .expect("ok");
         assert_eq!(
             first,
             ReplayDecision::Fresh,
@@ -103,7 +99,10 @@ fn l1_fast_rejects_known_replay_without_consulting_l2_again() {
         assert_eq!(calls.load(Ordering::SeqCst), 1, "L2 consulted exactly once");
 
         // Second sight of the SAME key: L1 fast-rejects ⇒ Replay, L2 NOT consulted.
-        let second = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
+        let second = tier
+            .atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
+            .await
+            .expect("ok");
         assert_eq!(
             second,
             ReplayDecision::Replay,
@@ -121,16 +120,24 @@ fn l1_eviction_never_causes_a_false_fresh() {
         let tier = L1FastRejectStore::with_capacity(l2, 2);
 
         assert_eq!(
-            tier.atomic_insert_if_absent("A", 0, 0).await.expect("ok"),
+            tier.atomic_insert_if_absent(ReplayInsert::new("A", TEST_ACTOR, 100, 0))
+                .await
+                .expect("ok"),
             ReplayDecision::Fresh
         );
         // Insert enough distinct keys to evict "A" from the 2-slot L1.
         for k in ["B", "C", "D"] {
-            let _ = tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok");
+            let _ = tier
+                .atomic_insert_if_absent(ReplayInsert::new(k, TEST_ACTOR, 100, 0))
+                .await
+                .expect("ok");
         }
         // "A" is now evicted from L1, but L2 still holds it — so re-inserting "A" must
         // be a Replay (from L2), NEVER a false Fresh.
-        let again = tier.atomic_insert_if_absent("A", 0, 0).await.expect("ok");
+        let again = tier
+            .atomic_insert_if_absent(ReplayInsert::new("A", TEST_ACTOR, 100, 0))
+            .await
+            .expect("ok");
         assert_eq!(
             again,
             ReplayDecision::Replay,
@@ -150,7 +157,9 @@ fn l2_outage_fails_closed_and_recovers_clean() {
         let tier = L1FastRejectStore::new(l2);
 
         // During the outage: fail closed (Unavailable), NOT a silent allow.
-        let outage = tier.atomic_insert_if_absent("k", 0, 0).await;
+        let outage = tier
+            .atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
+            .await;
         assert!(
             matches!(outage, Err(ReplayStoreError::Unavailable { .. })),
             "an L2 outage must fail closed, got {outage:?}",
@@ -160,7 +169,7 @@ fn l2_outage_fails_closed_and_recovers_clean() {
         // the first post-recovery sight of the key is a correct Fresh.
         fail.store(false, Ordering::SeqCst);
         let recovered = tier
-            .atomic_insert_if_absent("k", 0, 0)
+            .atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
             .await
             .expect("recovered");
         assert_eq!(
@@ -168,7 +177,10 @@ fn l2_outage_fails_closed_and_recovers_clean() {
             ReplayDecision::Fresh,
             "clean recovery: first sight is Fresh"
         );
-        let replay = tier.atomic_insert_if_absent("k", 0, 0).await.expect("ok");
+        let replay = tier
+            .atomic_insert_if_absent(ReplayInsert::new("k", TEST_ACTOR, 100, 0))
+            .await
+            .expect("ok");
         assert_eq!(replay, ReplayDecision::Replay, "and the next is a Replay");
     });
 }
@@ -191,7 +203,9 @@ fn cross_core_exactly_one_fresh_under_concurrency() {
         for i in 0..tasks {
             let tier = Arc::clone(&tiers[i % cores]);
             handles.push(tokio::spawn(async move {
-                tier.atomic_insert_if_absent(key, 0, 0).await.expect("ok")
+                tier.atomic_insert_if_absent(ReplayInsert::new(key, TEST_ACTOR, 100, 0))
+                    .await
+                    .expect("ok")
             }));
         }
         let mut fresh = 0;
@@ -217,13 +231,17 @@ fn distinct_keys_are_each_fresh_once() {
         // Distinct keys are independent: each is Fresh exactly once, Replay thereafter.
         for k in ["a", "b", "c"] {
             assert_eq!(
-                tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"),
+                tier.atomic_insert_if_absent(ReplayInsert::new(k, TEST_ACTOR, 100, 0))
+                    .await
+                    .expect("ok"),
                 ReplayDecision::Fresh
             );
         }
         for k in ["a", "b", "c"] {
             assert_eq!(
-                tier.atomic_insert_if_absent(k, 0, 0).await.expect("ok"),
+                tier.atomic_insert_if_absent(ReplayInsert::new(k, TEST_ACTOR, 100, 0))
+                    .await
+                    .expect("ok"),
                 ReplayDecision::Replay
             );
         }

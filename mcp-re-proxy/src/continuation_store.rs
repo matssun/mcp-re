@@ -154,12 +154,23 @@ const CONTINUATION_KEY_DOMAIN: &[u8] = b"mcp-re/continuation-key/v1";
 /// from the same actor therefore lands on the exact entry the open leg wrote, and an
 /// answer from any other actor lands on a key that does not exist.
 ///
-/// `actor_id` is length-prefixed so no `(actor, state)` pair can be spelled as a
-/// different one by moving the boundary between them.
-pub fn continuation_key(actor_id: &str, request_state: &[u8]) -> String {
+/// The AUDIENCE is in the key too, as it is in the replay composite key.
+///
+/// Without it two MCP-RE deployments — different audiences, different inner backends —
+/// pointed at one Redis share a single continuation namespace, and nothing in config
+/// or code enforced the assumption that they would not be. An actor trusted by both
+/// could then open a leg against one dispatch boundary and answer it against the
+/// other. The audience is what makes a signed request valid HERE and nowhere else, so
+/// it belongs in any key that crosses a shared store.
+///
+/// Every field is length-prefixed so no tuple can be spelled as a different one by
+/// moving a boundary between them.
+pub fn continuation_key(audience_id: &str, actor_id: &str, request_state: &[u8]) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(CONTINUATION_KEY_DOMAIN);
+    hasher.update((audience_id.len() as u64).to_be_bytes());
+    hasher.update(audience_id.as_bytes());
     hasher.update((actor_id.len() as u64).to_be_bytes());
     hasher.update(actor_id.as_bytes());
     hasher.update(request_state);
@@ -177,7 +188,13 @@ pub fn continuation_key(actor_id: &str, request_state: &[u8]) -> String {
 /// has a non-`None` store in tests without a Redis dependency.
 #[derive(Default)]
 pub struct InMemoryContinuationStore {
-    entries: std::sync::Mutex<std::collections::HashMap<String, RetainedBases>>,
+    /// Entry plus its expiry instant. The TTL is part of the trait contract — RF-07
+    /// requires a completed or abandoned continuation chain to leave no correlation
+    /// state — and binding it as `_ttl_secs` meant an unanswered continuation lived for
+    /// the whole process lifetime, so a long-running single-replica proxy accumulated
+    /// retained signature bases that nothing would ever consume. The Redis twin sets a
+    /// real key TTL; this is the same bound, enforced on read.
+    entries: std::sync::Mutex<std::collections::HashMap<String, (RetainedBases, i64)>>,
 }
 
 impl InMemoryContinuationStore {
@@ -187,6 +204,16 @@ impl InMemoryContinuationStore {
             entries: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
+
+    /// Wall-clock seconds. The store owns its own clock because the trait's `store`
+    /// takes a DURATION, not an instant, so there is no caller-supplied `now` to
+    /// anchor expiry to.
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
 }
 
 impl AsyncContinuationStore for InMemoryContinuationStore {
@@ -194,15 +221,17 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         &'a self,
         key: &'a str,
         bases: &'a RetainedBases,
-        _ttl_secs: i64,
+        ttl_secs: i64,
     ) -> ContinuationFuture<'a, ()> {
         let key = key.to_string();
         let bases = bases.clone();
         Box::pin(async move {
-            self.entries
-                .lock()
-                .expect("continuation map poisoned")
-                .insert(key, bases);
+            let now = Self::now();
+            let mut entries = self.entries.lock().expect("continuation map poisoned");
+            // Drop everything already expired on the way past, so an abandoned chain
+            // does not accumulate.
+            entries.retain(|_, (_, expires_at)| *expires_at > now);
+            entries.insert(key, (bases, now.saturating_add(ttl_secs)));
             Ok(())
         })
     }
@@ -210,12 +239,14 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
     fn peek<'a>(&'a self, key: &'a str) -> ContinuationFuture<'a, Option<RetainedBases>> {
         let key = key.to_string();
         Box::pin(async move {
+            let now = Self::now();
             Ok(self
                 .entries
                 .lock()
                 .expect("continuation map poisoned")
                 .get(&key)
-                .cloned())
+                .filter(|(_, expires_at)| *expires_at > now)
+                .map(|(bases, _)| bases.clone()))
         })
     }
 
@@ -223,13 +254,17 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
         let key = key.to_string();
         Box::pin(async move {
             // `remove` returning Some is the single-process form of "this call is the
-            // one that removed a live entry" — the map lock makes it atomic.
+            // one that removed a live entry" — the map lock makes it atomic. An EXPIRED
+            // entry is removed but reported as not-live: consuming a continuation past
+            // its TTL would honour an answer leg the Redis twin would already have
+            // dropped.
+            let now = Self::now();
             Ok(self
                 .entries
                 .lock()
                 .expect("continuation map poisoned")
                 .remove(&key)
-                .is_some())
+                .is_some_and(|(_, expires_at)| expires_at > now))
         })
     }
 }
@@ -237,6 +272,21 @@ impl AsyncContinuationStore for InMemoryContinuationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dispatch boundary the key is scoped to; a second deployment on the same
+    /// shared store has a different one.
+    const AUD: &str = "did:example:server-1";
+
+    /// Two deployments sharing one Redis must not share one continuation namespace.
+    /// The audience is what makes a signed request valid at THIS dispatch boundary,
+    /// so an actor trusted by both cannot open a leg against one and answer it
+    /// against the other.
+    #[test]
+    fn the_key_is_scoped_to_the_audience() {
+        let here = continuation_key(AUD, ACTOR_A, b"state-1");
+        let elsewhere = continuation_key("did:example:server-2", ACTOR_A, b"state-1");
+        assert_ne!(here, elsewhere);
+    }
 
     const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
     const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
@@ -251,7 +301,7 @@ mod tests {
     #[tokio::test]
     async fn peek_does_not_consume_and_consume_is_one_shot() {
         let store = InMemoryContinuationStore::new();
-        let key = continuation_key(ACTOR_A, b"state-1");
+        let key = continuation_key(AUD, ACTOR_A, b"state-1");
         store.store(&key, &bases(), 300).await.unwrap();
 
         // Reading is free of side effects: the binding is checked against these bytes
@@ -270,10 +320,10 @@ mod tests {
     async fn one_actors_entry_is_not_reachable_by_another() {
         // The cross-actor denial this scoping exists to stop: B naming A's requestState.
         let store = InMemoryContinuationStore::new();
-        let a_key = continuation_key(ACTOR_A, b"state-1");
+        let a_key = continuation_key(AUD, ACTOR_A, b"state-1");
         store.store(&a_key, &bases(), 300).await.unwrap();
 
-        let b_key = continuation_key(ACTOR_B, b"state-1");
+        let b_key = continuation_key(AUD, ACTOR_B, b"state-1");
         assert_ne!(a_key, b_key);
         assert_eq!(store.peek(&b_key).await.unwrap(), None);
         assert!(!store.consume(&b_key).await.unwrap());
@@ -284,24 +334,27 @@ mod tests {
     #[test]
     fn key_is_stable_and_specific_to_both_inputs() {
         assert_eq!(
-            continuation_key(ACTOR_A, b"abc"),
-            continuation_key(ACTOR_A, b"abc")
+            continuation_key(AUD, ACTOR_A, b"abc"),
+            continuation_key(AUD, ACTOR_A, b"abc")
         );
         assert_ne!(
-            continuation_key(ACTOR_A, b"abc"),
-            continuation_key(ACTOR_A, b"abd")
+            continuation_key(AUD, ACTOR_A, b"abc"),
+            continuation_key(AUD, ACTOR_A, b"abd")
         );
         assert_ne!(
-            continuation_key(ACTOR_A, b"abc"),
-            continuation_key(ACTOR_B, b"abc")
+            continuation_key(AUD, ACTOR_A, b"abc"),
+            continuation_key(AUD, ACTOR_B, b"abc")
         );
-        assert!(continuation_key(ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
+        assert!(continuation_key(AUD, ACTOR_A, b"abc").starts_with(CONTINUATION_KEY_PREFIX));
     }
 
     #[test]
     fn the_actor_state_boundary_cannot_be_moved() {
         // Without the length prefix, ("ab", "c") and ("a", "bc") would hash the same
         // bytes — an actor could name another's entry by spelling the split differently.
-        assert_ne!(continuation_key("ab", b"c"), continuation_key("a", b"bc"));
+        assert_ne!(
+            continuation_key(AUD, "ab", b"c"),
+            continuation_key(AUD, "a", b"bc")
+        );
     }
 }

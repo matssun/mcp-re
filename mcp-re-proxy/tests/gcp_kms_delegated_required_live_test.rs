@@ -263,6 +263,8 @@ fn delegated_config() -> mcp_re_proxy::cli::Config {
         "/tmp/mcp-re-gcp-delegated-required-replay",
         "--delegated-trust-epoch",
         EPOCH,
+        "--trust-domain",
+        "mcp.example.com",
     ]
     .iter()
     .map(|s| s.to_string())

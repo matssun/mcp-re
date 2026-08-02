@@ -32,7 +32,7 @@ const ARGS: SignRequestArgs = {
   audienceId: "did:example:server-1",
   route: null,
   dpopToken: "dpop-token",
-  nonce: "nonce-custody-0001",
+  nonce: "nonce-custody-0001-128bit",
   created: 1000,
   expires: 2000,
 };

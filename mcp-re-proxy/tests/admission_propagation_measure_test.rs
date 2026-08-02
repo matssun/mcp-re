@@ -88,6 +88,7 @@ const TARGET: &str = "https://mcp.example.com/mcp?route=a";
 const CLIENT_KEY_ID: &str = "client-key-1";
 const ROOT_KID: &str = "root-kid";
 const AUTHORITY_KID: &str = "admission-root-1";
+
 const VERIFIER_AUD: &str = "verifier-1";
 const AUD_SCOPE: &str = "aud-scope-1";
 const EPOCH: &str = "epoch-1";
@@ -138,6 +139,18 @@ fn audience() -> AudienceTuple {
     }
 }
 
+/// The actor id the PEP's verifier resolves for the signing client — the value an
+/// assertion must name so it cannot be presented by anyone else.
+fn test_actor() -> String {
+    ActorIdentity {
+        role: "client".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:host-a".into(),
+        keyid: CLIENT_KEY_ID.into(),
+    }
+    .actor_id()
+}
+
 fn actor_resolver() -> ActorResolver {
     Box::new(move |key_id: &str, slot: SignerSlot| {
         let (role, subject, key) = match (key_id, slot) {
@@ -177,6 +190,7 @@ fn admission_claims(workload: &str, generation: u64) -> AdmissionClaims {
         aud: Audience::One(VERIFIER_AUD.into()),
         mcp_re_profile: PROFILE_TAG.into(),
         mcp_re_admission_id: workload.into(),
+        mcp_re_admitted_actor: test_actor(),
         mcp_re_admission_generation: generation,
         mcp_re_admitted_state_digest: b64url_encode(&sha2::Sha256::digest(b"admitted-state")),
         mcp_re_admission_status: AdmissionStatus::Admitted,

@@ -38,9 +38,20 @@
 //!   never routes to an `Open` one; traffic rebalances onto healthy backends the
 //!   moment one is ejected.
 //!
-//! The state is per-backend atomics on a per-core pool (share-nothing,
-//! ADR-MCPRE-051 §1): each core learns and ejects independently with no contended
-//! cross-core lock on the hot path.
+//! The state is per-backend atomics. ONE pool is shared by every core: `app.rs`
+//! builds a single [`HttpInnerPool`], boxes it into the single `HttpProfileProxy`,
+//! and hands that `Arc` to each per-core handler. Two consequences follow and neither
+//! is hidden:
+//!
+//!   * [`max_in_flight`](HttpInnerPool::with_max_in_flight) is a PROCESS-WIDE bound,
+//!     not a per-core one. `app.rs` therefore sizes it at or above the sum of the
+//!     per-core admission ceilings, so the security gate — not this pool — is what
+//!     sheds load. Otherwise requests that passed every check would be answered with
+//!     a signed `inner server unavailable` at a capacity cliff invisible from the
+//!     configured flags.
+//!   * Circuit-breaker state is global, so one core's observations eject a backend
+//!     for all of them. That is the desired direction (a dead backend is dead for
+//!     everyone) and it costs an uncontended atomic on the hot path.
 //!
 //! ## Fail-closed
 //!
@@ -96,11 +107,11 @@ const STATE_HALF_OPEN: u8 = 2;
 pub const DEFAULT_FAILURE_THRESHOLD: u32 = 5;
 /// Default ejection duration a backend stays Open before a Half-Open probe.
 pub const DEFAULT_EJECTION_DURATION: Duration = Duration::from_secs(30);
-/// Default cap on concurrent in-flight inner dispatches per pool. Bounds inner-plane
-/// concurrency so a saturated or slow inner fleet fails closed with backpressure
-/// instead of queuing unboundedly (ADR-MCPRE-051 §3 pool-exhaustion). Generous for a
-/// per-core pool to a small stateless backend fleet; override with
-/// [`HttpInnerPool::with_max_in_flight`].
+/// Default cap on concurrent in-flight inner dispatches for the pool. Bounds
+/// inner-plane concurrency so a saturated or slow inner fleet fails closed with
+/// backpressure instead of queuing unboundedly (ADR-MCPRE-051 §3 pool-exhaustion).
+/// A FLOOR, not the operative value: the pool is process-wide, so `app.rs` raises it
+/// to the fleet's aggregate admission ceiling when that is larger.
 pub const DEFAULT_MAX_IN_FLIGHT: usize = 1024;
 
 /// Outlier-ejection / circuit-breaker tuning for the inner pool.
@@ -152,12 +163,13 @@ impl Backend {
     }
 }
 
-/// A per-core pooled HTTP client to stateless Streamable-HTTP inner backends, with
+/// The pooled HTTP client to stateless Streamable-HTTP inner backends, with
 /// per-backend outlier ejection + circuit breaking + health-aware load balancing.
 ///
-/// Cloning the underlying `hyper` client is cheap (it shares the connection pool),
-/// so `dispatch` clones per call and awaits without holding a lock. Each core owns
-/// its own `HttpInnerPool` (share-nothing, ADR-MCPRE-051 §1).
+/// Cloning the underlying `hyper` client is cheap (it shares the connection pool), so
+/// `dispatch` clones per call and awaits without holding a lock. One pool is shared by
+/// every core — see the module docs for what that means for `max_in_flight` and for
+/// breaker state.
 pub struct HttpInnerPool {
     client: Client<HttpConnector, Full<Bytes>>,
     /// The backend fleet with per-backend health. At least one; construction fails
@@ -428,6 +440,23 @@ impl HttpInnerPool {
     }
 }
 
+/// Releases a claimed recovery probe when the dispatch future is dropped.
+///
+/// `record_outcome` clears the flag on a completed round trip; this covers the path
+/// where there is no outcome at all. Clearing it twice is harmless — the store is
+/// idempotent — and clearing it once too few wedges the backend permanently.
+struct ProbeGuard<'a> {
+    backend: &'a Backend,
+}
+
+impl Drop for ProbeGuard<'_> {
+    fn drop(&mut self) {
+        self.backend
+            .probe_inflight
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 impl AsyncInnerServer for HttpInnerPool {
     fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a> {
         // Own the request bytes + a cheap client clone into the future.
@@ -452,6 +481,17 @@ impl AsyncInnerServer for HttpInnerPool {
                 return inner_unavailable_response(&body);
             };
             let uri = self.backends[idx].uri.clone();
+
+            // A claimed recovery probe MUST be released even if this future never
+            // finishes. hyper drops the service future on a client disconnect or an H2
+            // RST_STREAM, and `record_outcome` — the only other place that clears the
+            // flag — runs after the awaited round trip. A dropped probe therefore left
+            // `probe_inflight` set forever: the backend stayed HalfOpen with its single
+            // trial slot permanently claimed, so it could never be re-probed and never
+            // recovered, for the life of the process. The guard releases on drop.
+            let _probe = is_probe.then(|| ProbeGuard {
+                backend: &self.backends[idx],
+            });
 
             let outcome = Self::round_trip(&client, uri, body.clone(), timeout).await;
             let done = self.now_nanos();

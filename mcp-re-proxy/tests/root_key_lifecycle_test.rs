@@ -115,7 +115,7 @@ fn signed_request() -> SignedRequest {
             ArtifactType::OauthDpop,
             b"access-token-xyz",
         )],
-        "nonce-root-lifecycle",
+        "nonce-root-lifecycle-padded",
         CREATED,
         EXPIRES,
     );

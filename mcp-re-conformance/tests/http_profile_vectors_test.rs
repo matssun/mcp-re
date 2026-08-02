@@ -29,12 +29,10 @@ use mcp_re_http_profile::sign_accepted_202;
 use mcp_re_http_profile::sign_request;
 use mcp_re_http_profile::sign_request_full;
 use mcp_re_http_profile::sign_response;
-use mcp_re_http_profile::sign_response_full;
 use mcp_re_http_profile::verify_accepted_202;
 use mcp_re_http_profile::verify_artifact_binding;
 use mcp_re_http_profile::verify_request;
 use mcp_re_http_profile::verify_response;
-use mcp_re_http_profile::verify_response_bound_full;
 use mcp_re_http_profile::verify_signed_rejection;
 use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
@@ -1406,12 +1404,14 @@ fn chain_audience() -> AudienceTuple {
     }
 }
 
+/// The block's `server_signer` names the DELEGATED key — the key that actually signed
+/// the response — while the trust seam resolves the ROOT the credential chains to.
 fn chain_server_signer() -> ActorIdentity {
     ActorIdentity {
         role: "server".into(),
         trust_domain: "example.com".into(),
         subject: "did:example:server".into(),
-        keyid: SERVER_KEY_ID.into(),
+        keyid: CHAIN_DELEGATED_KID.into(),
     }
 }
 
@@ -1464,26 +1464,92 @@ fn chain_hop(
         headers: vec![("Content-Type".into(), "application/json".into())],
         body: body.as_bytes().to_vec(),
     };
-    sign_response_full(
+    // DELEGATED signing, because that is the only response mode the serving path has.
+    // Signing these hops direct-root meant the frozen corpus exercised a mode removed
+    // from the runtime surface, so a green suite said nothing about real evidence.
+    mcp_re_http_profile::sign_delegated_response_full(
         &mut response,
         &request,
         &req_evidence,
         &chain_server_signer(),
-        &server_key(),
-        SERVER_KEY_ID,
+        &chain_credential(),
+        &chain_delegated_key(),
+        CHAIN_DELEGATED_KID,
         CREATED,
         EXPIRES,
     )
     .expect("response signs");
-    let rsp_evidence =
-        verify_response_bound_full(&response, &request, &req_evidence, &resolver(), NOW)
-            .expect("response verifies")
-            .response_signature_base_digest;
+    let rsp_evidence = mcp_re_http_profile::verify_delegated_response_bound_full(
+        &response,
+        &request,
+        &req_evidence,
+        &resolver(),
+        &chain_expectations(),
+        &chain_nothing_revoked,
+        NOW,
+    )
+    .expect("response verifies")
+    .response_signature_base_digest;
     (
         RetainedHop { request, response },
         req_evidence,
         rsp_evidence,
     )
+}
+
+/// The delegated key every chain hop's response is signed with, and the root-signed
+/// credential that authorizes it.
+const CHAIN_DELEGATED_KID: &str = "server-key-1/delegated/1";
+
+fn chain_delegated_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&[66u8; 32])
+}
+
+fn chain_credential() -> String {
+    let d = chain_delegated_key();
+    let header = mcp_re_http_profile::DelegationHeader {
+        typ: mcp_re_http_profile::DELEGATION_TYP.into(),
+        alg: mcp_re_http_profile::DELEGATION_ALG.into(),
+        kid: SERVER_KEY_ID.into(),
+    };
+    let claims = mcp_re_http_profile::DelegationClaims {
+        iss: "did:example:server".into(),
+        iat: CREATED,
+        nbf: CREATED,
+        exp: EXPIRES,
+        jti: "evt-chain".into(),
+        aud: mcp_re_http_profile::Audience::One("did:example:server".into()),
+        mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
+        mcp_re_audience_hash: "aud-scope-1".into(),
+        mcp_re_server_signer: chain_server_signer().actor_id(),
+        mcp_re_key_use: mcp_re_http_profile::KEY_USE_RESPONSE_SIGNING.into(),
+        delegated_kid: CHAIN_DELEGATED_KID.into(),
+        issuer_kid: SERVER_KEY_ID.into(),
+        trust_epoch: "epoch-1".into(),
+        cnf: mcp_re_http_profile::Cnf {
+            jwk: mcp_re_http_profile::DelegatedJwk {
+                kty: mcp_re_http_profile::JWK_KTY_OKP.into(),
+                crv: mcp_re_http_profile::JWK_CRV_ED25519.into(),
+                kid: CHAIN_DELEGATED_KID.into(),
+                x: d.public_key().to_b64url(),
+            },
+        },
+    };
+    mcp_re_http_profile::issue_delegation_credential(&server_key(), &header, &claims)
+}
+
+fn chain_expectations() -> mcp_re_http_profile::DelegationExpectations<'static> {
+    mcp_re_http_profile::DelegationExpectations {
+        policy: VerifierPolicy::default(),
+        verifier_audiences: &["did:example:server"],
+        expected_audience_hash: "aud-scope-1",
+        accepted_epochs: &["epoch-1"],
+        max_clock_skew: 60,
+    }
+}
+
+fn chain_nothing_revoked(_: &str) -> bool {
+    false
 }
 
 fn to_chain_hop(h: &RetainedHop) -> ChainHop {
@@ -1827,6 +1893,17 @@ fn admission_root() -> SigningKey {
     SigningKey::from_seed_bytes(&[44u8; 32])
 }
 
+/// The verifier-resolved actor id an admission assertion must name.
+fn admission_presenter() -> String {
+    ActorIdentity {
+        role: "client".into(),
+        trust_domain: "example.com".into(),
+        subject: "did:example:client".into(),
+        keyid: CLIENT_KEY_ID.into(),
+    }
+    .actor_id()
+}
+
 fn admission_claims(
     generation: u64,
     status: mcp_re_http_profile::AdmissionStatus,
@@ -1841,6 +1918,9 @@ fn admission_claims(
         aud: mcp_re_http_profile::Audience::One("mcp.example.com".into()),
         mcp_re_profile: mcp_re_http_profile::PROFILE_TAG.into(),
         mcp_re_admission_id: "workload-7".into(),
+        // The actor the assertion is issued TO. Without it an assertion is a bearer
+        // token any verifying peer can present.
+        mcp_re_admitted_actor: admission_presenter(),
         mcp_re_admission_generation: generation,
         mcp_re_admitted_state_digest: mcp_re_core::b64url_encode(&sha2::Sha256::digest(
             b"admitted-state",
@@ -2188,6 +2268,7 @@ fn frozen_http_profile_corpus_verifies() {
                 match mcp_re_http_profile::check_admission(
                     &binding,
                     &check.assertion_jws,
+                    &admission_presenter(),
                     authoritative.as_ref(),
                     mcp_re_http_profile::PROFILE_TAG,
                     &["mcp.example.com"],
@@ -2228,7 +2309,8 @@ fn frozen_http_profile_corpus_verifies() {
                 let out = reconstruct_chain(
                     &hops,
                     &resolver(),
-                    &VerifierPolicy::default(),
+                    &chain_expectations(),
+                    &chain_nothing_revoked,
                     manifest.verify_at_unix,
                 );
                 // The label IS the frozen verdict: an incomplete record must name

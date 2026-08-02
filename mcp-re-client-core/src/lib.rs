@@ -61,6 +61,7 @@ pub use trust_manifest::TrustManifestError;
 
 // Re-export the RFC 9421 carrier types callers construct/consume, so the proxy and
 // SDK depend on ONE evidence vocabulary through this seam.
+pub use mcp_re_http_profile::result_class::INPUT_REQUIRED_RESULT_TYPE;
 pub use mcp_re_http_profile::ActorIdentity;
 pub use mcp_re_http_profile::ArtifactBinding;
 pub use mcp_re_http_profile::ArtifactType;

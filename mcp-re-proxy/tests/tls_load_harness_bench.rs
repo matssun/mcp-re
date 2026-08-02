@@ -915,7 +915,9 @@ fn now_unix() -> i64 {
 /// the real clock and carrying a UNIQUE `nonce` so replay never fires across the
 /// load run. RFC 9421 + RFC 9530 via the audited `mcp-re-client-core` — the
 /// signature rides in the returned request's HTTP headers, not a body object.
+/// Test nonces are padded to the 128-bit emission floor the client core enforces.
 fn signed_request(nonce: &str) -> SignedRequest {
+    let nonce = &format!("{nonce}-padded-to-the-128-bit-floor");
     let now = now_unix();
     let audience = AudienceTuple {
         audience_id: AUDIENCE.to_string(),
@@ -1430,9 +1432,18 @@ fn app_run_starts_and_drains_across_revocation_tiers() {
             .expect("serve + clean drain");
     };
 
-    run_ok(&["--fleet", "--revocation-tier", "live"]);
+    // LIVE and PUSH state their window in terms of consulting the trust store, so
+    // both require a reload cadence — without one the store is frozen at startup and
+    // neither tier can revoke anything.
+    run_ok(&[
+        "--fleet",
+        "--revocation-tier",
+        "live",
+        "--trust-reload-secs",
+        "60",
+    ]);
     run_ok(&["--fleet", "--revocation-tier", "bounded-cache:90"]);
-    run_ok(&["--revocation-tier", "push:60"]); // push, single-node, no trust-epoch
+    run_ok(&["--revocation-tier", "push:60", "--trust-reload-secs", "60"]); // push, single-node, no trust-epoch
 }
 
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
@@ -1586,6 +1597,20 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     let crl_path = tmp("client.crl");
     write_empty_crl(&material.client_ca, &crl_path);
     let crl = crl_path.to_string_lossy().into_owned();
+    // The trust-epoch key must EXIST before the proxy starts: an absent key is refused
+    // rather than read as a live epoch 0, because the two are indistinguishable and
+    // reading absence as a baseline leaves the push kill switch silently inert.
+    {
+        let mut admin = redis::Client::open(redis_url.as_str())
+            .expect("open redis client")
+            .get_connection()
+            .expect("admin connection");
+        let _: () = redis::cmd("SET")
+            .arg("mcp-re:trust:epoch")
+            .arg(0_i64)
+            .query(&mut admin)
+            .expect("seed the trust epoch");
+    }
     let argv: Vec<String> = [
         "--bind",
         bind.as_str(),
@@ -1637,6 +1662,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
         &redis_url,
         "--trust-epoch-key",
         "mcp-re:trust:epoch",
+        "--trust-reload-secs",
+        "60",
         // Offline client-cert CRL + in-process hot-reload (rebuilds the verifier).
         "--client-crl",
         &crl,

@@ -117,4 +117,60 @@ would otherwise produce a chart that looks bounded and is not:
 {{- if and .Values.admission.maxInFlight .Values.admission.maxInFlightTotal -}}
 {{- fail "set admission.maxInFlight OR admission.maxInFlightTotal, not both: the per-core value takes precedence and the fleet-wide total would be silently discarded. Use maxInFlightTotal to size against the fleet (divided evenly across cores) or maxInFlight to pin each core directly." -}}
 {{- end -}}
+
+{{/*
+The DRAIN INVARIANT. The kubelet's terminationGracePeriodSeconds clock starts at pod
+DELETION, not at SIGTERM, so the preStop delay is spent inside it:
+
+  drainPreStopSeconds + proxyDrainGraceSeconds < drainGracePeriodSeconds
+
+Violated, the pod is SIGKILLed while the proxy still believes it may drain, and an
+admitted request dies with neither a signed response nor a signed rejection — the
+opposite of the ADR-MCPRE-051 §6 zero-abandoned property. It cannot be checked at
+the proxy: only the chart knows the kubelet's two numbers.
+*/}}
+{{- $pre := int .Values.drainPreStopSeconds -}}
+{{- $proxyDrain := int .Values.proxyDrainGraceSeconds -}}
+{{- $kubelet := int .Values.drainGracePeriodSeconds -}}
+{{- if lt $proxyDrain 30 -}}
+{{- fail (printf "proxyDrainGraceSeconds=%d is below the proxy's 30s request deadline: an admitted request cannot finish inside the drain window, so a rolling update abandons it" $proxyDrain) -}}
+{{- end -}}
+{{- if ge (add $pre $proxyDrain) $kubelet -}}
+{{- fail (printf "drainPreStopSeconds(%d) + proxyDrainGraceSeconds(%d) >= drainGracePeriodSeconds(%d): the kubelet SIGKILLs at %ds while the proxy drains until %ds, so in-flight requests are killed mid-flight with no signed response and no rejection evidence. Raise drainGracePeriodSeconds or lower the other two." $pre $proxyDrain $kubelet $kubelet (add $pre $proxyDrain)) -}}
+{{- end -}}
+
+{{/*
+The `live` and `push` revocation tiers state their window in terms of consulting the
+trust store, so the store has to be re-readable. The proxy refuses the combination at
+startup; catching it here names the value instead of CrashLooping the pods.
+*/}}
+{{- if and (or (eq .Values.revocation.tier "live") (hasPrefix "push:" .Values.revocation.tier)) (not .Values.revocation.trustReloadSeconds) -}}
+{{- fail (printf "revocation.tier=%q requires revocation.trustReloadSeconds: both tiers advertise a revocation window measured in consulting the trust store, and with trust.json read once at startup a revoked request-signer key would keep verifying until every replica restarts" .Values.revocation.tier) -}}
+{{- end -}}
+
+{{/*
+ADR-MCPS-035 audit sink and the #415 §10 verified-context carrier: both are
+enumerations the proxy refuses at parse. Catching a typo here names the value rather
+than CrashLooping the pods on an argument error.
+*/}}
+{{- if not (has .Values.auditSink (list "none" "stderr")) -}}
+{{- fail (printf "auditSink=%q must be \"none\" or \"stderr\"" .Values.auditSink) -}}
+{{- end -}}
+{{- if not (has .Values.verifiedContextCarrier (list "disabled" "trusted")) -}}
+{{- fail (printf "verifiedContextCarrier=%q must be \"disabled\" or \"trusted\"" .Values.verifiedContextCarrier) -}}
+{{- end -}}
+
+{{/*
+The connection-age bound is the only thing that re-checks an established peer's
+certificate against an expiry or a reloaded CRL. Zero disables it, and the proxy
+refuses that at parse; a value above the cert-lifetime ceiling would let a
+connection outlive the credential that authenticated it.
+*/}}
+{{- $connAge := int .Values.maxConnectionAgeSeconds -}}
+{{- if le $connAge 0 -}}
+{{- fail "maxConnectionAgeSeconds must be > 0: with no bound, a peer holding a revoked or expired client certificate keeps full authenticated access for as long as it keeps one connection open, and --client-crl reload reaches only new connections" -}}
+{{- end -}}
+{{- if gt $connAge (int .Values.maxClientCertLifetimeSeconds) -}}
+{{- fail (printf "maxConnectionAgeSeconds(%d) exceeds maxClientCertLifetimeSeconds(%d): the connection would outlive the certificate that authenticated it" $connAge (int .Values.maxClientCertLifetimeSeconds)) -}}
+{{- end -}}
 {{- end -}}

@@ -76,6 +76,12 @@ spec:
             - {{ .Values.replay.durabilityTier | quote }}
             - "--revocation-tier"
             - {{ .Values.revocation.tier | quote }}
+            {{- if .Values.revocation.trustReloadSeconds }}
+            # What makes the tier above a statement about a RUNNING replica: without
+            # it every tier resolves against a map frozen at startup.
+            - "--trust-reload-secs"
+            - "{{ .Values.revocation.trustReloadSeconds }}"
+            {{- end }}
             {{- if .Values.revocation.trustEpochRedisUrl }}
             - "--trust-epoch-redis-url"
             - {{ .Values.revocation.trustEpochRedisUrl | quote }}
@@ -84,6 +90,36 @@ spec:
             {{- end }}
             - "--max-client-cert-lifetime"
             - "{{ .Values.maxClientCertLifetimeSeconds }}"
+            # The client certificate's chain, CRL status and validity window are
+            # checked at the TLS handshake and never again on an established
+            # connection. This bounds how long a peer serves on one handshake, so a
+            # reloaded CRL and an expiry both take effect within it.
+            - "--max-connection-age-secs"
+            - "{{ .Values.maxConnectionAgeSeconds }}"
+            {{- range .Values.clientCrl.paths }}
+            - "--client-crl"
+            - {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.clientCrl.paths .Values.clientCrl.reloadSeconds }}
+            - "--client-crl-reload-secs"
+            - "{{ .Values.clientCrl.reloadSeconds }}"
+            {{- end }}
+            {{- range .Values.mcpProtocolVersions }}
+            - "--mcp-protocol-version"
+            - {{ . | quote }}
+            {{- end }}
+            # ADR-MCPS-035: the per-request security record.
+            - "--audit-sink"
+            - {{ .Values.auditSink | quote }}
+            {{- if eq .Values.verifiedContextCarrier "trusted" }}
+            # #415 §10: asserts nothing but this proxy can reach the inner server.
+            - "--verified-context-carrier"
+            - "trusted"
+            {{- end }}
+            # MCPRE-115: the proxy's own drain window. Must leave the kubelet
+            # headroom over preStop + drain before SIGKILL (render gate enforced).
+            - "--drain-grace-secs"
+            - "{{ .Values.proxyDrainGraceSeconds }}"
             # MCPRE-114 admission ceiling. Omitted when unset, which the proxy reads
             # as unbounded — so an existing release keeps its behaviour on upgrade.
             # An explicit per-core ceiling wins over the fleet-wide total, so only one

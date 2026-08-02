@@ -196,10 +196,35 @@ where
                 // failure to pin is ignored (logged nowhere hot).
                 pin_current_thread_to_core(core_index);
 
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("per-core tokio runtime builds");
+                // One current-thread runtime per core is the share-nothing default
+                // (ADR-MCPRE-051 §1): no work stealing, no cross-core hot-path state.
+                //
+                // DELEGATED TLS custody breaks the assumption that runtime holds. The
+                // handshake signature is produced by rustls' SYNCHRONOUS
+                // `Signer::sign`, which on that path is a blocking KMS round trip or a
+                // PKCS#11 `C_Sign`. On a current-thread runtime one such call freezes
+                // the core outright — its accept loop, its keep-alive connections and
+                // every in-flight signed request — for the duration, and no timer can
+                // preempt it because the future never yields. Any peer opening
+                // connections triggers it, so it is a trivially-reachable DoS.
+                //
+                // Those deployments get a small worker pool per core instead, so a
+                // stalled signature costs one worker rather than a whole core. The
+                // share-nothing default is unchanged for the exported-key path, where
+                // signing is in-memory and never blocks.
+                let runtime = if options.tls_signing_may_block {
+                    tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(DELEGATED_TLS_WORKERS_PER_CORE)
+                        .thread_name(format!("mcp-re-serve-{core_index}-w"))
+                        .enable_all()
+                        .build()
+                        .expect("per-core tokio runtime builds")
+                } else {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("per-core tokio runtime builds")
+                };
                 runtime.block_on(async move {
                     // `from_std` requires a non-blocking socket and a runtime
                     // context (both satisfied here).
@@ -262,9 +287,17 @@ pub fn derived_per_core_ceiling(
     }
 }
 
+/// Worker threads per core when the TLS handshake signature can block.
+///
+/// Sized so a handful of concurrent stalled handshakes still leaves the core serving.
+/// It is not a throughput knob: on the exported-key path the runtime stays
+/// single-threaded, and raising this would not make a wedged token any less wedged —
+/// it only widens the window before the pool is exhausted.
+const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
+
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.
-fn resolve_core_count(configured: usize) -> usize {
+pub fn resolve_core_count(configured: usize) -> usize {
     if configured != 0 {
         return configured;
     }

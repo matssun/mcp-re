@@ -217,6 +217,15 @@ that runs in CI and an `#[ignore]` live twin. Runner:
 [`docs/security/gcp-kms-delegated-required.sh`](../security/gcp-kms-delegated-required.sh)
 (no secrets; set `PROJECT_ID`, authenticate `gcloud`, run).
 
+**AWS mirror.** `aws_kms_delegated_required_live_test` proves the SAME G1–G8
+behaviors against an AWS KMS root, feature-gated `aws_kms_keysource`, with the same
+offline-twin / `#[ignore]`-live split (`aws_kms_delegated_required_serving_*`,
+`aws_kms_authority_flip_*`). Runner: `scripts/test-aws-cloud.sh.example`. Its offline
+twins are green; **its live twins are UNRUN** — no AWS account is provisioned — so
+AWS carries no live delegated-root evidence yet. Which lane earns which claim is
+recorded in
+[`docs/security/cloud-kms-claims-map.md`](../security/cloud-kms-claims-map.md).
+
 | # | Required behavior | Proof (`test_fn`) | Enforced |
 |---|---|---|---|
 | G1 | Production serving wiring on a real KMS root: `build_delegated_signing(config, kms_root)` + `new_delegated` serves & verifies | `gcp_kms_delegated_required_serving_{offline_local_seed,live}` | CI + LIVE |

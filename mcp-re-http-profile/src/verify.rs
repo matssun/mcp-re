@@ -159,6 +159,12 @@ pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
     Ok(actor)
 }
 
+/// The longest `nonce` this verifier accepts, in characters.
+///
+/// A generous ceiling, not a format: 128 bits of base64url is 22 characters, and the
+/// replay key retains the nonce verbatim for the life of the signature window.
+const MAX_NONCE_CHARS: usize = 256;
+
 /// One parsed `Signature-Input` dictionary member.
 pub(crate) struct ParsedSignatureInput {
     pub(crate) components: Vec<CoveredComponent>,
@@ -275,6 +281,13 @@ fn parse_i64(s: &str) -> Result<i64, HttpProfileError> {
     if digits.len() > 1 && digits.starts_with('0') {
         return Err(malformed());
     }
+    // And no NEGATIVE ZERO. RFC 8941 §3.3.1's sf-integer has no `-0`, and it slipped
+    // through the leading-zero rule above (`digits` is "0", length 1): it parsed to 0
+    // and re-serialised as "0", so `created=-0` and `created=0` collapsed to one
+    // signature base — the exact spelling-collapse this function exists to refuse.
+    if s.starts_with('-') && digits == "0" {
+        return Err(malformed());
+    }
     s.parse::<i64>().map_err(|_| malformed())
 }
 
@@ -288,8 +301,24 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         .find(')')
         .ok_or(HttpProfileError::MalformedEvidence("inner list"))?;
     let list = &value[1..close];
+    // The inner list is EXACTLY single-space separated, with no leading or trailing
+    // space — the one form `sigbase` emits. `split_whitespace` accepted any run of
+    // spaces and tabs and collapsed them, so `("@method"  "@target-uri")` and
+    // `( "@method"\t"@target-uri" )` rebuilt to the same signature base and verified
+    // under the same signature. An on-path intermediary could then rewrite the raw
+    // `Signature-Input` header without invalidating anything, and every consumer that
+    // logs, hashes, caches or diffs the RAW header — an audit sink, a retained-evidence
+    // blob, a CDN cache key — saw bytes other than the ones that were signed. No
+    // forgery, but the one-to-one correspondence the profile claims for itself did not
+    // hold.
+    if list.starts_with(' ') || list.ends_with(' ') || list.contains("  ") {
+        return Err(HttpProfileError::MalformedEvidence("inner list spacing"));
+    }
+    if list.bytes().any(|b| b == b'\t') {
+        return Err(HttpProfileError::MalformedEvidence("inner list spacing"));
+    }
     let mut components = Vec::new();
-    for item in list.split_whitespace() {
+    for item in list.split(' ').filter(|i| !i.is_empty()) {
         let (name_part, req) = match item.strip_suffix(";req") {
             Some(p) => (p, true),
             None => (item, false),
@@ -358,8 +387,49 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
 
     let mut params = SignatureParams::default();
     let mut last_param_rank: i32 = -1;
-    for p in split_parameters(&value[close + 1..]) {
-        let p = p.trim();
+    // The parameter tail is EXACTLY `;k=v;k=v` — no space around a `;`, no empty
+    // slot, no trailing `;`. `(...) ;created=1;` used to parse identically to
+    // `(...);created=1`, which is the same wire-spelling collapse the inner-list check
+    // above refuses: the base is rebuilt from parsed values, so both spellings verify
+    // under one signature and the raw header stops matching the signed bytes.
+    let param_tail = &value[close + 1..];
+    if !param_tail.is_empty() {
+        if !param_tail.starts_with(';') {
+            return Err(HttpProfileError::MalformedEvidence(
+                "signature parameter spacing",
+            ));
+        }
+        // Only the segment before the FIRST `;` may be empty (there is nothing before
+        // it); every other empty segment is a stray or trailing `;`.
+        if split_parameters(param_tail)
+            .iter()
+            .skip(1)
+            .any(|seg| seg.is_empty())
+        {
+            return Err(HttpProfileError::MalformedEvidence(
+                "signature parameter spacing",
+            ));
+        }
+        // No space or tab OUTSIDE a quoted value. Inside one it is a legitimate byte of
+        // a keyid or nonce (`validate_sf_string` admits printable ASCII); outside, it
+        // is a spelling this profile never emits and would normalise away.
+        let mut in_quotes = false;
+        let mut escaped = false;
+        for b in param_tail.bytes() {
+            match b {
+                _ if escaped => escaped = false,
+                b'\\' if in_quotes => escaped = true,
+                b'"' => in_quotes = !in_quotes,
+                b' ' | b'\t' if !in_quotes => {
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "signature parameter spacing",
+                    ))
+                }
+                _ => {}
+            }
+        }
+    }
+    for p in split_parameters(param_tail) {
         if p.is_empty() {
             continue;
         }
@@ -415,7 +485,23 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
         match k {
             "created" => params.created = Some(parse_i64(v)?),
             "expires" => params.expires = Some(parse_i64(v)?),
-            "nonce" => params.nonce = Some(unquote(v)?),
+            "nonce" => {
+                let nonce = unquote(v)?;
+                // A nonce is carried VERBATIM into the node-local replay key and
+                // retained for up to `expires + skew`, and that tier bounds entry
+                // COUNT, not entry SIZE. Without a length bound an authenticated
+                // client could pad each nonce to the header limit and pin ~3 orders of
+                // magnitude more memory per admitted request, ending in a self-inflicted
+                // `replay_cache_unavailable` for the whole replica. 256 characters is
+                // far above any real nonce (128 bits of base64url is 22) and far below
+                // anything that amplifies.
+                if nonce.len() > MAX_NONCE_CHARS {
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "nonce signature parameter exceeds the length bound",
+                    ));
+                }
+                params.nonce = Some(nonce);
+            }
             "keyid" => params.keyid = Some(unquote(v)?),
             "alg" => params.alg = Some(unquote(v)?),
             "tag" => params.tag = Some(unquote(v)?),
@@ -1172,17 +1258,39 @@ pub fn verify_delegated_response_bound_full<R: Into<ResolverOutcome>>(
         expected_server_signer: &expected_server_signer,
         accepted_epochs: expect.accepted_epochs,
     };
+    // The credential's ROOT issuer key, through the SAME seam every other path uses.
+    //
+    // `verify_delegation_credential`'s resolver returns `Option`, which cannot express
+    // the difference between "not trusted" and "the store could not answer" — so
+    // resolving inline collapsed a trust-store OUTAGE into
+    // `mcp-re.delegation_issuer_untrusted`, sending an operator to look at the
+    // caller's credentials instead of at their own store (the exact confusion the C079
+    // fix removed everywhere else), and it dropped the `actor.slot != slot` assertion,
+    // so a resolver handing back a Request-slot actor would have had its key accepted
+    // as a delegation root. The failure is captured here and re-reported as itself.
+    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
+        std::cell::RefCell::new(None);
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| {
-            resolve_actor(issuer_kid, SignerSlot::Response)
-                .into()
-                .resolved()
-                .map(|a| a.verification_key)
+        |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
+            Ok(actor) => Some(actor.verification_key),
+            // A definitive "not trusted" stays the credential layer's own verdict
+            // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
+            // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
+            // propagated, because those are not statements about the credential.
+            Err(HttpProfileError::UnresolvedKeyId) => None,
+            Err(e) => {
+                *resolve_failure.borrow_mut() = Some(e);
+                None
+            }
         },
         |kid| is_revoked(kid),
-    )?;
+    );
+    let verified = match verified {
+        Ok(v) => v,
+        Err(e) => return Err(resolve_failure.into_inner().unwrap_or(e)),
+    };
 
     // Step 8: the response keyid is the delegated key, the block names it, and the
     // response signature verifies under cnf.jwk.
@@ -1302,17 +1410,39 @@ pub fn verify_delegated_response_unbound<R: Into<ResolverOutcome>>(
         expected_server_signer: &expected_server_signer,
         accepted_epochs: expect.accepted_epochs,
     };
+    // The credential's ROOT issuer key, through the SAME seam every other path uses.
+    //
+    // `verify_delegation_credential`'s resolver returns `Option`, which cannot express
+    // the difference between "not trusted" and "the store could not answer" — so
+    // resolving inline collapsed a trust-store OUTAGE into
+    // `mcp-re.delegation_issuer_untrusted`, sending an operator to look at the
+    // caller's credentials instead of at their own store (the exact confusion the C079
+    // fix removed everywhere else), and it dropped the `actor.slot != slot` assertion,
+    // so a resolver handing back a Request-slot actor would have had its key accepted
+    // as a delegation root. The failure is captured here and re-reported as itself.
+    let resolve_failure: std::cell::RefCell<Option<HttpProfileError>> =
+        std::cell::RefCell::new(None);
     let verified = verify_delegation_credential(
         credential,
         &params,
-        |issuer_kid| {
-            resolve_actor(issuer_kid, SignerSlot::Response)
-                .into()
-                .resolved()
-                .map(|a| a.verification_key)
+        |issuer_kid| match resolve_actor_for_slot(resolve_actor, issuer_kid, SignerSlot::Response) {
+            Ok(actor) => Some(actor.verification_key),
+            // A definitive "not trusted" stays the credential layer's own verdict
+            // (`mcp-re.delegation_issuer_untrusted`) — that IS the right token for an
+            // issuer nobody vouches for. Only an OUTAGE and a wrong-slot actor are
+            // propagated, because those are not statements about the credential.
+            Err(HttpProfileError::UnresolvedKeyId) => None,
+            Err(e) => {
+                *resolve_failure.borrow_mut() = Some(e);
+                None
+            }
         },
         |kid| is_revoked(kid),
-    )?;
+    );
+    let verified = match verified {
+        Ok(v) => v,
+        Err(e) => return Err(resolve_failure.into_inner().unwrap_or(e)),
+    };
 
     // Step 8: the response keyid is the delegated key, the block names it, and the
     // response-only signature verifies under cnf.jwk.
@@ -1415,4 +1545,61 @@ pub fn verify_response_unbound_with_policy<R: Into<ResolverOutcome>>(
         // No credential on this path, so there is no issuer to report.
         delegation_issuer_kid: None,
     })
+}
+
+#[cfg(test)]
+mod wire_form_tests {
+    use super::*;
+
+    const CANONICAL: &str = r#"("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#;
+
+    /// The verifier rebuilds `@signature-params` from PARSED values and re-serialises
+    /// canonically, so any wire spelling it silently normalises away verifies under the
+    /// same signature as the canonical one. That breaks the one-to-one correspondence
+    /// between the received bytes and the signed bytes the profile claims — an
+    /// intermediary could rewrite the raw header and nothing would notice.
+    #[test]
+    fn alternate_signature_input_spellings_are_refused_not_normalised() {
+        parse_signature_input(CANONICAL).expect("the canonical form parses");
+
+        let alternates = [
+            // Inner-list whitespace.
+            r#"("@method"  "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            "(\"@method\"\t\"@target-uri\" \"content-digest\");created=1700000000;expires=1700000300;nonce=\"n\";keyid=\"k\";alg=\"ed25519\"",
+            r#"( "@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            r#"("@method" "@target-uri" "content-digest" );created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            // Parameter spacing and empty slots.
+            r#"("@method" "@target-uri" "content-digest") ;created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            r#"("@method" "@target-uri" "content-digest");created=1700000000;expires=1700000300;nonce="n";keyid="k";alg="ed25519";"#,
+            r#"("@method" "@target-uri" "content-digest");created=1700000000;;expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+            r#"("@method" "@target-uri" "content-digest");created=1700000000; expires=1700000300;nonce="n";keyid="k";alg="ed25519""#,
+        ];
+        for alternate in alternates {
+            assert!(
+                parse_signature_input(alternate).is_err(),
+                "must be refused rather than normalised: {alternate}"
+            );
+        }
+    }
+
+    /// A space inside a quoted parameter value is a legitimate byte of that value, not
+    /// a spelling variant — refusing it would break keyids and nonces the profile
+    /// admits.
+    #[test]
+    fn a_space_inside_a_quoted_parameter_value_is_kept() {
+        let with_space = r#"("@method");created=1700000000;expires=1700000300;nonce="n";keyid="key one";alg="ed25519""#;
+        let parsed = parse_signature_input(with_space).expect("a quoted space is data");
+        assert_eq!(parsed.params.keyid.as_deref(), Some("key one"));
+    }
+
+    /// RFC 8941 §3.3.1's sf-integer has no `-0`. It slipped past the leading-zero rule
+    /// (the digits are just "0") and re-serialised as "0", so two spellings collapsed
+    /// to one signature base.
+    #[test]
+    fn negative_zero_is_not_an_sf_integer() {
+        assert_eq!(parse_i64("0").expect("zero parses"), 0);
+        assert!(parse_i64("-0").is_err(), "-0 is not an sf-integer");
+        assert!(parse_i64("-00").is_err());
+        assert_eq!(parse_i64("-17").expect("negatives parse"), -17);
+    }
 }

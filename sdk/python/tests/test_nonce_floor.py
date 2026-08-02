@@ -8,7 +8,7 @@ for every request while every signature still verified.
 """
 import pytest
 
-from mcp_re_sdk.custody import McpReError
+from mcp_re_sdk.custody import McpReSdkError
 from mcp_re_sdk.transport import MIN_NONCE_CHARS, _checked_nonce, _default_nonce
 
 
@@ -22,13 +22,16 @@ def test_the_default_generator_is_accepted():
 
 @pytest.mark.parametrize("bad", ["", "1", "counter-1", "nonce-parity-0001"])
 def test_a_sub_floor_override_is_refused_at_sign_time(bad):
-    with pytest.raises(McpReError) as excinfo:
+    # `McpReSdkError`, not `McpReError`: a local misconfiguration is not a protocol
+    # verdict, and raising `McpReError` here put an English sentence in `.wire_code`,
+    # which the taxonomy documents as a frozen token a caller branches on.
+    with pytest.raises(McpReSdkError) as excinfo:
         _checked_nonce(lambda: bad)
     assert "at least 22" in str(excinfo.value)
 
 
 def test_a_non_string_override_is_refused_without_raising_typeerror():
-    with pytest.raises(McpReError):
+    with pytest.raises(McpReSdkError):
         _checked_nonce(lambda: 12345)
 
 

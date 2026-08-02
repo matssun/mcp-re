@@ -11,9 +11,6 @@
 //! The `every_wire_code_is_a_frozen_core_token` test machine-checks the no-
 //! parallel-namespace rule.
 
-#[cfg(test)]
-use mcp_re_core::McpReError;
-
 /// A fail-closed HTTP-profile verification failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpProfileError {
@@ -278,33 +275,85 @@ mod tests {
     /// frozen core taxonomy also emits — no parallel namespace, machine-checked.
     #[test]
     fn every_wire_code_is_a_frozen_core_token() {
-        let frozen: Vec<&str> = vec![
-            McpReError::MissingEnvelope.wire_code(),
-            McpReError::MalformedEnvelope.wire_code(),
-            McpReError::SerializationFailed.wire_code(),
-            McpReError::InvalidSignature.wire_code(),
-            McpReError::DigestMismatch.wire_code(),
-            McpReError::UnsupportedVersion.wire_code(),
-            McpReError::ExpiredRequest.wire_code(),
-            McpReError::ActorBindingFailed.wire_code(),
-            McpReError::ArtifactBindingFailed.wire_code(),
-            McpReError::InvalidAudience.wire_code(),
-            McpReError::RequestBindingMismatch.wire_code(),
-            McpReError::ResponseHashMismatch.wire_code(),
-            McpReError::ResponseSigInvalid.wire_code(),
-            McpReError::ContinuationBindingFailed.wire_code(),
-            McpReError::DelegationCredentialMissing.wire_code(),
-            McpReError::DelegationCredentialInvalid.wire_code(),
-            McpReError::DelegationCredentialExpired.wire_code(),
-            McpReError::DelegationIssuerUntrusted.wire_code(),
-            McpReError::DelegationProfileMismatch.wire_code(),
-            McpReError::DelegationAudienceMismatch.wire_code(),
-            McpReError::DelegationKeyUseInvalid.wire_code(),
-            McpReError::DelegationTrustEpochStale.wire_code(),
-            McpReError::DelegationKeyMismatch.wire_code(),
-            McpReError::DelegationRevoked.wire_code(),
-        ];
-        let all = [
+        // The frozen taxonomy from its OWN single source, not a copy. The copy that
+        // stood here had fallen behind: `mcp-re.continuation_type_unsupported` is a
+        // real member and was missing, so a profile error carrying it would have been
+        // reported as a stray.
+        let frozen: std::collections::BTreeSet<&'static str> = mcp_re_core::ALL_ERRORS
+            .iter()
+            .map(mcp_re_core::McpReError::wire_code)
+            .collect();
+        // ONE source for the variant set: an exhaustive match makes a new variant a
+        // COMPILE error until it is listed, which is what "machine-checked" has to
+        // mean. The hand-written list this replaced had silently fallen two variants
+        // behind — `TrustResolverUnavailable` and `UnrecognizedResultType` were both
+        // emitted and neither was checked.
+        let all = all_variants_for_containment_check();
+        for e in &all {
+            assert!(
+                frozen.contains(&e.wire_code()),
+                "wire_code {:?} not in the frozen core taxonomy",
+                e.wire_code()
+            );
+        }
+    }
+
+    /// One representative value per `HttpProfileError` variant, via an EXHAUSTIVE
+    /// match: a new variant is a compile error here until it is added.
+    ///
+    /// This is what makes the containment check above machine-checked rather than
+    /// machine-checked-against-a-list-somebody-maintains.
+    fn all_variants_for_containment_check() -> Vec<HttpProfileError> {
+        // The match is on a value only so the compiler proves the arms exhaustive; the
+        // returned vector is what the caller compares against.
+        fn _exhaustive(e: &HttpProfileError) {
+            match e {
+                HttpProfileError::MissingEvidence(_)
+                | HttpProfileError::MalformedEvidence(_)
+                | HttpProfileError::DuplicateHeader(_)
+                | HttpProfileError::ContentEncodingPresent
+                | HttpProfileError::NonJsonMediaType
+                | HttpProfileError::ContentDigestMismatch
+                | HttpProfileError::MissingCoveredComponent(_)
+                | HttpProfileError::UnknownProfileTag
+                | HttpProfileError::UnsupportedAlgorithm
+                | HttpProfileError::InvalidSignature
+                | HttpProfileError::StaleWindow
+                | HttpProfileError::UnresolvedKeyId
+                | HttpProfileError::ActorSlotMismatch
+                | HttpProfileError::ArtifactBindingFailed
+                | HttpProfileError::AudienceMismatch
+                | HttpProfileError::ResponseBindingMismatch
+                | HttpProfileError::ResponseSignatureInvalid
+                | HttpProfileError::ContinuationBindingFailed
+                | HttpProfileError::McpMethodDivergence
+                | HttpProfileError::McpTransportHeaderMissing(_)
+                | HttpProfileError::McpProtocolVersionUnsupported
+                | HttpProfileError::McpTransportDivergence(_)
+                | HttpProfileError::AdmissionAssertionInvalid
+                | HttpProfileError::AdmissionIssuerUntrusted
+                | HttpProfileError::AdmissionAssertionExpired
+                | HttpProfileError::AdmissionBindingMismatch
+                | HttpProfileError::AdmissionNotCurrent
+                | HttpProfileError::AdmissionStateUnavailable
+                | HttpProfileError::ReceiptInvalid
+                | HttpProfileError::ReceiptInclusionInvalid
+                | HttpProfileError::ReceiptIssuerUntrusted
+                | HttpProfileError::UnrecognizedResultType
+                | HttpProfileError::TrustResolverUnavailable
+                | HttpProfileError::DelegationCredentialMissing
+                | HttpProfileError::DelegationCredentialInvalid
+                | HttpProfileError::DelegationCredentialExpired
+                | HttpProfileError::DelegationIssuerUntrusted
+                | HttpProfileError::DelegationProfileMismatch
+                | HttpProfileError::DelegationAudienceMismatch
+                | HttpProfileError::DelegationKeyUseInvalid
+                | HttpProfileError::DelegationTrustEpochStale
+                | HttpProfileError::DelegationKeyMismatch
+                | HttpProfileError::DelegationRevoked => {}
+            }
+        }
+        vec![
             HttpProfileError::MissingEvidence("x"),
             HttpProfileError::MalformedEvidence("x"),
             HttpProfileError::DuplicateHeader("x"),
@@ -336,6 +385,8 @@ mod tests {
             HttpProfileError::ReceiptInvalid,
             HttpProfileError::ReceiptInclusionInvalid,
             HttpProfileError::ReceiptIssuerUntrusted,
+            HttpProfileError::UnrecognizedResultType,
+            HttpProfileError::TrustResolverUnavailable,
             HttpProfileError::DelegationCredentialMissing,
             HttpProfileError::DelegationCredentialInvalid,
             HttpProfileError::DelegationCredentialExpired,
@@ -346,14 +397,7 @@ mod tests {
             HttpProfileError::DelegationTrustEpochStale,
             HttpProfileError::DelegationKeyMismatch,
             HttpProfileError::DelegationRevoked,
-        ];
-        for e in all {
-            assert!(
-                frozen.contains(&e.wire_code()),
-                "wire_code {:?} not in the frozen core taxonomy",
-                e.wire_code()
-            );
-        }
+        ]
     }
 
     /// MCPRE-92: each HTTP-profile failure class maps to its intended precise

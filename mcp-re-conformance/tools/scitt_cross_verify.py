@@ -102,15 +102,34 @@ def verify_sign1_ed25519(cose: bytes, pubkey: bytes) -> bool:
 
 
 def fold_rfc9162(leaf_bytes: bytes, tree_size: int, leaf_index: int, path: list) -> bytes:
+    """RFC 9162 §2.1.3.2 inclusion-proof verification, transcribed from the RFC text.
+
+    Both `fn` and `sn` are tracked, and `sn == 0` is required at the end. That is what
+    binds the path LENGTH, the leaf index and the tree size: an index-bit walk that
+    only shifts right consults the low bits of the index and nothing else, so a
+    receipt's claimed position and log size stay unconstrained even though both ride
+    in the UNSIGNED `vdp` header. It is also the only version that gets a
+    non-power-of-two tree right, because `fn == sn` is the right-edge promotion case.
+    """
     if leaf_index >= tree_size:
         raise ValueError("leaf_index >= tree_size")
-    digest = hashlib.sha256(b"\x00" + leaf_bytes).digest()
-    index = leaf_index
+    fnode, snode = leaf_index, tree_size - 1
+    r = hashlib.sha256(b"\x00" + leaf_bytes).digest()
     for sibling in path:
-        pair = digest + sibling if index % 2 == 0 else sibling + digest
-        digest = hashlib.sha256(b"\x01" + pair).digest()
-        index >>= 1
-    return digest
+        if snode == 0:
+            raise ValueError("inclusion path longer than the tree admits")
+        if fnode % 2 == 1 or fnode == snode:
+            r = hashlib.sha256(b"\x01" + sibling + r).digest()
+            while fnode != 0 and fnode % 2 == 0:
+                fnode //= 2
+                snode //= 2
+        else:
+            r = hashlib.sha256(b"\x01" + r + sibling).digest()
+        fnode //= 2
+        snode //= 2
+    if snode != 0:
+        raise ValueError("inclusion path shorter than the tree requires")
+    return r
 
 
 def cross_verify() -> int:
@@ -206,20 +225,37 @@ def build_statement(commitment: dict) -> bytes:
 
 
 def merkle(leaves: list[bytes], target: int) -> tuple[bytes, list[bytes]]:
-    """RFC 9162 root and audit path for `target`, duplicating the last node on odd levels."""
-    level = [hashlib.sha256(b"\x00" + leaf).digest() for leaf in leaves]
-    index, path = target, []
-    while len(level) > 1:
-        nxt = []
-        for i in range(0, len(level), 2):
-            left = level[i]
-            right = level[i + 1] if i + 1 < len(level) else level[i]
-            if i == index or i + 1 == index:
-                path.append(right if index % 2 == 0 else left)
-            nxt.append(hashlib.sha256(b"\x01" + left + right).digest())
-        index //= 2
-        level = nxt
-    return level[0], path
+    """RFC 9162 §2.1.1 MTH and §2.1.3.1 PATH for `target`.
+
+    The split is at the largest power of two STRICTLY below n, and the last node is
+    never duplicated. Those are different trees for every size that is not a power of
+    two, and the two corpora were both recorded at tree_size = 2 — the one size where
+    they coincide, which is why a duplicate-last-node implementation on both sides of
+    the cross-check went unnoticed.
+    """
+    hashed = [hashlib.sha256(b"\x00" + leaf).digest() for leaf in leaves]
+    path: list[bytes] = []
+
+    def mth(nodes: list[bytes], want: int | None) -> bytes:
+        if not nodes:
+            return hashlib.sha256(b"").digest()
+        if len(nodes) == 1:
+            return nodes[0]
+        k = 1 << (len(nodes) - 1).bit_length() - 1
+        left_nodes, right_nodes = nodes[:k], nodes[k:]
+        if want is None:
+            return hashlib.sha256(
+                b"\x01" + mth(left_nodes, None) + mth(right_nodes, None)
+            ).digest()
+        if want < k:
+            left, right = mth(left_nodes, want), mth(right_nodes, None)
+            path.append(right)
+        else:
+            left, right = mth(left_nodes, None), mth(right_nodes, want - k)
+            path.append(left)
+        return hashlib.sha256(b"\x01" + left + right).digest()
+
+    return mth(hashed, target), path
 
 
 def build_receipt(

@@ -116,20 +116,44 @@ impl VerifiedContext {
 /// Returns `true` if the caller had in fact seeded the reserved verified-context
 /// key — the caller gets no signal, but the PEP can audit the attempt.
 pub fn strip_proxy_owned_meta(body: &mut serde_json::Value) -> bool {
-    let Some(meta) = body.get_mut("_meta").and_then(|m| m.as_object_mut()) else {
+    // BOTH `_meta` positions. MCP carries a `_meta` at the top level AND one inside
+    // `params`, and an inner server reading the reserved key from either sees the same
+    // thing — so stripping only the top-level one left `params._meta` as an unguarded
+    // way to hand the inner server a caller-authored verified context. The guard is
+    // there to make a caller-seeded context unreachable, not to make it move.
+    let seeded_top = strip_reserved_keys(body.get_mut("_meta"));
+    let seeded_params =
+        strip_reserved_keys(body.get_mut("params").and_then(|p| p.get_mut("_meta")));
+    // An empty `_meta` the PEP emptied is noise the caller never sent; drop it so
+    // the inner server sees the body it would have seen without MCP-RE.
+    drop_if_empty(body.as_object_mut(), "_meta");
+    drop_if_empty(
+        body.get_mut("params").and_then(|p| p.as_object_mut()),
+        "_meta",
+    );
+    seeded_top || seeded_params
+}
+
+/// Remove the PEP-owned keys from one `_meta` object, reporting whether the reserved
+/// verified-context key had been seeded.
+fn strip_reserved_keys(meta: Option<&mut serde_json::Value>) -> bool {
+    let Some(meta) = meta.and_then(|m| m.as_object_mut()) else {
         return false;
     };
     meta.remove(REQUEST_EVIDENCE_BLOCK_KEY);
-    let seeded = meta.remove(VERIFIED_CONTEXT_BLOCK_KEY).is_some();
-    // An empty `_meta` the PEP emptied is noise the caller never sent; drop it so
-    // the inner server sees the body it would have seen without MCP-RE.
-    let now_empty = meta.is_empty();
-    if now_empty {
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("_meta");
-        }
+    meta.remove(VERIFIED_CONTEXT_BLOCK_KEY).is_some()
+}
+
+/// Drop `key` from `object` when the value under it is a now-empty object.
+fn drop_if_empty(object: Option<&mut serde_json::Map<String, serde_json::Value>>, key: &str) {
+    let Some(object) = object else { return };
+    let empty = object
+        .get(key)
+        .and_then(|v| v.as_object())
+        .is_some_and(|m| m.is_empty());
+    if empty {
+        object.remove(key);
     }
-    seeded
 }
 
 /// Write the PEP's verified context into the forwarded body under the reserved key

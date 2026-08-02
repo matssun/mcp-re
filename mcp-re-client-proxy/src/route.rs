@@ -13,6 +13,8 @@ use mcp_re_client_core::RevocationSource;
 use mcp_re_client_core::SignerSlot;
 use mcp_re_client_core::TrustedIssuerSet;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::RwLock;
 
 /// The per-route trust seam: resolve the response signer keyid to a structured
 /// actor for RFC 9421 response verification.
@@ -59,7 +61,52 @@ pub enum ClientVerification {
     /// the resolver and the revocation source, and the proxy rebuilds the resolver per
     /// request with that request's `now` — so a retiring root stops being trusted the
     /// moment its window closes, rather than at whatever time the route was built.
-    DelegatedAnchored(DelegationPolicy, TrustedIssuerSet),
+    DelegatedAnchored(DelegationPolicy, Arc<AnchorSnapshot>),
+}
+
+/// The trust-anchor set behind an atomic swap.
+///
+/// Held this way so a REFRESHED signed manifest can reach a running client. Taken by
+/// value, the set was frozen at route construction: revoking a compromised root — the
+/// thing a manifest is published to do — propagated only by restarting the process
+/// with new config, which contradicts TK-05's "revoking an `issuer_kid` invalidates
+/// every descendant immediately".
+///
+/// Same shape and same reason as the proxy's reloading trust store: the read path
+/// clones an `Arc` under a short read lock, so a verification in flight never blocks
+/// on a writer and keeps the set it captured.
+#[derive(Debug)]
+pub struct AnchorSnapshot {
+    current: RwLock<Arc<TrustedIssuerSet>>,
+}
+
+impl AnchorSnapshot {
+    /// Seed the snapshot with the anchors a manifest loaded at startup.
+    pub fn new(issuers: TrustedIssuerSet) -> Self {
+        AnchorSnapshot {
+            current: RwLock::new(Arc::new(issuers)),
+        }
+    }
+
+    /// The anchors in force right now.
+    pub fn load(&self) -> Arc<TrustedIssuerSet> {
+        match self.current.read() {
+            Ok(guard) => Arc::clone(&guard),
+            // A poisoned lock still yields the last value: a verification must not
+            // panic because a refresher paniced mid-swap, and the last-good set is the
+            // fail-closed-correct answer.
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    /// Publish a newer set — the anchors from a manifest that passed the version
+    /// floor. Verifications already in flight keep the set they captured.
+    pub fn store(&self, issuers: TrustedIssuerSet) {
+        match self.current.write() {
+            Ok(mut guard) => *guard = Arc::new(issuers),
+            Err(poisoned) => *poisoned.into_inner() = Arc::new(issuers),
+        }
+    }
 }
 
 /// One configured route: the canonical `@target-uri`, the resolved audience tuple,

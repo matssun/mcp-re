@@ -18,7 +18,12 @@ CREATED, EXPIRES = 1000, 2000
 IN_WINDOW, LATE = 1500, 2001
 
 
-def _sign(nonce: str = "nonce-corr-0001", request_id: str = "1"):
+def _n(nonce: str) -> str:
+    """Pad an ad-hoc test nonce to the 22-char (128-bit) emission floor the core enforces."""
+    return f"{nonce}-padded-to-the-128-bit-floor"
+
+
+def _sign(nonce: str = "nonce-corr-0001-128bit", request_id: str = "1"):
     return mcp_re_sdk.sign_request(
         SEED,
         "key-1",
@@ -38,7 +43,7 @@ def _sign(nonce: str = "nonce-corr-0001", request_id: str = "1"):
 def _record(store: CorrelationStore, signed, **over) -> str:
     args = dict(
         request_id="1",
-        nonce="nonce-corr-0001",
+        nonce="nonce-corr-0001-128bit",
         audience_id="did:example:server-1",
         expected_signer_id="did:example:server-1",
         created=CREATED,
@@ -62,7 +67,7 @@ class TestRecordAndTake:
         pending = store.take(cid, now=IN_WINDOW)
         assert pending.correlation_id == cid
         assert pending.request_id == "1"
-        assert pending.nonce == "nonce-corr-0001"
+        assert pending.nonce == "nonce-corr-0001-128bit"
         assert pending.evidence_digest_value == signed.evidence_digest_value
         assert pending.audience_id == "did:example:server-1"
         assert len(store) == 0
@@ -86,10 +91,10 @@ class TestRecordAndTake:
 
     def test_iterating_yields_the_outstanding_requests(self):
         store = CorrelationStore()
-        _record(store, _sign("n-1"), nonce="n-1")
-        _record(store, _sign("n-2"), nonce="n-2")
+        _record(store, _sign(_n("n-1")), nonce=_n("n-1"))
+        _record(store, _sign(_n("n-2")), nonce=_n("n-2"))
         assert len(store) == 2
-        assert {p.nonce for p in store} == {"n-1", "n-2"}
+        assert {p.nonce for p in store} == {_n("n-1"), _n("n-2")}
 
 
 class TestFailsClosed:
@@ -141,10 +146,10 @@ class TestFailsClosed:
 class TestReaping:
     def test_expire_before_drops_only_the_dead(self):
         store = CorrelationStore()
-        live = _sign("n-live")
-        dead = _sign("n-dead")
-        _record(store, live, nonce="n-live", expires=9000)
-        cid_dead = _record(store, dead, nonce="n-dead", expires=1200)
+        live = _sign(_n("n-live"))
+        dead = _sign(_n("n-dead"))
+        _record(store, live, nonce=_n("n-live"), expires=9000)
+        cid_dead = _record(store, dead, nonce=_n("n-dead"), expires=1200)
         dropped = store.expire_before(1500)
         assert [p.correlation_id for p in dropped] == [cid_dead]
         assert len(store) == 1
@@ -198,7 +203,7 @@ class TestTheStoreIsBounded:
         # rule — otherwise the leak simply moves from the pending half to the consumed one.
         store = CorrelationStore()
         for i in range(50):
-            cid = _record(store, _sign(f"n-{i}"), nonce=f"n-{i}")
+            cid = _record(store, _sign(_n(f"n-{i}")), nonce=_n(f"n-{i}"))
             store.abandon(cid)
         assert len(store) == 0
         assert store.prune_consumed(EXPIRES + 301) == 50
@@ -252,7 +257,7 @@ class TestInputRequiredAssociatesWithoutConsuming:
             audience_id="did:example:server-1",
             route=None,
             dpop_token="dpop-token",
-            nonce="nonce-corr-answer",
+            nonce="nonce-corr-answer-128bit",
             created=CREATED,
             expires=EXPIRES,
             **handles.as_sign_kwargs(),

@@ -33,6 +33,21 @@ pub fn verify_content_digest_sha256(
     // Exact-member comparison: find a `sha-256=:...:` member among the
     // comma-separated dictionary members and require byte equality with the
     // recomputed serialization.
+    // A DUPLICATED `sha-256` member is malformed, not first-wins. RFC 8941 forbids a
+    // repeated dictionary key, and resolving it by taking the first meant one signed
+    // message could bind two different bodies: an intermediary appending a second
+    // member (or two implementations disagreeing on which to read) would have the same
+    // signature accept different content. Counted before any comparison, so the
+    // refusal does not depend on which one happened to match.
+    let members = header_value.split(',').filter(|m| {
+        let m = m.trim();
+        m.strip_prefix("sha-256=").is_some()
+    });
+    if members.count() > 1 {
+        return Err(HttpProfileError::MalformedEvidence(
+            "content-digest carries more than one sha-256 member",
+        ));
+    }
     for member in header_value.split(',') {
         let member = member.trim();
         if let Some(rest) = member.strip_prefix("sha-256=") {

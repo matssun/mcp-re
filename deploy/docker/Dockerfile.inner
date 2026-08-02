@@ -17,7 +17,12 @@
 FROM python:3.12-slim AS inner
 # `mcp` is the upstream MCP SDK; uvicorn serves the ASGI app the module builds, which
 # is what lets the MRTR ConfirmActionShim wrap it.
-RUN pip install --no-cache-dir "mcp>=2.0,<3" "uvicorn>=0.30"
+#
+# EXACT versions, not floating ranges. This image runs the tool code, so a build a
+# month from now must be the image that was reviewed — `>=2.0,<3` resolves to whatever
+# was published most recently, which makes the artifact unreproducible and puts a
+# fresh upstream release into the component with the most reach on the first rebuild.
+RUN pip install --no-cache-dir "mcp==2.0.0" "uvicorn==0.38.0"
 WORKDIR /app
 COPY tools/fastmcp_inner_backend.py /app/fastmcp_inner_backend.py
 # The script resolves config/ports.toml one dir up from itself (here/../config);
@@ -26,4 +31,10 @@ COPY config/ports.toml /config/ports.toml
 ENV MCP_RE_INNER_BACKEND_HOST=0.0.0.0
 # fastmcp_inner_backend.py binds config host by default; the K8s manifest sets
 # MCP_RE_INNER_BACKEND_PORT and we bind 0.0.0.0 so the Service can reach it.
+# NON-ROOT. This container executes MCP tool code, so it is the last place to run as
+# uid 0: the proxy chart drops every capability and pins a non-root uid, and the
+# component it fronts had none of it. 65532 is the distroless `nonroot` uid, matching
+# the proxy's own.
+RUN useradd --uid 65532 --user-group --no-create-home --shell /usr/sbin/nologin nonroot
+USER 65532:65532
 ENTRYPOINT ["python", "/app/fastmcp_inner_backend.py"]

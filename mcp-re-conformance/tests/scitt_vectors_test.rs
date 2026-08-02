@@ -26,8 +26,12 @@
 //!
 //! These tests cannot see whether the labels are the RIGHT ones: they run the encoder
 //! against its own decoder, which agrees with itself whatever numbers it picks.
-//! `tools/scitt_independent_verify.py` is the outside opinion, built from the RFC text
-//! with no MCP-RE code, and it is what to run when the encoding changes.
+//! `mcp-re-conformance/tools/scitt_cross_verify.py` is the outside opinion, built from
+//! the RFC text with no MCP-RE code, and it is what to run when the encoding changes.
+//! Its Merkle tree and inclusion fold are transcribed from RFC 9162 §2.1.1/§2.1.3.2
+//! rather than shared with the Rust — a second implementation of the same misreading
+//! is not independent evidence, which is exactly how a duplicate-last-node tree
+//! survived on both sides of this check.
 //!
 //! Regenerate (and re-pin) with:
 //!   cargo test -p mcp-re-conformance --test scitt_vectors_test \
@@ -429,6 +433,47 @@ fn build_fixtures() -> Vec<Fixture> {
         )),
         ..fixture("", "", &complete, &receipt, "mcp-re.malformed_envelope")
     });
+
+    // s09 — a THREE-leaf log, target on the short right edge. The one shape that
+    // separates RFC 9162 from the duplicate-last-node tree: for every power-of-two
+    // size the two constructions agree, and both this corpus and both interop corpora
+    // were recorded at size 2, so the divergence was invisible everywhere. Leaf 2 of a
+    // 3-leaf tree is promoted past a level rather than paired, which an index-bit fold
+    // gets wrong in the operand order — so this vector fails on any verifier that is
+    // not running §2.1.3.2's fn/sn walk.
+    let (right_edge, right_edge_receipt) = {
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        for i in 0..2 {
+            let filler = statement(
+                EvidenceCommitment::from_reconstruction(
+                    &reconstruction(ChainLabel::Complete, 4 + i),
+                    None,
+                    None,
+                ),
+                &issuer(),
+            );
+            svc.register(&filler, sign_tree_head).expect("filler entry");
+        }
+        let target = statement(
+            EvidenceCommitment::from_reconstruction(
+                &reconstruction(ChainLabel::Complete, 3),
+                None,
+                None,
+            ),
+            &issuer(),
+        );
+        let receipt = svc.register(&target, sign_tree_head).expect("register");
+        assert_eq!(receipt.tree_size(), 3, "a non-power-of-two log");
+        assert_eq!(receipt.leaf_index(), 2, "the right-edge leaf");
+        (target, receipt)
+    };
+    out.push(fixture(
+        "s09_right_edge_leaf_of_a_three_leaf_log",
+        "Leaf 2 of a THREE-leaf log — the right-edge promotion case of RFC 9162          §2.1.3.2. Every power-of-two tree size hides the difference between the RFC          tree and a duplicate-last-node one; this is the smallest size that does not.",
+        &right_edge,
+        &right_edge_receipt,
+        "verify_ok",
+    ));
 
     out
 }

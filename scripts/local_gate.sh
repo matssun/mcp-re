@@ -110,7 +110,65 @@ stage_suites() {
     && cargo build --workspace --all-targets \
     && cargo test --workspace \
     && cargo build --workspace --all-targets --features "$FEATURES" \
-    && cargo test -p mcp-re-proxy --features "$FEATURES"
+    && cargo test -p mcp-re-proxy --features "$FEATURES" \
+    && stage_demo \
+    && stage_sdk
+}
+
+# The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs
+# are their OWN Cargo workspaces linking mcp-re-client-core by path, and their suites
+# exercise the bindings from Python and Node, not from Rust. So a change to the core's
+# emission contract compiles, passes every cargo and Bazel lane, and fails only in CI —
+# which is how a nonce-length floor in build_signed_request_with reached a PR with both
+# downloader jobs red and four green stages above them.
+stage_sdk() {
+  sdk_typescript && sdk_python
+}
+
+# Mirrors the "downloader — TypeScript napi package" job: the published build, the
+# generated-loader drift check, and the coverage-gated suite.
+sdk_typescript() {
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm not installed — SKIPPING the TypeScript SDK suite (CI still enforces it)."
+    return 0
+  fi
+  ( cd sdk/typescript \
+      && { [[ -d node_modules ]] || npm ci; } \
+      && npm run build \
+      && npx vitest run --coverage ) || return 1
+  git diff --exit-code -- sdk/typescript/native/binding.js sdk/typescript/native/binding.d.ts
+}
+
+# Mirrors the "downloader — Python maturin wheel" job: build the wheel, reinstall it,
+# run the coverage-gated suite, then regenerate the cross-language parity oracle from
+# the freshly built core. The regeneration is the part that matters — a binding that
+# drifts from the core shows up as a diff in a committed fixture, not as a test that
+# forgot to assert.
+sdk_python() {
+  local venv=sdk/python/.venv
+  if [[ ! -x "$venv/bin/python" ]]; then
+    python3 -m venv "$venv" || return 1
+    "$venv/bin/pip" install --quiet -e "sdk/python[dev]" || return 1
+  fi
+  ( cd sdk/python \
+      && ./.venv/bin/maturin build --release --out dist \
+      && ./.venv/bin/pip install --quiet --force-reinstall dist/*.whl \
+      && ./.venv/bin/python -m pytest -q ) || return 1
+
+  # A throwaway interpreter, exactly as CI does it: the oracle must come from the
+  # INSTALLED wheel alone, never from anything else already on a developer's venv.
+  local oracle; oracle="$(mktemp -d)/oracle"
+  python3 -m venv "$oracle" \
+    && "$oracle/bin/pip" install --quiet sdk/python/dist/*.whl \
+    && "$oracle/bin/python" tools/gen_sdk_parity_fixture.py \
+    && git diff --exit-code -- sdk/fixtures/parity_vectors.json
+}
+
+# The public "no cloud credentials" demo. In a gate because it is the one artefact
+# an evaluator runs first, and it was pointing at two test targets that had been
+# deleted — so it could not exit 0, and nothing anywhere ran it to notice.
+stage_demo() {
+  bash scripts/demo-local.sh >/dev/null
 }
 
 # The tree carries zero warnings; `-D warnings` keeps it that way. Runs before the
@@ -158,11 +216,66 @@ stage_slo() {
 # differs. This is what caught six deploy defects before a single cloud charge.
 stage_kind() {
   if [[ "$WITH_KIND" != 1 ]]; then echo "not requested (pass --with-kind)."; return 0; fi
+
+  # The proof client is reached only AFTER a full three-replica fleet rollout, so a
+  # client that cannot start costs an entire cluster deploy before it surfaces — and
+  # surfaces as "PROOF FAILED: replica A did not accept a fresh pinned nonce", which
+  # reads as a serving defect when nothing was ever sent. Smoke the EXACT command the
+  # harness will run, first, and let a non-zero --help say so plainly.
+  #
+  # MCP_RE_CLIENT is the WHOLE command, interpreter AND script (the harness appends
+  # only flags: `$CLIENT --server-name ...`). A bare interpreter therefore makes
+  # python parse `--server-name` as its own option. `:-` before any expansion: the
+  # script runs under `set -u`, where a bare ${MCP_RE_CLIENT%% *} on an unset variable
+  # aborts the whole shell — the stage would not fail, it would take the gate down.
+  local client_cmd="${MCP_RE_CLIENT:-python3 $PWD/docs/security/mcp_re_gke_client.py}"
+  if ! $client_cmd --help >/dev/null 2>&1; then
+    printf 'the four-proof client cannot start:\n  %s --help\nexited non-zero. MCP_RE_CLIENT must be the FULL command (interpreter AND script),\ne.g. "/path/to/venv/bin/python3 %s/docs/security/mcp_re_gke_client.py", and that\ninterpreter needs the SDK: <interpreter> -m pip install %s/sdk/python\n' \
+      "$client_cmd" "$PWD" "$PWD" >&2
+    return 1
+  fi
+
+  # The harness reads its mTLS material and identity tuple from the environment. Supply
+  # the emit_mtls_fixtures bundle and the tuple that bundle signs whenever the operator
+  # has not, so this stage is self-contained. Every value is overridable.
+  if [[ -z "${MCP_RE_FIXTURES_DIR:-}" ]]; then
+    MCP_RE_FIXTURES_DIR="$(mktemp -d)" || return 1
+    cargo run -q -p mcp-re-demo --example emit_mtls_fixtures -- "$MCP_RE_FIXTURES_DIR" || return 1
+    export MCP_RE_FIXTURES_DIR
+  fi
+  local fx="$MCP_RE_FIXTURES_DIR"
+
+  # kind has no metadata server, and this stage is the free local one: root the
+  # delegated issuer in the mounted seed rather than requiring a live Cloud KMS key.
+  # KMS-rooted issuance is proven by the cloud-KMS live lanes, not here.
+  export MCP_RE_KEY_SOURCE="${MCP_RE_KEY_SOURCE:-fileSeed}"
+
+  # The proxy port comes from the registry (config/ports.toml), never a literal.
+  local proxy_port
+  proxy_port="$(python3 -c 'import tomllib,sys; print(tomllib.load(open(sys.argv[1],"rb"))["services"]["mcp_re_proxy"]["port"])' config/ports.toml 2>/dev/null)"
+  [[ -n "$proxy_port" ]] || { echo "could not read mcp_re_proxy port from config/ports.toml" >&2; return 1; }
+
+  export MCP_RE_SERVER_NAME="${MCP_RE_SERVER_NAME:-proxy.internal}"
+  export MCP_RE_AUDIENCE="${MCP_RE_AUDIENCE:-did:example:server-1}"
+  export MCP_RE_TARGET_URI="${MCP_RE_TARGET_URI:-https://proxy.internal:$proxy_port/mcp}"
+  export MCP_RE_TRUST_DOMAIN="${MCP_RE_TRUST_DOMAIN:-example.com}"
+  export MCP_RE_SIGNER_ID="${MCP_RE_SIGNER_ID:-did:example:agent-1}"
+  export MCP_RE_KEY_ID="${MCP_RE_KEY_ID:-key-1}"
+  export MCP_RE_SIGNING_KEY_SEED="${MCP_RE_SIGNING_KEY_SEED:-@$fx/client_signing_seed}"
+  export MCP_RE_SERVER_SIGNER="${MCP_RE_SERVER_SIGNER:-did:example:server-1}"
+  export MCP_RE_SERVER_KEY_ID="${MCP_RE_SERVER_KEY_ID:-server-key-1}"
+  export MCP_RE_SERVER_PUBKEY="${MCP_RE_SERVER_PUBKEY:-@$fx/server_pubkey}"
+  export MCP_RE_TRUST_EPOCH="${MCP_RE_TRUST_EPOCH:-epoch-1}"
+  # Transport binding is always `exact`, so the client presents the SHORT-lived leaf.
+  export MCP_RE_TLS_CERT="${MCP_RE_TLS_CERT:-$fx/client_cert_short.pem}"
+  export MCP_RE_TLS_KEY="${MCP_RE_TLS_KEY:-$fx/client_key_short.pem}"
+  export MCP_RE_SERVER_CA="${MCP_RE_SERVER_CA:-$fx/server_ca.pem}"
+
   PROVIDER=kind docs/security/gke-multi-replica-validation.sh
 }
 
 run "static gates (tags, ports, secrets, chart, vocabulary)" stage_static
-run "cargo suites (workspace + feature-gated backends)"      stage_suites
+run "cargo suites + SDK downloaders (workspace, features, py/ts)" stage_suites
 run "bazel parity (//...)"                                   stage_bazel
 run "local SLO lane (ADR-051 §7 anchor + gate)"              stage_slo
 run "kind fleet proofs (identical harness to GKE)"           stage_kind

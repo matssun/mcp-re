@@ -28,6 +28,9 @@ use mcp_re_proxy::continuation_store::AsyncContinuationStore;
 use mcp_re_proxy::continuation_store::RetainedBases;
 use mcp_re_proxy::redis_continuation_store::RedisContinuationStore;
 
+/// The dispatch boundary the continuation key is scoped to; a second deployment on
+/// the same shared Redis has a different one, and therefore a different namespace.
+const AUD: &str = "did:example:server-1";
 const ACTOR_A: &str = "client:example.com:did:example:host-a:client-key-1";
 const ACTOR_B: &str = "client:example.com:did:example:host-b:client-key-2";
 
@@ -86,7 +89,7 @@ async fn peek_is_non_destructive_and_consume_is_one_shot_across_replicas() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let key = continuation_key(ACTOR_A, state.as_bytes());
+    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
     let expected = bases("one-shot");
 
     // OPEN on A.
@@ -135,8 +138,8 @@ async fn one_actors_continuation_is_not_reachable_by_another() {
     };
     let (a, b) = two_replicas(&url).await;
     let state = format!("state-{}", run_id());
-    let a_key = continuation_key(ACTOR_A, state.as_bytes());
-    let b_key = continuation_key(ACTOR_B, state.as_bytes());
+    let a_key = continuation_key(AUD, ACTOR_A, state.as_bytes());
+    let b_key = continuation_key(AUD, ACTOR_B, state.as_bytes());
     assert_ne!(
         a_key, b_key,
         "the same requestState under two actors is two keys"
@@ -173,7 +176,7 @@ async fn a_recorded_continuation_carries_a_bounded_ttl() {
         .await
         .expect("connects to Redis");
     let state = format!("state-{}", run_id());
-    let key = continuation_key(ACTOR_A, state.as_bytes());
+    let key = continuation_key(AUD, ACTOR_A, state.as_bytes());
 
     store
         .store(&key, &bases("ttl"), 1)

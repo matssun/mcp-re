@@ -143,6 +143,10 @@ const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// returns promptly after the last request finishes, large enough to not busy-spin.
 const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// hyper's own floor for `http1::Builder::max_buf_size`; a smaller value panics.
+/// `--max-header-bytes` is clamped up to it rather than passed through.
+const MIN_HYPER_BUF_BYTES: usize = 8192;
+
 /// RAII counter of requests currently being served on a core (MCPRE-115). Constructed
 /// once a request is admitted and about to be processed; the increment/decrement pair
 /// is exactly balanced by `Drop`, so the count reflects live in-flight requests on
@@ -279,8 +283,10 @@ fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String
     (configured_origin != received_origin).then_some(received_origin)
 }
 
-/// The path+query of an absolute URI, or `None` when it has no `://` (not absolute —
-/// the parse-time check already rejects that, so there is nothing to compare against).
+/// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
+///
+/// `None` only for a target with no `://`, which `cli::parse_args` refuses — so on
+/// the served path this is always `Some`, and the mismatch check is always live.
 fn origin_form_of(absolute: &str) -> Option<String> {
     let authority_start = absolute.find("://")? + 3;
     let authority = &absolute[authority_start..];
@@ -305,6 +311,14 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // Handshake, bounded by the aggregate read deadline: a peer that never
     // completes the handshake cannot hold the connection task forever. Reading
     // drives the handshake, exactly as the blocking `DeadlineStream` bounds it.
+    //
+    // Under DELEGATED TLS custody the CertificateVerify signature is produced by a
+    // blocking KMS round trip or a PKCS#11 `C_Sign` inside rustls' SYNCHRONOUS
+    // `Signer::sign`, so this `await` can occupy its worker thread for the whole call
+    // and the deadline below cannot preempt it — the future never yields, so the timer
+    // never runs. `async_fleet` gives those deployments a multi-worker runtime per
+    // core for exactly this reason: the stall then costs one worker rather than the
+    // core's accept loop and every other connection on it.
     let tls = match options.limits.request_deadline {
         Some(deadline) => tokio::time::timeout(deadline, acceptor.accept(tcp))
             .await
@@ -332,6 +346,9 @@ async fn serve_connection<H: AsyncRequestHandler>(
         .or(options.limits.read_timeout);
     // Read before `options` is moved into the service closure below.
     let stream_ceiling = options.limits.max_in_flight_requests;
+    let max_header_bytes = options.limits.max_header_bytes;
+    let write_timeout = options.limits.write_timeout;
+    let max_connection_age = options.limits.max_connection_age;
 
     let io = TokioIo::new(tls);
     let service = service_fn(move |req: Request<Incoming>| {
@@ -375,10 +392,64 @@ async fn serve_connection<H: AsyncRequestHandler>(
     if let Some(ceiling) = stream_ceiling {
         builder.http2().max_concurrent_streams(ceiling as u32);
     }
+    // Apply the operator's `--max-header-bytes` on BOTH protocols. It was previously
+    // parsed, validated, and then read by nothing on this path, so the only bound was
+    // hyper's internal default — an operator tightening the limit got a silent no-op.
+    // `max_buf_size` has a hyper-enforced 8 KiB floor, so clamp rather than pass a
+    // smaller value straight through and panic.
+    builder
+        .http1()
+        .max_buf_size(max_header_bytes.max(MIN_HYPER_BUF_BYTES));
+    builder
+        .http2()
+        .max_header_list_size(max_header_bytes.min(u32::MAX as usize) as u32);
+    // `--write-timeout-secs` is refused at parse time when it is 0, on the stated
+    // grounds that it is a slow-loris defence — so it has to actually bound something
+    // here. HTTP/2 has no per-write deadline in hyper; the keep-alive PING probe is
+    // the equivalent liveness bound, and it closes a connection whose peer has stopped
+    // reading. HTTP/1's write side is covered by the connection-age bound below.
+    if let Some(write_timeout) = write_timeout {
+        builder
+            .http2()
+            .timer(TokioTimer::new())
+            .keep_alive_interval(Some(write_timeout))
+            .keep_alive_timeout(write_timeout);
+    }
     // Serve every request on this connection (keep-alive / H2 multiplexed). A
     // connection-level error just ends this task; other connections are unaffected.
-    if let Err(_e) = builder.serve_connection(io, service).await {
-        return Ok(());
+    //
+    // MAX CONNECTION AGE: the peer's certificate was validated — chain, CRL, validity
+    // window — at the handshake and is never re-consulted on an established
+    // connection. At the age bound the connection is GRACEFULLY shut down: in-flight
+    // requests finish, no new ones are accepted, and the peer's next request rides a
+    // fresh handshake that re-runs the verifier against the current CRL. Without this,
+    // a peer that never reconnects is never re-checked.
+    let conn = builder.serve_connection(io, service);
+    tokio::pin!(conn);
+    match max_connection_age {
+        None => {
+            let _ = conn.await;
+        }
+        Some(age) => {
+            let deadline = tokio::time::sleep(age);
+            tokio::pin!(deadline);
+            let mut draining = false;
+            loop {
+                tokio::select! {
+                    result = conn.as_mut() => {
+                        let _ = result;
+                        break;
+                    }
+                    // `draining` disarms this arm after it fires once: the elapsed
+                    // sleep is immediately ready forever, so re-selecting it would
+                    // spin instead of letting the graceful close complete.
+                    _ = &mut deadline, if !draining => {
+                        draining = true;
+                        conn.as_mut().graceful_shutdown();
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -490,8 +561,17 @@ async fn handle_request<H: AsyncRequestHandler>(
     // is never reached on a rejection. The two rejection checks are sync CPU
     // (leaf-cert lifetime + header hygiene); only the admitted handler is AWAITED,
     // and it is the handler that awaits the async replay tier.
-    let served = match connection_rejection_for_leaf(leaf, &options, &body_bytes)
-        .or_else(|| routing_header_rejection(&headers, &body_bytes))
+    //
+    // The clock is read PER REQUEST, not per connection: the leaf is captured once at
+    // handshake, so this is the only point at which a certificate that has since
+    // passed `notAfter` can be caught on a connection the peer keeps open.
+    let served = match connection_rejection_for_leaf(
+        leaf,
+        &options,
+        &body_bytes,
+        crate::tls::wall_clock_unix(),
+    )
+    .or_else(|| routing_header_rejection(&headers, &body_bytes))
     {
         // A pre-handler transport rejection carries a JSON error body, no RFC 9421
         // evidence; frame it as a 403 JSON reply.

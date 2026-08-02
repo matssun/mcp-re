@@ -201,6 +201,8 @@ mod tests {
             "/tmp/mcp-re-delegated-wiring-test-replay",
             "--delegated-trust-epoch",
             "epoch-1",
+            "--trust-domain",
+            "mcp.example.com",
         ]
         .iter()
         .map(|s| s.to_string())

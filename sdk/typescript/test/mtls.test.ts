@@ -274,4 +274,62 @@ describe("the mTLS connect helper", () => {
       }),
     ).toThrow(/maxResponseBytes/);
   });
+
+  it("refuses a non-positive exchange timeout", () => {
+    // Node reads `timeout: 0` as NO timeout, so passing it through removed the bound
+    // instead of applying the default — and each exchange holds a transport semaphore
+    // slot, so a few unbounded stalls wedge the client. `null` is the only way to ask
+    // for no bound. The Python twin refuses `<= 0` identically.
+    for (const timeoutMs of [0, -1, Number.NaN]) {
+      expect(() =>
+        mtlsPoster(config(443), {
+          serverCa: "ca",
+          clientCert: "cert",
+          clientKey: "key",
+          timeoutMs,
+        }),
+      ).toThrow(/timeoutMs/);
+    }
+    // Explicit null is the deliberate no-bound posture and stays accepted.
+    expect(() =>
+      mtlsPoster(config(443), {
+        serverCa: "ca",
+        clientCert: "cert",
+        clientKey: "key",
+        timeoutMs: null,
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses empty TLS material rather than falling back to Node's public roots", () => {
+    // Node documents ca/cert/key as permitted to be falsy and branches on truthiness:
+    // an empty `ca` installs the ~150 bundled public roots INSTEAD of the pinned CA,
+    // and an empty cert/key sends no client certificate. Both handshake and both
+    // report success, which is the opposite of this module's stated posture.
+    const base = { serverCa: "ca", clientCert: "cert", clientKey: "key" };
+    for (const empty of ["", "   ", Buffer.alloc(0), [], [""]]) {
+      expect(() =>
+        mtlsPoster(config(443), { ...base, serverCa: empty as never }),
+      ).toThrow(/serverCa/);
+      expect(() =>
+        mtlsPoster(config(443), { ...base, clientCert: empty as never }),
+      ).toThrow(/clientCert/);
+      expect(() =>
+        mtlsPoster(config(443), { ...base, clientKey: empty as never }),
+      ).toThrow(/clientKey/);
+    }
+  });
+
+  it("refuses a connect port outside the TCP range", () => {
+    for (const connectPort of [0, -1, 65536, 1.5]) {
+      expect(() =>
+        mtlsPoster(config(443), {
+          serverCa: "ca",
+          clientCert: "cert",
+          clientKey: "key",
+          connectPort,
+        }),
+      ).toThrow(/connectPort/);
+    }
+  });
 });
