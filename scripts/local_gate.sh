@@ -111,7 +111,57 @@ stage_suites() {
     && cargo test --workspace \
     && cargo build --workspace --all-targets --features "$FEATURES" \
     && cargo test -p mcp-re-proxy --features "$FEATURES" \
-    && stage_demo
+    && stage_demo \
+    && stage_sdk
+}
+
+# The two downloader artefacts. `cargo test --workspace` cannot reach them: both SDKs
+# are their OWN Cargo workspaces linking mcp-re-client-core by path, and their suites
+# exercise the bindings from Python and Node, not from Rust. So a change to the core's
+# emission contract compiles, passes every cargo and Bazel lane, and fails only in CI —
+# which is how a nonce-length floor in build_signed_request_with reached a PR with both
+# downloader jobs red and four green stages above them.
+stage_sdk() {
+  sdk_typescript && sdk_python
+}
+
+# Mirrors the "downloader — TypeScript napi package" job: the published build, the
+# generated-loader drift check, and the coverage-gated suite.
+sdk_typescript() {
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm not installed — SKIPPING the TypeScript SDK suite (CI still enforces it)."
+    return 0
+  fi
+  ( cd sdk/typescript \
+      && { [[ -d node_modules ]] || npm ci; } \
+      && npm run build \
+      && npx vitest run --coverage ) || return 1
+  git diff --exit-code -- sdk/typescript/native/binding.js sdk/typescript/native/binding.d.ts
+}
+
+# Mirrors the "downloader — Python maturin wheel" job: build the wheel, reinstall it,
+# run the coverage-gated suite, then regenerate the cross-language parity oracle from
+# the freshly built core. The regeneration is the part that matters — a binding that
+# drifts from the core shows up as a diff in a committed fixture, not as a test that
+# forgot to assert.
+sdk_python() {
+  local venv=sdk/python/.venv
+  if [[ ! -x "$venv/bin/python" ]]; then
+    python3 -m venv "$venv" || return 1
+    "$venv/bin/pip" install --quiet -e "sdk/python[dev]" || return 1
+  fi
+  ( cd sdk/python \
+      && ./.venv/bin/maturin build --release --out dist \
+      && ./.venv/bin/pip install --quiet --force-reinstall dist/*.whl \
+      && ./.venv/bin/python -m pytest -q ) || return 1
+
+  # A throwaway interpreter, exactly as CI does it: the oracle must come from the
+  # INSTALLED wheel alone, never from anything else already on a developer's venv.
+  local oracle; oracle="$(mktemp -d)/oracle"
+  python3 -m venv "$oracle" \
+    && "$oracle/bin/pip" install --quiet sdk/python/dist/*.whl \
+    && "$oracle/bin/python" tools/gen_sdk_parity_fixture.py \
+    && git diff --exit-code -- sdk/fixtures/parity_vectors.json
 }
 
 # The public "no cloud credentials" demo. In a gate because it is the one artefact
@@ -225,7 +275,7 @@ stage_kind() {
 }
 
 run "static gates (tags, ports, secrets, chart, vocabulary)" stage_static
-run "cargo suites (workspace + feature-gated backends)"      stage_suites
+run "cargo suites + SDK downloaders (workspace, features, py/ts)" stage_suites
 run "bazel parity (//...)"                                   stage_bazel
 run "local SLO lane (ADR-051 §7 anchor + gate)"              stage_slo
 run "kind fleet proofs (identical harness to GKE)"           stage_kind
