@@ -2,9 +2,7 @@
 //! Live GCP Cloud KMS — HTTP standards-profile (RFC 9421 + RFC 9530) lane
 //! (ADR-MCPRE-050 + MCPRE-106).
 //!
-//! The sibling `gcp_kms_draft02_live_test` proves Cloud KMS can sign a draft-02
-//! envelope. This lane closes the equivalent gap for the HTTP standards profile:
-//! it proves Cloud KMS can sign an RFC 9421 request/response — through the
+//! This lane proves Cloud KMS can sign an RFC 9421 request/response — through the
 //! profile's PRODUCTION external-signer seam (`sign_request_with_signer` /
 //! `sign_response_with_signer`, MCPRE-106) — that the UNMODIFIED
 //! `verify_request` / `verify_response` accept, with tamper + wrong-key

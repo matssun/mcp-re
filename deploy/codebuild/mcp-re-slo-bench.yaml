@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Builds the ADR-MCPRE-051 §7 SLO bench image natively on arm64 INSIDE AWS and pushes
+# it to ECR. The AWS counterpart of deploy/cloudbuild/mcp-re-images.yaml.
+#
+#   aws cloudformation deploy --region eu-north-1 \
+#     --template-file deploy/codebuild/mcp-re-slo-bench.yaml \
+#     --stack-name mcp-re-slo-bench-build --capabilities CAPABILITY_IAM
+#
+# WHY BUILD IN THE CLOUD AT ALL. The bench image is a from-source Rust build carrying
+# a warmed cargo target/ so the Job runs with no recompile — it is large. Building it
+# on a developer box and pushing it means uploading that image over a home link, and
+# it competes for local disk with a target/ that is already tens of GB. Uploading the
+# ~25 MB source context instead and letting the build and the push both happen inside
+# the region is the same trade Cloud Build makes on the GCP side.
+#
+# WHY arm64. The SLO cluster is Graviton (see deploy/eks/mcp-re-slo-cluster.yaml), so
+# the image must be arm64. This project uses an aarch64 CodeBuild environment, which
+# builds it natively — no QEMU, and no emulated CPU anywhere near a measurement.
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECR repository and an arm64 CodeBuild project for the MCP-RE SLO bench image
+
+Resources:
+  BenchRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-re-slo-bench
+      # The runbook deletes this repository on teardown; RETAIN would leave paid
+      # storage behind after the stack is gone, which is the opposite of the point.
+      EmptyOnDelete: true
+      Tags:
+        - { Key: project, Value: mcp-re }
+        - { Key: ephemeral, Value: "true" }
+
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub mcp-re-build-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # The source zip is an input to one build, not an artifact. Expiring it keeps
+          # a torn-down project from paying storage on stale contexts indefinitely.
+          - Id: expire-source-contexts
+            Status: Enabled
+            ExpirationInDays: 1
+      Tags:
+        - { Key: project, Value: mcp-re }
+        - { Key: ephemeral, Value: "true" }
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: codebuild.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: build-and-push
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              # GetAuthorizationToken is account-wide by API design; the push rights
+              # below are scoped to this one repository.
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt BenchRepository.Arn
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::mcp-re-build-${AWS::AccountId}-${AWS::Region}/*
+
+  BenchBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: mcp-re-slo-bench
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts: { Type: NO_ARTIFACTS }
+      TimeoutInMinutes: 60
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        # Required to run a docker daemon inside the build container.
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - { Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region }
+          - { Name: ECR_REGISTRY, Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com" }
+      Source:
+        Type: S3
+        Location: !Sub mcp-re-build-${AWS::AccountId}-${AWS::Region}/source.zip
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                # The tag is READ FROM VERSION, never retyped — the same rule the
+                # Job runner follows. A literal here goes stale on the next bump and
+                # the Job then references a tag the registry does not hold.
+                - TAG=$(tr -d '[:space:]' < VERSION)
+                - echo "building mcp-re-slo-bench:$TAG for $(uname -m)"
+                - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            build:
+              commands:
+                - docker build -f deploy/docker/Dockerfile.bench -t "$ECR_REGISTRY/mcp-re-slo-bench:$TAG" .
+            post_build:
+              commands:
+                - docker push "$ECR_REGISTRY/mcp-re-slo-bench:$TAG"
+                # Prove the pushed image is the architecture the Graviton nodes need.
+                # A silently-amd64 image would not fail until a pod on the cluster
+                # crashlooped with an exec-format error.
+                - ARCH=$(docker image inspect "$ECR_REGISTRY/mcp-re-slo-bench:$TAG" --format '{{.Architecture}}')
+                - echo "pushed architecture=$ARCH"
+                - test "$ARCH" = "arm64"
+      Tags:
+        - { Key: project, Value: mcp-re }
+        - { Key: ephemeral, Value: "true" }
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt BenchRepository.RepositoryUri
+  SourceBucketName:
+    Value: !Ref SourceBucket
+  ProjectName:
+    Value: !Ref BenchBuild

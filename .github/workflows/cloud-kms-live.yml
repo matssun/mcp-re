@@ -138,6 +138,16 @@ jobs:
           --features aws_kms_keysource
           --test aws_kms_live_test
           -- --ignored aws_kms_signature_verifies_under_mcp_re_core
+      - name: Run AWS KMS delegated-REQUIRED serving + authority flip (#[ignore], real endpoint)
+        # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
+        # delegated key signs the response. This is the lane the cross-cloud
+        # delegated-root claim rests on; `aws_kms_live_test` above proves only that a
+        # real KMS signature verifies, which does NOT reach the delegated authority.
+        run: >-
+          cargo test -p mcp-re-proxy
+          --features aws_kms_keysource
+          --test aws_kms_delegated_required_live_test
+          -- --ignored
 
   gcp-kms-real:
     name: gcp cloud kms live (real endpoint, nightly-real-only)
@@ -163,14 +173,15 @@ jobs:
           --features gcp_kms_keysource
           --test gcp_kms_live_test
           -- --ignored gcp_kms_signature_verifies_under_mcp_re_core
-      - name: Run GCP Cloud KMS draft-02 (v0.6) envelope verification (#[ignore], real endpoint)
-        # Cloud KMS signs a COMPLETE draft-02 request + response (over the
-        # protected version + canonicalization_id + authorization_binding
-        # preimage) that the unmodified draft-02 verifier accepts. Same secrets.
+      - name: Run GCP Cloud KMS delegated-REQUIRED serving + authority flip (#[ignore], real endpoint)
+        # ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
+        # delegated key signs the response, plus the authority-flip and revocation
+        # boundaries. The counterpart of the AWS step above; both clouds must prove
+        # the same chain for the cross-cloud delegated-root claim.
         run: >-
           cargo test -p mcp-re-proxy
           --features gcp_kms_keysource
-          --test gcp_kms_draft02_live_test
+          --test gcp_kms_delegated_required_live_test
           -- --ignored
       - name: Run GCP Cloud KMS HTTP-profile (RFC 9421) verification (#[ignore], real endpoint)
         # Cloud KMS signs an RFC 9421 request + response through the HTTP profile's

@@ -140,13 +140,14 @@ cargo test -p mcp-re-proxy --features gcp_kms_keysource \
 cargo test -p mcp-re-proxy --features gcp_kms_keysource \
   --test gcp_kms_delegated_tls_live_test -- --ignored --nocapture --test-threads=1
 
-# 3. Draft-02 (v0.6) envelope lane: Cloud KMS signs a COMPLETE draft-02 request
-#    and response — over the protected version + canonicalization_id +
-#    authorization_binding preimage — that the unmodified draft-02 verifier
-#    (verify_request_draft02 / verify_response_draft02) accepts, with tamper and
-#    wrong-key negatives.
+# 3. Delegated-REQUIRED serving + authority-flip lane (ADR-MCPRE-052): the KMS root
+#    ISSUES a short-TTL credential through the production `build_delegated_signing`
+#    + `new_delegated` wiring and an in-memory delegated key signs the responses.
+#    Proves zero per-request KMS ops at the serving altitude, rotation, the
+#    revocation seam both ways, pre-052 direct-root rejection, and the trust-epoch
+#    flip. This is the lane the cross-cloud delegated-root claim rests on.
 cargo test -p mcp-re-proxy --features gcp_kms_keysource \
-  --test gcp_kms_draft02_live_test -- --ignored --nocapture --test-threads=1
+  --test gcp_kms_delegated_required_live_test -- --ignored --nocapture --test-threads=1
 
 # 4. HTTP standards profile (RFC 9421 + RFC 9530) lane: Cloud KMS signs an RFC 9421
 #    request and response through the profile's external-signer seam

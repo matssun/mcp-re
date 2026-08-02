@@ -1,0 +1,109 @@
+#!/bin/bash
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SANITIZED TEMPLATE for the live AWS KMS validation lane (ADR-MCPS-028 §B).
+# Copy to a LOCAL, UNTRACKED path and fill in your own account before running:
+#
+#     cp scripts/test-aws-cloud.sh.example work/test-aws-cloud.sh   # work/ is gitignored
+#     # edit the placeholders below, then:
+#     ./work/test-aws-cloud.sh
+#
+# DO NOT commit a filled-in copy. A tracked-file leak guard
+# (python3 scripts/tracked_secrets_gate.py, run in CI) fails the build if an AWS
+# access-key id lands in a tracked file.
+#
+# Credentials: the adapter reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+# AWS_SESSION_TOKEN directly (ADR-MCPS-028 credential scope — no profile, IMDS, or
+# IRSA discovery). Export them in the shell that runs this script; the `aws` CLI
+# calls below read the same variables.
+#
+# Cost: one ECC_NIST_EDWARDS25519 customer managed key is $1.00/month prorated
+# hourly, plus ~$0.15 per 10,000 asymmetric requests. A full run is a few cents.
+# The key is scheduled for deletion at the end (KMS minimum window is 7 days).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The region must offer BOTH the standard and the kms-fips endpoint; every
+# commercial region currently does, so a local region is fine.
+export REGION="${MCP_RE_AWS_KMS_REGION:-eu-north-1}"
+export KEY_ALIAS="alias/mcp-re-ed25519-object"
+
+STANDARD_ENDPOINT="https://kms.${REGION}.amazonaws.com"
+FIPS_ENDPOINT="https://kms-fips.${REGION}.amazonaws.com"
+
+cd "$(git rev-parse --show-toplevel)"
+
+# ── 1. Idempotent Ed25519 signing key ────────────────────────────────────────
+# An alias is the stable handle; the underlying key id is looked up from it, so a
+# re-run finds the existing key instead of creating a second billable one.
+if KEY_ARN="$(aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS" \
+                --query 'KeyMetadata.Arn' --output text 2>/dev/null)"; then
+  echo "key $KEY_ALIAS already exists ($KEY_ARN), skipping create"
+else
+  KEY_ARN="$(aws kms create-key --region "$REGION" \
+    --key-spec ECC_NIST_EDWARDS25519 \
+    --key-usage SIGN_VERIFY \
+    --description "MCP-RE response-signing identity (ADR-MCPS-028 §B live lane)" \
+    --query 'KeyMetadata.Arn' --output text)"
+  aws kms create-alias --region "$REGION" \
+    --alias-name "$KEY_ALIAS" --target-key-id "$KEY_ARN"
+  echo "created $KEY_ARN"
+fi
+
+export MCP_RE_AWS_KMS_REGION="$REGION"
+export MCP_RE_AWS_KMS_KEY_ID="$KEY_ARN"
+
+# ── 2. The load-bearing lane: a real KMS signature verifies under mcp-re-core ──
+# Runs ONLY the AWS live test target, so no other binary contributes a "0 tests"
+# exit-0. The test itself panics if its required env is absent.
+MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
+cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test aws_kms_live_test -- --ignored --nocapture
+
+# ── 2b. The delegated-root lane — what the cross-cloud claim actually rests on ──
+# ADR-MCPRE-052: the KMS root ISSUES a short-TTL credential and an in-memory
+# delegated key signs the response. Lane 2 proves only that a real KMS signature
+# verifies; it does NOT reach the delegated authority, so it cannot by itself earn
+# the "delegated-root signing validated against AWS KMS" wording.
+MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
+cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test aws_kms_delegated_required_live_test -- --ignored --nocapture
+
+# ── 3. FIPS protection-level probe (docs/security/aws-kms-fips-protection-level.md) ──
+# AWS KMS has no per-key protection-level knob, so the question "is the Ed25519
+# signing path served in the HSM's FIPS-approved mode?" is answered by whether the
+# FIPS endpoint — which routes to modules constrained to approved-mode services —
+# accepts an ED25519_SHA_512 Sign. This probe RECORDS the platform's answer; it
+# does not gate the lane above, whose claim (a real KMS signature verifies) holds
+# either way.
+echo
+echo "─── FIPS-endpoint probe: ED25519_SHA_512 Sign against $FIPS_ENDPOINT ───"
+PROBE_STATUS=0
+aws kms sign --region "$REGION" --endpoint-url "$FIPS_ENDPOINT" \
+  --key-id "$KEY_ARN" \
+  --message "$(printf 'mcp-re fips endpoint probe' | base64)" \
+  --message-type RAW \
+  --signing-algorithm ED25519_SHA_512 \
+  --query 'SigningAlgorithm' --output text || PROBE_STATUS=$?
+
+if [ "$PROBE_STATUS" -eq 0 ]; then
+  echo "PROBE RESULT: ACCEPTED — the FIPS endpoint served an Ed25519 signature."
+  echo "  Record this output in docs/security/aws-kms-fips-protection-level.md and"
+  echo "  re-check the CMVP algorithm list before publishing any FIPS-L3 language:"
+  echo "  endpoint acceptance is the platform's answer, not a validation certificate."
+else
+  echo "PROBE RESULT: REJECTED (exit $PROBE_STATUS) — Ed25519 is not served in"
+  echo "  approved mode at the FIPS endpoint. The custody label stays"
+  echo "  'HSM-held, not FIPS-validated for this algorithm'."
+fi
+
+# ── 4. Teardown ───────────────────────────────────────────────────────────────
+# Comment out to keep the key across runs; $1.00/month prorated hourly is the
+# entire standing cost. 7 days is the KMS minimum deletion window.
+echo
+echo "Scheduling $KEY_ARN for deletion (7-day window; cancel with"
+echo "  aws kms cancel-key-deletion --region $REGION --key-id $KEY_ARN)"
+aws kms delete-alias --region "$REGION" --alias-name "$KEY_ALIAS" || true
+aws kms schedule-key-deletion --region "$REGION" \
+  --key-id "$KEY_ARN" --pending-window-in-days 7 \
+  --query 'DeletionDate' --output text
