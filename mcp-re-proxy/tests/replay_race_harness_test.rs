@@ -45,6 +45,11 @@ use mcp_re_proxy::SharedReplayCache;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayDecision;
 
+/// Every entry in this file is charged to one signer; the per-actor budget is
+/// exercised by its own test in `async_replay.rs`.
+#[cfg(feature = "async_serve")]
+const TEST_ACTOR: &str = "did:example:test-signer";
+
 /// A retain-until far in the future so the store's defensive pre-store staleness
 /// guard (`is_stale_pre_store`, MCPS-08) never rejects the submission before the
 /// race — the vestigial `now_unix = 0` the trait passes means the guard reduces
@@ -350,6 +355,7 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd() {
 #[test]
 fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
     use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_proxy::async_replay::ReplayInsert;
     use mcp_re_proxy::RedisAsyncAtomicReplayStore;
 
     let url = std::env::var("MCP_RE_TEST_REDIS_URL")
@@ -390,7 +396,12 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
                 let key = key.clone();
                 handles.push(tokio::spawn(async move {
                     store
-                        .atomic_insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                        .atomic_insert_if_absent(ReplayInsert::new(
+                            &key,
+                            TEST_ACTOR,
+                            FAR_FUTURE_RETAIN_UNTIL,
+                            0,
+                        ))
                         .await
                 }));
             }
@@ -419,6 +430,7 @@ fn cross_core_same_key_admits_exactly_one_fresh_redis_async() {
 fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
     use mcp_re_proxy::async_etcd_store::EtcdAsyncAtomicReplayStore;
     use mcp_re_proxy::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_proxy::async_replay::ReplayInsert;
 
     let endpoint = std::env::var("MCP_RE_TEST_ETCD_URL")
         .ok()
@@ -456,7 +468,12 @@ fn cross_core_same_key_admits_exactly_one_fresh_etcd_async() {
                 let key = key.clone();
                 handles.push(tokio::spawn(async move {
                     store
-                        .atomic_insert_if_absent(&key, FAR_FUTURE_RETAIN_UNTIL, 0)
+                        .atomic_insert_if_absent(ReplayInsert::new(
+                            &key,
+                            TEST_ACTOR,
+                            FAR_FUTURE_RETAIN_UNTIL,
+                            0,
+                        ))
                         .await
                 }));
             }

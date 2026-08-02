@@ -47,26 +47,55 @@ use crate::shared_replay::ReplayStoreError;
 pub type ReplayDecisionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ReplayDecision, ReplayStoreError>> + Send + 'a>>;
 
+/// One insert-if-absent request: the composite key, the actor the entry is BUDGETED
+/// against, and the two clock anchors.
+///
+/// A struct rather than four positional arguments because `key` and `actor` are both
+/// `&str`: transposed at a call site they would still compile, and the result is a
+/// store that budgets every entry against a nonce — which is to say, against nothing.
+#[derive(Clone, Copy, Debug)]
+pub struct ReplayInsert<'a> {
+    /// The collision-safe composite key the tier composed (signer|audience|nonce).
+    pub key: &'a str,
+    /// The RESOLVED signer this entry is charged to. Retention is a shared resource,
+    /// so every entry has to name who is holding it; see
+    /// [`InMemoryAsyncAtomicReplayStore`] for what the charge buys.
+    pub actor: &'a str,
+    /// The skew-folded retain-until the tier computed.
+    pub expires_at_unix: i64,
+    /// The same vestigial `0` anchor as the sync contract — a backend that derives a
+    /// server-side TTL reads its OWN clock and ignores this.
+    pub now_unix: i64,
+}
+
+impl<'a> ReplayInsert<'a> {
+    /// Build an insert charged to `actor`.
+    pub fn new(key: &'a str, actor: &'a str, expires_at_unix: i64, now_unix: i64) -> Self {
+        ReplayInsert {
+            key,
+            actor,
+            expires_at_unix,
+            now_unix,
+        }
+    }
+}
+
 /// The ASYNC authoritative (L2) replay store contract — the async analogue of
 /// [`crate::shared_replay::AtomicReplayStore`]. One server-side-atomic
 /// insert-if-absent-with-TTL, awaited on the request path without blocking a runtime
 /// worker.
 pub trait AsyncAtomicReplayStore: Send + Sync {
-    /// Atomically insert `key` iff absent, with a TTL derived from the skew-folded
-    /// `expires_at_unix` relative to the store's OWN clock. `now_unix` is the same
-    /// vestigial `0` anchor as the sync contract — a backend that derives a
-    /// server-side TTL MUST read its own clock and ignore it (see
-    /// [`crate::shared_replay::AtomicReplayStore::insert_if_absent`]).
+    /// Atomically insert `insert.key` iff absent, with a TTL derived from the
+    /// skew-folded `insert.expires_at_unix` relative to the store's OWN clock.
     ///
     /// `Fresh` iff the key was absent and is now recorded (this caller won the
     /// insert), `Replay` if already present, or [`ReplayStoreError`] on operational
     /// failure (⇒ fail closed). This is the ONLY source of an authoritative `Fresh`.
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        now_unix: i64,
-    ) -> ReplayDecisionFuture<'a>;
+    ///
+    /// A backend that bounds its own retention MUST budget it per `insert.actor`; one
+    /// that delegates retention to a server-side TTL and holds no ceiling has nothing
+    /// to budget and ignores it.
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a>;
 
     /// This store's declared durability class (ADR-MCPS-020). Defaults to the
     /// conservative single-process reference; only a genuinely cross-process backend
@@ -92,10 +121,21 @@ pub struct InMemoryAsyncAtomicReplayStore {
 
 #[derive(Default)]
 struct InMemoryState {
-    /// composite key -> retain-until (the skew-folded instant the tier computed).
-    seen: HashMap<String, i64>,
+    /// composite key -> the retained entry.
+    seen: HashMap<String, RetainedEntry>,
     /// Admitted inserts since the last prune; drives the eviction cadence.
     inserts_since_prune: u64,
+    /// Retained entries per actor. The `Arc<str>` is shared with every entry charged
+    /// to that actor, so an actor's name is dropped as soon as its last entry is
+    /// pruned — the accounting map cannot outgrow the set it accounts for.
+    per_actor: HashMap<Arc<str>, usize>,
+}
+
+/// One retained entry: when it stops being retained, and who is holding it.
+struct RetainedEntry {
+    /// The skew-folded instant the tier computed.
+    retain_until: i64,
+    actor: Arc<str>,
 }
 
 /// A unix-seconds clock. Local to this module so the async in-memory store keeps its
@@ -130,6 +170,44 @@ const ASYNC_PRUNE_EVERY_N_INSERTS: u64 = 64;
 /// cache's `MAX_ENTRIES`.
 const ASYNC_MAX_ENTRIES: usize = 1_000_000;
 
+/// The share of [`ASYNC_MAX_ENTRIES`] no single actor may occupy, as a divisor: the
+/// reserve is `max_entries / ASYNC_RESERVE_DIVISOR`.
+///
+/// The ceiling alone is a global resource one signer can exhaust, and exhausting it
+/// answers `mcp-re.replay_cache_unavailable` to EVERY other signer on the replica —
+/// a signature-valid peer streaming distinct fresh nonces takes the whole replay tier
+/// down with it. Holding a reserve back means the greedy actor hits its own wall while
+/// the store still has room for everyone else.
+const ASYNC_RESERVE_DIVISOR: usize = 5;
+
+/// The per-actor retention budget, evaluated only when the store is under pressure.
+///
+/// `actors` is the number of actors currently holding entries. The budget is the
+/// tighter of two bounds:
+///
+/// * `max_entries - reserve` — no actor may occupy the reserve, even when it is the
+///   only actor on the replica. This is what leaves room for a peer that has not sent
+///   anything yet.
+/// * `max_entries / actors` — an equal split once there is more than one actor, so a
+///   greedy signer is refused before a quiet one is.
+///
+/// Minting identities to shrink everyone's share is not free: `actor` is the signer
+/// the verifier RESOLVED, so it is an authenticated delegation credential rooted in a
+/// trust anchor, not a self-asserted string.
+fn per_actor_budget(max_entries: usize, actors: usize) -> usize {
+    let reserve = max_entries / ASYNC_RESERVE_DIVISOR;
+    let solo_cap = max_entries.saturating_sub(reserve);
+    let equal_split = max_entries / actors.max(1);
+    solo_cap.min(equal_split).max(1)
+}
+
+/// Occupancy at which per-actor budgeting starts applying. Below it the store has room
+/// for every caller, so budgeting could only refuse a request the store could have
+/// served — one busy legitimate signer must not be throttled for being busy.
+fn under_pressure(len: usize, max_entries: usize) -> bool {
+    len >= max_entries.saturating_sub(max_entries / ASYNC_RESERVE_DIVISOR)
+}
+
 impl Default for InMemoryAsyncAtomicReplayStore {
     fn default() -> Self {
         InMemoryAsyncAtomicReplayStore {
@@ -158,6 +236,16 @@ impl InMemoryAsyncAtomicReplayStore {
         self
     }
 
+    /// Entries currently charged to `actor`. A poisoned lock reports 0 for the same
+    /// reason [`Self::len`] does — this is an inspection aid, not a decision.
+    #[cfg(test)]
+    fn held_by(&self, actor: &str) -> usize {
+        self.inner
+            .lock()
+            .map(|s| s.per_actor.get(actor).copied().unwrap_or(0))
+            .unwrap_or(0)
+    }
+
     /// Number of retained entries (test/inspection aid). A poisoned lock reports 0
     /// rather than panicking — this is an inspection aid, not a decision.
     pub fn len(&self) -> usize {
@@ -175,6 +263,7 @@ impl InMemoryAsyncAtomicReplayStore {
     fn insert_locked(
         &self,
         key: &str,
+        actor: &str,
         retain_until: i64,
         now_unix: i64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
@@ -218,7 +307,43 @@ impl InMemoryAsyncAtomicReplayStore {
         if state.inserts_since_prune >= ASYNC_PRUNE_EVERY_N_INSERTS {
             state.inserts_since_prune = 0;
             let now = (self.clock)();
-            state.seen.retain(|_, &mut until| until >= now);
+            let InMemoryState {
+                seen, per_actor, ..
+            } = &mut *state;
+            seen.retain(|_, entry| {
+                if entry.retain_until >= now {
+                    return true;
+                }
+                // The per-actor charge is released with the entry it accounts for, and
+                // the actor's last release drops its name from the map entirely.
+                if let Some(held) = per_actor.get_mut(&entry.actor) {
+                    *held -= 1;
+                    if *held == 0 {
+                        per_actor.remove(&entry.actor);
+                    }
+                }
+                false
+            });
+        }
+
+        // Under pressure, spend what is left of the ceiling on the actors that are not
+        // already holding more than their share. Refusing the greedy signer here is
+        // what keeps the refusal from landing on every OTHER signer at the ceiling
+        // below. Still `Unavailable` and never `Fresh`: an unrecorded nonce can be
+        // replayed, so refusing is the only safe answer either way.
+        if under_pressure(state.seen.len(), self.max_entries) {
+            let budget = per_actor_budget(self.max_entries, state.per_actor.len());
+            let held = state.per_actor.get(actor).copied().unwrap_or(0);
+            if held >= budget {
+                return Err(ReplayStoreError::Unavailable {
+                    details: format!(
+                        "in-memory async replay store: actor holds {held} of its {budget} \
+                         retained-entry budget while the store is at {} of {} entries",
+                        state.seen.len(),
+                        self.max_entries
+                    ),
+                });
+            }
         }
 
         // Fail-closed ceiling: refuse rather than grow without bound. Admitting a
@@ -232,22 +357,37 @@ impl InMemoryAsyncAtomicReplayStore {
                 ),
             });
         }
-        state.seen.insert(key.to_string(), retain_until);
+
+        // One `Arc<str>` per actor, shared by every entry charged to it, so the entry
+        // map carries a pointer rather than a copy of the signer id.
+        let actor: Arc<str> = match state.per_actor.get_key_value(actor) {
+            Some((name, _)) => Arc::clone(name),
+            None => Arc::from(actor),
+        };
+        *state.per_actor.entry(Arc::clone(&actor)).or_insert(0) += 1;
+        state.seen.insert(
+            key.to_string(),
+            RetainedEntry {
+                retain_until,
+                actor,
+            },
+        );
         Ok(ReplayDecision::Fresh)
     }
 }
 
 impl AsyncAtomicReplayStore for InMemoryAsyncAtomicReplayStore {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
-        // `expires_at_unix` is the skew-folded retain-until the tier computed. The
-        // decision is a lock-guarded insert, wrapped in a ready future so it satisfies
-        // the async contract without ever blocking a runtime worker.
-        Box::pin(async move { self.insert_locked(key, expires_at_unix, now_unix) })
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
+        // The decision is a lock-guarded insert, wrapped in a ready future so it
+        // satisfies the async contract without ever blocking a runtime worker.
+        Box::pin(async move {
+            self.insert_locked(
+                insert.key,
+                insert.actor,
+                insert.expires_at_unix,
+                insert.now_unix,
+            )
+        })
     }
 }
 
@@ -297,8 +437,11 @@ impl AsyncReplayTier {
     ) -> Result<ReplayDecision, ReplayCacheError> {
         let composite = composite_replay_key(&key.signer, &key.audience, &key.nonce);
         let retain_until = skew_folded_retain_until(key.expires_at_unix, self.max_clock_skew_secs);
+        // The entry is charged to the resolved signer — the same identity the composite
+        // key's first field carries, passed explicitly so a store never has to recover
+        // it by parsing a key it did not compose.
         self.store
-            .atomic_insert_if_absent(&composite, retain_until, 0)
+            .atomic_insert_if_absent(ReplayInsert::new(&composite, &key.signer, retain_until, 0))
             .await
             .map_err(ReplayCacheError::from)
     }
@@ -399,25 +542,17 @@ impl<L2: AsyncAtomicReplayStore> L1FastRejectStore<L2> {
 }
 
 impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2> {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
         Box::pin(async move {
             // L1 fast-reject: a known replay never touches L2 (and never yields Fresh).
-            if let Some(replay) = self.l1_lookup(key) {
+            if let Some(replay) = self.l1_lookup(insert.key) {
                 return Ok(replay);
             }
             // Authoritative L2 — the ONLY source of Fresh. On any decision the key is
             // now present in L2, so cache it in L1 for future fast-reject. On an L2
             // error, fail closed and record NOTHING (the key's presence is unknown).
-            let decision = self
-                .l2
-                .atomic_insert_if_absent(key, expires_at_unix, now_unix)
-                .await?;
-            self.l1_record(key);
+            let decision = self.l2.atomic_insert_if_absent(insert).await?;
+            self.l1_record(insert.key);
             Ok(decision)
         })
     }
@@ -433,6 +568,10 @@ impl<L2: AsyncAtomicReplayStore> AsyncAtomicReplayStore for L1FastRejectStore<L2
 mod tests {
     use super::*;
 
+    /// Every entry in these tests is charged to one signer; the per-actor budget
+    /// has its own test below.
+    const TEST_ACTOR: &str = "did:example:test-signer";
+
     fn block<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Runtime::new().expect("rt").block_on(f)
     }
@@ -443,14 +582,14 @@ mod tests {
         block(async {
             assert_eq!(
                 store
-                    .atomic_insert_if_absent("nonce-1", 100, 0)
+                    .atomic_insert_if_absent(ReplayInsert::new("nonce-1", TEST_ACTOR, 100, 0))
                     .await
                     .unwrap(),
                 ReplayDecision::Fresh
             );
             assert_eq!(
                 store
-                    .atomic_insert_if_absent("nonce-1", 100, 0)
+                    .atomic_insert_if_absent(ReplayInsert::new("nonce-1", TEST_ACTOR, 100, 0))
                     .await
                     .unwrap(),
                 ReplayDecision::Replay
@@ -476,7 +615,12 @@ mod tests {
             // A prune runs on the 64th insert; the first 63 all retain-until 1_500.
             for i in 0..(ASYNC_PRUNE_EVERY_N_INSERTS - 1) {
                 store
-                    .atomic_insert_if_absent(&format!("nonce-{i}"), 1_500, 0)
+                    .atomic_insert_if_absent(ReplayInsert::new(
+                        &format!("nonce-{i}"),
+                        TEST_ACTOR,
+                        1_500,
+                        0,
+                    ))
                     .await
                     .unwrap();
             }
@@ -486,7 +630,7 @@ mod tests {
             // cadence and evicts them.
             *now.lock().expect("clock") = 2_000;
             store
-                .atomic_insert_if_absent("nonce-live", 9_000, 0)
+                .atomic_insert_if_absent(ReplayInsert::new("nonce-live", TEST_ACTOR, 9_000, 0))
                 .await
                 .unwrap();
             assert_eq!(store.len(), 1, "only the still-live entry survives");
@@ -505,13 +649,20 @@ mod tests {
             for i in 0..3 {
                 assert_eq!(
                     store
-                        .atomic_insert_if_absent(&format!("nonce-{i}"), 9_000, 0)
+                        .atomic_insert_if_absent(ReplayInsert::new(
+                            &format!("nonce-{i}"),
+                            TEST_ACTOR,
+                            9_000,
+                            0
+                        ))
                         .await
                         .unwrap(),
                     ReplayDecision::Fresh
                 );
             }
-            let refused = store.atomic_insert_if_absent("nonce-over", 9_000, 0).await;
+            let refused = store
+                .atomic_insert_if_absent(ReplayInsert::new("nonce-over", TEST_ACTOR, 9_000, 0))
+                .await;
             assert!(
                 matches!(refused, Err(ReplayStoreError::Unavailable { .. })),
                 "past the ceiling the store must refuse, got {refused:?}"
@@ -527,12 +678,137 @@ mod tests {
             // must not turn a known replay into an unknown.
             assert_eq!(
                 store
-                    .atomic_insert_if_absent("nonce-0", 9_000, 0)
+                    .atomic_insert_if_absent(ReplayInsert::new("nonce-0", TEST_ACTOR, 9_000, 0))
                     .await
                     .unwrap(),
                 ReplayDecision::Replay
             );
         });
+    }
+
+    /// R6-C058: the entry ceiling is a SHARED resource, so exhausting it must not be
+    /// something one signer can do to everybody else. A signature-valid peer streaming
+    /// distinct fresh nonces used to fill all `max_entries` and every OTHER signer then
+    /// got `mcp-re.replay_cache_unavailable` — one actor taking the replay tier down.
+    #[test]
+    fn one_actor_cannot_spend_the_whole_ceiling_and_deny_another() {
+        // max_entries 10 ⇒ reserve 2, pressure at 8, solo budget 8.
+        let store = InMemoryAsyncAtomicReplayStore::new()
+            .with_max_entries(10)
+            .with_clock(Box::new(|| 1_000));
+        const GREEDY: &str = "did:example:greedy";
+        const QUIET: &str = "did:example:quiet";
+
+        block(async {
+            // The greedy signer streams distinct fresh nonces until it is refused.
+            let mut admitted = 0usize;
+            for i in 0..20 {
+                let key = format!("greedy-nonce-{i}");
+                match store
+                    .atomic_insert_if_absent(ReplayInsert::new(&key, GREEDY, 9_000, 0))
+                    .await
+                {
+                    Ok(ReplayDecision::Fresh) => admitted += 1,
+                    Err(ReplayStoreError::Unavailable { .. }) => break,
+                    other => panic!("unexpected decision {other:?}"),
+                }
+            }
+            assert_eq!(
+                admitted, 8,
+                "one actor must stop at its budget, not at the global ceiling"
+            );
+            assert_eq!(store.held_by(GREEDY), 8);
+            assert!(
+                store.len() < 10,
+                "the reserve must still be free, got {} of 10 entries",
+                store.len()
+            );
+
+            // THE PROPERTY: a signer that has sent nothing is still served while the
+            // greedy one is refused. Before the budget existed this was the request
+            // that failed.
+            assert_eq!(
+                store
+                    .atomic_insert_if_absent(ReplayInsert::new("quiet-nonce-0", QUIET, 9_000, 0))
+                    .await
+                    .expect("the quiet actor must still be admitted"),
+                ReplayDecision::Fresh
+            );
+
+            // And the greedy one stays refused — fail closed on the frozen token, never
+            // an allow, because an unrecorded nonce can be replayed.
+            let refused = store
+                .atomic_insert_if_absent(ReplayInsert::new("greedy-nonce-99", GREEDY, 9_000, 0))
+                .await
+                .expect_err("over budget");
+            assert_eq!(
+                ReplayCacheError::from(refused).to_mcp_re_error(),
+                mcp_re_core::McpReError::ReplayCacheUnavailable
+            );
+
+            // A known replay is still reported as one while over budget: refusing to
+            // GROW must not turn a known replay into an unknown.
+            assert_eq!(
+                store
+                    .atomic_insert_if_absent(ReplayInsert::new("greedy-nonce-0", GREEDY, 9_000, 0))
+                    .await
+                    .unwrap(),
+                ReplayDecision::Replay
+            );
+        });
+    }
+
+    /// The charge is released with the entry it accounts for — otherwise a busy actor
+    /// would be permanently penalised for traffic that has long since expired, and the
+    /// budget would become a slow leak rather than a bound.
+    #[test]
+    fn pruning_releases_the_per_actor_charge() {
+        let now = Arc::new(Mutex::new(1_000i64));
+        let n = Arc::clone(&now);
+        let store = InMemoryAsyncAtomicReplayStore::new()
+            .with_clock(Box::new(move || *n.lock().expect("clock")));
+        const ACTOR: &str = "did:example:busy";
+
+        block(async {
+            for i in 0..(ASYNC_PRUNE_EVERY_N_INSERTS - 1) {
+                store
+                    .atomic_insert_if_absent(ReplayInsert::new(
+                        &format!("nonce-{i}"),
+                        ACTOR,
+                        1_500,
+                        0,
+                    ))
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(store.held_by(ACTOR) as u64, ASYNC_PRUNE_EVERY_N_INSERTS - 1);
+
+            // Past their retain-until, the next insert triggers the prune cadence.
+            *now.lock().expect("clock") = 2_000;
+            store
+                .atomic_insert_if_absent(ReplayInsert::new("nonce-live", ACTOR, 9_000, 0))
+                .await
+                .unwrap();
+            assert_eq!(
+                store.held_by(ACTOR),
+                1,
+                "only the still-live entry is still charged"
+            );
+        });
+    }
+
+    /// The budget tightens as actors appear, and never below one entry.
+    #[test]
+    fn the_budget_reserves_headroom_and_splits_evenly() {
+        // Solo: capped below the ceiling, so a newcomer always has room.
+        assert_eq!(per_actor_budget(1_000_000, 1), 800_000);
+        // Shared: the equal split is tighter and wins.
+        assert_eq!(per_actor_budget(1_000_000, 2), 500_000);
+        assert_eq!(per_actor_budget(1_000_000, 100), 10_000);
+        // Never zero — a budget of 0 would refuse every actor and close the tier.
+        assert_eq!(per_actor_budget(10, 1_000), 1);
+        assert!(under_pressure(800_000, 1_000_000));
+        assert!(!under_pressure(799_999, 1_000_000));
     }
 
     /// MCPS-08: an already-past `retain_until` is refused BEFORE recording. Every
@@ -543,18 +819,18 @@ mod tests {
         let store = InMemoryAsyncAtomicReplayStore::new();
         block(async {
             let err = store
-                .atomic_insert_if_absent("stale", 100, 100)
+                .atomic_insert_if_absent(ReplayInsert::new("stale", TEST_ACTOR, 100, 100))
                 .await
                 .expect_err("retain_until == now is not retained");
             assert!(matches!(err, ReplayStoreError::Unavailable { .. }));
             assert!(store
-                .atomic_insert_if_absent("stale", 99, 100)
+                .atomic_insert_if_absent(ReplayInsert::new("stale", TEST_ACTOR, 99, 100))
                 .await
                 .is_err());
             // One second of retention IS retention.
             assert_eq!(
                 store
-                    .atomic_insert_if_absent("live", 101, 100)
+                    .atomic_insert_if_absent(ReplayInsert::new("live", TEST_ACTOR, 101, 100))
                     .await
                     .expect("a future retain_until records"),
                 ReplayDecision::Fresh
@@ -569,25 +845,35 @@ mod tests {
         block(async {
             // First sight is authoritative Fresh (from L2); the repeat is an L1 hit.
             assert_eq!(
-                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                l1.atomic_insert_if_absent(ReplayInsert::new("a", TEST_ACTOR, 100, 0))
+                    .await
+                    .unwrap(),
                 ReplayDecision::Fresh
             );
             assert_eq!(
-                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                l1.atomic_insert_if_absent(ReplayInsert::new("a", TEST_ACTOR, 100, 0))
+                    .await
+                    .unwrap(),
                 ReplayDecision::Replay
             );
             // Fill past capacity: 'a' is evicted from L1, but L2 still remembers it,
             // so a re-check is Replay (never a false Fresh — the load-bearing invariant).
             assert_eq!(
-                l1.atomic_insert_if_absent("b", 100, 0).await.unwrap(),
+                l1.atomic_insert_if_absent(ReplayInsert::new("b", TEST_ACTOR, 100, 0))
+                    .await
+                    .unwrap(),
                 ReplayDecision::Fresh
             );
             assert_eq!(
-                l1.atomic_insert_if_absent("c", 100, 0).await.unwrap(),
+                l1.atomic_insert_if_absent(ReplayInsert::new("c", TEST_ACTOR, 100, 0))
+                    .await
+                    .unwrap(),
                 ReplayDecision::Fresh
             );
             assert_eq!(
-                l1.atomic_insert_if_absent("a", 100, 0).await.unwrap(),
+                l1.atomic_insert_if_absent(ReplayInsert::new("a", TEST_ACTOR, 100, 0))
+                    .await
+                    .unwrap(),
                 ReplayDecision::Replay
             );
         });

@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
+use crate::async_replay::ReplayInsert;
 use crate::redis_store::classify_wait_acks;
 use crate::redis_store::compute_ttl_ms;
 use crate::redis_store::is_nonpositive_ttl;
@@ -142,13 +143,12 @@ impl RedisAsyncAtomicReplayStore {
 }
 
 impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        _now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
-        let key = key.to_string();
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
+        // Retention here is a Redis-side `SET NX PX` TTL, not a bounded local set, so
+        // this backend holds no ceiling for one actor to exhaust and nothing to budget
+        // `insert.actor` against.
+        let expires_at_unix = insert.expires_at_unix;
+        let key = insert.key.to_string();
         let mut conn = self.conn.clone();
         let wait_quorum = self.wait_quorum;
         // Read the store's OWN clock once (ignore the trait's vestigial 0), and reuse

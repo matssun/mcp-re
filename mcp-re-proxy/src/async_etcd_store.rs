@@ -56,6 +56,7 @@ use mcp_re_core::ReplayDurabilityClass;
 
 use crate::async_replay::AsyncAtomicReplayStore;
 use crate::async_replay::ReplayDecisionFuture;
+use crate::async_replay::ReplayInsert;
 use crate::etcd_store::build_lease_grant_body;
 use crate::etcd_store::build_txn_body;
 use crate::etcd_store::compute_ttl_secs;
@@ -199,12 +200,10 @@ impl EtcdAsyncAtomicReplayStore {
 }
 
 impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
-    fn atomic_insert_if_absent<'a>(
-        &'a self,
-        key: &'a str,
-        expires_at_unix: i64,
-        _now_unix: i64,
-    ) -> ReplayDecisionFuture<'a> {
+    fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
+        // Retention is an etcd lease TTL, not a bounded local set: no ceiling for one
+        // actor to exhaust, so nothing to budget `insert.actor` against.
+        let (key, expires_at_unix) = (insert.key, insert.expires_at_unix);
         // Read the store's OWN clock once (the trait's vestigial now_unix=0 is
         // ignored), and reuse it for the lease-TTL arithmetic.
         let now = (self.clock)();
@@ -298,6 +297,10 @@ mod tests {
     //! accepts and then says nothing.
 
     use super::*;
+
+    /// Every entry in these tests is charged to one signer; the per-actor budget
+    /// has its own test below.
+    const TEST_ACTOR: &str = "did:example:test-signer";
     use crate::async_replay::AsyncAtomicReplayStore;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -352,7 +355,12 @@ mod tests {
             Duration::from_millis(150),
         );
         let err = store
-            .atomic_insert_if_absent("did:example:host|aud|nonce", NOW, 0)
+            .atomic_insert_if_absent(ReplayInsert::new(
+                "did:example:host|aud|nonce",
+                TEST_ACTOR,
+                NOW,
+                0,
+            ))
             .await
             .expect_err("an already-stale request must never be admitted as Fresh");
         let ReplayStoreError::Unavailable { details } = err;
@@ -384,7 +392,12 @@ mod tests {
         let started = tokio::time::Instant::now();
         let err = store
             // A comfortably fresh window, so the staleness guard above is not what fires.
-            .atomic_insert_if_absent("did:example:host|aud|nonce-fresh", NOW + 300, 0)
+            .atomic_insert_if_absent(ReplayInsert::new(
+                "did:example:host|aud|nonce-fresh",
+                TEST_ACTOR,
+                NOW + 300,
+                0,
+            ))
             .await
             .expect_err("an unanswering gateway must fail closed, not hang");
         let elapsed = started.elapsed();
