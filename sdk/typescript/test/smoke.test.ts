@@ -29,7 +29,7 @@ describe("mcp-re-sdk smoke (built package)", () => {
       "did:example:server-1", // audienceId
       undefined, // route
       "dpop-token",
-      "nonce-smoke-0001",
+      "nonce-smoke-0001-128bit", // >= the 22-char (128-bit) emission floor
       1000, // created
       2000, // expires
     );

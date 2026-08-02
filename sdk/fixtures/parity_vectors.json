@@ -4,7 +4,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJhdXRob3JpemF0aW9uX3N5c3RlbV9pZCI6ImF1dGh6LTEiLCJiaW5kaW5nX3R5cGUiOiJyZWZlcmVuY2UtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGciLCJyZWZlcmVuY2Vfc2NoZW1lX2lkIjoic2NoZW1lLTEiLCJyZWZlcmVuY2VfdmFsdWUiOiJncmFudC0xMjMifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "WjE-dDKss1Nl-QYg70fPARRnwHmXxlqGFZ5AUO5EoPE",
+        "evidence_digest_value": "NBt8CWVYsRsd217kwKwohp7A6HNW8_FwbPQ9hrgUTZI",
         "headers": [
           [
             "content-type",
@@ -20,11 +20,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0005\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0005-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:ubZEJzN818MK3Muog9BZjVdlUO/NDem/jWnZtgMNojx7Pyl2NC4+BJ+hmz29x61KKwYQfBFNdv85K7JN7aYCBg==:"
+            "mcp-re=:w7Lx+dYKropt0Ds6fsRdwVT0QGBoS8LGJivAhmXSmaRVJCTfB7KWKcpAnHqruCfNmocBBalYFoSDicUEq2F/Aw==:"
           ]
         ],
         "method": "POST",
@@ -39,7 +39,7 @@
         "id_json": "1",
         "key_id": "key-1",
         "method": "tools/list",
-        "nonce": "nonce-parity-0005",
+        "nonce": "nonce-parity-0005-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -50,7 +50,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifSx7ImFydGlmYWN0X3R5cGUiOiJwZHAtZGVjaXNpb24iLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IlZZNjhjUnB5bGZva3RhaXVlbTY5QzJTS1UyUUltbXF6NUlrUnJZeEFQOGcifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "N6MkOcFui6ItC7Go_gZXwF40bUhXcD3WHPS6XvH_ouA",
+        "evidence_digest_value": "aZpmwI3IsdyXsC21oLLEkbFTfFt5CVtZZcx_P5Mvo14",
         "headers": [
           [
             "content-type",
@@ -66,11 +66,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0004\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0004-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:NN3+eFfcLBTO6iMdUvtZ+5egpkVgziLp4txbMb4Cx/hyQdKB4HlkcMUh0G0pMBNUzU27ZodFNZUVd6Zl6rYlDw==:"
+            "mcp-re=:0VGjsg3dOQcoW78eMd3ozHbZzzBV4XzhznTbecnNIyAFL18F/bmLNY2qDnVw4oXHGvaQd1WThXNy7aHR+1ThCw==:"
           ]
         ],
         "method": "POST",
@@ -85,7 +85,7 @@
         "id_json": "1",
         "key_id": "key-1",
         "method": "tools/list",
-        "nonce": "nonce-parity-0004",
+        "nonce": "nonce-parity-0004-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -96,7 +96,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJjb250aW51YXRpb24iOnsiaW5wdXRfcmVxdWlyZWRfcmVzcG9uc2VfZXZpZGVuY2UiOnsiZGlnZXN0X2FsZyI6InNoYS0yNTYiLCJkaWdlc3RfdmFsdWUiOiJhWEp5TFdoaGJtUnNaUSJ9LCJwcmV2aW91c19yZXF1ZXN0X2V2aWRlbmNlIjp7ImRpZ2VzdF9hbGciOiJzaGEtMjU2IiwiZGlnZXN0X3ZhbHVlIjoiY0hKbGRpMW9ZVzVrYkdVIn0sInJlcXVlc3Rfc3RhdGVfZGlnZXN0Ijp7ImRpZ2VzdF9hbGciOiJzaGEyNTYiLCJkaWdlc3RfdmFsdWUiOiJUVm9oSVZJam9OZVN1VFZFczltUUsxRHo4TU01Q29aOUdQMHVyMlRUd04wIn0sInR5cGUiOiJtY3AtbXJ0In0sInByb2ZpbGUiOiJtY3AtcmUtaHR0cC12MSJ9fSwiaWQiOjEsImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJ0b29scy9saXN0IiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "1wca6weuGRJv9icqSiTTFVZSIn9cdhJRmxanQn_45EE",
+        "evidence_digest_value": "q8GTykLxYKWpmqTBFsuviGg0cfjoiIbVACrOwRmtJ5M",
         "headers": [
           [
             "content-type",
@@ -112,11 +112,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0003\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0003-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:L5DPQrokWllyT0XQhCCY0805bOAxby99YN3hMOvvZOOa2rHuGwCeiYoRg4CnnRhdYmTG2RVRk83l6L+AhJjTCQ==:"
+            "mcp-re=:bCJFFNs6M2bX5mtOhW9y4TlFOXcHhdKpG21p3i9BKEZcEGDUD3c83Jx5RVuiXKOvEYL6I2+/J/akubGquwq8AA==:"
           ]
         ],
         "method": "POST",
@@ -135,7 +135,7 @@
         "id_json": "1",
         "key_id": "key-1",
         "method": "tools/list",
-        "nonce": "nonce-parity-0003",
+        "nonce": "nonce-parity-0003-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -146,7 +146,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "NugAGivSPxHF-Vde23QadcJlr0ZoB_tmPd3vJYSrPSc",
+        "evidence_digest_value": "_MkeDeSun2FEg12gOL4iSZvqPMxII3A1on1Dq3ePIFo",
         "headers": [
           [
             "content-type",
@@ -162,11 +162,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:MjL9OkdJQwlD9/r7rxFI3UnVV4m5S5OLVtulWW9P6FU6GsoHoeQvnKd+S2IN/SGcwHrNEeKLN0Kp8xXOX3uSAg==:"
+            "mcp-re=:97HQPGgoH5eP3zGSPyUW0EM1hvJ6fBVWKQC6G3Edc6474uNFyyfJaXFqbRS3OKhqii5p477iUy2K1hzW8RhQAA==:"
           ]
         ],
         "method": "POST",
@@ -180,7 +180,7 @@
         "id_json": "1",
         "key_id": "key-1",
         "method": "tools/list",
-        "nonce": "nonce-parity-0001",
+        "nonce": "nonce-parity-0001-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -191,7 +191,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJub3RpZmljYXRpb25zL2luaXRpYWxpemVkIiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "dp-IUlKxef9oY7fxQ8P2WUmAYLogpuLzIk0dK8xqYis",
+        "evidence_digest_value": "uciueRhNB3dbnQAkODa0lbk8sVAIHuRZwCTNk_yU7BM",
         "headers": [
           [
             "content-type",
@@ -207,11 +207,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:V8R97NAaFfIsrsMfZKOl7whjDv5UoAwTOnZgZh0OjMNz3BTzTqcGUSxDjokuJRaGR1y5GHMNrlM4T98df5fJAA==:"
+            "mcp-re=:X4BcNMxyRc46+xUcNSdzK4mhGEtsKi9bmGuYOCf9q0PPIxvr7InyzkvRWyIqec3crkF+AcZJVccsaDvthIy6Cg==:"
           ]
         ],
         "method": "POST",
@@ -224,7 +224,7 @@
         "expires": 1700000300,
         "key_id": "key-1",
         "method": "notifications/initialized",
-        "nonce": "nonce-parity-0006",
+        "nonce": "nonce-parity-0006-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -235,7 +235,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImpzb25ycGMiOiIyLjAiLCJtZXRob2QiOiJub3RpZmljYXRpb25zL2luaXRpYWxpemVkIiwicGFyYW1zIjp7fX0=",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "dp-IUlKxef9oY7fxQ8P2WUmAYLogpuLzIk0dK8xqYis",
+        "evidence_digest_value": "uciueRhNB3dbnQAkODa0lbk8sVAIHuRZwCTNk_yU7BM",
         "headers": [
           [
             "content-type",
@@ -251,11 +251,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0006-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:V8R97NAaFfIsrsMfZKOl7whjDv5UoAwTOnZgZh0OjMNz3BTzTqcGUSxDjokuJRaGR1y5GHMNrlM4T98df5fJAA==:"
+            "mcp-re=:X4BcNMxyRc46+xUcNSdzK4mhGEtsKi9bmGuYOCf9q0PPIxvr7InyzkvRWyIqec3crkF+AcZJVccsaDvthIy6Cg==:"
           ]
         ],
         "method": "POST",
@@ -268,7 +268,7 @@
         "expires": 1700000300,
         "key_id": "key-1",
         "method": "notifications/initialized",
-        "nonce": "nonce-parity-0006",
+        "nonce": "nonce-parity-0006-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -279,7 +279,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJyb3V0ZSI6InJvdXRlLWEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoicmVxLTciLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvY2FsbCIsInBhcmFtcyI6eyJhcmd1bWVudHMiOnsicGF0aCI6Ii9ldGMvaG9zdHMifSwibmFtZSI6InJlYWRfZmlsZSJ9fQ==",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "VPGxQVqFczKwlHqmO5N_enOS6Mmsa4Ugy_m10D5XWyo",
+        "evidence_digest_value": "J9w-2Ab4h3jU8yun5pQILIsxabD06acNnKKmFeWqfLY",
         "headers": [
           [
             "content-type",
@@ -295,11 +295,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0002\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0002-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:NnRvaOoeHIT9PztY/w+FLTeYjny8pEVL5vXQXNAcCR/0ZYJF6k+NQipTWAIE67edPDgMya+vxCxcUoDTmD75DQ==:"
+            "mcp-re=:Dcm6VySciyL44ZuLhM+3UgPTpklxD4nC6A6+R78Rw4ssD5RB76h04ZzigTxc0Bas0HH0Jsmc7Wsz7/25RlNQCg==:"
           ]
         ],
         "method": "POST",
@@ -313,7 +313,7 @@
         "id_json": "\"req-7\"",
         "key_id": "key-1",
         "method": "tools/call",
-        "nonce": "nonce-parity-0002",
+        "nonce": "nonce-parity-0002-128bit",
         "params_json": "{\"name\":\"read_file\",\"arguments\":{\"path\":\"/etc/hosts\"}}",
         "route": "route-a",
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
@@ -324,7 +324,7 @@
       "expected": {
         "body_b64": "eyJfbWV0YSI6eyJzZS5zeW5jb20vbWNwLXJlLmh0dHAucmVxdWVzdCI6eyJhcnRpZmFjdF9iaW5kaW5ncyI6W3siYXJ0aWZhY3RfdHlwZSI6Im9hdXRoLWRwb3AiLCJiaW5kaW5nX3R5cGUiOiJvcGFxdWUtZGlnZXN0IiwiZGlnZXN0X2FsZyI6InNoYTI1NiIsImRpZ2VzdF92YWx1ZSI6IkVUVFRRU1BfN1NUdHdobVJtdDdzM3VlOVpTU2FjTWVmYnJDdThGVmF5Q3cifV0sImF1ZGllbmNlIjp7ImF1ZGllbmNlX2lkIjoiZGlkOmV4YW1wbGU6c2VydmVyLTEiLCJ0YXJnZXRfdXJpIjoiaHR0cHM6Ly9wcm94eS5pbnRlcm5hbDo4NjAwL21jcCJ9LCJwcm9maWxlIjoibWNwLXJlLWh0dHAtdjEifX0sImlkIjoxLCJqc29ucnBjIjoiMi4wIiwibWV0aG9kIjoidG9vbHMvbGlzdCIsInBhcmFtcyI6e319",
         "evidence_digest_alg": "sha256",
-        "evidence_digest_value": "NugAGivSPxHF-Vde23QadcJlr0ZoB_tmPd3vJYSrPSc",
+        "evidence_digest_value": "_MkeDeSun2FEg12gOL4iSZvqPMxII3A1on1Dq3ePIFo",
         "headers": [
           [
             "content-type",
@@ -340,11 +340,11 @@
           ],
           [
             "Signature-Input",
-            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
+            "mcp-re=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"authorization\");created=1700000000;expires=1700000300;nonce=\"nonce-parity-0001-128bit\";keyid=\"key-1\";alg=\"ed25519\";tag=\"mcp-re-http-v1\""
           ],
           [
             "Signature",
-            "mcp-re=:MjL9OkdJQwlD9/r7rxFI3UnVV4m5S5OLVtulWW9P6FU6GsoHoeQvnKd+S2IN/SGcwHrNEeKLN0Kp8xXOX3uSAg==:"
+            "mcp-re=:97HQPGgoH5eP3zGSPyUW0EM1hvJ6fBVWKQC6G3Edc6474uNFyyfJaXFqbRS3OKhqii5p477iUy2K1hzW8RhQAA==:"
           ]
         ],
         "method": "POST",
@@ -358,7 +358,7 @@
         "id_json": "1",
         "key_id": "key-1",
         "method": "tools/list",
-        "nonce": "nonce-parity-0001",
+        "nonce": "nonce-parity-0001-128bit",
         "params_json": "{}",
         "route": null,
         "seed_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",

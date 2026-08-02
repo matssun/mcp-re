@@ -22,7 +22,10 @@ const EXPIRES = 2000;
 const IN_WINDOW = 1500;
 const LATE = 2001;
 
-function sign(nonce = "nonce-corr-0001", idJson = "1"): SignedRequestJs {
+/** Pad an ad-hoc test nonce to the 22-char (128-bit) emission floor the core enforces. */
+const N = (s: string): string => `${s}-padded-to-the-128-bit-floor`;
+
+function sign(nonce = "nonce-corr-0001-128bit", idJson = "1"): SignedRequestJs {
   return signRequest(
     SEED,
     "key-1",
@@ -41,7 +44,7 @@ function sign(nonce = "nonce-corr-0001", idJson = "1"): SignedRequestJs {
 
 const ARGS = (over: Partial<RecordArgs> = {}): RecordArgs => ({
   requestId: "1",
-  nonce: "nonce-corr-0001",
+  nonce: "nonce-corr-0001-128bit",
   audienceId: "did:example:server-1",
   expectedSignerId: "did:example:server-1",
   created: CREATED,
@@ -78,7 +81,7 @@ describe("record and take", () => {
     const p = store.take(cid, IN_WINDOW);
     expect(p.correlationId).toBe(cid);
     expect(p.requestId).toBe("1");
-    expect(p.nonce).toBe("nonce-corr-0001");
+    expect(p.nonce).toBe("nonce-corr-0001-128bit");
     expect(p.evidenceDigestValue).toBe(signed.evidenceDigestValue);
     expect(store.size).toBe(0);
   });
@@ -105,10 +108,10 @@ describe("record and take", () => {
 
   it("lists the outstanding requests", () => {
     const store = new CorrelationStore();
-    store.record(sign("n-1"), ARGS({ nonce: "n-1" }));
-    store.record(sign("n-2"), ARGS({ nonce: "n-2" }));
+    store.record(sign(N("n-1")), ARGS({ nonce: N("n-1") }));
+    store.record(sign(N("n-2")), ARGS({ nonce: N("n-2") }));
     expect(store.size).toBe(2);
-    expect(new Set(store.pending().map((p) => p.nonce))).toEqual(new Set(["n-1", "n-2"]));
+    expect(new Set(store.pending().map((p) => p.nonce))).toEqual(new Set([N("n-1"), N("n-2")]));
   });
 });
 
@@ -157,8 +160,8 @@ describe("fails closed", () => {
 describe("reaping", () => {
   it("drops only the dead", () => {
     const store = new CorrelationStore();
-    store.record(sign("n-live"), ARGS({ nonce: "n-live", expires: 9000 }));
-    const cidDead = store.record(sign("n-dead"), ARGS({ nonce: "n-dead", expires: 1200 }));
+    store.record(sign(N("n-live")), ARGS({ nonce: N("n-live"), expires: 9000 }));
+    const cidDead = store.record(sign(N("n-dead")), ARGS({ nonce: N("n-dead"), expires: 1200 }));
     const dropped = store.expireBefore(1500);
     expect(dropped.map((p) => p.correlationId)).toEqual([cidDead]);
     expect(store.size).toBe(1);
@@ -208,7 +211,7 @@ describe("the store is bounded", () => {
     // rule — otherwise the leak simply moves from the pending half to the consumed one.
     const store = new CorrelationStore();
     for (let i = 0; i < 50; i += 1) {
-      const cid = store.record(sign(`n-${i}`), ARGS({ nonce: `n-${i}` }));
+      const cid = store.record(sign(N(`n-${i}`)), ARGS({ nonce: N(`n-${i}`) }));
       store.abandon(cid);
     }
     expect(store.size).toBe(0);
@@ -258,7 +261,7 @@ describe("an input-required result associates without consuming", () => {
       "did:example:server-1",
       null,
       "dpop-token",
-      "nonce-corr-answer",
+      "nonce-corr-answer-128bit",
       CREATED,
       EXPIRES,
       a.contPrevAlg,
