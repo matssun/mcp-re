@@ -227,7 +227,7 @@ inner:
 # ISSUER root (off the request path). The default image (deploy/docker/Dockerfile)
 # is built with the `gcp_kms_keysource` feature, so it serves both modes; the KMS
 # signer stays inert until `gcpKms` selects `--key-source gcp-kms`.
-keySource: fileSeed # fileSeed | gcpKms
+keySource: fileSeed # fileSeed | gcpKms | awsKms
 
 # GCP Cloud KMS custody (used only when keySource == gcpKms).
 gcpKms:
@@ -247,11 +247,48 @@ gcpKms:
   # cluster running the same image + chart as GKE). Empty on GKE (useMetadata=true).
   accessTokenSecretName: ""
 
+# AWS KMS custody (used only when keySource == awsKms). The counterpart of the
+# gcpKms block above, and the same claim: the response-signing key lives in KMS and
+# never enters the pod.
+awsKms:
+  # The region the key lives in. Also selects the REGIONAL STS endpoint used by the
+  # IRSA exchange (https://sts.<region>.amazonaws.com).
+  region: ""
+  # Key id, ARN or alias of the ECC_NIST_EDWARDS25519 signing key.
+  keyId: ""
+  # Optional override of the KMS endpoint (blank = the public regional endpoint).
+  endpoint: ""
+  # IRSA — the AWS equivalent of GKE Workload Identity. Leave TRUE on EKS: the
+  # projected service-account token is exchanged for temporary credentials, so no
+  # long-lived IAM key material enters the pod. Requires the ServiceAccount to carry
+  # an `eks.amazonaws.com/role-arn` annotation (the render guard checks it), and the
+  # bound role to hold kms:Sign + kms:GetPublicKey on the key.
+  useWebIdentity: true
+  # Optional SECOND, DISTINCT KMS key for delegated TLS (the TLS server private key
+  # stays in KMS; the chart then omits --tls-key, which the proxy requires).
+  tlsKeyId: ""
+  # Name of a Secret with `aws-access-key-id` / `aws-secret-access-key`, injected as
+  # AWS_* env when useWebIdentity=false. Needed for a cluster with no IRSA OIDC
+  # provider — e.g. a local kind cluster running the same image + chart as EKS.
+  credentialsSecretName: ""
+  # A long-lived IAM key pair in the pod does not expire and authorizes kms:Sign for
+  # as long as the Secret exists — weaker than IRSA and weaker than the gcpKms
+  # Workload-Identity path this chart's custody claim is written against. The chart
+  # REFUSES to render useWebIdentity=false unless this says the posture was chosen.
+  allowStaticCredentials: false
+
 # Pod ServiceAccount. On GKE, annotate it to bind a Google Service Account via
 # Workload Identity so the gcpKms credential path needs no key file:
 #   annotations:
 #     iam.gke.io/gcp-service-account: <gsa>@<project>.iam.gserviceaccount.com
 # The bound GSA needs roles/cloudkms.signerVerifier on the signing key.
+#
+# On EKS the equivalent for awsKms.useWebIdentity is:
+#   annotations:
+#     eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<role>
+# The bound role needs kms:Sign + kms:GetPublicKey on the signing key. That
+# annotation is what makes EKS project the token and set AWS_ROLE_ARN /
+# AWS_WEB_IDENTITY_TOKEN_FILE; without it the proxy has no credentials.
 serviceAccount:
   create: true
   # If empty, the fullname is used. Set to reuse an existing (WI-bound) account.
@@ -260,12 +297,14 @@ serviceAccount:
 
 # TLS + trust material, mounted from a Secret. The Secret MUST provide:
 #   tls.crt, client-ca.pem, trust.json
-#   tls.key      — unless gcpKms.tlsKeyVersion custodies it (then it must be ABSENT;
-#                  the proxy refuses an exported TLS key alongside a delegated one)
-#   signing-seed — ONLY under keySource: fileSeed. Under gcpKms the response key never
-#                  leaves KMS, the chart does not pass --signing-key-seed, and the
-#                  proxy never reads one, so provisioning a seed there would put a
-#                  deployment's most sensitive file in the pod for nothing.
+#   tls.key      — unless gcpKms.tlsKeyVersion / awsKms.tlsKeyId custodies it (then it
+#                  must be ABSENT; the proxy refuses an exported TLS key alongside a
+#                  delegated one)
+#   signing-seed — ONLY under keySource: fileSeed. Under EITHER KMS custody the
+#                  response key never leaves KMS, the chart does not pass
+#                  --signing-key-seed, and the proxy never reads one, so provisioning
+#                  a seed there would put a deployment's most sensitive file in the
+#                  pod for nothing.
 #
 # Every key file this Secret does provide is mounted 0400: the proxy refuses to start
 # on a group/world-readable key file, and that refusal now covers tls.key under EVERY

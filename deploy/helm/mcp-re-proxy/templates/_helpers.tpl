@@ -34,6 +34,28 @@ no explicit name is given, it is the fullname; otherwise the given name (or
 {{- end -}}
 
 {{/*
+True when the response-signing key is custodied by a cloud KMS rather than a mounted
+seed. Both KMS modes share the same three consequences — no --signing-key-seed, the
+seed must be absent from the material Secret, and the startup posture is "no signing
+key material in the pod" — so they are asked once here rather than enumerated at
+every use, which is how the awsKms path would otherwise have silently kept mounting
+a seed the proxy never reads.
+*/}}
+{{- define "mcp-re-proxy.kmsCustody" -}}
+{{- if or (eq .Values.keySource "gcpKms") (eq .Values.keySource "awsKms") -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+True when the TLS server private key is ALSO custodied by KMS, under either cloud.
+The chart must then omit --tls-key: the proxy refuses an exported TLS key alongside
+a delegated one.
+*/}}
+{{- define "mcp-re-proxy.delegatedTls" -}}
+{{- if and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion -}}true{{- end -}}
+{{- if and (eq .Values.keySource "awsKms") .Values.awsKms.tlsKeyId -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Fail-closed guardrail: --fleet must not run on a node-local replay cache. The
 shared tier is expressed via replay.redisUrl + a redis-wait-quorum / linearizable
 durabilityTier; refuse to render an unsafe fleet chart.
@@ -54,8 +76,40 @@ durabilityTier; refuse to render an unsafe fleet chart.
 {{- if not .Values.gcpKms.keyVersion -}}
 {{- fail "keySource=gcpKms requires gcpKms.keyVersion (the Cloud KMS key-version resource path)" -}}
 {{- end -}}
+{{- else if eq .Values.keySource "awsKms" -}}
+{{- if not .Values.awsKms.region -}}
+{{- fail "keySource=awsKms requires awsKms.region" -}}
+{{- end -}}
+{{- if not .Values.awsKms.keyId -}}
+{{- fail "keySource=awsKms requires awsKms.keyId (a key id, ARN or alias)" -}}
+{{- end -}}
+{{/*
+The custody claim this chart exists to make is "no key material in the pod". Under
+awsKms that holds only on the IRSA path: with useWebIdentity=false the deployment
+must mount a long-lived IAM key pair, which is a non-expiring credential authorizing
+KMS Sign for as long as the Secret exists — strictly weaker than the GKE
+Workload-Identity posture the gcpKms path takes. Refuse to render it silently.
+*/}}
+{{- if not .Values.awsKms.useWebIdentity -}}
+{{- if not .Values.awsKms.allowStaticCredentials -}}
+{{- fail "awsKms.useWebIdentity=false means this pod authenticates to KMS with a LONG-LIVED IAM key pair from awsKms.credentialsSecretName. That credential does not expire and authorizes kms:Sign for as long as the Secret exists — weaker than the IRSA posture, and weaker than the gcpKms Workload-Identity path this chart's custody claim is written against. Prefer useWebIdentity=true with an eks.amazonaws.com/role-arn annotation on the ServiceAccount. To accept the static-credential posture deliberately, set awsKms.allowStaticCredentials=true." -}}
+{{- end -}}
+{{- if not .Values.awsKms.credentialsSecretName -}}
+{{- fail "awsKms.useWebIdentity=false requires awsKms.credentialsSecretName (a Secret with aws-access-key-id / aws-secret-access-key)" -}}
+{{- end -}}
+{{- end -}}
+{{/*
+IRSA is delivered by an annotation on the pod's ServiceAccount; without it EKS
+injects no AWS_ROLE_ARN and the proxy fails closed at startup. Catching it here
+turns a CrashLoop into a render error naming the annotation.
+*/}}
+{{- if .Values.awsKms.useWebIdentity -}}
+{{- if not (get .Values.serviceAccount.annotations "eks.amazonaws.com/role-arn") -}}
+{{- fail "awsKms.useWebIdentity=true needs the pod's ServiceAccount annotated with eks.amazonaws.com/role-arn: <role>. That annotation is what makes EKS project the token and set AWS_ROLE_ARN / AWS_WEB_IDENTITY_TOKEN_FILE; without it the proxy has no credentials and refuses to start. Set serviceAccount.annotations." -}}
+{{- end -}}
+{{- end -}}
 {{- else if not (eq .Values.keySource "fileSeed") -}}
-{{- fail "keySource must be fileSeed or gcpKms" -}}
+{{- fail "keySource must be fileSeed, gcpKms or awsKms" -}}
 {{- end -}}
 {{/*
 The replay tier and the trust-epoch counter carry admitted nonces and the epoch that

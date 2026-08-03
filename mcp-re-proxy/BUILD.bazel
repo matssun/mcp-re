@@ -37,6 +37,7 @@ _PROXY_LIB_SRCS = [
     # of the default build). No async aws-sdk-kms/tokio (ADR-MCPS-018 lean-sync).
     "src/aws_kms_keysource.rs",
     "src/aws_sigv4.rs",
+    "src/aws_sts.rs",
     "src/cli.rs",
     # ADR-MCPRE-051 §6 (MCPRE-116): versioned serving-config snapshot + in-process
     # CRL hot-reloader. Pure std; always compiled by every flavor.
@@ -922,6 +923,22 @@ nt_rust_test(
         # signed OCSP response fixture for the admit/forge acceptance tests.
         "@crates_mcp_re//:ed25519-dalek",
     ],
+)
+
+# ADR-MCPS-028 §B: the IRSA credential exchange, driven against a LOCAL fake STS
+# over loopback HTTP. This is the OFFLINE TWIN of the live web-identity lane — no
+# AWS account, no network, no `#[ignore]` — so the wiring that lets an EKS pod hold
+# no static IAM key material is guarded on every push, not only in the manual
+# live-infra lane. Per docs/security/cloud-kms-claims-map.md an offline twin guards
+# the wiring and never earns the cloud-validation claim on its own.
+nt_rust_test(
+    name = "aws_irsa_web_identity_test",
+    srcs = ["tests/aws_irsa_web_identity_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = _PROXY_EXT_FEATURES,
+    edition = "2021",
+    deps = _PROXY_LIB_DEPS + _PROXY_EXT_CRATES + [":mcp_re_proxy_ext"],
 )
 
 # #4028: cross-node replay rejection over a SHARED Redis. Self-skips (prints +

@@ -472,6 +472,16 @@ pub struct Config {
     /// Only meaningful when `key_source == AwsKms` (reuses `--aws-kms-region` /
     /// `--aws-kms-endpoint`).
     pub aws_kms_tls_key_id: Option<String>,
+    /// Take the AWS KMS credentials from **IRSA** — exchange the projected
+    /// service-account token at `AWS_WEB_IDENTITY_TOKEN_FILE` for temporary
+    /// credentials via STS — instead of the static `AWS_ACCESS_KEY_ID` /
+    /// `AWS_SECRET_ACCESS_KEY` pair. The AWS counterpart of
+    /// `--gcp-kms-use-metadata`, and the flag that lets an EKS deployment hold no
+    /// long-lived IAM key material at all.
+    pub aws_kms_use_web_identity: bool,
+    /// Optional STS endpoint override for the IRSA exchange (tests/emulators).
+    /// Defaults to the REGIONAL `https://sts.<region>.amazonaws.com`.
+    pub aws_sts_endpoint: Option<String>,
     /// GCP Cloud KMS key-version resource path
     /// (`projects/.../cryptoKeyVersions/N`). Required when `key_source == GcpKms`
     /// (ADR-MCPS-028 §C).
@@ -683,6 +693,10 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut allow_group_readable_key_files = false;
     let mut aws_kms_endpoint: Option<String> = None;
     let mut aws_kms_tls_key_id: Option<String> = None;
+    // IRSA off by default (static AWS_* pair); opt in with
+    // `--aws-kms-use-web-identity`, the AWS twin of `--gcp-kms-use-metadata`.
+    let mut aws_kms_use_web_identity = false;
+    let mut aws_sts_endpoint: Option<String> = None;
     // ADR-MCPS-028 §C GCP Cloud KMS: key-version resource path required when
     // `--key-source gcp-kms`; endpoint optional; metadata-server token off by default
     // (operator MCP_RE_GCP_ACCESS_TOKEN), opt in with `--gcp-kms-use-metadata`.
@@ -715,6 +729,14 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         // operator-supplied `MCP_RE_GCP_ACCESS_TOKEN`.
         if flag == "--gcp-kms-use-metadata" {
             gcp_kms_use_metadata = true;
+            i += 1;
+            continue;
+        }
+        // Valueless boolean flag (ADR-MCPS-028 §B): take the AWS KMS credentials from
+        // IRSA — exchange the projected service-account token for temporary ones —
+        // instead of a static AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY pair.
+        if flag == "--aws-kms-use-web-identity" {
+            aws_kms_use_web_identity = true;
             i += 1;
             continue;
         }
@@ -823,6 +845,9 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 aws_kms_endpoint = Some(validated_kms_endpoint("--aws-kms-endpoint", value)?)
             }
             "--aws-kms-tls-key-id" => aws_kms_tls_key_id = Some(value.clone()),
+            "--aws-sts-endpoint" => {
+                aws_sts_endpoint = Some(validated_kms_endpoint("--aws-sts-endpoint", value)?)
+            }
             "--gcp-kms-key-version" => gcp_kms_key_version = Some(value.clone()),
             "--gcp-kms-endpoint" => {
                 gcp_kms_endpoint = Some(validated_kms_endpoint("--gcp-kms-endpoint", value)?)
@@ -1410,6 +1435,19 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
         return Err("--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string());
     }
+    // The custody path an operator believes they selected must be the one they get.
+    // On any other key source these two would silently do nothing, leaving a
+    // deployment that thinks it holds no static IAM key material while holding it.
+    if aws_kms_use_web_identity && key_source != KeySourceKind::AwsKms {
+        return Err(
+            "--aws-kms-use-web-identity has no effect without --key-source aws-kms".to_string(),
+        );
+    }
+    if aws_sts_endpoint.is_some() && !aws_kms_use_web_identity {
+        return Err(
+            "--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string(),
+        );
+    }
     // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
     if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
         return Err("--key-source gcp-kms requires --gcp-kms-key-version \
@@ -1843,6 +1881,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         allow_group_readable_key_files,
         aws_kms_endpoint,
         aws_kms_tls_key_id,
+        aws_kms_use_web_identity,
+        aws_sts_endpoint,
         gcp_kms_key_version,
         gcp_kms_endpoint,
         gcp_kms_tls_key_version,
@@ -2458,7 +2498,18 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
                 key_id: require(&config.aws_kms_key_id, "--aws-kms-key-id")?,
                 endpoint: config.aws_kms_endpoint.clone(),
             };
-            let backend = crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?;
+            // IRSA or the static env pair — never both, never a fallback between
+            // them. A deployment that asked for web identity and cannot mint through
+            // it must fail, not quietly sign with whatever keys are in the process
+            // environment.
+            let backend = if config.aws_kms_use_web_identity {
+                crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
+                    &kms_config,
+                    config.aws_sts_endpoint.clone(),
+                )?
+            } else {
+                crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&kms_config)?
+            };
             let tls = FileKeySource {
                 signing_key_seed_path: config.signing_key_seed.clone(),
                 tls_cert_path: config.tls_cert.clone(),
@@ -2478,8 +2529,17 @@ pub fn build_key_source(config: &Config) -> Result<Box<dyn KeySource + Send + Sy
                         key_id: tls_key_id.clone(),
                         endpoint: config.aws_kms_endpoint.clone(),
                     };
-                    let tls_backend =
-                        crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&tls_kms_config)?;
+                    // The TLS key takes the SAME custody path as the object-signing
+                    // key: a deployment cannot end up with one KMS principal reached
+                    // through IRSA and the other through static keys.
+                    let tls_backend = if config.aws_kms_use_web_identity {
+                        crate::aws_kms_keysource::AwsKmsEd25519Backend::from_web_identity(
+                            &tls_kms_config,
+                            config.aws_sts_endpoint.clone(),
+                        )?
+                    } else {
+                        crate::aws_kms_keysource::AwsKmsEd25519Backend::from_env(&tls_kms_config)?
+                    };
                     Ok(Box::new(
                         crate::kms_keysource::KmsKeySource::new_with_delegated_tls(
                             Box::new(backend),
@@ -4338,6 +4398,53 @@ mod tests {
         );
         // Distinct credential: the TLS key id differs from the object-signing key id.
         assert_ne!(config.aws_kms_tls_key_id, config.aws_kms_key_id);
+    }
+
+    /// IRSA is OFF unless asked for. A deployment that did not name it must not get
+    /// it by accident, and — more importantly — one that did name it must not
+    /// silently get the static-key path instead.
+    #[test]
+    fn aws_kms_web_identity_is_off_by_default_and_on_when_named() {
+        // A durable replay cache: `minimal()` omits it, and the unsafe-config guard
+        // rejects the in-memory default before parsing gets this far.
+        let durable = args(&["--replay-cache", "file", "--replay-path", "/replay"]);
+
+        let mut a = minimal();
+        a.splice(0..0, durable.clone());
+        a.splice(0..0, aws_kms_flags());
+        assert!(!parse_args(&a).unwrap().aws_kms_use_web_identity);
+
+        let mut a = minimal();
+        a.splice(0..0, durable);
+        a.splice(0..0, aws_kms_flags());
+        a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
+        assert!(parse_args(&a).unwrap().aws_kms_use_web_identity);
+    }
+
+    /// A dangling `--aws-kms-use-web-identity` on another key source would silently
+    /// do nothing, leaving an operator believing the pod holds no static IAM key
+    /// material while it does. Mirrors the `--gcp-kms-use-metadata` guard.
+    #[test]
+    fn aws_kms_use_web_identity_without_aws_kms_fails_closed() {
+        let mut a = minimal();
+        a.splice(0..0, args(&["--aws-kms-use-web-identity"]));
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--aws-kms-use-web-identity"), "got: {err}");
+    }
+
+    /// The STS endpoint override only means anything on the web-identity path; on
+    /// the static path it would be read as "this is where credentials come from"
+    /// while nothing consulted it.
+    #[test]
+    fn aws_sts_endpoint_without_web_identity_fails_closed() {
+        let mut a = minimal();
+        a.splice(0..0, aws_kms_flags());
+        a.splice(
+            0..0,
+            args(&["--aws-sts-endpoint", "https://sts.eu-north-1.amazonaws.com"]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(err.contains("--aws-sts-endpoint"), "got: {err}");
     }
 
     /// #60 / #58: `--aws-kms-tls-key-id` (delegated) PLUS an exported `--tls-key` is

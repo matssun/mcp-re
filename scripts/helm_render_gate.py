@@ -213,6 +213,50 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "keySource must be",
     ),
+    (
+        "keySource=awsKms with no region is refused",
+        merged({"keySource": "awsKms", "awsKms": {"keyId": "alias/k"}}),
+        False,
+        "requires awsKms.region",
+    ),
+    (
+        "keySource=awsKms with no keyId is refused",
+        merged({"keySource": "awsKms", "awsKms": {"region": "eu-north-1"}}),
+        False,
+        "requires awsKms.keyId",
+    ),
+    # The custody claim the chart exists to make is "no key material in the pod".
+    # Under awsKms that holds only on the IRSA path, so the weaker one cannot be
+    # reached by leaving a boolean at a convenient value.
+    (
+        "awsKms static credentials are refused unless deliberately accepted",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/k",
+                           "useWebIdentity": False,
+                           "credentialsSecretName": "aws-creds"}}),
+        False,
+        "LONG-LIVED IAM key pair",
+    ),
+    (
+        "accepted awsKms static credentials still need the Secret naming them",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/k",
+                           "useWebIdentity": False,
+                           "allowStaticCredentials": True,
+                           "credentialsSecretName": ""}}),
+        False,
+        "requires awsKms.credentialsSecretName",
+    ),
+    # Without the annotation EKS injects no AWS_ROLE_ARN and the proxy fails closed
+    # at startup: a CrashLoop that says nothing about the missing annotation.
+    (
+        "awsKms IRSA without the role-arn annotation is refused",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/k",
+                           "useWebIdentity": True}}),
+        False,
+        "eks.amazonaws.com/role-arn",
+    ),
     # --- admission ceilings (MCPRE-114) ---
     (
         "admission ceiling of 0 is refused, not read as unset",
@@ -375,6 +419,44 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
           "projects/p/locations/l/keyRings/r/cryptoKeys/t/cryptoKeyVersions/1")],
         ["--tls-key"],
     ),
+    # The awsKms twins of the three gcpKms cases above. The seed one is the reason
+    # the "is this KMS custody" question moved into a helper: asked per-cloud, the
+    # awsKms path would have kept mounting a seed the proxy never reads.
+    (
+        "awsKms IRSA custody renders the web-identity flag and no signing-key seed",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/mcp-re",
+                           "useWebIdentity": True},
+                "serviceAccount": {"create": True, "name": "",
+                                   "annotations": {"eks.amazonaws.com/role-arn":
+                                                   "arn:aws:iam::455880745808:role/mcp-re"}}}),
+        [("--key-source", "aws-kms"),
+         ("--aws-kms-region", "eu-north-1"),
+         ("--aws-kms-key-id", "alias/mcp-re"),
+         "--aws-kms-use-web-identity"],
+        ["--signing-key-seed"],
+    ),
+    (
+        "awsKms delegated TLS omits the exported TLS key",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/mcp-re",
+                           "tlsKeyId": "alias/mcp-re-tls", "useWebIdentity": True},
+                "serviceAccount": {"create": True, "name": "",
+                                   "annotations": {"eks.amazonaws.com/role-arn":
+                                                   "arn:aws:iam::455880745808:role/mcp-re"}}}),
+        [("--aws-kms-tls-key-id", "alias/mcp-re-tls")],
+        ["--tls-key"],
+    ),
+    (
+        "accepted awsKms static credentials do NOT render the web-identity flag",
+        merged({"keySource": "awsKms",
+                "awsKms": {"region": "eu-north-1", "keyId": "alias/mcp-re",
+                           "useWebIdentity": False,
+                           "allowStaticCredentials": True,
+                           "credentialsSecretName": "aws-creds"}}),
+        [("--key-source", "aws-kms")],
+        ["--aws-kms-use-web-identity", "--signing-key-seed"],
+    ),
 ]
 
 
@@ -412,7 +494,15 @@ def main() -> int:
             continue
         args = container_args(output)
         problems = []
-        for flag, value in required_pairs:
+        for required in required_pairs:
+            # A bare string is a VALUELESS flag (`--gcp-kms-use-metadata`,
+            # `--aws-kms-use-web-identity`): presence is the whole assertion, and
+            # indexing +1 would read the next unrelated argument as its value.
+            if isinstance(required, str):
+                if required not in args:
+                    problems.append(f"{required} missing")
+                continue
+            flag, value = required
             if flag not in args:
                 problems.append(f"{flag} missing")
             elif args[args.index(flag) + 1] != value:

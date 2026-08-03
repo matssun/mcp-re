@@ -24,11 +24,13 @@ use base64::Engine;
 use mcp_re_core::b64url_encode;
 use mcp_re_core::verify_ed25519;
 use mcp_re_core::VerificationKey;
-use zeroize::Zeroizing;
 
-use crate::aws_sigv4::AwsCredentials;
 use crate::aws_sigv4::Header;
 use crate::aws_sigv4::SigV4Signer;
+use crate::aws_sts::AwsCredentialSource;
+use crate::aws_sts::EnvCredentialSource;
+use crate::aws_sts::WebIdentityConfig;
+use crate::aws_sts::WebIdentityCredentialSource;
 use crate::delegated_tls::RawEd25519TlsSigner;
 use crate::key_source::KeyError;
 use crate::kms_keysource::ed25519_raw_point_from_spki;
@@ -76,27 +78,6 @@ pub struct AwsKmsConfig {
     pub endpoint: Option<String>,
 }
 
-impl AwsCredentials {
-    /// Read static credentials from the explicit, NARROW set of environment
-    /// variables (ADR-MCPS-028 credential scope). No profile/IMDS/IRSA discovery —
-    /// credential auto-discovery is a deliberate non-feature here.
-    pub fn from_env() -> Result<Self, KeyError> {
-        let access_key_id = std::env::var("AWS_ACCESS_KEY_ID")
-            .map_err(|_| KeyError::NotFound("aws-kms: AWS_ACCESS_KEY_ID not set".to_string()))?;
-        let secret_access_key = std::env::var("AWS_SECRET_ACCESS_KEY").map_err(|_| {
-            KeyError::NotFound("aws-kms: AWS_SECRET_ACCESS_KEY not set".to_string())
-        })?;
-        Ok(AwsCredentials {
-            access_key_id,
-            secret_access_key: Zeroizing::new(secret_access_key),
-            session_token: std::env::var("AWS_SESSION_TOKEN")
-                .map(Zeroizing::new)
-                .ok()
-                .filter(|s| !s.is_empty()),
-        })
-    }
-}
-
 /// The blocking-HTTPS seam to KMS: a single signed POST of a JSON body for a given
 /// `X-Amz-Target`, returning the raw response body. Kept as a trait so the
 /// adapter's response-parsing + verify-before-return logic is unit-testable with a
@@ -108,15 +89,18 @@ pub(crate) trait KmsHttpClient {
 
 /// Production [`KmsHttpClient`]: SigV4-signs and sends over `ureq` (rustls HTTPS).
 pub(crate) struct UreqKmsClient {
-    /// Behind a lock so credentials can be RE-READ from the environment.
+    /// Behind a lock so credentials can be REFRESHED between calls.
     ///
     /// They were captured once at process start and never refreshed, while temporary
     /// (session-token) credentials are an explicitly supported mode: under IRSA or any
     /// STS-issued pair the token expires — typically within the hour — and from that
     /// moment every KMS call fails, so the whole fleet loses response signing
-    /// permanently and only a restart recovers it. The environment is what a projected
-    /// token refresh updates, so re-reading it is the refresh.
+    /// permanently and only a restart recovers it.
     signer: std::sync::RwLock<SigV4Signer>,
+    /// Where the refreshed credentials come from — the environment, or the IRSA
+    /// exchange. Consulted before every signature, so a rotated projected token or a
+    /// re-exchanged STS session takes effect without a restart.
+    credential_source: Box<dyn AwsCredentialSource>,
     agent: ureq::Agent,
     url: String,
     authority: String,
@@ -124,7 +108,7 @@ pub(crate) struct UreqKmsClient {
 
 impl UreqKmsClient {
     pub(crate) fn new(
-        credentials: AwsCredentials,
+        credential_source: Box<dyn AwsCredentialSource>,
         config: &AwsKmsConfig,
     ) -> Result<Self, KeyError> {
         let url = config
@@ -132,9 +116,13 @@ impl UreqKmsClient {
             .clone()
             .unwrap_or_else(|| format!("https://kms.{}.amazonaws.com", config.region));
         let authority = authority_of(&url)?;
+        // Mint once here so a misconfigured custody path fails at CONSTRUCTION —
+        // where an operator sees it — rather than on the first signature.
+        let credentials = credential_source.credentials()?;
         let signer = SigV4Signer::new(credentials, config.region.clone(), "kms".to_string());
         Ok(UreqKmsClient {
             signer: std::sync::RwLock::new(signer),
+            credential_source,
             agent: ureq::AgentBuilder::new().build(),
             url,
             authority,
@@ -144,12 +132,14 @@ impl UreqKmsClient {
 
 impl KmsHttpClient for UreqKmsClient {
     fn post_kms(&self, target: &str, body: &[u8]) -> Result<Vec<u8>, KeyError> {
-        // Re-read the environment before signing. Cheap (a `getenv`, on the cold KMS
-        // path only — the root is off the request path), and it is what lets a
-        // refreshed STS/IRSA credential take effect without a restart. A read that
-        // fails leaves the last-good credentials in place: a transient failure to read
-        // must not be worse than not looking.
-        if let Ok(refreshed) = AwsCredentials::from_env() {
+        // Refresh before signing. Cheap on both sources (a `getenv`, or a cache hit
+        // until the refresh margin) and on the cold KMS path only — the root is off
+        // the request path — and it is what lets a re-exchanged IRSA session or a
+        // rotated env pair take effect without a restart. A refresh that fails leaves
+        // the last-good credentials in place: a transient failure to look must not be
+        // worse than not looking, and a credential that has genuinely expired fails
+        // at KMS with its own error rather than being papered over here.
+        if let Ok(refreshed) = self.credential_source.credentials() {
             if let Ok(mut signer) = self.signer.write() {
                 signer.set_credentials(refreshed);
             }
@@ -386,8 +376,42 @@ impl AwsKmsEd25519Backend {
 
     /// Build a production AWS KMS backend (ureq HTTPS + SigV4) from env credentials.
     pub fn from_env(config: &AwsKmsConfig) -> Result<Self, KeyError> {
-        let credentials = AwsCredentials::from_env()?;
-        let client = UreqKmsClient::new(credentials, config)?;
+        Self::with_credential_source(Box::new(EnvCredentialSource), config)
+    }
+
+    /// Build a production backend whose credentials come from **IRSA**: the
+    /// projected service-account token EKS mounts is exchanged for temporary
+    /// credentials, so no long-lived IAM key material exists in the pod.
+    ///
+    /// The AWS counterpart of `GcpKmsEd25519Backend`'s metadata-server path, and
+    /// chosen the same way — by an explicit operator flag, never by discovery.
+    /// `sts_endpoint` overrides the regional default for tests.
+    pub fn from_web_identity(
+        config: &AwsKmsConfig,
+        sts_endpoint: Option<String>,
+    ) -> Result<Self, KeyError> {
+        let wi = WebIdentityConfig::from_env(&config.region, sts_endpoint)?;
+        Self::with_credential_source(Box::new(WebIdentityCredentialSource::new(wi)), config)
+    }
+
+    /// Build over an explicit credential source. The `GetPublicKey` in
+    /// [`Self::with_client`] is the first thing that uses it, so a custody path that
+    /// cannot mint credentials fails here — at startup — not on the first response
+    /// the proxy tries to sign.
+    pub(crate) fn with_credential_source(
+        source: Box<dyn AwsCredentialSource>,
+        config: &AwsKmsConfig,
+    ) -> Result<Self, KeyError> {
+        // Report the custody path that was actually taken, not the one configured.
+        // The two differ exactly when an operator believes they are on IRSA and are
+        // not — which is the case worth seeing in a log, since the proxy signs
+        // identically either way and nothing downstream would reveal it.
+        eprintln!(
+            "mcp-re-proxy: aws-kms key {} credentials = {}",
+            config.key_id,
+            source.describe()
+        );
+        let client = UreqKmsClient::new(source, config)?;
         Self::with_client(Box::new(client), config.key_id.clone())
     }
 
