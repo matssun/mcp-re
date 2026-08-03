@@ -1161,8 +1161,11 @@ pub fn run(
             proxy = proxy.with_evidence_retention(Arc::new(retention));
             eprintln!(
                 "mcp-re-proxy: evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
-                 request and response messages of every served call are retained, and a store \
-                 failure refuses the exchange with mcp-re.evidence_retention_unavailable."
+                 request and response messages of every ACCEPTED call are retained (rejected \
+                 requests are not), and a store failure refuses the exchange with \
+                 mcp-re.evidence_retention_unavailable. The store has NO expiry or quota — \
+                 a full volume is therefore a total outage. Put it on a dedicated volume \
+                 with a retention policy and free-space alerting."
             );
         }
         None => eprintln!(

@@ -47,7 +47,15 @@ use mcp_re_core::ReplayDecision;
 
 /// Every entry in this file is charged to one signer; the per-actor budget is
 /// exercised by its own test in `async_replay.rs`.
-#[cfg(feature = "async_serve")]
+///
+/// Gated on the exact union of its two uses — the async Redis and async etcd race
+/// lanes. Gating it on `async_serve` alone left it unused under that feature by
+/// itself, a combination neither CI clippy lane builds (they run default and
+/// all-features, never this one in between).
+#[cfg(all(
+    feature = "async_serve",
+    any(feature = "redis_replay", feature = "cpstore_etcd")
+))]
 const TEST_ACTOR: &str = "did:example:test-signer";
 
 /// A retain-until far in the future so the store's defensive pre-store staleness

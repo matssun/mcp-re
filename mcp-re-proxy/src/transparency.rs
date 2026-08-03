@@ -39,6 +39,29 @@
 //! fail a request, because a lost log line does not change what the deployment can
 //! prove about the call. Lost retained evidence does.
 //!
+//! **The cost of that choice, stated rather than discovered.** Failing closed on a store
+//! failure means a FULL VOLUME is a total outage: every request is refused until space
+//! is freed. The store grows without bound by construction — one object per accepted
+//! call, each holding a request and response body up to `--max-body-bytes` (16 MiB by
+//! default), with no expiry, no lifecycle and no quota. So an authenticated client can
+//! drive disk exhaustion, and the fail-closed posture turns that into a refusal of
+//! everything.
+//!
+//! A cap here would not fix it, it would only move it: at the cap the choice is refuse
+//! (the same outage) or stop retaining (breaking the assertion retention exists to make).
+//! The real control is an external retention policy — a dedicated volume, rotation or
+//! archival off the node, and free-space alerting — which is a deployment concern this
+//! module deliberately does not try to be. Turning retention on without one is choosing
+//! an outage on a timer.
+//!
+//! ## What is retained: ACCEPTED exchanges only
+//!
+//! Retention runs at the one exit where a request was verified, dispatched and answered.
+//! A REJECTED request is not retained: it produced no hop a chain can be reconstructed
+//! from, and a signed rejection receipt is already an audit-sink record carrying the
+//! frozen wire code. "We can account for what we served" is therefore the honest reading
+//! of a full store — not "we can account for everything that was attempted."
+//!
 //! ## First exposure
 //!
 //! Nothing under here had met hostile input before this wiring. Every value that
