@@ -222,6 +222,20 @@ jobs:
           cargo clippy --manifest-path sdk/typescript/Cargo.toml --all-targets -- -D warnings
           cargo clippy --manifest-path mcp-re-proxy/tests/mock-pkcs11/Cargo.toml --all-targets -- -D warnings
 
+      # Default and all-features leave everything BETWEEN them unbuilt, and an item
+      # reachable only from one feature's code is unused under a different one. Two
+      # such leftovers survived both lanes above (`TEST_ACTOR` under `async_serve`
+      # alone, `ReplayInsert` under `redis_replay` alone) because no build ever used
+      # exactly one flag. Each feature on its own is the cheap lane that covers it.
+      - name: Clippy — each feature alone
+        run: |
+          for feature in dev_env_key_source pkcs11_keysource redis_replay online_ocsp \
+                         aws_kms_keysource gcp_kms_keysource async_serve cpstore_etcd; do
+            echo "::group::clippy --features $feature"
+            cargo clippy -p mcp-re-proxy --all-targets --features "$feature" -- -D warnings
+            echo "::endgroup::"
+          done
+
   rfc9421-cross-verify:
     name: RFC 9421 third-party cross-verification (no-merge gate)
     runs-on: ubuntu-latest

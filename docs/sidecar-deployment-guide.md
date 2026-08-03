@@ -152,6 +152,23 @@ The store directory is opened at **startup**, so an unwritable path stops the pr
 where an operator sees it rather than refusing every request from a replica that
 appeared to start.
 
+**Failing closed has a cost, and it is yours to plan for.** A full volume is a total
+outage: every request is refused until space is freed. The store grows without bound by
+construction — one object per accepted call, each holding a request and response body up
+to `--max-body-bytes` (16 MiB default), with no expiry, no lifecycle and no quota. An
+authenticated client can therefore drive disk exhaustion, and fail-closed turns that into
+a refusal of everything.
+
+A built-in cap would not fix this, only move it: at the cap the choice is refuse (the same
+outage) or stop retaining (breaking the assertion retention exists to make). **Give the
+store a dedicated volume, a retention policy that rotates or archives off the node, and
+free-space alerting.** Turning retention on without one is choosing an outage on a timer.
+
+**Only ACCEPTED exchanges are retained.** A rejected request produced no hop a chain can
+be reconstructed from, and its signed rejection receipt is already an audit-sink record
+carrying the frozen wire code. So a full store supports "we can account for what we
+served" — not "we can account for everything that was attempted."
+
 Attestation is **not** on the request path. An auditor reconstructs the chain from
 retained hops, issues the Signed Statement, and registers it — see
 `mcp_re_proxy::transparency::attest_chain`. A PEP attesting per hop could only ever

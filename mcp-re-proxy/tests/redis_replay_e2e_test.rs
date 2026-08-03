@@ -19,12 +19,19 @@ use std::time::Instant;
 use mcp_re_core::ReplayCache;
 use mcp_re_core::ReplayCacheError;
 use mcp_re_core::ReplayDecision;
-use mcp_re_proxy::async_replay::ReplayInsert;
 use mcp_re_proxy::RedisAtomicReplayStore;
 use mcp_re_proxy::SharedReplayCache;
 
+// Both of these are reached ONLY from the `async_serve` wait-quorum lane below, so
+// they carry its gate. Left ungated they were unused under `redis_replay` alone — a
+// feature combination neither CI clippy lane builds, since those run default and
+// all-features and nothing in between.
+#[cfg(feature = "async_serve")]
+use mcp_re_proxy::async_replay::ReplayInsert;
+
 /// Every entry in this file is charged to one signer; the per-actor budget is
 /// exercised by its own test in `async_replay.rs`.
+#[cfg(feature = "async_serve")]
 const TEST_ACTOR: &str = "did:example:test-signer";
 
 const AUD: &str = "did:example:verifier";
