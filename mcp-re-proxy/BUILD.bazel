@@ -59,6 +59,7 @@ _PROXY_LIB_SRCS = [
     "src/delegated_tls.rs",
     "src/durable_replay.rs",
     "src/retained_evidence.rs",
+    "src/transparency.rs",
     "src/key_source.rs",
     # ADR-MCPS-028: provider-agnostic cloud-KMS response signer core (the shared
     # protocol mapping behind the #3838 delegation seam). Always compiled.
@@ -193,6 +194,7 @@ _PROXY_LIB_DEPS = [
     "@crates_mcp_re//:libc",
     "@crates_mcp_re//:rustls",
     "@crates_mcp_re//:rustls-pki-types",
+    "@crates_mcp_re//:serde",
     "@crates_mcp_re//:serde_json",
     "@crates_mcp_re//:thiserror",
     "@crates_mcp_re//:x509-cert",
@@ -347,7 +349,8 @@ nt_rust_test(
         "@crates_mcp_re//:libc",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:zeroize",
     ],
 )
@@ -414,7 +417,8 @@ nt_rust_test(
         "@crates_mcp_re//:http-body-util",
         "@crates_mcp_re//:hyper",
         "@crates_mcp_re//:hyper-util",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -472,7 +476,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -553,7 +558,8 @@ nt_rust_test(
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -572,7 +578,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -592,7 +599,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -613,7 +621,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:sha2",
         "@crates_mcp_re//:tokio",
     ],
@@ -636,7 +645,8 @@ nt_rust_test(
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
     ],
 )
 # ADR-MCPRE-052 §I: root rotation through a SIGNED trust-anchor manifest, with roots
@@ -658,7 +668,28 @@ nt_rust_test(
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
+    ],
+)
+# ADR-MCPRE-054, the whole vertical: a served call is RETAINED before its response goes
+# out, an auditor reconstructs the chain over the retained bytes, issues a Signed
+# Statement committing to it, registers it, and the receipt verifies OFFLINE. Also the
+# fail-closed control — an exchange whose evidence cannot be kept is refused.
+nt_rust_test(
+    name = "transparency_e2e_test",
+    srcs = ["tests/transparency_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
     ],
 )
 # MCPRE-122 client↔server e2e: the REAL client-side ClientProxy round-trips through an
@@ -678,7 +709,8 @@ nt_rust_test(
         "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -703,7 +735,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -723,7 +756,8 @@ nt_rust_test(
         "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -766,7 +800,8 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )
@@ -839,7 +874,8 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
     ],
 )
 # ===========================================================================
@@ -906,7 +942,8 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_ext",  # keep
         "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         # MCPS-090: the live PTTL test probes PTTL on the exact key the cache
         # inserted, to confirm the bounded-window TTL (not the now=0 epoch TTL).
         "@crates_mcp_re//:redis",
@@ -973,7 +1010,8 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_ext",  # keep
         "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         # The live TTL probe base64-encodes the key + drives the etcd v3 gateway.
         "@crates_mcp_re//:base64",
         "@crates_mcp_re//:ureq",
@@ -1003,7 +1041,8 @@ nt_rust_test(
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:rustls",
         "@crates_mcp_re//:rustls-pki-types",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
     ],
 )
 
@@ -1027,7 +1066,8 @@ nt_rust_test(
     deps = [
         ":mcp_re_proxy_ext",  # keep
         "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:rcgen",
     ],
 )
@@ -1111,7 +1151,8 @@ nt_rust_test(
         ":mcp_re_proxy_async",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
-        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:serde",
+    "@crates_mcp_re//:serde_json",
         "@crates_mcp_re//:tokio",
     ],
 )

@@ -18,6 +18,9 @@ mcp-re-policy = { path = "../mcp-re-policy" }
 # (src/http_profile_dispatch.rs) wraps. Pure crate (mcp-re-core only); the boundary
 # rule forbids only the REVERSE dependency (profile must not depend on the proxy).
 mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+# ADR-MCPRE-054: the retained-hop record is a derived serde type. Hand-rolling
+# JSON for a record an auditor reconstructs a chain from is more surface, not less.
+serde = { workspace = true }
 serde_json = { workspace = true }
 rustls = { workspace = true }
 rustls-pki-types = { workspace = true }

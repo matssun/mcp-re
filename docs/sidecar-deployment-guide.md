@@ -127,6 +127,39 @@ authorization-issuer keys. A bad key fails startup closed.
 | `--replay-path <path>` | State-file path for the `file` cache. |
 | `--replay-redis-url` / `--replay-durability-tier` | Shared-tier endpoint + durability class (e.g. `redis-wait-quorum:2:2000`). |
 
+### Evidence retention / transparency (ADR-MCPRE-054)
+
+| Flag | Meaning |
+| --- | --- |
+| *(absent, default)* | Nothing is retained; the request path is unchanged. No SCITT statement can later be issued about a call served here. |
+| `--retained-evidence-dir <path>` | Retain the full request and response messages of every served call, into a content-addressed store. |
+
+This is a **data-retention decision**, which is why it is opt-in and named rather than
+derived from another flag: it changes what the deployment stores about every call. What
+is kept is what a later SCITT Signed Statement commits to and what an auditor recomputes
+the handles from — the messages themselves, never a derived handle, because a retention
+bug or a dishonest archivist could otherwise state a handle that does not match the
+bytes beside it.
+
+Retention happens **before the response goes out**, and it **fails closed**: a store
+failure refuses the exchange with `mcp-re.evidence_retention_unavailable` (HTTP 503). A
+deployment that has turned retention on is asserting it can account for what it served,
+and the only way to keep that true is to refuse the call whose evidence cannot be kept.
+This is deliberately the opposite of the audit sink's posture — a lost log line does not
+change what the deployment can prove about a call; lost retained evidence does.
+
+The store directory is opened at **startup**, so an unwritable path stops the process
+where an operator sees it rather than refusing every request from a replica that
+appeared to start.
+
+Attestation is **not** on the request path. An auditor reconstructs the chain from
+retained hops, issues the Signed Statement, and registers it — see
+`mcp_re_proxy::transparency::attest_chain`. A PEP attesting per hop could only ever
+commit to a one-hop record, which for a continuation is a truncated one; registering
+inline would put an audit dependency in front of every response. Submission to a real
+SCITT Transparency Service remains ADR-MCPRE-054's open external dependency; the shipped
+`PrototypeTransparencyService` is an in-process Merkle log, not a service.
+
 ### Connection limits (DoS defense)
 
 `--max-header-bytes` (64 KiB), `--max-body-bytes` (16 MiB),

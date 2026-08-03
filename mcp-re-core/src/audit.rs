@@ -110,6 +110,7 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::UnknownEnvelopeField => "Unknown envelope field",
         McpReError::TrustResolverUnavailable => "Trust resolver unavailable",
         McpReError::ReplayCacheUnavailable => "Replay cache unavailable",
+        McpReError::EvidenceRetentionUnavailable => "Retained-evidence store unavailable",
         // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
         McpReError::AuthorizationBindingMissing => "authorization_binding missing",
         McpReError::AuthorizationBindingTypeUnsupported => "authorization_binding type unsupported",
