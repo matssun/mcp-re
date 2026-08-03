@@ -42,10 +42,12 @@
 //!     machine-readable JSON. It runs in the integration lane (this file is
 //!     `redis_replay`-gated); the cost-bearing live counterpart is the GKE runbook.
 //!
-//! NOTE on keep-alive: the current wire is one-request-per-connection
-//! (`Connection: close`, ADR-051 Context §3), so `keepalive` mode reports a
-//! realised-reuse fraction ≈ 0 on the current proxy — the mode is instrumented now
-//! and becomes meaningful with the Phase-2 keep-alive/H2 data plane.
+//! NOTE on keep-alive: the async data plane (ADR-MCPRE-051 §1) serves HTTP/1.1
+//! keep-alive and HTTP/2, so `keepalive` mode realises a reuse fraction of 1.000 with
+//! zero reconnects — one handshake per connection rather than one per request. Warm
+//! connections are safe to hold because the peer certificate's validity window and,
+//! when CRLs are configured, its revocation status are re-checked on EVERY request
+//! (`client_revocation.rs`), not only at the handshake.
 #![cfg(feature = "redis_replay")]
 
 use std::convert::Infallible;
@@ -1220,7 +1222,7 @@ fn print_report(cfg: &LoadConfig, report: &Report) {
     );
     if cfg.mode == Mode::KeepAlive {
         println!(
-            "keepalive_reuse    : {:.3} ({} reconnects; ~0 expected on the current Connection: close wire)",
+            "keepalive_reuse    : {:.3} ({} reconnects; 1.000 / 0 expected — the async data plane serves keep-alive and H2)",
             report.reuse_fraction, report.reconnects
         );
     }
@@ -1747,8 +1749,8 @@ fn inprocess_app_run_accepts_short_cert_rejects_long_cert() {
     );
 
     // Keep-alive-mode client path: two requests over the connection-reuse helper
-    // (distinct from the cold path). The current wire is Connection: close, so the
-    // helper reconnects each time — exercising its reconnect accounting either way.
+    // (distinct from the cold path). The async data plane holds the connection open, so
+    // the second request reuses it and the helper's reconnect accounting stays at zero.
     let mut kept = None;
     let reconnects = AtomicUsize::new(0);
     for i in 0..2 {

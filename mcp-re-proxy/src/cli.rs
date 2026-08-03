@@ -236,14 +236,24 @@ pub struct Config {
     /// (#3839). Each `--client-crl` value (comma-separated and/or repeated) adds a
     /// file; empty disables revocation checking (the pre-#3839 behavior). OFFLINE
     /// only — there is no online OCSP / distribution-point fetching.
+    ///
+    /// These bytes feed TWO checks: the handshake verifier, and the PER-REQUEST
+    /// revoked-serial index (`client_revocation`). The second is what makes revocation
+    /// take effect on a connection the peer is already holding — client authentication
+    /// runs on a full handshake only, so without it a keep-alive or HTTP/2 connection
+    /// serves every later request on a certificate nothing re-checks.
     pub client_crl_paths: Vec<String>,
     /// ADR-MCPRE-051 §6 (MCPRE-116) in-process CRL hot-reload cadence, in seconds.
     /// `None` (default) keeps the static-snapshot posture (reload requires a
     /// restart). `Some(n)` spawns a background task that every `n` seconds re-reads
-    /// the `--client-crl` files and atomically swaps in a rebuilt verifier — so a
-    /// refreshed CRL is honored WITHOUT a restart; a failed reload keeps the
-    /// last-good config (which still fails closed once its CRL passes `nextUpdate`).
-    /// Has no effect without `--client-crl`.
+    /// the `--client-crl` files and atomically swaps in a rebuilt verifier AND a
+    /// rebuilt per-request revoked-serial index — so a refreshed CRL is honored
+    /// WITHOUT a restart, on established connections as well as new ones. A failed
+    /// reload keeps the last-good config (which still fails closed once its CRL passes
+    /// `nextUpdate`). Has no effect without `--client-crl`.
+    ///
+    /// This cadence is therefore the revocation-latency bound for every peer, not only
+    /// for peers that happen to reconnect.
     pub client_crl_reload_secs: Option<u64>,
     /// ONLINE OCSP client-cert revocation selection (#4030). `Off` (default) does
     /// no online check; `Require` checks the leaf's OCSP responder at connection
