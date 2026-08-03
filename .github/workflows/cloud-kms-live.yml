@@ -125,6 +125,11 @@ jobs:
       # Optional endpoint override (e.g. an internal-platform real KMS endpoint). Left
       # empty by default => the real AWS endpoint. No emulator is used (none is faithful).
       MCP_RE_AWS_KMS_ENDPOINT: ${{ secrets.MCP_RE_AWS_KMS_ENDPOINT }}
+      # The SECOND, DISTINCT key that custodies the TLS server key. Absent => the
+      # delegated-TLS lane below is skipped and says so; it is never faked with the
+      # object-signing key, which would prove the opposite of what the lane claims
+      # (that the two are separate security principals).
+      MCP_RE_AWS_KMS_TLS_KEY_ID: ${{ secrets.MCP_RE_AWS_KMS_TLS_KEY_ID }}
     steps:
       - uses: actions/checkout@v7
       - name: Why this is nightly-real-only
@@ -148,6 +153,39 @@ jobs:
           --features aws_kms_keysource
           --test aws_kms_delegated_required_live_test
           -- --ignored
+      - name: Run AWS KMS delegated-signing custody (#[ignore], real endpoint)
+        # ADR-MCPRE-052 §4: the load-bearing property is ZERO KMS operations on the
+        # per-request signing path — N responses within one delegated key's life cost
+        # exactly one KMS call. The delegated-required lane above proves the chain
+        # verifies; this one proves the root is off the hot path.
+        run: >-
+          cargo test -p mcp-re-proxy
+          --features aws_kms_keysource
+          --test aws_kms_delegated_signing_live_test
+          -- --ignored
+      - name: Run AWS KMS HTTP-profile signing (#[ignore], real endpoint)
+        # ADR-MCPRE-050: a real KMS signature over an RFC 9421 base that the
+        # UNMODIFIED verify_request/verify_response accept, with tamper and
+        # wrong-key negatives.
+        run: >-
+          cargo test -p mcp-re-proxy
+          --features aws_kms_keysource
+          --test aws_kms_http_profile_live_test
+          -- --ignored
+      - name: Run AWS KMS delegated TLS (#[ignore], real endpoint)
+        # The TLS private key stays in KMS: a fully-validating mTLS handshake
+        # completes only because a real KMS Sign produced the CertificateVerify.
+        # Needs its own key, so it is conditional rather than silently degraded.
+        if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID != '' }}
+        run: >-
+          cargo test -p mcp-re-proxy
+          --features aws_kms_keysource
+          --test aws_kms_delegated_tls_live_test
+          -- --ignored
+      - name: Note when delegated TLS was not exercised
+        if: ${{ env.MCP_RE_AWS_KMS_TLS_KEY_ID == '' }}
+        run: |
+          echo "::warning title=aws delegated-TLS not exercised::MCP_RE_AWS_KMS_TLS_KEY_ID absent — the AWS delegated-TLS lane did NOT run. This is not coverage; provide a SECOND, DISTINCT Ed25519 KMS key to exercise it."
 
   gcp-kms-real:
     name: gcp cloud kms live (real endpoint, nightly-real-only)

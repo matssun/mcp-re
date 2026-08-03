@@ -14,10 +14,16 @@ exports_files(["src/http_profile_dispatch.rs"])
 # and runs ONLY in the manual live-infra lane (`cargo test --features … --
 # --ignored` against real AWS/GCP KMS):
 #   tests/aws_kms_live_test.rs, tests/aws_kms_delegated_required_live_test.rs,
+#   tests/aws_kms_delegated_signing_live_test.rs,
+#   tests/aws_kms_delegated_tls_live_test.rs,
+#   tests/aws_kms_http_profile_live_test.rs, tests/aws_kms_root_rotation_live_test.rs,
 #   tests/gcp_kms_live_test.rs, tests/gcp_kms_delegated_tls_live_test.rs,
 #   tests/gcp_kms_delegated_signing_live_test.rs,
 #   tests/gcp_kms_delegated_required_live_test.rs,
 #   tests/gcp_kms_http_profile_live_test.rs, tests/gcp_kms_root_rotation_live_test.rs
+# Each carries `#[ignore]` LIVE tests; the http-profile and delegated-signing files
+# ALSO carry non-ignored `*_offline_local_seed` twins, which the cargo
+# feature-gated-backends CI job runs on every push (they need no cloud).
 # NOTE: gazelle_rust's `generate_from_cargo` mode enumerates test targets from
 # Cargo metadata, so `# gazelle:exclude <file>` does NOT suppress them — gazelle
 # will always PROPOSE a target for each in `-mode diff`. This is a documented
