@@ -44,14 +44,97 @@ cp scripts/test-aws-cloud.sh.example work/test-aws-cloud.sh   # work/ is gitigno
 ```
 
 It creates (idempotently, via `alias/mcp-re-ed25519-object`) one
-`ECC_NIST_EDWARDS25519` CMK, runs the object-signing lane and the delegated-required
-lane against it, probes the FIPS endpoint, and schedules the key for deletion.
+`ECC_NIST_EDWARDS25519` CMK and runs, against it: object signing, delegated-required
+serving + authority flip, delegated-signing custody, and the HTTP profile. It then
+probes the FIPS endpoint and schedules the key for deletion.
 See [`cloud-kms-claims-map.md`](cloud-kms-claims-map.md) for what each lane earns and
 [`aws-kms-fips-protection-level.md`](aws-kms-fips-protection-level.md) for why the
 FIPS probe is recorded separately and never rides along with the custody claim.
 
+Two lanes are deliberately NOT in that script:
+
+- **Delegated TLS** needs a SECOND, DISTINCT key, because what it proves is that the
+  TLS server key and the object-signing key are separate security principals an
+  operator can scope with separate policies. Reusing one key would demonstrate the
+  opposite, so the script skips the lane loudly rather than substituting.
+
+  ```sh
+  export MCP_RE_AWS_KMS_TLS_KEY_ID=<a second ECC_NIST_EDWARDS25519 key>
+  ./work/test-aws-cloud.sh     # now includes the delegated-TLS lane
+  ```
+
+- **Root rotation** creates and destroys TWO disposable keys, so it is its own fenced
+  runner rather than something folded into a lane script:
+
+  ```sh
+  MCP_RE_LIVE_KMS_TESTS=1 MCP_RE_ALLOW_TEST_KMS_CREATE=1 \
+    docs/security/aws-kms-root-rotation.sh
+  ```
+
+  It refuses to run outside the account allowlist, only ever creates keys under the
+  fenced `alias/mcp-re-live-test-*` prefix, and registers each created ARN for
+  teardown before it is aliased.
+
 Cost: `$1.00`/month prorated hourly per CMK, plus ~`$0.15` per 10,000 asymmetric
 requests. A full run is a few cents.
+
+### 0b. IRSA — the run that makes the custody claim equal to GKE's
+
+Everything above authenticates with the static `AWS_*` pair in your shell. That is
+fine for a laptop-run lane and is NOT the posture an EKS deployment should have: a
+long-lived IAM key pair does not expire and authorizes `kms:Sign` for as long as the
+Secret exists. The GKE runs' headline is the opposite — the pod holds no key material
+and no long-lived credential, only a short-lived assertion naming it.
+
+The AWS equivalent is IRSA, and it is what `--aws-kms-use-web-identity` takes. One
+setup run per cluster:
+
+```sh
+MCP_RE_CONFIRM_IRSA_KMS_SETUP=1 docs/security/eks-kms-irsa-setup.sh
+export MCP_RE_AWS_KMS_ROLE_ARN="$(aws iam get-role --role-name mcp-re-kms-signer \
+  --query 'Role.Arn' --output text)"
+```
+
+That creates an IAM role whose trust policy pins BOTH `:sub` (one
+namespace/serviceaccount — without it any pod in the cluster could assume it and sign
+with the fleet's root key) and `:aud` (`sts.amazonaws.com`), and grants exactly
+`kms:Sign` + `kms:GetPublicKey` on the one key ARN.
+
+To run a live lane through IRSA rather than static keys, set
+`MCP_RE_AWS_USE_WEB_IDENTITY=1` — inside a pod, where the projected token exists:
+
+```sh
+MCP_RE_AWS_USE_WEB_IDENTITY=1 cargo test -p mcp-re-proxy \
+  --features aws_kms_keysource --test aws_kms_live_test -- --ignored --nocapture
+```
+
+The offline twin (`aws_irsa_web_identity_test`, 12 cases against a fake STS) runs on
+every push and guards the wiring. It cannot guard the thing that actually breaks
+first: whether EKS projects the token at the path the adapter reads, with an audience
+the trust policy accepts. That is what an on-cluster run is for — the GKE twin found
+its equivalent (the WI metadata token URL) exactly this way.
+
+## 0c. The four fleet coherence proofs on EKS
+
+Same harness, same chart, same assertions as GKE — only the substrate differs:
+
+```sh
+export ECR_REGISTRY=<acct>.dkr.ecr.eu-north-1.amazonaws.com
+export MCP_RE_FIXTURES_DIR=<emit_mtls_fixtures output>
+export MCP_RE_AWS_KMS_KEY_ID=alias/mcp-re-ed25519-object
+export MCP_RE_AWS_KMS_ROLE_ARN=<from 0b>
+PROVIDER=eks docs/security/gke-multi-replica-validation.sh
+PROVIDER=eks docs/security/gke-multi-replica-validation.sh --teardown
+```
+
+It creates the cluster `--with-oidc` (no OIDC provider, no IRSA, no custody claim) and
+turns on **VPC CNI NetworkPolicy enforcement**, failing the run if it cannot. On EKS a
+NetworkPolicy is accepted and enforces nothing unless the addon has it enabled — the
+same state the v0.11/v0.12.1 GKE runs were in, where the four proofs passed and the
+inner-plane policy filtered no packets, so any pod could POST past the PEP with no
+signature, no replay admission and no audit record.
+
+Run `PROVIDER=kind` first. It is the identical test for free.
 
 ## 1. ECR repository + the bench image
 

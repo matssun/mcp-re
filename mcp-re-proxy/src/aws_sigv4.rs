@@ -56,10 +56,15 @@ pub struct Header {
     pub value: String,
 }
 
-/// Static AWS credentials. Credential DISCOVERY (profiles, IMDS, IRSA, the SDK
-/// chain) is deliberately NOT supported here (ADR-MCPS-028): the adapter takes
-/// explicit keys (env-sourced by the caller) so there is no hidden network or
-/// credential-resolution trap.
+/// AWS credentials to sign a request with.
+///
+/// Credential DISCOVERY — the SDK's resolution chain over profiles, config files and
+/// IMDS — is deliberately NOT supported (ADR-MCPS-028): there is no hidden network
+/// call and no silent fallback between sources. A caller supplies these from exactly
+/// one source it named, either the narrow environment set or the IRSA exchange in
+/// [`crate::aws_sts`], and which one is an explicit operator choice rather than a
+/// search.
+#[derive(Clone)]
 pub struct AwsCredentials {
     pub access_key_id: String,
     pub secret_access_key: Zeroizing<String>,
@@ -70,6 +75,30 @@ pub struct AwsCredentials {
     /// lifetime, so leaving it as a plain `String` cloned once per KMS call left copies
     /// of a live bearer credential scattered through freed heap.
     pub session_token: Option<Zeroizing<String>>,
+}
+
+/// Hand-written and REDACTING, never derived.
+///
+/// `Zeroizing<String>`'s own `Debug` prints the wrapped string verbatim, so a derived
+/// impl here would put a live KMS-signing credential into every format string that
+/// touched this type — a `KeyError` chain, a panic message, a test failure. The
+/// access key id survives because AWS itself records it in CloudTrail and it is what
+/// makes a wrong-credential report actionable.
+impl std::fmt::Debug for AwsCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AwsCredentials")
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<redacted>")
+            .field(
+                "session_token",
+                &if self.session_token.is_some() {
+                    "<redacted>"
+                } else {
+                    "<none>"
+                },
+            )
+            .finish()
+    }
 }
 
 /// The minimal SigV4 signer, bound to a region + service (always `kms` here).

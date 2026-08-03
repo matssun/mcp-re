@@ -47,6 +47,11 @@ pub mod config_snapshot;
 pub mod aws_kms_keysource;
 #[cfg(feature = "aws_kms_keysource")]
 pub mod aws_sigv4;
+// The credential sources the SigV4 signer is fed from: the narrow environment set,
+// and IRSA (the projected service-account token exchanged for temporary credentials
+// via STS), which is the AWS counterpart of the GKE workload-identity path.
+#[cfg(feature = "aws_kms_keysource")]
+pub mod aws_sts;
 pub mod cli;
 // Issue #3838 (ADR-MCPS-014): a non-exporting reference `ResponseSigner` proving the
 // response-signing delegation seam — a backend whose key never leaves it can drive

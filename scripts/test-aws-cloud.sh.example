@@ -69,6 +69,42 @@ MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
 cargo test -p mcp-re-proxy --features aws_kms_keysource \
   --test aws_kms_delegated_required_live_test -- --ignored --nocapture
 
+# ── 2c. Delegated-signing custody: the root is OFF the per-request path ───────
+# ADR-MCPRE-052 §4. Lane 2b proves the chain verifies; this one proves the load-
+# bearing property behind it — signing N responses within one delegated key's life
+# invokes KMS exactly ONCE. Without it, "delegated" describes the format and not
+# the cost, and a fleet would still be rate-limited by KMS per request.
+MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
+cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test aws_kms_delegated_signing_live_test -- --ignored --nocapture
+
+# ── 2d. HTTP profile: a real KMS signature over an RFC 9421 base ──────────────
+# ADR-MCPRE-050. The carrier is the only thing that goes over the wire, so a KMS
+# signature that verifies in isolation but not through `verify_request` /
+# `verify_response` would earn nothing.
+MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
+cargo test -p mcp-re-proxy --features aws_kms_keysource \
+  --test aws_kms_http_profile_live_test -- --ignored --nocapture
+
+# ── 2e. Delegated TLS: the TLS private key stays in KMS ───────────────────────
+# Needs a SECOND, DISTINCT key — the point is that the TLS server key and the
+# object-signing key are separate security principals an operator can scope with
+# separate policies. Reusing one key would prove the opposite, so this lane is
+# SKIPPED (loudly) rather than silently degraded when the second key is absent.
+if [ -n "${MCP_RE_AWS_KMS_TLS_KEY_ID:-}" ]; then
+  MCP_RE_AWS_KMS_ENDPOINT="$STANDARD_ENDPOINT" \
+  cargo test -p mcp-re-proxy --features aws_kms_keysource \
+    --test aws_kms_delegated_tls_live_test -- --ignored --nocapture
+else
+  echo
+  echo "SKIPPED: delegated-TLS lane — set MCP_RE_AWS_KMS_TLS_KEY_ID to a SECOND,"
+  echo "  DISTINCT ECC_NIST_EDWARDS25519 key to exercise it. This is NOT coverage."
+fi
+
+# ── 2f. Root rotation is its own fenced, self-provisioning runner ─────────────
+# It creates and destroys TWO disposable keys, so it is deliberately not folded in
+# here: docs/security/aws-kms-root-rotation.sh
+
 # ── 3. FIPS protection-level probe (docs/security/aws-kms-fips-protection-level.md) ──
 # AWS KMS has no per-key protection-level knob, so the question "is the Ed25519
 # signing path served in the HSM's FIPS-approved mode?" is answered by whether the

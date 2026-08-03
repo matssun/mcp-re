@@ -71,12 +71,23 @@ ALLOW_NAMING_COLLISION = {
 # HITL / live-cloud: `#![cfg(feature="…kms…")]`; the live cases are `#[ignore]`,
 # run ONLY in the manual/nightly live-infra lane against real AWS/GCP KMS. A
 # generated Bazel target would compile empty (misleading) or attempt real cloud
-# calls in CI. Cargo-only. Some (gcp_kms_http_profile_live_test) also carry a
-# hermetic `for_test_with_local_seed` offline lane that runs in the feature-gated
-# cargo CI job — still cargo-only because the KMS feature closure is not Bazel-wired.
+# calls in CI. Cargo-only. Some ({aws,gcp}_kms_http_profile_live_test,
+# {aws,gcp}_kms_delegated_signing_live_test) also carry a hermetic
+# `for_test_with_local_seed` offline lane that runs in the feature-gated cargo CI
+# job — still cargo-only because the KMS feature closure is not Bazel-wired.
+#
+# NOT allowlisted, and deliberately so: `aws_irsa_web_identity_test`. It drives the
+# IRSA exchange against a LOCAL fake STS over loopback, so it needs no cloud and no
+# `#[ignore]` — it is a real Bazel target and runs on every `bazel test //...`.
 ALLOW_HITL_LIVE = {
     "aws_kms_live_test",
     "aws_kms_delegated_required_live_test",
+    "aws_kms_delegated_signing_live_test",
+    "aws_kms_http_profile_live_test",
+    "aws_kms_delegated_tls_live_test",
+    # The AWS twin of gcp_kms_root_rotation_live_test: two DISPOSABLE keys,
+    # self-provisioned and destroyed by docs/security/aws-kms-root-rotation.sh.
+    "aws_kms_root_rotation_live_test",
     "gcp_kms_live_test",
     "gcp_kms_delegated_tls_live_test",
     "gcp_kms_http_profile_live_test",

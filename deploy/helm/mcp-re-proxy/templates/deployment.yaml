@@ -37,19 +37,40 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if and (eq .Values.keySource "gcpKms") (not .Values.gcpKms.useMetadata) .Values.gcpKms.accessTokenSecretName }}
+          {{- $gcpToken := and (eq .Values.keySource "gcpKms") (not .Values.gcpKms.useMetadata) .Values.gcpKms.accessTokenSecretName }}
+          {{- $awsStatic := and (eq .Values.keySource "awsKms") (not .Values.awsKms.useWebIdentity) }}
+          {{- if or $gcpToken $awsStatic }}
+          env:
+          {{- end }}
+          {{- if $gcpToken }}
           # Operator-supplied Cloud KMS token path (useMetadata=false): the pod has
           # no Workload-Identity metadata server (e.g. a local kind cluster running
           # the IDENTICAL image + chart as GKE), so the KMS access token is injected
           # from a Secret as MCP_RE_GCP_ACCESS_TOKEN. On GKE leave useMetadata=true and
           # this block is omitted — the only substrate-forced difference between the
           # local and GKE runs of the SAME validation harness.
-          env:
             - name: MCP_RE_GCP_ACCESS_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.gcpKms.accessTokenSecretName | quote }}
                   key: access-token
+          {{- end }}
+          {{- if $awsStatic }}
+          # Static-credential AWS path (useWebIdentity=false). Reachable only with
+          # awsKms.allowStaticCredentials=true, because a long-lived IAM key pair in
+          # the pod is a weaker posture than IRSA — the render guard says so at length.
+          # Under useWebIdentity=true EKS injects AWS_ROLE_ARN and
+          # AWS_WEB_IDENTITY_TOKEN_FILE itself and nothing is set here.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awsKms.credentialsSecretName | quote }}
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awsKms.credentialsSecretName | quote }}
+                  key: aws-secret-access-key
           {{- end }}
           args:
             - "--bind"
@@ -174,22 +195,46 @@ spec:
             - "--gcp-kms-tls-key-version"
             - {{ .Values.gcpKms.tlsKeyVersion | quote }}
             {{- end }}
+            {{- else if eq .Values.keySource "awsKms" }}
+            # AWS KMS custody: the signing key never enters the pod. Under IRSA
+            # (useWebIdentity) no IAM key material enters it either — the projected
+            # service-account token is exchanged for temporary credentials.
+            - "--key-source"
+            - "aws-kms"
+            - "--aws-kms-region"
+            - {{ .Values.awsKms.region | quote }}
+            - "--aws-kms-key-id"
+            - {{ .Values.awsKms.keyId | quote }}
+            {{- if .Values.awsKms.endpoint }}
+            - "--aws-kms-endpoint"
+            - {{ .Values.awsKms.endpoint | quote }}
+            {{- end }}
+            {{- if .Values.awsKms.useWebIdentity }}
+            - "--aws-kms-use-web-identity"
+            {{- end }}
+            {{- if .Values.awsKms.tlsKeyId }}
+            # Delegated TLS: the TLS server private key also stays in KMS, so the
+            # exported --tls-key is omitted (the proxy rejects both together).
+            - "--aws-kms-tls-key-id"
+            - {{ .Values.awsKms.tlsKeyId | quote }}
+            {{- end }}
             {{- else }}
             - "--key-source"
             - "file"
             {{- end }}
-            {{- if ne .Values.keySource "gcpKms" }}
+            {{- if not (include "mcp-re-proxy.kmsCustody" .) }}
             # Passed ONLY under file custody, where the proxy actually reads it. Under
-            # gcpKms the response key never leaves KMS and the seed is never read, so
-            # passing it would put a deployment's most sensitive file in the pod for no
-            # reason — in exactly the mode chosen because no key material should be
-            # there. (The CLI used to require it unconditionally; it no longer does.)
+            # EITHER KMS custody the response key never leaves KMS and the seed is
+            # never read, so passing it would put a deployment's most sensitive file in
+            # the pod for no reason — in exactly the mode chosen because no key material
+            # should be there. (The CLI used to require it unconditionally; it no
+            # longer does.)
             - "--signing-key-seed"
             - "{{ .Values.tls.mountPath }}/signing-seed"
             {{- end }}
             - "--tls-cert"
             - "{{ .Values.tls.mountPath }}/tls.crt"
-            {{- if not (and (eq .Values.keySource "gcpKms") .Values.gcpKms.tlsKeyVersion) }}
+            {{- if not (include "mcp-re-proxy.delegatedTls" .) }}
             - "--tls-key"
             - "{{ .Values.tls.mountPath }}/tls.key"
             {{- end }}

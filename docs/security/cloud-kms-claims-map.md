@@ -18,6 +18,8 @@ making any cross-cloud custody claim.
 | `.github/workflows/cloud-kms-live.yml` | nightly 04:00 UTC + manual dispatch | no | the `#[ignore]` **live** lanes, and only when that backend's secrets are present |
 | `scripts/test-gcp-cloud.sh.example` | manual, operator-run | no | the GCP live lanes against the operator's own project |
 | `scripts/test-aws-cloud.sh.example` | manual, operator-run | no | the AWS live lanes + the FIPS-endpoint probe |
+| `docs/security/{aws,gcp}-kms-root-rotation.sh` | manual, fenced + self-provisioning | no | the root-rotation lane against two DISPOSABLE keys it creates and destroys |
+| `docs/security/gke-multi-replica-validation.sh` | manual, `PROVIDER=gke\|eks\|kind` | no | the four fleet coherence proofs; on a cloud it roots in that cloud's KMS |
 
 A missing secret set makes a `cloud-kms-live` job a no-op that is reported as *"not
 exercised"*, never as passing coverage. The live tests themselves call `require_env`
@@ -29,17 +31,36 @@ and hard-fail on any missing variable, so a half-configured lane cannot fake a g
 backend adapter with a local seed and no network. It guards the wiring on every push.
 **It is not cloud validation** — only the live lane earns that half of the claim.
 
+Two states are tracked separately and must not be conflated. **WRITTEN** means the
+lane exists and its offline twin is green in blocking CI. **RUN** means it has
+executed against that cloud's real KMS. Only RUN earns a cloud-validation claim.
+
 | Capability | Test target | Offline twins | In nightly live CI | In operator script | GCP | AWS |
 |---|---|---|---|---|---|---|
-| Object signing — a real KMS signature verifies under `mcp-re-core` | `{aws,gcp}_kms_live_test` | 0 | yes (both) | yes (both) | ✅ | ✅ |
-| **Delegated-required serving + authority flip** | `{aws,gcp}_kms_delegated_required_live_test` | 2 | yes (both) | yes (both) | ✅ | ✅ |
-| Delegated-signing custody state machine | `gcp_kms_delegated_signing_live_test` | 1 | no | GCP only | ✅ | ✗ |
-| HTTP profile (RFC 9421 + RFC 9530) | `gcp_kms_http_profile_live_test` | 2 | GCP only | GCP only | ✅ | ✗ |
-| Delegated TLS — TLS private key stays in KMS | `gcp_kms_delegated_tls_live_test` | 0 | no | GCP only | ✅ | ✗ |
-| Root rotation / trust-anchor transition | `gcp_kms_root_rotation_live_test` | 0 | no | `docs/security/gcp-kms-root-rotation.sh` | ✅ | ✗ |
+| Object signing — a real KMS signature verifies under `mcp-re-core` | `{aws,gcp}_kms_live_test` | 0 | yes (both) | yes (both) | ✅ RUN | ✅ RUN |
+| **Delegated-required serving + authority flip** | `{aws,gcp}_kms_delegated_required_live_test` | 2 | yes (both) | yes (both) | ✅ RUN | ✅ RUN |
+| Delegated-signing custody state machine | `{aws,gcp}_kms_delegated_signing_live_test` | 2 | AWS only | yes (both) | ✅ RUN | 📝 WRITTEN |
+| HTTP profile (RFC 9421 + RFC 9530) | `{aws,gcp}_kms_http_profile_live_test` | 4 | yes (both) | yes (both) | ✅ RUN | 📝 WRITTEN |
+| Delegated TLS — TLS private key stays in KMS | `{aws,gcp}_kms_delegated_tls_live_test` | 0 | AWS only (needs a 2nd key) | yes (both) | ✅ RUN | 📝 WRITTEN |
+| Root rotation / trust-anchor transition | `{aws,gcp}_kms_root_rotation_live_test` | 0 | no | `docs/security/{aws,gcp}-kms-root-rotation.sh` | ✅ RUN | 📝 WRITTEN |
+| **Workload-identity custody — no key material in the pod** | GKE metadata server / AWS IRSA | 12 (AWS) | no | yes (both) | ✅ RUN | 📝 WRITTEN |
 
-AWS gaps are deliberate scope, not defects. `--aws-kms-tls-key-id` is wired in the
-CLI, so the delegated-TLS gap is a missing lane rather than a missing capability.
+The AWS column was `✗` on four rows until 2026-08-03, described here as "deliberate
+scope, not defects". Scope is a reason to leave a gap open; it is not a reason the gap
+stops being one, and every missing row was a property MCP-RE claims and had checked
+against exactly one cloud. The lanes now exist on both. What separates the columns is
+no longer coverage but **execution**: the four AWS lanes have not been run against
+real AWS KMS yet, and until they are, the wording below stands as written.
+
+Workload-identity custody deserves its own row because it was the deepest gap and was
+not a lane at all. Until 2026-08-03 `AwsCredentials::from_env` required
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` and the adapter did no IRSA discovery, so
+an EKS deployment had to mount a long-lived IAM key pair. The GKE runs' headline —
+KMS reached through Workload Identity, no key material in-pod — had no AWS
+counterpart, and any statement of cross-cloud custody parity was comparing two
+different postures. `mcp-re-proxy/src/aws_sts.rs` and
+`--aws-kms-use-web-identity` close it; `aws_irsa_web_identity_test` is the offline
+twin.
 
 ## What each claim requires
 
@@ -68,6 +89,21 @@ aws_kms_authority_flip_live ... ok                       # authority/epoch/revoc
 
 The delegated-root sentence is therefore now defensible for both clouds, with the
 `opt-in adapter` qualifier below.
+
+**"The pod holds no key material and no long-lived credential."**
+Requires the workload-identity row, per cloud. On GCP it is earned — the v0.12.1 GKE
+run reached KMS through the Workload-Identity metadata server, and surfaced a real
+on-GKE custody bug (the WI metadata token URL) in doing so. On AWS the mechanism now
+exists (IRSA, `--aws-kms-use-web-identity`) and is proven against a fake STS offline,
+but **has not been run on a real EKS pod**. Until it has, an AWS deployment's custody
+claim is "the signing key never leaves KMS" — the same as GCP's — but NOT "no
+credential material in the pod", which additionally needs the token exchange to have
+worked where the projected token actually comes from.
+
+The distinction is not pedantic: the offline twin supplies its own token file and its
+own STS. What it cannot exercise is whether EKS projects the token this adapter
+expects, at the path it reads, with an audience the role's trust policy accepts —
+which is precisely the class of thing the GKE run found the hard way.
 
 **Both adapters are opt-in.** `aws_kms_keysource` and `gcp_kms_keysource` are both in
 `_PROXY_EXT_FEATURES` (`mcp-re-proxy/BUILD.bazel`); the default `:mcp_re_proxy` target
