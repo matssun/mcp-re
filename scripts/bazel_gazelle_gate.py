@@ -63,6 +63,7 @@ from collections import Counter
 ALLOW_NAMING_COLLISION = {
     "mcp-re-conformance",            # == conformance lib/bin, hand-named
     "mcp-re-proxy",                  # == :mcp_re_proxy_cli (bin over src/main.rs)
+    "mcp-re-client",                 # == :mcp_re_client_cli (bin over src/main.rs)
     "mcp_re_proxy_test",             # == :proxy_unit_test (crate=:mcp_re_proxy)
     "emit_mtls_fixtures",          # == hand-named fixture-emitter bin
 }

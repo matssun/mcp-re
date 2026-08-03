@@ -962,6 +962,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
+name = "mcp-re-client"
+version = "0.14.0"
+dependencies = [
+ "libc",
+ "mcp-re-client-core",
+ "mcp-re-client-proxy",
+ "mcp-re-core",
+ "mcp-re-host",
+ "mcp-re-http-profile",
+ "mcp-re-proxy",
+ "mcp-re-transport",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "mcp-re-client-core"
 version = "0.14.0"
 dependencies = [
@@ -1089,6 +1107,7 @@ dependencies = [
  "redis",
  "rustls",
  "rustls-pki-types",
+ "serde",
  "serde_json",
  "sha2",
  "spki 0.7.3",

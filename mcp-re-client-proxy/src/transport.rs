@@ -14,7 +14,12 @@ use mcp_re_client_core::HttpResponse;
 /// The remote leg: send the signed RFC 9421 request, get the (signed) response
 /// back. A transport-level failure (connection refused, timeout) is `Err` and is
 /// treated by the proxy as a transport failure, never as bad evidence.
-pub trait RemoteTransport {
+///
+/// `Send + Sync` so one [`ClientProxy`](crate::ClientProxy) can serve several local
+/// callers at once. Without it every request on the local leg queues behind the
+/// previous one's remote round trip — an agent issuing parallel tool calls would see
+/// them serialized by the security sidecar, which is a reason to remove the sidecar.
+pub trait RemoteTransport: Send + Sync {
     /// Round-trip the signed request to the remote endpoint.
     fn round_trip(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError>;
 }

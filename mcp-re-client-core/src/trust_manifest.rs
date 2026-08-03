@@ -189,6 +189,20 @@ pub trait ManifestVersionFloor {
     fn record(&mut self, version: u64) -> Result<(), TrustManifestError>;
 }
 
+/// A boxed floor is a floor. Deployments choose their storage at run time (a durable
+/// directory, or the explicit in-memory posture), so the choice arrives as a trait
+/// object; without this the caller would have to reintroduce a hand-written enum whose
+/// arms both forward to the same two methods.
+impl<T: ManifestVersionFloor + ?Sized> ManifestVersionFloor for Box<T> {
+    fn min_version(&self) -> Result<u64, TrustManifestError> {
+        (**self).min_version()
+    }
+
+    fn record(&mut self, version: u64) -> Result<(), TrustManifestError> {
+        (**self).record(version)
+    }
+}
+
 /// A floor held only in memory — the EXPLICIT no-durability posture, for an ephemeral
 /// verifier or a test. It protects against rollback within one process lifetime and
 /// says nothing about the next one, which is the whole reason it has to be named:

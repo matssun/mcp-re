@@ -665,6 +665,31 @@ pub fn verify_delegated_response_anchored(
     verify_delegated_response(response, &resolver, expectation, policy, issuers, now)
 }
 
+/// Verify a delegated-signed bodyless **202** anchored in a [`TrustedIssuerSet`] — the
+/// same verification as [`verify_delegated_accepted_202`], with the trust-anchor set
+/// supplied ONCE.
+///
+/// The pairing argument is [`verify_delegated_response_anchored`]'s, and it applies with
+/// the same force here: the set is both the root resolver and the revocation source, and
+/// a caller who builds the resolver from it but passes an empty revocation list
+/// acknowledges notifications under a root they have marked revoked.
+///
+/// Anchored routes had no 202 verifier at all, so a notification sent over one could
+/// only be refused. Refusing was the right answer while nothing could check the
+/// acknowledgement — but it left the trust-anchor lifecycle, the mode a signed manifest
+/// distributes, unable to carry one-way messages that the raw seam has verified since
+/// #424.
+pub fn verify_delegated_accepted_202_anchored(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    policy: &DelegationPolicy,
+    issuers: &TrustedIssuerSet,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
+    let resolver = issuers.anchored_resolver(now);
+    verify_delegated_accepted_202(response, request, &resolver, policy, issuers, now)
+}
+
 /// The server's frozen wire code from a (verified) rejection-receipt body
 /// (`error.data.mcp_re_error.wire_code`), if present. Read ONLY after verification.
 fn rejection_wire_code(body: &[u8]) -> Option<String> {

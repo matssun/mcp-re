@@ -69,6 +69,9 @@ pub mod durable_replay;
 // MCPRE-501 slice 3: the filesystem side of the SCITT retained-evidence split.
 // mcp-re-http-profile declares the store interface and stays pure; the fs lives here.
 pub mod retained_evidence;
+// ADR-MCPRE-054: the serving path's half of the SCITT vertical — retention on the
+// request path, and the reader an auditor reconstructs a chain through.
+pub mod transparency;
 // ADR-MCPS-028 §C: native GCP Cloud KMS Ed25519 response signer over blocking HTTPS
 // (ureq) + OAuth2 bearer — NO async google-cloud SDK. Compiled ONLY under the
 // non-default `gcp_kms_keysource` feature.

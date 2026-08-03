@@ -165,6 +165,12 @@ pub struct HttpProfileProxy {
     /// entirely: the binding, if a call carries one, is verified evidence that
     /// decides nothing.
     admission: Option<AdmissionEnforcer>,
+    /// ADR-MCPRE-054 evidence retention. `None` is the default: nothing is retained
+    /// and the request path is unchanged. When present, every served exchange is
+    /// retained BEFORE the response is handed back, and a retention failure refuses the
+    /// exchange — a deployment that has turned this on is asserting it can account for
+    /// what it served.
+    retention: Option<Arc<crate::transparency::EvidenceRetention>>,
 }
 
 /// What a request that carries NO admission evidence means to this deployment.
@@ -202,6 +208,21 @@ impl HttpProfileProxy {
         sink: std::sync::Arc<dyn crate::audit_sink::AuditSink>,
     ) -> Self {
         self.audit = Some(sink);
+        self
+    }
+
+    /// Install ADR-MCPRE-054 evidence retention.
+    ///
+    /// Turning this on changes what the deployment STORES about every call — the full
+    /// request and response messages, which is what a later SCITT statement commits to
+    /// and what an auditor recomputes the handles from. It is off unless installed, and
+    /// once installed a retention failure refuses the exchange rather than serving a
+    /// call the deployment cannot account for.
+    pub fn with_evidence_retention(
+        mut self,
+        retention: Arc<crate::transparency::EvidenceRetention>,
+    ) -> Self {
+        self.retention = Some(retention);
         self
     }
 
@@ -255,6 +276,7 @@ impl HttpProfileProxy {
             verifier_policy: VerifierPolicy::default(),
             audit: None,
             admission: None,
+            retention: None,
         }
     }
 
@@ -814,6 +836,27 @@ impl HttpProfileProxy {
                         Some(actor_id),
                     );
                 }
+            }
+        }
+        // ADR-MCPRE-054 retention, for the same reason the audit record is emitted
+        // here rather than at signing time: everything above can still discard this
+        // response, and retaining an exchange the client never received would put a
+        // record in the store that no receipt should ever be issued about.
+        //
+        // Before the response goes out, not after. A deployment with retention on is
+        // asserting it can account for what it served, and the only way to keep that
+        // true is to refuse the exchange when the evidence cannot be kept.
+        if let Some(retention) = &self.retention {
+            if let Err(e) = retention.retain(&http_req, &response) {
+                eprintln!("evidence retention failed, refusing the exchange: {e}");
+                return self.response_rejection(
+                    &http_req,
+                    McpReError::EvidenceRetentionUnavailable.wire_code(),
+                    503,
+                    now,
+                    Some(&verified.evidence),
+                    Some(actor_id),
+                );
             }
         }
         // Emitted HERE, not at signing time: everything above can still discard this

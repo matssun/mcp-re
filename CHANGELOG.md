@@ -12,6 +12,53 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Added — the client-side ambassador ships as a binary (`mcp-re-client`)
+
+`FileManifestFloor` and `load_signed_manifest_with_floor` had no caller outside tests,
+and `mcp-re-client-proxy` declares only `[lib]`. The floor is the highest trust-anchor
+manifest version a verifier has ever accepted, and its whole purpose is to survive a
+restart — so a library can *offer* one and only a deployable can *keep* one.
+"Restart-durable rollback protection" was therefore a property the test suite could
+demonstrate and no deployment had.
+
+The new `mcp-re-client` crate is that deployable: a loopback plain-MCP listener that
+signs outbound as RFC 9421 + RFC 9530, verifies the delegated-signed reply, and loads
+its trust anchors from a signed manifest through a durable floor, refreshed on a cadence
+into the snapshot every route reads. See
+[`docs/client-sidecar-deployment-guide.md`](docs/client-sidecar-deployment-guide.md).
+
+- **The bind refuses a non-loopback address** unless `local.allow_non_loopback` is set.
+  The local leg is unauthenticated by construction, so anything that reaches it gets
+  requests signed under this client's identity.
+- **The floor must be named** — `durable` or `ephemeral`. A client that silently got the
+  ephemeral floor would report the same posture as one with a durable floor while
+  providing none of it across the restart that matters.
+- **A failed refresh keeps the last good anchors; an EXPIRED manifest withdraws them.**
+  Holding the anchors of a document that expired is the stale trust picture the expiry
+  check exists to refuse, reached by a different route.
+- **Anchored routes can now carry notifications.** `verify_delegated_accepted_202_anchored`
+  closes a gap where the trust-anchor mode — the one a signed manifest distributes — had
+  no signed-202 verifier and could only refuse one-way messages.
+
+### Added — evidence retention on the serving path (ADR-MCPRE-054)
+
+The SCITT surface was reachable only from tests, conformance vectors and interop
+harnesses: nothing on the serving path produced a statement, reconstructed a chain, or
+retained anything, so `retained_evidence.rs` was dead code inside the serving crate.
+
+- **`--retained-evidence-dir <path>`** retains the full request and response messages of
+  every served call. Opt-in and named, because it changes what a deployment stores about
+  every call.
+- **Retention fails closed.** A store failure refuses the exchange with the new frozen
+  `mcp-re.evidence_retention_unavailable`. A deployment that turned retention on is
+  asserting it can account for what it served; the audit sink takes the opposite posture
+  deliberately, because a lost log line does not change what the deployment can prove.
+- **Attestation stays off the request path.** `mcp_re_proxy::transparency::attest_chain`
+  reconstructs a chain from retained hops and issues a Signed Statement committing to it.
+  A PEP attesting per hop could only commit to a one-hop record, which for a continuation
+  is a truncated one. Submission to a real Transparency Service remains the ADR's open
+  external dependency.
+
 ### Security — round-6 audit remediation (BREAKING for some deployments)
 
 A file-by-file pass over the round-6 security audit: 126 findings fixed, including all

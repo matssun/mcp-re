@@ -365,6 +365,7 @@ mcp-re-proxy/                Server-side sidecar (TLS termination, OCSP, sandbox
 mcp-re-policy/               Delegated-authorization profiles (Phase 5).
 mcp-re-client-core/          Client-side shared seam (signed RFC 9421 requests, response binding, enforcement) — the audited core both SDKs and the client proxy bind to (ADR-MCPS-044).
 mcp-re-client-proxy/         Client-side MCP-RE proxy library — transport-agnostic seam (plain-MCP -> sign -> forward -> verify).
+mcp-re-client/               Client-side ambassador BINARY — the deployable that loads the signed trust-anchor manifest against a durable rollback floor and refreshes it in place.
 mcp-re-conformance/          Black-box conformance harness (object + HTTP; MCP-RE is HTTP-profile only).
 mcp-re-demo/                 mTLS/fixtures demo surface (host-side HostSession client + DemoFixtures).
 mcp-re-test-paths/           Test-only: resolve binaries + fixtures under Bazel OR Cargo.
@@ -429,6 +430,7 @@ conformance, reference implementation, demos, and non-goals):
   v0.2.0, and the cross-round [finding ledger](docs/archive/security/finding-ledger.jsonl).
   Vulnerability reporting: [`SECURITY.md`](SECURITY.md).
 - **Operator guides:** [`docs/sidecar-deployment-guide.md`](docs/sidecar-deployment-guide.md),
+  [`docs/client-sidecar-deployment-guide.md`](docs/client-sidecar-deployment-guide.md),
   [`docs/host-integration-guide.md`](docs/host-integration-guide.md),
   [`docs/transport-hardening-guide.md`](docs/transport-hardening-guide.md),
   [`docs/conformance-guide.md`](docs/conformance-guide.md),

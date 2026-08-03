@@ -1,0 +1,495 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The ADR-MCPRE-054 vertical, end to end, from a served call to an offline-verifiable
+//! receipt.
+//!
+//! ```text
+//! signed request -> HttpProfileProxy (delegated-required, retention ON)
+//!   -> the exchange is RETAINED before the response goes out
+//!   -> auditor: reconstruct_chain over the retained hop
+//!   -> issue_signed_statement committing to the reconstruction
+//!   -> register with a transparency service -> Receipt
+//!   -> verify_receipt_offline + verify_retained_evidence, contacting nobody
+//! ```
+//!
+//! Until this wiring the whole SCITT surface was reachable only from tests, conformance
+//! vectors and interop harnesses: nothing on the serving path produced a statement,
+//! reconstructed a chain, or retained anything, so `retained_evidence.rs` was dead code
+//! inside the serving crate. This lane is the production caller.
+//!
+//! The transparency service here is `PrototypeTransparencyService` — an in-process
+//! Merkle log, NOT a running SCITT Transparency Service. Registering against a real one
+//! is ADR-MCPRE-054's remaining external dependency. What this proves without one is
+//! everything either side of that hop: that a served call is retained, that the
+//! reconstruction and the statement are about the retained bytes, and that the receipt
+//! verifies offline.
+
+use std::sync::Arc;
+
+use mcp_re_core::SigningKey;
+use mcp_re_http_profile::scitt::CoseVerificationKey;
+use mcp_re_http_profile::scitt::PrototypeTransparencyService;
+use mcp_re_http_profile::scitt::ResolvedTransparencyService;
+use mcp_re_http_profile::scitt::StatementLeafProfile;
+use mcp_re_http_profile::ActorIdentity;
+use mcp_re_http_profile::AudienceTuple;
+use mcp_re_http_profile::ChainLabel;
+use mcp_re_http_profile::DelegationExpectations;
+use mcp_re_http_profile::HttpProfileError;
+use mcp_re_http_profile::ResolvedActor;
+use mcp_re_http_profile::SignerSlot;
+use mcp_re_http_profile::VerifierPolicy;
+
+use mcp_re_proxy::async_replay::AsyncReplayTier;
+use mcp_re_proxy::async_replay::InMemoryAsyncAtomicReplayStore;
+use mcp_re_proxy::async_serve::ServedHttpRequest;
+use mcp_re_proxy::http_profile_dispatch::ProxyDispatchConfig;
+use mcp_re_proxy::transparency::attest_chain;
+use mcp_re_proxy::transparency::EvidenceRetention;
+use mcp_re_proxy::ActorResolver;
+use mcp_re_proxy::HttpProfileProxy;
+
+use mcp_re_client_core::ArtifactBinding;
+use mcp_re_client_core::ArtifactType;
+use mcp_re_client_core::RequestSigningInputs;
+
+const CLIENT_SEED: [u8; 32] = [11u8; 32];
+const ROOT_SEED: [u8; 32] = [55u8; 32];
+const ISSUER_SEED: [u8; 32] = [77u8; 32];
+const TS_SEED: [u8; 32] = [88u8; 32];
+const NOW: i64 = 1_700_000_100;
+const TARGET: &str = "https://mcp.example.com/mcp?route=a";
+const CLIENT_KEY_ID: &str = "client-key-1";
+const ROOT_KID: &str = "root-kid";
+const ISSUER_KID: &str = "pep-statement-issuer";
+const TS_KID: &str = "prototype-ts";
+const AUD: &str = "verifier-1";
+const EPOCH: &str = "epoch-1";
+const ACCESS_TOKEN: &str = "access-token-xyz";
+
+fn client_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&CLIENT_SEED)
+}
+fn root_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&ROOT_SEED)
+}
+fn issuer_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&ISSUER_SEED)
+}
+fn ts_key() -> SigningKey {
+    SigningKey::from_seed_bytes(&TS_SEED)
+}
+
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "mcp-re-transparency-e2e-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("scratch");
+        Scratch(path)
+    }
+    fn join(&self, name: &str) -> std::path::PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+// ---- the real delegated-required server ------------------------------------
+
+fn server_config(replay_path: &std::path::Path) -> mcp_re_proxy::cli::Config {
+    let replay_path = replay_path.to_string_lossy().into_owned();
+    let args: Vec<String> = [
+        "--bind",
+        "127.0.0.1:8443",
+        "--audience",
+        AUD,
+        "--server-signer",
+        "did:example:server",
+        "--server-key-id",
+        ROOT_KID,
+        "--signing-key-seed",
+        "/dev/null",
+        "--tls-cert",
+        "/dev/null",
+        "--tls-key",
+        "/dev/null",
+        "--client-ca",
+        "/dev/null",
+        "--trust",
+        "/dev/null",
+        "--inner-http-url",
+        "http://127.0.0.1:9",
+        "--target-uri",
+        TARGET,
+        "--route",
+        "a",
+        "--replay-cache",
+        "file",
+        "--replay-path",
+        &replay_path,
+        "--delegated-trust-epoch",
+        EPOCH,
+        "--trust-domain",
+        "mcp.example.com",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    mcp_re_proxy::cli::parse_args(&args).expect("parse server config")
+}
+
+/// The trust seam for BOTH the serving path (Request slot) and the auditor's
+/// reconstruction (Response slot: the root the delegated credential chains to).
+fn resolver() -> ActorResolver {
+    Box::new(move |key_id: &str, slot: SignerSlot| {
+        match (key_id, slot) {
+            (CLIENT_KEY_ID, SignerSlot::Request) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "client".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:client".into(),
+                    keyid: CLIENT_KEY_ID.into(),
+                },
+                verification_key: client_key().public_key(),
+                slot,
+            }),
+            (ROOT_KID, SignerSlot::Response) => Some(ResolvedActor {
+                identity: ActorIdentity {
+                    role: "server".into(),
+                    trust_domain: "example.com".into(),
+                    subject: "did:example:server".into(),
+                    keyid: ROOT_KID.into(),
+                },
+                verification_key: root_key().public_key(),
+                slot,
+            }),
+            _ => None,
+        }
+        .into()
+    })
+}
+
+fn build_server(
+    replay_path: &std::path::Path,
+    retention: Option<Arc<EvidenceRetention>>,
+) -> HttpProfileProxy {
+    let config = server_config(replay_path);
+    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
+        .expect("build delegated signing wiring");
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first delegated key");
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    let proxy = HttpProfileProxy::new_delegated(
+        resolver(),
+        expected_audience,
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(|_forwarded: &[u8]| -> Vec<u8> {
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        }),
+        300,
+        Arc::clone(&wiring.signer),
+    );
+    match retention {
+        Some(retention) => proxy.with_evidence_retention(retention),
+        None => proxy,
+    }
+}
+
+/// Sign a plain request and serve it, returning the served status and the frozen
+/// `mcp-re.*` reason the response body carries (a success carries none).
+fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>) {
+    let inputs = RequestSigningInputs::new(
+        CLIENT_KEY_ID.to_owned(),
+        AudienceTuple {
+            audience_id: AUD.into(),
+            target_uri: TARGET.into(),
+            route: Some("a".into()),
+        },
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        nonce,
+        NOW - 100,
+        NOW + 200,
+    )
+    .with_headers(vec![(
+        "Authorization".to_owned(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = mcp_re_client_core::build_signed_request(
+        &serde_json::json!(1),
+        "tools/call",
+        serde_json::Map::new(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("sign the request");
+    let request = signed.request();
+    let served = ServedHttpRequest {
+        method: request.method.clone(),
+        target_uri: request.target_uri.clone(),
+        headers: request.headers.clone(),
+        body: request.body.clone(),
+        identity: None,
+        assertion: None,
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let response = rt.block_on(async { proxy.handle(served, NOW).await });
+    let reason = serde_json::from_slice::<serde_json::Value>(&response.body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/data/mcp_re_error/wire_code")
+                .and_then(|w| w.as_str())
+                .map(str::to_owned)
+        });
+    (response.status, reason)
+}
+
+/// The status alone, for the calls that are expected to succeed.
+fn serve_one(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
+    serve_one_full(proxy, nonce).0
+}
+
+fn expectations<'a>(audiences: &'a [&'a str], epochs: &'a [&'a str]) -> DelegationExpectations<'a> {
+    DelegationExpectations {
+        policy: VerifierPolicy::default(),
+        verifier_audiences: audiences,
+        expected_audience_hash: AUD,
+        accepted_epochs: epochs,
+        max_clock_skew: 60,
+    }
+}
+
+/// The external-signer seam COSE issuance and registration take: raw signature bytes,
+/// so the issuer/TS key never enters the profile crate.
+fn sign_with(key: SigningKey) -> impl Fn(&[u8]) -> Result<Vec<u8>, HttpProfileError> {
+    move |preimage: &[u8]| {
+        mcp_re_core::b64url_decode(&key.sign(preimage))
+            .map_err(|_| HttpProfileError::InvalidSignature)
+    }
+}
+
+// ---- the proofs ------------------------------------------------------------
+
+/// The whole vertical: serve, retain, reconstruct, attest, register, verify offline.
+#[test]
+fn a_served_call_becomes_an_offline_verifiable_receipt() {
+    let scratch = Scratch::new("vertical");
+    let retention =
+        Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
+    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+
+    assert_eq!(serve_one(&proxy, "nonce-transparency-vertical-1"), 200);
+
+    // The auditor reads what the serving path kept. The handle is the store's, so an
+    // auditor that has the digest — from the deployment's audit stream — can find it.
+    let retained: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
+        .expect("the store directory exists")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        retained.len(),
+        1,
+        "exactly the one served exchange was retained"
+    );
+    let digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
+        &std::fs::read(scratch.join("evidence").join(&retained[0])).expect("read back"),
+    );
+
+    let audiences = [AUD];
+    let epochs = [EPOCH];
+    let attestation = attest_chain(
+        &retention,
+        &[digest],
+        &resolver(),
+        &expectations(&audiences, &epochs),
+        &|_kid: &str| false,
+        NOW,
+        ISSUER_KID,
+        None,
+        None,
+        sign_with(issuer_key()),
+    )
+    .expect("the retained exchange attests");
+
+    assert_eq!(
+        attestation.reconstruction.label,
+        ChainLabel::Complete,
+        "a single terminal hop, fully verified, is a complete record"
+    );
+    assert!(attestation.statement.commitment().is_complete_record());
+
+    // Registration, then the acceptance property: the receipt verifies CONTACTING
+    // NOBODY — issuer signature, inclusion proof re-deriving the signed root, and the
+    // service's signature over that root.
+    let mut service = PrototypeTransparencyService::new(TS_KID);
+    let receipt = service
+        .register(&attestation.statement, sign_with(ts_key()))
+        .expect("the statement registers");
+
+    mcp_re_http_profile::scitt::verify_receipt_offline(
+        &attestation.statement,
+        &receipt,
+        |kid| (kid == ISSUER_KID).then(|| CoseVerificationKey::Ed25519(issuer_key().public_key())),
+        |kid| {
+            (kid == TS_KID).then(|| ResolvedTransparencyService {
+                key: CoseVerificationKey::Ed25519(ts_key().public_key()),
+                leaf_profile: StatementLeafProfile::StatementBytes,
+            })
+        },
+    )
+    .expect("the receipt verifies offline");
+}
+
+/// The retained/committed split made to mean something: the statement's commitment is
+/// checked against the bytes the store holds. A receipt says a statement was registered;
+/// only this says the statement is about the evidence in hand.
+#[test]
+fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
+    let scratch = Scratch::new("retained");
+    let retention =
+        Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
+    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+    assert_eq!(serve_one(&proxy, "nonce-transparency-retained-1"), 200);
+
+    let name = std::fs::read_dir(scratch.join("evidence"))
+        .expect("dir")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .next()
+        .expect("one object");
+    let digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
+        &std::fs::read(scratch.join("evidence").join(&name)).expect("read"),
+    );
+
+    let audiences = [AUD];
+    let epochs = [EPOCH];
+    let attestation = attest_chain(
+        &retention,
+        std::slice::from_ref(&digest),
+        &resolver(),
+        &expectations(&audiences, &epochs),
+        &|_kid: &str| false,
+        NOW,
+        ISSUER_KID,
+        None,
+        None,
+        sign_with(issuer_key()),
+    )
+    .expect("attest");
+
+    // Re-derived independently from the store, as an auditor holding only the retained
+    // bytes and the statement would.
+    let hops = retention.load_chain(&[digest]).expect("load the chain");
+    let reconstruction = mcp_re_http_profile::reconstruct_chain(
+        &hops,
+        &resolver(),
+        &expectations(&audiences, &epochs),
+        &|_kid: &str| false,
+        NOW,
+    );
+    mcp_re_http_profile::scitt::verify_retained_evidence(
+        attestation.statement.commitment(),
+        &reconstruction,
+        None,
+        None,
+    )
+    .expect("the retained bytes reproduce what the statement committed to");
+
+    // And the control: a DIFFERENT record does not pass as this one.
+    let other = build_server(&scratch.join("replay-b"), Some(Arc::clone(&retention)));
+    assert_eq!(serve_one(&other, "nonce-transparency-retained-2"), 200);
+    let names: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
+        .expect("dir")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != &name)
+        .collect();
+    let other_digest = mcp_re_http_profile::scitt::EvidenceDigest::of(
+        &std::fs::read(scratch.join("evidence").join(&names[0])).expect("read"),
+    );
+    let other_hops = retention.load_chain(&[other_digest]).expect("load");
+    let other_reconstruction = mcp_re_http_profile::reconstruct_chain(
+        &other_hops,
+        &resolver(),
+        &expectations(&audiences, &epochs),
+        &|_kid: &str| false,
+        NOW,
+    );
+    assert!(
+        mcp_re_http_profile::scitt::verify_retained_evidence(
+            attestation.statement.commitment(),
+            &other_reconstruction,
+            None,
+            None,
+        )
+        .is_err(),
+        "a statement must not verify against a different call's retained evidence"
+    );
+}
+
+/// Retention is off unless a deployment turns it on, and off means the request path is
+/// unchanged — no store, no directory, nothing kept.
+#[test]
+fn retention_is_off_by_default_and_nothing_is_kept() {
+    let scratch = Scratch::new("off");
+    let proxy = build_server(&scratch.join("replay"), None);
+    assert_eq!(serve_one(&proxy, "nonce-transparency-off-1"), 200);
+    assert!(
+        !scratch.join("evidence").exists(),
+        "a deployment that did not ask for retention stores nothing"
+    );
+}
+
+/// A deployment with retention ON is asserting it can account for what it served, so an
+/// exchange whose evidence cannot be kept is REFUSED rather than served silently.
+///
+/// The failure is injected by replacing the store directory with a regular file, so
+/// every write under it fails at the filesystem — the closest thing to a full or
+/// unmounted volume that a hermetic test can arrange.
+#[test]
+fn an_exchange_whose_evidence_cannot_be_retained_is_refused() {
+    let scratch = Scratch::new("failclosed");
+    let evidence = scratch.join("evidence");
+    let retention = Arc::new(EvidenceRetention::open(&evidence).expect("open retention"));
+    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+
+    // The store opened; now the directory goes away and a file takes its name.
+    std::fs::remove_dir_all(&evidence).expect("remove the store directory");
+    std::fs::write(&evidence, b"not a directory").expect("occupy the path");
+
+    // The REASON, not just the status: 503 is also what an unavailable replay tier
+    // returns, and a test that accepted any 503 here would keep passing if retention
+    // stopped running altogether and something else refused the call.
+    assert_eq!(
+        serve_one_full(&proxy, "nonce-transparency-failclosed-1"),
+        (
+            503,
+            Some("mcp-re.evidence_retention_unavailable".to_owned())
+        ),
+        "serving a call the deployment cannot account for would break the assertion \
+         turning retention on makes"
+    );
+}

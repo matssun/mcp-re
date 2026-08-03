@@ -105,6 +105,16 @@ pub enum McpReError {
     #[error("mcp-re.replay_cache_unavailable")]
     ReplayCacheUnavailable,
 
+    /// Retained-evidence store failure, on a deployment that has turned evidence
+    /// retention ON (ADR-MCPRE-054). Distinct from the two above because it names a
+    /// different obligation: a deployment retaining evidence is asserting it can
+    /// account for what it served, and serving a call whose evidence could not be kept
+    /// breaks that assertion silently. Fails closed for the same reason the replay
+    /// cache does, and is NOT a reuse of `replay_cache_unavailable` — an operator
+    /// reading that token would go and look at the replay tier.
+    #[error("mcp-re.evidence_retention_unavailable")]
+    EvidenceRetentionUnavailable,
+
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
     // Granular for protocol/profile-confusion failures; low-level JSON
     // value-domain failures stay coarse under `SerializationFailed`. All nine
@@ -277,6 +287,7 @@ impl McpReError {
             McpReError::UnknownEnvelopeField => "mcp-re.unknown_envelope_field",
             McpReError::TrustResolverUnavailable => "mcp-re.trust_resolver_unavailable",
             McpReError::ReplayCacheUnavailable => "mcp-re.replay_cache_unavailable",
+            McpReError::EvidenceRetentionUnavailable => "mcp-re.evidence_retention_unavailable",
             // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
             McpReError::AuthorizationBindingMissing => "mcp-re.authorization_binding_missing",
             McpReError::AuthorizationBindingTypeUnsupported => {
@@ -342,6 +353,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::UnknownEnvelopeField,
     McpReError::TrustResolverUnavailable,
     McpReError::ReplayCacheUnavailable,
+    McpReError::EvidenceRetentionUnavailable,
     McpReError::AuthorizationBindingMissing,
     McpReError::AuthorizationBindingTypeUnsupported,
     McpReError::AuthorizationBindingMalformed,
@@ -405,6 +417,10 @@ mod tests {
         check(
             McpReError::ReplayCacheUnavailable,
             "mcp-re.replay_cache_unavailable",
+        );
+        check(
+            McpReError::EvidenceRetentionUnavailable,
+            "mcp-re.evidence_retention_unavailable",
         );
         // KEPT verbatim despite field rename actor -> signer (ADR-007).
         check(

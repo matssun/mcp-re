@@ -325,6 +325,15 @@ pub struct Config {
     /// the record is a write on every request, so it is a deployment's choice; the
     /// startup line states which posture is in force either way.
     pub audit_sink: AuditSinkKind,
+    /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
+    /// retained and the request path is unchanged.
+    ///
+    /// Setting it changes what the deployment STORES about every call: the full request
+    /// and response messages, which is what a later SCITT statement commits to and what
+    /// an auditor recomputes the handles from. That is a data-retention decision, which
+    /// is why it is opt-in and named rather than derived from some other flag. Once set,
+    /// a store failure refuses the exchange with `mcp-re.evidence_retention_unavailable`.
+    pub retained_evidence_dir: Option<String>,
     /// #415 rev 2 §10: whether the PEP writes its own verified context into the body
     /// forwarded to the inner server. `Disabled` by default because `Trusted` asserts
     /// an unverifiable property of the inner channel.
@@ -624,6 +633,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut admission_allow_degraded = false;
     let mut trust_reload_secs: Option<u64> = None;
     let mut audit_sink = AuditSinkKind::None;
+    let mut retained_evidence_dir: Option<String> = None;
     let mut verified_context = VerifiedContextKind::Disabled;
     let mut replay = ReplayKind::Memory;
     let mut replay_path = None;
@@ -927,6 +937,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
             // ADR-MCPS-035: the per-request security record. Without this the
             // emission points exist and nothing consumes them, so a deployment has no
             // per-request attribution at all.
+            "--retained-evidence-dir" => retained_evidence_dir = Some(value.clone()),
             "--audit-sink" => {
                 audit_sink = match value.as_str() {
                     "none" => AuditSinkKind::None,
@@ -1803,6 +1814,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         admission_allow_degraded,
         trust_reload_secs,
         audit_sink,
+        retained_evidence_dir,
         verified_context,
         replay_redis_url,
         trust_epoch_redis_url,

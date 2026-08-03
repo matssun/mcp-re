@@ -1147,6 +1147,31 @@ pub fn run(
         }
     }
 
+    // ADR-MCPRE-054: evidence retention. Stated at startup in both directions because
+    // it changes what this deployment STORES about every call, and because a reader of
+    // the posture line should never have to infer a data-retention decision.
+    match &config.retained_evidence_dir {
+        Some(dir) => {
+            let retention = crate::transparency::EvidenceRetention::open(dir).map_err(|e| {
+                // Fail at startup, not at the first served call: a deployment that
+                // cannot open the store would otherwise refuse every request with
+                // `evidence_retention_unavailable` while appearing to have started.
+                format!("--retained-evidence-dir {dir}: {e}")
+            })?;
+            proxy = proxy.with_evidence_retention(Arc::new(retention));
+            eprintln!(
+                "mcp-re-proxy: evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
+                 request and response messages of every served call are retained, and a store \
+                 failure refuses the exchange with mcp-re.evidence_retention_unavailable."
+            );
+        }
+        None => eprintln!(
+            "mcp-re-proxy: evidence retention = OFF: nothing is retained, so no SCITT \
+             statement can later be issued about a call served here. Pass \
+             --retained-evidence-dir <path> to enable it."
+        ),
+    }
+
     // #415 rev 2 §10: the verified-context carrier. Caller-seeded context is stripped
     // regardless; this decides only whether the PEP writes its OWN context in its
     // place, and `trusted` is an operator assertion about the inner channel that

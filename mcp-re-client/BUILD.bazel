@@ -1,0 +1,86 @@
+load("//bazel:defs.bzl", "nt_rust_binary", "nt_rust_library", "nt_rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# R6-C061/C099: the DEPLOYABLE client side. `mcp-re-client-proxy` owns the pipeline and
+# links no networking crate; `mcp-re-transport` owns the verifying mTLS leg. This crate
+# is what an operator runs, and the only place ADR-MCPRE-052's durable trust-anchor
+# rollback floor is loaded, refreshed and enforced outside tests — a floor is state a
+# PROCESS keeps across restarts, so a library can offer one and only a binary can keep
+# one.
+nt_rust_library(
+    name = "mcp_re_client",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "mcp_re_client",
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        # The signing seed and its decoded bytes are held in `Zeroizing` so both are
+        # scrubbed on drop.
+        "@crates_mcp_re//:zeroize",
+    ],
+)
+
+# The CLI shell: parse, build, perform the fail-closed startup anchor load, serve.
+nt_rust_binary(
+    name = "mcp_re_client_cli",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_client",
+        # main.rs installs a SIGTERM/SIGINT handler via libc::sigaction, so the binary
+        # links libc directly rather than by manifest inheritance.
+        "@crates_mcp_re//:libc",
+    ],
+)
+
+# Inline unit tests: config validation (the loopback guard, unknown fields, binding
+# resolution), the anchor loader/refresher (durable floor, rollback across a restart,
+# last-good on a failed refresh, withdrawal on expiry), and the local HTTP framing.
+nt_rust_test(
+    name = "mcp_re_client_test",
+    crate = ":mcp_re_client",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-host:mcp_re_host",
+        "//mcp-re-transport:mcp_re_transport",
+        "@crates_mcp_re//:libc",
+        "@crates_mcp_re//:serde",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:zeroize",
+    ],
+)
+
+# The full-stack proof: the shipped listener driven over a REAL loopback socket against
+# a REAL delegated-required server, with the client's anchors loaded from a signed
+# manifest through a file-backed rollback floor. Includes the decisive one — a published
+# revocation reaching an already-running listener with no restart.
+nt_rust_test(
+    name = "local_leg_e2e_test",
+    srcs = ["tests/local_leg_e2e_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client",
+        "//mcp-re-client-core:mcp_re_client_core",
+        "//mcp-re-client-proxy:mcp_re_client_proxy",
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-http-profile:mcp_re_http_profile",
+        "//mcp-re-proxy:mcp_re_proxy_async",
+        "@crates_mcp_re//:serde_json",
+        "@crates_mcp_re//:tokio",
+    ],
+)

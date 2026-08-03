@@ -19,6 +19,7 @@ use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::classify_result;
 use mcp_re_client_core::continuation_state;
 use mcp_re_client_core::verify_delegated_accepted_202;
+use mcp_re_client_core::verify_delegated_accepted_202_anchored;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::verify_delegated_response_anchored;
 use mcp_re_client_core::DelegatedOutcome;
@@ -317,18 +318,17 @@ impl ClientProxy {
                     params.now_unix,
                 )?;
             }
-            // The anchored variant has no 202 verifier of its own yet, and guessing one
-            // would mean verifying an acknowledgement against trust anchors nobody
-            // wired for it. Refused rather than accepted unverified: an unacknowledged
-            // notification is a failure the caller can see, while an unverified one is
-            // a silent downgrade of the whole notification contract.
-            ClientVerification::DelegatedAnchored(_, _) => {
-                return Err(ProxyError::FailedClosed(
-                    HttpProfileError::MalformedEvidence(
-                        "notifications are not supported on an anchored route: no signed-202 \
-                         verifier is wired for the trust-anchor set",
-                    ),
-                ))
+            // The trust-anchor set is read at THIS message's `now`, exactly as the
+            // bodied path reads it, so a manifest that revoked a root refuses the next
+            // acknowledgement rather than the next restart.
+            ClientVerification::DelegatedAnchored(policy, anchors) => {
+                verify_delegated_accepted_202_anchored(
+                    response,
+                    signed.request(),
+                    policy,
+                    &anchors.load(),
+                    params.now_unix,
+                )?;
             }
         }
         Ok(ProxyResponse {

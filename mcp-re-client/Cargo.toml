@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "mcp-re-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "MCP-RE client-side ambassador: the deployable sidecar that signs plain MCP as RFC 9421 and verifies the server's delegated-signed reply against manifest-published trust anchors."
+
+# The DEPLOYABLE client side. `mcp-re-client-proxy` owns the pipeline and stays
+# transport-free; `mcp-re-transport` owns the verifying mTLS leg and implements that
+# crate's `RemoteTransport`; this crate is the artifact an operator runs, and the only
+# place the durable trust-anchor floor is loaded, refreshed and enforced outside tests.
+#
+# It exists because a library cannot hold a rollback floor: ADR-MCPRE-052's floor is
+# durable state a PROCESS keeps across restarts, and every non-test caller of
+# `FileManifestFloor` was a test until this binary.
+[dependencies]
+mcp-re-core = { path = "../mcp-re-core" }
+mcp-re-client-core = { path = "../mcp-re-client-core" }
+mcp-re-client-proxy = { path = "../mcp-re-client-proxy" }
+mcp-re-transport = { path = "../mcp-re-transport" }
+# The clock and the OS-CSPRNG nonce source. `mcp-re-host` is transport-free by
+# design (ADR-MCPS-015); depending on it here does not change that — the binary is
+# not the transport crate.
+mcp-re-host = { path = "../mcp-re-host" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+libc = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+mcp-re-proxy = { path = "../mcp-re-proxy" }
+mcp-re-http-profile = { path = "../mcp-re-http-profile" }
+tokio = { workspace = true }
+
+[lib]
+name = "mcp_re_client"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-re-client"
+path = "src/main.rs"
