@@ -421,6 +421,15 @@ impl Drop for FloorPath {
     }
 }
 
+/// A one-way JSON-RPC NOTIFICATION: the ABSENT `id` is what makes it one, and both the
+/// signer and the serving path classify on exactly that key's absence.
+fn plain_notification() -> serde_json::Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+    })
+}
+
 fn plain_request() -> serde_json::Value {
     json!({
         "jsonrpc": "2.0",
@@ -839,6 +848,45 @@ fn a_manifest_revoked_root_fails_the_round_trip_closed() {
         Some("mcp-re.delegation_revoked"),
         "revoking the ROOT in the manifest invalidates the delegated credential under it"
     );
+}
+
+#[test]
+fn an_anchored_route_verifies_the_signed_202_that_acknowledges_a_notification() {
+    // Anchored routes used to refuse every notification: no signed-202 verifier was
+    // wired for the trust-anchor set, so the mode a signed manifest distributes could
+    // not carry a one-way message at all. The acknowledgement is checked against the
+    // manifest-published root, exactly as a bodied reply is.
+    let floor = FloorPath::new("notify-accept");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, false);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let out = proxy
+        .handle("r1", &plain_notification(), &params("nonce-anchored-202"))
+        .expect("the signed 202 verifies against the manifest-published root");
+    assert_eq!(out.kind, ResponseKind::AcceptedNotification);
+    assert_eq!(
+        out.plain_response,
+        serde_json::Value::Null,
+        "a notification has no reply to hand back"
+    );
+}
+
+#[test]
+fn a_manifest_revoked_root_refuses_the_notification_acknowledgement_too() {
+    // The control for the test above. Verifying the 202 has to be a real check against
+    // the same anchors, not a formality that returns AcceptedNotification whatever the
+    // trust picture says — otherwise revoking a root would still silently acknowledge
+    // every one-way message sent under it.
+    let floor = FloorPath::new("notify-revoke");
+    let issuers = issuers_from_signed_manifest(&floor.0, 1, true);
+    let proxy = client_proxy_anchored(build_server(), issuers);
+    let err = proxy
+        .handle(
+            "r1",
+            &plain_notification(),
+            &params("nonce-anchored-202-rev"),
+        )
+        .expect_err("a revoked root must not acknowledge a notification");
+    assert_eq!(err.wire_code(), Some("mcp-re.delegation_revoked"));
 }
 
 #[test]

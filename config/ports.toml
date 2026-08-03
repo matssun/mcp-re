@@ -85,6 +85,18 @@ port = 8630
 scheme = "tcp"
 description = "Shared Redis replay tier (primary; replicas provide WAIT quorum acks)."
 
+# The mcp-re-client sidecar's LOCAL plain-MCP listener. The local client speaks
+# ordinary MCP here and never sees an MCP-RE field; the sidecar signs outbound and
+# verifies the delegated-signed reply. Loopback ONLY — this leg carries no
+# authentication, so anything that can reach it gets requests signed under the client's
+# identity, which is why the binary refuses a non-loopback bind unless the config
+# declares local.allow_non_loopback.
+[services.mcp_re_client]
+host = "127.0.0.1"
+port = 8640
+scheme = "http"
+description = "mcp-re-client sidecar — local plain-MCP listener (client-side ambassador)."
+
 # The Streamable-HTTP inner MCP backend the proxy forwards to (ADR-MCPRE-051 §3).
 # A real HTTP MCP server (the upstream MCP SDK) — the ALLOWED inner plane. NOT stdio: stdio is
 # compat-only (out-of-TCB bridge) and never the production inner. Local dev runs it

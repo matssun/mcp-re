@@ -17,6 +17,7 @@ members = [
     "mcp-re-proxy",       # Server-side sidecar (async/HTTP-first PEP; ADR-MCPRE-051)
     "mcp-re-host",        # Client-side ambassador (request signing, response verification)
     "mcp-re-client-core", # Client-side shared seam for proxy + SDK (ADR-MCPS-044) — signed draft-02 requests, response binding
+    "mcp-re-client",      # Client-side ambassador BINARY — the deployable that loads the signed trust-anchor manifest against a durable rollback floor (ADR-MCPRE-052)
     "mcp-re-client-proxy",# Client-side MCP-RE proxy library (transport-agnostic seam) — plain-MCP -> sign -> forward -> verify (ADR-MCPS-044)
     "mcp-re-transport",   # Client-side mTLS transport (MCPS-053 — verifying rustls client)
     "mcp-re-policy",      # Delegation/authorization profiles (Phase 5 — placeholder)
