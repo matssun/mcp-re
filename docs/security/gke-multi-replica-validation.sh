@@ -1,9 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# MCP-RE — live multi-replica (GKE) validation harness (MCPS-90).
+# MCP-RE — live multi-replica validation harness (MCPS-90).
 #
-# WHAT THIS PROVES, against a REAL Google Kubernetes Engine fleet of N identical
+# WHAT THIS PROVES, against a REAL Kubernetes fleet (GKE or EKS) of N identical
 # mcp-re-proxy replicas behind a Service, with a shared Redis replay + trust-epoch
 # tier (ADR-MCPS-049 / ADR-MCPRE-051 §4):
 #   Proof 1 — cross-replica REPLAY coherence: a nonce accepted (Fresh) by one
@@ -19,19 +19,19 @@
 #
 # These four are already proven IN-PROCESS by the repo's tests
 # (replay_race_harness_test, trust-epoch flush tests, async_drain_test); this
-# harness RE-PROVES them on live GKE infrastructure, which is the MCPS-90 / MCPS-90
+# harness RE-PROVES them on live cloud infrastructure, which is the MCPS-90
 # release gate ADR-MCPS-049 clause and the single-node non-claim retirement
 # (MCPS-91) depend on.
 #
-# This is a TEMPLATE. It contains no secrets. Fill in PROJECT_ID / CLUSTER /
-# REGION below (or export them), authenticate with `gcloud auth login`, and
-# provide the fleet's TLS + trust material Secret (see deploy/helm/mcp-re-proxy).
-# It is IDEMPOTENT: re-running reuses an existing cluster/release.
+# This is a TEMPLATE. It contains no secrets. Fill in the substrate's targets below
+# (or export them), authenticate to that cloud, and provide the fleet's TLS + trust
+# material Secret (see deploy/helm/mcp-re-proxy). It is IDEMPOTENT: re-running reuses
+# an existing cluster/release.
 #
-# Cost note: a small GKE Autopilot/standard cluster + a Redis instance for the
-# duration of the run. Tear down with `--teardown` when done.
+# Cost note: a small cluster + a Redis instance for the duration of the run. Tear
+# down with `--teardown` when done.
 #
-# Prerequisites:
+# Prerequisites (GKE):
 #   * a Google Cloud project with billing enabled; gcloud + kubectl + helm
 #   * gcloud auth login && gcloud config set project <PROJECT_ID>
 #   * a Kubernetes Secret `mcp-re-tls` with tls.crt/tls.key/client-ca.pem/trust.json
@@ -41,12 +41,17 @@
 #
 # Usage:
 #   PROJECT_ID=my-proj ./gke-multi-replica-validation.sh [--teardown]      # real GKE fleet
+#   PROVIDER=eks       ./gke-multi-replica-validation.sh [--teardown]      # real EKS fleet
 #   PROVIDER=kind      ./gke-multi-replica-validation.sh [--teardown]      # local kind, no cost
 #
 # PROVIDER=kind runs the IDENTICAL proofs against the same image + chart on a local
-# kind cluster — the pre-GKE gate. A green kind run is the same test as GKE, run for
-# free; only the cluster substrate and the KMS-token source differ (see PROVIDER).
-# Exit 0 == all four proofs pass.
+# kind cluster — the pre-cloud gate. A green kind run is the same test as GKE or EKS,
+# run for free; only the cluster substrate and the cloud-credential source differ (see
+# PROVIDER). Exit 0 == all four proofs pass.
+#
+# EKS prerequisites beyond the GKE list: eksctl + the aws CLI, an ECR_REGISTRY holding
+# this VERSION's images, and one run of docs/security/eks-kms-irsa-setup.sh to create
+# the IRSA role (then export MCP_RE_AWS_KMS_ROLE_ARN).
 set -euo pipefail
 
 # PROVIDER selects the CLUSTER SUBSTRATE — and NOTHING else. `gke` provisions a real
@@ -57,8 +62,21 @@ set -euo pipefail
 # is the whole point: a green `kind` run is the same test as GKE, run for free, so no
 # cluster spend happens on a config that hasn't already passed locally.
 PROVIDER="${PROVIDER:-gke}"
-[[ "$PROVIDER" == gke || "$PROVIDER" == kind ]] || { printf 'PROVIDER must be gke|kind\n' >&2; exit 1; }
+case "$PROVIDER" in gke|eks|kind) ;; *) printf 'PROVIDER must be gke|eks|kind\n' >&2; exit 1 ;; esac
 KIND_CLUSTER="${KIND_CLUSTER:-mcp-re-fleet}"
+# The `gke-` in this file's name is HISTORICAL — it predates the eks and kind
+# substrates and is kept only because renaming it would rewrite CHANGELOG entries
+# that record what was actually run. The harness is provider-generic: the proofs,
+# the chart, the Secret and the `--expect` assertions are identical on all three.
+AWS_REGION="${MCP_RE_AWS_REGION:-eu-north-1}"
+EKS_CLUSTER="${EKS_CLUSTER:-mcp-re-fleet}"
+EKS_NODES="${EKS_NODES:-2}"
+# 2 vCPU / 8 GiB, free-tier-eligible: enough for a 3-replica fleet + Redis + inner,
+# and NOT the declared-hardware class — this harness proves COHERENCE, never
+# throughput. The §7 baseline is a separate run on a separate node group
+# (docs/security/eks-slo-baseline-runbook.md), and its instance types cannot launch
+# on a Free Tier plan at all.
+EKS_MACHINE="${EKS_MACHINE:-m7i-flex.large}"
 
 # PROJECT_ID targets EVERY gcloud call explicitly (never the ambient active
 # config), so this harness can only ever act on the project the operator names.
@@ -104,6 +122,14 @@ if [[ "$PROVIDER" == gke ]]; then
   PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${AR}/mcp-re-proxy:$IMAGE_TAG}"
   INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${AR}/mcp-re-inner-fastmcp:$IMAGE_TAG}"
   LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${AR}/mcp-re-loadgen:$IMAGE_TAG}"
+elif [[ "$PROVIDER" == eks ]]; then
+  # ECR. The registry host is required rather than derived: deriving it from the
+  # caller's account would silently pull from whatever account happens to be
+  # authenticated, which is not the same guarantee as naming the one you meant.
+  : "${ECR_REGISTRY:?set ECR_REGISTRY=<acct>.dkr.ecr.<region>.amazonaws.com (see docs/security/eks-slo-baseline-runbook.md)}"
+  PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-${ECR_REGISTRY}/mcp-re-proxy:$IMAGE_TAG}"
+  INNER_IMAGE="${MCP_RE_INNER_IMAGE:-${ECR_REGISTRY}/mcp-re-inner-fastmcp:$IMAGE_TAG}"
+  LOADGEN_IMAGE="${MCP_RE_LOADGEN_IMAGE:-${ECR_REGISTRY}/mcp-re-loadgen:$IMAGE_TAG}"
 else
   PROXY_IMAGE="${MCP_RE_PROXY_IMAGE:-mcp-re-proxy:$IMAGE_TAG}"
   INNER_IMAGE="${MCP_RE_INNER_IMAGE:-mcp-re-inner-fastmcp:$IMAGE_TAG}"
@@ -141,6 +167,12 @@ if [[ "${1:-}" == "--teardown" ]]; then
   helm -n "$NAMESPACE" uninstall "$RELEASE" || true
   if [[ "$PROVIDER" == gke ]]; then
     gcloud container clusters delete "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE" --quiet || true
+  elif [[ "$PROVIDER" == eks ]]; then
+    # --disable-nodegroup-eviction: the fleet's PodDisruptionBudget would otherwise
+    # hold the drain open until the eksctl timeout, leaving a BILLING cluster behind
+    # after a teardown that reported success.
+    eksctl delete cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" \
+      --disable-nodegroup-eviction || true
   else
     kind delete cluster --name "$KIND_CLUSTER" || true
   fi
@@ -175,6 +207,33 @@ if [[ "$PROVIDER" == gke ]]; then
       --workload-pool "${PROJECT_ID}.svc.id.goog"
   fi
   gcloud container clusters get-credentials "$CLUSTER" --project "$PROJECT_ID" --zone "$ZONE"
+elif [[ "$PROVIDER" == eks ]]; then
+  log "Cluster $EKS_CLUSTER (EKS, $AWS_REGION, OIDC/IRSA) "
+  if ! aws eks describe-cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" >/dev/null 2>&1; then
+    # --with-oidc provisions the cluster's OIDC identity provider. That is what makes
+    # IRSA possible at all: without it EKS projects no service-account token and the
+    # awsKms custody path below has no credentials, so the fleet would have to fall
+    # back to a mounted IAM key pair — a weaker posture than the GKE run this harness
+    # is supposed to be the twin of.
+    eksctl create cluster --name "$EKS_CLUSTER" --region "$AWS_REGION" \
+      --nodes "$EKS_NODES" --node-type "$EKS_MACHINE" --node-volume-size 40 \
+      --with-oidc --managed
+  fi
+  aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+  # NetworkPolicy on EKS is NOT enforced by default. The VPC CNI accepts the object
+  # and filters nothing unless policy enforcement is switched on, which is exactly the
+  # state the earlier GKE runs were in before --enable-network-policy: the four
+  # coherence proofs pass and `mcp-re-inner-fastmcp-allow-proxy-only` enforces NOTHING,
+  # so any pod in the cluster can POST past the PEP — no signature, no replay
+  # admission, no audit record. Turn it on, and FAIL if it cannot be turned on rather
+  # than running a fleet that reports inner containment it does not have.
+  log "VPC CNI NetworkPolicy enforcement (inner containment)"
+  aws eks update-addon --cluster-name "$EKS_CLUSTER" --region "$AWS_REGION" \
+    --addon-name vpc-cni --resolve-conflicts PRESERVE \
+    --configuration-values '{"enableNetworkPolicy":"true"}' >/dev/null \
+    || fail "could not enable VPC CNI NetworkPolicy on $EKS_CLUSTER — without it the inner-plane NetworkPolicy is accepted and enforces nothing"
+  aws eks wait addon-active --cluster-name "$EKS_CLUSTER" --region "$AWS_REGION" \
+    --addon-name vpc-cni
 else
   # kind: create-or-reuse a local cluster and load the SAME images the GKE build
   # produces (native arch, built from deploy/docker/Dockerfile{,.inner}). Build any
@@ -330,12 +389,24 @@ log "Deploy fleet ($REPLICAS replicas) — always-maximal-security posture; flee
 INNER_URL="http://mcp-re-inner-fastmcp:$(port_of mcp_re_inner_backend)/mcp/"
 
 # Signing-key custody (ADR-MCPRE-052 delegated-required ROOT ISSUER, off the request
-# path). Default gcpKms — the branch's subject. The custody CODE is identical on both
-# providers; only how the pod obtains the KMS access token differs (the one
-# substrate-forced difference): GKE via Workload-Identity metadata (useMetadata=true),
-# kind via an operator-token Secret. Set MCP_RE_KEY_SOURCE=fileSeed to root the issuer
-# in the mounted seed instead (no KMS).
-KEY_SOURCE="${MCP_RE_KEY_SOURCE:-gcpKms}"
+# path). The custody CODE is identical on every provider; only how the pod obtains its
+# cloud credential differs — the one substrate-forced difference:
+#   GKE   gcpKms via the Workload-Identity metadata server (useMetadata=true)
+#   EKS   awsKms via IRSA — the projected token exchanged by STS (useWebIdentity=true)
+#   kind  an operator-token Secret (gcpKms) or a static IAM pair (awsKms); local only
+# In both cloud cases the pod holds NO key material and NO long-lived credential,
+# which is the property these runs exist to demonstrate. Set MCP_RE_KEY_SOURCE=fileSeed
+# to root the issuer in the mounted seed instead (no KMS at all).
+#
+# The default follows the substrate, so a run cannot silently prove custody on a cloud
+# whose KMS it never touched.
+if [[ -n "${MCP_RE_KEY_SOURCE:-}" ]]; then
+  KEY_SOURCE="$MCP_RE_KEY_SOURCE"
+elif [[ "$PROVIDER" == eks ]]; then
+  KEY_SOURCE="awsKms"
+else
+  KEY_SOURCE="gcpKms"
+fi
 KMS_SETS=()
 case "$KEY_SOURCE" in
   gcpKms)
@@ -367,8 +438,42 @@ case "$KEY_SOURCE" in
         --dry-run=client -o yaml | kubectl apply -f -
       KMS_SETS+=( --set gcpKms.useMetadata=false --set gcpKms.accessTokenSecretName=mcp-re-kms-token )
     fi ;;
+  awsKms)
+    : "${MCP_RE_AWS_KMS_KEY_ID:?set MCP_RE_AWS_KMS_KEY_ID to the KMS signing key id/ARN/alias}"
+    KMS_SETS+=( --set keySource=awsKms
+                --set-string awsKms.region="${MCP_RE_AWS_KMS_REGION:-$AWS_REGION}"
+                --set-string awsKms.keyId="$MCP_RE_AWS_KMS_KEY_ID" )
+    # Credential acquisition — the ONE substrate-forced difference, mirroring the
+    # gcpKms arm above:
+    #   EKS (IRSA): the projected service-account token is exchanged for temporary
+    #     credentials by STS. Requires (a) the cluster made --with-oidc (done above)
+    #     and (b) the KSA annotated with the role ARN + a trust policy naming this
+    #     namespace/serviceaccount — run docs/security/eks-kms-irsa-setup.sh once,
+    #     then export MCP_RE_AWS_KMS_ROLE_ARN so the annotation is applied THROUGH
+    #     helm here (deterministic; helm owns the SA annotation).
+    #   kind: no OIDC provider and no projected token, so a static IAM key pair is
+    #     used. Valid on kind ONLY, and the chart makes you say so.
+    use_irsa="${MCP_RE_AWS_USE_WEB_IDENTITY:-}"
+    [[ -z "$use_irsa" && "$PROVIDER" == eks ]] && use_irsa=1
+    if [[ "$use_irsa" == "1" ]]; then
+      : "${MCP_RE_AWS_KMS_ROLE_ARN:?IRSA path: export MCP_RE_AWS_KMS_ROLE_ARN=arn:aws:iam::<acct>:role/<role> (run eks-kms-irsa-setup.sh first)}"
+      KMS_SETS+=( --set awsKms.useWebIdentity=true
+                  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$MCP_RE_AWS_KMS_ROLE_ARN" )
+    elif [[ "$PROVIDER" == eks ]]; then
+      fail "static IAM credentials on EKS defeat the point of this run — the GKE twin holds NO key material in the pod. Use the IRSA path (leave MCP_RE_AWS_USE_WEB_IDENTITY unset)."
+    else
+      : "${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (source work/test-aws-cloud.sh; never commit them)}"
+      : "${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY}"
+      kubectl -n "$NAMESPACE" create secret generic mcp-re-aws-credentials \
+        --from-literal=aws-access-key-id="$AWS_ACCESS_KEY_ID" \
+        --from-literal=aws-secret-access-key="$AWS_SECRET_ACCESS_KEY" \
+        --dry-run=client -o yaml | kubectl apply -f -
+      KMS_SETS+=( --set awsKms.useWebIdentity=false
+                  --set awsKms.allowStaticCredentials=true
+                  --set awsKms.credentialsSecretName=mcp-re-aws-credentials )
+    fi ;;
   fileSeed) KMS_SETS+=( --set keySource=fileSeed ) ;;
-  *) fail "MCP_RE_KEY_SOURCE must be gcpKms|fileSeed" ;;
+  *) fail "MCP_RE_KEY_SOURCE must be gcpKms|awsKms|fileSeed" ;;
 esac
 
 # The trust domain both sides sign/verify under. ONE variable, used for the chart AND
