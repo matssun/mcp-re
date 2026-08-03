@@ -8,10 +8,15 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**Current release: v0.12.1** (2026-07-14) — the first live
-KMS-via-Workload-Identity GKE run, over the HTTP-profile serving stack landed in
-v0.11–v0.12. The sole over-the-wire carrier is the **RFC 9421 HTTP Message
-Signatures + RFC 9530 Content-Digest** profile (`mcp-re-http-v1`, ADR-MCPRE-050);
+**Current release: v0.14.0** (2026-07-28) — a security-audit release: fourteen rounds
+of the audit funnel closed 57 finding clusters, each fix carrying a negative control,
+over the HTTP-profile serving stack landed in v0.11–v0.12 and the first live
+KMS-via-Workload-Identity GKE run in v0.12.1. A sixth audit round since then closed a
+further 127 clusters including all 25 highs; that work, the live AWS KMS lanes, the
+per-request revocation check, evidence retention (ADR-MCPRE-054) and the client
+ambassador binary are on `main` and unreleased. The sole over-the-wire carrier is the
+**RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest** profile
+(`mcp-re-http-v1`, ADR-MCPRE-050);
 the earlier native/object envelope (Ed25519-over-JCS `_meta`, draft-01/draft-02)
 and the stdio transport were **removed**, not kept as fallbacks. Response signing
 is **delegated-required only** (ADR-MCPRE-052): a root key in HSM/KMS issues
@@ -29,7 +34,8 @@ The current implementation may claim:
 > four deployment modes — for horizontally-scaled multi-node fleets within one
 > trust domain / one operator, at the security tier composed from those modes
 > (proven live on a 2-node GKE cluster, v0.11, with KMS custody via Workload
-> Identity added in v0.12.1).
+> Identity added in v0.12.1). Non-exporting delegated-root custody is live-proven
+> against **both** Google Cloud KMS and AWS KMS through the opt-in adapters.
 
 This claim is tiered: single-node is the unconditional floor; the multi-node
 extension holds only at the declared shared-tier profile (`--fleet` fails closed on a
@@ -144,6 +150,55 @@ coherence guarantees:
   frozen wire codes.
 - One-command reproduction harness (`docs/security/gcloud-kms-validation.sh`).
 
+### Live AWS KMS validation
+
+Run against real AWS KMS on **2026-08-01** (account `455880745808`, region
+`eu-north-1`, key spec `ECC_NIST_EDWARDS25519`, `ED25519_SHA_512` /
+`MessageType: RAW`):
+
+- **Object signing** — `aws_kms_signature_verifies_under_mcp_re_core`: a live
+  `Sign` produces a signature the unmodified `mcp-re-core` verifier accepts.
+- **Delegated-required serving** — `aws_kms_delegated_required_serving_live`: the
+  full ADR-MCPRE-052 chain through production `build_delegated_signing` +
+  `new_delegated` wiring, with zero per-request KMS operations at the serving
+  altitude.
+- **Authority flip** — `aws_kms_authority_flip_live`: rotation to a successor, the
+  revocation seam in both directions, pre-052 direct-root rejection, and the
+  trust-epoch flip.
+
+Which lanes earn which wording — and which lanes remain GCP-only — is the table in
+[`docs/security/cloud-kms-claims-map.md`](security/cloud-kms-claims-map.md). Both
+adapters are **opt-in** (`aws_kms_keysource` / `gcp_kms_keysource`); the default
+`:mcp_re_proxy` target links neither, so no claim may imply a default proxy binary
+carries KMS support. FIPS coverage is a separate axis and does not ride along — see
+[`aws-kms-fips-protection-level.md`](security/aws-kms-fips-protection-level.md).
+
+On EKS, a **plumbing dry-run** passed on 2026-08-01 (`8000/8000`, `t4g.small`),
+proving the real `eks.amazonaws.com/nodegroup` selector and an authenticated private
+ECR pull — the two things a kind rehearsal structurally cannot reach. Its throughput
+number is not a baseline and never reaches `slo_gate.py`.
+
+### The audit surface a deployment can actually turn on
+
+- **Per-request client-certificate revocation** — revocation is re-checked on every
+  request rather than only at the handshake, and TLS session resumption is refused so
+  a resumed session cannot carry a chain validated against a withdrawn CA.
+- **The ADR-MCPS-035 audit sink is installable** — `--audit-sink none|stderr`, wired
+  through `app.rs` and the Helm chart. A proxy that emits no per-request security
+  record now says so at startup instead of doing it silently.
+- **§7 admission currency on the serving path** (ADR-MCPRE-053) — an
+  authority-signed admission assertion is verified before replay admission and before
+  the inner backend, because both are irreversible; `--admission off|optional|required`.
+- **Evidence retention** (ADR-MCPRE-054) — `--retained-evidence-dir` retains the full
+  request and response of every ACCEPTED call, fails closed on a store failure, and
+  keeps attestation off the request path. Opt-in and named, because it changes what a
+  deployment stores about every call.
+- **The client-side ambassador ships as a binary** (`mcp-re-client`) — a loopback
+  plain-MCP listener that signs outbound under the HTTP profile, verifies the
+  delegated-signed reply, and loads trust anchors from a signed manifest through a
+  named durable-or-ephemeral floor. Restart-durable rollback protection is now a
+  property a deployment has, not one only the test suite could demonstrate.
+
 ## Not yet claimed
 
 MCP-RE does not currently claim:
@@ -152,13 +207,29 @@ MCP-RE does not currently claim:
 - universal enterprise authorization (MCP-RE binds authorization decisions; it
   does not interpret or replace an enterprise authz system);
 - an EMA (enterprise-managed authorization) implementation;
-- portable audit receipts;
+- **portable audit receipts end-to-end.** ADR-MCPRE-054 is implemented: retained
+  evidence, RFC 9942 COSE receipts, RFC 9943 Signed Statements, and
+  `transparency::attest_chain` reconstructing a chain from retained hops. What is
+  **not** claimed is the last hop — submission to a real Transparency Service, which
+  remains the ADR's open external dependency. Interop is proven against two
+  independent implementations, not against a production TS;
 - full SIEM / Security Command Center integration (the audit taxonomy is frozen
   and SCC-mappable, but the integration itself is unbuilt);
-- broad multi-cloud live validation: GCP Cloud KMS is live-proven (including on GKE
-  via Workload Identity); the AWS KMS adapter is shipped with its live lane written
-  but **not** yet run against real AWS KMS, so multi-cloud custody is not claimed
-  until AWS is also live-proven;
+- **uniform multi-cloud live validation.** Non-exporting delegated-root custody is
+  live-proven on **both** clouds (GCP 2026-07-14 incl. GKE Workload Identity; AWS
+  2026-08-01), which is what the delegated-root wording rests on. The clouds are
+  **not** at equal depth: delegated TLS, the HTTP-profile lane, the delegated-signing
+  state machine, and root rotation have live runners on GCP only — deliberate scope,
+  not defects, since `--aws-kms-tls-key-id` is wired. Per-capability detail:
+  [`cloud-kms-claims-map.md`](security/cloud-kms-claims-map.md);
+- **client-side KMS custody, on either cloud.** Those lanes targeted
+  `mcp-re-client-proxy-cli` and `mcp-re-walkthrough`, neither of which is a workspace
+  member, so they have no runner. A known coverage gap, recorded rather than dropped;
+- **an ADR-MCPRE-051 §7 baseline on AWS hardware.** The EKS lane is written and its
+  plumbing is proven on a real node, but the declared-hardware classes
+  (`m7g.2xlarge` / `c7g.2xlarge`) cannot launch on a Free Tier *plan* account — an
+  account-plan restriction no quota increase clears. The GKE-measured baseline is the
+  only declared one;
 - **topology-independent zero-drop rolling updates.** The graceful-drain path is
   clean in-process and on kind, but the live GKE rolling-update proof has a known
   residual — a rollout dropped **2 of 590** in-flight requests through a real L4
@@ -168,8 +239,10 @@ MCP-RE does not currently claim:
   a declared, validated topology and drain configuration;
 - **zero-window certificate revocation.** Mode A enforces short-lived certs plus a
   static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
-  revocation via the attestor's CRL — but revocation latency is bounded by the CRL
-  cadence, not zero;
+  revocation via the attestor's CRL. Revocation is now re-checked **per request**
+  rather than only at the handshake, and session resumption is refused so a warm
+  connection cannot outlive the check — so the window is the CRL refresh cadence and
+  no longer the connection lifetime. It is still bounded by that cadence, not zero;
 - OS-level sandboxing of wrapped servers, and signed tool-manifest enforcement
   (gated on the high-assurance cargo features — see the README deployment profiles);
 - **unconditional (zero-configuration) multi-node replay safety.** The
