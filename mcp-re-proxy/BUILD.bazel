@@ -109,6 +109,9 @@ _PROXY_LIB_SRCS = [
     # second live revocation authority, fail-closed on outage).
     "src/live_trust.rs",
     "src/reloading_trust.rs",
+    # Per-request client-cert revocation: the revoked-serial index the serving path
+    # consults on every request, since rustls consults the CRLs at the handshake alone.
+    "src/client_revocation.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",
@@ -480,6 +483,26 @@ nt_rust_test(
 nt_rust_test(
     name = "config_snapshot_hot_reload_test",
     srcs = ["tests/config_snapshot_hot_reload_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    crate_features = ["async_serve"],
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy_async",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
+        # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
+        # resolves it transitively while Bazel needs the edge stated.
+        "@crates_mcp_re//:tokio",
+    ],
+)
+# Revocation must take effect on the connection a revoked peer is ALREADY holding:
+# client authentication runs on a full handshake only, so before the per-request check
+# a reloaded CRL reached new connections alone.
+nt_rust_test(
+    name = "per_request_revocation_test",
+    srcs = ["tests/per_request_revocation_test.rs"],
     auto_cargo_toml = False,
     bazel_build_cfg = False,
     crate_features = ["async_serve"],

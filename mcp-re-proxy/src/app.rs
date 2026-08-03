@@ -17,6 +17,7 @@ use crate::cli;
 use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
 use crate::cli::ReplayKind;
+use crate::client_revocation;
 use crate::config_snapshot;
 use crate::http_inner::HttpInnerPool;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
@@ -689,10 +690,20 @@ pub fn run(
         // honest.
         eprintln!(
             "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
-             tls_session_resumption=refused",
+             per_request_crl_check={} tls_session_resumption=refused",
             match config.limits.max_connection_age {
                 Some(d) => format!("{}s", d.as_secs()),
                 None => "unbounded".to_string(),
+            },
+            // The claim the CRL lines below rest on. rustls consults the CRLs during
+            // client authentication, which runs on a full handshake only, so without
+            // this a revoked peer serves every later request on the connection it
+            // already holds and the reload cadence below describes new connections
+            // alone.
+            if client_crls.is_empty() {
+                "not_configured"
+            } else {
+                "enforced"
             }
         );
         if client_crls.is_empty() {
@@ -750,9 +761,18 @@ pub fn run(
                 .unwrap_or_else(|| "unbounded".to_string());
             format!("short-lived-cert only (exposure_window {window}); no client CRL")
         } else {
-            "the CRL nextUpdate / in-process reload cadence (reload needs a restart until \
-             MCPS-66) — a fleet's CRL-rollout window"
-                .to_string()
+            match config.client_crl_reload_secs {
+                // The reload cadence IS the bound, on open and new connections alike:
+                // a republished index is consulted by the next request on a connection
+                // the peer is already holding.
+                Some(secs) => format!(
+                    "bounded {secs}s (the --client-crl-reload-secs cadence), enforced per request \
+                     on established connections as well as at the handshake"
+                ),
+                None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+                         CRL-rollout window"
+                    .to_string(),
+            }
         };
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
@@ -805,6 +825,30 @@ pub fn run(
     // is no relax knob. `false` = deny-unknown, threaded to every verifier builder.
     let reload_allow_unknown = false;
 
+    // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
+    // verifier is about to be given. Installed only when CRLs are configured: with
+    // none, rustls performs no revocation checking, and installing an index would put
+    // a check on the request path that the handshake does not perform.
+    //
+    // Without this, revocation reaches only NEW connections. rustls runs client
+    // authentication on a full handshake alone, so a peer added to a reloaded CRL keeps
+    // serving every request on the connection it already holds.
+    let client_revocation = if client_crls.is_empty() {
+        None
+    } else {
+        let index = client_revocation::ClientRevocationIndex::from_crl_ders(
+            &client_crls
+                .iter()
+                .map(|crl| crl.as_ref().to_vec())
+                .collect::<Vec<_>>(),
+            reload_allow_unknown,
+        )
+        .map_err(|e| e.to_string())?;
+        Some(Arc::new(client_revocation::SharedClientRevocation::new(
+            index,
+        )))
+    };
+
     let server_config = match tls_delegated_signer {
         Some(signer) => tls::build_server_config_delegated_validated(
             server_chain,
@@ -852,6 +896,7 @@ pub fn run(
                 allow_unknown_status: reload_allow_unknown,
                 interval_secs: reload_secs,
                 shutdown: Arc::clone(&shutdown),
+                revocation: client_revocation.clone(),
             });
             eprintln!(
                 "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
@@ -918,6 +963,7 @@ pub fn run(
         identity_strategy,
         limits: config.limits.clone(),
         max_client_cert_lifetime: config.max_client_cert_lifetime,
+        client_revocation: client_revocation.clone(),
         #[cfg(feature = "online_ocsp")]
         ocsp_checker,
         target_uri: config.target_uri.clone(),
@@ -1385,6 +1431,11 @@ struct CrlReloadTask {
     allow_unknown_status: bool,
     interval_secs: u64,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
+    /// The per-request revocation index, republished from the same re-read bytes as
+    /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
+    /// reaching new connections alone — which is the gap the per-request check exists
+    /// to close.
+    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
 }
 
 /// Read `--trust` and build the snapshot the revocation tiers resolve against.
@@ -1470,6 +1521,7 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
         allow_unknown_status,
         interval_secs,
         shutdown,
+        revocation,
     } = task;
     std::thread::spawn(move || {
         // Nap in small increments so a shutdown signal is observed within one
@@ -1484,12 +1536,26 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
                 let crls = cli::load_client_crls(&crl_paths)?;
+                // Build the per-request index from the SAME bytes, BEFORE the verifier
+                // is rebuilt, so a malformed CRL keeps last-good on both rather than
+                // swapping one and failing the other.
+                let index = client_revocation::ClientRevocationIndex::from_crl_ders(
+                    &crls
+                        .iter()
+                        .map(|crl| crl.as_ref().to_vec())
+                        .collect::<Vec<_>>(),
+                    allow_unknown_status,
+                )
+                .map_err(|e| e.to_string())?;
                 let rebuilt = material.rebuild(
                     server_chain.clone(),
                     client_ca.clone(),
                     crls,
                     allow_unknown_status,
                 )?;
+                if let Some(revocation) = revocation.as_ref() {
+                    revocation.store(index);
+                }
                 Ok(Arc::new(rebuilt))
             });
             match outcome {

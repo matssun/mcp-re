@@ -158,7 +158,7 @@ replica flushes its trust cache on the next request and re-resolves live. The
 | Tier | Bound |
 |---|---|
 | Trust key-status | near-zero when the trust-epoch source is healthy; bounded `T` on a source outage (fail-closed); bounded `T` with no source |
-| Client-cert CRL | the CRL `nextUpdate` / reload cadence (MCPS-66) — a fleet's CRL-rollout window |
+| Client-cert CRL | the `--client-crl-reload-secs` cadence (or the CRL `nextUpdate` with no reload configured) — applied per request, so it bounds peers holding established connections too, not only reconnecting ones |
 
 Zero-window revocation is **not** claimed on either tier. The proxy prints the
 bounds from real config at startup (`FLEET cross-replica revocation-lag bounds`).
