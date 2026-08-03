@@ -137,6 +137,9 @@ pub mod revocation_tier;
 // ADR-MCPS-021 Tier 2: live strong trust check — consults the inner store on every
 // verification (no positive-trust caching), with an optional second live
 // revocation authority; fail-closed on store/revocation outage.
+/// Per-request client-certificate revocation — what makes a warm connection safe to
+/// keep, since rustls consults the CRLs at the handshake and never again.
+pub mod client_revocation;
 pub mod live_trust;
 /// The re-readable trust store the revocation tiers resolve against — what makes
 /// "the store is consulted on every verification" a true statement about a running

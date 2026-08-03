@@ -165,6 +165,42 @@ Where an ingress or attestor performs mTLS revocation checking, that result may 
 recorded or bound as ingress/attestor evidence (Mode C) — but it is transport
 evidence, not part of the MCP-RE object-evidence protocol.
 
+### Revocation on a connection the peer already holds
+
+rustls consults the CRLs during client authentication, and client authentication runs
+on a **full handshake only**. A keep-alive or HTTP/2 connection then serves every
+later request without the verifier being consulted again — so a peer added to a
+reloaded CRL kept full authenticated access for as long as it did not reconnect, and
+`--client-crl-reload-secs` reached new connections alone.
+
+The serving path therefore re-checks the peer certificate on **every request**, not
+only at the handshake:
+
+* its **validity window** (`notBefore`/`notAfter`) against the clock; and
+* its **serial** against the CRLs in force right now, when CRLs are configured —
+  `client_revocation.rs`, an index rebuilt from the same bytes as the verifier on each
+  reload and swapped atomically, so a refreshed CRL reaches requests being served on
+  open connections.
+
+The per-request verdict rules mirror the handshake's deliberately, including
+deny-on-unknown-status and treating a CRL past its `nextUpdate` as covering nothing.
+With no CRLs configured rustls performs no revocation checking, and neither does this
+— the request path is unchanged.
+
+Two bounds remain, and they are narrower than before:
+
+* `--max-connection-age-secs` (default 300s) bounds **chain re-validation**. Chain
+  building happens at the handshake, so a withdrawn or expired client CA reaches an
+  established connection only when the peer re-handshakes.
+* TLS session resumption stays **refused**. A resumed session restores the stored peer
+  chain and skips client auth entirely; the per-request checks now cover validity and
+  revocation, but not the chain.
+
+**This is what makes warm connections safe to keep.** A deployment holding connections
+open pays the full handshake once per connection rather than once per request, and an
+expired or revoked credential is still caught on the next request rather than at the
+next handshake.
+
 **The short-lived-cert baseline (plane 1).** Independent of OCSP/CRL, the proxy
 enforces **short-lived** client certs: it rejects a certificate whose validity span
 (`not_after - not_before`) exceeds the limit, or whose validity cannot be parsed,
