@@ -28,6 +28,7 @@ use std::sync::Arc;
 use mcp_re_core::SigningKey;
 use mcp_re_http_profile::scitt::CoseVerificationKey;
 use mcp_re_http_profile::scitt::PrototypeTransparencyService;
+use mcp_re_http_profile::scitt::ReceiptPositionProfile;
 use mcp_re_http_profile::scitt::ResolvedTransparencyService;
 use mcp_re_http_profile::scitt::StatementLeafProfile;
 use mcp_re_http_profile::ActorIdentity;
@@ -252,6 +253,31 @@ fn build_server(
     }
 }
 
+/// The full-profile audit inputs for reconstruction: the verifier's own audience tuple
+/// and the DPoP credential surface the retained request does not carry.
+fn attest_audience() -> AudienceTuple {
+    AudienceTuple {
+        audience_id: AUD.into(),
+        target_uri: TARGET.into(),
+        route: Some("a".into()),
+    }
+}
+
+fn attest_material(_: &mcp_re_http_profile::ArtifactBinding) -> Option<Vec<u8>> {
+    Some(ACCESS_TOKEN.as_bytes().to_vec())
+}
+
+static ATTEST_MATERIAL: fn(&mcp_re_http_profile::ArtifactBinding) -> Option<Vec<u8>> =
+    attest_material;
+
+fn attest_audit() -> mcp_re_http_profile::ChainAudit<'static> {
+    static AUDIENCE: std::sync::OnceLock<AudienceTuple> = std::sync::OnceLock::new();
+    mcp_re_http_profile::ChainAudit {
+        expected_audience: AUDIENCE.get_or_init(attest_audience),
+        artifact_material: &ATTEST_MATERIAL,
+    }
+}
+
 /// Sign a plain request and serve it, returning the served status and the frozen
 /// `mcp-re.*` reason the response body carries (a success carries none).
 fn serve_one_full(proxy: &HttpProfileProxy, nonce: &str) -> (u16, Option<String>) {
@@ -445,6 +471,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
         &[digest],
         &resolver(),
         &expectations(&audiences, &epochs),
+        &attest_audit(),
         &|_kid: &str| false,
         NOW,
         ISSUER_KID,
@@ -477,6 +504,7 @@ fn a_served_call_becomes_an_offline_verifiable_receipt() {
             (kid == TS_KID).then(|| ResolvedTransparencyService {
                 key: CoseVerificationKey::Ed25519(ts_key().public_key()),
                 leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Bound,
             })
         },
     )
@@ -511,6 +539,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
         std::slice::from_ref(&digest),
         &resolver(),
         &expectations(&audiences, &epochs),
+        &attest_audit(),
         &|_kid: &str| false,
         NOW,
         ISSUER_KID,
@@ -527,6 +556,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
         &hops,
         &resolver(),
         &expectations(&audiences, &epochs),
+        &attest_audit(),
         &|_kid: &str| false,
         NOW,
     );
@@ -555,6 +585,7 @@ fn the_statement_is_verifiable_against_the_bytes_the_store_kept() {
         &other_hops,
         &resolver(),
         &expectations(&audiences, &epochs),
+        &attest_audit(),
         &|_kid: &str| false,
         NOW,
     );

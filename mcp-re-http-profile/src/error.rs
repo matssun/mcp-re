@@ -154,6 +154,17 @@ pub enum HttpProfileError {
     /// The Signed Statement issuer or transparency service key is not trusted. Maps
     /// to `mcp-re.actor_binding_failed`.
     ReceiptIssuerUntrusted,
+    /// The pinned transparency service issues position-bound receipts, and this one
+    /// carries no position commitment. Refused rather than verified under the weaker
+    /// contract: falling back on request would let an attacker strip the parameter.
+    /// Maps to `mcp-re.request_binding_mismatch`.
+    ReceiptPositionUnbound,
+    /// The receipt's protected position commitment does not match the
+    /// `(profile, log identity, vds, tree_size, leaf_index, root)` tuple it presents —
+    /// the signature-covered position and the stated one disagree, which is a receipt
+    /// restated at a position its issuer did not sign. Maps to
+    /// `mcp-re.request_binding_mismatch`.
+    ReceiptPositionMismatch,
 
     // Delegated signing-key attestation (ADR-MCPRE-052 §8, MCPRE-122). Each maps
     // to its precise frozen `mcp-re.delegation_*` token.
@@ -244,7 +255,9 @@ impl HttpProfileError {
             // field name.
             HttpProfileError::ResponseBindingMismatch
             | HttpProfileError::AdmissionBindingMismatch
-            | HttpProfileError::ReceiptInclusionInvalid => "mcp-re.request_binding_mismatch",
+            | HttpProfileError::ReceiptInclusionInvalid
+            | HttpProfileError::ReceiptPositionUnbound
+            | HttpProfileError::ReceiptPositionMismatch => "mcp-re.request_binding_mismatch",
             HttpProfileError::ResponseSignatureInvalid => "mcp-re.response_sig_invalid",
             HttpProfileError::ContinuationBindingFailed => "mcp-re.continuation_binding_failed",
             // An unrecognized `resultType` and an unrecognized continuation `type`
@@ -338,6 +351,8 @@ mod tests {
                 | HttpProfileError::AdmissionStateUnavailable
                 | HttpProfileError::ReceiptInvalid
                 | HttpProfileError::ReceiptInclusionInvalid
+                | HttpProfileError::ReceiptPositionUnbound
+                | HttpProfileError::ReceiptPositionMismatch
                 | HttpProfileError::ReceiptIssuerUntrusted
                 | HttpProfileError::UnrecognizedResultType
                 | HttpProfileError::TrustResolverUnavailable

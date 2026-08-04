@@ -111,6 +111,25 @@ pub struct EvidenceCommitment {
     /// Digest over the ordered per-hop evidence handles the reconstruction
     /// produced — the commitment to the SHAPE of the retained chain.
     pub chain_commitment: String,
+    /// Digest over the SUBMITTED hop bytes, verified or not.
+    ///
+    /// The three fields above are all derived from the VERIFIED prefix, so a chain that
+    /// broke at hop 0 left every record with the same two empty handles and the same
+    /// fold over zero bytes: byte-identical statements about unrelated calls. This field
+    /// gives such a record an identity — of the submission, not of a verified call. Read
+    /// it with [`commits_to_verified_evidence`](Self::commits_to_verified_evidence),
+    /// which still says whether anything in it verified.
+    ///
+    /// Defaulted for reading, because a v1 statement genuinely has no submission
+    /// identity and refusing to parse one would make every pre-revision record
+    /// unreadable rather than merely weaker. That default is safe HERE and would not be
+    /// safe in a receipt header: this field lives inside the payload the issuer's
+    /// COSE_Sign1 covers, so removing it from a v2 statement breaks the signature.
+    /// Nothing an attacker can do turns a v2 record into a v1 one.
+    /// [`identifies_a_submission`](Self::identifies_a_submission) is how a reader tells
+    /// the two apart.
+    #[serde(default)]
+    pub submitted_commitment: String,
 }
 
 impl EvidenceCommitment {
@@ -126,11 +145,14 @@ impl EvidenceCommitment {
         //
         // A reconstruction that broke at hop 0 — and the empty chain — has no verified
         // prefix, so there is nothing here to take an identity from: the handles are
-        // empty and the shape digest folds over nothing. Such a commitment names no
-        // particular call, and [`commits_to_verified_evidence`](Self::commits_to_verified_evidence)
-        // is how a reader tells. [`verify_retained_evidence`] refuses to compare
-        // retained bytes against one rather than reporting a match that holds for
-        // every unrelated record that failed the same way.
+        // empty and the shape digest folds over nothing. `submitted_commitment` is what
+        // distinguishes two such records; it is an identity for the SUBMISSION and
+        // asserts nothing about it, so
+        // [`commits_to_verified_evidence`](Self::commits_to_verified_evidence) remains
+        // how a reader tells whether anything verified. [`verify_retained_evidence`]
+        // still refuses to compare retained bytes against such a record rather than
+        // reporting a match that holds for every unrelated record that failed the same
+        // way.
         let (request_evidence, response_evidence) = match reconstruction.hop_evidence.first() {
             Some(h) => (
                 h.request_evidence.digest_value.clone(),
@@ -152,6 +174,7 @@ impl EvidenceCommitment {
             verified_context_commitment,
             chain_label: label_token(&reconstruction.label),
             chain_commitment: b64url_encode(&shape.finalize()),
+            submitted_commitment: reconstruction.submitted_commitment.clone(),
         }
     }
 
@@ -174,6 +197,18 @@ impl EvidenceCommitment {
     /// [`verify_retained_evidence`] — must consult this first.
     pub fn commits_to_verified_evidence(&self) -> bool {
         !self.request_evidence.is_empty() || !self.response_evidence.is_empty()
+    }
+
+    /// Whether this record identifies the SUBMISSION it was made about.
+    ///
+    /// False only for a statement issued before the evidence profile carried
+    /// [`submitted_commitment`](Self::submitted_commitment). Such a record that also
+    /// fails [`commits_to_verified_evidence`](Self::commits_to_verified_evidence) names
+    /// nothing at all: it is a truthful account of "I was handed evidence and none of it
+    /// verified" that could equally be an account of any other call that failed the same
+    /// way. Anything reasoning about WHICH call a record concerns must consult this.
+    pub fn identifies_a_submission(&self) -> bool {
+        !self.submitted_commitment.is_empty()
     }
 }
 
@@ -218,6 +253,91 @@ const PROOF_INCLUSION: i64 = -1;
 
 /// `RFC9162_SHA256`: the RFC 9162 binary Merkle tree, SHA-256 (RFC 9942 §5).
 const VDS_RFC9162_SHA256: i64 = 1;
+
+/// The MCP-RE evidence profile these receipts and statements are issued under.
+///
+/// It is part of the position commitment's preimage, so a commitment computed under one
+/// profile can never be read as valid under another. Bumping it is how a future contract
+/// change becomes visible rather than silent.
+pub const EVIDENCE_PROFILE: &str = "mcp-re-evidence/v2";
+
+/// Protected header parameter carrying the position commitment (C080).
+///
+/// A text label, not an integer: this is an MCP-RE profile extension, and a tstr cannot
+/// collide with a future IANA assignment in the COSE header registry the way a guessed
+/// integer can.
+const HEADER_POSITION_COMMITMENT: &str = "mcp-re-position";
+
+/// Domain separator for the position commitment preimage.
+const POSITION_COMMITMENT_DOMAIN: &[u8] = b"mcp-re-scitt-position";
+
+/// The position commitment: `H(domain ‖ profile ‖ log_identity ‖ vds ‖ tree_size ‖
+/// leaf_index ‖ root_hash)`, every field length-delimited.
+///
+/// This is what closes C080. `tree_size` and `leaf_index` ride in the UNSIGNED `vdp`
+/// header and the `RFC9162_SHA256` receipt payload is the bare Merkle Tree Hash, so the
+/// service's signature covers the root and nothing else — and the root does not
+/// determine the position. Placing this digest in the PROTECTED header brings the whole
+/// tuple under that signature: restating a receipt at a different position changes the
+/// recomputed digest and the protected one no longer matches.
+///
+/// The tuple is bound EXPLICITLY rather than relying on an authenticated `tree_size`
+/// making the index derivable. That derivation does hold today — no ambiguity class
+/// contains two members sharing a tree size, which
+/// `the_tree_size_determines_the_leaf_index_within_every_ambiguity_class` pins — but it
+/// is a property of the current verification algorithm, not of the evidence. A contract
+/// that depends on a test continuing to pass is weaker than one that states the fact.
+///
+/// Every component is preceded by its length as 8 octets big-endian, and the integers
+/// are fixed-width big-endian. Raw concatenation would let a longer log identity absorb
+/// the leading octets of the next field and produce one preimage for two different
+/// positions, which is the exact ambiguity this exists to remove.
+fn position_commitment(
+    log_identity: &str,
+    vds: i64,
+    tree_size: u64,
+    leaf_index: u64,
+    root: &[u8],
+) -> Vec<u8> {
+    let mut h = Sha256::new();
+    for part in [
+        POSITION_COMMITMENT_DOMAIN,
+        EVIDENCE_PROFILE.as_bytes(),
+        log_identity.as_bytes(),
+        &vds.to_be_bytes()[..],
+        &tree_size.to_be_bytes()[..],
+        &leaf_index.to_be_bytes()[..],
+        root,
+    ] {
+        h.update((part.len() as u64).to_be_bytes());
+        h.update(part);
+    }
+    h.finalize().to_vec()
+}
+
+/// Whether a pinned transparency service issues position-bound receipts.
+///
+/// The old profile authenticates inclusion in the signed root but NOT the exposed
+/// position tuple; the new one authenticates the tuple as well. Which applies is a
+/// property of the service, so it comes from the pinned artifact an operator wrote down
+/// — never from the receipt being checked, which is the value under attack.
+///
+/// The reverse direction is enforced by the `crit` header rather than by this field: a
+/// v2 receipt marks the position parameter critical, so an implementation that does not
+/// understand it must refuse rather than verify the receipt while ignoring the
+/// commitment. [`Receipt::from_cose`] refuses every critical label it does not know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReceiptPositionProfile {
+    /// Receipts carry no position commitment. `tree_size` and `leaf_index` remain
+    /// unauthenticated transport hints, and a relayer may restate them.
+    #[default]
+    Unbound,
+    /// Receipts MUST carry a valid position commitment. A receipt without one is refused
+    /// rather than verified under the weaker contract — otherwise pinning the stronger
+    /// profile would buy nothing, since an attacker would simply strip the parameter.
+    Bound,
+}
 
 /// The subject every MCP-RE Signed Statement is about: one MCP call's evidence.
 /// SCITT requires a `sub`, and a stable value keeps statements from this issuer
@@ -439,6 +559,13 @@ pub struct Receipt {
     leaf_index: u64,
     /// Sibling hashes from leaf to root.
     inclusion_path: Vec<Vec<u8>>,
+    /// The protected position commitment, when the receipt carries one.
+    ///
+    /// Present means the issuing service bound `(profile, log identity, vds, tree_size,
+    /// leaf_index, root)` under its signature; absent means it did not, and the position
+    /// is a transport hint. Which of the two is acceptable is the pinned
+    /// [`ReceiptPositionProfile`]'s decision, not this receipt's.
+    position_commitment: Option<Vec<u8>>,
     /// The Merkle root the receipt signs, when it is ATTACHED as the payload.
     ///
     /// `None` for the detached form (RFC 9942 §4.4, and the shape its own Figure 6
@@ -458,22 +585,28 @@ impl Receipt {
     pub fn ts_kid(&self) -> &str {
         &self.ts_kid
     }
-    /// The log size the receipt STATES — an unauthenticated transport hint, not a
-    /// verified fact.
+    /// The log size the receipt STATES.
     ///
-    /// A caller must not build ordering, anchoring, freshness or log-maturity
-    /// reasoning on this value. The transparency service signs the Merkle Tree Hash
-    /// alone, and a root reached by a path of length `k` is reachable from every
-    /// position in a family of `(leaf_index, tree_size)` pairs, so a relayer may
-    /// restate a small log's receipt as a position in a larger one and it still
-    /// verifies. [`rfc9162_root_from_inclusion_proof`] documents the family.
+    /// Authenticated only when the receipt carries a position commitment AND
+    /// [`verify_receipt_offline`] has checked it under a
+    /// [`ReceiptPositionProfile::Bound`] pin. Without one this is a transport hint and
+    /// no ordering, anchoring, freshness or log-maturity reasoning may rest on it: the
+    /// service signs the Merkle Tree Hash alone, and a root reached by a path of length
+    /// `k` is reachable from a whole class of `(leaf_index, tree_size)` pairs, so a
+    /// relayer may restate a small log's receipt as a position in a larger one and it
+    /// still verifies. [`rfc9162_root_from_inclusion_proof`] gives the measured extent.
     pub fn tree_size(&self) -> u64 {
         self.tree_size
     }
-    /// The leaf index the receipt STATES. Unauthenticated for the same reason as
-    /// [`Self::tree_size`].
+    /// The leaf index the receipt STATES. Authenticated on exactly the same condition as
+    /// [`Self::tree_size`], and by the same commitment — the two are bound together, not
+    /// separately.
     pub fn leaf_index(&self) -> u64 {
         self.leaf_index
+    }
+    /// Whether this receipt carries a protected position commitment.
+    pub fn is_position_bound(&self) -> bool {
+        self.position_commitment.is_some()
     }
 
     /// Parse a tagged `COSE_Sign1` receipt WITHOUT verifying it.
@@ -482,6 +615,34 @@ impl Receipt {
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt cose"))?;
         let ts_kid = String::from_utf8(sign1.protected.header.key_id.clone())
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt receipt kid"))?;
+        // Every critical label must be one this verifier understands. This is what makes
+        // the v1→v2 transition safe in the direction the profile pin cannot cover: a v2
+        // receipt marks its position parameter critical, so an implementation that only
+        // knows v1 refuses it instead of verifying the inclusion proof and silently
+        // ignoring the commitment that was supposed to bind the position.
+        for label in &sign1.protected.header.crit {
+            let known = matches!(
+                label,
+                coset::RegisteredLabelWithPrivate::Text(t) if t == HEADER_POSITION_COMMITMENT
+            );
+            if !known {
+                return Err(HttpProfileError::MalformedEvidence(
+                    "scitt receipt critical header unsupported",
+                ));
+            }
+        }
+        let position_commitment = sign1
+            .protected
+            .header
+            .rest
+            .iter()
+            .find(|(label, _)| *label == Label::Text(HEADER_POSITION_COMMITMENT.to_owned()))
+            .map(|(_, v)| {
+                v.as_bytes().filter(|b| b.len() == 32).cloned().ok_or(
+                    HttpProfileError::MalformedEvidence("scitt receipt position commitment"),
+                )
+            })
+            .transpose()?;
         // The verifiable-data-structure must be one this verifier implements. An
         // unrecognized structure is refused, never walked as if it were RFC 9162:
         // a proof format this code does not implement cannot be checked by it.
@@ -565,6 +726,7 @@ impl Receipt {
             tree_size,
             leaf_index,
             inclusion_path,
+            position_commitment,
             root,
         })
     }
@@ -631,6 +793,8 @@ pub struct ResolvedTransparencyService {
     pub key: CoseVerificationKey,
     /// Which bytes this service's log hashes as the Merkle entry.
     pub leaf_profile: StatementLeafProfile,
+    /// Whether this service's receipts must carry a position commitment.
+    pub position_profile: ReceiptPositionProfile,
 }
 
 /// An interior Merkle node hash (RFC 6962 node prefix `0x01`).
@@ -679,15 +843,20 @@ fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
 /// four pairs in that whole range are unique. Refusing the ambiguous ones is
 /// therefore not an available defence: it would refuse essentially every receipt.
 ///
-/// **What WOULD close it: the service signing the tree size.** Within every class,
-/// no two members share a `tree_size` — the size determines the index uniquely. So an
-/// authenticated size authenticates the position outright; this is a complete fix,
-/// not a mitigation. It needs an RFC 9162 signed tree head (which does cover the
-/// size) alongside the receipt, and the `RFC9162_SHA256` verifiable-data-structure
-/// does not carry one. Until a pinned service supplies it, [`Receipt::tree_size`] and
-/// [`Receipt::leaf_index`] are unauthenticated and documented as such.
-/// `the_tree_size_determines_the_leaf_index_within_every_ambiguity_class` pins the
-/// property that makes that fix sufficient, so it cannot silently stop being true.
+/// **How it is closed.** Not inside this function — no fold can separate positions that
+/// direct it identically. [`position_commitment`] puts the whole tuple in the receipt's
+/// PROTECTED header, so the service's signature covers `(profile, log identity, vds,
+/// tree_size, leaf_index, root)` and a restatement no longer matches.
+///
+/// An authenticated `tree_size` ALONE would also suffice: within every class no two
+/// members share one, so the size determines the index —
+/// `the_tree_size_determines_the_leaf_index_within_every_ambiguity_class` pins that.
+/// It is deliberately not what the profile relies on. That sufficiency is a property of
+/// this algorithm rather than of the evidence, and a security contract resting on a test
+/// continuing to pass is weaker than one that states the fact outright.
+///
+/// Where a pinned service issues no commitment ([`ReceiptPositionProfile::Unbound`]),
+/// the pre-revision contract still applies and both accessors remain transport hints.
 ///
 /// An EMPTY path is admitted only for `tree_size == 1`, which is the one case RFC
 /// 9162 defines it for (`PATH(0, D[1]) = {}`); for any larger tree `sn` is non-zero
@@ -764,6 +933,7 @@ pub fn verify_receipt_offline(
             return Err(HttpProfileError::ReceiptInclusionInvalid);
         }
     }
+
     let computed = computed.to_vec();
 
     // 3. The receipt's own signature, over the root the fold just reproduced — so a
@@ -781,6 +951,37 @@ pub fn verify_receipt_offline(
         receipt.root.is_none(),
         &computed,
     )?;
+
+    // 4. The position commitment (C080), when the pinned profile says there is one.
+    //
+    //    AFTER the signature, deliberately. The commitment lives in the protected
+    //    header, so before step 3 it is just another attacker-supplied field — comparing
+    //    it then would report a position mismatch for a receipt whose real defect is
+    //    that nobody signed it. Here it is a value the service demonstrably signed.
+    //
+    //    It is checked against the root the fold DERIVED, not one supplied beside it, so
+    //    the commitment is bound to the statement under verification. A `Bound` pin with
+    //    no commitment present is refused rather than falling back to the weaker
+    //    contract: accepting on request would let an attacker strip the parameter and
+    //    make pinning the stronger profile worth nothing.
+    match (ts.position_profile, &receipt.position_commitment) {
+        (ReceiptPositionProfile::Bound, None) => {
+            return Err(HttpProfileError::ReceiptPositionUnbound)
+        }
+        (_, Some(bound)) => {
+            let expected = position_commitment(
+                receipt.ts_kid(),
+                VDS_RFC9162_SHA256,
+                receipt.tree_size,
+                receipt.leaf_index,
+                &computed,
+            );
+            if expected != *bound {
+                return Err(HttpProfileError::ReceiptPositionMismatch);
+            }
+        }
+        (ReceiptPositionProfile::Unbound, None) => {}
+    }
     Ok(())
 }
 
@@ -1135,6 +1336,15 @@ pub struct ScittServiceTrustPin {
     /// before MCP-RE will fold a service's log any other way.
     #[serde(default)]
     pub leaf_profile: StatementLeafProfile,
+    /// Whether this service's receipts must carry a position commitment. Absent means
+    /// the default, `unbound` — the pre-v2 contract, where `tree_size` and `leaf_index`
+    /// are unauthenticated hints.
+    ///
+    /// In the PIN for the same reason as `leaf_profile`: it is a property of the service
+    /// that cannot be inferred from the receipt under attack, and requiring it must be a
+    /// thing an operator wrote down.
+    #[serde(default)]
+    pub position_profile: ReceiptPositionProfile,
 }
 
 /// The key material inside a pin.
@@ -1208,6 +1418,7 @@ impl ScittServiceTrustPin {
             .map(|key| ResolvedTransparencyService {
                 key,
                 leaf_profile: self.leaf_profile,
+                position_profile: self.position_profile,
             })
     }
 }
@@ -1257,10 +1468,27 @@ impl PrototypeTransparencyService {
         ciborium::into_writer(&proof, &mut proof_bytes)
             .map_err(|_| HttpProfileError::MalformedEvidence("scitt inclusion proof encode"))?;
 
+        // The position commitment goes in the PROTECTED header and is marked CRITICAL:
+        // protected so the service's signature covers the tuple, critical so a verifier
+        // that does not implement this profile refuses the receipt rather than checking
+        // the inclusion proof and ignoring the binding.
         let protected = HeaderBuilder::new()
             .algorithm(iana::Algorithm::EdDSA)
             .key_id(self.kid.as_bytes().to_vec())
             .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+            .text_value(
+                HEADER_POSITION_COMMITMENT.to_owned(),
+                Value::Bytes(position_commitment(
+                    &self.kid,
+                    VDS_RFC9162_SHA256,
+                    tree_size,
+                    leaf_index,
+                    &root,
+                )),
+            )
+            .add_critical_label(coset::RegisteredLabelWithPrivate::Text(
+                HEADER_POSITION_COMMITMENT.to_owned(),
+            ))
             .build();
         // `vdp` is a map keyed by proof type (RFC 9942 §5.2.1 Figure 5), so a Receipt
         // can carry inclusion and consistency proofs side by side.
@@ -1463,6 +1691,7 @@ mod tests {
         ChainReconstruction {
             label,
             hop_evidence,
+            submitted_commitment: "test-submitted".to_owned(),
         }
     }
 
@@ -1482,16 +1711,226 @@ mod tests {
             (k == TS_KID).then(|| ResolvedTransparencyService {
                 key: ts().public_key().into(),
                 leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Bound,
             })
         }
     }
 
-    /// A resolver for a service using `key`, with the default leaf profile.
+    /// A resolver for the prototype service under the PRE-v2 contract, so a test can
+    /// show what the position commitment actually buys.
+    fn tr_unbound() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        |k: &str| {
+            (k == TS_KID).then(|| ResolvedTransparencyService {
+                key: ts().public_key().into(),
+                leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Unbound,
+            })
+        }
+    }
+
+    /// Re-issue a receipt in the PRE-v2 shape: same tree, same signature discipline, no
+    /// position parameter and no `crit`. This is what the service emitted before the
+    /// contract revision, and it is what the restatement test needs in order to
+    /// reproduce the finding rather than merely assert it.
+    fn pre_v2_receipt(receipt: &Receipt) -> Vec<u8> {
+        let proof = Value::Array(vec![
+            Value::Integer(receipt.tree_size.into()),
+            Value::Integer(receipt.leaf_index.into()),
+            Value::Array(
+                receipt
+                    .inclusion_path
+                    .iter()
+                    .map(|h| Value::Bytes(h.clone()))
+                    .collect(),
+            ),
+        ]);
+        let mut proof_bytes = Vec::new();
+        ciborium::into_writer(&proof, &mut proof_bytes).expect("encode");
+        CoseSign1Builder::new()
+            .protected(
+                HeaderBuilder::new()
+                    .algorithm(iana::Algorithm::EdDSA)
+                    .key_id(TS_KID.as_bytes().to_vec())
+                    .value(HEADER_VDS, Value::Integer(VDS_RFC9162_SHA256.into()))
+                    .build(),
+            )
+            .unprotected(
+                HeaderBuilder::new()
+                    .value(
+                        HEADER_VDP,
+                        Value::Map(vec![(
+                            Value::Integer(PROOF_INCLUSION.into()),
+                            Value::Array(vec![Value::Bytes(proof_bytes)]),
+                        )]),
+                    )
+                    .build(),
+            )
+            .payload(receipt.root.clone().expect("attached root"))
+            .create_signature(&[], |pt| {
+                mcp_re_core::b64url_decode(&ts().sign(pt)).expect("sign")
+            })
+            .build()
+            .to_tagged_vec()
+            .expect("encode")
+    }
+
+    /// Restate a receipt at a DIFFERENT `(leaf_index, tree_size)` that folds the same
+    /// path to the same root.
+    ///
+    /// The proof rides in the UNPROTECTED header, so this rewrites it and leaves the
+    /// protected header, payload and signature exactly as the service produced them.
+    /// Nothing is forged: the resulting receipt is one the service signed, presented as
+    /// a position it never signed.
+    fn restate_position(receipt: &Receipt, tree_size: u64, leaf_index: u64) -> Vec<u8> {
+        let mut sign1 = CoseSign1::from_tagged_slice(receipt.to_cose()).expect("parses");
+        let proof = Value::Array(vec![
+            Value::Integer(tree_size.into()),
+            Value::Integer(leaf_index.into()),
+            Value::Array(
+                receipt
+                    .inclusion_path
+                    .iter()
+                    .map(|h| Value::Bytes(h.clone()))
+                    .collect(),
+            ),
+        ]);
+        let mut proof_bytes = Vec::new();
+        ciborium::into_writer(&proof, &mut proof_bytes).expect("encode");
+        sign1.unprotected = HeaderBuilder::new()
+            .value(
+                HEADER_VDP,
+                Value::Map(vec![(
+                    Value::Integer(PROOF_INCLUSION.into()),
+                    Value::Array(vec![Value::Bytes(proof_bytes)]),
+                )]),
+            )
+            .build();
+        sign1.to_tagged_vec().expect("encode")
+    }
+
+    /// C080. A receipt for leaf 1 of a 2-leaf log is restated as leaf 2 of a 3-leaf log.
+    /// The fold takes the same combine directions, so it reproduces the same root and
+    /// the service's signature still verifies — the restatement is not a forgery, it is
+    /// a true receipt presented at a position nobody signed.
+    ///
+    /// Both halves are asserted, because the second is what makes the first meaningful:
+    /// under the PRE-v2 contract the restatement VERIFIES, and under the position-bound
+    /// contract it is refused.
+    #[test]
+    fn a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let other = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 2),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let _ = register(&mut svc, &other);
+        let receipt = register(&mut svc, &st);
+        assert_eq!((receipt.tree_size(), receipt.leaf_index()), (2, 1));
+
+        // The honest receipt verifies under both contracts.
+        verify_receipt_offline(&st, &receipt, ir(), tr()).expect("the honest position");
+
+        // Pre-v2, reproduced rather than asserted: the same tree, issued without the
+        // position parameter, restated at (3, 2) — and it VERIFIES. The fold takes the
+        // same combine directions, so nothing in the receipt disagrees with the claim.
+        let legacy = Receipt::from_cose(&pre_v2_receipt(&receipt)).expect("parses");
+        assert!(legacy.position_commitment.is_none());
+        verify_receipt_offline(&st, &legacy, ir(), tr_unbound()).expect("the honest legacy claim");
+        let legacy_restated = Receipt::from_cose(&restate_position(&legacy, 3, 2)).expect("parses");
+        assert_eq!(
+            (legacy_restated.tree_size(), legacy_restated.leaf_index()),
+            (3, 2)
+        );
+        verify_receipt_offline(&st, &legacy_restated, ir(), tr_unbound())
+            .expect("C080: the unbound contract cannot distinguish the restated position");
+
+        // v2: the protected commitment covers the tuple, so the same restatement fails.
+        let restated = Receipt::from_cose(&restate_position(&receipt, 3, 2)).expect("parses");
+        assert_eq!((restated.tree_size(), restated.leaf_index()), (3, 2));
+        assert_eq!(
+            verify_receipt_offline(&st, &restated, ir(), tr()).unwrap_err(),
+            HttpProfileError::ReceiptPositionMismatch,
+        );
+
+        // And a present-but-wrong commitment is refused even by a pin that would have
+        // tolerated its ABSENCE: the pin governs whether the parameter may be missing,
+        // never whether a signed one may disagree with the position it accompanies.
+        assert_eq!(
+            verify_receipt_offline(&st, &restated, ir(), tr_unbound()).unwrap_err(),
+            HttpProfileError::ReceiptPositionMismatch,
+        );
+    }
+
+    /// Pinning the stronger profile must not be defeatable by removing the parameter.
+    #[test]
+    fn a_bound_service_refuses_a_receipt_that_carries_no_position_commitment() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let stripped = Receipt::from_cose(&es256_receipt(&st)).expect("parses");
+        assert!(stripped.position_commitment.is_none());
+        assert_eq!(
+            verify_receipt_offline(&st, &stripped, ir(), ts_p256_bound()).unwrap_err(),
+            HttpProfileError::ReceiptPositionUnbound,
+        );
+    }
+
+    fn ts_p256_bound() -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
+        move |k: &str| {
+            (k == TS_KID).then(|| ResolvedTransparencyService {
+                key: ts_p256_key(),
+                leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Bound,
+            })
+        }
+    }
+
+    /// The `crit` rule, which is what stops an old implementation from verifying a v2
+    /// receipt while ignoring the commitment that binds its position. An unknown
+    /// critical label is refused at parse, before any signature work.
+    #[test]
+    fn an_unknown_critical_header_is_refused() {
+        let st = statement(EvidenceCommitment::from_reconstruction(
+            &recon(ChainLabel::Complete, 1),
+            None,
+            None,
+        ));
+        let mut svc = PrototypeTransparencyService::new(TS_KID);
+        let receipt = register(&mut svc, &st);
+        let mut sign1 = CoseSign1::from_tagged_slice(receipt.to_cose()).expect("parses");
+        sign1
+            .protected
+            .header
+            .crit
+            .push(coset::RegisteredLabelWithPrivate::Text(
+                "some-future-parameter".to_owned(),
+            ));
+        sign1.protected.original_data = None;
+        let bytes = sign1.to_tagged_vec().expect("encode");
+        assert_eq!(
+            Receipt::from_cose(&bytes).unwrap_err(),
+            HttpProfileError::MalformedEvidence("scitt receipt critical header unsupported"),
+        );
+    }
+
+    /// A resolver for a FOREIGN service using `key`, with the default leaf profile.
+    ///
+    /// `Unbound`: the receipts these tests build by hand are the shape a real external
+    /// SCITT service emits, and no such service carries MCP-RE's position parameter.
     fn ts_with(key: CoseVerificationKey) -> impl Fn(&str) -> Option<ResolvedTransparencyService> {
         move |k: &str| {
             (k == TS_KID).then(|| ResolvedTransparencyService {
                 key: key.clone(),
                 leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Unbound,
             })
         }
     }
@@ -2208,6 +2647,7 @@ mod tests {
                 request_evidence: RequestEvidence::from_signature_base(same),
                 response_evidence: RequestEvidence::from_response_signature_base(same),
             }],
+            submitted_commitment: "test-submitted".to_owned(),
         };
         let commitment = EvidenceCommitment::from_reconstruction(&retained, None, None);
         assert_ne!(
@@ -2248,6 +2688,12 @@ mod tests {
             discovery_method: "well-known-scitt-keys".into(),
             discovery_uri: "https://example.test/.well-known/scitt-keys".into(),
             fetched_at: "2026-07-31T00:00:00Z".into(),
+            // A real external SCITT service does not emit MCP-RE's profile extension,
+            // so an interoperability pin is `Unbound` and its receipts verify under the
+            // pre-v2 contract. This is the transition working as intended: the stronger
+            // profile is something a deployment opts into per service, not something
+            // that retroactively invalidates every receipt anyone else issues.
+            position_profile: ReceiptPositionProfile::Unbound,
             kid: TS_KID.into(),
             algorithm: algorithm.to_owned(),
             public_key: PinnedPublicKey {

@@ -16,6 +16,7 @@ use mcp_re_http_profile::ActorIdentity;
 use mcp_re_http_profile::ArtifactBinding;
 use mcp_re_http_profile::ArtifactType;
 use mcp_re_http_profile::Audience;
+use mcp_re_http_profile::ChainAudit;
 use mcp_re_http_profile::ChainLabel;
 use mcp_re_http_profile::Cnf;
 use mcp_re_http_profile::DelegatedJwk;
@@ -151,6 +152,23 @@ fn audience() -> AudienceTuple {
         audience_id: "mcp.example.com".into(),
         target_uri: TARGET.into(),
         route: Some("tools/call".into()),
+    }
+}
+
+/// The full-profile audit inputs. The blocks under test carry an `OauthDpop` binding
+/// over `b"tok"` and no `Authorization` header, so the material function is what makes
+/// that binding checkable — a binding whose credential cannot be obtained fails closed.
+fn artifact_material(_: &ArtifactBinding) -> Option<Vec<u8>> {
+    Some(b"tok".to_vec())
+}
+
+static ARTIFACT_MATERIAL: fn(&ArtifactBinding) -> Option<Vec<u8>> = artifact_material;
+
+fn audit() -> ChainAudit<'static> {
+    static AUD: std::sync::OnceLock<AudienceTuple> = std::sync::OnceLock::new();
+    ChainAudit {
+        expected_audience: AUD.get_or_init(audience),
+        artifact_material: &ARTIFACT_MATERIAL,
     }
 }
 
@@ -333,7 +351,15 @@ fn to_digest(e: &RequestEvidence) -> mcp_re_http_profile::RequestEvidenceDigest 
 }
 
 fn reconstruct(hops: &[RetainedHop]) -> ChainLabel {
-    reconstruct_chain(hops, &resolver(), &expectations(), &nothing_revoked, NOW).label
+    reconstruct_chain(
+        hops,
+        &resolver(),
+        &expectations(),
+        &audit(),
+        &nothing_revoked,
+        NOW,
+    )
+    .label
 }
 
 // --- positives ---------------------------------------------------------------
@@ -358,7 +384,14 @@ fn single_terminal_hop_reconstructs_complete() {
 #[test]
 fn complete_chain_reports_every_hops_evidence() {
     let hops = three_hop_chain();
-    let out = reconstruct_chain(&hops, &resolver(), &expectations(), &nothing_revoked, NOW);
+    let out = reconstruct_chain(
+        &hops,
+        &resolver(),
+        &expectations(),
+        &audit(),
+        &nothing_revoked,
+        NOW,
+    );
     assert!(out.label.is_complete());
     assert_eq!(
         out.hop_evidence.len(),
@@ -427,6 +460,7 @@ fn per_hop_validity_does_not_imply_a_complete_chain() {
         &truncated,
         &resolver(),
         &expectations(),
+        &audit(),
         &nothing_revoked,
         NOW,
     );
@@ -490,6 +524,7 @@ fn front_truncated_chain_is_incomplete_not_a_complete_record() {
         &front_truncated,
         &resolver(),
         &expectations(),
+        &audit(),
         &nothing_revoked,
         NOW,
     );
@@ -794,6 +829,7 @@ fn an_aged_multi_hop_record_still_reconstructs_complete() {
         &hops,
         &resolver(),
         &expectations(),
+        &audit(),
         &nothing_revoked,
         AUDIT_LATER,
     );
@@ -833,6 +869,7 @@ fn a_hop_created_after_the_audit_instant_is_refused() {
             &hops,
             &resolver(),
             &expectations(),
+            &audit(),
             &nothing_revoked,
             audit_at
         )
@@ -858,6 +895,7 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
             std::slice::from_ref(&h0),
             &resolver(),
             &expectations_with(&policy),
+            &audit(),
             &nothing_revoked,
             within
         )
@@ -872,6 +910,7 @@ fn the_audit_ceiling_tolerates_the_configured_skew() {
             &[h0],
             &resolver(),
             &expectations_with(&policy),
+            &audit(),
             &nothing_revoked,
             beyond
         )
@@ -900,6 +939,7 @@ fn an_over_wide_window_is_still_refused_in_an_aged_record() {
         &[h0],
         &resolver(),
         &expectations_with(&policy),
+        &audit(),
         &nothing_revoked,
         AUDIT_LATER,
     )
@@ -926,6 +966,7 @@ fn a_degenerate_window_is_still_refused_in_an_aged_record() {
         &[h0],
         &resolver(),
         &expectations(),
+        &audit(),
         &nothing_revoked,
         AUDIT_LATER,
     )
@@ -1073,4 +1114,145 @@ fn an_honest_block_still_reconstructs_complete() {
         reconstruct(&[hop_with_block("n-honest", &block(None), DONE)]),
         ChainLabel::Complete
     );
+}
+
+// --- C082: the full-profile checks reconstruction used to skip -------------------
+
+/// Audience-tuple EQUALITY, not merely "the block names the URI it was sent to".
+///
+/// The weaker check passed a hop whose audience named a different audience id or route
+/// on the same endpoint, so a record could be attested `Complete` while containing
+/// requests the enforcement boundary would have refused for the wrong audience.
+#[test]
+fn a_hop_whose_audience_is_not_the_verifiers_own_breaks_the_chain() {
+    let mut elsewhere = block(None);
+    elsewhere.audience = AudienceTuple {
+        audience_id: "other.example.com".into(),
+        target_uri: TARGET.into(),
+        route: Some("tools/call".into()),
+    };
+    // The URI still matches, so the old target-URI-only check would have passed it.
+    assert_eq!(elsewhere.audience.target_uri, audience().target_uri);
+    match reconstruct(&[hop_with_block("n-aud", &elsewhere, DONE)]) {
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason:
+                IncompleteReason::RequestUnverifiable(
+                    mcp_re_http_profile::HttpProfileError::AudienceMismatch,
+                ),
+        } => {}
+        other => panic!("a foreign audience must break the chain, got {other:?}"),
+    }
+}
+
+/// A binding whose credential surface cannot be obtained fails CLOSED. Reconstruction
+/// previously never looked at `artifact_bindings[]` at all, so a hop carrying a binding
+/// nobody could check was indistinguishable from one carrying none.
+#[test]
+fn a_binding_with_no_obtainable_credential_breaks_the_chain() {
+    fn nothing_available(_: &ArtifactBinding) -> Option<Vec<u8>> {
+        None
+    }
+    static NOTHING: fn(&ArtifactBinding) -> Option<Vec<u8>> = nothing_available;
+    let aud = audience();
+    let starved = ChainAudit {
+        expected_audience: &aud,
+        artifact_material: &NOTHING,
+    };
+    let hops = [hop_with_block("n-artifact", &block(None), DONE)];
+    let out = reconstruct_chain(
+        &hops,
+        &resolver(),
+        &expectations(),
+        &starved,
+        &nothing_revoked,
+        NOW,
+    );
+    match out.label {
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason:
+                IncompleteReason::RequestUnverifiable(
+                    mcp_re_http_profile::HttpProfileError::ArtifactBindingFailed,
+                ),
+        } => {}
+        other => panic!("an uncheckable binding must break the chain, got {other:?}"),
+    }
+}
+
+// --- C114: a record that verified nothing still has an identity ------------------
+
+/// Two DIFFERENT submissions that both break at hop 0 must not produce the same record.
+///
+/// Every field derived from the verified prefix is empty for both — that is the defect:
+/// the statements were byte-identical, so a record about one call could be presented as
+/// a record about any other call that failed the same way. The submitted-bytes
+/// commitment is what tells them apart.
+#[test]
+fn two_records_that_verified_nothing_are_still_distinguishable() {
+    let mut first = block(None);
+    first.audience = AudienceTuple {
+        audience_id: "first.example.com".into(),
+        target_uri: TARGET.into(),
+        route: Some("tools/call".into()),
+    };
+    let mut second = block(None);
+    second.audience = AudienceTuple {
+        audience_id: "second.example.com".into(),
+        target_uri: TARGET.into(),
+        route: Some("tools/call".into()),
+    };
+    let a = [hop_with_block("n-id-a", &first, DONE)];
+    let b = [hop_with_block("n-id-b", &second, DONE)];
+    let run = |hops: &[RetainedHop]| {
+        reconstruct_chain(
+            hops,
+            &resolver(),
+            &expectations(),
+            &audit(),
+            &nothing_revoked,
+            NOW,
+        )
+    };
+    let (ra, rb) = (run(&a), run(&b));
+
+    // Both verified nothing: the identity fields the old record had are identical.
+    assert!(ra.hop_evidence.is_empty() && rb.hop_evidence.is_empty());
+    assert_eq!(ra.label, rb.label, "they even fail the same way");
+
+    assert_ne!(
+        ra.submitted_commitment, rb.submitted_commitment,
+        "two different submissions must not share one identity",
+    );
+    assert!(!ra.submitted_commitment.is_empty());
+}
+
+/// The identity is of the SUBMISSION, so it is stable across runs of the same bytes —
+/// otherwise it could not be compared by anyone but the process that computed it.
+#[test]
+fn the_submitted_identity_is_a_function_of_the_bytes_alone() {
+    let hops = [hop_with_block("n-stable", &block(None), DONE)];
+    let run = || {
+        reconstruct_chain(
+            &hops,
+            &resolver(),
+            &expectations(),
+            &audit(),
+            &nothing_revoked,
+            NOW,
+        )
+        .submitted_commitment
+    };
+    assert_eq!(run(), run());
+    // And an empty chain, which verifies nothing and has no hops at all, still gets one.
+    let empty = reconstruct_chain(
+        &[],
+        &resolver(),
+        &expectations(),
+        &audit(),
+        &nothing_revoked,
+        NOW,
+    );
+    assert!(!empty.submitted_commitment.is_empty());
+    assert_ne!(empty.submitted_commitment, run());
 }

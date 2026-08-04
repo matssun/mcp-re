@@ -935,25 +935,43 @@ pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
     )?;
     block.validate(&verified.profile_id)?;
 
-    // 3. Audience binding: block audience == expected, and the expected tuple's
-    //    target URI is consistent with the request @target-uri (guards routed /
-    //    reverse-proxied deployments where a label could alias two dispatch
-    //    boundaries).
-    if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
-        return Err(HttpProfileError::AudienceMismatch);
-    }
-
-    // 4. Strict artifact enforcement: every present binding must verify.
-    for binding in &block.artifact_bindings {
-        let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
-            .ok_or(HttpProfileError::ArtifactBindingFailed)?;
-        verify_artifact_binding(binding, &credential)?;
-    }
+    // 3-4. Audience binding and strict artifact enforcement.
+    enforce_full_profile_bindings(request, &block, expected_audience, artifact_material)?;
 
     verified.audience_hash = Some(block.audience.audience_hash());
     verified.audience = Some(block.audience.clone());
     verified.request_block = Some(block);
     Ok(verified)
+}
+
+/// The two full-profile checks that need inputs the request cannot supply for itself:
+/// audience-tuple equality and `artifact_bindings[]`.
+///
+/// Shared with chain reconstruction rather than restated there. Reconstruction's verdict
+/// is embedded in a SCITT Signed Statement, so "served" and "accounted for" have to be
+/// the same verdict — two copies of this rule would let a record be labelled `Complete`
+/// under checks the enforcement boundary had tightened.
+///
+/// The audience test is equality against the VERIFIER's own tuple plus consistency
+/// between that tuple's `target_uri` and the request's `@target-uri`, which guards routed
+/// and reverse-proxied deployments where a label could alias two dispatch boundaries.
+/// Artifact enforcement is strict: a binding whose credential surface is unavailable
+/// fails `artifact_binding_failed` rather than being skipped.
+pub(crate) fn enforce_full_profile_bindings(
+    request: &HttpRequest,
+    block: &HttpRequestEvidenceBlock,
+    expected_audience: &AudienceTuple,
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+) -> Result<(), HttpProfileError> {
+    if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
+        return Err(HttpProfileError::AudienceMismatch);
+    }
+    for binding in &block.artifact_bindings {
+        let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
+            .ok_or(HttpProfileError::ArtifactBindingFailed)?;
+        verify_artifact_binding(binding, &credential)?;
+    }
+    Ok(())
 }
 
 /// Obtain the credential bytes a binding commits to. DPoP `ath` binds the access

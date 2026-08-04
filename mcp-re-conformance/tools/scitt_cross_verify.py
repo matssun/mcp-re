@@ -306,6 +306,9 @@ def build_receipt(
 
 
 def emit_external_kat() -> int:
+    # No `submitted_commitment`: an independent implementation issues under the profile
+    # it implements, not under MCP-RE's. The vector is the check that such a statement
+    # still parses and verifies rather than being refused for a field it never carried.
     commitment = {
         "request_evidence": "external-request-handle",
         "response_evidence": "external-response-handle",

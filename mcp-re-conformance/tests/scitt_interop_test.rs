@@ -100,6 +100,10 @@ fn retained_chain(bytes: &[u8]) -> ChainReconstruction {
                 ),
             })
             .collect(),
+        // The corpus record carries handles, not the submitted messages, so the
+        // identity of the submission is not reproducible from it. A fixed stand-in
+        // keeps the vector deterministic without pretending otherwise.
+        submitted_commitment: "interop-submitted".to_owned(),
     }
 }
 

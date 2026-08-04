@@ -38,12 +38,20 @@
 //! is Layer 5's job, and the reason [`ChainReconstruction`] is shaped to be
 //! committed to (a SCITT receipt over a complete OR explicitly-incomplete record).
 //!
-//! Two full-profile REQUEST checks are also outside its reach, and a `Complete`
-//! label does not assert them: equality of each hop's audience tuple against the
-//! VERIFIER's own, since reconstruction is not given one, and `artifact_bindings[]`,
-//! whose credential surface (an mTLS certificate, a RAR detail) is not carried by
-//! the retained request.
+//! The two full-profile REQUEST checks that need inputs the retained bytes cannot
+//! supply — equality of each hop's audience tuple against the VERIFIER's own, and
+//! `artifact_bindings[]`, whose credential surface (an mTLS certificate, a RAR detail)
+//! the request does not carry — are taken from [`ChainAudit`] and enforced through the
+//! same function the live path uses. A `Complete` label therefore asserts what an
+//! admission asserts, which is the point: the label is embedded in a SCITT Signed
+//! Statement, so "served" and "accounted for" must be one verdict.
 
+use mcp_re_core::b64url_encode;
+use sha2::Digest;
+use sha2::Sha256;
+
+use crate::block::ArtifactBinding;
+use crate::block::AudienceTuple;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
@@ -145,7 +153,90 @@ pub struct ChainReconstruction {
     /// is every hop; on an `Incomplete` one it is the verified prefix — the part
     /// of the record that IS accounted for.
     pub hop_evidence: Vec<HopEvidence>,
+    /// A digest over the SUBMITTED hop bytes, whether or not any of them verified.
+    ///
+    /// [`hop_evidence`](Self::hop_evidence) is the verified prefix, so a chain that
+    /// broke at hop 0 contributes nothing to it and every such record collapsed to the
+    /// same three identity fields: two empty handles and a fold over zero bytes. A
+    /// Signed Statement about one could not be told from a statement about any other
+    /// call that failed the same way, which makes "this record is about that call" an
+    /// unanswerable question exactly where an auditor most needs it answered.
+    ///
+    /// This is the answer, and it is deliberately taken from what was SUBMITTED rather
+    /// than from what verified: unverified bytes are still specific bytes. It is an
+    /// identity, never an endorsement — nothing here asserts the submission was
+    /// well-formed, authentic, or served.
+    pub submitted_commitment: String,
 }
+
+/// The full-profile inputs a retained record cannot supply for itself.
+///
+/// Audience-tuple equality needs the VERIFIER's own tuple, and `artifact_bindings[]`
+/// needs a credential surface (mTLS certificate, RAR detail) the retained request does
+/// not carry. Without them reconstruction ran the minimal proof path and a `Complete`
+/// label asserted less than the enforcement boundary does — so a Signed Statement could
+/// commit to a whole call record containing requests the live path would have refused.
+///
+/// Bundled rather than added as two more positional parameters so that a caller has to
+/// name what it is supplying, and so that adding a third full-profile input later is not
+/// another signature break at every call site.
+pub struct ChainAudit<'a> {
+    /// The verifier's own audience tuple. Every hop's block must equal it.
+    pub expected_audience: &'a AudienceTuple,
+    /// Credential bytes for bindings that cannot be derived from covered headers. A
+    /// binding with no obtainable credential fails closed.
+    pub artifact_material: &'a dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+}
+
+/// Digest the submitted hops, length-delimited so no two distinct submissions can share
+/// a preimage.
+///
+/// Every variable-length field is preceded by its length as 8 octets big-endian.
+/// Concatenating raw bytes would let a request ending in one byte and a response
+/// beginning with another produce the same stream as a different split, which is exactly
+/// the ambiguity an identity must not have.
+fn submitted_commitment(hops: &[RetainedHop]) -> String {
+    let mut h = Sha256::new();
+    h.update(SUBMITTED_COMMITMENT_DOMAIN.len().to_be_bytes());
+    h.update(SUBMITTED_COMMITMENT_DOMAIN);
+    h.update((hops.len() as u64).to_be_bytes());
+    for hop in hops {
+        // The request line and the response status are part of what was submitted, so
+        // two submissions differing only in method or status must not share an identity.
+        h.update(u64::from(hop.response.status).to_be_bytes());
+        for part in [
+            hop.request.method.as_bytes(),
+            hop.request.target_uri.as_bytes(),
+            hop.request.body.as_slice(),
+            hop.response.body.as_slice(),
+        ] {
+            h.update((part.len() as u64).to_be_bytes());
+            h.update(part);
+        }
+        // The signatures are what make one submission of the same JSON distinct from
+        // another, so they are part of the identity too.
+        for headers in [&hop.request.headers, &hop.response.headers] {
+            let mut signature_headers: Vec<(&str, &str)> = headers
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case("signature"))
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            signature_headers.sort_unstable();
+            h.update((signature_headers.len() as u64).to_be_bytes());
+            for (name, value) in signature_headers {
+                h.update((name.len() as u64).to_be_bytes());
+                h.update(name.as_bytes());
+                h.update((value.len() as u64).to_be_bytes());
+                h.update(value.as_bytes());
+            }
+        }
+    }
+    b64url_encode(&h.finalize())
+}
+
+/// Domain separator for [`submitted_commitment`], so its digests can never be confused
+/// with any other SHA-256 this profile takes over evidence.
+const SUBMITTED_COMMITMENT_DOMAIN: &[u8] = b"mcp-re-evidence/v2:submitted-chain";
 
 /// The two role-labeled handles a verified hop contributes to the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,11 +330,15 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     hops: &[RetainedHop],
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
     expect: &DelegationExpectations<'_>,
+    audit: &ChainAudit<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
 ) -> ChainReconstruction {
     let policy = &expect.policy;
     let mut hop_evidence: Vec<HopEvidence> = Vec::with_capacity(hops.len());
+    // Taken over what was handed in, before any of it is judged, so the record has an
+    // identity on every path out of this function including the ones that verify nothing.
+    let submitted = submitted_commitment(hops);
 
     if hops.is_empty() {
         return ChainReconstruction {
@@ -252,6 +347,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
                 reason: IncompleteReason::EmptyChain,
             },
             hop_evidence,
+            submitted_commitment: submitted,
         };
     }
 
@@ -268,10 +364,20 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         ) {
             Ok(t) => t,
             Err(HopInstantError::Unreadable(e)) => {
-                return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e))
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::RequestUnverifiable(e),
+                    submitted,
+                )
             }
             Err(HopInstantError::AfterAuditInstant) => {
-                return incomplete(hop_evidence, i, IncompleteReason::HopAfterAuditInstant)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::HopAfterAuditInstant,
+                    submitted,
+                )
             }
         };
         let response_at = match hop_instant(
@@ -283,10 +389,20 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         ) {
             Ok(t) => t,
             Err(HopInstantError::Unreadable(e)) => {
-                return incomplete(hop_evidence, i, IncompleteReason::ResponseUnverifiable(e))
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::ResponseUnverifiable(e),
+                    submitted,
+                )
             }
             Err(HopInstantError::AfterAuditInstant) => {
-                return incomplete(hop_evidence, i, IncompleteReason::HopAfterAuditInstant)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::HopAfterAuditInstant,
+                    submitted,
+                )
             }
         };
 
@@ -295,7 +411,12 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
             match verify_request_with_policy(&hop.request, resolve_actor, policy, request_at) {
                 Ok(v) => v,
                 Err(e) => {
-                    return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e))
+                    return incomplete(
+                        hop_evidence,
+                        i,
+                        IncompleteReason::RequestUnverifiable(e),
+                        submitted,
+                    )
                 }
             };
 
@@ -310,29 +431,44 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         //     it, while containing requests the enforcement boundary would have
         //     refused. "Served" and "accounted for" have to be the same verdict.
         //
-        //     What is checked here is what the retained bytes can answer on their
-        //     own: the block is present and valid, and its audience tuple names the
-        //     URI this request was sent to. The two remaining full-profile checks
-        //     cannot be made from a retained record: equality against the verifier's
-        //     own `AudienceTuple`, and `artifact_bindings[]`, whose credential
-        //     surface (mTLS certificate, RAR detail) is not carried by the request.
-        //     Both need inputs `reconstruct_chain` is not given.
+        //     The audience tuple and `artifact_bindings[]` are enforced through the
+        //     SAME function the live path uses, against the caller-supplied
+        //     [`ChainAudit`]. One implementation, so an auditor's `Complete` cannot
+        //     mean less than an admission.
         let block: HttpRequestEvidenceBlock = match extract_meta_block(
             &hop.request.body,
             REQUEST_EVIDENCE_BLOCK_KEY,
             "request evidence block",
         ) {
             Ok(b) => b,
-            Err(e) => return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e)),
+            Err(e) => {
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::RequestUnverifiable(e),
+                    submitted,
+                )
+            }
         };
         if let Err(e) = block.validate(&verified_req.profile_id) {
-            return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e));
-        }
-        if block.audience.target_uri != hop.request.target_uri {
             return incomplete(
                 hop_evidence,
                 i,
-                IncompleteReason::RequestUnverifiable(HttpProfileError::AudienceMismatch),
+                IncompleteReason::RequestUnverifiable(e),
+                submitted,
+            );
+        }
+        if let Err(e) = crate::verify::enforce_full_profile_bindings(
+            &hop.request,
+            &block,
+            audit.expected_audience,
+            audit.artifact_material,
+        ) {
+            return incomplete(
+                hop_evidence,
+                i,
+                IncompleteReason::RequestUnverifiable(e),
+                submitted,
             );
         }
 
@@ -348,7 +484,12 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         ) {
             Ok(v) => v,
             Err(e) => {
-                return incomplete(hop_evidence, i, IncompleteReason::ResponseUnverifiable(e))
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::ResponseUnverifiable(e),
+                    submitted,
+                )
             }
         };
 
@@ -371,9 +512,21 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         match (i, block.continuation.as_ref()) {
             (0, None) => {}
             (0, Some(_)) => {
-                return incomplete(hop_evidence, i, IncompleteReason::ContinuationDoesNotLink)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::ContinuationDoesNotLink,
+                    submitted,
+                )
             }
-            (_, None) => return incomplete(hop_evidence, i, IncompleteReason::MissingContinuation),
+            (_, None) => {
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::MissingContinuation,
+                    submitted,
+                )
+            }
             (_, Some(c)) => {
                 let prev: &HopEvidence = &hop_evidence[i - 1];
                 let links = c.previous_request_evidence.digest_value
@@ -384,7 +537,12 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
                     && c.input_required_response_evidence.digest_alg
                         == prev.response_evidence.digest_alg;
                 if !links {
-                    return incomplete(hop_evidence, i, IncompleteReason::ContinuationDoesNotLink);
+                    return incomplete(
+                        hop_evidence,
+                        i,
+                        IncompleteReason::ContinuationDoesNotLink,
+                        submitted,
+                    );
                 }
             }
         }
@@ -397,13 +555,28 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
         let is_last = i + 1 == hops.len();
         match (is_last, outcome) {
             (_, HopOutcome::Unrecognized) => {
-                return incomplete(hop_evidence, i, IncompleteReason::UnrecognizedResultType)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::UnrecognizedResultType,
+                    submitted,
+                )
             }
             (false, HopOutcome::Terminal) => {
-                return incomplete(hop_evidence, i, IncompleteReason::NonTerminalExpected)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::NonTerminalExpected,
+                    submitted,
+                )
             }
             (true, HopOutcome::InputRequired) => {
-                return incomplete(hop_evidence, i, IncompleteReason::TerminalExpected)
+                return incomplete(
+                    hop_evidence,
+                    i,
+                    IncompleteReason::TerminalExpected,
+                    submitted,
+                )
             }
             _ => {}
         }
@@ -417,6 +590,7 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
     ChainReconstruction {
         label: ChainLabel::Complete,
         hop_evidence,
+        submitted_commitment: submitted,
     }
 }
 
@@ -476,9 +650,11 @@ fn incomplete(
     hop_evidence: Vec<HopEvidence>,
     hop: usize,
     reason: IncompleteReason,
+    submitted_commitment: String,
 ) -> ChainReconstruction {
     ChainReconstruction {
         label: ChainLabel::Incomplete { hop, reason },
         hop_evidence,
+        submitted_commitment,
     }
 }

@@ -680,6 +680,10 @@ impl std::error::Error for AttestError {}
 /// so a receipt could otherwise commit to a COMPLETE call record established without
 /// any delegation chain ever being checked.
 ///
+/// `audit` carries the two full-profile inputs the retained bytes cannot supply — the
+/// verifier's own audience tuple and the artifact credential surface — so a `Complete`
+/// label asserts what an admission asserts rather than the minimal proof path.
+///
 /// An INCOMPLETE chain is attested, not refused. That is the point of the §9 seam: a
 /// truncated or broken record is representable and distinguishable, and refusing to
 /// issue a statement about one would leave the most interesting records — the ones with
@@ -695,6 +699,7 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     hops: &[EvidenceDigest],
     resolve_actor: &dyn Fn(&str, mcp_re_http_profile::SignerSlot) -> R,
     expect: &mcp_re_http_profile::DelegationExpectations<'_>,
+    audit: &mcp_re_http_profile::ChainAudit<'_>,
     is_revoked: &dyn Fn(&str) -> bool,
     now: i64,
     issuer_kid: &str,
@@ -703,8 +708,14 @@ pub fn attest_chain<R: Into<mcp_re_http_profile::ResolverOutcome>>(
     sign: impl FnOnce(&[u8]) -> Result<Vec<u8>, mcp_re_http_profile::HttpProfileError>,
 ) -> Result<Attestation, AttestError> {
     let retained = retention.load_chain(hops).map_err(AttestError::Retention)?;
-    let reconstruction =
-        mcp_re_http_profile::reconstruct_chain(&retained, resolve_actor, expect, is_revoked, now);
+    let reconstruction = mcp_re_http_profile::reconstruct_chain(
+        &retained,
+        resolve_actor,
+        expect,
+        audit,
+        is_revoked,
+        now,
+    );
     let commitment = mcp_re_http_profile::scitt::EvidenceCommitment::from_reconstruction(
         &reconstruction,
         bindings_commitment.clone(),
