@@ -185,6 +185,14 @@ pub enum FloorConfig {
         /// unlinking it, and the part an ephemeral volume cannot lose.
         #[serde(default)]
         bootstrap_version: u64,
+        /// The operator-declared maximum the STORED floor may reach. Absent leaves the
+        /// directory unbounded upward, where one marker named `u64::MAX` refuses every
+        /// future manifest including a break-glass revocation.
+        ///
+        /// Exceeding it fails the client STOP, never clamping the floor down — and it
+        /// bounds nothing unless this config is less writable than the floor directory.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ceiling_version: Option<u64>,
     },
     /// Explicitly NO durability across restarts, for an ephemeral client that accepts
     /// re-opening the rollback window on every start.

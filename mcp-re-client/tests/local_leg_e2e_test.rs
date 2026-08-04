@@ -274,6 +274,7 @@ fn trust_config(scratch: &Scratch) -> TrustConfig {
         floor: FloorConfig::Durable {
             dir: scratch.join("floor"),
             bootstrap_version: 0,
+            ceiling_version: None,
         },
         reload_secs: 300,
     }

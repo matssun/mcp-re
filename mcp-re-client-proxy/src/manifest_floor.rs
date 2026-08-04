@@ -45,15 +45,34 @@
 //!
 //! ## What the floor directory's integrity buys, and what it does not
 //!
-//! Everything above defends the floor DOWNWARD. Upward it is undefended and cannot be
-//! defended from inside this module: markers are unauthenticated by construction, so a
-//! writer of the directory can create `18446744073709551615` and pin the floor at
-//! `u64::MAX`, after which every manifest — including a break-glass revocation — is
-//! refused as `Stale`. No in-module bound helps: a fixed ceiling is a number the same
-//! writer stays under, and an operator-declared ceiling would clamp a LEGITIMATE floor
-//! down and re-open the rollback window it exists to close. The floor directory must
-//! therefore be no more writable than the trust store itself; the bootstrap bounds what
-//! a directory-writer can take away, not what it can add.
+//! Everything above defends the floor DOWNWARD. Upward the markers are unauthenticated
+//! by construction, so a writer of the directory can create `18446744073709551615` and
+//! pin the floor at `u64::MAX`, after which every manifest — including a break-glass
+//! revocation — is refused as `Stale`. This is the same shape as the TUF fast-forward
+//! attack, and it is a denial of service reachable by whoever holds the cheapest write
+//! capability in the deployment.
+//!
+//! [`FileManifestFloor::with_bounds`] declares a CEILING, and the ceiling
+//! [`fail-stops`](mcp_re_client_core::TrustManifestError::FloorAboveCeiling) — it never
+//! clamps. `min(stored_floor, ceiling)` would be worse than no ceiling: it lowers a
+//! floor on the say-so of the storage that just proved untrustworthy, re-opening the
+//! rollback window silently and letting the attacker pick which versions come back by
+//! choosing how far to overshoot. A floor above its ceiling means the storage and the
+//! trust domain that bounds it disagree, and neither one may be preferred; the client
+//! stops and says so.
+//!
+//! The ceiling is worth exactly the trust domain it comes from. Read from a config file
+//! the floor-directory writer can also edit, it adds nothing — it must be no more
+//! writable than the org keys themselves.
+//!
+//! What this does NOT do is preserve availability. A malicious fast-forward still stops
+//! the client; it stops it LOUDLY, at a named error an operator can act on, instead of
+//! silently withdrawing every anchor once the loaded manifest expires. Closing the
+//! finding underneath needs the floor to stop being state the constrained actor can
+//! write at all — authenticated, anti-replay, atomically updated storage outside the
+//! writer's authority. Until then the floor directory must be permissioned no more
+//! widely than the trust store itself; the bootstrap bounds what a directory-writer can
+//! take away, and the ceiling bounds what it can add.
 
 use std::fs::File;
 use std::io;
@@ -78,6 +97,10 @@ pub struct FileManifestFloor {
     /// deleting the directory — or losing it with an ephemeral volume — cannot
     /// re-open the rollback window past this point.
     bootstrap: u64,
+    /// The operator-declared maximum the STORED floor may reach. `None` leaves the
+    /// directory unbounded upward. A stored floor above it is a fail-stop, never a
+    /// clamp — see the module docs.
+    ceiling: Option<u64>,
 }
 
 impl FileManifestFloor {
@@ -101,11 +124,42 @@ impl FileManifestFloor {
         path: impl Into<PathBuf>,
         bootstrap: u64,
     ) -> Result<Self, TrustManifestError> {
+        Self::with_bounds(path, bootstrap, None)
+    }
+
+    /// Open the floor with an operator-declared minimum AND maximum.
+    ///
+    /// `ceiling` bounds what a writer of the floor directory can ADD. Exceeding it is
+    /// [`TrustManifestError::FloorAboveCeiling`] — the client stops rather than serving
+    /// under a floor it cannot reconcile, and rather than clamping down to a value the
+    /// untrusted storage effectively chose. It is only worth the trust domain it comes
+    /// from: a ceiling the floor-directory writer can also edit bounds nothing.
+    ///
+    /// A `bootstrap` above the `ceiling` is that same contradiction declared in one
+    /// place, so it is refused here rather than at the first verification.
+    pub fn with_bounds(
+        path: impl Into<PathBuf>,
+        bootstrap: u64,
+        ceiling: Option<u64>,
+    ) -> Result<Self, TrustManifestError> {
+        if let Some(ceiling) = ceiling {
+            if bootstrap > ceiling {
+                return Err(TrustManifestError::FloorAboveCeiling {
+                    floor: bootstrap,
+                    ceiling,
+                });
+            }
+        }
         let dir = path.into();
         std::fs::create_dir_all(&dir)
             .map_err(|_| TrustManifestError::FloorNotPersisted("create trust-anchor floor dir"))?;
-        let floor = FileManifestFloor { dir, bootstrap };
-        // Prove it is readable now rather than at the first verification.
+        let floor = FileManifestFloor {
+            dir,
+            bootstrap,
+            ceiling,
+        };
+        // Prove it is readable — and within its declared bounds — now rather than at the
+        // first verification.
         floor.min_version()?;
         Ok(floor)
     }
@@ -114,6 +168,25 @@ impl FileManifestFloor {
     pub fn path(&self) -> &Path {
         &self.dir
     }
+
+    /// The declared ceiling, if any.
+    pub fn ceiling(&self) -> Option<u64> {
+        self.ceiling
+    }
+
+    /// Fail-stop when `value` is above the declared ceiling.
+    ///
+    /// The comparison is `>`, not `>=`: a floor exactly AT the ceiling is the highest
+    /// state the operator said could exist, which is consistent, not contradictory.
+    fn check_ceiling(&self, value: u64) -> Result<(), TrustManifestError> {
+        match self.ceiling {
+            Some(ceiling) if value > ceiling => Err(TrustManifestError::FloorAboveCeiling {
+                floor: value,
+                ceiling,
+            }),
+            _ => Ok(()),
+        }
+    }
 }
 
 impl ManifestVersionFloor for FileManifestFloor {
@@ -121,11 +194,19 @@ impl ManifestVersionFloor for FileManifestFloor {
         // Re-read every time rather than cache: another process (a sidecar updater, a
         // second client) may have raised the floor since this handle was opened, and
         // the higher value is the safe one to enforce.
-        Ok(read_floor(&self.dir)?.max(self.bootstrap))
+        let durable = read_floor(&self.dir)?;
+        self.check_ceiling(durable)?;
+        Ok(durable.max(self.bootstrap))
     }
 
     fn record(&mut self, version: u64) -> Result<(), TrustManifestError> {
         let durable = read_floor(&self.dir)?;
+        self.check_ceiling(durable)?;
+        // A validly signed manifest whose version is above the ceiling means the
+        // operator's ceiling is stale, not that the manifest is bad. Recording it anyway
+        // would push the stored floor past the bound and brick every later read, so the
+        // inconsistency is reported at the one call that would create it.
+        self.check_ceiling(version)?;
         if durable > version {
             // Another writer raised the floor ABOVE this version between the load's
             // floor read and this call. The accepted manifest passed a floor that no
@@ -477,6 +558,116 @@ mod tests {
                 "the already-exists path must not report durability it never established",
             );
         }
+    }
+
+    /// The fast-forward: one marker named `u64::MAX` pins the floor so high that every
+    /// future manifest — including a break-glass revocation — is refused as `Stale`.
+    /// With a ceiling declared, the client stops at a named error instead.
+    #[test]
+    fn a_fast_forwarded_floor_fails_stop_against_the_ceiling() {
+        let scratch = Scratch::new("ceiling-fastforward");
+        let floor = FileManifestFloor::with_bounds(&scratch.0, 0, Some(50)).expect("open");
+        persist(&scratch.0, u64::MAX).expect("an attacker writes the highest marker there is");
+        assert_eq!(
+            floor.min_version().err(),
+            Some(TrustManifestError::FloorAboveCeiling {
+                floor: u64::MAX,
+                ceiling: 50,
+            }),
+            "a floor above its ceiling is reported, not reconciled",
+        );
+    }
+
+    /// The negative control for the whole design. `min(stored, ceiling)` would answer 50
+    /// here and go on serving — accepting every manifest between 51 and 90 that the real
+    /// floor had already passed, chosen by the same writer that overshot. The ONLY
+    /// acceptable answer is the error.
+    #[test]
+    fn the_ceiling_never_clamps_the_floor_downward() {
+        let scratch = Scratch::new("ceiling-no-clamp");
+        let floor = FileManifestFloor::with_bounds(&scratch.0, 0, Some(50)).expect("open");
+        persist(&scratch.0, 90).expect("the stored floor overshoots the ceiling");
+        let outcome = floor.min_version();
+        assert!(
+            outcome.is_err(),
+            "clamping to {:?} would re-admit versions 51..=90 the floor had passed",
+            outcome,
+        );
+        assert_eq!(
+            outcome.err(),
+            Some(TrustManifestError::FloorAboveCeiling {
+                floor: 90,
+                ceiling: 50
+            }),
+        );
+    }
+
+    /// A ceiling bounds the storage, not ordinary operation: everything at or below it
+    /// behaves exactly as it did before the ceiling existed.
+    #[test]
+    fn a_floor_within_its_ceiling_is_untouched() {
+        let scratch = Scratch::new("ceiling-within");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 2, Some(50)).expect("open");
+        assert_eq!(
+            floor.min_version().unwrap(),
+            2,
+            "the bootstrap still applies"
+        );
+        floor
+            .record(50)
+            .expect("a version AT the ceiling is consistent, not contradictory");
+        assert_eq!(floor.min_version().unwrap(), 50);
+    }
+
+    /// A signed manifest above the ceiling means the operator's ceiling is stale. It is
+    /// refused at the call that would otherwise write an unreadable floor — recording it
+    /// would brick every later read, turning one stale config value into an outage that
+    /// needs manual repair of the directory.
+    #[test]
+    fn recording_above_the_ceiling_is_refused_before_it_bricks_the_floor() {
+        let scratch = Scratch::new("ceiling-record");
+        let mut floor = FileManifestFloor::with_bounds(&scratch.0, 0, Some(50)).expect("open");
+        assert_eq!(
+            floor.record(51).err(),
+            Some(TrustManifestError::FloorAboveCeiling {
+                floor: 51,
+                ceiling: 50
+            }),
+        );
+        assert_eq!(
+            read_floor(&scratch.0).unwrap(),
+            0,
+            "nothing was persisted, so the floor is still readable",
+        );
+    }
+
+    /// The same contradiction declared in one place: an operator who sets a bootstrap
+    /// above the ceiling has written two mutually exclusive statements, and the process
+    /// should not start.
+    #[test]
+    fn a_bootstrap_above_the_ceiling_is_refused_at_construction() {
+        let scratch = Scratch::new("ceiling-bootstrap");
+        assert_eq!(
+            FileManifestFloor::with_bounds(&scratch.0, 60, Some(50)).err(),
+            Some(TrustManifestError::FloorAboveCeiling {
+                floor: 60,
+                ceiling: 50
+            }),
+        );
+    }
+
+    /// No ceiling is the old behaviour exactly — the fast-forward is undefended, which
+    /// is the honest posture for a deployment that has not declared a bound.
+    #[test]
+    fn without_a_ceiling_the_floor_is_unbounded_upward() {
+        let scratch = Scratch::new("ceiling-absent");
+        let floor = FileManifestFloor::open(&scratch.0).expect("open");
+        persist(&scratch.0, u64::MAX).expect("write the fast-forward marker");
+        assert_eq!(
+            floor.min_version().unwrap(),
+            u64::MAX,
+            "undefended, and visibly so",
+        );
     }
 
     /// Markers below the maximum are pruned so the directory does not grow without

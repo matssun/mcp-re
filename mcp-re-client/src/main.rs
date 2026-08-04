@@ -47,21 +47,32 @@ fn install_shutdown_handlers() {
 /// (now empty) directory says and an older signed manifest is accepted again.
 fn floor_posture(floor: &mcp_re_client::config::FloorConfig) -> String {
     use mcp_re_client::config::FloorConfig;
+    // The ceiling is reported the same way and for the same reason: absent, the floor is
+    // undefended against a writer who pins it at u64::MAX and refuses every later
+    // manifest, and an operator reading the posture line should see that.
+    let ceiling = |c: &Option<u64>| match c {
+        Some(c) => format!(", ceiling_version={c}"),
+        None => ", NO ceiling_version — unbounded upward".to_owned(),
+    };
     match floor {
         FloorConfig::Durable {
             dir,
             bootstrap_version: 0,
+            ceiling_version,
         } => format!(
             "durable at {} with NO bootstrap_version — a restart over lost storage resets \
-             the floor to 0",
-            dir.display()
+             the floor to 0{}",
+            dir.display(),
+            ceiling(ceiling_version),
         ),
         FloorConfig::Durable {
             dir,
             bootstrap_version,
+            ceiling_version,
         } => format!(
-            "durable at {} (bootstrap_version={bootstrap_version})",
-            dir.display()
+            "durable at {} (bootstrap_version={bootstrap_version}{})",
+            dir.display(),
+            ceiling(ceiling_version),
         ),
         FloorConfig::Ephemeral { bootstrap_version } => format!(
             "EPHEMERAL — no rollback protection across a restart \
@@ -216,6 +227,7 @@ mod tests {
         let unbootstrapped = floor_posture(&FloorConfig::Durable {
             dir: "/var/lib/mcp-re/floor".into(),
             bootstrap_version: 0,
+            ceiling_version: None,
         });
         assert!(
             unbootstrapped.contains("NO bootstrap_version"),
@@ -224,6 +236,7 @@ mod tests {
         let bootstrapped = floor_posture(&FloorConfig::Durable {
             dir: "/var/lib/mcp-re/floor".into(),
             bootstrap_version: 7,
+            ceiling_version: None,
         });
         assert!(
             bootstrapped.contains("bootstrap_version=7"),
@@ -235,6 +248,32 @@ mod tests {
         assert!(
             ephemeral.contains("EPHEMERAL") && ephemeral.contains("bootstrap_version=3"),
             "unexpected: {ephemeral}"
+        );
+    }
+
+    /// An absent ceiling is a real posture, not a neutral default: the floor is then
+    /// undefended against a writer who pins it at `u64::MAX` and refuses every later
+    /// manifest. The line has to say so, for the same reason it says so about the
+    /// bootstrap.
+    #[test]
+    fn the_posture_line_reports_whether_the_floor_is_bounded_upward() {
+        let unbounded = floor_posture(&FloorConfig::Durable {
+            dir: "/var/lib/mcp-re/floor".into(),
+            bootstrap_version: 7,
+            ceiling_version: None,
+        });
+        assert!(
+            unbounded.contains("NO ceiling_version"),
+            "unexpected: {unbounded}"
+        );
+        let bounded = floor_posture(&FloorConfig::Durable {
+            dir: "/var/lib/mcp-re/floor".into(),
+            bootstrap_version: 7,
+            ceiling_version: Some(500),
+        });
+        assert!(
+            bounded.contains("ceiling_version=500") && !bounded.contains("NO ceiling_version"),
+            "unexpected: {bounded}"
         );
     }
 }

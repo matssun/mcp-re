@@ -105,9 +105,14 @@ impl AnchorLoader {
             FloorConfig::Durable {
                 dir,
                 bootstrap_version,
+                ceiling_version,
             } => Box::new(
-                mcp_re_client_proxy::FileManifestFloor::with_bootstrap(dir, *bootstrap_version)
-                    .map_err(AnchorError::Refused)?,
+                mcp_re_client_proxy::FileManifestFloor::with_bounds(
+                    dir,
+                    *bootstrap_version,
+                    *ceiling_version,
+                )
+                .map_err(AnchorError::Refused)?,
             ),
             FloorConfig::Ephemeral { bootstrap_version } => Box::new(
                 mcp_re_client_core::InMemoryVersionFloor::starting_at(*bootstrap_version),
@@ -360,6 +365,7 @@ mod tests {
                 FloorConfig::Durable {
                     dir: scratch.join("floor"),
                     bootstrap_version: 0,
+                    ceiling_version: None,
                 }
             } else {
                 FloorConfig::Ephemeral {

@@ -165,6 +165,15 @@ pub enum TrustManifestError {
     /// are not returned. Using them would leave the accepted version recorded nowhere:
     /// the next start would read the old floor and re-accept the superseded manifest.
     FloorNotPersisted(&'static str),
+    /// The stored floor is above the operator-declared ceiling, so the floor storage
+    /// disagrees with the trust domain that bounds it and one of the two is lying.
+    ///
+    /// This is a FAIL-STOP, never a clamp. Lowering the effective floor to the ceiling
+    /// would re-open exactly the rollback window the floor exists to close, and would do
+    /// it silently — an attacker who can write the floor storage could then choose which
+    /// manifest versions to re-admit by overshooting on purpose. Refusing to serve is
+    /// the only response that neither trusts the storage nor discards the protection.
+    FloorAboveCeiling { floor: u64, ceiling: u64 },
 }
 
 /// The durable rollback floor: the highest `manifest_version` this verifier has already
