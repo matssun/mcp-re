@@ -197,6 +197,18 @@ impl DelegatedServerSigner {
     }
 }
 
+/// What [`DelegatedRotor::advance_trust_epoch`] actually managed to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustEpochAdvance {
+    /// A fresh delegated key was minted under the new epoch and published. This
+    /// replica no longer mints under the prior epoch.
+    Advanced,
+    /// The root issuer declined and the predecessor — minted under the PRIOR epoch — is
+    /// still valid, so it keeps serving until its own `exp`. The advance has not
+    /// happened: the caller must retry, and must not report the epoch as applied.
+    Declined,
+}
+
 /// The cold-path rotation driver: owns the custody state machine and republishes
 /// snapshots into a shared [`DelegatedServerSigner`]. A single owner drives it
 /// (never the hot path), so the root issuer's blocking KMS/HSM calls stay off the
@@ -261,7 +273,26 @@ where
     /// accepted-epoch set then reject the new credential (`delegation_trust_epoch_stale`),
     /// which is cross-replica because every replica reads the same shared counter. On a
     /// fail-closed issuance the snapshot is retired so the hot path fails closed.
-    pub fn advance_trust_epoch(&mut self, epoch: String, now: i64) -> Result<(), CustodyError> {
+    ///
+    /// `Ok` distinguishes the two outcomes `reissue` collapses into one. `reissue`
+    /// returns `Ok(())` both when a successor was minted under the new epoch AND when
+    /// the root issuer DECLINED while the predecessor — minted under the epoch just
+    /// revoked — is still valid. Reporting the second as an advance would tell the
+    /// operator their break-glass revocation had landed on a replica that is still
+    /// minting under the revoked epoch, so the caller is handed
+    /// [`TrustEpochAdvance::Declined`] and must retry rather than record success.
+    pub fn advance_trust_epoch(
+        &mut self,
+        epoch: String,
+        now: i64,
+    ) -> Result<TrustEpochAdvance, CustodyError> {
+        // The published kid BEFORE the attempt. A successful issuance always mints a
+        // fresh keypair, and the kid is that key's RFC 7638 thumbprint, so an unchanged
+        // kid is proof no new credential was minted.
+        let before_kid = self
+            .custody
+            .active_snapshot()
+            .map(|active| active.delegated_kid);
         self.custody.set_trust_epoch(epoch);
         match self.custody.reissue(now) {
             Ok(()) => {
@@ -269,8 +300,14 @@ where
                     .custody
                     .active_snapshot()
                     .expect("reissue guarantees an active key");
+                if Some(&snapshot.delegated_kid) == before_kid.as_ref() {
+                    // The predecessor is untouched and still serving until its own `exp`
+                    // (ADR-MCPRE-052 §6) — not retired, because a root blip must not
+                    // compose an epoch advance into an outage.
+                    return Ok(TrustEpochAdvance::Declined);
+                }
                 self.signer.publish(snapshot);
-                Ok(())
+                Ok(TrustEpochAdvance::Advanced)
             }
             Err(e) => {
                 self.signer.retire();
@@ -380,9 +417,12 @@ mod tests {
             .clone();
         assert_eq!(rotor.trust_epoch(), "epoch-1");
 
-        rotor
-            .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
-            .expect("re-issue under the advanced epoch");
+        assert_eq!(
+            rotor
+                .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
+                .expect("re-issue under the advanced epoch"),
+            TrustEpochAdvance::Advanced
+        );
         assert_eq!(rotor.trust_epoch(), "epoch-1#2");
         let snap = signer.current(NOW + 5).expect("a key is published");
         assert_ne!(
@@ -393,6 +433,56 @@ mod tests {
             rotor.root_invocations(),
             2,
             "root re-issued exactly once more"
+        );
+    }
+
+    /// R7-C029/C004: an advance the root DECLINED must not be reported as applied.
+    ///
+    /// `reissue` returns `Ok(())` both when a successor was minted and when the root
+    /// declined while the predecessor — minted under the epoch just revoked — is still
+    /// valid. Collapsing the two told the operator their break-glass revocation had
+    /// landed on a replica still minting under the revoked epoch, reset the failure
+    /// counter, and moved the caller's `last_label` so the advance was never retried.
+    #[test]
+    fn a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key() {
+        // K1 issues; every later issuance is declined by the root.
+        let root = SigningKey::from_seed_bytes(&[33u8; 32]);
+        let mut attempts = 0u32;
+        let issue = move |h: &DelegationHeader, c: &DelegationClaims| {
+            attempts += 1;
+            (attempts == 1).then(|| issue_delegation_credential(&root, h, c))
+        };
+        let mut n = 100u8;
+        let factory = move || {
+            n = n.wrapping_add(1);
+            SigningKey::from_seed_bytes(&[n; 32])
+        };
+        let signer = Arc::new(DelegatedServerSigner::new());
+        let custody = DelegatedSigningCustody::new(cfg(), issue, factory);
+        let mut rotor = DelegatedRotor::new(custody, Arc::clone(&signer));
+
+        rotor.rotate(NOW).expect("K1 issues");
+        let k1 = signer
+            .current(NOW)
+            .expect("K1 serves")
+            .delegated_kid
+            .clone();
+
+        assert_eq!(
+            rotor
+                .advance_trust_epoch("epoch-1#2".into(), NOW + 5)
+                .expect("a still-valid predecessor is not an error"),
+            TrustEpochAdvance::Declined,
+            "the root declined, so the epoch advance did NOT happen here"
+        );
+        assert_eq!(
+            signer
+                .current(NOW + 5)
+                .expect("the predecessor keeps serving until its own exp")
+                .delegated_kid,
+            k1,
+            "no fresh key was minted, so the replica is still signing under the epoch \
+             the operator just revoked"
         );
     }
 

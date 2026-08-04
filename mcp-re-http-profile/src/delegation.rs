@@ -32,6 +32,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::error::HttpProfileError;
+use crate::policy::VerifierPolicy;
 
 /// The frozen credential media type (ADR-MCPRE-052 §1; vocabulary firewall).
 pub const DELEGATION_TYP: &str = "mcp-re-delegation+jwt";
@@ -149,11 +150,30 @@ pub struct VerifiedDelegation {
     pub trust_epoch: String,
 }
 
+/// Constrain a configured clock skew to the profile's hard cap before it widens
+/// the credential window.
+///
+/// The credential window and the RFC 9421 signature window are configured from one
+/// operator value in every caller, but only the signature side runs it through
+/// [`VerifierPolicy::new`], where `0..=MAX_CLOCK_SKEW_BOUND` is enforced. Applied
+/// raw here, `max_clock_skew: 86400` yielded a 300 s signature gate beside a
+/// 24-hour credential-acceptance gate — an exfiltrated or de-listed delegated key
+/// staying acceptable a day past its `exp`, with nothing in the operator's view
+/// saying so. The two gates are now bounded by the same constant, and a negative
+/// value narrows nothing rather than skewing the window asymmetrically.
+fn bounded_skew(configured: i64) -> i64 {
+    configured.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+}
+
 /// The verifier's expectations for the credential scope + freshness
 /// (ADR-MCPRE-052 §3). The caller supplies these from the active profile, the
 /// verified request context, and the deployment's epoch policy.
 pub struct DelegationVerifyParams<'a> {
     /// `now` in unix seconds, and the tolerated clock skew.
+    ///
+    /// Bounded by [`VerifierPolicy::MAX_CLOCK_SKEW_BOUND`] before it is applied —
+    /// the same hard cap the RFC 9421 signature gate enforces — so a configuration
+    /// above the cap cannot widen the credential-acceptance window beyond it.
     pub now: i64,
     pub max_clock_skew: i64,
     /// This verifier's own audience identifier(s) — the credential's `aud` must
@@ -222,10 +242,9 @@ pub fn verify_delegation_credential(
     .map_err(|_| HttpProfileError::DelegationCredentialInvalid)?;
 
     // --- freshness (step 4) --------------------------------------------------
-    // nbf ≤ now ≤ exp, widened by max_clock_skew on both edges.
-    if params.now + params.max_clock_skew < claims.nbf
-        || params.now - params.max_clock_skew > claims.exp
-    {
+    // nbf ≤ now ≤ exp, widened by the BOUNDED skew on both edges.
+    let skew = bounded_skew(params.max_clock_skew);
+    if params.now + skew < claims.nbf || params.now - skew > claims.exp {
         return Err(HttpProfileError::DelegationCredentialExpired);
     }
 
@@ -531,6 +550,57 @@ mod tests {
             verify(&jws, &early, r.public_key()).unwrap_err(),
             HttpProfileError::DelegationCredentialExpired
         );
+    }
+
+    /// The credential window is bounded by the SAME hard cap as the RFC 9421
+    /// signature window. A deployment that configures a day of skew must not get a
+    /// day of credential acceptance beside a 300 s signature gate — an exfiltrated
+    /// delegated key would outlive its own `exp` by that whole margin.
+    ///
+    /// The instant probed is one second past `exp + MAX_CLOCK_SKEW_BOUND`, so it is
+    /// inside the window the raw value would have opened and outside the capped one.
+    #[test]
+    fn configured_skew_above_the_hard_cap_does_not_widen_the_credential_window() {
+        let (r, d) = (root(), delegated());
+        let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
+        let claims = good_claims(&d.public_key());
+
+        let mut wide = params(&[AUD], &[EPOCH]);
+        wide.max_clock_skew = 86_400;
+        wide.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND + 1;
+        assert_eq!(
+            verify(&jws, &wide, r.public_key()).unwrap_err(),
+            HttpProfileError::DelegationCredentialExpired,
+            "a skew above the cap must not extend acceptance past exp + 300s"
+        );
+
+        // Symmetric on the nbf edge.
+        let mut early = params(&[AUD], &[EPOCH]);
+        early.max_clock_skew = 86_400;
+        early.now = claims.nbf - VerifierPolicy::MAX_CLOCK_SKEW_BOUND - 1;
+        assert_eq!(
+            verify(&jws, &early, r.public_key()).unwrap_err(),
+            HttpProfileError::DelegationCredentialExpired
+        );
+
+        // And the cap is a ceiling, not a replacement: exactly at the bound the
+        // credential is still accepted, so nothing legitimate was narrowed away.
+        let mut at_bound = params(&[AUD], &[EPOCH]);
+        at_bound.max_clock_skew = 86_400;
+        at_bound.now = claims.exp + VerifierPolicy::MAX_CLOCK_SKEW_BOUND;
+        verify(&jws, &at_bound, r.public_key()).expect("the capped window still applies");
+    }
+
+    /// A negative configured skew narrows nothing and never inverts the window.
+    #[test]
+    fn negative_configured_skew_is_treated_as_zero() {
+        let (r, d) = (root(), delegated());
+        let jws = mint(&r, &good_header(), &good_claims(&d.public_key()));
+        let claims = good_claims(&d.public_key());
+        let mut p = params(&[AUD], &[EPOCH]);
+        p.max_clock_skew = -1_000;
+        p.now = claims.exp;
+        verify(&jws, &p, r.public_key()).expect("exp itself is inside the window");
     }
 
     #[test]

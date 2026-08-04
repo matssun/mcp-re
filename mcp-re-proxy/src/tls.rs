@@ -110,9 +110,12 @@ pub struct ServerLimits {
     /// keep-alive or HTTP/2 connection only when the peer re-handshakes.
     ///
     /// Revocation and the certificate's own validity window no longer depend on it:
-    /// both are re-checked on EVERY request (see
-    /// [`client_revocation`](crate::client_revocation)). This bound is what remains for
-    /// the one property a per-request check cannot cheaply reproduce.
+    /// both are re-checked on EVERY request whenever a per-request certificate control
+    /// is configured, and to the same depth the handshake checks — the whole presented
+    /// chain, not just the leaf (see
+    /// [`client_revocation`](crate::client_revocation)). Chain BUILDING is what remains
+    /// bound by this age instead: whether a path to a trusted anchor still exists is
+    /// settled by the handshake verifier and nowhere else.
     ///
     /// Graceful: in-flight requests on the connection finish; only new requests are
     /// refused, and the peer reconnects transparently. `None` disables the bound,
@@ -776,21 +779,27 @@ pub(crate) fn resolve_identity_from_leaf(
     }
 }
 
-/// Leaf-DER form of [`connection_rejection`] for the opt-in async serve path. In a
-/// default build this is exactly the cert-lifetime guard (byte-for-byte the same
-/// decision as the blocking path). NOTE: online-OCSP revocation
-/// (`#[cfg(feature = "online_ocsp")]`) needs the full peer chain from the live
-/// connection and is NOT yet wired on the async path — combining `async_serve`
-/// with `online_ocsp` is a tracked follow-up; the default and shared-replay tier
-/// builds have full parity.
+/// Captured-chain form of [`connection_rejection`] for the async serve path, which
+/// cannot read the live connection: hyper owns the TLS stream once the handshake is
+/// done, so the peer chain is captured at handshake and handed here per request.
+///
+/// `chain[0]` is the leaf and the rest are the intermediates the peer presented,
+/// leaf-first — the same order and the same decision as the blocking path, which
+/// reads them from `ServerConnection::peer_certificates`. An empty chain is an absent
+/// peer certificate and fails closed in the core.
+///
+/// NOTE: online-OCSP revocation (`#[cfg(feature = "online_ocsp")]`) needs the live
+/// connection and is NOT yet wired on the async path — combining `async_serve` with
+/// `online_ocsp` is a tracked follow-up; the default and shared-replay tier builds have
+/// full parity.
 #[cfg_attr(not(feature = "async_serve"), allow(dead_code))]
-pub(crate) fn connection_rejection_for_leaf(
-    leaf_der: Option<&[u8]>,
+pub(crate) fn connection_rejection_for_chain(
+    chain: &[&[u8]],
     options: &ServerOptions,
     request: &[u8],
     now: i64,
 ) -> Option<Vec<u8>> {
-    cert_lifetime_rejection_for_leaf(leaf_der, options, request, now)
+    cert_lifetime_rejection_for_chain(chain, options, request, now)
 }
 
 /// Extract the raw Tier-3 ingress-assertion header value to hand to the
@@ -870,14 +879,17 @@ fn cert_lifetime_rejection(
     options: &ServerOptions,
     request: &[u8],
 ) -> Option<Vec<u8>> {
-    // An absent peer certificate is passed THROUGH as `None` rather than
+    // An absent peer certificate is passed THROUGH as an EMPTY chain rather than
     // short-circuiting here, so the decision (including the no-leaf case) is made
-    // in one place by the fail-closed core.
-    let leaf = conn
+    // in one place by the fail-closed core. The WHOLE chain is handed over, because
+    // the handshake verifier checks revocation to the trust anchor
+    // (`RevocationCheckDepth::Chain`) and a per-request check that stopped at the
+    // leaf would keep honouring a revoked intermediate.
+    let chain: Vec<&[u8]> = conn
         .peer_certificates()
-        .and_then(|chain| chain.first())
-        .map(|leaf| leaf.as_ref());
-    cert_lifetime_rejection_for_leaf(leaf, options, request, wall_clock_unix())
+        .map(|chain| chain.iter().map(|cert| cert.as_ref()).collect())
+        .unwrap_or_default();
+    cert_lifetime_rejection_for_chain(&chain, options, request, wall_clock_unix())
 }
 
 /// Wall-clock Unix seconds for the transport-layer certificate-validity check.
@@ -893,15 +905,28 @@ pub(crate) fn wall_clock_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// Leaf-DER core of [`cert_lifetime_rejection`], shared by the blocking serve loop
-/// (which reads the leaf from the live `ServerConnection`) and the opt-in async
-/// serve path (ADR-MCPRE-051 §1), which captures the peer leaf DER once at
-/// handshake because `hyper` takes ownership of the TLS stream for keep-alive/H2.
-/// The DECISION (lifetime vs. `max_client_cert_lifetime`) is byte-identical to the
-/// blocking path — only the leaf's provenance differs — so the blocking-path tests
-/// validate this core for both.
-pub(crate) fn cert_lifetime_rejection_for_leaf(
-    leaf_der: Option<&[u8]>,
+/// The certificate core of [`cert_lifetime_rejection`], shared by the blocking serve
+/// loop (which reads the chain from the live `ServerConnection`) and the async serving
+/// fleet (which captures it once at handshake, because `hyper` takes ownership of the
+/// TLS stream for keep-alive/H2). The DECISION is identical on both — only the chain's
+/// provenance differs.
+///
+/// `chain[0]` is the peer leaf and the rest are the intermediates the peer presented,
+/// leaf-first, exactly as `ServerConnection::peer_certificates` orders them. An empty
+/// chain is an absent peer certificate.
+///
+/// The leaf carries the lifetime, validity-window and revocation decision; every
+/// further certificate carries a revocation decision only. That split matches what the
+/// handshake verifier does — chain-deep revocation to the trust anchor, one validity
+/// window per certificate checked by the path builder — so a peer cannot be admitted on
+/// request 2 under an intermediate that was refused on request 1.
+///
+/// Intermediates are refused only on an EXPLICIT `Revoked` verdict, never on `Unknown`.
+/// Whether the chain reaches a CRL-covered issuer is a path-building question the
+/// handshake already settled; re-deciding it here from the certificates the peer chose
+/// to send would refuse chains the handshake admitted.
+pub(crate) fn cert_lifetime_rejection_for_chain(
+    chain: &[&[u8]],
     options: &ServerOptions,
     request: &[u8],
     now: i64,
@@ -920,29 +945,34 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
     // span, revoked serial — falls through to the rejection below. Returning `None`
     // for a missing leaf would waive the very checks these exist to perform, and would
     // do it one line before an unparseable cert fails closed.
-    let admitted = leaf_der.and_then(leaf_facts).is_some_and(|facts| {
-        // SPAN within the ceiling, AND the certificate valid right now. Neither
-        // implies the other: a short-lived certificate satisfies the ceiling for
-        // the rest of time, so without the `now` comparison a peer that keeps one
-        // connection open keeps serving under an expired credential — the exposure
-        // window the ceiling exists to bound would never close.
-        let within_lifetime = ceiling.is_none_or(|max| {
-            facts.not_after - facts.not_before <= max.as_secs() as i64
-                && now >= facts.not_before
-                && now < facts.not_after
+    let leaf_admitted = chain
+        .first()
+        .and_then(|leaf| leaf_facts(leaf))
+        .is_some_and(|facts| {
+            // The certificate's OWN validity window, independent of every configured
+            // control. A short-lived certificate satisfies a span ceiling for the rest
+            // of time, so without this comparison a peer that keeps one connection open
+            // keeps serving under an EXPIRED credential. It is checked whenever any
+            // per-request certificate control is configured, because it is a property of
+            // the certificate rather than of the ceiling: fusing it to
+            // `max_client_cert_lifetime` made a CRL-only deployment stop re-checking
+            // expiry at all.
+            let within_window = now >= facts.not_before && now < facts.not_after;
+            // SPAN within the ceiling — the short-lived-certificate posture.
+            let within_lifetime = ceiling
+                .is_none_or(|max| facts.not_after - facts.not_before <= max.as_secs() as i64);
+            // And NOT REVOKED as of the CRLs in force right now. The handshake consulted
+            // them once; every later request on a keep-alive or HTTP/2 connection is served
+            // without the verifier ever running again, so this is the only point at which a
+            // reloaded CRL reaches the connection a revoked peer is already holding open.
+            let not_revoked = revocation.is_none_or(|revocation| {
+                revocation
+                    .load()
+                    .admits(facts.issuer_der, facts.serial, now)
+            });
+            within_window && within_lifetime && not_revoked
         });
-        // And NOT REVOKED as of the CRLs in force right now. The handshake consulted
-        // them once; every later request on a keep-alive or HTTP/2 connection is served
-        // without the verifier ever running again, so this is the only point at which a
-        // reloaded CRL reaches the connection a revoked peer is already holding open.
-        let not_revoked = revocation.is_none_or(|revocation| {
-            revocation
-                .load()
-                .admits(facts.issuer_der, facts.serial, now)
-        });
-        within_lifetime && not_revoked
-    });
-    if admitted {
+    if leaf_admitted && chain_issuers_not_revoked(chain, options, now) {
         return None;
     }
     // Absent, unparseable, over-long or revoked cert → fail closed with the transport
@@ -955,6 +985,37 @@ pub(crate) fn cert_lifetime_rejection_for_leaf(
         &McpReError::TransportBindingFailed,
         &id,
     ))
+}
+
+/// Is every certificate ABOVE the leaf still un-revoked as of the CRLs in force?
+///
+/// The handshake verifier checks revocation to the trust anchor, so an operator who
+/// revokes a compromised intermediate expects that to reach open connections the same
+/// way a revoked leaf does. Without this, a peer holding a keep-alive or HTTP/2
+/// connection under a leaf issued by that intermediate kept full authenticated access
+/// until the connection-age bound closed it.
+///
+/// `Revoked` is the only refusal: see [`cert_lifetime_rejection_for_chain`]. An
+/// intermediate whose DER does not parse is refused too — the same fail-closed
+/// direction the leaf takes, and the handshake already parsed every one of these.
+fn chain_issuers_not_revoked(chain: &[&[u8]], options: &ServerOptions, now: i64) -> bool {
+    let Some(revocation) = options.client_revocation.as_ref() else {
+        return true;
+    };
+    let Some(issuers) = chain.get(1..).filter(|rest| !rest.is_empty()) else {
+        return true;
+    };
+    let index = revocation.load();
+    if index.is_empty() {
+        return true;
+    }
+    issuers.iter().all(|der| match leaf_facts(der) {
+        None => false,
+        Some(facts) => {
+            index.verdict(facts.issuer_der, facts.serial, now)
+                != crate::client_revocation::RevocationVerdict::Revoked
+        }
+    })
 }
 
 /// ADR-MCPS-025 routing-header hygiene rejection — runs at the SAME per-connection
@@ -1594,7 +1655,7 @@ mod lifetime_tests {
             max_client_cert_lifetime: Some(std::time::Duration::from_secs(3600)),
             ..Default::default()
         };
-        let rejected = super::cert_lifetime_rejection_for_leaf(None, &options, req, 0)
+        let rejected = super::cert_lifetime_rejection_for_chain(&[], &options, req, 0)
             .expect("an absent leaf must be rejected when a ceiling is configured");
         let value: serde_json::Value =
             serde_json::from_slice(&rejected).expect("json error object");
@@ -1613,7 +1674,7 @@ mod lifetime_tests {
             ..Default::default()
         };
         assert!(
-            super::cert_lifetime_rejection_for_leaf(None, &options, req, 0).is_none(),
+            super::cert_lifetime_rejection_for_chain(&[], &options, req, 0).is_none(),
             "with no ceiling configured there is no lifetime decision to make"
         );
     }
@@ -1630,7 +1691,7 @@ mod lifetime_tests {
         // ~1 year span — far over a 1h ceiling.
         let long = mint_leaf_der((2020, 1, 1), (2021, 1, 1));
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&long), &options, req, IN_2020).is_some(),
+            super::cert_lifetime_rejection_for_chain(&[&long], &options, req, IN_2020).is_some(),
             "a 1-year cert must be rejected under a 1-hour ceiling"
         );
         // Day granularity is the coarsest this fixture mints, so admit-side coverage
@@ -1641,8 +1702,7 @@ mod lifetime_tests {
         };
         let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&short), &generous, req, IN_2020)
-                .is_none(),
+            super::cert_lifetime_rejection_for_chain(&[&short], &generous, req, IN_2020).is_none(),
             "a 1-day cert must be admitted under a 2-day ceiling"
         );
     }
@@ -1664,18 +1724,18 @@ mod lifetime_tests {
         };
         let short = mint_leaf_der((2020, 1, 1), (2020, 1, 2));
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020).is_none(),
+            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020).is_none(),
             "inside its validity window the cert is admitted"
         );
         // One day later — same certificate, same span, same ceiling.
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020 + 86_400)
+            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020 + 86_400)
                 .is_some(),
             "past not_after the cert must be refused even though its span is small"
         );
         // And before it is valid.
         assert!(
-            super::cert_lifetime_rejection_for_leaf(Some(&short), &options, req, IN_2020 - 86_400)
+            super::cert_lifetime_rejection_for_chain(&[&short], &options, req, IN_2020 - 86_400)
                 .is_some(),
             "before not_before the cert must be refused"
         );

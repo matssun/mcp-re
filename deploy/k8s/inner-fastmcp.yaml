@@ -28,6 +28,12 @@ spec:
       # The inner backend is the component that EXECUTES tool code, and it is out of
       # the TCB by design — so it gets at least the hardening the proxy applies to
       # itself. It had none: root uid, no capability drop, no seccomp, no limits.
+      #
+      # No kube-apiserver credential either. Tool code executing here would otherwise
+      # reach the cluster API as system:serviceaccount:<ns>:default with a token the
+      # backend never uses, turning a compromised tool into whatever that account can
+      # do.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -115,6 +121,23 @@ spec:
 # nothing. Release names are a deployment choice; the workload identity is not, so the
 # rule keys on the identity.
 #
+# EGRESS is restricted for the mirror-image reason, and it is the direction that
+# matters most here: this pod executes tool code. With egress unconstrained, that code
+# can open a TCP connection to the fleet's own security state — FLUSHDB the admitted-
+# nonce keyspace (re-opening the replay window fleet-wide) or write the trust-epoch key
+# (forcing every replica to re-mint under an epoch verifiers reject, a fleet-wide
+# response-signing outage), both named as exactly those stakes in
+# deploy/helm/mcp-re-proxy/values.yaml — and reach the Kubernetes API. A compromise of
+# one MCP tool would escalate into a fleet-wide security-state compromise through the
+# network layer this object exists to control.
+#
+# The backend needs no outbound connection at all: it serves the proxy's requests on
+# the connection the proxy opened, and NetworkPolicy is connection-oriented, so reply
+# traffic is not egress. DNS is the single exception, allowed because the Python
+# runtime resolves at startup and a pod that cannot resolve fails in ways that read as
+# an application bug. A tool that legitimately needs to reach an upstream is a
+# deliberate addition here, not a default.
+#
 # REQUIRES a CNI that enforces NetworkPolicy (Calico, Cilium, GKE Dataplane V2, ...).
 # On a cluster without one this object is accepted and silently enforces nothing.
 # `gke-multi-replica-validation.sh` runs the deny test the previous note only advised:
@@ -131,6 +154,7 @@ spec:
       app.kubernetes.io/name: mcp-re-inner-fastmcp
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - podSelector:
@@ -139,3 +163,19 @@ spec:
       ports:
         - protocol: TCP
           port: 8620
+  egress:
+    # DNS only. Naming both selectors in ONE `to` entry is load-bearing: two entries
+    # would be ORed into "any pod in kube-system OR any kube-dns-labelled pod
+    # anywhere", which is a materially wider allowance than the resolver.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

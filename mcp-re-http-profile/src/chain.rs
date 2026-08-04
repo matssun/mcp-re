@@ -16,26 +16,34 @@
 //! [`ChainLabel::Incomplete`] and NAMES the hop that broke it.
 //!
 //! What this module verifies, per hop:
-//!   1. the request verifies (content-digest, evidence, trust, signature);
+//!   1. the request verifies (content-digest, signature evidence, trust,
+//!      signature), and its evidence BLOCK is present, structurally valid, and
+//!      names the URI the request was sent to;
 //!   2. the response verifies AND is `;req`-bound to that same request;
 //!   3. for every hop after the first, the request's continuation re-links to the
 //!      PREVIOUS hop: its `previous_request_evidence` is that hop's request
 //!      handle and its `input_required_response_evidence` is that hop's response
 //!      handle — both role-labeled, so a handle cannot be lifted between fields;
 //!   4. the shape of the chain: every hop before the last is non-terminal
-//!      (`InputRequiredResult`), the last is terminal, and only the first hop may
-//!      carry no continuation.
+//!      (`InputRequiredResult`), the last is terminal, and the first hop carries no
+//!      continuation — one that does names a predecessor the record cannot produce.
 //!
 //! What it does NOT do: fetch evidence, decide retention, or judge whether the
 //! set it was handed is all the evidence that exists. A caller that retains three
 //! hops out of four and asks about those three gets an answer about those three.
 //! Detecting that a hop is missing from the MIDDLE is what re-linking gives you;
 //! detecting that the chain was truncated at the END is what the terminal-shape
-//! check gives you. Neither can tell you the retention itself was honest — that
+//! check gives you, and at the START, that hop 0's own continuation has nothing to
+//! link to. Neither can tell you the retention itself was honest — that
 //! is Layer 5's job, and the reason [`ChainReconstruction`] is shaped to be
 //! committed to (a SCITT receipt over a complete OR explicitly-incomplete record).
+//!
+//! Two full-profile REQUEST checks are also outside its reach, and a `Complete`
+//! label does not assert them: equality of each hop's audience tuple against the
+//! VERIFIER's own, since reconstruction is not given one, and `artifact_bindings[]`,
+//! whose credential surface (an mTLS certificate, a RAR detail) is not carried by
+//! the retained request.
 
-use crate::block::HttpContinuation;
 use crate::block::HttpRequestEvidenceBlock;
 use crate::block::ResolverOutcome;
 use crate::block::SignerSlot;
@@ -291,6 +299,43 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
                 }
             };
 
+        // 1b. The request evidence block itself, not merely the signature over it.
+        //
+        //     Step 1 runs the MINIMAL proof path, which stops at the RFC 9421
+        //     signature and the MCP transport contract: it never looks inside the
+        //     block. A hop with no block at all, or one whose block fails its own
+        //     structural rules, or one whose audience names a target other than the
+        //     URI the request was actually sent to, verified all the same — so a
+        //     record could be labelled `Complete`, and a Signed Statement issued over
+        //     it, while containing requests the enforcement boundary would have
+        //     refused. "Served" and "accounted for" have to be the same verdict.
+        //
+        //     What is checked here is what the retained bytes can answer on their
+        //     own: the block is present and valid, and its audience tuple names the
+        //     URI this request was sent to. The two remaining full-profile checks
+        //     cannot be made from a retained record: equality against the verifier's
+        //     own `AudienceTuple`, and `artifact_bindings[]`, whose credential
+        //     surface (mTLS certificate, RAR detail) is not carried by the request.
+        //     Both need inputs `reconstruct_chain` is not given.
+        let block: HttpRequestEvidenceBlock = match extract_meta_block(
+            &hop.request.body,
+            REQUEST_EVIDENCE_BLOCK_KEY,
+            "request evidence block",
+        ) {
+            Ok(b) => b,
+            Err(e) => return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e)),
+        };
+        if let Err(e) = block.validate(&verified_req.profile_id) {
+            return incomplete(hop_evidence, i, IncompleteReason::RequestUnverifiable(e));
+        }
+        if block.audience.target_uri != hop.request.target_uri {
+            return incomplete(
+                hop_evidence,
+                i,
+                IncompleteReason::RequestUnverifiable(HttpProfileError::AudienceMismatch),
+            );
+        }
+
         // 2. The hop's response must verify AND be bound to that request.
         let verified_rsp = match verify_delegated_response_bound_full(
             &hop.response,
@@ -307,13 +352,27 @@ pub fn reconstruct_chain<R: Into<ResolverOutcome>>(
             }
         };
 
-        // 3. Re-link to the previous hop. The first hop has nothing to link to;
-        //    every later hop MUST carry a continuation naming its predecessor's
-        //    two handles. This is where a missing middle hop is caught: hop i's
-        //    continuation names hop i-1, so if i-1 is absent from the record the
-        //    hop we DO have in that slot does not match.
-        match (i, request_continuation(&hop.request)) {
-            (0, _) => {}
+        // 3. Re-link to the previous hop. Every hop after the first MUST carry a
+        //    continuation naming its predecessor's two handles. This is where a
+        //    missing middle hop is caught: hop i's continuation names hop i-1, so if
+        //    i-1 is absent from the record the hop we DO have in that slot does not
+        //    match.
+        //
+        //    Hop 0 OPENS the record, and that is a claim about the record, not a
+        //    licence to skip the check. A hop 0 that carries a continuation names a
+        //    predecessor the record cannot produce: the call started before the
+        //    evidence does. Accepting it labelled a front-truncated record
+        //    `Complete` — submit hops 1 and 2 of a real R0→S0→R1→S1→R2→S2 call and
+        //    every remaining hop verifies, hop 2 re-links to hop 1, hop 2 is
+        //    terminal — so a Signed Statement could commit to a whole call record
+        //    with the opening turns, their audience and their artifact bindings
+        //    missing. It lands on the same reason as the missing middle, which is
+        //    what it is: a continuation naming evidence that is not in the record.
+        match (i, block.continuation.as_ref()) {
+            (0, None) => {}
+            (0, Some(_)) => {
+                return incomplete(hop_evidence, i, IncompleteReason::ContinuationDoesNotLink)
+            }
             (_, None) => return incomplete(hop_evidence, i, IncompleteReason::MissingContinuation),
             (_, Some(c)) => {
                 let prev: &HopEvidence = &hop_evidence[i - 1];
@@ -422,19 +481,4 @@ fn incomplete(
         label: ChainLabel::Incomplete { hop, reason },
         hop_evidence,
     }
-}
-
-/// The continuation from a request's evidence block, if it carries one.
-///
-/// Reading it here is safe only because the caller has already verified the
-/// request's signature: `content-digest` is a covered component, so the block is
-/// protected by the signature over the bytes this parses.
-fn request_continuation(request: &HttpRequest) -> Option<HttpContinuation> {
-    extract_meta_block::<HttpRequestEvidenceBlock>(
-        &request.body,
-        REQUEST_EVIDENCE_BLOCK_KEY,
-        "request evidence block",
-    )
-    .ok()?
-    .continuation
 }

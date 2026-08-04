@@ -453,6 +453,67 @@ fn chain_ending_non_terminally_is_incomplete() {
     );
 }
 
+/// THE front-truncation test. Given a real 3-hop call, submit only hops 1 and 2.
+/// Every submitted hop verifies, hop 2 re-links to hop 1, and hop 2 is terminal —
+/// so every check but one says "complete". The one that must catch it is hop 0's
+/// own continuation: it names a predecessor the record cannot produce, so the
+/// record starts after the call did.
+///
+/// Without the hop-0 check this reconstructs as `Complete`, and a SCITT Signed
+/// Statement over it reports `is_complete_record() == true` while the opening
+/// turns — the original request, its audience and its artifact bindings — are
+/// missing. That is the truncated-record laundering §9.3 forbids, from the one
+/// direction the shape checks do not cover.
+#[test]
+fn front_truncated_chain_is_incomplete_not_a_complete_record() {
+    let all = three_hop_chain();
+    let front_truncated = vec![all[1].clone(), all[2].clone()];
+
+    // Precondition: this is not a test about broken messages. Both submitted hops
+    // verify on their own, exactly as they did inside the whole call.
+    for h in &front_truncated {
+        let v = mcp_re_http_profile::verify_request(&h.request, &resolver(), NOW)
+            .expect("the retained request verifies on its own");
+        mcp_re_http_profile::verify_delegated_response_bound_full(
+            &h.response,
+            &h.request,
+            &v.evidence,
+            &resolver(),
+            &expectations(),
+            &nothing_revoked,
+            NOW,
+        )
+        .expect("the retained response verifies and is bound to its request");
+    }
+
+    let out = reconstruct_chain(
+        &front_truncated,
+        &resolver(),
+        &expectations(),
+        &nothing_revoked,
+        NOW,
+    );
+    assert_eq!(
+        out.label,
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::ContinuationDoesNotLink,
+        },
+        "a hop that names a predecessor absent from the record does not open a call"
+    );
+    assert!(!out.label.is_complete());
+    // Nothing is reported as accounted for: the break is at the first hop.
+    assert!(out.hop_evidence.is_empty());
+}
+
+/// The complementary positive: a genuine opening hop carries NO continuation and
+/// still reconstructs. Without this the hop-0 rule could be tightened into
+/// rejecting every chain and the negative above would still pass.
+#[test]
+fn an_opening_hop_without_a_continuation_still_opens_a_complete_record() {
+    assert_eq!(reconstruct(&three_hop_chain()), ChainLabel::Complete);
+}
+
 /// A hop after the first with no continuation at all: nothing links it backwards.
 #[test]
 fn later_hop_without_a_continuation_is_incomplete() {
@@ -879,4 +940,137 @@ fn a_degenerate_window_is_still_refused_in_an_aged_record() {
         } => {}
         other => panic!("expected the degenerate-window check to still fire, got {other:?}"),
     }
+}
+
+// --- the request EVIDENCE BLOCK, not merely the signature over it -------------
+
+/// Sign one hop with a caller-chosen evidence block, so a test can put a block in
+/// the retained bytes that the enforcement boundary would have refused.
+fn hop_with_block(nonce: &str, blk: &HttpRequestEvidenceBlock, body: &str) -> RetainedHop {
+    let mut request = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let req_evidence = sign_request_full(
+        &mut request,
+        blk,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        nonce,
+    )
+    .expect("request signs");
+    RetainedHop {
+        response: signed_answer(&request, &req_evidence, body),
+        request,
+    }
+}
+
+/// The delegated response answering `request`, signed over the same window.
+fn signed_answer(
+    request: &HttpRequest,
+    req_evidence: &RequestEvidence,
+    body: &str,
+) -> HttpResponse {
+    let mut response = HttpResponse {
+        status: 200,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.as_bytes().to_vec(),
+    };
+    sign_delegated_response_full(
+        &mut response,
+        request,
+        req_evidence,
+        &server_signer(),
+        &credential(CREATED, EXPIRES),
+        &delegated_key(),
+        DELEGATED_KID,
+        CREATED,
+        EXPIRES,
+    )
+    .expect("response signs");
+    response
+}
+
+/// A hop whose block names a DIFFERENT service than the URI the request went to.
+///
+/// The signature says nothing about this: the block rides in the body, which is
+/// covered by `content-digest`, so a request naming another audience is a perfectly
+/// well-signed request. Reconstruction ran the MINIMAL proof path, which never opens
+/// the block, so such a hop reconstructed as verified and the record was labelled
+/// `Complete` — and a SCITT Signed Statement over it asserts a whole call record
+/// containing a request the enforcement boundary would have refused with
+/// `audience_mismatch`.
+#[test]
+fn a_hop_whose_block_names_another_target_is_not_a_verified_hop() {
+    let mut elsewhere = block(None);
+    elsewhere.audience = AudienceTuple {
+        audience_id: "other.example.com".into(),
+        target_uri: "https://other.example.com/mcp".into(),
+        route: Some("tools/call".into()),
+    };
+    let hop = hop_with_block("n-elsewhere", &elsewhere, DONE);
+
+    // Precondition: the hop is not broken. It verifies on the minimal path — the
+    // one reconstruction used to run — so nothing about the signature catches this.
+    mcp_re_http_profile::verify_request(&hop.request, &resolver(), NOW)
+        .expect("the request is correctly signed; only its block is wrong");
+
+    assert_eq!(
+        reconstruct(&[hop]),
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::RequestUnverifiable(
+                mcp_re_http_profile::HttpProfileError::AudienceMismatch
+            ),
+        },
+    );
+}
+
+/// A hop carrying no evidence block at all. `sign_request` produces exactly this:
+/// a valid RFC 9421 request with no `_meta` block, which the minimal path accepts
+/// and the full profile does not.
+#[test]
+fn a_hop_with_no_evidence_block_is_not_a_verified_hop() {
+    let mut request = HttpRequest {
+        method: "POST".into(),
+        target_uri: TARGET.into(),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let req_evidence = mcp_re_http_profile::sign_request(
+        &mut request,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-blockless",
+    )
+    .expect("request signs");
+    let response = signed_answer(&request, &req_evidence, DONE);
+
+    mcp_re_http_profile::verify_request(&request, &resolver(), NOW)
+        .expect("the minimal path accepts a blockless request");
+
+    let label = reconstruct(&[RetainedHop { request, response }]);
+    match label {
+        ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::RequestUnverifiable(_),
+        } => {}
+        other => panic!("a blockless hop must not be a verified hop, got {other:?}"),
+    }
+}
+
+/// The positive control: an honest block still reconstructs, so the checks above
+/// could not have been satisfied by refusing everything.
+#[test]
+fn an_honest_block_still_reconstructs_complete() {
+    assert_eq!(
+        reconstruct(&[hop_with_block("n-honest", &block(None), DONE)]),
+        ChainLabel::Complete
+    );
 }

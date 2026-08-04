@@ -19,6 +19,7 @@ use crate::cli::KeySourceKind;
 use crate::cli::ReplayKind;
 use crate::client_revocation;
 use crate::config_snapshot;
+use crate::delegated_server_signer::TrustEpochAdvance;
 use crate::http_inner::HttpInnerPool;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
 use crate::tls;
@@ -42,7 +43,6 @@ use std::collections::HashMap;
 /// The Tier-3 guarantee is "flush within one poll interval of an advance", so this is
 /// the revocation latency the push tier actually delivers. Kept well inside the
 /// bounded-`T` fallback so the push tier is still the faster of the two.
-#[cfg(feature = "redis_replay")]
 const TRUST_EPOCH_POLL_SECS: u64 = 5;
 
 fn now_unix() -> i64 {
@@ -333,9 +333,14 @@ pub fn run(
     // a hardcoded stronger one — so it cannot surface a revocation window stronger
     // than the configured tier proves (the tier-claim ceiling). Tier 1
     // (bounded-cache) is the default when --revocation-tier is absent.
+    // The tier's window is a claim about how fast a REVOKED key stops resolving, and
+    // nothing resolves faster than `--trust` is re-read. The qualifier belongs on the
+    // tier line itself: as a separate line further down it was routinely read as being
+    // about something else, and the tier line was quoted on its own.
     eprintln!(
-        "mcp-re-proxy: {}",
-        config.revocation_tier.startup_audit_line("trust-store")
+        "mcp-re-proxy: {} store-change-cadence={}",
+        config.revocation_tier.startup_audit_line("trust-store"),
+        store_change_cadence(config.trust_reload_secs)
     );
     // ADR-MCPS-021 Axis 2: APPLY the declared tier to the resolver so the runtime
     // behavior actually matches the surfaced guarantee (Tier 1 bounds cached active
@@ -370,12 +375,17 @@ pub fn run(
     // Re-read `--trust` on a cadence so a key removed from the file stops resolving on
     // a RUNNING replica. Without it the tier wrappers above wrap an immutable map and
     // the guarantee printed a few lines up is not one the data plane can keep.
+    // Whether the store behind the resolver is still changing. Only meaningful where a
+    // reload is running: with `--trust-reload-secs` absent the store is frozen by
+    // design and says so on the OFF line below, so there is no freshness to lose.
+    let trust_freshness = Arc::new(TrustStoreFreshness::default());
     if let Some(interval_secs) = config.trust_reload_secs {
         spawn_trust_reload_task(
             Arc::clone(&trust_store),
             config.trust_path.clone(),
             response_kid.clone(),
             interval_secs,
+            Arc::clone(&trust_freshness),
             Arc::clone(&shutdown),
         );
         eprintln!(
@@ -414,6 +424,18 @@ pub fn run(
     // serving a key. The trust file supplies only the kid -> signer identity
     // coordinate; the KEY comes from the resolver on every request.
     let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> = Arc::from(resolver);
+    // OUTSIDE the tier wrappers, so a bounded-cache hit cannot answer from a snapshot
+    // the reload has stopped being able to refresh. Only where a reload is running: a
+    // deployment without one has already been told its store cannot change at all.
+    let resolver: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
+        if config.trust_reload_secs.is_some() {
+            Arc::new(StaleFailsClosed {
+                inner: resolver,
+                freshness: Arc::clone(&trust_freshness),
+            })
+        } else {
+            resolver
+        };
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
     // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
@@ -472,13 +494,19 @@ pub fn run(
     // `--replay-cache file` is not offered on the async fleet: a single file-backed
     // cache does not fit the per-core, share-nothing data plane (ADR-MCPRE-051 §1).
     // The redis ConnectionManager's reconnect task lives on a process-lifetime
-    // control runtime (`replay_control_rt`), distinct from the per-core serving
+    // control runtime (`control_rt`), distinct from the per-core serving
     // runtimes; it is held alive for the whole serve.
-    let replay_control_rt: Option<tokio::runtime::Runtime>;
+    // ONE process-lifetime control runtime for every networked control-plane client:
+    // the redis replay ConnectionManager's reconnect task, the admission source and the
+    // MRTR continuation store. Distinct from the per-core serving runtimes and held
+    // alive for the whole serve. Created on demand by [`control_runtime`], so a seam
+    // that needs it is never gated on some OTHER seam having created it first.
+    // `mut` only bites where a networked control-plane client exists to build it.
+    #[cfg_attr(not(feature = "redis_replay"), allow(unused_mut))]
+    let mut control_rt: Option<tokio::runtime::Runtime> = None;
     match config.replay {
         ReplayKind::Memory => {
             // Proxy::new already installed the in-memory async tier (single-replica).
-            replay_control_rt = None;
         }
         ReplayKind::File => {
             return Err(
@@ -513,7 +541,6 @@ pub fn run(
                         fleet_strict: true,
                         tier: config.replay_durability_tier.clone(),
                     };
-                    replay_control_rt = None;
                 }
                 #[cfg(not(feature = "cpstore_etcd"))]
                 {
@@ -533,7 +560,7 @@ pub fn run(
                     eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("redis"));
                     // The ConnectionManager's reconnect task runs on this dedicated
                     // process-lifetime runtime, distinct from the per-core serving
-                    // runtimes; held alive by `replay_control_rt` for the whole serve.
+                    // runtimes; held alive by `control_rt` for the whole serve.
                     let rt = tokio::runtime::Builder::new_multi_thread()
                         .worker_threads(1)
                         .enable_all()
@@ -570,7 +597,7 @@ pub fn run(
                         fleet_strict: true,
                         tier: config.replay_durability_tier.clone(),
                     };
-                    replay_control_rt = Some(rt);
+                    control_rt = Some(rt);
                 }
                 #[cfg(not(feature = "redis_replay"))]
                 {
@@ -738,22 +765,11 @@ pub fn run(
     // (the two tiers have different cadences). Zero-window revocation is never
     // claimed on either.
     if config.fleet {
-        let trust_bound = match (
+        let trust_bound = fleet_trust_bound(
             &config.revocation_tier,
             config.trust_epoch_redis_url.is_some(),
-        ) {
-            (RevocationTier::Push { t_secs }, true) => format!(
-                "near-zero when the trust-epoch source is healthy (flush on the next request after \
-                 an epoch advance), bounded {t_secs}s on a source read-outage (fail-closed)"
-            ),
-            (RevocationTier::Push { t_secs }, false) => {
-                format!("bounded {t_secs}s (no --trust-epoch-redis-url; the push channel is inert)")
-            }
-            (RevocationTier::BoundedCache { t_secs }, _) => format!("bounded {t_secs}s"),
-            (RevocationTier::Live, _) => {
-                "per-request live re-resolution (no positive cache)".to_string()
-            }
-        };
+            config.trust_reload_secs,
+        );
         let crl_bound = if client_crls.is_empty() {
             let window = config
                 .max_client_cert_lifetime
@@ -1197,7 +1213,8 @@ pub fn run(
     // AND that runtime exist; single-store / in-memory replay deployments run without
     // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
     #[cfg(feature = "redis_replay")]
-    if let (Some(url), Some(rt)) = (config.replay_redis_url.as_ref(), replay_control_rt.as_ref()) {
+    if let Some(url) = config.replay_redis_url.as_ref() {
+        let rt = control_runtime(&mut control_rt)?;
         let store = rt
             .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
             .map_err(|e| format!("connect redis continuation store: {e}"))?;
@@ -1209,7 +1226,11 @@ pub fn run(
             Arc::new(store),
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         );
+    } else {
+        eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
     }
+    #[cfg(not(feature = "redis_replay"))]
+    eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
 
     // MCPRE-493: wire the §7 admission-currency gate. Without a source the assertion
     // and its binding are verified evidence that decides nothing — a call carrying a
@@ -1219,15 +1240,15 @@ pub fn run(
     // enabled but toothless.
     #[cfg(feature = "redis_replay")]
     if config.admission != crate::cli::AdmissionKind::Off {
-        let (Some(url), Some(rt)) = (
-            config.admission_redis_url.as_ref(),
-            replay_control_rt.as_ref(),
-        ) else {
-            return Err(
-                "--admission requires --admission-redis-url and the replay control runtime"
-                    .to_string(),
-            );
+        let Some(url) = config.admission_redis_url.as_ref() else {
+            return Err("--admission requires --admission-redis-url".to_string());
         };
+        // The admission record is an INDEPENDENT endpoint; it has nothing to do with
+        // which replay tier the deployment chose. Coupling it to the replay control
+        // runtime made admission unimplementable on the CP/linearizable tier — the
+        // operator supplied `--admission-redis-url`, was told the flag was missing, and
+        // the natural resolution was to turn a security control off.
+        let rt = control_runtime(&mut control_rt)?;
         let source = rt
             .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
             .map_err(|e| format!("connect redis admission source: {e}"))?;
@@ -1286,14 +1307,15 @@ pub fn run(
 
     // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
     // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
-    // `replay_control_rt` (if any) is handed in so the redis ConnectionManager's
-    // reconnect task stays alive for the whole serve.
+    // `control_rt` (if any) is handed in so the redis ConnectionManager's reconnect
+    // task, the admission source and the continuation store stay alive for the whole
+    // serve.
     serve_fleet(
         proxy,
         Arc::clone(&config_snapshot),
         serve_options,
         &config,
-        replay_control_rt,
+        control_rt,
         shutdown,
     )
 }
@@ -1309,14 +1331,14 @@ pub fn run(
 ///
 /// The authoritative replay tier and async HTTP inner have already been wired into
 /// `proxy` by the caller (`run`) from the `--replay-cache` / `--inner-http-url`
-/// selection. `_replay_control_rt` (if a durable redis tier is configured) holds
+/// selection. `_control_rt` (when any networked control-plane client was wired) holds
 /// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
 fn serve_fleet(
     proxy: HttpProfileProxy,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: crate::ServerOptions,
     config: &cli::Config,
-    _replay_control_rt: Option<tokio::runtime::Runtime>,
+    _control_rt: Option<tokio::runtime::Runtime>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     use std::net::ToSocketAddrs;
@@ -1496,6 +1518,169 @@ fn read_trust_file(
     Ok((resolver, signers))
 }
 
+/// The `--fleet` per-tier cross-replica revocation-lag bound, derived from real config.
+///
+/// This is the one operator-facing line whose stated purpose is to bound revocation lag
+/// HONESTLY, so each clause has to name a mechanism that exists. Two floors sit under
+/// every tier's number:
+///
+///   * the trust epoch is read by a BACKGROUND POLLER on a
+///     [`TRUST_EPOCH_POLL_SECS`] cadence, never on the request path, so a push-tier
+///     flush lands within one poll interval of an advance — not "on the next request
+///     after an epoch advance", which is a mechanism the data plane no longer has;
+///   * a key removed from `--trust` cannot stop resolving faster than the file is
+///     re-read, whatever the tier does with its cache.
+fn fleet_trust_bound(
+    tier: &RevocationTier,
+    epoch_source_configured: bool,
+    trust_reload_secs: Option<u64>,
+) -> String {
+    let reload_floor = match trust_reload_secs {
+        Some(secs) => format!("--trust re-read every {secs}s"),
+        None => "--trust read once at startup (no --trust-reload-secs), so the store itself \
+                 changes only on a restart"
+            .to_string(),
+    };
+    match (tier, epoch_source_configured) {
+        (RevocationTier::Push { t_secs }, true) => format!(
+            "cache flush within one {TRUST_EPOCH_POLL_SECS}s trust-epoch poll interval of an \
+             advance while the source is healthy, bounded {t_secs}s on a source read-outage \
+             (fail-closed), over {reload_floor}"
+        ),
+        (RevocationTier::Push { t_secs }, false) => format!(
+            "bounded {t_secs}s (no --trust-epoch-redis-url; the push channel is inert), over \
+             {reload_floor}"
+        ),
+        (RevocationTier::BoundedCache { t_secs }, _) => {
+            format!("bounded {t_secs}s, over {reload_floor}")
+        }
+        (RevocationTier::Live, _) => {
+            format!("per-request live re-resolution (no positive cache), over {reload_floor}")
+        }
+    }
+}
+
+/// The posture line for a deployment with no cross-replica MRTR continuation store.
+///
+/// Every other optional seam prints its OFF posture; this one printed nothing, so an
+/// operator on the CP/linearizable replay tier — the tier the claim matrix presents as
+/// strongest — silently lost every human-approval / multi-round-trip flow. The failure
+/// is closed but reads on the wire as a client or attack signal, which is exactly what
+/// the startup posture exists to prevent.
+const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay-redis-url): \
+     multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
+     `input_required` reply from one replica and answers on another is refused \
+     (mcp-re.continuation_binding_failed). Set --replay-redis-url for the shared store.";
+
+/// The process-lifetime control runtime, built on first use.
+///
+/// Every networked control-plane client shares it — the redis replay reconnect task,
+/// the admission source, the MRTR continuation store. Building it lazily is what keeps
+/// them independent: an admission source is its OWN endpoint and must not be gated on
+/// the replay tier having happened to create a runtime.
+#[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
+fn control_runtime(
+    slot: &mut Option<tokio::runtime::Runtime>,
+) -> Result<&tokio::runtime::Runtime, String> {
+    if slot.is_none() {
+        *slot = Some(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .map_err(|e| format!("build control runtime: {e}"))?,
+        );
+    }
+    Ok(slot.as_ref().expect("just created"))
+}
+
+/// The qualifier carried on the revocation-tier startup line: how fast the trust STORE
+/// itself can change.
+///
+/// Every tier's window is a claim about how quickly a key removed from `--trust` stops
+/// resolving, and nothing resolves faster than the file is re-read. The default tier
+/// (`bounded-cache`) is accepted without a cadence — unlike `live`/`push`, whose claims
+/// are refused outright without one — so its "enforced fleet-wide within T" line is the
+/// one an operator gets by omission. The correction therefore rides on the SAME line as
+/// the claim: as a separate line further down it was read as being about something else,
+/// and the tier line was quoted on its own.
+fn store_change_cadence(trust_reload_secs: Option<u64>) -> String {
+    match trust_reload_secs {
+        Some(secs) => format!("{secs}s (--trust re-read on that cadence)"),
+        None => "NONE: --trust is read once at startup, so the window above bounds CACHING \
+                 only — the store itself changes only when every replica restarts"
+            .to_string(),
+    }
+}
+
+/// How many consecutive failed `--trust` re-reads are absorbed before the resolver
+/// fails closed.
+///
+/// Keeping the last-good store across a blip is deliberate: a truncated file caught
+/// mid-write must not empty the trust map. But "keep last-good" with no bound restores
+/// exactly the unbounded revocation window the reload exists to close — the replica
+/// keeps honouring a key the operator removed, indefinitely, while its startup line
+/// promises a one-cadence window. Five consecutive failures is far longer than a
+/// ConfigMap remount or an editor's save and short enough that an incident-time
+/// revocation is not silently ignored.
+const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
+
+/// Whether the trust store is still fresh enough to answer.
+///
+/// Set by [`spawn_trust_reload_task`] when the file has been unreadable for
+/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive cadences, or when the reload thread has
+/// died. Read by the resolver wrapper below on every verification, which is what makes
+/// it a real fail-closed rather than a log line.
+#[derive(Debug, Default)]
+struct TrustStoreFreshness {
+    stale: std::sync::atomic::AtomicBool,
+}
+
+impl TrustStoreFreshness {
+    fn mark_stale(&self) {
+        self.stale.store(true, Ordering::SeqCst);
+    }
+
+    fn mark_fresh(&self) {
+        self.stale.store(false, Ordering::SeqCst);
+    }
+
+    fn is_stale(&self) -> bool {
+        self.stale.load(Ordering::Relaxed)
+    }
+}
+
+/// The request-trust resolver, refusing to answer at all once the store behind it has
+/// stopped changing.
+///
+/// `Unavailable` and not `NotFound`: a frozen store still HOLDS the revoked key, so
+/// answering from it is the one outcome that must not happen, and reporting the outage
+/// as an unknown keyid would send the operator hunting a client bug. The verifier maps
+/// this to `mcp-re.trust_resolver_unavailable`, which is what a stale store actually is.
+struct StaleFailsClosed {
+    inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
+    freshness: Arc<TrustStoreFreshness>,
+}
+
+impl mcp_re_core::TrustResolver for StaleFailsClosed {
+    fn resolve(
+        &self,
+        signer: &str,
+        key_id: &str,
+    ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
+        if self.freshness.is_stale() {
+            return Err(mcp_re_core::TrustResolverError::Unavailable {
+                details: "the trust store has not been re-read successfully for several \
+                          cadences; a key revoked in --trust would still resolve from the \
+                          frozen snapshot, so verification fails closed until a reload \
+                          succeeds"
+                    .to_string(),
+            });
+        }
+        self.inner.resolve(signer, key_id)
+    }
+}
+
 /// Re-read `--trust` on a cadence and swap the snapshot atomically.
 ///
 /// The same shape as [`spawn_crl_reload_task`], and for the same reason: a
@@ -1503,43 +1688,133 @@ fn read_trust_file(
 /// incident. A FAILED read keeps the last-good store — a truncated file caught
 /// mid-write must not empty the trust map, because an empty map rejects every request
 /// and would turn an editor's save into a fleet-wide outage.
+///
+/// That tolerance is BOUNDED. Unlike a CRL, an `InMemoryTrustResolver` carries no
+/// expiry, so nothing makes a frozen snapshot stop being honoured on its own; after
+/// [`TRUST_RELOAD_FAILURE_BUDGET`] consecutive failures the resolver fails closed
+/// instead. SUPERVISED for the same reason as the rotation owner: nothing joins this
+/// thread, so a panic (a poisoned lock, a closed stderr) would otherwise end reloading
+/// for the process lifetime while every surface still read healthy.
 fn spawn_trust_reload_task(
     store: Arc<crate::reloading_trust::ReloadingTrustStore>,
     trust_path: String,
     response_kid: String,
     interval_secs: u64,
+    freshness: Arc<TrustStoreFreshness>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        // Nap in small increments so a shutdown signal is observed within one
-        // increment rather than after a whole reload interval.
-        let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
-        loop {
-            for _ in 0..ticks {
-                if shutdown.load(Ordering::SeqCst) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            match read_trust_file(&trust_path, &response_kid) {
-                Ok((resolver, signers)) => {
-                    let enrolled = signers.len();
-                    store.store(resolver, signers);
-                    eprintln!(
-                        "mcp-re-proxy: trust store reloaded; {enrolled} request-signer key(s)                          live"
-                    );
-                }
-                Err(reason) => {
-                    eprintln!(
-                        "mcp-re-proxy: trust store reload FAILED, keeping last-good store:                          {reason}"
-                    );
-                }
-            }
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            trust_reload_loop(
+                &store,
+                &trust_path,
+                &response_kid,
+                interval_secs,
+                &freshness,
+                &shutdown,
+            );
+        }));
+        if outcome.is_err() {
+            freshness.mark_stale();
+            eprintln!(
+                "mcp-re-proxy: FATAL: the trust store reload thread PANICKED. --trust is no \
+                 longer being re-read, so a key revoked in it would keep resolving from the \
+                 frozen snapshot; request verification now fails closed \
+                 (trust_resolver_unavailable) rather than serving a store that cannot change. \
+                 This replica cannot recover on its own — restart it."
+            );
         }
     });
 }
 
+/// The reload loop proper. Split out so the supervisor above can catch a panic from
+/// anywhere inside it.
+fn trust_reload_loop(
+    store: &crate::reloading_trust::ReloadingTrustStore,
+    trust_path: &str,
+    response_kid: &str,
+    interval_secs: u64,
+    freshness: &TrustStoreFreshness,
+    shutdown: &std::sync::atomic::AtomicBool,
+) {
+    // Nap in small increments so a shutdown signal is observed within one
+    // increment rather than after a whole reload interval.
+    let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
+    let mut consecutive_failures: u32 = 0;
+    loop {
+        for _ in 0..ticks {
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        match read_trust_file(trust_path, response_kid) {
+            Ok((resolver, signers)) => {
+                let enrolled = signers.len();
+                let recovered = consecutive_failures > 0;
+                consecutive_failures = 0;
+                store.store(resolver, signers);
+                freshness.mark_fresh();
+                if recovered {
+                    eprintln!(
+                        "mcp-re-proxy: trust store reload RECOVERED; {enrolled} request-signer \
+                         key(s) live, verification is serving again"
+                    );
+                } else {
+                    eprintln!(
+                        "mcp-re-proxy: trust store reloaded; {enrolled} request-signer key(s) live"
+                    );
+                }
+            }
+            Err(reason) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= TRUST_RELOAD_FAILURE_BUDGET {
+                    freshness.mark_stale();
+                    eprintln!(
+                        "mcp-re-proxy: trust store reload FAILED {consecutive_failures}x in a row \
+                         ({reason}); the snapshot is now too old to carry the declared revocation \
+                         window, so request verification FAILS CLOSED \
+                         (trust_resolver_unavailable) until a reload succeeds. Fix the --trust \
+                         mount at {trust_path}."
+                    );
+                } else {
+                    eprintln!(
+                        "mcp-re-proxy: WARNING: trust store reload FAILED \
+                         ({consecutive_failures}/{TRUST_RELOAD_FAILURE_BUDGET}), keeping last-good \
+                         store: {reason}. At {TRUST_RELOAD_FAILURE_BUDGET} consecutive failures \
+                         verification fails closed."
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
+/// and a panic in it would silently stop CRL reloading for the process lifetime.
+///
+/// Unlike the trust store, a stale CRL index bounds ITSELF — a CRL past its `nextUpdate`
+/// covers nothing, so its issuer's certificates become `Unknown` and are refused. A
+/// failed reload therefore never widens what is accepted, and the escalation here is a
+/// loud operator signal rather than a second fail-closed transition.
 fn spawn_crl_reload_task(task: CrlReloadTask) {
+    std::thread::spawn(move || {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crl_reload_loop(task);
+        }));
+        if outcome.is_err() {
+            eprintln!(
+                "mcp-re-proxy: FATAL: the client-CRL reload thread PANICKED. --client-crl is no \
+                 longer being re-read, so a newly revoked client certificate reaches this replica \
+                 only when its CRL passes nextUpdate (after which that issuer's certificates are \
+                 refused outright). This replica cannot recover on its own — restart it."
+            );
+        }
+    });
+}
+
+/// The CRL reload loop proper. Split out so the supervisor above can catch a panic.
+fn crl_reload_loop(task: CrlReloadTask) {
     let CrlReloadTask {
         snapshot,
         server_chain,
@@ -1551,10 +1826,11 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
         shutdown,
         revocation,
     } = task;
-    std::thread::spawn(move || {
+    {
         // Nap in small increments so a shutdown signal is observed within one
         // increment rather than after a whole reload interval.
         let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
+        let mut consecutive_failures: u32 = 0;
         loop {
             for _ in 0..ticks {
                 if shutdown.load(Ordering::SeqCst) {
@@ -1588,16 +1864,29 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
             });
             match outcome {
                 config_snapshot::ReloadOutcome::Swapped => {
-                    eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
+                    let recovered = consecutive_failures > 0;
+                    consecutive_failures = 0;
+                    if recovered {
+                        eprintln!(
+                            "mcp-re-proxy: client CRL reload RECOVERED; new verifier and \
+                             per-request index are live"
+                        );
+                    } else {
+                        eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
+                    }
                 }
                 config_snapshot::ReloadOutcome::KeptLastGood { reason } => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
                     eprintln!(
-                        "mcp-re-proxy: client CRL reload FAILED, keeping last-good config: {reason}"
+                        "mcp-re-proxy: WARNING: client CRL reload FAILED {consecutive_failures}x \
+                         in a row, keeping last-good config: {reason}. Newly revoked certificates \
+                         are NOT reaching this replica; when the last-good CRL passes its \
+                         nextUpdate its issuer's certificates are refused outright."
                     );
                 }
             }
         }
-    });
+    }
 }
 
 /// ADR-MCPRE-052 §4/§6 + ADR-MCPRE-051 §5 (MCPRE-122): the cold-path delegated-key
@@ -1739,7 +2028,7 @@ fn rotation_loop(
                 if let Some(label) = resolved {
                     if label != last_label {
                         match rotor.advance_trust_epoch(label.clone(), now_unix()) {
-                            Ok(()) => {
+                            Ok(TrustEpochAdvance::Advanced) => {
                                 consecutive_failures = 0;
                                 last_label = label;
                                 signer.metrics().record_success(now_unix());
@@ -1751,6 +2040,32 @@ fn rotation_loop(
                                      epoch — update the verifiers' accepted epochs to complete the \
                                      revocation (delegation_trust_epoch_stale)."
                                 );
+                                continue;
+                            }
+                            // The root declined and the PRIOR-epoch key is still valid.
+                            // `last_label` is deliberately left where it was, so the
+                            // next pass re-enters this arm and retries; advancing it
+                            // here would report a revocation that never happened and
+                            // never look at it again.
+                            Ok(TrustEpochAdvance::Declined) => {
+                                consecutive_failures = signer.metrics().record_failure();
+                                let ttl = signer.seconds_to_expiry(now_unix());
+                                let backoff =
+                                    rotation_backoff(consecutive_failures, ttl, rotation_jitter());
+                                eprintln!(
+                                    "mcp-re-proxy: WARNING: trust epoch advance to {label} NOT \
+                                     APPLIED (root issuer declined); this replica is STILL MINTING \
+                                     under the prior epoch on its current key, until that key's \
+                                     exp ({}s) and then FAILS CLOSED. The break-glass revocation \
+                                     is not yet in force here. consecutive_failures {}. Retrying \
+                                     in {}ms.",
+                                    ttl.unwrap_or(0),
+                                    consecutive_failures,
+                                    backoff.as_millis(),
+                                );
+                                if interruptible_sleep(backoff, shutdown) {
+                                    return;
+                                }
                                 continue;
                             }
                             Err(_) => {
@@ -2604,6 +2919,155 @@ mod trust_epoch_watch_tests {
                 "epoch-min#2".to_string(),
             ],
             "labels track the shared counter only — never a per-process baseline"
+        );
+    }
+}
+
+#[cfg(test)]
+mod store_cadence_tests {
+    use super::fleet_trust_bound;
+    use super::store_change_cadence;
+    use super::TrustStoreFreshness;
+    use crate::revocation_tier::RevocationTier;
+    use std::sync::Arc;
+
+    /// R7-C126: the `--fleet` push-tier line must not claim a mechanism that was
+    /// removed. The epoch is read by a 5s background poller, never on the request path,
+    /// so "flush on the next request after an epoch advance" was a guarantee the data
+    /// plane could not keep — an operator sizing a revocation SLO from it got a number
+    /// short by up to the poll interval.
+    #[test]
+    fn the_push_tier_bound_states_the_poll_interval_not_the_next_request() {
+        let line = fleet_trust_bound(&RevocationTier::Push { t_secs: 90 }, true, Some(30));
+        assert!(
+            !line.contains("next request"),
+            "the per-request flush no longer exists: {line}"
+        );
+        assert!(
+            line.contains(&format!(
+                "{}s trust-epoch poll interval",
+                super::TRUST_EPOCH_POLL_SECS
+            )),
+            "the honest bound is one poll interval: {line}"
+        );
+        assert!(
+            line.contains("90s"),
+            "the outage fallback is still named: {line}"
+        );
+    }
+
+    /// A push tier with no networked source is inert, and says so rather than quoting
+    /// the healthy-source number.
+    #[test]
+    fn a_push_tier_without_a_source_reports_the_fallback_only() {
+        let line = fleet_trust_bound(&RevocationTier::Push { t_secs: 90 }, false, Some(30));
+        assert!(line.contains("inert"), "got: {line}");
+        assert!(
+            !line.contains("poll interval"),
+            "no source means no poll to bound anything: {line}"
+        );
+    }
+
+    /// Every tier's number sits over the same floor: nothing resolves faster than the
+    /// store is re-read.
+    #[test]
+    fn every_tier_names_the_reload_floor_under_its_number() {
+        for tier in [
+            RevocationTier::Live,
+            RevocationTier::BoundedCache { t_secs: 60 },
+            RevocationTier::Push { t_secs: 60 },
+        ] {
+            let with_reload = fleet_trust_bound(&tier, true, Some(15));
+            assert!(
+                with_reload.contains("--trust re-read every 15s"),
+                "tier {tier:?}: {with_reload}"
+            );
+            let frozen = fleet_trust_bound(&tier, true, None);
+            assert!(
+                frozen.contains("only on a restart"),
+                "tier {tier:?}: a frozen store must be named on the same line: {frozen}"
+            );
+        }
+    }
+
+    /// R7-C129: `bounded-cache` is the tier a deployment gets by omission, and it is
+    /// accepted with no `--trust-reload-secs` while still printing "revocation enforced
+    /// fleet-wide within T". Without a reload the base store is frozen for the process
+    /// lifetime, so the qualifier has to be ON that line — not a separate one further
+    /// down that an operator quoting the tier line never reads.
+    #[test]
+    fn a_tier_with_no_reload_cadence_says_the_store_cannot_change() {
+        let line = store_change_cadence(None);
+        assert!(line.contains("NONE"), "got: {line}");
+        assert!(
+            line.contains("CACHING"),
+            "the line must say what the tier's window actually bounds: {line}"
+        );
+        assert!(
+            line.contains("restart"),
+            "and what changing the store actually costs: {line}"
+        );
+    }
+
+    /// With a cadence the same line names it, so the tier window and the store window
+    /// are read together.
+    #[test]
+    fn a_configured_cadence_is_named_on_the_tier_line() {
+        let line = store_change_cadence(Some(30));
+        assert!(line.starts_with("30s"), "got: {line}");
+        assert!(line.contains("--trust"), "got: {line}");
+    }
+
+    /// R7-C072/C104: keep-last-good must be BOUNDED. A trust file that becomes
+    /// permanently unreadable otherwise restores the unbounded revocation window the
+    /// reload exists to close, silently — an `InMemoryTrustResolver` carries no expiry,
+    /// so nothing makes a frozen snapshot stop being honoured on its own.
+    ///
+    /// The bound has to be a state the RESOLVER reads, not a warning on stderr: a log
+    /// line changes nothing about which keys keep verifying.
+    #[test]
+    fn a_frozen_store_stops_answering_instead_of_serving_the_revoked_key() {
+        use mcp_re_core::TrustResolver;
+
+        struct AlwaysResolves;
+        impl TrustResolver for AlwaysResolves {
+            fn resolve(
+                &self,
+                _signer: &str,
+                _key_id: &str,
+            ) -> Result<mcp_re_core::VerificationKey, mcp_re_core::TrustResolverError> {
+                Ok(mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]).public_key())
+            }
+        }
+
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        let resolver = super::StaleFailsClosed {
+            inner: Arc::new(AlwaysResolves),
+            freshness: Arc::clone(&freshness),
+        };
+
+        assert!(
+            resolver.resolve("signer-a", "kid-a").is_ok(),
+            "a fresh store answers normally"
+        );
+
+        // The reload has failed its budget: the snapshot behind this resolver can no
+        // longer be trusted to reflect a revocation.
+        freshness.mark_stale();
+        assert!(
+            matches!(
+                resolver.resolve("signer-a", "kid-a"),
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+            ),
+            "a frozen store still HOLDS the revoked key, so answering from it is the \
+             one outcome that must not happen — and it must be reported as an outage, \
+             not as an unknown keyid"
+        );
+
+        freshness.mark_fresh();
+        assert!(
+            resolver.resolve("signer-a", "kid-a").is_ok(),
+            "a recovered reload serves again"
         );
     }
 }

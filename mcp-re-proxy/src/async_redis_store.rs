@@ -31,6 +31,17 @@
 //! reading the store's own clock, so the `PX` window is the intended
 //! `retain_until - now` and an already-stale request is rejected before Redis is
 //! touched.
+//!
+//! **The server must not be allowed to drop a nonce before its TTL.** "Key present"
+//! is the whole replay signal here, so an admitted nonce that leaves the keyspace
+//! early is `Fresh` again for the remainder of its freshness window — a replay
+//! bypass, on every replica, produced by capacity pressure rather than by an attack.
+//! Every replay key carries a `PX` TTL, which makes it a preferred victim under the
+//! `volatile-*` policies and an ordinary one under `allkeys-*`. So the connect path
+//! ASSERTS `maxmemory-policy noeviction` and fails closed otherwise, including when
+//! the server will not answer `CONFIG GET`: an unverifiable eviction policy is not a
+//! guarantee, and a startup refusal is recoverable where a silent replay window is
+//! not.
 
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
@@ -69,6 +80,77 @@ pub struct RedisAsyncAtomicReplayStore {
 /// in on a genuinely wedged connection.
 const WAIT_RESPONSE_HEADROOM_MS: u64 = 2_000;
 
+/// The Redis parameter that decides whether an admitted nonce survives to its TTL.
+const MAXMEMORY_POLICY_PARAM: &str = "maxmemory-policy";
+
+/// The only `maxmemory-policy` under which Redis never removes a key it was asked to
+/// hold for `PX` milliseconds. Every other policy — `allkeys-*` and, because every
+/// replay key carries a TTL, `volatile-*` — can evict a live nonce at `maxmemory`.
+const REQUIRED_MAXMEMORY_POLICY: &str = "noeviction";
+
+/// Pull the single value out of a `CONFIG GET <param>` reply.
+///
+/// RESP2 answers with a flat array (`[param, value]`) and RESP3 with a map, and the
+/// connection's protocol is a URL detail nothing here controls — so both are read, and
+/// anything else yields `None`, which the caller treats as an unverified policy.
+fn config_get_value(reply: &redis::Value, param: &str) -> Option<String> {
+    fn as_text(value: &redis::Value) -> Option<String> {
+        match value {
+            redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone()).ok(),
+            redis::Value::SimpleString(text) => Some(text.clone()),
+            _ => None,
+        }
+    }
+    match reply {
+        redis::Value::Map(pairs) => pairs
+            .iter()
+            .find(|(name, _)| as_text(name).as_deref() == Some(param))
+            .and_then(|(_, value)| as_text(value)),
+        redis::Value::Array(items) => items
+            .chunks_exact(2)
+            .find(|pair| as_text(&pair[0]).as_deref() == Some(param))
+            .and_then(|pair| as_text(&pair[1])),
+        _ => None,
+    }
+}
+
+/// Whether a server reporting `policy` can be trusted to retain a replay record for
+/// its full TTL. `None` means the policy could not be read at all.
+///
+/// Fail closed either way: an evicting policy silently re-opens replay inside a
+/// nonce's own freshness window, and a policy nobody can read is not evidence that it
+/// is safe.
+fn eviction_policy_verdict(policy: Option<&str>) -> Result<(), ReplayStoreError> {
+    match policy {
+        Some(policy)
+            if policy
+                .trim()
+                .eq_ignore_ascii_case(REQUIRED_MAXMEMORY_POLICY) =>
+        {
+            Ok(())
+        }
+        Some(policy) => Err(ReplayStoreError::Unavailable {
+            details: format!(
+                "redis replay store refused: {MAXMEMORY_POLICY_PARAM} is {policy:?}, which \
+                 evicts keys at maxmemory. Every replay record carries a PX TTL, so an evicted \
+                 nonce reads as Fresh again for the rest of its freshness window on every \
+                 replica — a replay bypass with no error and no audit reason. Set \
+                 {MAXMEMORY_POLICY_PARAM} to {REQUIRED_MAXMEMORY_POLICY} on the replay \
+                 instance (give other keyspaces their own instance if they need eviction)."
+            ),
+        }),
+        None => Err(ReplayStoreError::Unavailable {
+            details: format!(
+                "redis replay store refused: could not read {MAXMEMORY_POLICY_PARAM} (CONFIG GET \
+                 unavailable or unparseable). This tier's replay guarantee is exactly the \
+                 server's promise to keep a key for its PX TTL, and an unverifiable eviction \
+                 policy is not that promise. Permit CONFIG GET for the proxy's Redis user, or \
+                 point --replay-redis-url at an instance where it is readable."
+            ),
+        }),
+    }
+}
+
 impl RedisAsyncAtomicReplayStore {
     /// Connect to `url` (e.g. `redis://host:port`) with the production system
     /// clock. Fails closed ([`ReplayStoreError::Unavailable`]) if the client
@@ -101,17 +183,37 @@ impl RedisAsyncAtomicReplayStore {
                 .set_response_timeout(Some(Self::response_timeout_for(timeout_ms))),
             None => redis::aio::ConnectionManagerConfig::new(),
         };
-        let conn = client
+        let mut conn = client
             .get_connection_manager_with_config(config)
             .await
             .map_err(|e| ReplayStoreError::Unavailable {
                 details: format!("connect redis async: {e}"),
             })?;
+        Self::assert_no_eviction(&mut conn).await?;
         Ok(RedisAsyncAtomicReplayStore {
             conn,
             clock,
             wait_quorum: None,
         })
+    }
+
+    /// Refuse to serve on a Redis that may drop a replay record before its TTL.
+    ///
+    /// Asked once, at connect, because it is a property of the server rather than of
+    /// a request — and asked at all because nothing on the insert path can detect an
+    /// eviction after the fact: the next `SET NX` on an evicted key simply succeeds,
+    /// which is indistinguishable from a nonce that was never presented.
+    async fn assert_no_eviction(conn: &mut ConnectionManager) -> Result<(), ReplayStoreError> {
+        let reply: Option<redis::Value> = redis::cmd("CONFIG")
+            .arg("GET")
+            .arg(MAXMEMORY_POLICY_PARAM)
+            .query_async(conn)
+            .await
+            .ok();
+        let policy = reply
+            .as_ref()
+            .and_then(|reply| config_get_value(reply, MAXMEMORY_POLICY_PARAM));
+        eviction_policy_verdict(policy.as_deref())
     }
 
     /// Enable the `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020): after each fresh insert,
@@ -145,8 +247,9 @@ impl RedisAsyncAtomicReplayStore {
 impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
     fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
         // Retention here is a Redis-side `SET NX PX` TTL, not a bounded local set, so
-        // this backend holds no ceiling for one actor to exhaust and nothing to budget
-        // `insert.actor` against.
+        // there is no local ceiling to split: `insert.actor` is budgeted above this
+        // seam by `AsyncReplayTier`, which is what makes the bound apply to this
+        // backend at all.
         let expires_at_unix = insert.expires_at_unix;
         let key = insert.key.to_string();
         let mut conn = self.conn.clone();
@@ -220,5 +323,163 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
     /// A genuinely cross-process durable backend (ADR-MCPS-020).
     fn durability_class(&self) -> ReplayDurabilityClass {
         ReplayDurabilityClass::Durable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The eviction-policy assertion. "Key present" is the entire replay signal, so a
+    //! server that may drop a live nonce is a replay bypass rather than an outage —
+    //! and it is invisible on the insert path, because a `SET NX` on an evicted key
+    //! succeeds exactly as it would for a nonce never seen before. The store therefore
+    //! has to refuse at connect, which is what these drive against a scripted server.
+
+    use super::*;
+    use tokio::io::AsyncBufReadExt;
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncWriteExt;
+    use tokio::io::BufReader;
+
+    fn bulk(text: &str) -> redis::Value {
+        redis::Value::BulkString(text.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn the_policy_is_read_out_of_either_protocols_reply() {
+        let resp2 = redis::Value::Array(vec![bulk(MAXMEMORY_POLICY_PARAM), bulk("noeviction")]);
+        assert_eq!(
+            config_get_value(&resp2, MAXMEMORY_POLICY_PARAM).as_deref(),
+            Some("noeviction")
+        );
+        let resp3 = redis::Value::Map(vec![(bulk(MAXMEMORY_POLICY_PARAM), bulk("volatile-lru"))]);
+        assert_eq!(
+            config_get_value(&resp3, MAXMEMORY_POLICY_PARAM).as_deref(),
+            Some("volatile-lru")
+        );
+        // A server that answers something else (an empty reply for an unknown
+        // parameter, an error, a renamed CONFIG) leaves the policy unread.
+        assert_eq!(
+            config_get_value(&redis::Value::Array(vec![]), MAXMEMORY_POLICY_PARAM),
+            None
+        );
+        assert_eq!(
+            config_get_value(&redis::Value::Nil, MAXMEMORY_POLICY_PARAM),
+            None
+        );
+    }
+
+    #[test]
+    fn every_evicting_policy_is_refused_and_so_is_an_unreadable_one() {
+        assert!(eviction_policy_verdict(Some("noeviction")).is_ok());
+        assert!(
+            eviction_policy_verdict(Some("NOEVICTION")).is_ok(),
+            "the reply is a server string, not a token this code chose"
+        );
+        // `volatile-*` is not the safer half: every replay key carries a PX TTL, so
+        // they are the PREFERRED victims there.
+        for policy in [
+            "volatile-lru",
+            "volatile-lfu",
+            "volatile-ttl",
+            "volatile-random",
+            "allkeys-lru",
+            "allkeys-lfu",
+            "allkeys-random",
+        ] {
+            let err = eviction_policy_verdict(Some(policy))
+                .expect_err("an evicting policy silently re-opens replay");
+            let ReplayStoreError::Unavailable { details } = err;
+            assert!(details.contains(policy), "the refusal must name the policy");
+        }
+        assert!(
+            eviction_policy_verdict(None).is_err(),
+            "an unverifiable policy is not evidence of a safe one"
+        );
+    }
+
+    /// Read one RESP command (an array of bulk strings) from a client.
+    async fn read_command<R: tokio::io::AsyncBufRead + Unpin>(
+        reader: &mut R,
+    ) -> Option<Vec<String>> {
+        let mut header = String::new();
+        if reader.read_line(&mut header).await.ok()? == 0 {
+            return None;
+        }
+        let argc: usize = header.trim_end().strip_prefix('*')?.parse().ok()?;
+        let mut args = Vec::with_capacity(argc);
+        for _ in 0..argc {
+            let mut len_line = String::new();
+            if reader.read_line(&mut len_line).await.ok()? == 0 {
+                return None;
+            }
+            let len: usize = len_line.trim_end().strip_prefix('$')?.parse().ok()?;
+            // The trailing CRLF is part of the framing, so read it and drop it.
+            let mut buf = vec![0u8; len + 2];
+            reader.read_exact(&mut buf).await.ok()?;
+            buf.truncate(len);
+            args.push(String::from_utf8(buf).ok()?);
+        }
+        Some(args)
+    }
+
+    /// A server that speaks just enough RESP to answer the connect handshake and one
+    /// `CONFIG GET maxmemory-policy`, reporting `policy`. Returns its `redis://` URL.
+    async fn redis_reporting(policy: &str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let policy = policy.to_string();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let policy = policy.clone();
+                tokio::spawn(async move {
+                    let (rx, mut tx) = stream.into_split();
+                    let mut reader = BufReader::new(rx);
+                    while let Some(args) = read_command(&mut reader).await {
+                        let reply = match args.first() {
+                            Some(cmd) if cmd.eq_ignore_ascii_case("CONFIG") => format!(
+                                "*2\r\n${}\r\n{MAXMEMORY_POLICY_PARAM}\r\n${}\r\n{policy}\r\n",
+                                MAXMEMORY_POLICY_PARAM.len(),
+                                policy.len()
+                            ),
+                            // Whatever else the client library sends while setting the
+                            // connection up.
+                            _ => "+OK\r\n".to_string(),
+                        };
+                        if tx.write_all(reply.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        format!("redis://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_store_refuses_to_connect_to_an_evicting_redis() {
+        let url = redis_reporting("volatile-lru").await;
+        let err = RedisAsyncAtomicReplayStore::connect(&url)
+            .await
+            .err()
+            .expect("a Redis that evicts live nonces must not back the replay tier");
+        let ReplayStoreError::Unavailable { details } = err;
+        assert!(
+            details.contains(MAXMEMORY_POLICY_PARAM) && details.contains("volatile-lru"),
+            "the refusal must say which policy it read, got: {details}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_noeviction_redis_is_accepted() {
+        // The refusal above must be the policy, not the scripted server: the identical
+        // connect against a server reporting `noeviction` has to succeed, or the test
+        // above proves nothing.
+        let url = redis_reporting("noeviction").await;
+        let store = RedisAsyncAtomicReplayStore::connect(&url)
+            .await
+            .expect("noeviction is the supported configuration");
+        assert_eq!(store.durability_class(), ReplayDurabilityClass::Durable);
     }
 }

@@ -245,15 +245,16 @@ const MIN_NONCE_CHARS = 22;
 /**
  * The frozen `mcp-re.*` token in a thrown core error's message, or `null`.
  *
- * The napi binding formats every core failure as `"mcp-re: mcp-re.<token>"`, and the
- * test used to be `/^mcp-re\.[a-z0-9_]+$/` against the whole message — which cannot
- * match a string starting with `"mcp-re: "`. So EVERY genuine peer-evidence failure
- * (a forged signature, an unbound response, a revoked credential) was relabelled
- * `mcp-re-sdk: Error: ...`, i.e. reported to the application as a local condition,
- * and the Python twin delivered the bare token for the same event.
+ * The napi binding formats every core failure as `"mcp-re: mcp-re.<token>"`. What the
+ * taxonomy pins — and what a caller branches on without parsing prose (REQ-14/POL-6) —
+ * is the TOKEN, so the binding's prefix is stripped before the code is delivered. Both
+ * spellings are accepted, since the prefix is a binding detail. The Python twin's
+ * `_peer_wire_code` does the same, so one wire event has one spelling in both SDKs.
  *
- * Both spellings are accepted, since the prefix is a binding detail: the token is what
- * the taxonomy pins.
+ * `null` for anything that is not a token, so a local condition — a reset connection, a
+ * TLS error, a timeout thrown by the caller's `poster` — is delivered under the
+ * `mcp-re-sdk:` prefix instead of occupying the field that otherwise only ever holds
+ * something the peer said.
  */
 const peerWireCode = (message: string): string | null => {
   const token = message.startsWith("mcp-re: ") ? message.slice("mcp-re: ".length) : message;
@@ -424,11 +425,20 @@ function authzBindingDigest(bindingsJson: string | null): string | null {
   return `sha-256:${createHash("sha256").update(bindingsJson, "utf8").digest("base64url")}`;
 }
 
-/** A JSON-RPC error correlated to the request, so the awaiting call rejects. */
-const errorMessage = (id: RequestId, wireCode: string): JSONRPCMessage => ({
+/**
+ * A JSON-RPC error correlated to the request, so the awaiting call rejects.
+ *
+ * `data` carries structured facts about the verdict that are not part of the frozen
+ * token — the token itself stays exactly what the peer said.
+ */
+const errorMessage = (id: RequestId, wireCode: string, data?: unknown): JSONRPCMessage => ({
   jsonrpc: "2.0",
   id,
-  error: { code: MCP_RE_ERROR_CODE, message: wireCode },
+  error: {
+    code: MCP_RE_ERROR_CODE,
+    message: wireCode,
+    ...(data === undefined ? {} : { data }),
+  },
 });
 
 /**
@@ -554,6 +564,33 @@ export class McpReHttpTransport implements Transport {
           .join(", ")} must be set. Every response is verified against these, so an ` +
           `empty value rejects every response the server sends rather than relaxing the check.`,
       );
+    }
+    // The revocation denylist, checked for SHAPE because this is the one config field
+    // whose wrong value fails OPEN. `readonly string[]` is erased at runtime, and
+    // `[..."kid-1"]` spreads a bare string into one entry per character: the denylist is
+    // non-empty, reports as configured, and matches no delegated kid, issuer kid or
+    // credential `jti` that can exist. The operator believes a compromised key is
+    // revoked while the client accepts it for its whole TTL and epoch window. The
+    // sibling anchor fields degrade the same way but fail CLOSED, which is why this one
+    // is checked for shape and not merely for emptiness.
+    const revoked: unknown = config.revokedIdentifiers;
+    if (revoked !== undefined && revoked !== null) {
+      if (!Array.isArray(revoked)) {
+        throw new McpReSdkError(
+          `revokedIdentifiers must be an array of identifier strings, not ${
+            typeof revoked === "string" ? "a bare string" : typeof revoked
+          }: a string spreads one character per entry, matching no identifier and ` +
+            `disabling revocation while reporting a denylist as configured`,
+        );
+      }
+      for (const id of revoked) {
+        if (typeof id !== "string" || id.length === 0) {
+          throw new McpReSdkError(
+            `revokedIdentifiers entries must be non-empty strings, got ${JSON.stringify(id)}; ` +
+              `an entry that cannot match an identifier silently revokes nothing`,
+          );
+        }
+      }
     }
     this.#config = config;
     this.#poster = poster;
@@ -812,9 +849,17 @@ export class McpReHttpTransport implements Transport {
         now(),
       );
     } catch (e) {
+      // The same normalization the request path applies: `wireCode` is documented as the
+      // frozen token, and the napi binding spells a core failure `"mcp-re: mcp-re.<x>"`,
+      // so the prefix is stripped. Anything that is not a token is a local condition and
+      // says so, rather than travelling as an invented wire code.
       throw new NotificationNotAcknowledged(
         method,
-        e instanceof McpReError ? e.wireCode : e instanceof Error ? e.message : String(e),
+        e instanceof McpReError
+          ? e.wireCode
+          : e instanceof Error
+            ? (peerWireCode(e.message) ?? `mcp-re-sdk: ${e.name}: ${e.message}`)
+            : String(e),
       );
     }
 
@@ -853,6 +898,15 @@ export class McpReHttpTransport implements Transport {
 
     try {
       for (;;) {
+        // Checked every leg, not only before the first. `Promise.race` in `send()`
+        // decides which result the CALLER sees; it does not stop the losing arm, so
+        // without this an ADR-MCPS-047 continuation chain would go on signing and POSTing
+        // fresh answer legs, re-populating the correlation store, and re-prompting a
+        // human through `answerInputRequired`, after `close()` has aborted and `onclose`
+        // has fired. A queued or continuing leg is not already-dispatched work: emitting it
+        // after close() hands the server a valid, fresh, correctly-signed request the
+        // caller believes it cancelled. The Python twin's task group really cancels.
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
         const created = now();
         const expires = created + (config.requestTtl ?? 300);
         const bindingsJson = this.#bindingsJson(method);
@@ -917,6 +971,15 @@ export class McpReHttpTransport implements Transport {
 
         // A verified rejection receipt is genuine evidence, but it is NOT an acceptance:
         // it must reach the app as an error, never as a result.
+        //
+        // `bound` is the core's verdict on whether the receipt is tied to THIS
+        // transmission. A preflight-unbound receipt carries no binding to this request's
+        // nonce or evidence, so one such signed receipt answers any request from any
+        // client of that issuer for the credential's whole validity window. It is still
+        // an error and never a result, but the application must be able to tell "the
+        // boundary rejected MY request" from "a generic rejection arrived" (RSP-7), so
+        // the binding fact travels in `data` — beside the frozen token rather than
+        // inside it, because the token is what the peer said.
         if (verified.outcome !== "success") {
           this.#correlation.take(correlationId, now());
           outstanding.delete(correlationId);
@@ -928,6 +991,7 @@ export class McpReHttpTransport implements Transport {
           return errorMessage(
             request.id,
             verified.wireCode ? verified.wireCode : "mcp-re.response_sig_invalid",
+            { requestBound: verified.bound },
           );
         }
 
@@ -962,6 +1026,11 @@ export class McpReHttpTransport implements Transport {
               `handler is installed, so no answer leg can be signed`,
           );
         }
+
+        // Re-checked immediately before the handler runs: `answerInputRequired` is where
+        // a human is prompted, and a transport the caller has already closed must not
+        // raise a prompt for an answer leg it will never send.
+        if (this.#abort.signal.aborted) throw this.#abort.signal.reason;
 
         const responses = await config.answerInputRequired({
           handles,

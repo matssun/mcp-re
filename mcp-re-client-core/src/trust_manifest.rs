@@ -184,8 +184,14 @@ pub enum TrustManifestError {
 pub trait ManifestVersionFloor {
     /// The highest version already accepted, or 0 if none ever was.
     fn min_version(&self) -> Result<u64, TrustManifestError>;
-    /// Durably raise the floor to `version`. A lower `version` MUST leave the floor
-    /// unchanged rather than error — a concurrent writer may already have raised it.
+    /// Durably raise the floor to `version`.
+    ///
+    /// A lower `version` leaves the floor unchanged. Whether that is reported as `Ok`
+    /// depends on what the implementation can observe: an in-memory floor has no other
+    /// writer, so a lower version is simply a no-op, while a durable floor shared
+    /// between processes cannot distinguish "already at this version" from "another
+    /// process raised it past this one after our snapshot" — and returning `Ok` there
+    /// would hand back a manifest that only cleared a stale floor.
     fn record(&mut self, version: u64) -> Result<(), TrustManifestError>;
 }
 
@@ -330,8 +336,11 @@ pub fn load_signed_manifest(
         set = set.revoke(kid.clone());
     }
 
+    // The load-time check above proves the manifest was live when it was read. Carrying
+    // the expiry into the set makes it a property of every later verification, so a
+    // refresher that stops running cannot leave stale anchors trusted indefinitely.
     Ok(LoadedTrustAnchors {
-        issuer_set: set,
+        issuer_set: set.with_manifest_expiry(signed.manifest.expires_at),
         version: signed.manifest.manifest_version,
     })
 }
@@ -493,6 +502,29 @@ mod tests {
         assert_eq!(loaded.version, 1);
         assert!(loaded.issuer_set.resolve_root("root-A", 5_000).is_some());
         assert!(loaded.issuer_set.resolve_root("root-B", 5_000).is_none());
+    }
+
+    #[test]
+    fn the_manifests_deadline_travels_with_the_anchors_it_published() {
+        let m = manifest(1, vec![issuer("root-A", &root_a())], vec![], vec![]);
+        let signed = sign_manifest(&m, &org_key(), ORG_KID);
+        let loaded = load_signed_manifest(&signed, org_resolver, PROFILE, 0, 5_000).expect("loads");
+        assert_eq!(
+            loaded.issuer_set.manifest_expires_at(),
+            Some(m.expires_at),
+            "the set must carry the publishing manifest's deadline"
+        );
+        assert!(loaded.issuer_set.resolve_root("root-A", 5_000).is_some());
+        // The load succeeded once, at a moment the manifest was live. A verifier that
+        // holds these anchors past the deadline must stop resolving them, because
+        // nothing else re-checks: expiry is enforced per verification, not per refresh.
+        assert!(
+            loaded
+                .issuer_set
+                .resolve_root("root-A", m.expires_at + 1)
+                .is_none(),
+            "an anchor from an expired manifest must not resolve"
+        );
     }
 
     #[test]

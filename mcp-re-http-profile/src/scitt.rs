@@ -123,6 +123,14 @@ impl EvidenceCommitment {
     ) -> Self {
         // The record commits to the FIRST hop's request/response handles as the
         // call's identity, and to a digest over every hop's handles as its shape.
+        //
+        // A reconstruction that broke at hop 0 — and the empty chain — has no verified
+        // prefix, so there is nothing here to take an identity from: the handles are
+        // empty and the shape digest folds over nothing. Such a commitment names no
+        // particular call, and [`commits_to_verified_evidence`](Self::commits_to_verified_evidence)
+        // is how a reader tells. [`verify_retained_evidence`] refuses to compare
+        // retained bytes against one rather than reporting a match that holds for
+        // every unrelated record that failed the same way.
         let (request_evidence, response_evidence) = match reconstruction.hop_evidence.first() {
             Some(h) => (
                 h.request_evidence.digest_value.clone(),
@@ -152,6 +160,20 @@ impl EvidenceCommitment {
     /// receipt over it can never read as whole.
     pub fn is_complete_record(&self) -> bool {
         self.chain_label == "complete"
+    }
+
+    /// Whether this commitment names any verified evidence at all.
+    ///
+    /// False for a reconstruction with no verified prefix — a chain that broke at hop
+    /// 0, and the empty chain. Every such record produces the SAME three identity
+    /// fields: two empty handles and SHA-256 over zero bytes. The label still says
+    /// which hop broke and why, so the statement is a truthful record of "I was handed
+    /// evidence and none of it verified", but it identifies no particular call, and
+    /// recomputing the handles from some other archivist's bytes would reproduce it
+    /// exactly. Anything that treats a commitment as naming specific bytes — above all
+    /// [`verify_retained_evidence`] — must consult this first.
+    pub fn commits_to_verified_evidence(&self) -> bool {
+        !self.request_evidence.is_empty() || !self.response_evidence.is_empty()
     }
 }
 
@@ -402,9 +424,18 @@ pub struct Receipt {
     cose: Vec<u8>,
     /// The transparency service key id, from the protected header `kid`.
     ts_kid: String,
-    /// The log size the signed tree head commits to.
+    /// The log size the receipt states.
+    ///
+    /// NOT authenticated. In the `RFC9162_SHA256` profile the receipt payload is the
+    /// bare Merkle Tree Hash (RFC 9942 §5), never an RFC 9162 signed tree head, so the
+    /// transparency service's signature covers the root and nothing else; this value
+    /// rides in the UNSIGNED `vdp` header. Verification constrains it only to a
+    /// position the inclusion path can reach — see
+    /// [`rfc9162_root_from_inclusion_proof`] for exactly how much that is and how
+    /// much it is not.
     tree_size: u64,
-    /// The registered leaf's index in the log.
+    /// The registered leaf's index in the log. NOT authenticated, for the same reason
+    /// as [`Receipt::tree_size`].
     leaf_index: u64,
     /// Sibling hashes from leaf to root.
     inclusion_path: Vec<Vec<u8>>,
@@ -427,11 +458,20 @@ impl Receipt {
     pub fn ts_kid(&self) -> &str {
         &self.ts_kid
     }
-    /// The log size the signed tree head commits to.
+    /// The log size the receipt STATES — an unauthenticated transport hint, not a
+    /// verified fact.
+    ///
+    /// A caller must not build ordering, anchoring, freshness or log-maturity
+    /// reasoning on this value. The transparency service signs the Merkle Tree Hash
+    /// alone, and a root reached by a path of length `k` is reachable from every
+    /// position in a family of `(leaf_index, tree_size)` pairs, so a relayer may
+    /// restate a small log's receipt as a position in a larger one and it still
+    /// verifies. [`rfc9162_root_from_inclusion_proof`] documents the family.
     pub fn tree_size(&self) -> u64 {
         self.tree_size
     }
-    /// The registered leaf's index.
+    /// The leaf index the receipt STATES. Unauthenticated for the same reason as
+    /// [`Self::tree_size`].
     pub fn leaf_index(&self) -> u64 {
         self.leaf_index
     }
@@ -617,14 +657,37 @@ fn node_hash(left: &[u8], right: &[u8]) -> [u8; 32] {
 ///     current level, and `fn == sn` means "right edge, combine as the right child
 ///     and keep climbing". Without it a conforming receipt for a 3-leaf log folds
 ///     its operands in the wrong order and is rejected.
-///   * **Nothing is bound.** With only the low bits of `leaf_index` consulted and
-///     `tree_size` unused, the trailing bits of the index and the size itself are
-///     unconstrained — and both ride in the UNSIGNED `vdp` header. A relayer could
-///     restate a 2-entry prototype log's receipt as entry 21 of a large one and it
-///     still verified, so `Receipt::tree_size()` and `leaf_index()` were reporting
-///     attacker-chosen values on a receipt this function had returned `Ok` for.
-///     The terminal `sn == 0` requirement plus the per-step `sn != 0` check is what
-///     makes the path length, the index and the size all load-bearing.
+///   * **Most restatements are refused.** With only the low bits of `leaf_index`
+///     consulted and `tree_size` unused, the trailing bits of the index and the size
+///     itself are wholly unconstrained. The terminal `sn == 0` requirement plus the
+///     per-step `sn != 0` check makes the PATH LENGTH load-bearing, so `(21, 32)`,
+///     `(3, 4)`, `(7, 8)` and `(1, 4)` no longer fold a one-sibling proof to a root.
+///
+/// **What this function cannot bind, and why.** It does not make `leaf_index` and
+/// `tree_size` authentic, and no fold can. In the `RFC9162_SHA256` profile the
+/// receipt payload is the bare Merkle Tree Hash (RFC 9942 §5) — unlike an RFC 9162
+/// signed tree head, it never covers `tree_size` — and both values ride in the
+/// UNSIGNED `vdp` header.
+///
+/// The scope is not a special family, it is nearly everything. What the verifier
+/// computes is fixed by the SEQUENCE of combine directions this loop takes, so any
+/// two `(leaf_index, tree_size)` pairs producing the same sequence accept the same
+/// path and the same root. Enumerated over every pair with `tree_size <= 1024`,
+/// **98.4% lie in a class with at least one other pair**, spread over 251 distinct
+/// classes — not one right-edge family. `(1,2)`, `(2,3)`, `(4,5)`, `(8,9)` share the
+/// single-sibling class, but so do `(3,4)`, `(5,6)`, `(6,7)` at length 2, and only
+/// four pairs in that whole range are unique. Refusing the ambiguous ones is
+/// therefore not an available defence: it would refuse essentially every receipt.
+///
+/// **What WOULD close it: the service signing the tree size.** Within every class,
+/// no two members share a `tree_size` — the size determines the index uniquely. So an
+/// authenticated size authenticates the position outright; this is a complete fix,
+/// not a mitigation. It needs an RFC 9162 signed tree head (which does cover the
+/// size) alongside the receipt, and the `RFC9162_SHA256` verifiable-data-structure
+/// does not carry one. Until a pinned service supplies it, [`Receipt::tree_size`] and
+/// [`Receipt::leaf_index`] are unauthenticated and documented as such.
+/// `the_tree_size_determines_the_leaf_index_within_every_ambiguity_class` pins the
+/// property that makes that fix sufficient, so it cannot silently stop being true.
 ///
 /// An EMPTY path is admitted only for `tree_size == 1`, which is the one case RFC
 /// 9162 defines it for (`PATH(0, D[1]) = {}`); for any larger tree `sn` is non-zero
@@ -959,6 +1022,18 @@ pub trait RetainedEvidenceStore {
 /// here. A second implementation of the same rule is a second thing to keep in sync,
 /// and a drifted copy accepts the wrong bytes silently.
 ///
+/// **A record with no verified hop is refused, not matched.** A reconstruction that
+/// broke at hop 0 — and the empty chain — has no verified prefix, so
+/// [`EvidenceCommitment::from_reconstruction`] emits two empty handles and a shape
+/// digest over zero bytes. Those are the same three values for every unrelated call
+/// that failed at hop 0, so comparing them proves nothing: an archivist could present
+/// call B's retained bytes as the record a statement about call A was made over and
+/// every field would match. Reporting `Ok` there would be the check announcing a
+/// binding it does not have, on exactly the records an auditor is most likely to be
+/// investigating, so this returns an error instead. The statement and its receipt
+/// still verify — what fails is the claim that these particular bytes are the ones it
+/// was about.
+///
 /// `bindings_commitment` / `verified_context_commitment` are passed back in because
 /// the issuer supplied them as digests: this module never saw the artifact bytes and
 /// so cannot recompute them. Passing `None` for a commitment that carries `Some`
@@ -974,6 +1049,11 @@ pub fn verify_retained_evidence(
         bindings_commitment,
         verified_context_commitment,
     );
+    if !commitment.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence() {
+        return Err(HttpProfileError::MalformedEvidence(
+            "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
+        ));
+    }
     if recomputed.request_evidence != commitment.request_evidence {
         return Err(HttpProfileError::MalformedEvidence(
             "retained request evidence does not match the commitment",
@@ -1281,6 +1361,80 @@ fn mth_and_path(leaves: &[[u8; 32]], target: Option<usize>, path: &mut Vec<[u8; 
 mod tests {
     use super::*;
     use crate::chain::HopEvidence;
+
+    /// The combine-direction sequence `rfc9162_root_from_inclusion_proof` takes for a
+    /// position. Two positions with the same sequence run the same computation, so one
+    /// path and one root verify for both — this is what "restatement" means here.
+    fn combine_sequence(leaf_index: u64, tree_size: u64) -> Option<Vec<bool>> {
+        if leaf_index >= tree_size {
+            return None;
+        }
+        let (mut fnode, mut snode) = (leaf_index, tree_size - 1);
+        let mut out = Vec::new();
+        while out.len() <= 64 {
+            if snode == 0 {
+                return Some(out);
+            }
+            if !fnode.is_multiple_of(2) || fnode == snode {
+                out.push(true);
+                while fnode != 0 && fnode.is_multiple_of(2) {
+                    fnode /= 2;
+                    snode /= 2;
+                }
+            } else {
+                out.push(false);
+            }
+            fnode /= 2;
+            snode /= 2;
+        }
+        None
+    }
+
+    /// The property that makes "the service signs the tree size" a COMPLETE fix rather
+    /// than a mitigation: within any set of positions that verify interchangeably, no
+    /// two share a `tree_size`. An authenticated size therefore pins the index outright.
+    ///
+    /// If this ever stops holding, signing the size stops being sufficient and the
+    /// remedy has to change — which is why it is asserted rather than described.
+    #[test]
+    fn the_tree_size_determines_the_leaf_index_within_every_ambiguity_class() {
+        let mut classes: std::collections::HashMap<Vec<bool>, Vec<(u64, u64)>> =
+            std::collections::HashMap::new();
+        for tree_size in 1..=256u64 {
+            for leaf_index in 0..tree_size {
+                if let Some(seq) = combine_sequence(leaf_index, tree_size) {
+                    classes
+                        .entry(seq)
+                        .or_default()
+                        .push((leaf_index, tree_size));
+                }
+            }
+        }
+
+        for (seq, members) in &classes {
+            let mut sizes: Vec<u64> = members.iter().map(|(_, n)| *n).collect();
+            sizes.sort_unstable();
+            let before = sizes.len();
+            sizes.dedup();
+            assert_eq!(
+                sizes.len(),
+                before,
+                "two positions with combine sequence {seq:?} share a tree_size, so \
+                 authenticating the size would NOT pin the index: {members:?}"
+            );
+        }
+
+        // And the exposure itself: ambiguity is the overwhelming norm, so refusing the
+        // ambiguous positions is not an available defence. Stated as a floor so the
+        // test pins the shape of the problem without pinning an exact census.
+        let total: usize = classes.values().map(Vec::len).sum();
+        let ambiguous: usize = classes.values().filter(|m| m.len() > 1).map(Vec::len).sum();
+        assert!(
+            ambiguous * 10 > total * 9,
+            "expected the great majority of positions to be restatable ({ambiguous} of \
+             {total}); if this dropped, re-derive whether refusal became viable"
+        );
+    }
     use crate::chain::IncompleteReason;
     use crate::evidence::RequestEvidence;
     use mcp_re_core::SigningKey;
@@ -1761,12 +1915,11 @@ mod tests {
             .expect("a right-edge leaf of a 3-leaf tree verifies");
     }
 
-    /// `tree_size` and `leaf_index` ride in the UNSIGNED `vdp` header, so they are
-    /// only bound if verification consumes them. It now does: the RFC 9162 walk
-    /// requires `sn == 0` at the end, so a restated size or index no longer folds to
-    /// the same root.
+    /// `tree_size` and `leaf_index` ride in the UNSIGNED `vdp` header. The RFC 9162
+    /// walk's terminal `sn == 0` requirement makes the PATH LENGTH load-bearing, so a
+    /// position whose proof would need a different number of siblings is refused.
     #[test]
-    fn restating_the_log_position_no_longer_verifies() {
+    fn restating_the_log_position_at_a_different_path_length_does_not_verify() {
         let leaf = [7u8; 32];
         let sibling = vec![9u8; 32];
         // The honest proof: leaf 1 of a 2-leaf tree, one sibling.
@@ -1774,8 +1927,6 @@ mod tests {
             .expect("the honest position verifies");
         assert_eq!(root, node_hash(&sibling, &leaf));
 
-        // The same single-sibling proof restated at other positions: every one of
-        // these folded identically under the index-bit walk.
         for (index, size) in [(3u64, 4u64), (7, 8), (21, 32), (1, 4)] {
             assert!(
                 rfc9162_root_from_inclusion_proof(
@@ -1786,6 +1937,40 @@ mod tests {
                 )
                 .is_err(),
                 "leaf_index {index} of a {size}-leaf tree needs a different path length"
+            );
+        }
+    }
+
+    /// The limit of the above, pinned so nobody reads the accessors as authenticated.
+    ///
+    /// A right-edge leaf is PROMOTED past every level, so leaf `2^k` of a `2^k + 1`-leaf
+    /// log consumes exactly one sibling and folds to the same `H(0x01 ‖ sibling ‖ leaf)`
+    /// as leaf 1 of a 2-leaf log. The `RFC9162_SHA256` receipt payload is the bare
+    /// Merkle Tree Hash, which — unlike an RFC 9162 signed tree head — never covers
+    /// `tree_size`, so there is nothing in the signed material that distinguishes these
+    /// positions and no fold can refuse them. This test states the residual explicitly:
+    /// [`Receipt::tree_size`] and [`Receipt::leaf_index`] are unauthenticated hints,
+    /// and any consumer building ordering, anchoring or log-maturity reasoning on them
+    /// is reading a relayer-chosen value.
+    #[test]
+    fn a_right_edge_restatement_is_indistinguishable_and_still_verifies() {
+        let leaf = [7u8; 32];
+        let sibling = vec![9u8; 32];
+        let honest = rfc9162_root_from_inclusion_proof(&leaf, 1, 2, std::slice::from_ref(&sibling))
+            .expect("the honest position verifies");
+
+        for k in 1u32..8 {
+            let (index, size) = (1u64 << k, (1u64 << k) + 1);
+            let restated = rfc9162_root_from_inclusion_proof(
+                &leaf,
+                index,
+                size,
+                std::slice::from_ref(&sibling),
+            )
+            .expect("a right-edge position of the same path length is not distinguishable");
+            assert_eq!(
+                restated, honest,
+                "leaf {index} of a {size}-leaf log folds to the honest 2-leaf root"
             );
         }
     }
@@ -1871,6 +2056,111 @@ mod tests {
         substituted.hop_evidence[2].request_evidence =
             RequestEvidence::from_signature_base(b"req-substituted");
         assert!(verify_retained_evidence(&commitment, &substituted, None, None).is_err());
+    }
+
+    /// A chain that broke at hop 0 has no verified prefix, so all three identity
+    /// fields degenerate to constants: two empty handles and SHA-256 over zero bytes.
+    /// Every such record — of every unrelated call, whatever the retained bytes were —
+    /// produces the same three values.
+    ///
+    /// This is stated as a test rather than left implicit because it is the reason the
+    /// check below has to refuse: the comparison `verify_retained_evidence` makes
+    /// simply has no discriminating power here.
+    #[test]
+    fn a_record_with_no_verified_hop_has_no_identity() {
+        let broke_at_hop_zero = recon(
+            ChainLabel::Incomplete {
+                hop: 0,
+                reason: IncompleteReason::ContinuationDoesNotLink,
+            },
+            0,
+        );
+        let empty = recon(
+            ChainLabel::Incomplete {
+                hop: 0,
+                reason: IncompleteReason::ContinuationDoesNotLink,
+            },
+            0,
+        );
+        let a = EvidenceCommitment::from_reconstruction(&broke_at_hop_zero, None, None);
+        let b = EvidenceCommitment::from_reconstruction(&empty, None, None);
+        assert_eq!(a, b, "the identity fields carry nothing to tell them apart");
+        assert!(a.request_evidence.is_empty());
+        assert!(a.response_evidence.is_empty());
+        assert_eq!(
+            a.chain_commitment,
+            b64url_encode(&Sha256::digest(b"")),
+            "the shape digest folds over nothing"
+        );
+        assert!(!a.commits_to_verified_evidence());
+        assert!(
+            EvidenceCommitment::from_reconstruction(&recon(ChainLabel::Complete, 1), None, None)
+                .commits_to_verified_evidence(),
+            "a record with a verified hop DOES name evidence"
+        );
+    }
+
+    /// The retained/committed split must not report a binding it does not have.
+    ///
+    /// Without the fail-closed gate, `verify_retained_evidence` returns `Ok` for a
+    /// hop-0-failure commitment against ANY other hop-0-failure reconstruction —
+    /// including one built from a completely different call's retained bytes — because
+    /// every field it compares is a constant. That is the archivist substitution the
+    /// whole check exists to catch, on the records an auditor most needs pinned.
+    #[test]
+    fn retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop() {
+        let label = ChainLabel::Incomplete {
+            hop: 0,
+            reason: IncompleteReason::RequestUnverifiable(HttpProfileError::InvalidSignature),
+        };
+        let call_a = recon(label.clone(), 0);
+        let commitment = EvidenceCommitment::from_reconstruction(&call_a, None, None);
+
+        let expected = HttpProfileError::MalformedEvidence(
+            "a record with no verified hop commits to no call, so retained evidence cannot be bound to it",
+        );
+
+        // Its own reconstruction is refused too: there is nothing to bind either way.
+        assert_eq!(
+            verify_retained_evidence(&commitment, &call_a, None, None).unwrap_err(),
+            expected
+        );
+
+        // A DIFFERENT call that failed at hop 0 for the same reason. Every compared
+        // field matches, which is precisely why matching must not be reported.
+        let call_b = recon(label, 0);
+        assert_eq!(
+            EvidenceCommitment::from_reconstruction(&call_b, None, None),
+            commitment,
+            "the two records are indistinguishable — the check cannot separate them"
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &call_b, None, None).unwrap_err(),
+            expected
+        );
+
+        // The empty chain lands in the same place rather than matching anything.
+        let nothing = recon(
+            ChainLabel::Incomplete {
+                hop: 0,
+                reason: IncompleteReason::EmptyChain,
+            },
+            0,
+        );
+        assert_eq!(
+            verify_retained_evidence(&commitment, &nothing, None, None).unwrap_err(),
+            expected
+        );
+
+        // And a real record is not collateral damage.
+        let real = recon(ChainLabel::Complete, 2);
+        verify_retained_evidence(
+            &EvidenceCommitment::from_reconstruction(&real, None, None),
+            &real,
+            None,
+            None,
+        )
+        .expect("a record with verified hops still binds");
     }
 
     /// A commitment that names artifact bindings or a verified context is not

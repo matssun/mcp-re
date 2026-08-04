@@ -115,6 +115,19 @@ pub enum McpReError {
     #[error("mcp-re.evidence_retention_unavailable")]
     EvidenceRetentionUnavailable,
 
+    /// The retained-evidence write failed AFTER the inner backend had already run
+    /// (ADR-MCPRE-054). Distinct from `evidence_retention_unavailable`, which names the
+    /// case where retention refused BEFORE dispatch and the call therefore definitely
+    /// did not execute.
+    ///
+    /// The distinction is the whole point: the pre-dispatch refusal is genuinely
+    /// retry-safe, and this one is not. Reusing one token for both told a client that a
+    /// call which may have executed was safe to repeat — and the repeat carries a fresh
+    /// nonce, so the replay tier cannot stop it. Carries
+    /// `retry_safety = unsafe_without_reconciliation`.
+    #[error("mcp-re.evidence_retention_indeterminate")]
+    EvidenceRetentionIndeterminate,
+
     // ----- Draft-02 (v0.6) fail-closed codes (ADR-MCPS-040 / decision F.1) -----
     // Granular for protocol/profile-confusion failures; low-level JSON
     // value-domain failures stay coarse under `SerializationFailed`. All nine
@@ -288,6 +301,7 @@ impl McpReError {
             McpReError::TrustResolverUnavailable => "mcp-re.trust_resolver_unavailable",
             McpReError::ReplayCacheUnavailable => "mcp-re.replay_cache_unavailable",
             McpReError::EvidenceRetentionUnavailable => "mcp-re.evidence_retention_unavailable",
+            McpReError::EvidenceRetentionIndeterminate => "mcp-re.evidence_retention_indeterminate",
             // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
             McpReError::AuthorizationBindingMissing => "mcp-re.authorization_binding_missing",
             McpReError::AuthorizationBindingTypeUnsupported => {
@@ -354,6 +368,7 @@ pub const ALL_ERRORS: &[McpReError] = &[
     McpReError::TrustResolverUnavailable,
     McpReError::ReplayCacheUnavailable,
     McpReError::EvidenceRetentionUnavailable,
+    McpReError::EvidenceRetentionIndeterminate,
     McpReError::AuthorizationBindingMissing,
     McpReError::AuthorizationBindingTypeUnsupported,
     McpReError::AuthorizationBindingMalformed,
@@ -421,6 +436,10 @@ mod tests {
         check(
             McpReError::EvidenceRetentionUnavailable,
             "mcp-re.evidence_retention_unavailable",
+        );
+        check(
+            McpReError::EvidenceRetentionIndeterminate,
+            "mcp-re.evidence_retention_indeterminate",
         );
         // KEPT verbatim despite field rename actor -> signer (ADR-007).
         check(

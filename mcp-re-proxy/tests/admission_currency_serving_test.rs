@@ -496,9 +496,82 @@ fn an_unreachable_authority_fails_closed_by_default() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
-/// Degraded mode is a BOUNDED window a deployment opts into, not a fallback.
+/// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
+///
+/// Degraded mode is a BOUNDED window a deployment opts into, not a fallback — and the
+/// thing P has to bound is how long this replica may serve on last-known state while the
+/// authority is unreachable. Applied to the presented assertion's `iat` it bounded the
+/// wrong thing: the revocation channel IS the store, so during a store outage the
+/// issuer never learns of a revocation and keeps minting assertions with a current
+/// `iat`, and a caller that simply keeps fetching them was served for the whole outage,
+/// however long. Every assertion below is FRESH; only the outage ages.
 #[test]
 fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
+    let source = Arc::new(InMemoryAdmissionSource::new());
+    source.admit(WORKLOAD, 5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let policy = AdmissionPolicy {
+        allow_degraded_mode: true,
+        degraded_propagation_bound: 120,
+        ..strict_policy()
+    };
+    let proxy = replica(
+        Arc::clone(&source) as Arc<dyn AsyncAdmissionSource>,
+        policy,
+        AdmissionEnforcement::Required,
+        Arc::clone(&calls),
+    );
+
+    // The authority is reachable: this call establishes last-known state to serve on.
+    let confirmed = admission_claims(5, AdmissionStatus::Admitted, NOW - 30);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(
+            Some((&confirmed, &authority_key())),
+            "n-degraded-confirm",
+        )),
+        NOW,
+    ));
+    assert_eq!(served.status, 200, "a live-confirmed admission serves");
+
+    source.set_unavailable(true);
+
+    // 60s into the outage: inside P, and the assertion is fresh.
+    let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW + 55);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(
+            Some((&fresh, &authority_key())),
+            "n-degraded-in",
+        )),
+        NOW + 60,
+    ));
+    assert_eq!(served.status, 200, "within P, degraded mode serves");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    // 160s into the same outage — past P + skew — with an EQUALLY FRESH assertion. A
+    // revocation could have propagated by now and this replica would not know it, and no
+    // assertion the caller can obtain moves this clock, which is the whole point.
+    let just_issued = admission_claims(5, AdmissionStatus::Admitted, NOW + 155);
+    let served = block_on(proxy.handle(
+        served_of(&signed_call(
+            Some((&just_issued, &authority_key())),
+            "n-degraded-out",
+        )),
+        NOW + 160,
+    ));
+    assert_eq!(served.status, 403);
+    assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "no third call reached the inner"
+    );
+}
+
+/// R7-C093, the other half: a replica that has NEVER reached the authority has no
+/// last-known state to serve on, so startup is not a confirmation. Degraded mode extends
+/// a window that has to have been opened by a real read.
+#[test]
+fn a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode() {
     let source = Arc::new(InMemoryAdmissionSource::new());
     source.admit(WORKLOAD, 5);
     source.set_unavailable(true);
@@ -515,34 +588,21 @@ fn an_unreachable_authority_serves_within_p_and_fails_closed_past_it() {
         Arc::clone(&calls),
     );
 
-    // Issued 60s ago: inside P.
-    let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW - 60);
+    let fresh = admission_claims(5, AdmissionStatus::Admitted, NOW - 10);
     let served = block_on(proxy.handle(
         served_of(&signed_call(
             Some((&fresh, &authority_key())),
-            "n-degraded-in",
+            "n-never-read",
         )),
         NOW,
     ));
-    assert_eq!(served.status, 200, "within P, degraded mode serves");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    // Issued 300s ago: past P + skew. A revocation could have propagated by now and
-    // this replica would not know it.
-    let stale = admission_claims(5, AdmissionStatus::Admitted, NOW - 300);
-    let served = block_on(proxy.handle(
-        served_of(&signed_call(
-            Some((&stale, &authority_key())),
-            "n-degraded-out",
-        )),
-        NOW,
-    ));
     assert_eq!(served.status, 403);
     assert_eq!(wire_code_of(&served.body), ADMISSION_REFUSED);
     assert_eq!(
         calls.load(Ordering::SeqCst),
-        1,
-        "no second call reached the inner"
+        0,
+        "the backend must not run for a workload whose admission was never confirmed here"
     );
 }
 

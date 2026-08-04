@@ -547,3 +547,75 @@ fn the_bodyless_signer_covers_every_conditionally_mandatory_header() {
     }
     verify_bodyless_request(&req, &resolver(), &policy(), NOW).expect("verifies");
 }
+
+/// A deployment's MCP transport contract must not be silently exempt on one request
+/// shape.
+///
+/// Most of the §4.1 contract is stated against a JSON-RPC body — `Mcp-Method`/
+/// `Mcp-Name` agreement, `McpTransportPolicy::enforce` parsing the body first — so it
+/// cannot be applied whole to a message that has none. It was previously accepted and
+/// then never consulted: `policy` reached only the signature-parameter check, so a
+/// deployment configured for `2026-07-28` got no supported-version gate on this shape
+/// while believing it had one.
+///
+/// The arm that survives the loss of a body is the one that never needed it: a version
+/// header that is present must name a version the deployment accepts. That is what
+/// `enforce_bodyless` applies, and it runs after the signature, so the header it reads
+/// is covered.
+#[test]
+fn a_configured_transport_contract_is_refused_rather_than_ignored() {
+    let mut req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![(
+            "Mcp-Protocol-Version".into(),
+            // A version NO deployment below declares support for. Under the old
+            // behaviour this verified: the version set was never consulted.
+            "1999-01-01".into(),
+        )],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-transport",
+    )
+    .expect("signs");
+
+    let strict = VerifierPolicy::default().with_mcp_transport(
+        mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&["2026-07-28"]),
+    );
+    assert_eq!(
+        verify_bodyless_request(&req, &resolver(), &strict, NOW).unwrap_err(),
+        HttpProfileError::McpProtocolVersionUnsupported,
+        "the deployment's supported-version set must gate this shape too",
+    );
+
+    // A version the deployment DOES declare passes the same gate — the contract is
+    // applied, not a blanket refusal of every bodyless request under a policy.
+    let mut ok_req = HttpRequest {
+        method: "DELETE".into(),
+        target_uri: "https://mcp.example.com/mcp".into(),
+        headers: vec![("Mcp-Protocol-Version".into(), "2026-07-28".into())],
+        body: Vec::new(),
+    };
+    sign_bodyless_request(
+        &mut ok_req,
+        &client_key(),
+        CLIENT_KEY_ID,
+        CREATED,
+        EXPIRES,
+        "n-transport-ok",
+    )
+    .expect("signs");
+    verify_bodyless_request(&ok_req, &resolver(), &strict, NOW)
+        .expect("a supported version must verify under the same contract");
+
+    // Without a transport contract there is nothing to enforce, and the message
+    // verifies exactly as before.
+    verify_bodyless_request(&req, &resolver(), &policy(), NOW)
+        .expect("no transport contract configured, so nothing is bypassed");
+}

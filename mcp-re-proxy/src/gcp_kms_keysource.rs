@@ -38,6 +38,7 @@
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 
 use base64::engine::general_purpose::STANDARD;
@@ -133,6 +134,47 @@ impl MetadataServerTokenSource {
     }
 }
 
+/// Take the access token and its stated lifetime out of a workload-identity token
+/// response.
+///
+/// Every copy of the credential this makes is scrubbed on drop. The token is MOVED out
+/// of the parsed document rather than read from it: `as_str().to_string()` would leave
+/// the `Value`'s own owned `String` — a second copy of a live bearer credential that
+/// authorizes Cloud KMS `asymmetricSign` on the root key — to drop unprotected into
+/// freed heap, where a core dump, a swapped page or a later memory-disclosure primitive
+/// recovers it. Disclosure of THIS credential is a root-authority compromise, not a
+/// session one, because it is what mints delegation credentials.
+fn token_from_metadata_response(
+    body: &Zeroizing<String>,
+) -> Result<(Zeroizing<String>, u64), KeyError> {
+    let mut document: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| KeyError::Malformed(format!("gcp-kms: token JSON: {e}")))?;
+    let expires_in = document
+        .get("expires_in")
+        .and_then(|s| s.as_u64())
+        .unwrap_or(0);
+    Ok((take_access_token(&mut document)?, expires_in))
+}
+
+/// Move the `access_token` string out of a parsed token response, leaving the document
+/// holding no copy of it.
+fn take_access_token(document: &mut serde_json::Value) -> Result<Zeroizing<String>, KeyError> {
+    let token = match document.get_mut("access_token") {
+        Some(serde_json::Value::String(s)) => Zeroizing::new(std::mem::take(s)),
+        _ => {
+            return Err(KeyError::Malformed(
+                "gcp-kms: token has no access_token".to_string(),
+            ))
+        }
+    };
+    if token.is_empty() {
+        return Err(KeyError::Malformed(
+            "gcp-kms: metadata server returned an empty access_token".to_string(),
+        ));
+    }
+    Ok(token)
+}
+
 impl GcpAccessTokenSource for MetadataServerTokenSource {
     fn access_token(&self) -> Result<Zeroizing<String>, KeyError> {
         let now = SystemTime::now();
@@ -159,7 +201,12 @@ impl GcpAccessTokenSource for MetadataServerTokenSource {
             .call()
         {
             Ok(resp) => {
-                let mut buf = String::new();
+                // The response body IS the credential. Held in `Zeroizing` from the
+                // first allocation, like the AWS sibling's STS body: a live bearer
+                // token that authorizes Cloud KMS `asymmetricSign` on the root key must
+                // not be left in freed heap for a core dump or a swapped page to yield,
+                // and scrubbing only the final copy leaves the raw JSON behind.
+                let mut buf = Zeroizing::new(String::new());
                 resp.into_reader()
                     .take(64 * 1024)
                     .read_to_string(&mut buf)
@@ -172,14 +219,7 @@ impl GcpAccessTokenSource for MetadataServerTokenSource {
                 )))
             }
         };
-        let v: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| KeyError::Malformed(format!("gcp-kms: token JSON: {e}")))?;
-        let token = v
-            .get("access_token")
-            .and_then(|s| s.as_str())
-            .ok_or_else(|| KeyError::Malformed("gcp-kms: token has no access_token".to_string()))?;
-        let expires_in = v.get("expires_in").and_then(|s| s.as_u64()).unwrap_or(0);
-        let token = Zeroizing::new(token.to_string());
+        let (token, expires_in) = token_from_metadata_response(&body)?;
         let mut cache = self
             .cache
             .lock()
@@ -369,11 +409,49 @@ fn parse_sign_response(body: &[u8]) -> Result<Vec<u8>, KeyError> {
         .map_err(|e| KeyError::Malformed(format!("gcp-kms: signature base64: {e}")))
 }
 
+/// How long the delegated-TLS path stops calling Cloud KMS after Cloud KMS has
+/// reported that the project is over its cryptographic-operations quota.
+///
+/// The handshake path and the root-issuance path share one project quota, and only the
+/// handshake path can be driven by an unauthenticated peer: TLS 1.3 emits the server
+/// `CertificateVerify` — one `asymmetricSign` — before it has seen a client
+/// certificate, and with session resumption refused every connection is a full
+/// handshake. Left alone, a connection flood spends the project's quota, and the
+/// cold-path rotor's sign for the next delegated credential fails with it; the replica
+/// then fails closed on `delegated_signing_unavailable` when the current credential's
+/// TTL runs out. A handshake flood becomes a signing outage.
+///
+/// So the throttle is treated as a signal about the shared quota, not as one request's
+/// bad luck: for this window the handshake path refuses locally WITHOUT calling Cloud
+/// KMS, leaving the quota to the issuance path. Refusing handshakes is the cheap
+/// failure — a peer retries a connection; a replica that has lost response signing does
+/// not recover until a credential can be minted. Matches the AWS sibling's
+/// `TLS_SIGN_THROTTLE_COOLDOWN`.
+const TLS_SIGN_THROTTLE_COOLDOWN: Duration = Duration::from_secs(2);
+
+/// Does this Cloud KMS failure say the PROJECT is over its quota, rather than that one
+/// request was malformed?
+///
+/// Classified from the rendered error because [`KeyError`] carries no machine-readable
+/// status and its taxonomy is frozen. The text it matches is produced by
+/// [`UreqGcpClient::asymmetric_sign`] in this module, which renders the HTTP status and
+/// interpolates the Cloud KMS JSON error body verbatim — `RESOURCE_EXHAUSTED` and
+/// `UNAVAILABLE` are the two statuses that mean the project, not the request.
+fn is_kms_throttling(error: &KeyError) -> bool {
+    let rendered = format!("{error:?}");
+    ["RESOURCE_EXHAUSTED", "UNAVAILABLE", "HTTP 429", "HTTP 503"]
+        .iter()
+        .any(|marker| rendered.contains(marker))
+}
+
 /// A non-exporting [`KmsEd25519Backend`] backed by GCP Cloud KMS.
 pub struct GcpKmsEd25519Backend {
     transport: Box<dyn GcpKmsTransport + Send + Sync>,
     spki_der: Vec<u8>,
     verify_key: VerificationKey,
+    /// When the delegated-TLS path may call Cloud KMS again, set after Cloud KMS
+    /// reported throttling. `None` outside a cooldown, which is the steady state.
+    tls_cooldown_until: Mutex<Option<Instant>>,
 }
 
 impl GcpKmsEd25519Backend {
@@ -392,7 +470,46 @@ impl GcpKmsEd25519Backend {
             transport,
             spki_der,
             verify_key,
+            tls_cooldown_until: Mutex::new(None),
         })
+    }
+
+    /// The delegated-TLS handshake signature, at an explicit instant so the
+    /// quota-preserving cooldown is provable without waiting on a clock.
+    ///
+    /// Inside a cooldown this refuses WITHOUT reaching Cloud KMS. See
+    /// [`TLS_SIGN_THROTTLE_COOLDOWN`]: the handshake path is the one an unauthenticated
+    /// peer can drive, and it shares a project quota with the delegated-credential
+    /// issuance that keeps the replica able to sign responses at all.
+    fn tls_sign_at(&self, message: &[u8], now: Instant) -> Result<Vec<u8>, KeyError> {
+        {
+            let mut cooldown = self.tls_cooldown_until.lock().map_err(|_| {
+                KeyError::NotFound("gcp-kms: tls cooldown lock poisoned".to_string())
+            })?;
+            match *cooldown {
+                Some(until) if now < until => {
+                    return Err(KeyError::NotFound(
+                        "gcp-kms: Cloud KMS is throttling this project; the delegated-TLS \
+                         handshake signature is refused locally so the delegated-credential \
+                         issuance keeps its share of the quota"
+                            .to_string(),
+                    ))
+                }
+                Some(_) => *cooldown = None,
+                None => {}
+            }
+        }
+        // The object-signing RAW-Ed25519 Cloud KMS `asymmetricSign` path verbatim over
+        // the handshake transcript, length-checked + verified.
+        let signed = self.sign_raw_ed25519(message);
+        if let Err(error) = &signed {
+            if is_kms_throttling(error) {
+                if let Ok(mut cooldown) = self.tls_cooldown_until.lock() {
+                    *cooldown = Some(now + TLS_SIGN_THROTTLE_COOLDOWN);
+                }
+            }
+        }
+        signed
     }
 
     /// Build a production GCP Cloud KMS backend (ureq HTTPS + bearer token).
@@ -515,9 +632,7 @@ impl KmsEd25519Backend for GcpKmsEd25519Backend {
 /// object-signing `sign_raw_ed25519` path, which is reused unchanged).
 impl RawEd25519TlsSigner for GcpKmsEd25519Backend {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
-        // Reuse the object-signing RAW-Ed25519 Cloud KMS `asymmetricSign` path
-        // verbatim over the handshake transcript, length-checked + verified.
-        self.sign_raw_ed25519(message)
+        self.tls_sign_at(message, Instant::now())
     }
 
     fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
@@ -550,6 +665,52 @@ mod tests {
         }
         pem.push_str("-----END PUBLIC KEY-----\n");
         pem
+    }
+
+    /// The parsed document must be left holding NO copy of the bearer credential.
+    ///
+    /// Reading it out with `as_str().to_string()` leaves the `Value`'s own owned
+    /// `String` to drop unscrubbed — a second copy of a token that authorizes Cloud KMS
+    /// `asymmetricSign` on the root key, sitting in freed heap for the process lifetime.
+    #[test]
+    fn the_access_token_is_moved_out_of_the_parsed_document() {
+        let mut document: serde_json::Value =
+            serde_json::from_str(r#"{"access_token":"ya29.SECRET","expires_in":3599}"#)
+                .expect("parses");
+        let token = take_access_token(&mut document).expect("token");
+        assert_eq!(&*token, "ya29.SECRET");
+        assert_eq!(
+            document.get("access_token").and_then(|v| v.as_str()),
+            Some(""),
+            "the document must not still own a copy of the credential"
+        );
+    }
+
+    /// The body is the credential, so the whole response is held scrubbed — and the
+    /// stated lifetime still comes back with it.
+    #[test]
+    fn a_token_response_yields_the_credential_and_its_lifetime() {
+        let body = Zeroizing::new(
+            r#"{"access_token":"ya29.SECRET","expires_in":3599,"token_type":"Bearer"}"#.to_string(),
+        );
+        let (token, expires_in) = token_from_metadata_response(&body).expect("parses");
+        assert_eq!(&*token, "ya29.SECRET");
+        assert_eq!(expires_in, 3599);
+    }
+
+    /// An empty or absent token is refused rather than used as a bearer credential.
+    #[test]
+    fn an_empty_or_absent_access_token_is_refused() {
+        for body in [
+            r#"{"expires_in":3599}"#,
+            r#"{"access_token":"","expires_in":3599}"#,
+            r#"{"access_token":42}"#,
+        ] {
+            assert!(
+                token_from_metadata_response(&Zeroizing::new(body.to_string())).is_err(),
+                "{body} must not yield a credential"
+            );
+        }
     }
 
     /// A hostile near-`u64::MAX` `expires_in` from the metadata server must NOT
@@ -714,6 +875,98 @@ mod tests {
         let raw = ed25519_raw_point_from_spki(&backend.tls_public_key_spki_der().unwrap()).unwrap();
         let key = VerificationKey::from_bytes(&raw).unwrap();
         verify_ed25519(transcript, &b64url_encode(&sig), &key).expect("tls sig verifies");
+    }
+
+    /// A Cloud KMS transport that always reports the project is over quota, counting
+    /// how many times it was actually reached.
+    struct ThrottlingGcp {
+        key: SigningKey,
+        signs: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl GcpKmsTransport for ThrottlingGcp {
+        fn get_public_key(&self) -> Result<Vec<u8>, KeyError> {
+            Ok(serde_json::json!({
+                "algorithm": ALGORITHM_ED25519,
+                "pem": pem_from_raw(&self.key.public_key().to_bytes()),
+            })
+            .to_string()
+            .into_bytes())
+        }
+        fn asymmetric_sign(&self, _body: &[u8]) -> Result<Vec<u8>, KeyError> {
+            self.signs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // The shape `UreqGcpClient::asymmetric_sign` renders for an error response.
+            Err(KeyError::NotFound(
+                "gcp-kms: asymmetricSign HTTP 429: {\"error\":{\"status\":\
+                 \"RESOURCE_EXHAUSTED\"}}"
+                    .to_string(),
+            ))
+        }
+    }
+
+    /// A Cloud KMS throttle on the HANDSHAKE path must stop that path calling Cloud KMS
+    /// for a window, so the project quota it shares with delegated-credential issuance
+    /// is not spent by a flood of unauthenticated connections. Counted at the transport,
+    /// not inferred from the error: the property is "Cloud KMS was not called", not "the
+    /// handshake failed".
+    #[test]
+    fn a_throttled_tls_sign_stops_calling_kms_for_the_cooldown() {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = GcpKmsEd25519Backend::with_transport(Box::new(ThrottlingGcp {
+            key: SigningKey::from_seed_bytes(&[41u8; 32]),
+            signs: std::sync::Arc::clone(&counter),
+        }))
+        .expect("construct");
+        let signs = || counter.load(std::sync::atomic::Ordering::SeqCst);
+
+        let start = Instant::now();
+        backend
+            .tls_sign_at(b"transcript", start)
+            .expect_err("Cloud KMS is throttling");
+        assert_eq!(signs(), 1, "the first handshake does reach Cloud KMS");
+
+        for _ in 0..20 {
+            backend
+                .tls_sign_at(b"transcript", start + Duration::from_millis(1))
+                .expect_err("refused locally");
+        }
+        assert_eq!(
+            signs(),
+            1,
+            "a handshake flood inside the cooldown must not convert into Cloud KMS calls"
+        );
+
+        backend
+            .tls_sign_at(b"transcript", start + TLS_SIGN_THROTTLE_COOLDOWN)
+            .expect_err("Cloud KMS is still throttling");
+        assert_eq!(
+            signs(),
+            2,
+            "past the cooldown the path probes Cloud KMS again"
+        );
+    }
+
+    /// The classifier must fire on the project-quota statuses and NOT on an ordinary
+    /// per-request refusal, which says nothing about the shared quota.
+    #[test]
+    fn only_quota_failures_open_the_cooldown() {
+        for throttling in [
+            "gcp-kms: asymmetricSign HTTP 429: {\"error\":{\"status\":\"RESOURCE_EXHAUSTED\"}}",
+            "gcp-kms: asymmetricSign HTTP 503: {\"error\":{\"status\":\"UNAVAILABLE\"}}",
+        ] {
+            assert!(
+                is_kms_throttling(&KeyError::NotFound(throttling.to_string())),
+                "{throttling}"
+            );
+        }
+        for other in [
+            "gcp-kms: asymmetricSign HTTP 403: {\"error\":{\"status\":\"PERMISSION_DENIED\"}}",
+            "gcp-kms: asymmetricSign: connection refused",
+        ] {
+            assert!(
+                !is_kms_throttling(&KeyError::NotFound(other.to_string())),
+                "{other}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

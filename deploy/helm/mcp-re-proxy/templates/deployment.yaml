@@ -1,5 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 {{- include "mcp-re-proxy.validate" . }}
+{{/*
+ADR-MCPRE-053 §7 admission currency. The proxy refuses every one of these at startup;
+catching them here turns a CrashLoopBackOff into a render error that names the value.
+*/}}
+{{- $adm := .Values.admissionCurrency.mode | toString -}}
+{{- if not (has $adm (list "" "off" "optional" "required")) -}}
+{{- fail (printf "admissionCurrency.mode=%q must be \"\" (omit the flag; the proxy defaults to off), \"off\", \"optional\" or \"required\"." $adm) -}}
+{{- end -}}
+{{- if and $adm (ne $adm "off") -}}
+{{- if not (and .Values.admissionCurrency.authorityKid .Values.admissionCurrency.authorityPubkey) -}}
+{{- fail "admissionCurrency.mode=optional|required requires admissionCurrency.authorityKid AND admissionCurrency.authorityPubkey: an admission assertion is only evidence if its issuer is one this deployment trusts, and a gate that verifies nothing while looking enabled is the most dangerous of the three states." -}}
+{{- end -}}
+{{- if not .Values.admissionCurrency.redisUrl -}}
+{{- fail "admissionCurrency.mode=optional|required requires admissionCurrency.redisUrl, the shared authoritative record currency is checked against; without it every call fails closed on an unreachable authority." -}}
+{{- end -}}
+{{- if and .Values.fleet (not .Values.replay.allowPlaintextRedis) (hasPrefix "redis://" .Values.admissionCurrency.redisUrl) -}}
+{{- fail "admissionCurrency.redisUrl is plaintext redis:// — this hop decides whether a caller is still admitted, so an unauthenticated peer who can write it re-admits a revoked actor fleet-wide. Use rediss:// with credentials, or set replay.allowPlaintextRedis=true to accept the risk deliberately." -}}
+{{- end -}}
+{{- if and .Values.admissionCurrency.allowDegraded (not (gt (int .Values.admissionCurrency.degradedBoundSecs) 0)) -}}
+{{- fail "admissionCurrency.allowDegraded=true requires a positive admissionCurrency.degradedBoundSecs: degraded serving is a BOUNDED window measured from the last successful authority read, and an unbounded or zero one is not a policy." -}}
+{{- end -}}
+{{- else -}}
+{{- if or .Values.admissionCurrency.authorityKid .Values.admissionCurrency.redisUrl -}}
+{{- fail "admissionCurrency.authorityKid / admissionCurrency.redisUrl are set but admissionCurrency.mode is off — the rendered args would read as 'admission control is configured' to anyone auditing them while nothing is enforced. Set mode to optional|required, or clear them." -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +47,13 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "mcp-re-proxy.serviceAccountName" . }}
+      # No kube-apiserver credential in the pod that holds the signing seed and the
+      # TLS private key. Set here as well as on the ServiceAccount, because the pod
+      # spec is what still governs when serviceAccount.create=false names an existing
+      # account. The proxy makes no Kubernetes API calls; gcpKms uses the GKE metadata
+      # server and awsKms/IRSA its own projected `aws-iam-token` volume, so neither
+      # custody path loses anything.
+      automountServiceAccountToken: false
       # MCPS-88: SIGTERM triggers a graceful drain (stop accepting, finish the
       # in-flight request, exit 0). Give the kubelet headroom over the request
       # deadline so a rollout drains rather than kills.
@@ -141,16 +174,53 @@ spec:
             # headroom over preStop + drain before SIGKILL (render gate enforced).
             - "--drain-grace-secs"
             - "{{ .Values.proxyDrainGraceSeconds }}"
-            # MCPRE-114 admission ceiling. Omitted when unset, which the proxy reads
-            # as unbounded — so an existing release keeps its behaviour on upgrade.
-            # An explicit per-core ceiling wins over the fleet-wide total, so only one
-            # flag is ever emitted.
+            # MCPRE-114 in-flight CONCURRENCY ceiling — a resource bound, not the
+            # ADR-MCPRE-053 §7 admission-currency check rendered below. Omitted when
+            # unset, which the proxy reads as its own fail-safe per-core ceiling of
+            # 256 (ServerLimits::default()), so an existing release keeps its
+            # behaviour on upgrade. An explicit per-core ceiling wins over the
+            # fleet-wide total, so only one flag is ever emitted.
             {{- if .Values.admission.maxInFlight }}
             - "--max-in-flight"
             - "{{ .Values.admission.maxInFlight }}"
             {{- else if .Values.admission.maxInFlightTotal }}
             - "--max-in-flight-total"
             - "{{ .Values.admission.maxInFlightTotal }}"
+            {{- end }}
+            {{- if .Values.admissionCurrency.mode }}
+            # ADR-MCPRE-053 §7 admission currency (ADM-1..ADM-5): the caller's
+            # admission assertion is checked against the shared authoritative record
+            # BEFORE replay admission and before the inner backend. Omitted entirely
+            # when mode is "", which the proxy reads as AdmissionKind::Off.
+            - "--admission"
+            - {{ .Values.admissionCurrency.mode | quote }}
+            {{- if ne .Values.admissionCurrency.mode "off" }}
+            # An assertion is only evidence if its issuer is one this deployment
+            # trusts, and currency is only a fact against the shared record — the
+            # proxy refuses optional|required without all three.
+            - "--admission-authority-kid"
+            - {{ .Values.admissionCurrency.authorityKid | quote }}
+            - "--admission-authority-pubkey"
+            - {{ .Values.admissionCurrency.authorityPubkey | quote }}
+            - "--admission-redis-url"
+            - {{ .Values.admissionCurrency.redisUrl | quote }}
+            {{- if .Values.admissionCurrency.allowDegraded }}
+            # Degraded serve is a BOUNDED window measured from the last successful
+            # authority read; without it an unreachable authority fails every call
+            # closed. A zero or unbounded window is refused by the CLI and at render.
+            - "--admission-allow-degraded"
+            - "true"
+            - "--admission-degraded-bound-secs"
+            - "{{ .Values.admissionCurrency.degradedBoundSecs }}"
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.retainedEvidence.dir }}
+            # SCT-2 / SCT-3: retain the full request and response messages of every
+            # served call into the content-addressed store, mounted below as the pod's
+            # only writable path.
+            - "--retained-evidence-dir"
+            - {{ .Values.retainedEvidence.dir | quote }}
             {{- end }}
             - "--audience"
             - {{ .Values.identity.audience | quote }}
@@ -290,6 +360,14 @@ spec:
             - name: material
               mountPath: {{ .Values.tls.mountPath | quote }}
               readOnly: true
+            {{- if .Values.retainedEvidence.dir }}
+            # The retained-hop store. containerSecurityContext pins
+            # readOnlyRootFilesystem, so this emptyDir is the pod's only writable
+            # path; it is node-local and dies with the pod, which makes it a staging
+            # area for a shipper rather than the archive itself.
+            - name: retained-evidence
+              mountPath: {{ .Values.retainedEvidence.dir | quote }}
+            {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -305,6 +383,14 @@ spec:
             # membership. Paired with --allow-group-readable-key-files below; the
             # proxy still verifies at startup that the group is one it is in.
             defaultMode: 0440
+        {{- if .Values.retainedEvidence.dir }}
+        - name: retained-evidence
+          emptyDir:
+            # Bounded: an unbounded emptyDir consumes node ephemeral storage until the
+            # kubelet evicts the pod, which would make a retention setting a
+            # node-wide availability risk.
+            sizeLimit: {{ .Values.retainedEvidence.sizeLimit | quote }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

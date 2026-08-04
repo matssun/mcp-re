@@ -197,15 +197,24 @@ pub struct AudienceTuple {
 }
 
 impl AudienceTuple {
-    /// Canonical byte serialization: the three slots joined by the unit
-    /// separator `0x1F`, always three slots (empty route is an empty slot) so
-    /// the encoding is fixed-arity and injective. `0x1F` cannot appear in a URI
-    /// or identity token, so no field can forge a separator.
+    /// Canonical byte serialization: the three ESCAPED slots joined by the unit
+    /// separator `0x1F`, always three slots (empty route is an empty slot).
+    ///
+    /// Fixed arity alone does not make the encoding injective, because a separator
+    /// INSIDE a field is indistinguishable from the join: these are
+    /// serde-deserialized JSON strings, which carry any code point, so
+    /// `("x", "y", Some("z\u{1f}"))` and `("x", "y\u{1f}z", Some(""))` produced one
+    /// byte string and therefore one [`audience_hash`](Self::audience_hash). Each
+    /// field is escaped through the same [`field_escape`] the `actor_id` join uses,
+    /// which is reversible and leaves no `0x1F` in any slot, so distinct tuples
+    /// cannot collapse.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let route = self.route.as_deref().unwrap_or("");
         let joined = format!(
             "{}\u{1f}{}\u{1f}{}",
-            self.audience_id, self.target_uri, route
+            field_escape(&self.audience_id),
+            field_escape(&self.target_uri),
+            field_escape(route)
         );
         joined.into_bytes()
     }
@@ -745,6 +754,68 @@ mod tests {
             route: None,
         };
         assert_ne!(a.canonical_bytes(), b.canonical_bytes());
+    }
+
+    /// Fixed arity does not rescue the join on its own: a separator carried INSIDE a
+    /// field is indistinguishable from the join that follows it. These pairs are
+    /// distinct audiences that shared one `audience_hash` — one replay-key audience
+    /// slot and one delegated-credential scope value for two different MCP audiences.
+    #[test]
+    fn a_separator_inside_a_field_does_not_collapse_two_audiences() {
+        let collisions = [
+            (
+                AudienceTuple {
+                    audience_id: "x".into(),
+                    target_uri: "y".into(),
+                    route: Some("z\u{1f}".into()),
+                },
+                AudienceTuple {
+                    audience_id: "x".into(),
+                    target_uri: "y\u{1f}z".into(),
+                    route: Some(String::new()),
+                },
+            ),
+            (
+                AudienceTuple {
+                    audience_id: "a\u{1f}b".into(),
+                    target_uri: "c".into(),
+                    route: Some("d".into()),
+                },
+                AudienceTuple {
+                    audience_id: "a".into(),
+                    target_uri: "b\u{1f}c".into(),
+                    route: Some("d".into()),
+                },
+            ),
+        ];
+        for (a, b) in collisions {
+            assert_ne!(a, b, "the pair must really be two different tuples");
+            assert_ne!(
+                a.canonical_bytes(),
+                b.canonical_bytes(),
+                "{a:?} and {b:?} must not share one canonical encoding"
+            );
+            assert_ne!(a.audience_hash(), b.audience_hash());
+        }
+    }
+
+    /// The escape must be reversible, or it would trade one collision for another:
+    /// a field containing the escape marker must not collide with the escaped form
+    /// of a different field.
+    #[test]
+    fn the_escape_marker_itself_does_not_create_a_collision() {
+        let a = AudienceTuple {
+            audience_id: "%1F".into(),
+            target_uri: "t".into(),
+            route: None,
+        };
+        let b = AudienceTuple {
+            audience_id: "\u{1f}".into(),
+            target_uri: "t".into(),
+            route: None,
+        };
+        assert_ne!(a.canonical_bytes(), b.canonical_bytes());
+        assert_ne!(a.audience_hash(), b.audience_hash());
     }
 
     // ----- no raw secrets -----

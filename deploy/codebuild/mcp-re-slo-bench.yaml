@@ -55,12 +55,29 @@ Resources:
   BuildRole:
     Type: AWS::IAM::Role
     Properties:
+      # Confused-deputy conditions. Trusting the bare codebuild.amazonaws.com service
+      # principal lets the CodeBuild service assume this role on behalf of ANY project
+      # in the account, so any other project could be pointed at it and inherit its
+      # ECR push rights on mcp-re-slo-bench — the image that is then pulled and
+      # executed on the SLO cluster, bypassing the pinned buildspec below that is the
+      # review. SourceAccount bounds it to this account, SourceArn to this one project.
+      #
+      # The ARN is spelled out rather than !GetAtt-ed off BenchBuild, which would be
+      # circular (the project names this role). It is held equal by the literal
+      # `Name: mcp-re-slo-bench` on the project.
+      #
+      # Both are StringEquals, never StringLike: a wildcard here would re-admit the
+      # sibling projects the condition exists to exclude.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal: { Service: codebuild.amazonaws.com }
             Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn: !Sub arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/mcp-re-slo-bench
       Policies:
         - PolicyName: build-and-push
           PolicyDocument:

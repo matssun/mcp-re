@@ -77,6 +77,7 @@ use crate::continuation_store::RetainedBases;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
+use crate::transparency::RetentionReservation;
 use crate::transport::TransportBindingPolicy;
 
 /// Default lifetime of a recorded MRTR continuation in the shared correlation store
@@ -197,6 +198,52 @@ struct AdmissionEnforcer {
     /// A kid never introduces trust: an assertion signed by an unresolvable issuer
     /// is refused, exactly as an unknown request keyid is.
     resolve_authority: AdmissionAuthorityResolver,
+    /// When the authoritative source was last READ successfully, in unix seconds.
+    ///
+    /// P bounds how long this PEP may serve on last-known state while the authority is
+    /// unreachable. Applied to the presented assertion's `iat`, it bounds the wrong
+    /// thing: the revocation channel is the STORE, so during a store outage the
+    /// assertion issuer never learns of a revocation and keeps minting assertions with
+    /// a current `iat` — and a caller that simply keeps fetching them is served for the
+    /// whole outage, however long. Bounding elapsed time since the last successful read
+    /// is what makes "degraded serving is bounded by P" a true statement about the
+    /// deployment.
+    ///
+    /// `i64::MIN` until the first successful read: a replica that has never reached the
+    /// authority has no last-known state to serve on, so it fails closed rather than
+    /// treating startup as a confirmation.
+    last_authoritative_read: std::sync::atomic::AtomicI64,
+}
+
+impl AdmissionEnforcer {
+    /// Note that the authoritative record was read at `now`.
+    ///
+    /// A definitive negative counts: the authority answered, which is what P measures.
+    fn record_authoritative_read(&self, now: i64) {
+        self.last_authoritative_read
+            .fetch_max(now, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Has the authority been unreachable for longer than P (+ skew)?
+    ///
+    /// True also when it has never been reachable, and whenever degraded mode is not
+    /// enabled at all — in both cases there is no window to be inside of.
+    fn degraded_window_exhausted(&self, now: i64) -> bool {
+        if !self.policy.allow_degraded_mode {
+            return true;
+        }
+        let last = self
+            .last_authoritative_read
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if last == i64::MIN {
+            return true;
+        }
+        now.saturating_sub(last)
+            > self
+                .policy
+                .degraded_propagation_bound
+                .saturating_add(self.policy.max_clock_skew)
+    }
 }
 
 impl HttpProfileProxy {
@@ -352,6 +399,7 @@ impl HttpProfileProxy {
             policy,
             enforcement,
             resolve_authority,
+            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
         });
         self
     }
@@ -398,8 +446,12 @@ impl HttpProfileProxy {
         // heard of this workload is a definitive negative, refused here rather than
         // being handed to a fork that would serve it on its own assertion.
         let authoritative = match enforcer.source.current(&binding.admission_id).await {
-            Ok(Some(state)) => Some(state),
+            Ok(Some(state)) => {
+                enforcer.record_authoritative_read(now);
+                Some(state)
+            }
             Ok(None) => {
+                enforcer.record_authoritative_read(now);
                 return Some(self.rejection(
                     http_req,
                     HttpProfileError::AdmissionNotCurrent.wire_code(),
@@ -407,9 +459,25 @@ impl HttpProfileProxy {
                     now,
                     Some(&verified.evidence),
                     Some(actor_id.to_owned()),
-                ))
+                ));
             }
-            Err(_) => None,
+            // The source is unreachable. Whether the §5.2 degraded fork may be entered
+            // at all is decided HERE, by how long the authority has been unreachable —
+            // not downstream by how fresh the caller's assertion is, which the caller
+            // controls.
+            Err(_) => {
+                if enforcer.degraded_window_exhausted(now) {
+                    return Some(self.rejection(
+                        http_req,
+                        HttpProfileError::AdmissionStateUnavailable.wire_code(),
+                        403,
+                        now,
+                        Some(&verified.evidence),
+                        Some(actor_id.to_owned()),
+                    ));
+                }
+                None
+            }
         };
 
         let resolve = Arc::clone(&enforcer.resolve_authority);
@@ -564,6 +632,7 @@ impl HttpProfileProxy {
             &self.replay_async,
             continuation_ctx,
             &self.dispatch_cfg,
+            now,
         )
         .await
         {
@@ -686,6 +755,43 @@ impl HttpProfileProxy {
                     )
                 }
             };
+        // Step 6a — take durable retention responsibility BEFORE the side effects run.
+        //
+        // This is the only point at which refusing is still free. Past the dispatch
+        // below, a retention failure can no longer be answered with "nothing happened",
+        // and the difference is not cosmetic: the pre-dispatch refusal is retry-safe and
+        // the post-dispatch one is not, while a retry carries a fresh nonce that the
+        // replay tier cannot stop.
+        //
+        // It is NOT a probe, and does not claim the later write will succeed — nothing
+        // can, because the backend and the store share no transaction. It makes the
+        // crossing of the execution threshold durable, so what follows is a recorded
+        // state rather than a guess.
+        //
+        // The write itself runs on the retention writer thread and this future AWAITS
+        // its acknowledgement, so the core's runtime keeps serving while the fsync is in
+        // progress. Awaiting is not optional: dispatching before the marker is durable
+        // would make the reservation a hint rather than a record.
+        let reserved = match self.retention.as_ref() {
+            Some(retention) => Some(retention.reserve(&http_req).await),
+            None => None,
+        };
+        let reservation = match reserved {
+            None => None,
+            Some(Ok(reservation)) => Some(reservation),
+            Some(Err(e)) => {
+                eprintln!("evidence retention could not accept the exchange, refusing before dispatch: {e}");
+                return self.response_rejection(
+                    &http_req,
+                    McpReError::EvidenceRetentionUnavailable.wire_code(),
+                    503,
+                    now,
+                    Some(&verified.evidence),
+                    Some(actor_id),
+                );
+            }
+        };
+
         let inner_bytes = self.inner_async.dispatch(&forwarded).await;
 
         // Step 7 — sign the backend reply, bound to THIS request, with the delegated key
@@ -711,6 +817,23 @@ impl HttpProfileProxy {
                 expires,
             ) {
                 Ok(ack) => {
+                    // Retention covers this exit on the SAME terms as the bodied reply.
+                    // The backend has already run by here, so leaving it out let a
+                    // client decide whether a call it had executed was accountable, by
+                    // the single act of omitting the JSON-RPC `id`.
+                    if let Some(rejection) = self
+                        .retain_accepted(
+                            &http_req,
+                            &ack,
+                            now,
+                            Some(&verified.evidence),
+                            actor_id.clone(),
+                            reservation.as_ref(),
+                        )
+                        .await
+                    {
+                        return rejection;
+                    }
                     // The signed bodyless 202 IS the signed response for a notification,
                     // and it is returned on this line — so the record describes bytes the
                     // client actually receives.
@@ -838,26 +961,18 @@ impl HttpProfileProxy {
                 }
             }
         }
-        // ADR-MCPRE-054 retention, for the same reason the audit record is emitted
-        // here rather than at signing time: everything above can still discard this
-        // response, and retaining an exchange the client never received would put a
-        // record in the store that no receipt should ever be issued about.
-        //
-        // Before the response goes out, not after. A deployment with retention on is
-        // asserting it can account for what it served, and the only way to keep that
-        // true is to refuse the exchange when the evidence cannot be kept.
-        if let Some(retention) = &self.retention {
-            if let Err(e) = retention.retain(&http_req, &response) {
-                eprintln!("evidence retention failed, refusing the exchange: {e}");
-                return self.response_rejection(
-                    &http_req,
-                    McpReError::EvidenceRetentionUnavailable.wire_code(),
-                    503,
-                    now,
-                    Some(&verified.evidence),
-                    Some(actor_id),
-                );
-            }
+        if let Some(rejection) = self
+            .retain_accepted(
+                &http_req,
+                &response,
+                now,
+                Some(&verified.evidence),
+                actor_id.clone(),
+                reservation.as_ref(),
+            )
+            .await
+        {
+            return rejection;
         }
         // Emitted HERE, not at signing time: everything above can still discard this
         // response, and a `response.signed` record for bytes the client never received
@@ -869,6 +984,75 @@ impl HttpProfileProxy {
             now,
         );
         served(response)
+    }
+
+    /// Retain one ACCEPTED exchange (ADR-MCPRE-054), or produce the refusal.
+    ///
+    /// `Some(rejection)` means the evidence could not be kept and the exchange must be
+    /// refused; `None` means it is retained, or retention is not configured, and the
+    /// caller may serve.
+    ///
+    /// EVERY accepted exit goes through here — the bodied reply and the bodyless 202
+    /// alike. Retention wired onto only one of them is not a weaker guarantee, it is a
+    /// client-selectable one: the notification form reaches the same backend and runs
+    /// the same side effects, so a hostile-but-enrolled caller could choose to leave no
+    /// reconstructible hop by dropping the `id`. A new success path must call this too,
+    /// which is why it is one function and not a block copied twice.
+    ///
+    /// Retention runs BEFORE the response goes out and before its `response.signed`
+    /// record, for the same reason the audit record is emitted late: everything above
+    /// can still discard this response, and retaining an exchange the client never
+    /// received would put a record in the store that no receipt should be issued about.
+    /// A deployment with retention on asserts it can account for what it served, and
+    /// refusing when the evidence cannot be kept is the only thing that keeps that true.
+    async fn retain_accepted(
+        &self,
+        request: &HttpRequest,
+        response: &HttpResponse,
+        now: i64,
+        bound: Option<&RequestEvidence>,
+        actor_id: String,
+        reservation: Option<&RetentionReservation>,
+    ) -> Option<ServedHttpResponse> {
+        let retention = self.retention.as_ref()?;
+        let Some(reservation) = reservation else {
+            // Retention is configured but this exit reached completion without a
+            // reservation, which means a path bypassed step 6a. Refuse rather than
+            // retain: serving here would be serving a call whose execution threshold
+            // was never recorded, which is the property the reservation exists for.
+            eprintln!(
+                "evidence retention: an accepted exchange reached completion with no \
+                 reservation; refusing rather than serving an unrecorded execution"
+            );
+            return Some(self.response_rejection(
+                request,
+                McpReError::EvidenceRetentionIndeterminate.wire_code(),
+                500,
+                now,
+                bound,
+                Some(actor_id),
+            ));
+        };
+        match retention.complete(reservation, request, response).await {
+            Ok(_) => None,
+            Err(e) => {
+                // The backend has already run. Answering 503 here is what made a
+                // transient store fault into repeated execution: 503 is the status
+                // clients retry, and the retry's fresh nonce passes replay admission.
+                eprintln!(
+                    "evidence retention failed AFTER the call executed; the exchange is \
+                     indeterminate and MUST NOT be blindly retried: {e}"
+                );
+                Some(self.response_rejection(
+                    request,
+                    McpReError::EvidenceRetentionIndeterminate.wire_code(),
+                    500,
+                    now,
+                    bound,
+                    Some(actor_id),
+                ))
+            }
+        }
     }
 
     /// A PRE-ACCEPTANCE rejection — recorded as `mcp-re.request.rejected`.
@@ -1121,5 +1305,78 @@ fn unsigned_error(status: u16, wire_code: &str) -> HttpResponse {
             "id": serde_json::Value::Null,
         }))
         .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod admission_window_tests {
+    use super::*;
+
+    fn enforcer(bound: i64, skew: i64, allow_degraded: bool) -> AdmissionEnforcer {
+        AdmissionEnforcer {
+            source: Arc::new(crate::admission_source::InMemoryAdmissionSource::new()),
+            policy: AdmissionPolicy {
+                max_assertion_age: 300,
+                max_clock_skew: skew,
+                degraded_propagation_bound: bound,
+                allow_degraded_mode: allow_degraded,
+            },
+            enforcement: AdmissionEnforcement::Required,
+            resolve_authority: Arc::new(|_kid: &str| None),
+            last_authoritative_read: std::sync::atomic::AtomicI64::new(i64::MIN),
+        }
+    }
+
+    /// A replica that has never reached the authority has no last-known state to serve
+    /// on, so startup is not a confirmation.
+    #[test]
+    fn a_replica_that_never_reached_the_authority_has_no_window() {
+        assert!(enforcer(60, 5, true).degraded_window_exhausted(1_000));
+    }
+
+    /// R7-C093: the degraded window is elapsed OUTAGE time, not assertion freshness.
+    ///
+    /// The revocation channel is the store, so during a store outage the issuer never
+    /// learns of a revocation and keeps minting assertions with a current `iat`. A
+    /// caller that simply keeps fetching them was therefore served for the whole
+    /// outage, however long, while the operator was told degraded serving is bounded
+    /// by P. Nothing the caller can do moves this clock.
+    #[test]
+    fn the_degraded_window_closes_p_after_the_last_successful_read() {
+        let enforcer = enforcer(60, 5, true);
+        enforcer.record_authoritative_read(1_000);
+
+        assert!(
+            !enforcer.degraded_window_exhausted(1_060),
+            "inside P + skew the last-known state is still usable"
+        );
+        assert!(
+            !enforcer.degraded_window_exhausted(1_065),
+            "the skew allowance is on the same clock"
+        );
+        assert!(
+            enforcer.degraded_window_exhausted(1_066),
+            "past P + skew an unreachable authority fails closed, however fresh the \
+             assertion the caller presents"
+        );
+    }
+
+    /// The clock only moves forward: a stale read cannot re-open a window a later one
+    /// closed.
+    #[test]
+    fn an_out_of_order_read_does_not_rewind_the_window() {
+        let enforcer = enforcer(60, 0, true);
+        enforcer.record_authoritative_read(2_000);
+        enforcer.record_authoritative_read(1_000);
+        assert!(!enforcer.degraded_window_exhausted(2_050));
+    }
+
+    /// Degraded mode is opt-in; without it an unreachable authority fails closed at
+    /// once, whatever was last read.
+    #[test]
+    fn without_the_opt_in_there_is_no_window_at_all() {
+        let enforcer = enforcer(3_600, 30, false);
+        enforcer.record_authoritative_read(1_000);
+        assert!(enforcer.degraded_window_exhausted(1_001));
     }
 }

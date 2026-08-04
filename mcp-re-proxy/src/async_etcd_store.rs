@@ -12,13 +12,13 @@
 //! Protocol (identical wire shape to the sync store, whose PURE helpers are reused
 //! verbatim so the two backends cannot drift):
 //!   * `POST /v3/lease/grant` mints a lease with a BOUNDED TTL (so a recorded nonce
-//!     self-expires at the freshness window even if the proxy dies);
+//!     self-expires at the freshness window even if the proxy dies), granted only when
+//!     no live lease already expires at this key's exact instant — keys retained to the
+//!     same second share one, so the outstanding-lease count grows with the freshness
+//!     window rather than with request volume;
 //!   * `POST /v3/kv/txn` with `compare { CREATE_REVISION == 0 }` PUTs the key under
 //!     that lease IFF it does not yet exist — etcd linearizes the txn, so two racing
-//!     inserts cannot both observe the key absent (exactly one `Fresh`);
-//!   * on a non-fresh outcome the just-granted lease is best-effort revoked
-//!     (`POST /v3/lease/revoke`) so replays don't accumulate leases; a revoke
-//!     failure is harmless (the bounded TTL still reaps it).
+//!     inserts cannot both observe the key absent (exactly one `Fresh`).
 //!
 //! Fail-closed: ANY transport/status/parse error — including a per-operation TIMEOUT —
 //! is [`ReplayStoreError::Unavailable`], and an outage is NEVER a fresh nonce.
@@ -51,7 +51,6 @@ use hyper_util::rt::TokioExecutor;
 use serde_json::Value;
 use std::time::Duration;
 
-use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 
 use crate::async_replay::AsyncAtomicReplayStore;
@@ -72,8 +71,9 @@ const MAX_ETCD_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Default per-operation deadline for one etcd gateway round trip.
 ///
-/// This bounds ONE POST, and `atomic_insert_if_absent` issues up to three (lease grant,
-/// txn, best-effort revoke), so the worst case is ~3x this. Two seconds is generous for a
+/// This bounds ONE POST, and `atomic_insert_if_absent` issues two (lease grant, txn) —
+/// up to four when a lease it reused turns out to have been revoked and the grant and
+/// txn are retried once — so the worst case is ~4x this. Two seconds is generous for a
 /// same-cluster etcd serving a lease grant and a single-key txn — the point is not to
 /// tune latency but to make an unreachable endpoint fail closed in bounded time instead
 /// of parking the request forever.
@@ -96,6 +96,18 @@ pub struct EtcdAsyncAtomicReplayStore {
     /// Deadline applied to EACH gateway round trip. Never `None`: an unbounded
     /// authoritative-store call on the request path is the defect this closes.
     op_timeout: Duration,
+    /// `retain_until` -> the lease already granted to expire at that instant.
+    ///
+    /// A lease per admitted nonce makes the outstanding-lease count grow with REQUEST
+    /// VOLUME, and etcd's lessor carries every one of them until it expires. Keys that
+    /// stop being retained at the same second want the same expiry, so they can share
+    /// one lease: the count then grows with the FRESHNESS WINDOW instead — at most one
+    /// lease per second of `max_signature_validity + skew`, whatever the request rate.
+    /// Reaching etcd's backend quota raises a NOSPACE alarm that keeps the cluster
+    /// read-only until an operator compacts, defragments and disarms it, so the
+    /// difference is between a bounded working set and a sticky manual outage chosen
+    /// by one signature-valid peer.
+    leases: std::sync::Mutex<std::collections::BTreeMap<i64, i64>>,
 }
 
 impl EtcdAsyncAtomicReplayStore {
@@ -123,12 +135,46 @@ impl EtcdAsyncAtomicReplayStore {
             base_url: base_url.trim_end_matches('/').to_string(),
             clock,
             op_timeout: op_timeout.clamp(Duration::from_millis(1), MAX_ETCD_OP_TIMEOUT),
+            leases: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         }
     }
 
     /// The per-operation deadline in force.
     pub fn op_timeout(&self) -> Duration {
         self.op_timeout
+    }
+
+    /// The lease already granted to expire at `retain_until`, if one is still live.
+    ///
+    /// Drops every lease whose instant has arrived first: etcd revokes those itself, and
+    /// attaching a key to a lease that no longer exists leaves the key unretained — the
+    /// direction that re-opens replay. The instant `now` counts as arrived, so the pool
+    /// errs towards one extra grant rather than towards one unretained nonce. The map is
+    /// bounded by the freshness window in seconds, not by request volume.
+    fn pooled_lease(&self, retain_until: i64, now: i64) -> Option<i64> {
+        // A poisoned pool is not a reason to fail a request closed: the worst outcome
+        // of ignoring it is granting a lease that could have been shared.
+        let mut leases = self.leases.lock().ok()?;
+        *leases = leases.split_off(&now.saturating_add(1));
+        leases.get(&retain_until).copied()
+    }
+
+    /// Offer a freshly granted lease for reuse by later nonces retained to the same
+    /// instant. Best effort: a lease nobody reuses simply expires on its own TTL.
+    fn pool_lease(&self, retain_until: i64, lease_id: i64) {
+        if let Ok(mut leases) = self.leases.lock() {
+            leases.insert(retain_until, lease_id);
+        }
+    }
+
+    /// Stop offering `lease_id` for `retain_until` — it did not work, so no further
+    /// request may be built on it.
+    fn forget_lease(&self, retain_until: i64, lease_id: i64) {
+        if let Ok(mut leases) = self.leases.lock() {
+            if leases.get(&retain_until) == Some(&lease_id) {
+                leases.remove(&retain_until);
+            }
+        }
     }
 
     /// POST `body` as JSON to `path` on the gateway; return the parsed JSON reply.
@@ -201,8 +247,14 @@ impl EtcdAsyncAtomicReplayStore {
 
 impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
     fn atomic_insert_if_absent<'a>(&'a self, insert: ReplayInsert<'a>) -> ReplayDecisionFuture<'a> {
-        // Retention is an etcd lease TTL, not a bounded local set: no ceiling for one
-        // actor to exhaust, so nothing to budget `insert.actor` against.
+        // Retention is an etcd lease TTL, not a bounded local set, so there is no local
+        // ceiling to split: `insert.actor` is budgeted above this seam by
+        // `AsyncReplayTier`, and the leases themselves are shared per expiry instant
+        // (see [`EtcdAsyncAtomicReplayStore::leases`]). Together those decide what one
+        // signature-valid peer can make this cluster hold — and holding it to its
+        // backend quota raises a NOSPACE alarm that stays raised, read-only, until an
+        // operator compacts, defragments and disarms it, taking every co-tenant of that
+        // etcd down with the replay tier.
         let (key, expires_at_unix) = (insert.key, insert.expires_at_unix);
         // Read the store's OWN clock once (the trait's vestigial now_unix=0 is
         // ignored), and reuse it for the lease-TTL arithmetic.
@@ -213,6 +265,7 @@ impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
         let client = &self.client;
         let base = self.base_url.as_str();
         let op_timeout = self.op_timeout;
+        let store = self;
         Box::pin(async move {
             // MCPS-08 defensive pre-store rejection (#142), the guard the sync sibling
             // `etcd_store` and the Redis backend both enforce and this one skipped.
@@ -243,42 +296,69 @@ impl AsyncAtomicReplayStore for EtcdAsyncAtomicReplayStore {
             // backend). Past the guard above the window is strictly positive, so the
             // helper's clamp is no longer load-bearing here.
             let ttl_secs = compute_ttl_secs(expires_at_unix, now);
-            let lease_resp = Self::post(
-                client,
-                base,
-                "/v3/lease/grant",
-                &build_lease_grant_body(ttl_secs),
-                op_timeout,
-            )
-            .await?;
-            let lease_id = parse_lease_id(&lease_resp)?;
+            // A lease already granted to expire at this exact instant is the same
+            // retention this key needs, so it is reused rather than duplicated.
+            let (lease_id, reused) = match store.pooled_lease(expires_at_unix, now) {
+                Some(pooled) => (pooled, true),
+                None => {
+                    let granted = parse_lease_id(
+                        &Self::post(
+                            client,
+                            base,
+                            "/v3/lease/grant",
+                            &build_lease_grant_body(ttl_secs),
+                            op_timeout,
+                        )
+                        .await?,
+                    )?;
+                    store.pool_lease(expires_at_unix, granted);
+                    (granted, false)
+                }
+            };
 
             // Linearizable put-if-absent under the lease.
-            let txn_resp = Self::post(
+            let mut txn = Self::post(
                 client,
                 base,
                 "/v3/kv/txn",
                 &build_txn_body(&key_b64, &value_b64, lease_id),
                 op_timeout,
             )
-            .await?;
-            let decision = decision_from_txn(&txn_resp);
-
-            // On a non-fresh outcome the key already existed, so THIS lease bound
-            // nothing: best-effort revoke it so replays don't accumulate leases.
-            // A revoke failure is harmless — the bounded TTL still reaps it — so it
-            // is intentionally not propagated.
-            if decision != ReplayDecision::Fresh {
-                let _ = Self::post(
+            .await;
+            // A pooled lease can be revoked by etcd between the moment it was read and
+            // the moment the txn lands (its instant arrives, an operator revokes it),
+            // and a put under a lease that no longer exists is refused. That is a stale
+            // local optimisation, not an unhealthy store, so it is retried ONCE on a
+            // lease this store grants itself. A second failure is the store's answer.
+            if txn.is_err() && reused {
+                store.forget_lease(expires_at_unix, lease_id);
+                let granted = parse_lease_id(
+                    &Self::post(
+                        client,
+                        base,
+                        "/v3/lease/grant",
+                        &build_lease_grant_body(ttl_secs),
+                        op_timeout,
+                    )
+                    .await?,
+                )?;
+                store.pool_lease(expires_at_unix, granted);
+                txn = Self::post(
                     client,
                     base,
-                    "/v3/lease/revoke",
-                    &serde_json::json!({ "ID": lease_id.to_string() }),
+                    "/v3/kv/txn",
+                    &build_txn_body(&key_b64, &value_b64, granted),
                     op_timeout,
                 )
                 .await;
             }
-            Ok(decision)
+            // A non-fresh outcome leaves this lease holding nothing of THIS request's,
+            // and it is not revoked: the lease is offered to every later nonce retained
+            // to the same instant, so revoking it would drop keys that belong to other
+            // requests a whole freshness window early — a replay hole, not a saving.
+            // Nothing accumulates either way, because a lease is granted only when the
+            // pool has none for that instant.
+            Ok(decision_from_txn(&txn?))
         })
     }
 
@@ -302,6 +382,7 @@ mod tests {
     /// has its own test below.
     const TEST_ACTOR: &str = "did:example:test-signer";
     use crate::async_replay::AsyncAtomicReplayStore;
+    use mcp_re_core::ReplayDecision;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -414,6 +495,138 @@ mod tests {
             accepts.load(Ordering::SeqCst) >= 1,
             "this test must actually have reached the gateway, or it proves nothing about \
              the timeout"
+        );
+    }
+
+    /// A scripted etcd JSON gateway: answers `/v3/lease/grant` with an incrementing
+    /// lease id and `/v3/kv/txn` with a successful compare, counting the calls to each.
+    /// Returns its base URL and the two counters (grants, txns).
+    async fn counting_gateway() -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let grants = Arc::new(AtomicUsize::new(0));
+        let txns = Arc::new(AtomicUsize::new(0));
+        let (g, t) = (Arc::clone(&grants), Arc::clone(&txns));
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let (g, t) = (Arc::clone(&g), Arc::clone(&t));
+                tokio::spawn(async move {
+                    let mut seen = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        let read = match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => n,
+                        };
+                        seen.extend_from_slice(&buf[..read]);
+                        // One request per connection is enough for this store's use;
+                        // answer as soon as a whole request has arrived.
+                        let text = String::from_utf8_lossy(&seen).to_string();
+                        let Some(head_len) = text.find("\r\n\r\n") else {
+                            continue;
+                        };
+                        let body_len: usize = text
+                            .to_ascii_lowercase()
+                            .split("content-length:")
+                            .nth(1)
+                            .and_then(|rest| rest.split("\r\n").next())
+                            .and_then(|v| v.trim().parse().ok())
+                            .unwrap_or(0);
+                        if seen.len() < head_len + 4 + body_len {
+                            continue;
+                        }
+                        let body = if text.contains("/v3/lease/grant") {
+                            let id = g.fetch_add(1, Ordering::SeqCst) + 1;
+                            format!("{{\"ID\":\"{id}\",\"TTL\":\"300\"}}")
+                        } else {
+                            t.fetch_add(1, Ordering::SeqCst);
+                            "{\"succeeded\":true}".to_string()
+                        };
+                        let reply = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: \
+                             {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(reply.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                        return;
+                    }
+                });
+            }
+        });
+        (format!("http://{addr}"), grants, txns)
+    }
+
+    /// One lease per admitted nonce makes the outstanding-lease count grow with request
+    /// VOLUME: a signature-valid peer streaming distinct nonces accumulates leases and
+    /// keys until etcd hits its backend quota, whose NOSPACE alarm holds the cluster
+    /// read-only until an operator intervenes by hand. Nonces retained to the same
+    /// instant want the same expiry, so they share one lease and the count grows with
+    /// the freshness window instead.
+    #[tokio::test]
+    async fn nonces_retained_to_the_same_instant_share_one_lease() {
+        let (base, grants, txns) = counting_gateway().await;
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        for i in 0..25 {
+            assert_eq!(
+                store
+                    .atomic_insert_if_absent(ReplayInsert::new(
+                        &format!("did:example:host|aud|nonce-{i}"),
+                        TEST_ACTOR,
+                        NOW + 300,
+                        0,
+                    ))
+                    .await
+                    .expect("the scripted gateway admits every put"),
+                ReplayDecision::Fresh
+            );
+        }
+        assert_eq!(
+            txns.load(Ordering::SeqCst),
+            25,
+            "every nonce still gets its own linearizable put-if-absent"
+        );
+        assert_eq!(
+            grants.load(Ordering::SeqCst),
+            1,
+            "25 nonces expiring at one instant must not mint 25 leases"
+        );
+
+        // A different retain-until is different retention, so it gets its own lease.
+        store
+            .atomic_insert_if_absent(ReplayInsert::new(
+                "did:example:host|aud|later",
+                TEST_ACTOR,
+                NOW + 600,
+                0,
+            ))
+            .await
+            .expect("records");
+        assert_eq!(grants.load(Ordering::SeqCst), 2);
+    }
+
+    /// The pool holds leases only while they are live: one whose instant has passed has
+    /// been revoked by etcd, and attaching a key to it would leave the key unretained.
+    #[tokio::test]
+    async fn an_expired_lease_is_never_reused() {
+        let (base, grants, _txns) = counting_gateway().await;
+        let store = EtcdAsyncAtomicReplayStore::connect_with(&base, fixed_clock());
+        store
+            .atomic_insert_if_absent(ReplayInsert::new("k|a|n1", TEST_ACTOR, NOW + 5, 0))
+            .await
+            .expect("records");
+        assert_eq!(grants.load(Ordering::SeqCst), 1);
+        assert_eq!(store.pooled_lease(NOW + 5, NOW), Some(1));
+        // Past that instant the lease is gone from etcd, so it is gone from the pool.
+        assert_eq!(store.pooled_lease(NOW + 5, NOW + 5), None);
+        assert!(
+            store.leases.lock().expect("pool").is_empty(),
+            "an expired lease must not be kept for reuse"
         );
     }
 

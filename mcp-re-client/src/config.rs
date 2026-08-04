@@ -121,9 +121,12 @@ pub struct TrustConfig {
     pub org_keys: Vec<OrgKey>,
     /// The durable rollback floor.
     pub floor: FloorConfig,
-    /// How often to re-read the manifest, seconds. 0 disables refresh — the anchors
-    /// are then whatever startup loaded, and a published revocation reaches this
-    /// client only on restart.
+    /// How often to re-read the manifest, seconds. Bounded
+    /// `1..=`[`MAX_MANIFEST_RELOAD_SECS`], and not optional: the withdrawal of anchors
+    /// whose manifest has passed its own `expires_at` happens in a refresh cycle and
+    /// nowhere else, so the cadence is also the ceiling on how long an expired trust
+    /// picture can stay in force. A client with no refresh has no expiry enforcement
+    /// and no revocation path at all.
     #[serde(default = "default_manifest_reload")]
     pub reload_secs: u64,
 }
@@ -131,6 +134,27 @@ pub struct TrustConfig {
 fn default_manifest_reload() -> u64 {
     300
 }
+
+/// The longest accepted manifest re-read cadence.
+///
+/// `crate::anchors::refresh_once` is the only code that withdraws anchors once the
+/// manifest in force has expired, so the interval between cycles is exactly how long a
+/// lapsed trust picture keeps verifying responses. An hour bounds that without
+/// dictating the common cadence, which is [`default_manifest_reload`].
+pub const MAX_MANIFEST_RELOAD_SECS: u64 = 3600;
+
+/// The largest accepted `delegation.max_clock_skew`.
+///
+/// The same value bounds every verifier in the profile
+/// (`mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND`) — pinned equal by
+/// `a_config_skew_bound_matches_the_profile_bound`. Duplicated rather than imported
+/// because `mcp-re-http-profile` is not a dependency of this crate outside tests.
+///
+/// It has to be checked HERE because the two consumers of the value disagree about an
+/// out-of-range one: the RFC 9421 freshness gate falls back to the profile default,
+/// while the delegated-credential window uses the number raw. Unbounded, that combination
+/// accepts a server credential arbitrarily far past its `exp` while reporting nothing.
+pub const MAX_CLOCK_SKEW_SECS: i64 = 300;
 
 /// A pinned manifest-signing key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +207,7 @@ pub struct DelegationConfig {
     /// bounded rollout window.
     pub accepted_epochs: Vec<String>,
     /// Clock-skew tolerance, seconds. Governs both the credential window and the
-    /// RFC 9421 response-signature freshness gate.
+    /// RFC 9421 response-signature freshness gate. Bounded `0..=`[`MAX_CLOCK_SKEW_SECS`].
     #[serde(default = "default_skew")]
     pub max_clock_skew: i64,
 }
@@ -239,6 +263,13 @@ pub struct BindingConfig {
 /// names a header rather than restating its value: an OAuth-DPoP binding whose digest
 /// covers one token while the `Authorization` header carries another is a binding to
 /// nothing, and restating the value in two config fields is how that happens.
+///
+/// Which forms are legal is therefore per artifact type, and [`ClientConfig::validate`]
+/// enforces it: for an artifact the verifier recovers from the request itself — the
+/// DPoP access token, which it takes from the covered `Authorization` header — only
+/// [`BindingSource::Header`] can name the transmitted bytes, so the literal and file
+/// forms are refused there rather than left to fail as an opaque
+/// `artifact_binding_failed` at request time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum BindingSource {
@@ -275,6 +306,24 @@ fn err(message: impl Into<String>) -> ConfigError {
     ConfigError(message.into())
 }
 
+/// The header the profile's verifier reads a DPoP access token from.
+const AUTHORIZATION: &str = "Authorization";
+
+/// The bearer credential inside an `Authorization` header value, or `None`.
+///
+/// Byte-identical to the verifier's own extraction
+/// (`mcp_re_http_profile::authorization_bearer_bytes`), pinned by
+/// `a_dpop_binding_digests_what_the_verifier_digests`: the digest must cover the token,
+/// not the `Bearer ` scheme in front of it, or the binding cannot verify anywhere.
+fn bearer_token(authorization_header: &str) -> Option<&str> {
+    let token = authorization_header.strip_prefix("Bearer ")?.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
 impl ClientConfig {
     /// Parse a configuration document.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ConfigError> {
@@ -293,7 +342,12 @@ impl ClientConfig {
 
     /// The checks that cannot be expressed in the type: non-empty collections, unique
     /// route ids, a resolvable binding source, and the loopback guard.
-    fn validate(&self) -> Result<(), ConfigError> {
+    ///
+    /// Public because every field of this struct is public and the type derives
+    /// `Deserialize`: a consumer that builds or mutates a config rather than going
+    /// through [`ClientConfig::from_json`] must be able to re-establish the invariant,
+    /// and [`crate::build`] runs it on whatever it is handed for the same reason.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if !self.local.allow_non_loopback && !self.local.bind.ip().is_loopback() {
             return Err(err(format!(
                 "local.bind {} is not a loopback address. The local leg is \
@@ -320,6 +374,24 @@ impl ClientConfig {
         }
         if self.delegation.accepted_epochs.is_empty() {
             return Err(err("delegation.accepted_epochs is empty"));
+        }
+        if !(0..=MAX_CLOCK_SKEW_SECS).contains(&self.delegation.max_clock_skew) {
+            return Err(err(format!(
+                "delegation.max_clock_skew {} is outside 0..={MAX_CLOCK_SKEW_SECS}. The value \
+                 widens the delegated credential's nbf/exp window directly, so an unbounded one \
+                 accepts a server credential long past its exp — while the response-signature \
+                 freshness gate silently reverts to the profile default, leaving no symptom",
+                self.delegation.max_clock_skew
+            )));
+        }
+        if !(1..=MAX_MANIFEST_RELOAD_SECS).contains(&self.trust.reload_secs) {
+            return Err(err(format!(
+                "trust.reload_secs {} is outside 1..={MAX_MANIFEST_RELOAD_SECS}. Withdrawing \
+                 anchors whose manifest has passed its expires_at happens in a refresh cycle and \
+                 nowhere else, so 0 leaves an expired trust picture verifying forever and a long \
+                 cadence is how long it keeps doing so",
+                self.trust.reload_secs
+            )));
         }
         if self.routes.is_empty() {
             return Err(err("routes is empty"));
@@ -349,17 +421,65 @@ impl ClientConfig {
             }
             for binding in &route.artifact_bindings {
                 if let BindingSource::Header { name } = &binding.source {
-                    if !route
+                    let Some(header) = route
                         .extra_headers
                         .iter()
-                        .any(|h| h.name.eq_ignore_ascii_case(name))
-                    {
+                        .find(|h| h.name.eq_ignore_ascii_case(name))
+                    else {
                         return Err(err(format!(
                             "route {:?} binds header {name:?}, which it does not send: \
                              the binding would digest nothing the server sees",
                             route.route_id
                         )));
+                    };
+                    if binding.artifact_type == ArtifactType::OauthDpop
+                        && bearer_token(&header.value).is_none()
+                    {
+                        return Err(err(format!(
+                            "route {:?} binds an oauth-dpop artifact to header {name:?}, whose \
+                             value is not a Bearer credential: the verifier digests the token \
+                             after the Bearer scheme, so there is nothing here it can match",
+                            route.route_id
+                        )));
                     }
+                }
+                match (binding.artifact_type, &binding.source) {
+                    // The verifier takes the DPoP credential from the request's covered
+                    // `Authorization` header, never from anything the caller restates, so
+                    // that header is the only place a digest can commit to transmitted
+                    // bytes. A literal or a file digests a value that only has to match
+                    // by coincidence — the binding-to-nothing this type documents.
+                    (ArtifactType::OauthDpop, BindingSource::Header { name })
+                        if !name.eq_ignore_ascii_case(AUTHORIZATION) =>
+                    {
+                        return Err(err(format!(
+                            "route {:?} binds an oauth-dpop artifact to header {name:?}; the \
+                             verifier reads the access token from {AUTHORIZATION:?} and no \
+                             other header",
+                            route.route_id
+                        )))
+                    }
+                    (ArtifactType::OauthDpop, BindingSource::Header { .. }) => {}
+                    (ArtifactType::OauthDpop, _) => {
+                        return Err(err(format!(
+                            "route {:?} sources an oauth-dpop artifact from config rather than \
+                             from the {AUTHORIZATION:?} header it sends: the digest would cover \
+                             a restated value the request need not carry, which is a binding to \
+                             nothing",
+                            route.route_id
+                        )))
+                    }
+                    // The mTLS binding commits to the DER of the client certificate the
+                    // TLS layer presents. A literal cannot be that, at any length.
+                    (ArtifactType::OauthMtls, BindingSource::Literal { .. }) => {
+                        return Err(err(format!(
+                            "route {:?} sources an oauth-mtls artifact from a literal; the \
+                             binding must digest the DER of the client certificate this client \
+                             presents, which config text cannot restate",
+                            route.route_id
+                        )))
+                    }
+                    _ => {}
                 }
             }
         }
@@ -371,23 +491,41 @@ impl RouteConfig {
     /// Resolve this route's bindings into digested [`ArtifactBinding`]s.
     ///
     /// Header bytes are taken from THIS route's `extra_headers`, so the digest covers
-    /// exactly the bytes the request will carry.
+    /// exactly the bytes the request will carry — and for `oauth-dpop`, exactly the
+    /// bytes the verifier recovers from that header: RFC 9449's `ath` is over the
+    /// access token, so the `Bearer ` scheme in front of it is not part of the digest.
     pub fn resolve_bindings(&self) -> Result<Vec<ArtifactBinding>, ConfigError> {
         self.artifact_bindings
             .iter()
             .map(|binding| {
                 let bytes: Vec<u8> = match &binding.source {
-                    BindingSource::Header { name } => self
-                        .extra_headers
-                        .iter()
-                        .find(|h| h.name.eq_ignore_ascii_case(name))
-                        .map(|h| h.value.as_bytes().to_vec())
-                        .ok_or_else(|| {
-                            err(format!(
-                                "route {:?} sends no header {name:?}",
-                                self.route_id
-                            ))
-                        })?,
+                    BindingSource::Header { name } => {
+                        let value = self
+                            .extra_headers
+                            .iter()
+                            .find(|h| h.name.eq_ignore_ascii_case(name))
+                            .map(|h| h.value.as_str())
+                            .ok_or_else(|| {
+                                err(format!(
+                                    "route {:?} sends no header {name:?}",
+                                    self.route_id
+                                ))
+                            })?;
+                        if binding.artifact_type == ArtifactType::OauthDpop {
+                            bearer_token(value)
+                                .ok_or_else(|| {
+                                    err(format!(
+                                        "route {:?} binds an oauth-dpop artifact to header \
+                                         {name:?}, whose value is not a Bearer credential",
+                                        self.route_id
+                                    ))
+                                })?
+                                .as_bytes()
+                                .to_vec()
+                        } else {
+                            value.as_bytes().to_vec()
+                        }
+                    }
                     BindingSource::Literal { value } => value.as_bytes().to_vec(),
                     BindingSource::File { path } => std::fs::read(path).map_err(|e| {
                         err(format!(
@@ -450,7 +588,8 @@ mod tests {
       "route_id": "r1",
       "target_uri": "https://mcp.example.com/mcp",
       "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
-      "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "literal", "value": "tok" } }]
+      "extra_headers": [{ "name": "Authorization", "value": "Bearer tok" }],
+      "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
     }]"#;
 
     #[test]
@@ -503,9 +642,15 @@ mod tests {
         assert!(error.0.contains("does not send"), "unexpected: {error}");
     }
 
-    /// The header form digests the bytes the request will actually carry.
+    /// The header form digests the bytes the VERIFIER recovers from the request.
+    ///
+    /// For `oauth-dpop` that is RFC 9449's `ath` — the access token — not the whole
+    /// header value: the profile takes the credential from the covered `Authorization`
+    /// header via `authorization_bearer_bytes`, which strips the `Bearer ` scheme. A
+    /// digest over the scheme-prefixed value is one no verifier can ever match, so the
+    /// route's only permitted binding form would fail closed on every request.
     #[test]
-    fn a_header_binding_digests_the_header_the_route_sends() {
+    fn a_dpop_binding_digests_what_the_verifier_digests() {
         let route = r#"[{
           "route_id": "r1",
           "target_uri": "https://mcp.example.com/mcp",
@@ -519,14 +664,194 @@ mod tests {
         let resolved = config.routes[0]
             .resolve_bindings()
             .expect("bindings resolve");
+        // The verifier's own extraction over the headers this route sends.
+        let credential =
+            mcp_re_http_profile::authorization_bearer_bytes(&config.routes[0].header_pairs())
+                .expect("the route sends a bearer credential");
+        assert_eq!(credential, b"tok-1");
         assert_eq!(
             resolved,
             vec![ArtifactBinding::opaque_digest(
                 ArtifactType::OauthDpop,
-                b"Bearer tok-1"
+                &credential
             )],
-            "the digest covers the header value verbatim"
+            "the digest must cover the token the verifier digests, not the header value"
         );
+    }
+
+    /// A non-dpop header binding still digests the header value verbatim: nothing in
+    /// the profile re-interprets those bytes.
+    #[test]
+    fn a_non_dpop_header_binding_digests_the_value_verbatim() {
+        let route = r#"[{
+          "route_id": "r1",
+          "target_uri": "https://mcp.example.com/mcp",
+          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
+          "extra_headers": [{ "name": "X-Rar", "value": "details-blob" }],
+          "artifact_bindings": [{ "artifact_type": "oauth-rar", "source": { "kind": "header", "name": "x-rar" } }]
+        }]"#;
+        let config =
+            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
+                .expect("loads");
+        assert_eq!(
+            config.routes[0].resolve_bindings().expect("resolve"),
+            vec![ArtifactBinding::opaque_digest(
+                ArtifactType::OauthRar,
+                b"details-blob"
+            )]
+        );
+    }
+
+    /// A restated token is the binding-to-nothing the type documentation forbids: the
+    /// verifier reads the credential from the `Authorization` header the request
+    /// carries, so a literal only matches it by coincidence.
+    #[test]
+    fn a_literal_or_file_dpop_binding_is_refused() {
+        for source in [
+            r#"{ "kind": "literal", "value": "Bearer B" }"#,
+            r#"{ "kind": "file", "path": "/dev/null" }"#,
+        ] {
+            let route = format!(
+                r#"[{{
+              "route_id": "r1",
+              "target_uri": "https://mcp.example.com/mcp",
+              "audience": {{ "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" }},
+              "extra_headers": [{{ "name": "Authorization", "value": "Bearer A" }}],
+              "artifact_bindings": [{{ "artifact_type": "oauth-dpop", "source": {source} }}]
+            }}]"#
+            );
+            let error = ClientConfig::from_json(
+                document(r#"{ "bind": "127.0.0.1:8640" }"#, &route).as_bytes(),
+            )
+            .expect_err("a restated dpop credential must not start");
+            assert!(
+                error.0.contains("binding to nothing"),
+                "unexpected: {error}"
+            );
+        }
+    }
+
+    /// The verifier reads the token from `Authorization` and nowhere else, so binding
+    /// a dpop artifact to some other header the route happens to send digests bytes no
+    /// verifier will look at.
+    #[test]
+    fn a_dpop_binding_on_another_header_is_refused() {
+        let route = r#"[{
+          "route_id": "r1",
+          "target_uri": "https://mcp.example.com/mcp",
+          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
+          "extra_headers": [{ "name": "X-Token", "value": "Bearer A" }],
+          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "X-Token" } }]
+        }]"#;
+        let error =
+            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
+                .expect_err("must refuse");
+        assert!(
+            error.0.contains("and no other header"),
+            "unexpected: {error}"
+        );
+    }
+
+    /// A dpop binding over a header carrying no Bearer credential digests something
+    /// the verifier cannot even extract.
+    #[test]
+    fn a_dpop_binding_on_a_non_bearer_authorization_is_refused() {
+        let route = r#"[{
+          "route_id": "r1",
+          "target_uri": "https://mcp.example.com/mcp",
+          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
+          "extra_headers": [{ "name": "Authorization", "value": "Basic dXNlcjpwdw==" }],
+          "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "header", "name": "Authorization" } }]
+        }]"#;
+        let error =
+            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
+                .expect_err("must refuse");
+        assert!(
+            error.0.contains("not a Bearer credential"),
+            "unexpected: {error}"
+        );
+    }
+
+    /// The mTLS binding commits to the DER of the certificate the TLS layer presents.
+    #[test]
+    fn a_literal_mtls_binding_is_refused() {
+        let route = r#"[{
+          "route_id": "r1",
+          "target_uri": "https://mcp.example.com/mcp",
+          "audience": { "audience_id": "v1", "target_uri": "https://mcp.example.com/mcp", "route": "a" },
+          "artifact_bindings": [{ "artifact_type": "oauth-mtls", "source": { "kind": "literal", "value": "my-cert" } }]
+        }]"#;
+        let error =
+            ClientConfig::from_json(document(r#"{ "bind": "127.0.0.1:8640" }"#, route).as_bytes())
+                .expect_err("must refuse");
+        assert!(
+            error.0.contains("config text cannot restate"),
+            "unexpected: {error}"
+        );
+    }
+
+    /// The bound has to be the profile's, or the config admits a value
+    /// `VerifierPolicy::new` will reject and silently replace with its default.
+    #[test]
+    fn a_config_skew_bound_matches_the_profile_bound() {
+        assert_eq!(
+            MAX_CLOCK_SKEW_SECS,
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND
+        );
+    }
+
+    /// An unbounded skew widens the delegated credential window raw while the
+    /// freshness gate reverts to the default, so the misconfiguration has no symptom
+    /// at all unless it is refused here.
+    #[test]
+    fn an_out_of_range_clock_skew_is_refused() {
+        let doc = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+            r#""accepted_epochs": ["e1"]"#,
+            r#""accepted_epochs": ["e1"], "max_clock_skew": 31536000"#,
+        );
+        let error = ClientConfig::from_json(doc.as_bytes()).expect_err("must refuse");
+        assert!(error.0.contains("max_clock_skew"), "unexpected: {error}");
+
+        let negative = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+            r#""accepted_epochs": ["e1"]"#,
+            r#""accepted_epochs": ["e1"], "max_clock_skew": -1"#,
+        );
+        ClientConfig::from_json(negative.as_bytes()).expect_err("a negative skew must not start");
+
+        let at_bound = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+            r#""accepted_epochs": ["e1"]"#,
+            &format!(r#""accepted_epochs": ["e1"], "max_clock_skew": {MAX_CLOCK_SKEW_SECS}"#),
+        );
+        ClientConfig::from_json(at_bound.as_bytes()).expect("the bound itself is legal");
+    }
+
+    /// Withdrawing anchors past the manifest's own `expires_at` happens in a refresh
+    /// cycle and nowhere else, so a client with no refresh keeps verifying under a
+    /// trust picture whose governing document lapsed — and a long cadence is exactly
+    /// how long it does so.
+    #[test]
+    fn a_disabled_or_unbounded_reload_cadence_is_refused() {
+        for secs in ["0", "86400"] {
+            let doc = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+                r#""floor": { "kind": "durable", "dir": "/var/lib/mcp-re/floor" }"#,
+                &format!(
+                    r#""floor": {{ "kind": "durable", "dir": "/var/lib/mcp-re/floor" }}, "reload_secs": {secs}"#
+                ),
+            );
+            let error = ClientConfig::from_json(doc.as_bytes())
+                .expect_err("a cadence outside the bound must not start");
+            assert!(
+                error.0.contains("trust.reload_secs"),
+                "reload_secs {secs}: unexpected {error}"
+            );
+        }
+        let ok = document(r#"{ "bind": "127.0.0.1:8640" }"#, ROUTE).replace(
+            r#""floor": { "kind": "durable", "dir": "/var/lib/mcp-re/floor" }"#,
+            &format!(
+                r#""floor": {{ "kind": "durable", "dir": "/var/lib/mcp-re/floor" }}, "reload_secs": {MAX_MANIFEST_RELOAD_SECS}"#
+            ),
+        );
+        ClientConfig::from_json(ok.as_bytes()).expect("the bound itself is legal");
     }
 
     /// Two routes under one id would leave the later one's bindings attached to the
@@ -538,7 +863,7 @@ mod tests {
             "route_id": "r1",
             "target_uri": "https://a.example.com/mcp",
             "audience": { "audience_id": "v1", "target_uri": "https://a.example.com/mcp", "route": "a" },
-            "artifact_bindings": [{ "artifact_type": "oauth-dpop", "source": { "kind": "literal", "value": "x" } }]
+            "artifact_bindings": [{ "artifact_type": "oauth-rar", "source": { "kind": "literal", "value": "x" } }]
           },
           {
             "route_id": "r1",

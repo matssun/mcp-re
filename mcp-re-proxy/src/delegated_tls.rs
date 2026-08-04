@@ -19,7 +19,11 @@
 //! non-exporting, but they are distinct credentials (distinct KMS key ids / token
 //! objects). This module is transport-agnostic: it only needs the raw-sign closure.
 
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use rustls::server::ClientHello;
 use rustls::server::ResolvesServerCert;
@@ -52,10 +56,114 @@ pub trait RawEd25519TlsSigner: Send + Sync {
 
 const ED25519_SIGNATURE_LEN: usize = 64;
 
+/// The sustained ceiling, in handshake signatures per second, on how fast unauthenticated
+/// peers can drive the delegated TLS signer.
+///
+/// Sized against what legitimate traffic needs: session resumption is refused by design,
+/// so every connection costs one signature, and `ServerLimits::max_connection_age`
+/// (300s) with `max_concurrent_connections` (256 per core) puts the steady-state
+/// re-handshake rate near one signature per core per second. 100/s leaves a large
+/// multiple of that for connection churn and rolling deploys while staying well inside a
+/// KMS account's cryptographic-operation quota.
+pub const DEFAULT_TLS_SIGN_RATE_PER_SEC: u32 = 100;
+
+/// The burst allowance — how many signatures may be drawn back-to-back before the
+/// sustained rate binds. One rolling deploy reconnects a whole fleet at once, so a burst
+/// well above the sustained rate is legitimate; twice the per-second rate absorbs that
+/// without letting a flood accumulate credit.
+pub const DEFAULT_TLS_SIGN_BURST: u32 = 200;
+
+/// A token bucket bounding how many TLS handshake signatures unauthenticated peers can
+/// force out of a remote, billed, account-throttled signer.
+///
+/// In TLS 1.3 the server signs the handshake transcript BEFORE it has seen the client
+/// certificate, so `Signer::sign` is reachable by anything that can complete a
+/// ClientHello — no credential, no client cert. On the delegated custody paths that
+/// signature is a blocking KMS `Sign` round trip or a PKCS#11 `C_Sign`, and session
+/// resumption is refused by design, so each connection costs exactly one. Without a
+/// bound, cheap inbound TCP converts 1:1 into paid, quota-limited signing calls against
+/// the SAME account and key material the cold-path delegated-key issuer uses — so a
+/// handshake flood throttles credential issuance and the fleet fails closed at its
+/// keys' `exp`.
+///
+/// Refusing the handshake is the fail-closed direction: a refused connection costs the
+/// peer a retry, whereas an exhausted KMS quota is a fleet-wide outage.
+#[derive(Debug)]
+pub struct TlsHandshakeSignBudget {
+    /// Bucket capacity (the burst allowance), in tokens.
+    capacity: f64,
+    /// Sustained refill rate, in tokens per second.
+    refill_per_sec: f64,
+    /// `(tokens available, last refill instant)`. A short uncontended lock per
+    /// handshake, which is orders of magnitude cheaper than the signature it guards.
+    state: Mutex<(f64, Instant)>,
+    /// How many signatures this budget has refused, for the operator-facing posture.
+    refused: AtomicU64,
+}
+
+impl TlsHandshakeSignBudget {
+    /// A budget of `rate_per_sec` sustained signatures with a `burst` allowance. Both
+    /// are clamped to at least 1 so a mis-set value cannot disable the signer outright.
+    pub fn new(rate_per_sec: u32, burst: u32) -> Self {
+        TlsHandshakeSignBudget {
+            capacity: f64::from(burst.max(1)),
+            refill_per_sec: f64::from(rate_per_sec.max(1)),
+            state: Mutex::new((f64::from(burst.max(1)), Instant::now())),
+            refused: AtomicU64::new(0),
+        }
+    }
+
+    /// The sustained rate this budget enforces, for the startup posture line.
+    pub fn rate_per_sec(&self) -> u32 {
+        self.refill_per_sec as u32
+    }
+
+    /// The burst allowance, for the startup posture line.
+    pub fn burst(&self) -> u32 {
+        self.capacity as u32
+    }
+
+    /// Signatures refused so far because the budget was exhausted.
+    pub fn refused(&self) -> u64 {
+        self.refused.load(Ordering::Relaxed)
+    }
+
+    /// Take one token, or report that the budget is exhausted.
+    ///
+    /// A poisoned lock is treated as exhausted: the only writer is this method, so a
+    /// poisoned lock means a panic inside it, and continuing to sign off state that is
+    /// not known good is the direction this exists to prevent.
+    fn try_acquire(&self) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            self.refused.fetch_add(1, Ordering::Relaxed);
+            return false;
+        };
+        let now = Instant::now();
+        let elapsed = now.duration_since(state.1).as_secs_f64();
+        state.1 = now;
+        state.0 = (state.0 + elapsed * self.refill_per_sec).min(self.capacity);
+        if state.0 >= 1.0 {
+            state.0 -= 1.0;
+            true
+        } else {
+            drop(state);
+            self.refused.fetch_add(1, Ordering::Relaxed);
+            false
+        }
+    }
+}
+
+impl Default for TlsHandshakeSignBudget {
+    fn default() -> Self {
+        TlsHandshakeSignBudget::new(DEFAULT_TLS_SIGN_RATE_PER_SEC, DEFAULT_TLS_SIGN_BURST)
+    }
+}
+
 /// A [`rustls::sign::SigningKey`] that delegates Ed25519 handshake signing to a
 /// non-exporting [`RawEd25519TlsSigner`].
 pub struct DelegatedEd25519SigningKey {
     signer: Arc<dyn RawEd25519TlsSigner>,
+    budget: Arc<TlsHandshakeSignBudget>,
 }
 
 impl std::fmt::Debug for DelegatedEd25519SigningKey {
@@ -66,8 +174,25 @@ impl std::fmt::Debug for DelegatedEd25519SigningKey {
 }
 
 impl DelegatedEd25519SigningKey {
+    /// A signing key guarded by the default handshake-signature budget
+    /// ([`DEFAULT_TLS_SIGN_RATE_PER_SEC`] / [`DEFAULT_TLS_SIGN_BURST`]).
     pub fn new(signer: Arc<dyn RawEd25519TlsSigner>) -> Self {
-        DelegatedEd25519SigningKey { signer }
+        DelegatedEd25519SigningKey::with_budget(signer, Arc::new(TlsHandshakeSignBudget::default()))
+    }
+
+    /// A signing key guarded by a caller-supplied budget, so an embedder sized against a
+    /// different KMS quota (or several servers sharing one account) can hand the same
+    /// budget to each.
+    pub fn with_budget(
+        signer: Arc<dyn RawEd25519TlsSigner>,
+        budget: Arc<TlsHandshakeSignBudget>,
+    ) -> Self {
+        DelegatedEd25519SigningKey { signer, budget }
+    }
+
+    /// The budget guarding this key's remote signer.
+    pub fn budget(&self) -> &Arc<TlsHandshakeSignBudget> {
+        &self.budget
     }
 }
 
@@ -78,6 +203,7 @@ impl SigningKey for DelegatedEd25519SigningKey {
         if offered.contains(&SignatureScheme::ED25519) {
             Some(Box::new(DelegatedEd25519Signer {
                 signer: self.signer.clone(),
+                budget: Arc::clone(&self.budget),
             }))
         } else {
             None
@@ -91,6 +217,7 @@ impl SigningKey for DelegatedEd25519SigningKey {
 
 struct DelegatedEd25519Signer {
     signer: Arc<dyn RawEd25519TlsSigner>,
+    budget: Arc<TlsHandshakeSignBudget>,
 }
 
 impl std::fmt::Debug for DelegatedEd25519Signer {
@@ -101,6 +228,18 @@ impl std::fmt::Debug for DelegatedEd25519Signer {
 
 impl Signer for DelegatedEd25519Signer {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+        // The peer is still unauthenticated here (TLS 1.3 signs before the client
+        // certificate is seen), so the budget is checked BEFORE the remote signer is
+        // touched. Refusing the handshake costs the peer a retry; spending the KMS quota
+        // costs the fleet its ability to issue delegated credentials at all.
+        if !self.budget.try_acquire() {
+            return Err(rustls::Error::General(
+                "delegated TLS handshake-signature budget exhausted; this connection is \
+                 refused so unauthenticated peers cannot spend the signing quota the \
+                 delegated-key issuer depends on"
+                    .to_string(),
+            ));
+        }
         let sig = self
             .signer
             .sign_tls_ed25519(message)
@@ -127,19 +266,42 @@ impl Signer for DelegatedEd25519Signer {
 #[derive(Debug)]
 pub struct DelegatedCertResolver {
     certified: Arc<CertifiedKey>,
+    budget: Arc<TlsHandshakeSignBudget>,
 }
 
 impl DelegatedCertResolver {
     /// Pair the server certificate chain (public; loaded from a file) with the
-    /// delegated signer for its key.
+    /// delegated signer for its key, guarded by the default handshake-signature budget.
     pub fn new(
         cert_chain: Vec<CertificateDer<'static>>,
         signer: Arc<dyn RawEd25519TlsSigner>,
     ) -> Arc<Self> {
-        let key = Arc::new(DelegatedEd25519SigningKey::new(signer));
+        DelegatedCertResolver::with_budget(
+            cert_chain,
+            signer,
+            Arc::new(TlsHandshakeSignBudget::default()),
+        )
+    }
+
+    /// As [`new`](Self::new), with a caller-supplied budget.
+    pub fn with_budget(
+        cert_chain: Vec<CertificateDer<'static>>,
+        signer: Arc<dyn RawEd25519TlsSigner>,
+        budget: Arc<TlsHandshakeSignBudget>,
+    ) -> Arc<Self> {
+        let key = Arc::new(DelegatedEd25519SigningKey::with_budget(
+            signer,
+            Arc::clone(&budget),
+        ));
         Arc::new(DelegatedCertResolver {
             certified: Arc::new(CertifiedKey::new(cert_chain, key)),
+            budget,
         })
+    }
+
+    /// The budget bounding how fast unauthenticated peers can drive the remote signer.
+    pub fn budget(&self) -> &Arc<TlsHandshakeSignBudget> {
+        &self.budget
     }
 }
 
@@ -212,5 +374,68 @@ mod tests {
         let key = DelegatedEd25519SigningKey::new(Arc::new(ShortSig));
         let signer = key.choose_scheme(&[SignatureScheme::ED25519]).unwrap();
         assert!(signer.sign(b"x").is_err());
+    }
+
+    /// Counts how many times the remote signer was actually reached, which is what the
+    /// budget exists to bound — a status-only assertion would pass while every
+    /// ClientHello still bought a KMS `Sign`.
+    #[derive(Default)]
+    struct CountingSigner {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl RawEd25519TlsSigner for CountingSigner {
+        fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let key = McpReSigningKey::from_seed_bytes(&[7u8; 32]);
+            Ok(b64url_decode(&key.sign(message)).expect("local sig is valid b64url"))
+        }
+        fn tls_public_key_spki_der(&self) -> Result<Vec<u8>, KeyError> {
+            Ok(crate::kms_keysource::ED25519_SPKI_PREFIX.to_vec())
+        }
+    }
+
+    /// An unauthenticated handshake flood must not reach the remote signer once the
+    /// budget is spent: the refused handshakes cost ZERO signer invocations.
+    #[test]
+    fn handshake_signature_budget_bounds_remote_signer_invocations() {
+        let counting = Arc::new(CountingSigner::default());
+        // A tiny budget with a slow refill, so the burst is the whole allowance here.
+        let budget = Arc::new(TlsHandshakeSignBudget::new(1, 3));
+        let key = DelegatedEd25519SigningKey::with_budget(counting.clone(), Arc::clone(&budget));
+        let mut ok = 0usize;
+        let mut refused = 0usize;
+        for _ in 0..50 {
+            let signer = key
+                .choose_scheme(&[SignatureScheme::ED25519])
+                .expect("signer");
+            match signer.sign(b"transcript") {
+                Ok(_) => ok += 1,
+                Err(_) => refused += 1,
+            }
+        }
+        // The burst is 3 and the refill is 1/s, so a tight loop draws at most the burst
+        // plus whatever fraction of a second the loop takes.
+        assert!(ok >= 3, "the burst allowance must be usable, got {ok}");
+        assert!(ok < 10, "the flood must be bounded, got {ok} signatures");
+        assert!(
+            refused > 0,
+            "the flood must be refused once the budget is spent"
+        );
+        assert_eq!(
+            counting.calls.load(Ordering::Relaxed),
+            ok,
+            "a refused handshake must never reach the remote signer"
+        );
+        assert_eq!(budget.refused(), refused as u64);
+    }
+
+    /// The budget refills, so a bounded rate is a RATE and not a one-shot quota.
+    #[test]
+    fn handshake_signature_budget_refills_over_time() {
+        let budget = TlsHandshakeSignBudget::new(1000, 1);
+        assert!(budget.try_acquire());
+        assert!(!budget.try_acquire());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(budget.try_acquire(), "the bucket must refill with time");
     }
 }

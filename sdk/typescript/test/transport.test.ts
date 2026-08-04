@@ -13,6 +13,30 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { JSONRPCMessage } from "@modelcontextprotocol/client";
 
+// The core's `bound` verdict on a rejection receipt, forced. The recorded receipt in
+// `transport_replay.test.ts` is request-bound, and no fixture can carry an unbound one:
+// a preflight-unbound receipt is signed WITHOUT the `;req` request components, so it
+// cannot be derived from a recording without the server's delegated private key. The
+// unbound case is the security-relevant one, so the verdict is overridden here and the
+// real core answers everything else — with the override unset this is a pass-through,
+// and every other test in this file runs against the genuine binding.
+const boundVerdict = vi.hoisted(() => ({ override: null as boolean | null }));
+vi.mock("../native/binding.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../native/binding.js")>();
+  return {
+    ...actual,
+    verifyResponse: (...args: Parameters<typeof actual.verifyResponse>) =>
+      boundVerdict.override === null
+        ? actual.verifyResponse(...args)
+        : {
+            outcome: "rejection",
+            wireCode: "mcp-re.authorization_binding_missing",
+            bound: boundVerdict.override,
+            requestState: null,
+          },
+  };
+});
+
 import { bindingsJson } from "../src/authorization.js";
 import type { HttpHeader } from "../native/binding.js";
 import type { PendingRequest } from "../src/correlation.js";
@@ -314,6 +338,21 @@ describe("McpReHttpTransport notification handling", () => {
       name: "NotificationNotAcknowledged",
       method: "notifications/initialized",
     });
+  });
+
+  it("reports the ack failure as the frozen token, not the binding's prefixed spelling", async () => {
+    // `wireCode` is documented as the frozen `mcp-re.*` token a caller branches on
+    // without parsing prose. The napi binding spells a core failure
+    // `"mcp-re: mcp-re.<token>"`, and the request path already strips that; the
+    // notification path passed the prefixed string straight through, so the same wire
+    // event reached an application under two different spellings depending on which
+    // message shape carried it. The Python twin pins the same assertion.
+    const transport = new McpReHttpTransport(minimalConfig(), async () => unsignedAck);
+    await transport.start();
+
+    const error = await transport.send(NOTIFICATION).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(NotificationNotAcknowledged);
+    expect((error as NotificationNotAcknowledged).wireCode).toMatch(/^mcp-re\.[a-z0-9_]+$/);
   });
 
   it("fails closed on a bodied 200 in place of an acknowledgement", async () => {
@@ -775,4 +814,96 @@ describe("McpReHttpTransport delegated-verification anchor", () => {
       ).toThrow(new RegExp(`trust anchor is incomplete[\\s\\S]*${field}`));
     });
   }
+});
+
+describe("McpReHttpTransport revocation denylist shape", () => {
+  // `revokedIdentifiers` is the one config field whose wrong value fails OPEN. Every
+  // sibling anchor field degrades into "nothing verifies"; a malformed denylist degrades
+  // into "nothing is revoked" while still reporting a denylist as configured.
+
+  it("refuses a bare string, which would spread into a per-character denylist", () => {
+    // `[..."kid-compromised"]` is a NON-EMPTY list of single characters, none of which
+    // can match a delegated kid, issuer kid or credential `jti`. The compromised key
+    // stays accepted for its whole TTL and epoch window while the operator believes
+    // revocation is in force. `readonly string[]` cannot catch it: the type is erased.
+    expect(
+      () =>
+        new McpReHttpTransport(
+          minimalConfig({ revokedIdentifiers: "kid-compromised" as unknown as string[] }),
+          vi.fn<Poster>(),
+        ),
+    ).toThrow(/revokedIdentifiers must be an array/);
+  });
+
+  it("refuses an entry that is not a non-empty string", () => {
+    // An empty string matches no identifier either, so it is a denylist entry that
+    // revokes nothing while making the list look populated.
+    expect(
+      () =>
+        new McpReHttpTransport(
+          minimalConfig({ revokedIdentifiers: ["kid-1", ""] }),
+          vi.fn<Poster>(),
+        ),
+    ).toThrow(/non-empty strings/);
+    expect(
+      () =>
+        new McpReHttpTransport(
+          minimalConfig({ revokedIdentifiers: [7 as unknown as string] }),
+          vi.fn<Poster>(),
+        ),
+    ).toThrow(/non-empty strings/);
+  });
+
+  it("accepts a well-formed denylist, and the empty TTL-only posture", () => {
+    expect(
+      () => new McpReHttpTransport(minimalConfig({ revokedIdentifiers: ["kid-1"] }), vi.fn<Poster>()),
+    ).not.toThrow();
+    expect(
+      () => new McpReHttpTransport(minimalConfig({ revokedIdentifiers: [] }), vi.fn<Poster>()),
+    ).not.toThrow();
+    expect(() => new McpReHttpTransport(minimalConfig(), vi.fn<Poster>())).not.toThrow();
+  });
+});
+
+describe("McpReHttpTransport rejection receipt binding", () => {
+  // `transport_replay.test.ts` pins the BOUND value against a recorded receipt. It cannot
+  // distinguish reading `verified.bound` from hard-coding `true`, and the unbound case is
+  // the security-relevant one, so both verdicts are pinned here against a forced core
+  // answer. The Python twin pins the same pair.
+
+  async function rejectionError(bound: boolean): Promise<{ message: string; data: unknown }> {
+    boundVerdict.override = bound;
+    try {
+      const transport = new McpReHttpTransport(minimalConfig(), async () => ({
+        status: 409,
+        headers: [],
+        body: Buffer.from("{}"),
+      }));
+      await transport.start();
+      const delivered: JSONRPCMessage[] = [];
+      transport.onmessage = (m) => delivered.push(m);
+      await transport.send(REQUEST);
+      return (delivered[0] as { error: { message: string; data: unknown } }).error;
+    } finally {
+      boundVerdict.override = null;
+    }
+  }
+
+  it("reports a preflight-unbound receipt as NOT request-bound", async () => {
+    // The core verifies a rejection receipt request-bound first and preflight-unbound
+    // second, and says which one succeeded. An unbound receipt is genuine evidence from a
+    // trusted issuer, but it answers no particular transmission — one of them is an answer
+    // to every request from every client of that issuer for the credential's validity
+    // window — so an application must be able to tell "the boundary rejected MY request"
+    // from "a generic rejection arrived" (RSP-7). It is still an error and never a result.
+    const error = await rejectionError(false);
+    expect(error.message, "the frozen token is what the peer said and must not be rewritten").toBe(
+      "mcp-re.authorization_binding_missing",
+    );
+    expect(error.data).toEqual({ requestBound: false });
+  });
+
+  it("reports a request-bound receipt as request-bound", async () => {
+    expect((await rejectionError(true)).data).toEqual({ requestBound: true });
+  });
 });

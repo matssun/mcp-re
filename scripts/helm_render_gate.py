@@ -18,7 +18,13 @@ This gate renders the chart under a matrix of value sets and asserts, for each,
 whether rendering must SUCCEED or must FAIL — and when it must fail, that the
 refusal message names the value at fault. It also pins the rendered argv for the
 cases where "renders successfully" is not the whole property: a flag that must be
-present, and a flag that must be ABSENT.
+present, and a flag that must be ABSENT; the pod-spec FIELDS that argv cannot
+express (the apiserver token, the read-only root filesystem, the retention
+volume); and three couplings the chart cannot check against itself, because a
+chart can be flawless in isolation and still describe something the rest of the
+system does not do — a `keySource` the image was never compiled for, a non-root
+uid that lives only in the chart and not in the image, and a documented default
+that is not the constant the proxy actually applies.
 
 Requires the `helm` binary. Absence is a hard error, not a skip: a gate that
 skips itself on the machine where it matters is the same defect it exists to
@@ -38,6 +44,124 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CHART = REPO / "deploy" / "helm" / "mcp-re-proxy"
+DOCKERFILE = REPO / "deploy" / "docker" / "Dockerfile"
+
+#: `keySource` value -> the cargo feature the binary needs to serve it. A mode the
+#: chart accepts but the default image was not built with does not degrade: the CLI
+#: arm behind `#[cfg(not(feature = ...))]` returns a KeyError at startup, so the pod
+#: CrashLoopBackOffs after the operator has already provisioned a KMS key, an IAM
+#: role and an OIDC provider. The chart validating a mode in detail is not the same
+#: as the artifact being able to run it, and only this check couples the two.
+KEY_SOURCE_FEATURES: dict[str, str] = {
+    "gcpKms": "gcp_kms_keysource",
+    "awsKms": "aws_kms_keysource",
+}
+
+
+def default_image_features() -> set[str]:
+    """The feature set `ARG FEATURES=` bakes into the image the chart points at."""
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ARG FEATURES="):
+            return {f.strip() for f in line.split("=", 1)[1].split(",") if f.strip()}
+    return set()
+
+
+def check_image_declares_non_root() -> list[str]:
+    """The proxy IMAGE must declare the same non-root uid the chart pins.
+
+    Carried by the chart alone, the non-root posture is a property of one deployment
+    description rather than of the artifact: `docker run`, a plain manifest, a kind
+    side-load or a chart fork start the process that mounts the response-signing seed
+    and the TLS private key as uid 0. `runAsNonRoot: true` also cannot act as an
+    admission-time backstop unless the image declares a numeric uid for the kubelet
+    to read. Equality with `runAsUser` is asserted too, because the material Secret is
+    delivered 0440 owned by `fsGroup` and the proxy reads it through group membership
+    — a drift between the two numbers is a pod that cannot read its own key.
+    """
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    stage, declared = None, {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FROM ") and " AS " in stripped:
+            stage = stripped.rsplit(" AS ", 1)[1].strip()
+        elif stripped.startswith("USER ") and stage:
+            declared[stage] = stripped.split(None, 1)[1].strip()
+    if "proxy" not in declared:
+        return [f"{DOCKERFILE.name}: the `proxy` stage declares no USER, so the image "
+                "that mounts the signing seed and the TLS key runs as uid 0"]
+    uid = declared["proxy"].split(":")[0]
+    if not uid.isdigit() or uid == "0":
+        return [f"{DOCKERFILE.name}: the `proxy` stage runs as {declared['proxy']!r}; "
+                "it must be a NUMERIC non-root uid for runAsNonRoot to admit against"]
+    values = (CHART / "values.yaml").read_text(encoding="utf-8")
+    for field in ("runAsUser", "runAsGroup", "fsGroup"):
+        expected = [ln.split(":", 1)[1].strip() for ln in values.splitlines()
+                    if ln.strip().startswith(f"{field}:")]
+        if expected and expected[0] != uid:
+            return [f"the image runs as uid {uid} but the chart pins {field}: "
+                    f"{expected[0]} — the mounted key Secret would be unreadable"]
+    return []
+
+
+def check_documented_in_flight_default() -> list[str]:
+    """The absent-flag in-flight ceiling the chart DOCUMENTS must be the code's.
+
+    This number is what an operator sizes the boundary against, and the chart is
+    where they read it. It had been stated three ways at once — `64` in values.yaml,
+    "unbounded" in deployment.yaml, `256` in `ServerLimits::default()` — so two of
+    the three files an operator consults were wrong about the control they configure,
+    and the "unbounded" wording invited setting a ceiling to escape a fail-open
+    default that does not exist. Nothing coupled the prose to the constant, so all
+    three could be individually plausible.
+    """
+    limits = (REPO / "mcp-re-proxy" / "src" / "tls.rs").read_text(encoding="utf-8")
+    actual = ""
+    for line in limits.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("max_in_flight_requests: Some("):
+            actual = stripped.split("Some(", 1)[1].split(")", 1)[0]
+            break
+    if not actual:
+        return ["mcp-re-proxy/src/tls.rs declares no `max_in_flight_requests: Some(N)`; "
+                "the documented default can no longer be checked against the code"]
+    problems = []
+    # `_helpers.tpl` is the third place the number reaches an operator, and the only
+    # one they hit while the render is refusing them.
+    for name in ("values.yaml", "templates/deployment.yaml", "templates/_helpers.tpl"):
+        raw = (CHART / name).read_text(encoding="utf-8")
+        # Comment markers and line wrapping carry no meaning here, and the phrase
+        # being asserted is long enough to straddle a wrap. Normalise both away so
+        # the check reads the sentence rather than the layout.
+        text = " ".join(raw.replace("#", " ").split())
+        if "per-core ceiling" not in text:
+            problems.append(f"{name} no longer explains the absent-flag ceiling at all")
+        elif f"ceiling of {actual}" not in text:
+            problems.append(f"{name} does not state the code's per-core ceiling of {actual}")
+        if "UNBOUNDED" in text or "unbounded ceiling" in text:
+            problems.append(f"{name} still calls the absent-flag default unbounded; "
+                            f"the proxy applies {actual}")
+    return problems
+
+
+def check_image_serves_every_key_source() -> list[str]:
+    """Every custody mode the chart's `keySource` comment offers must be compiled in."""
+    problems: list[str] = []
+    features = default_image_features()
+    if not features:
+        return [f"{DOCKERFILE.name}: no `ARG FEATURES=` line; cannot tell what the image serves"]
+    values = (CHART / "values.yaml").read_text(encoding="utf-8")
+    offered = [mode for mode in KEY_SOURCE_FEATURES if mode in values]
+    if not offered:
+        return ["values.yaml offers no KMS keySource; this check has stopped measuring anything"]
+    for mode in offered:
+        feature = KEY_SOURCE_FEATURES[mode]
+        if feature not in features:
+            problems.append(
+                f"values.yaml offers keySource: {mode} but the default image is built "
+                f"without `{feature}` — that install fails closed at startup"
+            )
+    return problems
+
 
 # A values set that overrides every guard-tripping default, so the BASE render is
 # expected to succeed. Each case below perturbs exactly one thing from here, which
@@ -338,6 +462,68 @@ CASES: list[tuple[str, dict, bool, str]] = [
         False,
         "verifiedContextCarrier",
     ),
+    # --- ADR-MCPRE-053 §7 admission currency ---
+    #
+    # Distinct from the `admission:` in-flight ceiling above in every respect. The
+    # naming collision is the reason these cases are explicit about which control
+    # they exercise: an operator who set `admission.maxInFlightTotal` and believed
+    # admission control was configured had configured a concurrency bound.
+    (
+        "an unknown admissionCurrency.mode is refused",
+        merged({"admissionCurrency": {"mode": "on"}}),
+        False,
+        "admissionCurrency.mode",
+    ),
+    # A gate that looks enabled and verifies nothing is the worst of the three
+    # states, so the trust anchor cannot be left out of a mode that checks.
+    (
+        "admission currency without an authority is refused",
+        merged({"admissionCurrency": {"mode": "required"}}),
+        False,
+        "authorityKid",
+    ),
+    (
+        "admission currency without the shared record is refused",
+        merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5"}}),
+        False,
+        "requires admissionCurrency.redisUrl",
+    ),
+    # This hop decides whether a caller is still admitted, so it gets the same
+    # plaintext-Redis rule as the nonce and trust-epoch hops.
+    (
+        "plaintext admission-currency redis is refused under fleet",
+        merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "redis://r:6379"}}),
+        False,
+        "admissionCurrency.redisUrl is plaintext",
+    ),
+    (
+        "an unbounded degraded window is refused",
+        merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379",
+                                      "allowDegraded": True, "degradedBoundSecs": 0}}),
+        False,
+        "degradedBoundSecs",
+    ),
+    # The half-configured state that reads as "admission control is on" to anyone
+    # auditing the rendered args while nothing is enforced.
+    (
+        "admission-currency settings with mode off are refused, not silently ignored",
+        merged({"admissionCurrency": {"mode": "", "authorityKid": "adm-1"}}),
+        False,
+        "mode is off",
+    ),
+    (
+        "a fully configured admission currency renders",
+        merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379"}}),
+        True,
+        "",
+    ),
 ]
 
 # (name, values, args that MUST appear as an adjacent pair, args that must NOT appear)
@@ -457,6 +643,101 @@ ARGV_CASES: list[tuple[str, dict, list[tuple[str, str]], list[str]]] = [
         [("--key-source", "aws-kms")],
         ["--aws-kms-use-web-identity", "--signing-key-seed"],
     ),
+    # ADR-MCPRE-053 §7. "The guards refuse a bad config" is only half the property:
+    # the chart previously rendered NO admission flag under any values at all, so
+    # every chart-deployed fleet ran AdmissionKind::Off. The flag has to appear.
+    (
+        "no admissionCurrency means no admission flag at all",
+        merged(),
+        [],
+        ["--admission", "--admission-authority-kid", "--admission-authority-pubkey",
+         "--admission-redis-url", "--admission-allow-degraded",
+         "--admission-degraded-bound-secs"],
+    ),
+    (
+        "admission currency renders the mode and all three anchors",
+        merged({"admissionCurrency": {"mode": "required", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379"}}),
+        [("--admission", "required"),
+         ("--admission-authority-kid", "adm-1"),
+         ("--admission-authority-pubkey", "cHVia2V5"),
+         ("--admission-redis-url", "rediss://r:6379")],
+        # Degraded serving is opt-in; leaving it unset must not render a bound that
+        # would read as an authorised window.
+        ["--admission-allow-degraded", "--admission-degraded-bound-secs"],
+    ),
+    (
+        "a bounded degraded window renders both flags together",
+        merged({"admissionCurrency": {"mode": "optional", "authorityKid": "adm-1",
+                                      "authorityPubkey": "cHVia2V5",
+                                      "redisUrl": "rediss://r:6379",
+                                      "allowDegraded": True, "degradedBoundSecs": 30}}),
+        [("--admission", "optional"),
+         ("--admission-allow-degraded", "true"),
+         ("--admission-degraded-bound-secs", "30")],
+        [],
+    ),
+    # SCT-2 / SCT-3 retention. The flag is only half of it — with
+    # readOnlyRootFilesystem set, a rendered path with no writable volume under it
+    # is a proxy that fails on its first write.
+    (
+        "no retainedEvidence.dir means no retention flag",
+        merged(),
+        [],
+        ["--retained-evidence-dir"],
+    ),
+    (
+        "retainedEvidence.dir renders the retention flag",
+        merged({"retainedEvidence": {"dir": "/var/lib/mcp-re/retained", "sizeLimit": "2Gi"}}),
+        [("--retained-evidence-dir", "/var/lib/mcp-re/retained")],
+        [],
+    ),
+]
+
+# (name, values, YAML lines that MUST appear, YAML lines that must NOT appear)
+#
+# Pod-spec posture rather than argv: these are fields, not flags, so `container_args`
+# cannot see them. Compared as whole stripped lines so indentation changes do not
+# make a nested field pass for a top-level one.
+MANIFEST_CASES: list[tuple[str, dict, list[str], list[str]]] = [
+    # The pod holds the response-signing seed and the TLS private key and calls no
+    # Kubernetes API. Asserted on BOTH objects: the ServiceAccount field is what a
+    # reviewer reads, the pod-spec field is what still governs when an existing
+    # account is reused with serviceAccount.create=false.
+    (
+        "the apiserver token is not automounted, on either object",
+        merged(),
+        ["automountServiceAccountToken: false"],
+        [],
+    ),
+    (
+        "the pod spec refuses the token even when the ServiceAccount is not created",
+        merged({"serviceAccount": {"create": False, "name": "existing-sa"}}),
+        ["automountServiceAccountToken: false"],
+        ["kind: ServiceAccount"],
+    ),
+    # An attacker with code execution in the key-holding container is confined to
+    # memory rather than able to stage tooling on the writable layer.
+    (
+        "the proxy container filesystem is read-only",
+        merged(),
+        ["readOnlyRootFilesystem: true"],
+        [],
+    ),
+    (
+        "retention gets the pod's only writable path, and it is bounded",
+        merged({"retainedEvidence": {"dir": "/var/lib/mcp-re/retained", "sizeLimit": "2Gi"}}),
+        ["readOnlyRootFilesystem: true", "- name: retained-evidence",
+         "mountPath: \"/var/lib/mcp-re/retained\"", "emptyDir:", "sizeLimit: \"2Gi\""],
+        [],
+    ),
+    (
+        "no retention means no volume to write to",
+        merged(),
+        [],
+        ["- name: retained-evidence", "emptyDir:"],
+    ),
 ]
 
 
@@ -469,6 +750,17 @@ def main() -> int:
         return 2
 
     failures: list[str] = []
+
+    # Image-vs-chart couplings. Neither is visible in a render: the chart can be
+    # perfect and the artifact still unable to run what it describes.
+    for label, check in (
+        ("the default image serves every offered keySource", check_image_serves_every_key_source),
+        ("the proxy image declares the chart's non-root uid", check_image_declares_non_root),
+        ("the documented in-flight default is the code's", check_documented_in_flight_default),
+    ):
+        problems = check()
+        failures.extend(f"{label}: {p}" for p in problems)
+        print(f"  {'FAIL' if problems else 'ok  '} {label}")
 
     for name, values, must_render, fragment in CASES:
         ok, output = render(values)
@@ -514,12 +806,31 @@ def main() -> int:
             failures.append(f"{name}: " + "; ".join(problems))
         print(f"  {'FAIL' if problems else 'ok  '} {name}")
 
+    for name, values, required_lines, forbidden_lines in MANIFEST_CASES:
+        ok, output = render(values)
+        if not ok:
+            failures.append(f"{name}: render failed:\n{output.strip()[-400:]}")
+            print(f"  FAIL {name}")
+            continue
+        # Comments are dropped: the assertion is about what the manifest DECLARES,
+        # and every one of these fields is argued for in a comment right above it.
+        lines = {
+            line.strip() for line in output.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        problems = [f"{line!r} missing" for line in required_lines if line not in lines]
+        problems += [f"{line!r} present but must be absent" for line in forbidden_lines
+                     if line in lines]
+        if problems:
+            failures.append(f"{name}: " + "; ".join(problems))
+        print(f"  {'FAIL' if problems else 'ok  '} {name}")
+
     if failures:
         print("\nhelm render gate FAILED:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"\nhelm render gate: {len(CASES) + len(ARGV_CASES)} cases pass")
+    print(f"\nhelm render gate: {3 + len(CASES) + len(ARGV_CASES) + len(MANIFEST_CASES)} cases pass")
     return 0
 
 

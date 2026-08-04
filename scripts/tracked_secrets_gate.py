@@ -19,7 +19,11 @@ blast radius. A gate that forbade it would delete a safety control.
 What this gate forbids is the class the template was actually worried about:
 
   * **Private key material** in a tracked file — PEM private-key blocks, an SSH
-    private key, a PKCS#8/PKCS#12 blob.
+    private key, a PKCS#8/PKCS#12 blob. The binary formats are covered by their
+    own detector (`binary_key_signature` / `BINARY_KEY_SUFFIXES`), because the
+    line-oriented scan below decodes UTF-8 and a .p12/.der/.jks key is exactly
+    the thing that does not decode — matching nothing while the gate reported
+    green.
   * **Credential documents** — a GCP service-account JSON key (recognised by its
     `"private_key"` + `"private_key_id"` pair), an AWS access-key id.
   * **Personal account identifiers** — a real `@gmail.com` / `@googlemail.com`
@@ -61,7 +65,11 @@ ALLOWED_PATHS: dict[str, str] = {
 PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     (
         "private-key-block",
-        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
+        # Every PEM/armor label that carries a private key, including the OpenPGP
+        # one — whose real header is `-----BEGIN PGP PRIVATE KEY BLOCK-----`, so a
+        # `PGP ` alternative in front of a bare `PRIVATE KEY-----` never matches an
+        # actual armored key.
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"),
         "a private key belongs in a secret store, never in git",
     ),
     (
@@ -115,6 +123,152 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 ]
 
 
+#: Suffixes whose formats carry NOTHING BUT private key material — there is no
+#: public-artifact use of a .p12/.jks/.pk8, so the name alone is the finding and
+#: the file need not be parsed. `.pem`/`.key`/`.crt` are deliberately absent:
+#: those names carry public certificates and CA bundles just as often, and a gate
+#: that cries wolf gets disabled. Their private-key case is caught by content —
+#: the PEM pattern above, or `binary_key_signature` below.
+BINARY_KEY_SUFFIXES: dict[str, str] = {
+    ".p12": "a PKCS#12 bundle exists to carry a private key",
+    ".pfx": "a PKCS#12 bundle exists to carry a private key",
+    ".jks": "a Java keystore exists to carry private keys",
+    ".bcfks": "a Bouncy Castle keystore exists to carry private keys",
+    ".keystore": "a keystore exists to carry private keys",
+    ".pk8": "a PKCS#8 blob is a private key",
+    ".p8": "a PKCS#8 blob is a private key",
+    ".ppk": "a PuTTY private key",
+    ".kdbx": "a KeePass database is a credential store",
+}
+
+
+def der_private_key_kind(data: bytes) -> str | None:
+    """Name the DER structure if `data` opens as one that carries a private key.
+
+    ASN.1 DER gives an exact discriminator and it costs a header parse. Every
+    private-key container opens as a SEQUENCE whose FIRST member is a version
+    INTEGER, and the value separates them:
+
+      3  PKCS#12 PFX
+      1  SEC1 ECPrivateKey (RFC 5915) — what `openssl ecparam -genkey -outform DER`
+         writes, i.e. an EC TLS or signing key in its most ordinary binary form
+      0  PKCS#8 PrivateKeyInfo, PKCS#1 RSAPrivateKey, traditional DSA
+
+    An X.509 certificate, a CRL, a CSR and a public SubjectPublicKeyInfo all open
+    with a NESTED SEQUENCE (0x30) as their first member, never an INTEGER, so none
+    of them can collide with any of the three.
+
+    Not covered here: PKCS#8 EncryptedPrivateKeyInfo, whose first member is an
+    AlgorithmIdentifier SEQUENCE and is therefore shaped exactly like a
+    certificate. Distinguishing it needs OID matching, which would trade this
+    zero-false-positive property for coverage of the one form that is at least
+    password-wrapped; the `.p8`/`.pk8` suffix rule is what catches it by name.
+    """
+    if len(data) < 4 or data[0] != 0x30:
+        return None
+    length_octet = data[1]
+    if length_octet & 0x80:
+        header = 2 + (length_octet & 0x7F)
+    else:
+        header = 2
+    body = data[header : header + 3]
+    if body == b"\x02\x01\x03":
+        return "a PKCS#12 bundle exists to carry a private key"
+    if body == b"\x02\x01\x01":
+        return "a DER SEC1 ECPrivateKey is a private key"
+    if body == b"\x02\x01\x00":
+        return "a DER PKCS#8 / PKCS#1 blob is a private key"
+    return None
+
+
+def binary_key_signature(data: bytes) -> str | None:
+    """The reason `data` is private key material, or None.
+
+    A file that does not decode as UTF-8 is not a file with nothing in it — it is
+    the exact shape a .p12/.der/.jks key has, and it is what the line-oriented
+    scan cannot see.
+    """
+    if data.startswith(b"\xfe\xed\xfe\xed"):
+        return "a Java keystore (JKS magic) exists to carry private keys"
+    if data.startswith(b"\xce\xce\xce\xce"):
+        return "a JCEKS keystore exists to carry private keys"
+    der = der_private_key_kind(data)
+    if der is not None:
+        return der
+    # A PEM block inside a file that is otherwise not valid UTF-8 — the armor is
+    # ASCII either way, so match it on the raw bytes.
+    if re.search(rb"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----", data):
+        return "a private key belongs in a secret store, never in git"
+    return None
+
+
+def scan_binary(path: str, data: bytes) -> list[tuple[str, int, str, str]]:
+    """Suffix and magic-byte hits for one tracked file, reported at line 0."""
+    hits = []
+    suffix = Path(path).suffix.lower()
+    if suffix in BINARY_KEY_SUFFIXES:
+        hits.append((path, 0, "key-material-file", BINARY_KEY_SUFFIXES[suffix]))
+    why = binary_key_signature(data)
+    if why is not None:
+        hits.append((path, 0, "binary-private-key", why))
+    return hits
+
+
+#: Exclusion patterns that must appear in EVERY file that decides what leaves this
+#: repository. Two such files exist and they govern different transfers:
+#: `.dockerignore` keeps a path out of an image LAYER, `.gcloudignore` keeps it out
+#: of the tarball `gcloud builds submit .` uploads to
+#: gs://<project>_cloudbuild/source/, which is readable by every principal with
+#: project-level storage read and survives the build.
+#:
+#: These paths are exactly the ones a developer is TOLD to fill in with real
+#: credentials — `work/` because it is gitignored, `.aws/` / `.kube/` because that is
+#: where the tooling writes them. Being gitignored is why the scan above cannot see
+#: them, and gcloud reads `.gcloudignore` INSTEAD of `.gitignore` when it exists, so
+#: the ignore list is the whole control. Round 6 added them to one file and not the
+#: other; this check is what makes that asymmetry impossible to reintroduce.
+UPLOAD_IGNORE_FILES: tuple[str, ...] = (".dockerignore", ".gcloudignore")
+REQUIRED_UPLOAD_EXCLUSIONS: tuple[str, ...] = (
+    "work/",
+    "**/work/",
+    "**/.env",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/kubeconfig",
+    ".aws/",
+    ".gcloud/",
+    ".kube/",
+)
+
+
+def missing_upload_exclusions(text: str) -> list[str]:
+    """Which REQUIRED_UPLOAD_EXCLUSIONS an ignore file's body does not carry.
+
+    Whole-line equality, not a substring search: `work/` appearing inside a comment
+    that explains the rule is not the rule, and that is the exact shape the
+    unremediated `.gcloudignore` had — a long preamble and no pattern.
+    """
+    present = {line.strip() for line in text.splitlines() if not line.lstrip().startswith("#")}
+    return [pattern for pattern in REQUIRED_UPLOAD_EXCLUSIONS if pattern not in present]
+
+
+def scan_upload_ignores() -> list[tuple[str, int, str, str]]:
+    """Every credential exclusion missing from an upload-context ignore file."""
+    hits = []
+    for name in UPLOAD_IGNORE_FILES:
+        path = REPO / name
+        if not path.is_file():
+            hits.append((name, 0, "upload-ignore-missing",
+                         "this file decides what leaves the repo; its absence is not a default"))
+            continue
+        for pattern in missing_upload_exclusions(path.read_text(encoding="utf-8")):
+            hits.append((name, 0, "upload-ignore-gap",
+                         f"{pattern!r} is not excluded, so it ships with the build context"))
+    return hits
+
+
 def tracked_files() -> list[str]:
     """Every tracked path, from git. The git tree IS the subject under test."""
     out = subprocess.run(
@@ -148,9 +302,17 @@ def scan_repo() -> list[tuple[str, int, str, str]]:
             continue
         full = REPO / rel
         try:
-            text = full.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
-            continue  # binary or vanished; nothing line-oriented to scan
+            data = full.read_bytes()
+        except (FileNotFoundError, IsADirectoryError):
+            continue  # vanished or a submodule entry
+        # EVERY tracked file goes through the binary detector, decodable or not: a
+        # .p12 that happens to be valid UTF-8 is still a PKCS#12 key, and the
+        # line-oriented pass below would not see it.
+        hits.extend(scan_binary(rel, data))
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue  # not line-oriented; scan_binary above is what covers it
         hits.extend(scan_text(rel, text))
     return hits
 
@@ -183,6 +345,72 @@ SELFTEST_CASES: list[tuple[bool, str]] = [
     ),
     (False, "const CLIENT_SEED: [u8; 32] = [11u8; 32];"),
     (False, "did:example:server-1"),
+    # The real OpenPGP armor header. The pattern used to spell this
+    # `-----BEGIN PGP PRIVATE KEY-----`, which no tool emits, so an armored key
+    # passed the gate.
+    (True, "-----BEGIN PGP PRIVATE KEY BLOCK-----"),
+    (True, "-----BEGIN ENCRYPTED PRIVATE KEY-----"),
+    (True, "-----BEGIN DSA PRIVATE KEY-----"),
+    (False, "-----BEGIN CERTIFICATE-----"),
+    (False, "-----BEGIN PUBLIC KEY-----"),
+]
+
+#: `(should_flag, name, bytes)` for the binary detector — the class the
+#: line-oriented scan structurally cannot see. Without these the extension and
+#: magic-byte rules are untested code, which is the same failure mode as the
+#: guard this file replaced.
+BINARY_SELFTEST_CASES: list[tuple[bool, str, bytes]] = [
+    # PKCS#12: SEQUENCE (long-form length) then version INTEGER 3.
+    (True, "bundle.bin", b"\x30\x82\x04\x00\x02\x01\x03\x30\x82\x03\xc6"),
+    # DER PKCS#8 PrivateKeyInfo: version INTEGER 0.
+    (True, "key.bin", b"\x30\x82\x01\x54\x02\x01\x00\x30\x0d\x06\x09"),
+    # SEC1 ECPrivateKey (RFC 5915), version INTEGER 1 — the literal first bytes of
+    # `openssl ecparam -genkey -name prime256v1 -outform DER`, i.e. an EC TLS key
+    # in its most ordinary binary form. Short-form length, so the version follows
+    # the header immediately.
+    (True, "ec.bin", b"\x30\x77\x02\x01\x01\x04\x20\x11\x22\x33\x44"),
+    (True, "store.bin", b"\xfe\xed\xfe\xed\x00\x00\x00\x02"),
+    # A .p12 is a private key by name; the bytes need not be parsed.
+    (True, "client.p12", b"not even DER"),
+    (True, "server.jks", b"\x00\x01\x02\x03"),
+    # An armored key inside a file the UTF-8 pass cannot decode.
+    (True, "mixed.bin", b"\xff\xfe binary \n-----BEGIN OPENSSH PRIVATE KEY-----\n"),
+    # Must NOT flag. A DER X.509 certificate: the outer SEQUENCE's first member is
+    # the tbsCertificate SEQUENCE (0x30), never a version INTEGER.
+    (False, "cert.der", b"\x30\x82\x03\x1c\x30\x82\x02\x04\xa0\x03\x02\x01\x02"),
+    (False, "logo.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+    (False, "fixture.json", b'{"schema": "mcp-re-scitt-service-trust-pin/v1"}'),
+    (False, "chain.pem", b"-----BEGIN CERTIFICATE-----\nMIIB\n"),
+]
+
+#: `(should_flag, label, ignore-file body)`. The first case is the VERBATIM
+#: `.gcloudignore` this check was written against — the one that excluded build
+#: output and nothing else while `.dockerignore` already carried the credential
+#: block. Without it the parity check is code that has only ever seen a passing
+#: input.
+UPLOAD_IGNORE_SELFTEST_CASES: list[tuple[bool, str, str]] = [
+    (
+        True,
+        "the pre-remediation .gcloudignore (build output only)",
+        "# Keep the Cloud Build upload small.\n"
+        ".git/\ntarget/\n**/target/\nnode_modules/\n**/node_modules/\n"
+        ".venv*/\n**/.venv*/\nsdk/**/dist/\nsdk/**/native/\n*.log\n",
+    ),
+    (
+        True,
+        "the exclusions named only inside a comment",
+        "".join(f"# {pattern}\n" for pattern in REQUIRED_UPLOAD_EXCLUSIONS),
+    ),
+    (
+        True,
+        "one exclusion dropped from an otherwise complete list",
+        "".join(f"{pattern}\n" for pattern in REQUIRED_UPLOAD_EXCLUSIONS[1:]),
+    ),
+    (
+        False,
+        "every exclusion present",
+        "*.log\n" + "".join(f"{pattern}\n" for pattern in REQUIRED_UPLOAD_EXCLUSIONS),
+    ),
 ]
 
 
@@ -194,10 +422,24 @@ def selftest() -> int:
             verb = "did not flag" if should_flag else "wrongly flagged"
             print(f"SELFTEST FAIL: detector {verb}: {sample!r}")
             failures += 1
+    for should_flag, name, data in BINARY_SELFTEST_CASES:
+        flagged = bool(scan_binary(name, data))
+        if flagged != should_flag:
+            verb = "did not flag" if should_flag else "wrongly flagged"
+            print(f"SELFTEST FAIL: binary detector {verb}: {name} {data[:16]!r}")
+            failures += 1
+    for should_flag, label, body in UPLOAD_IGNORE_SELFTEST_CASES:
+        flagged = bool(missing_upload_exclusions(body))
+        if flagged != should_flag:
+            verb = "did not flag" if should_flag else "wrongly flagged"
+            print(f"SELFTEST FAIL: upload-ignore check {verb}: {label}")
+            failures += 1
+    total = (len(SELFTEST_CASES) + len(BINARY_SELFTEST_CASES)
+             + len(UPLOAD_IGNORE_SELFTEST_CASES))
     if failures:
         print(f"\n{failures} selftest case(s) failed — the gate is not trustworthy.")
         return 1
-    print(f"selftest ok: {len(SELFTEST_CASES)} cases")
+    print(f"selftest ok: {total} cases")
     return 0
 
 
@@ -205,19 +447,21 @@ def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
 
-    hits = scan_repo()
+    hits = scan_upload_ignores() + scan_repo()
     if not hits:
         print("tracked-secrets gate: clean")
         return 0
 
-    print("Tracked files carry credential material or personal identifiers:\n")
+    print("Credential material is reachable from a tracked file or a build upload:\n")
     for path, lineno, name, why in hits:
         print(f"  {path}:{lineno}  [{name}] {why}")
     print(
-        "\nRemove the value and rotate it — a tracked file is public history even "
-        "after a later commit deletes it. Use a placeholder, or read it from the "
-        "environment. If a match is a genuine false positive, add the path to "
-        "ALLOWED_PATHS with the reason it is safe."
+        "\nFor a tracked file: remove the value and rotate it — a tracked file is "
+        "public history even after a later commit deletes it. Use a placeholder, or "
+        "read it from the environment. If a match is a genuine false positive, add "
+        "the path to ALLOWED_PATHS with the reason it is safe.\n"
+        "For an upload-ignore gap: add the pattern verbatim. `.dockerignore` and "
+        "`.gcloudignore` govern different transfers, so both need it."
     )
     return 1
 

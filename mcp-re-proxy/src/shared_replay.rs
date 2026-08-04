@@ -314,7 +314,13 @@ pub struct InMemoryAtomicReplayStore {
     /// as a field so tests can exercise the ceiling cheaply; production always
     /// uses the default.
     max_entries: usize,
+    /// The inline sweep's anchor. Shared with clones, so every handle onto the same
+    /// map evicts against the same notion of now.
+    clock: UnixClock,
 }
+
+/// A unix-seconds clock, behind an `Arc` because the store is cloned to share state.
+type UnixClock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 impl Default for InMemoryAtomicReplayStore {
     fn default() -> Self {
@@ -329,6 +335,7 @@ impl InMemoryAtomicReplayStore {
             seen: Arc::new(Mutex::new(BTreeMap::new())),
             inserts_since_prune: Arc::new(Mutex::new(0)),
             max_entries: MAX_ATOMIC_STORE_ENTRIES,
+            clock: Arc::new(wall_clock_unix),
         }
     }
 
@@ -337,6 +344,14 @@ impl InMemoryAtomicReplayStore {
     #[cfg(test)]
     fn with_max_entries(mut self, max_entries: usize) -> Self {
         self.max_entries = max_entries;
+        self
+    }
+
+    /// Test-only: inject a fixed clock so the inline sweep's boundary is observable
+    /// without racing the wall clock.
+    #[cfg(test)]
+    fn with_clock(mut self, clock: UnixClock) -> Self {
+        self.clock = clock;
         self
     }
 
@@ -407,12 +422,18 @@ impl AtomicReplayStore for InMemoryAtomicReplayStore {
         //
         // The anchor is the store's OWN clock: the trait's `now_unix` is documented as
         // vestigial (callers pass `0`), and pruning against `0` would evict nothing.
+        //
+        // The boundary is `>=`, the same one [`Self::prune`] and every other store in
+        // the tree apply: an entry is KEPT through its `retain_until` and dropped only
+        // strictly past it. Both directions are safe — past `retain_until` the nonce
+        // can no longer pass the freshness window — but one store applying two
+        // boundaries would put its two code paths a second apart.
         if let Ok(mut since) = self.inserts_since_prune.lock() {
             *since = since.saturating_add(1);
             if *since >= PRUNE_EVERY_N_INSERTS {
                 *since = 0;
-                let now = wall_clock_unix();
-                map.retain(|_, &mut until| until > now);
+                let now = (self.clock)();
+                map.retain(|_, &mut until| until >= now);
             }
         }
         // Fail-closed ceiling (finding #140): this reference store has no
@@ -483,6 +504,39 @@ mod tests {
             "expired entries must be reclaimed so the store recovers"
         );
     }
+    /// One store, one eviction boundary. The explicit `prune` keeps an entry through
+    /// its `retain_until` (`>=`), and the inline sweep — the path production actually
+    /// takes, since nothing calls `prune` — must agree, or the two code paths of one
+    /// store drop an entry a second apart while a doc elsewhere asserts they were
+    /// unified.
+    #[test]
+    fn the_inline_sweep_uses_the_same_boundary_as_the_explicit_prune() {
+        const NOW: i64 = 1_000;
+        let store = InMemoryAtomicReplayStore::new().with_clock(std::sync::Arc::new(|| NOW));
+        // Retained until exactly `now` — the instant the two boundaries disagree on.
+        for i in 0..PRUNE_EVERY_N_INSERTS - 1 {
+            store
+                .insert_if_absent(&format!("boundary{i}"), NOW, 0)
+                .expect("records");
+        }
+        // The next insert is the one that trips the sweep cadence.
+        store
+            .insert_if_absent("trigger", NOW + 5_000, 0)
+            .expect("records");
+        assert_eq!(
+            store.len(),
+            PRUNE_EVERY_N_INSERTS,
+            "an entry is kept THROUGH its retain_until on the inline path too"
+        );
+
+        // And the explicit prune, on the same store at the same instant, agrees.
+        store.prune(NOW);
+        assert_eq!(store.len(), PRUNE_EVERY_N_INSERTS);
+        // One second past it, both drop the boundary entries.
+        store.prune(NOW + 1);
+        assert_eq!(store.len(), 1, "only the still-live entry survives");
+    }
+
     use mcp_re_core::McpReError;
     use mcp_re_core::ReplayCache;
     use mcp_re_core::ReplayCacheError;

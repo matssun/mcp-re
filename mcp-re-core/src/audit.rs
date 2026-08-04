@@ -111,6 +111,9 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::TrustResolverUnavailable => "Trust resolver unavailable",
         McpReError::ReplayCacheUnavailable => "Replay cache unavailable",
         McpReError::EvidenceRetentionUnavailable => "Retained-evidence store unavailable",
+        McpReError::EvidenceRetentionIndeterminate => {
+            "Retained-evidence write failed after the call had already executed"
+        }
         // Draft-02 (v0.6) — ADR-MCPS-040 / decision F.1.
         McpReError::AuthorizationBindingMissing => "authorization_binding missing",
         McpReError::AuthorizationBindingTypeUnsupported => "authorization_binding type unsupported",

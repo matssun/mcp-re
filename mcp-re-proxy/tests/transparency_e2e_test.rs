@@ -177,6 +177,47 @@ fn resolver() -> ActorResolver {
     })
 }
 
+/// A server whose inner backend counts how many times it was actually invoked.
+///
+/// The distinction the retention state machine turns on is "the call definitely did not
+/// execute" vs "it may have", so a test that only reads the status cannot tell whether
+/// the refusal happened on the right side of the execution boundary.
+fn build_server_counting(
+    replay_path: &std::path::Path,
+    retention: Option<Arc<EvidenceRetention>>,
+    dispatches: Arc<std::sync::atomic::AtomicUsize>,
+) -> HttpProfileProxy {
+    let config = server_config(replay_path);
+    let wiring = mcp_re_proxy::build_delegated_signing(&config, root_key())
+        .expect("build delegated signing wiring");
+    let mut rotor = wiring.rotor;
+    rotor.rotate(NOW).expect("first delegated key");
+    let expected_audience = AudienceTuple {
+        audience_id: config.audience.clone(),
+        target_uri: config.target_uri.clone(),
+        route: config.route.clone(),
+    };
+    let proxy = HttpProfileProxy::new_delegated(
+        resolver(),
+        expected_audience,
+        AsyncReplayTier::new(Arc::new(InMemoryAsyncAtomicReplayStore::new()), 60),
+        ProxyDispatchConfig {
+            fleet_strict: false,
+            tier: None,
+        },
+        Box::new(move |_forwarded: &[u8]| -> Vec<u8> {
+            dispatches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true,"tool":"read"}}"#.to_vec()
+        }),
+        300,
+        Arc::clone(&wiring.signer),
+    );
+    match retention {
+        Some(retention) => proxy.with_evidence_retention(retention),
+        None => proxy,
+    }
+}
+
 fn build_server(
     replay_path: &std::path::Path,
     retention: Option<Arc<EvidenceRetention>>,
@@ -291,6 +332,85 @@ fn sign_with(key: SigningKey) -> impl Fn(&[u8]) -> Result<Vec<u8>, HttpProfileEr
 }
 
 // ---- the proofs ------------------------------------------------------------
+
+/// Serve one NOTIFICATION (a JSON-RPC message with no `id`), answered with a signed
+/// bodyless 202.
+fn serve_one_notification(proxy: &HttpProfileProxy, nonce: &str) -> u16 {
+    let inputs = RequestSigningInputs::new(
+        CLIENT_KEY_ID.to_owned(),
+        AudienceTuple {
+            audience_id: AUD.into(),
+            target_uri: TARGET.into(),
+            route: Some("a".into()),
+        },
+        vec![ArtifactBinding::opaque_digest(
+            ArtifactType::OauthDpop,
+            ACCESS_TOKEN.as_bytes(),
+        )],
+        nonce,
+        NOW - 100,
+        NOW + 200,
+    )
+    .with_headers(vec![(
+        "Authorization".to_owned(),
+        format!("Bearer {ACCESS_TOKEN}"),
+    )]);
+    let signed = mcp_re_client_core::build_signed_notification(
+        "notifications/cancelled",
+        serde_json::Map::new(),
+        TARGET,
+        &inputs,
+        &client_key(),
+    )
+    .expect("sign the notification");
+    let request = signed.request();
+    let served = ServedHttpRequest {
+        method: request.method.clone(),
+        target_uri: request.target_uri.clone(),
+        headers: request.headers.clone(),
+        body: request.body.clone(),
+        identity: None,
+        assertion: None,
+    };
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async { proxy.handle(served, NOW).await })
+        .status
+}
+
+/// R7-C010/C011/C012/C019/C034: retention must not be a message class the CLIENT picks.
+///
+/// A notification reaches the same backend and runs the same side effects as a bodied
+/// call; it is merely answered with a signed bodyless 202 instead of a body. When the
+/// retention hook sat only on the bodied exit, dropping the JSON-RPC `id` served the
+/// call, ran it, emitted `response.signed` — and retained nothing, so no receipt could
+/// ever be issued about it.
+#[test]
+fn a_served_notification_is_retained_like_any_other_accepted_exchange() {
+    let scratch = Scratch::new("notification-retained");
+    let retention =
+        Arc::new(EvidenceRetention::open(scratch.join("evidence")).expect("open retention"));
+    let proxy = build_server(&scratch.join("replay"), Some(Arc::clone(&retention)));
+
+    assert_eq!(
+        serve_one_notification(&proxy, "nonce-transparency-notification-1"),
+        202,
+        "a one-way notification is acknowledged with a signed bodyless 202"
+    );
+
+    let retained: Vec<_> = std::fs::read_dir(scratch.join("evidence"))
+        .expect("the store directory exists")
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(
+        retained.len(),
+        1,
+        "the accepted notification must be retained; omitting the JSON-RPC id must not \
+         be a way to have a served, executed call leave no reconstructible hop"
+    );
+}
 
 /// The whole vertical: serve, retain, reconstruct, attest, register, verify offline.
 #[test]
@@ -491,5 +611,95 @@ fn an_exchange_whose_evidence_cannot_be_retained_is_refused() {
         ),
         "serving a call the deployment cannot account for would break the assertion \
          turning retention on makes"
+    );
+}
+
+/// R7-C018/C045/C058: a known-unwritable store must stop the call BEFORE the backend.
+///
+/// 503 says "nothing happened, retry is safe", and that is only true if the refusal
+/// happened on the near side of the execution boundary. Asserting the status alone
+/// cannot tell the two sides apart, so this counts inner dispatches: the honest 503
+/// requires the backend to have run zero times.
+#[test]
+fn a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs() {
+    let scratch = Scratch::new("prereserve");
+    let evidence = scratch.join("evidence");
+    let retention = Arc::new(EvidenceRetention::open(&evidence).expect("open retention"));
+    let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let proxy = build_server_counting(
+        &scratch.join("replay"),
+        Some(Arc::clone(&retention)),
+        Arc::clone(&dispatches),
+    );
+
+    std::fs::remove_dir_all(&evidence).expect("remove the store directory");
+    std::fs::write(&evidence, b"not a directory").expect("occupy the path");
+
+    assert_eq!(
+        serve_one_full(&proxy, "nonce-transparency-prereserve-1"),
+        (
+            503,
+            Some("mcp-re.evidence_retention_unavailable".to_owned())
+        ),
+    );
+    assert_eq!(
+        dispatches.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the backend must not have run: a retryable 503 for a call that DID execute is \
+         how a store fault becomes repeated execution, since the retry carries a fresh \
+         nonce the replay tier cannot refuse"
+    );
+}
+
+/// R7-C018/C045/C058: the post-execution failure is a DIFFERENT state, and says so.
+///
+/// Reserve succeeds, so the call is dispatched; the store is then broken, so completion
+/// fails. There is no transaction spanning the backend and the store, so this state is
+/// unavoidable — what matters is that it is reported as indeterminate rather than as an
+/// ordinary retryable outage, and that the reservation marker survives as the durable
+/// record that this request crossed the execution threshold.
+#[tokio::test]
+async fn a_retention_failure_after_execution_is_indeterminate_and_leaves_its_reservation() {
+    let scratch = Scratch::new("indeterminate");
+    let evidence = scratch.join("evidence");
+    let retention = EvidenceRetention::open(&evidence).expect("open retention");
+
+    let request = mcp_re_http_profile::HttpRequest {
+        method: "POST".to_owned(),
+        target_uri: TARGET.to_owned(),
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+    };
+    let response = mcp_re_http_profile::HttpResponse {
+        status: 200,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+    };
+
+    let reservation = retention
+        .reserve(&request)
+        .await
+        .expect("reserve before dispatch");
+    let marker = evidence.join(format!("{}.pending", reservation.digest().as_str()));
+    assert!(
+        marker.exists(),
+        "the reservation must be durable before the side effects run"
+    );
+
+    // The backend has now "run". Break the store underneath the completion.
+    std::fs::remove_dir_all(&evidence).expect("remove the store directory");
+    std::fs::write(&evidence, b"not a directory").expect("occupy the path");
+
+    retention
+        .complete(&reservation, &request, &response)
+        .await
+        .expect_err("completion must fail once the store is gone");
+
+    // Restore a directory so the marker's absence/presence is observable again.
+    std::fs::remove_file(&evidence).expect("free the path");
+    std::fs::create_dir_all(&evidence).expect("recreate the store directory");
+    assert!(
+        !evidence.join(reservation.digest().as_str()).exists(),
+        "no hop was retained for the failed completion"
     );
 }
