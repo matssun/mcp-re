@@ -153,6 +153,8 @@ pub mod live_trust;
 /// "the store is consulted on every verification" a true statement about a running
 /// proxy rather than about a map frozen at boot.
 pub mod reloading_trust;
+/// ADR-MCPRE-055: the trust epoch that gates TLS session resumption.
+pub mod tls_auth_epoch;
 // ADR-MCPS-021 Tier 3: push-invalidation trust cache — bounded-`T` caching plus an
 // injected invalidation channel that evicts revoked entries immediately, with a
 // bounded-`T` fallback when the channel is unhealthy (never a zero-window claim).

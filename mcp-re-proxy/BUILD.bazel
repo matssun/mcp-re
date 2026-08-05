@@ -120,6 +120,7 @@ _PROXY_LIB_SRCS = [
     # Per-request client-cert revocation: the revoked-serial index the serving path
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_revocation.rs",
+    "src/tls_auth_epoch.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).
     "src/push_trust.rs",
@@ -507,6 +508,22 @@ nt_rust_test(
         # Named by path (`tokio::net::TcpListener`) rather than imported, so cargo
         # resolves it transitively while Bazel needs the edge stated.
         "@crates_mcp_re//:tokio",
+    ],
+)
+# ADR-MCPRE-055: resumption is a shortcut only while the trust that authorised it
+# stands. Drives real rustls handshakes, because the property is whether rustls actually
+# resumed — a store that silently never resumed would pass the unit tests.
+nt_rust_test(
+    name = "tls_epoch_resumption_test",
+    srcs = ["tests/tls_epoch_resumption_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_proxy",  # keep
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:rustls",
+        "@crates_mcp_re//:rustls-pki-types",
     ],
 )
 # Revocation must take effect on the connection a revoked peer is ALREADY holding:

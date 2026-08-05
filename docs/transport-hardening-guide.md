@@ -192,9 +192,15 @@ Two bounds remain, and they are narrower than before:
 * `--max-connection-age-secs` (default 300s) bounds **chain re-validation**. Chain
   building happens at the handshake, so a withdrawn or expired client CA reaches an
   established connection only when the peer re-handshakes.
-* TLS session resumption stays **refused**. A resumed session restores the stored peer
-  chain and skips client auth entirely; the per-request checks now cover validity and
-  revocation, but not the chain.
+* TLS session resumption is **bound to the trust epoch** (ADR-MCPRE-055). A resumed
+  session restores the stored peer chain and skips client auth entirely, and the
+  per-request checks cover validity and revocation but not the chain — so resumption is
+  gated on a digest of the trusted client-CA set and the client-auth policy, the inputs
+  chain building depends on. While that digest holds, a stored chain is one the current
+  trust would still build; when a CA is withdrawn it changes and every stored session
+  stops being a shortcut. CRL contents are deliberately NOT in the digest: revocation is
+  already enforced per request, and a re-signed CRL would otherwise tear down every
+  connection on each reload.
 
 **This is what makes warm connections safe to keep.** A deployment holding connections
 open pays the full handshake once per connection rather than once per request, and an

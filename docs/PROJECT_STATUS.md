@@ -181,8 +181,9 @@ number is not a baseline and never reaches `slo_gate.py`.
 ### The audit surface a deployment can actually turn on
 
 - **Per-request client-certificate revocation** — revocation is re-checked on every
-  request rather than only at the handshake, and TLS session resumption is refused so
-  a resumed session cannot carry a chain validated against a withdrawn CA.
+  request rather than only at the handshake, and TLS session resumption is bound to a
+  trust epoch (ADR-MCPRE-055) so a resumed session cannot carry a chain validated
+  against a withdrawn CA.
 - **The ADR-MCPS-035 audit sink is installable** — `--audit-sink none|stderr`, wired
   through `app.rs` and the Helm chart. A proxy that emits no per-request security
   record now says so at startup instead of doing it silently.
@@ -240,7 +241,7 @@ MCP-RE does not currently claim:
 - **zero-window certificate revocation.** Mode A enforces short-lived certs plus a
   static CRL that fails closed on staleness, and Mode C delivers dynamic mid-life
   revocation via the attestor's CRL. Revocation is now re-checked **per request**
-  rather than only at the handshake, and session resumption is refused so a warm
+  rather than only at the handshake, and session resumption is epoch-bound so a warm
   connection cannot outlive the check — so the window is the CRL refresh cadence and
   no longer the connection lifetime. It is still bounded by that cadence, not zero;
 - OS-level sandboxing of wrapped servers, and signed tool-manifest enforcement
