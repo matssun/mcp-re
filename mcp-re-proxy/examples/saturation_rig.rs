@@ -422,15 +422,17 @@ fn run_generators(
     stop.store(true, Ordering::Relaxed);
     let gen_cpu = sampler.join().unwrap_or(0.0);
 
-    let (mut rps, mut ok, mut failed) = (0.0, 0usize, 0usize);
+    let (mut ok, mut failed) = (0usize, 0usize);
     let (mut p50, mut p99) = (0u64, 0u64);
+    let (mut first_start, mut last_end) = (u64::MAX, 0u64);
     for o in &outs {
         let Ok(text) = std::fs::read_to_string(o) else {
             continue;
         };
         let v: Value = serde_json::from_str(&text).expect("gen report");
-        rps += v["throughput_rps"].as_f64().unwrap_or(0.0);
         ok += v["successes"].as_u64().unwrap_or(0) as usize;
+        first_start = first_start.min(v["start_ms"].as_u64().unwrap_or(u64::MAX));
+        last_end = last_end.max(v["end_ms"].as_u64().unwrap_or(0));
         failed += v["failures"].as_u64().unwrap_or(0) as usize;
         p50 = p50.max(v["latency_us"]["p50"].as_u64().unwrap_or(0));
         p99 = p99.max(v["latency_us"]["p99"].as_u64().unwrap_or(0));
@@ -441,7 +443,9 @@ fn run_generators(
         }
         let _ = std::fs::remove_file(o);
     }
-    let _ = ok;
+    // TRUE aggregate: all successes over the union of the generators' windows.
+    let span = (last_end.saturating_sub(first_start)) as f64 / 1000.0;
+    let rps = if span > 0.0 { ok as f64 / span } else { 0.0 };
     (rps, p50, p99, failed, gen_cpu)
 }
 
@@ -456,6 +460,10 @@ fn main() {
     // is judged to have bought nothing.
     let mut max_generators = 8usize;
     let mut saturation_pct = 5.0f64;
+    // Escalation proves saturation but leaves each row at a different offered load, so
+    // the core sweep stops being a curve. `--fixed-generators` pins every point to one
+    // count; the M/M+1 probe still runs so a row that is client-bound is still flagged.
+    let mut fixed_generators: Option<usize> = None;
     // Must match the replica count actually running: `redis-wait-quorum` requires a
     // POSITIVE quorum, so a lone Redis cannot serve this rig at all. The default matches
     // the §7 lane, so the admission path measured here is the one the gate runs.
@@ -481,6 +489,9 @@ fn main() {
             "--backend-workers" => backend_workers = val().parse().expect("backend workers"),
             "--max-generators" => max_generators = val().parse().expect("max generators"),
             "--saturation-pct" => saturation_pct = val().parse().expect("saturation pct"),
+            "--fixed-generators" => {
+                fixed_generators = Some(val().parse().expect("fixed generators"))
+            }
             other => panic!("unknown flag {other}"),
         }
     }
@@ -533,12 +544,24 @@ fn main() {
         // ESCALATE until the client stops being the limit. Testing only M and M+1 tells
         // you the point is a floor but not where the ceiling is; adding generators until
         // throughput stops responding is what turns a floor into a measurement.
-        let mut gens = generators;
+        let mut gens = fixed_generators.unwrap_or(generators);
         let (mut rps, mut p50, _p99_0, mut fail, mut gcpu) =
             run_generators(&gen_exe, &m, &target, gens, connections, requests, &mode);
         let mut verdict = "CLIENT";
         let mut gain = f64::NAN;
-        while gens < max_generators {
+        if let Some(n) = fixed_generators {
+            // One probe at N+1 purely to classify the row; the reported number stays the
+            // pinned-N one so the curve remains comparable.
+            let (probe, _, _, _, _) =
+                run_generators(&gen_exe, &m, &target, n + 1, connections, requests, &mode);
+            gain = (probe - rps) / rps.max(1.0) * 100.0;
+            verdict = if gain > saturation_pct {
+                "CLIENT"
+            } else {
+                "PROXY"
+            };
+        }
+        while gens < max_generators && fixed_generators.is_none() {
             let (rps_next, p50_n, _p99_n, fail_n, gcpu_n) = run_generators(
                 &gen_exe,
                 &m,

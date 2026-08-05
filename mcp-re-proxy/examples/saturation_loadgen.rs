@@ -309,6 +309,14 @@ fn main() {
     // saying why costs more time than the line that records it.
     let first_err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
 
+    // Absolute wall clock, so the orchestrator can compute TRUE aggregate throughput
+    // over the union of the generators' windows. Summing each generator's own
+    // successes/elapsed overstates the total whenever their windows are staggered — and
+    // they are, because each pre-signs its corpus first.
+    let start_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64;
     let started = Instant::now();
     rt.block_on(async {
         let mut tasks = Vec::with_capacity(a.connections);
@@ -391,6 +399,10 @@ fn main() {
         }
     });
     let elapsed = started.elapsed().as_secs_f64();
+    let end_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64;
 
     let mut lat = lat.lock().expect("lat").clone();
     lat.sort_unstable();
@@ -411,6 +423,8 @@ fn main() {
         "failures": failed.load(Ordering::Relaxed),
         "handshakes": handshakes.load(Ordering::Relaxed),
         "wall_secs": elapsed,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
         "presign_secs": presign_secs,
         "throughput_rps": successes as f64 / elapsed,
         "latency_us": { "p50": q(0.50), "p99": q(0.99), "p999": q(0.999),
