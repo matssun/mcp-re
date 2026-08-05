@@ -690,7 +690,7 @@ pub fn run(
         // honest.
         eprintln!(
             "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
-             per_request_crl_check={} tls_session_resumption=refused",
+             per_request_crl_check={} tls_session_resumption=epoch-bound",
             match config.limits.max_connection_age {
                 Some(d) => format!("{}s", d.as_secs()),
                 None => "unbounded".to_string(),

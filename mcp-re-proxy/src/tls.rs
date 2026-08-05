@@ -335,6 +335,14 @@ impl RustlsDirectProvider {
         crls: Vec<CertificateRevocationListDer<'static>>,
         allow_unknown_revocation_status: bool,
     ) -> Result<ServerConfig, TlsError> {
+        // Computed BEFORE `client_ca` is moved into the verifier: the anchors are the
+        // epoch's primary input (ADR-MCPRE-055).
+        let epoch = Arc::new(crate::tls_auth_epoch::SharedTlsAuthEpoch::new(
+            crate::tls_auth_epoch::TlsAuthEpoch::compute(
+                &client_ca,
+                allow_unknown_revocation_status,
+            ),
+        ));
         let provider = Arc::new(ring::default_provider());
         let verifier = build_client_verifier(
             client_ca,
@@ -375,50 +383,57 @@ impl RustlsDirectProvider {
             .with_single_cert(server_chain, server_key)
             .map_err(|e| TlsError::Config(e.to_string()));
 
-        server_config.map(refuse_session_resumption)
+        server_config.map(|config| epoch_bound_resumption(config, epoch))
     }
 }
 
-/// Turn OFF TLS session resumption on a server config that requires client
-/// certificates.
+/// Bind TLS session resumption to the trust epoch (ADR-MCPRE-055).
 ///
 /// rustls runs client authentication — chain building, the CRL consultation, and the
 /// certificate's own validity window — on a FULL handshake only. A resumed session
-/// restores the stored peer certificate chain verbatim and skips it, so a peer that
-/// completed one good handshake keeps an authenticated, identity-bearing channel for
-/// the life of the cached session (rustls' stateful ticket lifetime is 24h by
-/// default). The `ExactMatchBinding` still matches, because the restored identity is
-/// the original one.
+/// restores the stored peer certificate chain verbatim and skips all three, so an
+/// authentication result would otherwise outlive the trust it was derived from: a peer
+/// that completed one good handshake keeps an authenticated, identity-bearing channel
+/// for the life of the cached session. The `ExactMatchBinding` still matches, because
+/// the restored identity is the original one.
 ///
-/// Two of those three are now re-checked per request — the validity window and, when
-/// CRLs are configured, revocation (see [`client_revocation`](crate::client_revocation)).
-/// CHAIN BUILDING is not: a resumed session still carries a chain that was validated
-/// against whatever the trusted client CAs were at the original handshake. Refusing
-/// resumption is what keeps a withdrawn CA from being honoured for a ticket lifetime,
-/// so it stays refused.
+/// Two of the three are recovered per request — the validity window and, when CRLs are
+/// configured, revocation (see [`client_revocation`](crate::client_revocation)). CHAIN
+/// BUILDING is not, and cannot be cheaply: it is the ECDSA work that dominates a full
+/// handshake. So resumption is gated instead on
+/// [`TlsAuthEpoch`](crate::tls_auth_epoch::TlsAuthEpoch), a digest of the trusted
+/// client-CA set and the client-auth policy — exactly the inputs chain building depends
+/// on. While that digest holds, a stored chain is still one the current trust would
+/// build; when an operator withdraws a CA it changes, every stored session stops being a
+/// shortcut, and the peer takes a full handshake against current trust.
 ///
-/// That defeats the whole Mode-A revocation posture, which rests on short-lived
-/// client certificates plus CRL refresh. The cost of refusing resumption is a full
-/// handshake per connection — which is exactly what re-runs the checks — and it is
-/// paid at most once per [`ServerLimits::max_connection_age`] window.
+/// A stale session is never an authorization failure — it is the absence of a shortcut.
 ///
-/// **That cost is measurable and it moves the ADR-MCPRE-051 §7 baseline.** On the §7
-/// envelope (1 core / concurrency 128 / 8000 requests / COLD, i.e. a fresh connection
-/// per request) it is worth about 17% of throughput: 5451 rps with resumption, 4547
-/// without, measured A/B on one box. The §7 envelope is the WORST case for this —
-/// every request pays a handshake. A deployment holding connections open pays it once
-/// per connection, and holding them open is now safe on the two properties that
-/// mattered: an expired or revoked credential is caught on the next request rather
-/// than at the next handshake.
+/// The store is per-`ServerConfig` and therefore shared by every per-core worker serving
+/// through it, which is what makes resumption effective under `SO_REUSEPORT`: a
+/// reconnect landing on a different worker still finds the session.
 ///
-/// The old number was measuring a proxy that skipped client-certificate verification on
-/// ~7999 of those 8000 handshakes, so it was never a measurement of the posture the ADR
-/// claims. Re-baselining is an owner declaration, not something this module can make.
-fn refuse_session_resumption(mut config: ServerConfig) -> ServerConfig {
-    config.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
-    config.send_tls13_tickets = 0;
+/// Early data stays disabled (rustls' default): a 0-RTT payload would be replayable and
+/// is accepted before the handshake completes.
+fn epoch_bound_resumption(
+    mut config: ServerConfig,
+    epoch: Arc<crate::tls_auth_epoch::SharedTlsAuthEpoch>,
+) -> ServerConfig {
+    config.session_storage = Arc::new(crate::tls_auth_epoch::EpochBoundSessionStore::new(
+        epoch,
+        rustls::server::ServerSessionMemoryCache::new(TLS_SESSION_CACHE_ENTRIES),
+    ));
+    config.max_early_data_size = 0;
     config
 }
+
+/// How many resumable sessions one `ServerConfig` retains.
+///
+/// Matched to `ServerLimits::max_concurrent_connections` (256) times a small factor, so
+/// a peer set that fills the connection cap can still resume after briefly disconnecting
+/// rather than evicting itself. Each entry is a few hundred bytes; the cache is bounded,
+/// so this cannot grow with peer count.
+const TLS_SESSION_CACHE_ENTRIES: usize = 4096;
 
 /// Build the fail-closed WebPKI client-certificate verifier shared by the
 /// exported-key ([`RustlsDirectProvider::build_server_config_with_crls`]) and delegated-key
@@ -569,6 +584,10 @@ pub fn build_server_config_delegated_with_crls(
     crls: Vec<CertificateRevocationListDer<'static>>,
     allow_unknown_revocation_status: bool,
 ) -> Result<ServerConfig, TlsError> {
+    // Computed BEFORE `client_ca` is moved into the verifier (ADR-MCPRE-055).
+    let epoch = Arc::new(crate::tls_auth_epoch::SharedTlsAuthEpoch::new(
+        crate::tls_auth_epoch::TlsAuthEpoch::compute(&client_ca, allow_unknown_revocation_status),
+    ));
     let provider = Arc::new(ring::default_provider());
     let verifier = build_client_verifier(
         client_ca,
@@ -581,7 +600,7 @@ pub fn build_server_config_delegated_with_crls(
         .map_err(|e| TlsError::Config(e.to_string()))?
         .with_client_cert_verifier(verifier)
         .with_cert_resolver(cert_resolver);
-    Ok(refuse_session_resumption(server_config))
+    Ok(epoch_bound_resumption(server_config, epoch))
 }
 
 /// Extract the 32 raw Ed25519 public-key bytes from a leaf certificate's

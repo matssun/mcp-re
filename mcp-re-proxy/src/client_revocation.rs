@@ -9,8 +9,9 @@
 //! but the rebuilt verifier only ever reaches NEW connections.
 //!
 //! Bounding that with [`ServerLimits::max_connection_age`](crate::tls::ServerLimits)
-//! makes the exposure finite, and refusing session resumption stops a resumed
-//! handshake from restoring the peer chain without re-running client auth. Neither
+//! makes the exposure finite, and binding session resumption to the trust epoch
+//! ([`tls_auth_epoch`](crate::tls_auth_epoch)) stops a resumed handshake from restoring
+//! a peer chain built under trust that has since changed. Neither
 //! makes revocation take effect on the connection the revoked peer is already using.
 //! This module does: the serving path checks the peer's serial against the CURRENT
 //! CRLs on every request, at the same point it checks the certificate's validity
