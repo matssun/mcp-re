@@ -202,6 +202,15 @@ struct Proc(Child);
 
 impl Drop for Proc {
     fn drop(&mut self) {
+        // Under a profiling wrapper the direct child is the profiler, and SIGKILL
+        // discards the capture it has not written yet. SIGTERM the grandchild instead.
+        if std::env::var("MCP_RE_PROFILE_WRAPPER").is_ok() {
+            let _ = Command::new("pkill")
+                .args(["-TERM", "-P", &self.0.id().to_string()])
+                .status();
+            let _ = self.0.wait();
+            return;
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }

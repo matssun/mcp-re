@@ -471,12 +471,16 @@ async fn handle_request<H: AsyncRequestHandler>(
     // owned permit is held for the rest of this request and released on return (RAII),
     // so the ceiling bounds requests actually in flight, never queuing them without
     // bound. `None` ⇒ no ceiling (unbounded in-flight).
-    let _admission = match &in_flight {
-        Some(semaphore) => match Arc::clone(semaphore).try_acquire_owned() {
-            Ok(permit) => Some(permit),
-            Err(_) => return Ok(overloaded_response()),
-        },
-        None => None,
+    let _timed_total = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Total);
+    let _admission = {
+        let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Admission);
+        match &in_flight {
+            Some(semaphore) => match Arc::clone(semaphore).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(_) => return Ok(overloaded_response()),
+            },
+            None => None,
+        }
     };
 
     // MCPRE-115: count this request as in flight for the duration of its processing
@@ -585,6 +589,7 @@ async fn handle_request<H: AsyncRequestHandler>(
                 identity,
                 assertion: assertion.map(str::to_string),
             };
+            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Handler);
             handler(served_req).await
         }
     };

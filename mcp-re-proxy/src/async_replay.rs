@@ -440,6 +440,7 @@ impl AsyncReplayTier {
         // The entry is charged to the resolved signer — the same identity the composite
         // key's first field carries, passed explicitly so a store never has to recover
         // it by parsing a key it did not compose.
+        let _t_replay = crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplayInsert);
         self.store
             .atomic_insert_if_absent(ReplayInsert::new(&composite, &key.signer, retain_until, 0))
             .await

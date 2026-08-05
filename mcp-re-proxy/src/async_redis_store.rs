@@ -35,6 +35,8 @@
 use mcp_re_core::ReplayDecision;
 use mcp_re_core::ReplayDurabilityClass;
 use redis::aio::ConnectionManager;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::async_replay::AsyncAtomicReplayStore;
@@ -52,8 +54,24 @@ use crate::shared_replay::ReplayStoreError;
 /// `SET NX PX`. Cloning is NOT exposed — one store owns one
 /// [`ConnectionManager`]; the manager is cloned internally per op.
 pub struct RedisAsyncAtomicReplayStore {
-    /// Auto-reconnecting, multiplexed async connection. Cloned per op (cheap).
-    conn: ConnectionManager,
+    /// A POOL of auto-reconnecting multiplexed connections, one picked per op.
+    ///
+    /// One connection has a finite round-trip rate, and every request costs two ops
+    /// (`SET NX PX`, then `WAIT`). Over loopback that rate is far above the serving
+    /// path's, so a pool buys NOTHING measurable there — swept 1, 2, 4, 8 and 16
+    /// against a Docker Redis and throughput was flat at ~13k either way. It is kept
+    /// for the deployment this store is actually for: with Redis a network hop away at
+    /// even 0.5 ms, a single connection ceilings at ~2k ops/s — about 1k requests/s —
+    /// regardless of cores, and that is a bound no amount of serving parallelism can
+    /// cross.
+    ///
+    /// So this is headroom for remote Redis, not a fix for any locally measured
+    /// ceiling. The ~13k seen on loopback is something else and remains unattributed.
+    pool: Vec<ConnectionManager>,
+    /// Round-robin cursor. `Relaxed` is right: this only has to spread load, and a
+    /// racing pair landing on the same connection costs nothing but a shared socket for
+    /// one op. Correctness never depends on which connection an op takes.
+    next: AtomicUsize,
     /// The store's own clock (the proxy's impure edge), read once per op for both
     /// the staleness guard and the TTL window.
     clock: UnixClock,
@@ -93,6 +111,19 @@ impl RedisAsyncAtomicReplayStore {
         clock: UnixClock,
         wait_timeout_ms: Option<u64>,
     ) -> Result<Self, ReplayStoreError> {
+        Self::connect_pooled(url, clock, wait_timeout_ms, Self::DEFAULT_POOL_SIZE).await
+    }
+
+    /// As [`connect_with_wait_timeout`](Self::connect_with_wait_timeout) with an
+    /// explicit pool size. A size of 0 is treated as 1 — a store with no connection
+    /// could not serve at all, and failing closed at startup on an arithmetic edge is
+    /// worse than the single connection this used to have.
+    pub async fn connect_pooled(
+        url: &str,
+        clock: UnixClock,
+        wait_timeout_ms: Option<u64>,
+        pool_size: usize,
+    ) -> Result<Self, ReplayStoreError> {
         let client = redis::Client::open(url).map_err(|e| ReplayStoreError::Unavailable {
             details: format!("open redis client: {e}"),
         })?;
@@ -101,18 +132,37 @@ impl RedisAsyncAtomicReplayStore {
                 .set_response_timeout(Some(Self::response_timeout_for(timeout_ms))),
             None => redis::aio::ConnectionManagerConfig::new(),
         };
-        let conn = client
-            .get_connection_manager_with_config(config)
-            .await
-            .map_err(|e| ReplayStoreError::Unavailable {
-                details: format!("connect redis async: {e}"),
-            })?;
+        let mut pool = Vec::with_capacity(pool_size.max(1));
+        for _ in 0..pool_size.max(1) {
+            let conn = client
+                .get_connection_manager_with_config(config.clone())
+                .await
+                .map_err(|e| ReplayStoreError::Unavailable {
+                    details: format!("connect redis async: {e}"),
+                })?;
+            pool.push(conn);
+        }
         Ok(RedisAsyncAtomicReplayStore {
-            conn,
+            pool,
+            next: AtomicUsize::new(0),
             clock,
             wait_quorum: None,
         })
     }
+
+    /// The connection this op will use. Round-robin over the pool.
+    fn checkout(&self) -> ConnectionManager {
+        let i = self.next.fetch_add(1, Ordering::Relaxed) % self.pool.len();
+        self.pool[i].clone()
+    }
+
+    /// How many connections the store opens when the caller does not say.
+    ///
+    /// Each request costs two Redis round trips, and one connection sustains roughly
+    /// 29k ops/s, so a pool of this size puts the replay path an order of magnitude
+    /// above the proxy's own measured per-request CPU cost — far enough that the next
+    /// ceiling is something else, which is the point.
+    pub const DEFAULT_POOL_SIZE: usize = 8;
 
     /// Enable the `REDIS_WAIT_QUORUM` tier (ADR-MCPS-020): after each fresh insert,
     /// issue `WAIT <quorum> <timeout_ms>` and fail closed unless at least `quorum`
@@ -149,7 +199,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
         // `insert.actor` against.
         let expires_at_unix = insert.expires_at_unix;
         let key = insert.key.to_string();
-        let mut conn = self.conn.clone();
+        let mut conn = self.checkout();
         let wait_quorum = self.wait_quorum;
         // Read the store's OWN clock once (ignore the trait's vestigial 0), and reuse
         // it for both the staleness guard and the TTL window.
