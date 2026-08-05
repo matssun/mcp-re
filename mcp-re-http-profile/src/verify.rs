@@ -807,13 +807,24 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
     //    trust store off the path of digest-mismatched traffic — a keyid is never
     //    looked up for a message whose body does not match what it claims.
     //
-    //    The cost is CPU asymmetry, and it is deliberate rather than overlooked:
-    //    the signature base needs only the Content-Digest HEADER value, never the
-    //    body, so a peer that clears mTLS but holds no valid signing key still
-    //    drives a full SHA-256 pass over a max-size body before the ~50 µs
-    //    signature check refuses it. Availability, not a bypass — the body ceiling
-    //    is the deployment's (the serving path's configured maximum), and the
-    //    per-core in-flight permit bounds concurrency.
+    //    The ordering is not forced by the profile: the signature base needs only
+    //    the Content-Digest HEADER value, never the body. So a peer that clears mTLS
+    //    but holds no valid signing key does drive a full SHA-256 pass over a
+    //    max-size body before the ~50 µs signature check refuses it.
+    //
+    //    That asymmetry is bounded work, not unbounded work, and the bound is not
+    //    here. Every path into this function passes a read-time ceiling that fails
+    //    closed BEFORE the body is allocated — `ServerLimits::max_body_bytes` on the
+    //    serving path, `ClientLimits::max_response_bytes` on the client — with the
+    //    per-core in-flight permit bounding concurrency on top. A ceiling re-checked
+    //    at this point would fire only after the allocation the read-time one
+    //    already refuses, so it would narrow nothing and give a deployment two
+    //    ceilings to keep in agreement.
+    //
+    //    The remaining cost is a few milliseconds of SHA-256 over a max-size body,
+    //    against a sender that had to put that body on the wire to buy it — link
+    //    time alone exceeds the hash by more than an order of magnitude. The ratio
+    //    runs against the sender, so this is not an amplification path.
     let digest_header = required_header(&request.headers, "content-digest")?;
     verify_content_digest_sha256(digest_header, &request.body)?;
     let content_digest = digest_header.to_owned();

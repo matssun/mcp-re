@@ -5,9 +5,11 @@ round's work was sitting in an uncommitted working tree with its findings in a
 gitignored directory — recoverable, but one `git checkout`, failed rebase, or
 tree-is-disposable assumption away from being lost.
 
-**It does not claim the five open findings are closed.** It claims exactly two things:
-the 148 landed fixes are preserved, and the decisions taken about the remaining five
-are recorded so the next context does not re-derive them.
+**It does not claim the round is complete.** It claims that the 148 landed fixes are
+preserved and that every decision taken about the remaining five is recorded, so the next
+context does not re-derive them. Of those five, four were implemented or mitigated on this
+branch and one was ruled accepted-by-design; what none of them has yet is a gate run of
+its own — see the caveat below, which is still the operative line in this document.
 
 ## Identity
 
@@ -47,7 +49,16 @@ branch, drop the artifacts commit and keep the fixes commit.
 decision). Per `triage.json`:
 
 - **148 `confirmed-fixed`** — landed in `226d786`
-- **5 `needs-owner-ruling`** — NOT fixed, NOT closed, listed below
+- **3 `implemented-pending-gate`** — R7-C080, R7-C082, R7-C114, landed as the one
+  `mcp-re-evidence/v2` revision described below
+- **1 `partially-mitigated-pending-gate`** — R7-C095, the fail-stop ceiling; buys
+  detection, not availability
+- **1 `accepted-by-design`** — R7-C139, ruled: the ordering stands, no policy knob is
+  added, and the amplification framing does not survive measurement
+
+`triage.json` is authoritative for disposition. The five sections under "The five open
+findings" below are the STATE AT CHECKPOINT, kept as the record of what was found —
+none of them still reads `needs-owner-ruling`.
 
 ## Gate record
 
@@ -183,9 +194,11 @@ still carry v1 statement payloads and still verify. `submitted_commitment` reads
 and deliberately NOT done for the receipt header, because this field sits inside the
 payload the issuer's COSE_Sign1 covers, so it cannot be stripped.
 
-## The five open findings
+## The five findings that were open at checkpoint
 
-None of these is closed. All five are `needs-owner-ruling` in `triage.json`.
+These descriptions are the state at checkpoint. Four have since been implemented or
+mitigated on this branch and one has been ruled; `triage.json` carries the current
+disposition and a `resolution` for each. None of them is `needs-owner-ruling` any more.
 
 ### R7-C080 — medium, `mcp-re-http-profile/src/scitt.rs:661`
 *RFC 9162 fold admits restated `(leaf_index, tree_size)`.*
