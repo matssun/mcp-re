@@ -21,7 +21,7 @@ Supported discovery:
 
     pip install cbor2 requests
     python tools/scitt_fetch_service_key.py \
-        --service-uri http://127.0.0.1:8000 --kid <kid> --out service-key-pin.json
+        --service-uri https://transparency.example --kid <kid> --out service-key-pin.json
 
 The `kid` should be the one the receipt names; pass `--any-single-key` for a service
 whose key set holds exactly one key and whose receipts carry no `kid`.
@@ -38,8 +38,6 @@ import os
 import sys
 import urllib.request
 
-import cbor2
-
 SCHEMA = "mcp-re-scitt-service-trust-pin/v1"
 
 # COSE_Key parameters (RFC 9052 §7) and algorithms (RFC 9053).
@@ -47,6 +45,23 @@ KTY, KID, ALG, CRV, X, Y = 1, 2, 3, -1, -2, -3
 KTY_EC2, KTY_OKP = 2, 1
 ALG_ES256, ALG_EDDSA = -7, -8
 CRV_P256, CRV_ED25519 = 1, 6
+
+
+def _cbor2():
+    """The cbor2 module, imported on demand.
+
+    Only key normalisation needs it. Importing it at module scope made `--selftest`
+    — the only proof that the https-only guard below still holds — unrunnable on a
+    machine without the dependency, which is every machine the structural gates run
+    on. A guard whose test cannot execute is a guard nobody is checking.
+    """
+    try:
+        import cbor2
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "this path needs the cbor2 package: pip install cbor2"
+        ) from None
+    return cbor2
 
 
 def b64u(raw: bytes) -> str:
@@ -57,8 +72,38 @@ def b64u_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
+def _refuse_scheme(uri: str, how: str) -> SystemExit:
+    return SystemExit(
+        f"refusing to fetch a trust pin over {uri.split(':', 1)[0]!r} ({how}): the pin "
+        "records WHICH key was trusted, so an unauthenticated fetch lets whoever "
+        "controls the network choose it. Use https://."
+    )
+
+
+class HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only while the target stays https.
+
+    The scheme check on the URI the operator typed is not the check that matters:
+    stdlib's default `HTTPRedirectHandler` accepts http, https and ftp targets, so a
+    single 302 from the service restores exactly the plaintext leg the guard exists
+    to prevent — and the key written into the pin is then whoever is on the path's
+    choice. The redirect is where the scheme has to be re-checked, because it is the
+    hop the operator never sees.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith("https://"):
+            raise _refuse_scheme(newurl, f"HTTP {code} redirect from {req.full_url}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _opener() -> urllib.request.OpenerDirector:
+    """An opener that cannot leave https, on the first hop or any later one."""
+    return urllib.request.build_opener(HttpsOnlyRedirectHandler)
+
+
 def fetch(uri: str) -> bytes:
-    """Fetch the key set over HTTPS only.
+    """Fetch the key set over HTTPS only, redirects included.
 
     The pin is the ONE thing that says which key an interoperability run verified
     against, so whoever controls the network at pin time chooses that key. A bare
@@ -71,12 +116,8 @@ def fetch(uri: str) -> bytes:
     key an on-path party substituted.
     """
     if not uri.lower().startswith("https://"):
-        raise SystemExit(
-            f"refusing to fetch a trust pin over {uri.split(':', 1)[0]!r}: the pin records "
-            "WHICH key was trusted, so an unauthenticated fetch lets whoever controls the "
-            "network choose it. Use https://."
-        )
-    with urllib.request.urlopen(uri, timeout=30) as response:  # noqa: S310 - checked above
+        raise _refuse_scheme(uri, "requested URI")
+    with _opener().open(uri, timeout=30) as response:  # noqa: S310 - checked above
         return response.read()
 
 
@@ -90,7 +131,7 @@ def cose_key_thumbprint(kty: int, crv: int, x: bytes, y: bytes | None) -> str:
     required = {KTY: kty, CRV: crv, X: x}
     if y is not None:
         required[Y] = y
-    canonical = cbor2.dumps(dict(sorted(required.items())), canonical=True)
+    canonical = _cbor2().dumps(dict(sorted(required.items())), canonical=True)
     return b64u(hashlib.sha256(canonical).digest())
 
 
@@ -163,7 +204,61 @@ def select(entries: list, kid: str | None, any_single: bool, key_of, kid_of):
     return entries[0], kid_of(entries[0])
 
 
+def selftest() -> int:
+    """Assert the redirect handler itself, not just the first-hop scheme check.
+
+    Driving this end to end would need a TLS server that 302s to plaintext, so the
+    test targets the decision directly: the handler is what stdlib consults on every
+    hop, and it must refuse every scheme but https.
+    """
+    handler = HttpsOnlyRedirectHandler()
+    request = urllib.request.Request("https://service.example/.well-known/scitt-keys")
+    failures = 0
+    for target, allowed in (
+        ("http://service.example/keys", False),
+        ("HTTP://service.example/keys", False),
+        ("ftp://service.example/keys", False),
+        ("file:///tmp/keys", False),
+        ("https://elsewhere.example/keys", True),
+    ):
+        try:
+            handler.redirect_request(request, None, 302, "Found", {}, target)
+            refused = False
+        except SystemExit:
+            refused = True
+        except Exception:  # noqa: BLE001 - stdlib may reject an https target for
+            refused = False  # unrelated reasons; only the scheme decision is under test
+        if refused == allowed:
+            verb = "followed" if allowed else "refused"
+            print(f"SELFTEST FAIL: redirect to {target!r} was not {verb}")
+            failures += 1
+    for uri in ("http://service.example", "file:///tmp/keys"):
+        try:
+            fetch(uri)
+        except SystemExit:
+            continue
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"SELFTEST FAIL: fetch({uri!r}) was not refused before any request")
+        failures += 1
+    # The WIRING, not just the class. `build_opener` installs its own
+    # `HTTPRedirectHandler` unless the caller passes that class or a subclass, so a
+    # guard class that exists but is not the one the opener consults would leave the
+    # plaintext hop open while every case above still passed.
+    installed = [h for h in _opener().handlers if isinstance(h, urllib.request.HTTPRedirectHandler)]
+    if len(installed) != 1 or not isinstance(installed[0], HttpsOnlyRedirectHandler):
+        print(f"SELFTEST FAIL: fetch()'s opener consults {installed!r}, not the https-only handler")
+        failures += 1
+    if failures:
+        print(f"{failures} case(s) failed — the https-only guard is not trustworthy.")
+        return 1
+    print("selftest ok: 8 cases (redirect scheme guard, first-hop scheme guard, opener wiring)")
+    return 0
+
+
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--service-uri", required=True, help="service base URI, or the full JWKS URI")
     ap.add_argument("--method", choices=("well-known-scitt-keys", "jwks"),
@@ -192,7 +287,7 @@ def main() -> int:
     document_digest = b64u(hashlib.sha256(document).digest())
 
     if args.method == "well-known-scitt-keys":
-        decoded = cbor2.loads(document)
+        decoded = _cbor2().loads(document)
         # A COSE_Key Set is an array of COSE_Key maps; some services wrap it in a map
         # under a "keys" label.
         entries = decoded if isinstance(decoded, list) else decoded.get("keys") or decoded.get(1)

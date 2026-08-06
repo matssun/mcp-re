@@ -156,7 +156,8 @@ Admission ceilings (MCPRE-114). Two render-time refusals, because both bad input
 would otherwise produce a chart that looks bounded and is not:
 
   * 0 — Helm treats it as falsy, so the `if` in deployment.yaml would omit the flag
-    and the proxy would run UNBOUNDED after the operator wrote a ceiling of zero.
+    and the proxy would fall back to its own fail-safe per-core ceiling of 256 after
+    the operator wrote a ceiling of zero: silently 256x the boundary they asked for.
     The CLI rejects `--max-in-flight 0` for the same reason.
   * both set — the CLI's precedence silently discards the fleet-wide total in favour
     of the per-core value; the rendered args would show one flag while values.yaml
@@ -165,7 +166,7 @@ would otherwise produce a chart that looks bounded and is not:
 {{- range $key, $value := .Values.admission -}}
 {{- $text := toString $value -}}
 {{- if and (ne $text "") (not (regexMatch "^[1-9][0-9]*$" $text)) -}}
-{{- fail (printf "admission.%s=%q must be a positive integer, or \"\" to omit the flag (UNBOUNDED). 0 is refused rather than read as unset: it looks like a tightening but would mean no ceiling at all." $key $text) -}}
+{{- fail (printf "admission.%s=%q must be a positive integer, or \"\" to omit the flag and take the proxy's own fail-safe per-core ceiling of 256. 0 is refused rather than read as unset: it looks like a tightening but would mean no ceiling at all." $key $text) -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.admission.maxInFlight .Values.admission.maxInFlightTotal -}}

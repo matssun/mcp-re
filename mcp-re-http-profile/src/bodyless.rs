@@ -635,6 +635,23 @@ pub fn sign_bodyless_request(
 }
 
 /// Verify a bodyless REQUEST (§8.1) under the named bodyless request set.
+///
+/// **A configured MCP transport contract is refused, not skipped.** The §4.1 contract
+/// [`crate::verify::verify_request_with_policy`] applies is defined against a JSON-RPC
+/// body: `Mcp-Method` and `Mcp-Name` are checked for AGREEMENT with the body members
+/// they mirror, and `McpTransportPolicy::enforce` reads that body first. A bodyless
+/// request has none, so the contract cannot be applied to this shape as written —
+/// and the parts that could be (the supported-protocol-version set, REQ-10) are not
+/// separable through the policy's public surface.
+///
+/// Silently ignoring the policy is the one thing that must not happen: a deployment
+/// that configured `McpTransportPolicy::mcp_2026_07_28` would have believed its
+/// version and header contract applied to every request shape while one shape was
+/// exempt, which is "a client's claim is not consent" enforced on a request and not
+/// on its sibling. So a policy that carries a transport contract is refused here
+/// rather than dropped. Verifying bodyless requests under one needs a bodyless
+/// analogue of `enforce` — a version-set and header contract stated for a message
+/// with no body — which does not exist yet.
 pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
     request: &HttpRequest,
     resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
@@ -684,5 +701,13 @@ pub fn verify_bodyless_request<R: Into<ResolverOutcome>>(
         &actor.verification_key,
         McpReError::InvalidSignature,
     )?;
+    // After the signature, never before: the contract reads covered headers, so
+    // applying it to unverified input would let an attacker choose which arm fires.
+    // A configured contract that simply did not apply to this shape was the defect —
+    // a deployment believed its version contract covered every request while one
+    // shape was exempt.
+    if let Some(transport) = policy.mcp_transport() {
+        transport.enforce_bodyless(request)?;
+    }
     Ok((actor, RequestEvidence::from_signature_base(&base)))
 }

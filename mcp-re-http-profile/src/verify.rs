@@ -159,12 +159,6 @@ pub(crate) fn resolve_actor_for_slot<R: Into<ResolverOutcome>>(
     Ok(actor)
 }
 
-/// The longest `nonce` this verifier accepts, in characters.
-///
-/// A generous ceiling, not a format: 128 bits of base64url is 22 characters, and the
-/// replay key retains the nonce verbatim for the life of the signature window.
-const MAX_NONCE_CHARS: usize = 256;
-
 /// One parsed `Signature-Input` dictionary member.
 pub(crate) struct ParsedSignatureInput {
     pub(crate) components: Vec<CoveredComponent>,
@@ -240,7 +234,19 @@ fn split_parameters(value: &str) -> Vec<&str> {
 }
 
 /// Find the member value for `label` in a `Signature-Input`/`Signature`
-/// dictionary header, fail-closed on absence or duplication.
+/// dictionary header, fail-closed on absence, duplication, or whitespace the
+/// dictionary grammar does not permit.
+///
+/// RFC 8941 §3.2 `dict-member = member-key ( parameters / ( "=" member-value ) )`
+/// admits no OWS around the `=`; OWS is permitted only around the member-separating
+/// comma, which [`split_dictionary`] trims. Normalizing whitespace after the `=`
+/// away — as a `.trim()` here did — made `mcp-re= (...)` and `mcp-re=(...)` rebuild
+/// to one signature base and verify under one signature. That is the same
+/// wire-spelling collapse [`parse_signature_input`] refuses inside the member, one
+/// layer up: an on-path intermediary could rewrite the raw header bytes without
+/// invalidating anything, so an audit sink, a retained-evidence blob or a cache key
+/// held bytes other than the ones that were signed. This is the sole reader of both
+/// the `Signature-Input` and the `Signature` header, so every path inherits it.
 fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpProfileError> {
     let mut found: Option<&'a str> = None;
     for member in split_dictionary(header_value) {
@@ -251,7 +257,12 @@ fn member_value<'a>(header_value: &'a str, label: &str) -> Result<&'a str, HttpP
                         "duplicate signature label",
                     ));
                 }
-                found = Some(v.trim());
+                if v.trim() != v {
+                    return Err(HttpProfileError::MalformedEvidence(
+                        "dictionary member spacing",
+                    ));
+                }
+                found = Some(v);
             }
         }
     }
@@ -492,14 +503,11 @@ fn parse_signature_input(value: &str) -> Result<ParsedSignatureInput, HttpProfil
                 // COUNT, not entry SIZE. Without a length bound an authenticated
                 // client could pad each nonce to the header limit and pin ~3 orders of
                 // magnitude more memory per admitted request, ending in a self-inflicted
-                // `replay_cache_unavailable` for the whole replica. 256 characters is
-                // far above any real nonce (128 bits of base64url is 22) and far below
-                // anything that amplifies.
-                if nonce.len() > MAX_NONCE_CHARS {
-                    return Err(HttpProfileError::MalformedEvidence(
-                        "nonce signature parameter exceeds the length bound",
-                    ));
-                }
+                // `replay_cache_unavailable` for the whole replica. The same bound is
+                // applied where the signer SERIALIZES the parameter
+                // (`sigbase::validate_nonce_length`), so a value this profile cannot
+                // carry is never emitted either.
+                crate::sigbase::validate_nonce_length(&nonce)?;
                 params.nonce = Some(nonce);
             }
             "keyid" => params.keyid = Some(unquote(v)?),
@@ -795,7 +803,28 @@ pub fn verify_request_with_policy<R: Into<ResolverOutcome>>(
     require_json_media_type(&request.headers, "request content-type")?;
 
     // 1. Content binding first: the body must match its digest before any
-    //    signature statement about that digest is even considered.
+    //    signature statement about that digest is even considered. This keeps the
+    //    trust store off the path of digest-mismatched traffic — a keyid is never
+    //    looked up for a message whose body does not match what it claims.
+    //
+    //    The ordering is not forced by the profile: the signature base needs only
+    //    the Content-Digest HEADER value, never the body. So a peer that clears mTLS
+    //    but holds no valid signing key does drive a full SHA-256 pass over a
+    //    max-size body before the ~50 µs signature check refuses it.
+    //
+    //    That asymmetry is bounded work, not unbounded work, and the bound is not
+    //    here. Every path into this function passes a read-time ceiling that fails
+    //    closed BEFORE the body is allocated — `ServerLimits::max_body_bytes` on the
+    //    serving path, `ClientLimits::max_response_bytes` on the client — with the
+    //    per-core in-flight permit bounding concurrency on top. A ceiling re-checked
+    //    at this point would fire only after the allocation the read-time one
+    //    already refuses, so it would narrow nothing and give a deployment two
+    //    ceilings to keep in agreement.
+    //
+    //    The remaining cost is a few milliseconds of SHA-256 over a max-size body,
+    //    against a sender that had to put that body on the wire to buy it — link
+    //    time alone exceeds the hash by more than an order of magnitude. The ratio
+    //    runs against the sender, so this is not an amplification path.
     let digest_header = required_header(&request.headers, "content-digest")?;
     verify_content_digest_sha256(digest_header, &request.body)?;
     let content_digest = digest_header.to_owned();
@@ -917,25 +946,43 @@ pub fn verify_request_full_with_policy<R: Into<ResolverOutcome>>(
     )?;
     block.validate(&verified.profile_id)?;
 
-    // 3. Audience binding: block audience == expected, and the expected tuple's
-    //    target URI is consistent with the request @target-uri (guards routed /
-    //    reverse-proxied deployments where a label could alias two dispatch
-    //    boundaries).
-    if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
-        return Err(HttpProfileError::AudienceMismatch);
-    }
-
-    // 4. Strict artifact enforcement: every present binding must verify.
-    for binding in &block.artifact_bindings {
-        let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
-            .ok_or(HttpProfileError::ArtifactBindingFailed)?;
-        verify_artifact_binding(binding, &credential)?;
-    }
+    // 3-4. Audience binding and strict artifact enforcement.
+    enforce_full_profile_bindings(request, &block, expected_audience, artifact_material)?;
 
     verified.audience_hash = Some(block.audience.audience_hash());
     verified.audience = Some(block.audience.clone());
     verified.request_block = Some(block);
     Ok(verified)
+}
+
+/// The two full-profile checks that need inputs the request cannot supply for itself:
+/// audience-tuple equality and `artifact_bindings[]`.
+///
+/// Shared with chain reconstruction rather than restated there. Reconstruction's verdict
+/// is embedded in a SCITT Signed Statement, so "served" and "accounted for" have to be
+/// the same verdict — two copies of this rule would let a record be labelled `Complete`
+/// under checks the enforcement boundary had tightened.
+///
+/// The audience test is equality against the VERIFIER's own tuple plus consistency
+/// between that tuple's `target_uri` and the request's `@target-uri`, which guards routed
+/// and reverse-proxied deployments where a label could alias two dispatch boundaries.
+/// Artifact enforcement is strict: a binding whose credential surface is unavailable
+/// fails `artifact_binding_failed` rather than being skipped.
+pub(crate) fn enforce_full_profile_bindings(
+    request: &HttpRequest,
+    block: &HttpRequestEvidenceBlock,
+    expected_audience: &AudienceTuple,
+    artifact_material: &dyn Fn(&ArtifactBinding) -> Option<Vec<u8>>,
+) -> Result<(), HttpProfileError> {
+    if block.audience != *expected_audience || expected_audience.target_uri != request.target_uri {
+        return Err(HttpProfileError::AudienceMismatch);
+    }
+    for binding in &block.artifact_bindings {
+        let credential = resolve_artifact_credential(binding, &request.headers, artifact_material)
+            .ok_or(HttpProfileError::ArtifactBindingFailed)?;
+        verify_artifact_binding(binding, &credential)?;
+    }
+    Ok(())
 }
 
 /// Obtain the credential bytes a binding commits to. DPoP `ath` binds the access
@@ -1590,6 +1637,47 @@ mod wire_form_tests {
         let with_space = r#"("@method");created=1700000000;expires=1700000300;nonce="n";keyid="key one";alg="ed25519""#;
         let parsed = parse_signature_input(with_space).expect("a quoted space is data");
         assert_eq!(parsed.params.keyid.as_deref(), Some("key one"));
+    }
+
+    /// The spelling rules hold at the DICTIONARY MEMBER boundary too, not only inside
+    /// the member value. `member_value` is the sole reader of both `Signature-Input`
+    /// and `Signature`, so OWS normalised away here would let an intermediary rewrite
+    /// either raw header and still verify under the same signature.
+    #[test]
+    fn dictionary_member_spacing_is_refused_not_normalised() {
+        let canonical = format!("mcp-re={CANONICAL}");
+        assert_eq!(
+            member_value(&canonical, "mcp-re").expect("the canonical member reads"),
+            CANONICAL
+        );
+
+        for alternate in [
+            format!("mcp-re= {CANONICAL}"),
+            format!("mcp-re=\t{CANONICAL}"),
+            format!("other=(\"@method\"), mcp-re=  {CANONICAL}"),
+        ] {
+            assert_eq!(
+                member_value(&alternate, "mcp-re").unwrap_err(),
+                HttpProfileError::MalformedEvidence("dictionary member spacing"),
+                "must be refused rather than normalised: {alternate}"
+            );
+        }
+
+        // The same reader serves the `Signature` header's byte sequence.
+        assert_eq!(
+            member_value("mcp-re=  :YWJj:", "mcp-re").unwrap_err(),
+            HttpProfileError::MalformedEvidence("dictionary member spacing")
+        );
+        assert_eq!(
+            member_value("mcp-re=:YWJj:", "mcp-re").expect("canonical"),
+            ":YWJj:"
+        );
+
+        // OWS around the member-separating comma stays legal (RFC 8941 §4.2).
+        assert_eq!(
+            member_value("other=(\"@method\") , mcp-re=:YWJj:", "mcp-re").expect("comma OWS"),
+            ":YWJj:"
+        );
     }
 
     /// RFC 8941 §3.3.1's sf-integer has no `-0`. It slipped past the leading-zero rule

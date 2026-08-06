@@ -119,6 +119,31 @@ impl McpTransportPolicy {
         self
     }
 
+    /// Enforce the part of the transport contract that applies to a VERIFIED request
+    /// carrying NO body — a signed GET or DELETE on the streamable-HTTP leg.
+    ///
+    /// [`enforce`](Self::enforce) cannot serve this shape: it parses the body first,
+    /// and every one of its agreement checks compares a covered header against a
+    /// covered body member that does not exist here. The arms that survive the loss of
+    /// a body are exactly the ones that constrain the header on its own — the
+    /// supported-version set — so those are what this applies.
+    ///
+    /// `Mcp-Method` and `Mcp-Name` presence is deliberately NOT required here even
+    /// when the deployment requires it for POSTs. Those requirements exist so a header
+    /// can be checked against the body it claims to describe; demanding them of a
+    /// message with nothing to describe would refuse conforming GETs and DELETEs.
+    /// A version header that IS present must still name a version the deployment
+    /// accepts, because that check never needed a body.
+    pub fn enforce_bodyless(&self, request: &HttpRequest) -> Result<(), HttpProfileError> {
+        if let Some(h) = single_header(&request.headers, MCP_PROTOCOL_VERSION_HEADER)? {
+            let v = h.trim();
+            if !self.supported_protocol_versions.iter().any(|s| s == v) {
+                return Err(HttpProfileError::McpProtocolVersionUnsupported);
+            }
+        }
+        Ok(())
+    }
+
     /// Enforce the transport contract against a VERIFIED request.
     ///
     /// Preconditions the caller guarantees: the signature verified, so any covered

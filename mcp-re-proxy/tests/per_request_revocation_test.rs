@@ -430,3 +430,151 @@ fn every_request_on_a_warm_connection_is_checked_not_just_the_first() {
         );
     }
 }
+
+/// The serial the INTERMEDIATE CA is minted with, so the root's CRL can revoke exactly
+/// that certificate rather than the leaf under it.
+const INTERMEDIATE_SERIAL: u64 = 0x9001;
+
+/// An intermediate CA signed by `root`, with an explicit serial so a CRL can name it.
+fn make_intermediate(root: &Ca, cn: &str, serial: u64) -> Ca {
+    let key = KeyPair::generate().expect("intermediate key");
+    let mut params = CertificateParams::new(Vec::new()).expect("intermediate params");
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    params.serial_number = Some(SerialNumber::from(serial));
+    params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2035, 1, 1);
+    params.distinguished_name.push(DnType::CommonName, cn);
+    let cert = params
+        .signed_by(&key, &root.issuer())
+        .expect("intermediate signed by root");
+    Ca { cert, key, params }
+}
+
+/// The CRLs a two-level deployment actually publishes: one from the root (which is
+/// where an intermediate is revoked) and one from the intermediate (which is where a
+/// leaf is). Both are needed for either certificate to have a covered status at all.
+fn index_for_chain(
+    root: &Ca,
+    intermediate: &Ca,
+    root_revokes: &[u64],
+    intermediate_revokes: &[u64],
+) -> ClientRevocationIndex {
+    ClientRevocationIndex::from_crl_ders(
+        &[
+            make_crl(root, root_revokes),
+            make_crl(intermediate, intermediate_revokes),
+        ],
+        false,
+    )
+    .expect("index builds")
+}
+
+/// A client presenting the FULL chain it was issued: leaf first, then the intermediate
+/// that signed it, exactly as a real peer does so the server can build a path.
+fn client_config_with_chain(intermediate: &Ca, serial: u64) -> ClientConfig {
+    let (leaf, key) = make_client_leaf(intermediate, serial);
+    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
+    let provider = Arc::new(ring::default_provider());
+    ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("client versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_client_auth_cert(
+            vec![leaf.der().clone(), intermediate.cert.der().clone()],
+            key_der,
+        )
+        .expect("client auth")
+}
+
+/// R7-C105: revoking an INTERMEDIATE must reach the connections already open under it.
+///
+/// The handshake verifier checks revocation to the trust anchor
+/// (`RevocationCheckDepth::Chain`), so a per-request check that consulted the leaf alone
+/// was strictly weaker than the handshake: an operator responding to a compromised
+/// intermediate published it on the parent's CRL, every NEW handshake was refused, and
+/// every peer already holding a keep-alive or HTTP/2 connection kept full authenticated
+/// access until `max_connection_age` closed it.
+///
+/// The leaf here is never revoked. Only the CA above it is, so this can only pass if the
+/// whole presented chain is re-checked per request.
+#[test]
+fn revoking_an_intermediate_refuses_the_next_request_on_an_open_connection() {
+    let root = make_ca("client-root-ca-revocation");
+    let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
+    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
+        &root,
+        &intermediate,
+        &[],
+        &[],
+    )));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
+
+    let mut warm = WarmConnection::open(
+        server.addr,
+        &client_config_with_chain(&intermediate, INNOCENT_SERIAL),
+    )
+    .expect("handshake succeeds while the whole chain is in good standing");
+    assert_eq!(
+        warm.request().expect("first request served"),
+        200,
+        "a peer whose chain is entirely in good standing is served"
+    );
+
+    // The intermediate is compromised and published on the ROOT's CRL. The leaf is
+    // still not named anywhere.
+    revocation.store(index_for_chain(
+        &root,
+        &intermediate,
+        &[INTERMEDIATE_SERIAL],
+        &[],
+    ));
+
+    assert_eq!(
+        warm.request().expect("second request answered"),
+        403,
+        "the open connection must stop being served once its ISSUING CA is revoked — a \
+         leaf-only per-request check served this request"
+    );
+}
+
+/// The converse, so the chain walk cannot be read as "refuse whenever the chain is
+/// longer than one": an untouched intermediate keeps its peers served.
+#[test]
+fn an_unrevoked_intermediate_keeps_its_peers_served() {
+    let root = make_ca("client-root-ca-revocation");
+    let intermediate = make_intermediate(&root, "client-intermediate-ca", INTERMEDIATE_SERIAL);
+    let other = make_intermediate(&root, "another-intermediate-ca", INTERMEDIATE_SERIAL + 1);
+    let revocation = Arc::new(SharedClientRevocation::new(index_for_chain(
+        &root,
+        &intermediate,
+        &[],
+        &[],
+    )));
+    let snapshot = Arc::new(ServerConfigSnapshot::new(server_config_trusting(&root)));
+    let server = spawn(Arc::clone(&snapshot), Arc::clone(&revocation));
+
+    let mut warm = WarmConnection::open(
+        server.addr,
+        &client_config_with_chain(&intermediate, INNOCENT_SERIAL),
+    )
+    .expect("handshake succeeds");
+    assert_eq!(warm.request().expect("served"), 200);
+
+    // A DIFFERENT intermediate is revoked.
+    revocation.store(index_for_chain(
+        &root,
+        &intermediate,
+        &[INTERMEDIATE_SERIAL + 1],
+        &[],
+    ));
+    let _ = &other;
+
+    assert_eq!(
+        warm.request().expect("still served"),
+        200,
+        "revoking one CA must not shed the peers of every other"
+    );
+}

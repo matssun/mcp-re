@@ -19,17 +19,30 @@
 //!
 //! ## Same posture as the handshake, deliberately
 //!
-//! The verdict rules mirror [`build_client_verifier`](crate::tls) exactly, because a
+//! The verdict rules mirror [`build_client_verifier`](crate::tls), because a
 //! per-request check that is more permissive than the handshake would admit on
 //! request 2 what was refused on request 1:
 //!
-//!   * a serial listed in a CRL for the leaf's issuer ⇒ [`RevocationVerdict::Revoked`];
-//!   * a leaf whose issuer no CRL covers ⇒ [`RevocationVerdict::Unknown`], refused
-//!     unless the operator set `allow_unknown_revocation_status` (rustls'
+//!   * a serial listed in a CRL for the certificate's issuer ⇒
+//!     [`RevocationVerdict::Revoked`];
+//!   * a certificate whose issuer no CRL covers ⇒ [`RevocationVerdict::Unknown`],
+//!     refused unless the operator set `allow_unknown_revocation_status` (rustls'
 //!     `UnknownStatusPolicy::Deny` is the default this follows);
 //!   * a CRL past its `nextUpdate` covers nothing, so its issuer's certificates
 //!     become `Unknown` — the same fail-closed direction as
 //!     `enforce_revocation_expiration`.
+//!
+//! ## One certificate per call; the CHAIN is the caller's to walk
+//!
+//! [`ClientRevocationIndex::verdict`] and [`ClientRevocationIndex::admits`] each judge
+//! ONE certificate, named by its issuer `Name` DER and its serial. The handshake
+//! verifier checks revocation to the trust anchor (rustls' default
+//! `RevocationCheckDepth::Chain`), so a caller that asks about the leaf alone has a
+//! per-request check WEAKER than the handshake: an intermediate CA published on its
+//! parent's CRL would be refused at every new handshake and still admitted on every
+//! request of a connection the peer already holds open. Whoever calls this must
+//! therefore hand it every certificate the peer presented, not just the first — see
+//! `tls::cert_lifetime_rejection_for_chain`.
 //!
 //! With NO CRLs configured, rustls performs no revocation checking at all. An index
 //! built from no CRLs therefore admits everything ([`ClientRevocationIndex::is_empty`]),

@@ -52,6 +52,14 @@ and cannot see a peer's nonces).
    outage. The chart defaults to `rediss://` and its guard refuses a plaintext
    `redis://` URL under `fleet=true` unless you set
    `replay.allowPlaintextRedis=true` deliberately.
+
+   It must also run **`maxmemory-policy noeviction`**, which the proxy reads back at
+   connect instead of assuming. Every replay record carries a TTL, so under any
+   `volatile-*` or `allkeys-*` policy Redis may drop a live nonce at `maxmemory` — the
+   replay window re-opens with nothing to show for it, which is why this is checked
+   rather than documented. Two managed defaults will fail startup until you act:
+   Memorystore ships `volatile-lru`, and ElastiCache renames `CONFIG` so the policy
+   cannot be read at all. Set it on the instance before pointing a fleet at it.
 2. A Kubernetes **Secret** with the proxy's material: `tls.crt`, `tls.key`,
    `client-ca.pem`, `trust.json`, `signing-seed`.
 3. A container image of `mcp-re-proxy` built with the `redis_replay` feature.

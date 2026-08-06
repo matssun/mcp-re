@@ -139,6 +139,17 @@ struct ContinuationCheck {
 struct ChainCheck {
     hops: Vec<ChainHop>,
     expected_label: String,
+    /// The verifier's own audience tuple. Reconstruction requires it: without one, a
+    /// `Complete` label asserted only the minimal proof path, so a record could be
+    /// attested whole while containing requests the enforcement boundary would refuse.
+    /// Frozen HERE rather than derived from the hops, because deriving the expectation
+    /// from the thing under test is not a test.
+    expected_audience: AudienceTuple,
+    /// Base64url credential bytes supplied for artifact bindings whose surface the
+    /// retained request does not carry. Absent means none is available, which makes
+    /// every present binding fail closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_material_b64: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1573,6 +1584,8 @@ fn chain_fixture(name: &str, hops: &[RetainedHop], label: &str) -> Fixture {
         chain_check: Some(ChainCheck {
             hops: hops.iter().map(to_chain_hop).collect(),
             expected_label: label.into(),
+            expected_audience: chain_audience(),
+            artifact_material_b64: Some(mcp_re_core::b64url_encode(b"tok")),
         }),
         admission_check: None,
         delegated_202_check: None,
@@ -2306,10 +2319,19 @@ fn frozen_http_profile_corpus_verifies() {
                         response: from_wire_response(&h.response),
                     })
                     .collect();
+                let material = check
+                    .artifact_material_b64
+                    .as_ref()
+                    .map(|m| mcp_re_core::b64url_decode(m).expect("artifact material b64url"));
+                let material_fn = |_: &mcp_re_http_profile::ArtifactBinding| material.clone();
                 let out = reconstruct_chain(
                     &hops,
                     &resolver(),
                     &chain_expectations(),
+                    &mcp_re_http_profile::ChainAudit {
+                        expected_audience: &check.expected_audience,
+                        artifact_material: &material_fn,
+                    },
                     &chain_nothing_revoked,
                     manifest.verify_at_unix,
                 );

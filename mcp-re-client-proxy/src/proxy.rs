@@ -18,8 +18,8 @@ use mcp_re_client_core::build_signed_notification;
 use mcp_re_client_core::build_signed_request;
 use mcp_re_client_core::classify_result;
 use mcp_re_client_core::continuation_state;
-use mcp_re_client_core::verify_delegated_accepted_202;
-use mcp_re_client_core::verify_delegated_accepted_202_anchored;
+use mcp_re_client_core::response::verify_delegated_accepted_202_anchored_pinned;
+use mcp_re_client_core::response::verify_delegated_accepted_202_pinned;
 use mcp_re_client_core::verify_delegated_response;
 use mcp_re_client_core::verify_delegated_response_anchored;
 use mcp_re_client_core::DelegatedOutcome;
@@ -90,6 +90,23 @@ pub enum ResponseKind {
     /// boundary authenticated and accepted the message. It does NOT say any action
     /// completed.
     AcceptedNotification,
+    /// A verified TERMINAL reply carrying a JSON-RPC `error` member: the exchange
+    /// completed and the call did not succeed.
+    ///
+    /// Distinct from [`Success`](ResponseKind::Success) because `classify_result`
+    /// reads the `result` member, and an error reply has none — so an absent `result`
+    /// classifies as terminal and the failure would be announced to the local client
+    /// as a completed call. The signature is equally valid either way; what differs is
+    /// what the server said, and that difference is not recoverable once the header
+    /// has been written.
+    ///
+    /// Distinct from [`VerifiedRejection`](ResponseKind::VerifiedRejection), which is
+    /// the enforcement boundary refusing the request. This is the *inner tool* failing
+    /// a request that was admitted.
+    CallFailed {
+        /// The JSON-RPC error code the server reported, when it is an integer.
+        code: Option<i64>,
+    },
     /// A verified delegated rejection receipt, converted to plain JSON-RPC error.
     /// `wire_code` is the server's frozen `mcp-re.*` reason; `bound` distinguishes a
     /// request-bound receipt from a preflight-unbound one.
@@ -211,7 +228,9 @@ impl ClientProxy {
         }
         // A NOTIFICATION is answered with a signed bodyless 202, not a bodied reply,
         // so it takes its own verification path. Nothing below it applies: there is no
-        // result to classify and no body to rebuild.
+        // result to classify and no body to rebuild. It carries no `ResponseExpectation`
+        // because a bodyless 202 has no response block to bind one to; the pin it does
+        // share is passed to it directly.
         if id.is_none() {
             return self.verify_notification_ack(route, &signed, &response, params);
         }
@@ -256,6 +275,19 @@ impl ClientProxy {
                 // Classify BEFORE handing the reply over. A verified signature says
                 // the server said this; it does not say the exchange is finished.
                 let result = plain.get("result");
+                // `plain_response_from_verified` has already refused a reply carrying
+                // neither member or both, so an `error` here means there is no
+                // `result` to classify — and classifying an absent `result` yields
+                // Terminal, which is the success label.
+                if let Some(code) = plain
+                    .get("error")
+                    .map(|e| e.get("code").and_then(Value::as_i64))
+                {
+                    return Ok(ProxyResponse {
+                        plain_response: plain,
+                        kind: ResponseKind::CallFailed { code },
+                    });
+                }
                 let kind = match classify_result(result) {
                     ResultClass::Terminal => ResponseKind::Success,
                     ResultClass::InputRequired => {
@@ -300,6 +332,12 @@ impl ClientProxy {
     /// The 202 states that the enforcement boundary authenticated and ACCEPTED the
     /// message — not that any action completed. A notification is not delivered until
     /// this verifies, so an unverifiable ack is a `ProxyError`, never a silent success.
+    ///
+    /// The route's PINNED root issuer is enforced here on the same coordinate the
+    /// bodied path pins. A pin that governs replies and not one-way notifications is a
+    /// control an operator configured and the proxy did not run: on a route in an
+    /// org-wide anchor set, any sibling holding a non-revoked delegated key under any
+    /// listed root could otherwise acknowledge this route's `notifications/cancelled`.
     fn verify_notification_ack(
         &self,
         route: &crate::route::Route,
@@ -307,14 +345,16 @@ impl ClientProxy {
         response: &HttpResponse,
         params: &CallParams,
     ) -> Result<ProxyResponse, ProxyError> {
+        let pin = route.expected_server_keyid.as_deref();
         match &route.verification {
             ClientVerification::DelegatedRequired(policy, resolve_actor, revocation) => {
-                verify_delegated_accepted_202(
+                verify_delegated_accepted_202_pinned(
                     response,
                     signed.request(),
                     resolve_actor.as_ref(),
                     policy,
                     revocation.as_ref(),
+                    pin,
                     params.now_unix,
                 )?;
             }
@@ -322,11 +362,12 @@ impl ClientProxy {
             // bodied path reads it, so a manifest that revoked a root refuses the next
             // acknowledgement rather than the next restart.
             ClientVerification::DelegatedAnchored(policy, anchors) => {
-                verify_delegated_accepted_202_anchored(
+                verify_delegated_accepted_202_anchored_pinned(
                     response,
                     signed.request(),
                     policy,
                     &anchors.load(),
+                    pin,
                     params.now_unix,
                 )?;
             }
@@ -368,6 +409,14 @@ fn plain_error_from_rejection(id: &Value) -> Value {
 /// 200 body — so rebuilding the reply from `result` alone reported a failed call as a
 /// successful one returning `null`, dropped the reason, and emitted a message that was
 /// neither a valid JSON-RPC result nor a valid error.
+///
+/// A body that is not a single JSON-RPC response object carrying EXACTLY ONE of
+/// `result` / `error` fails closed. A signed reply is proof the server said this; it is
+/// not proof the server said anything a client can act on, and every other shape — a
+/// top-level array, a bare scalar, an empty `{"jsonrpc":"2.0","id":1}` envelope, both
+/// members at once — has no reading under which "the call completed with result `null`"
+/// is true. Defaulting them to a null result is the same defect as flattening an error
+/// reply: a truthful-looking success the server never sent.
 fn plain_response_from_verified(
     response_body: &[u8],
     request_id: &Value,
@@ -377,21 +426,34 @@ fn plain_response_from_verified(
     if let Some(result) = object.get_mut("result").and_then(Value::as_object_mut) {
         result.remove("_meta");
     }
-    if let Some(top) = object.as_object_mut() {
-        top.remove("_meta");
-    }
-    if let Some(error) = object.get("error") {
-        return Ok(json!({
+    let Some(top) = object.as_object_mut() else {
+        return Err(ProxyError::FailedClosed(
+            HttpProfileError::MalformedEvidence("verified reply is not a JSON-RPC object"),
+        ));
+    };
+    top.remove("_meta");
+    match (top.get("result"), top.get("error")) {
+        (Some(_), Some(_)) => Err(ProxyError::FailedClosed(
+            HttpProfileError::MalformedEvidence(
+                "verified reply carries both a result and an error",
+            ),
+        )),
+        (None, None) => Err(ProxyError::FailedClosed(
+            HttpProfileError::MalformedEvidence(
+                "verified reply carries neither a result nor an error",
+            ),
+        )),
+        (None, Some(error)) => Ok(json!({
             "jsonrpc": "2.0",
             "id": request_id,
             "error": error.clone(),
-        }));
+        })),
+        (Some(result), None) => Ok(json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result.clone(),
+        })),
     }
-    Ok(json!({
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "result": object.get("result").cloned().unwrap_or(Value::Null),
-    }))
 }
 
 #[cfg(test)]
@@ -411,6 +473,38 @@ mod tests {
         assert!(
             plain.get("result").is_none(),
             "an error reply must not also carry a result member"
+        );
+    }
+
+    /// Carrying the error through is only half of it: the classification the local
+    /// client reads must say the call failed. `classify_result` inspects `result`, and
+    /// an error reply has none — an absent `result` classifies as Terminal, which is
+    /// the success label. The signature verifies either way, so nothing downstream can
+    /// recover the difference once the header has been written.
+    #[test]
+    fn a_verified_error_reply_is_classified_as_a_failed_call_not_a_success() {
+        let body = br#"{"jsonrpc":"2.0","id":"srv-1","error":{"code":-32601,"message":"method not found"}}"#;
+        let plain = plain_response_from_verified(body, &json!("req-1")).expect("rebuild");
+
+        // The selection the serving path makes, on the reply it actually holds.
+        let kind = match plain
+            .get("error")
+            .map(|e| e.get("code").and_then(Value::as_i64))
+        {
+            Some(code) => ResponseKind::CallFailed { code },
+            None => match classify_result(plain.get("result")) {
+                ResultClass::Terminal => ResponseKind::Success,
+                _ => unreachable!("this fixture carries an error member"),
+            },
+        };
+
+        assert!(
+            matches!(kind, ResponseKind::CallFailed { code: Some(-32601) }),
+            "an error reply must classify as CallFailed carrying the server's code, got {kind:?}"
+        );
+        assert!(
+            !matches!(kind, ResponseKind::Success),
+            "a failed call must never be announced to the local client as a success"
         );
     }
 
@@ -461,6 +555,41 @@ mod tests {
         let terminal = br#"{"jsonrpc":"2.0","id":"s","result":{"ok":true}}"#;
         let plain = plain_response_from_verified(terminal, &json!("req-1")).expect("rebuild");
         assert_eq!(classify_result(plain.get("result")), ResultClass::Terminal);
+    }
+
+    /// The shapes next to the JSON-RPC-error one. Each used to fall through to
+    /// `result: null` and classify Terminal, so a signed reply that is not a JSON-RPC
+    /// response at all reached the local client as a completed tool call — the same
+    /// defect as flattening an error reply, on its neighbours.
+    #[test]
+    fn a_reply_that_is_not_a_json_rpc_response_fails_closed() {
+        for body in [
+            // An envelope with neither member.
+            br#"{"jsonrpc":"2.0","id":1}"#.as_slice(),
+            // A batch array, a bare scalar, a bare string.
+            br#"[{"jsonrpc":"2.0","id":1,"result":{}}]"#.as_slice(),
+            br#"7"#.as_slice(),
+            br#""ok""#.as_slice(),
+            // Both members at once: no reading of this says the call completed.
+            br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true},"error":{"code":-1}}"#.as_slice(),
+        ] {
+            let outcome = plain_response_from_verified(body, &json!("req-1"));
+            assert!(
+                matches!(outcome, Err(ProxyError::FailedClosed(_))),
+                "{} must not be delivered as a success",
+                String::from_utf8_lossy(body),
+            );
+        }
+    }
+
+    /// And the shape that IS a response still rebuilds, `_meta` stripped — the guard
+    /// above refuses malformed evidence, not an ordinary empty result.
+    #[test]
+    fn an_ordinary_result_still_rebuilds() {
+        let body = br#"{"jsonrpc":"2.0","id":"s","result":{}}"#;
+        let plain = plain_response_from_verified(body, &json!(2)).expect("rebuild");
+        assert_eq!(plain["id"], 2);
+        assert_eq!(plain["result"], json!({}));
     }
 
     /// MCP 2026-07-28 closes the `resultType` set; an unknown one is never resolved

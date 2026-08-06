@@ -81,6 +81,26 @@ pub(crate) fn validate_sf_string(value: &str, what: &'static str) -> Result<(), 
     }
 }
 
+/// The longest `nonce` this profile carries, in characters.
+///
+/// A generous ceiling, not a format: 128 bits of base64url is 22 characters, and the
+/// replay key retains the nonce verbatim for the life of the signature window. Applied
+/// on BOTH sides for the same reason as [`validate_sf_string`] — a value this profile
+/// cannot carry must not be emitted, not merely rejected on the way back in. Enforced
+/// only at parse, a signer could emit a nonce every conforming MCP-RE verifier refuses
+/// as malformed evidence, and the far end is where the operator would find out.
+pub(crate) const MAX_NONCE_CHARS: usize = 256;
+
+/// Refuse a `nonce` longer than [`MAX_NONCE_CHARS`].
+pub(crate) fn validate_nonce_length(nonce: &str) -> Result<(), HttpProfileError> {
+    if nonce.len() > MAX_NONCE_CHARS {
+        return Err(HttpProfileError::MalformedEvidence(
+            "nonce signature parameter exceeds the length bound",
+        ));
+    }
+    Ok(())
+}
+
 impl SignatureParams {
     /// Serialize the inner list `("a" "b" ...);created=...;keyid="..."` — the
     /// value of the `@signature-params` line and of the `Signature-Input`
@@ -108,6 +128,7 @@ impl SignatureParams {
         }
         if let Some(nonce) = &self.nonce {
             validate_sf_string(nonce, "nonce signature parameter")?;
+            validate_nonce_length(nonce)?;
             out.push_str(&format!(";nonce=\"{nonce}\""));
         }
         if let Some(keyid) = &self.keyid {
@@ -139,10 +160,35 @@ pub enum SourceMessage<'a> {
     ResponseOnly(&'a HttpResponse),
 }
 
+/// Resolve one covered component's value and reject any value the base cannot
+/// carry injectively.
+///
+/// CR/LF in ANY covered value — a field value or a derived component alike — would
+/// make the base non-injective: components are joined one per line, so a value
+/// containing a newline forges a second component line inside the base and two
+/// different messages produce the same signature base. `@target-uri` is a REQUIRED
+/// covered component on every request and, via `;req`, on every response, and a
+/// deployment that reconstructs it behind TLS termination is exactly where those
+/// bytes stop being operator-chosen. RFC 9110 forbids these bytes in a field value
+/// and no URI, method token or status can contain them, so nothing legitimate is
+/// refused.
+fn component_value(
+    component: &CoveredComponent,
+    source: &SourceMessage<'_>,
+) -> Result<String, HttpProfileError> {
+    let value = resolve_component_value(component, source)?;
+    if value.bytes().any(|b| b == b'\r' || b == b'\n') {
+        return Err(HttpProfileError::MalformedEvidence(
+            "covered component value contains CR or LF",
+        ));
+    }
+    Ok(value)
+}
+
 /// Resolve one covered component's value, fail-closed: an absent field or an
 /// unsupported derived component is a missing covered component, never a
 /// blank line.
-fn component_value(
+fn resolve_component_value(
     component: &CoveredComponent,
     source: &SourceMessage<'_>,
 ) -> Result<String, HttpProfileError> {
@@ -172,7 +218,13 @@ fn component_value(
 
     if let Some(name) = component.name.strip_prefix('@') {
         return match (name, request, response) {
-            ("method", Some(r), _) => Ok(r.method.to_ascii_uppercase()),
+            // RFC 9421 §2.2.1: the method name is case-sensitive and "no
+            // transformation to the method's case is performed". Uppercasing it
+            // here collapsed `post` and `POST` onto one signature base, so an
+            // intermediary could rewrite the request line's method case and the
+            // signature still verified — the audited bytes then differ from the
+            // signed ones.
+            ("method", Some(r), _) => Ok(r.method.clone()),
             ("target-uri", Some(r), _) => Ok(r.target_uri.clone()),
             ("authority", Some(r), _) => authority_of(&r.target_uri)
                 .ok_or(HttpProfileError::MissingCoveredComponent(component.name)),
@@ -201,16 +253,6 @@ fn component_value(
         }
     }
     let value = found.ok_or(HttpProfileError::MissingCoveredComponent(component.name))?;
-    // CR/LF in a covered value would make the base non-injective: components are
-    // joined one per line, so a value containing a newline can forge a second
-    // component line inside the base, and two different messages then produce the same
-    // signature base. RFC 9110 forbids these bytes in a field value anyway, so nothing
-    // legitimate is refused.
-    if value.bytes().any(|b| b == b'\r' || b == b'\n') {
-        return Err(HttpProfileError::MalformedEvidence(
-            "covered field value contains CR or LF",
-        ));
-    }
     Ok(value.to_owned())
 }
 
@@ -268,7 +310,7 @@ mod tests {
 
     fn request() -> HttpRequest {
         HttpRequest {
-            method: "post".into(),
+            method: "POST".into(),
             target_uri: "https://example.com/foo?p=1".into(),
             headers: vec![("Content-Type".into(), "application/json".into())],
             body: b"{}".to_vec(),
@@ -331,6 +373,152 @@ mod tests {
         assert_eq!(
             err,
             HttpProfileError::MissingCoveredComponent("content-type")
+        );
+    }
+
+    /// RFC 9421 §2.2.1 performs no case transformation on `@method`. Two wire
+    /// spellings must therefore produce two bases: normalising them onto one let an
+    /// intermediary rewrite the request line without invalidating the signature.
+    #[test]
+    fn method_case_is_carried_verbatim_into_the_base() {
+        let mut lower = request();
+        lower.method = "post".into();
+        let base_of = |r: &HttpRequest| {
+            String::from_utf8(
+                signature_base(
+                    &[CoveredComponent::new("@method")],
+                    &SignatureParams::default(),
+                    &SourceMessage::Request(r),
+                )
+                .expect("resolves"),
+            )
+            .unwrap()
+        };
+        assert!(base_of(&lower).contains("\"@method\": post"));
+        assert_ne!(
+            base_of(&lower),
+            base_of(&request()),
+            "`post` and `POST` are two messages and must not share one base"
+        );
+    }
+
+    /// The injectivity guard covers DERIVED components, not only field values: a
+    /// newline inside `@target-uri` would forge a second `"name": value` line inside
+    /// the base, so two distinct messages would produce one signature base.
+    #[test]
+    fn crlf_in_a_derived_component_fails_closed() {
+        for (name, mutate) in [
+            (
+                "@target-uri",
+                (|r: &mut HttpRequest| {
+                    r.target_uri =
+                        "https://example.com/mcp\n\"content-type\": application/json".into()
+                }) as fn(&mut HttpRequest),
+            ),
+            ("@method", |r: &mut HttpRequest| {
+                r.method = "POST\n\"x\": y".into()
+            }),
+        ] {
+            let mut r = request();
+            mutate(&mut r);
+            let err = signature_base(
+                &[CoveredComponent::new(name)],
+                &SignatureParams::default(),
+                &SourceMessage::Request(&r),
+            )
+            .unwrap_err();
+            assert_eq!(
+                err,
+                HttpProfileError::MalformedEvidence("covered component value contains CR or LF"),
+                "{name} must not carry a line break into the base"
+            );
+        }
+    }
+
+    /// The nonce length bound holds on the PRODUCING side, through every signer.
+    ///
+    /// Enforced only at parse, a caller or SDK configured with an oversized nonce
+    /// produced requests that signed correctly and were then refused
+    /// `mcp-re.malformed_envelope` by every conforming MCP-RE verifier — a
+    /// self-inflicted outage discoverable only at the far end. Every other wire-form
+    /// rule this profile has (the sf-string character class, integer spelling) is
+    /// enforced on both sides; this is the same rule: a value this profile cannot
+    /// carry must not be EMITTED, not merely rejected on the way back in.
+    #[test]
+    fn a_nonce_the_profile_cannot_carry_is_never_emitted() {
+        let oversized = "n".repeat(MAX_NONCE_CHARS + 1);
+        let at_bound = "n".repeat(MAX_NONCE_CHARS);
+        let components = [CoveredComponent::new("@method")];
+
+        let params_with = |nonce: &str| SignatureParams {
+            nonce: Some(nonce.to_owned()),
+            ..SignatureParams::default()
+        };
+        assert_eq!(
+            params_with(&oversized)
+                .serialize_with(&components)
+                .unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "nonce signature parameter exceeds the length bound"
+            ),
+        );
+        params_with(&at_bound)
+            .serialize_with(&components)
+            .expect("the bound itself is still emittable");
+
+        // Both bodied and bodyless request signers route through that serializer, so
+        // neither can emit a nonce its own verifier refuses.
+        let mut bodied = request();
+        assert_eq!(
+            crate::sign::sign_request(
+                &mut bodied,
+                &mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]),
+                "k",
+                1_700_000_000,
+                1_700_000_300,
+                &oversized,
+            )
+            .unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "nonce signature parameter exceeds the length bound"
+            ),
+        );
+
+        let mut bodyless = HttpRequest {
+            method: "DELETE".into(),
+            target_uri: "https://example.com/mcp".into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
+        assert_eq!(
+            crate::bodyless::sign_bodyless_request(
+                &mut bodyless,
+                &mcp_re_core::SigningKey::from_seed_bytes(&[9u8; 32]),
+                "k",
+                1_700_000_000,
+                1_700_000_300,
+                &oversized,
+            )
+            .unwrap_err(),
+            HttpProfileError::MalformedEvidence(
+                "nonce signature parameter exceeds the length bound"
+            ),
+        );
+    }
+
+    #[test]
+    fn crlf_in_a_field_value_fails_closed() {
+        let mut r = request();
+        r.headers = vec![("Content-Type".into(), "application/json\r\nx: y".into())];
+        let err = signature_base(
+            &[CoveredComponent::new("content-type")],
+            &SignatureParams::default(),
+            &SourceMessage::Request(&r),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            HttpProfileError::MalformedEvidence("covered component value contains CR or LF")
         );
     }
 

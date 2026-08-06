@@ -106,6 +106,12 @@
         }
       }
     ],
-    "expected_label": "incomplete:1:terminal_expected"
+    "expected_label": "incomplete:1:terminal_expected",
+    "expected_audience": {
+      "audience_id": "mcp.example.com",
+      "target_uri": "https://mcp.example.com/mcp",
+      "route": "tools/call"
+    },
+    "artifact_material_b64": "dG9r"
   }
 }

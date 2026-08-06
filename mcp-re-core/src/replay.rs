@@ -107,6 +107,16 @@ pub enum ReplayDecision {
 pub struct ReplayKey {
     /// The verified request signer identity.
     pub signer: String,
+    /// The verified PRINCIPAL the entry is accounted to, which is not the same string
+    /// as [`ReplayKey::signer`].
+    ///
+    /// `signer` must discriminate every distinct key, so it carries the keyid — two
+    /// keys of one subject must never collapse onto one replay key. An occupancy
+    /// budget wants the opposite: charging per key hands a subject one budget per key
+    /// it holds, which is routine during rotation and in a fleet issuing a client key
+    /// per replica, so a single subject would both multiply its own allowance and
+    /// inflate the divisor every other principal is measured against.
+    pub principal: String,
     /// The verified request audience.
     pub audience: String,
     /// The request nonce.

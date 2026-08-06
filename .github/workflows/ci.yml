@@ -163,6 +163,13 @@ jobs:
           python3 scripts/es256_containment_gate.py --selftest
           python3 scripts/es256_containment_gate.py
 
+      # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
+      # installs the permissive default redirect handler unless it is passed a
+      # subclass, so a guard class that exists but is never consulted leaves the
+      # downgrade open — the selftest asserts the wiring, not just the class.
+      - name: SCITT service-key fetch guards
+        run: python3 tools/scitt_fetch_service_key.py --selftest
+
       # cryptoki-sys (declared non-optional for Bazel target exposure) builds its
       # FFI bindings with libclang; install it defensively so the cargo closure
       # links on a clean runner.

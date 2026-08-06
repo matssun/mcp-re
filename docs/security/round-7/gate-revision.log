@@ -1,0 +1,59 @@
+=== revision gate ===
+2026-08-04T19:51:53Z
+33f9b701a52bad59bd4511a5cce6b01bf30b9eaf
+
+=====================================================================
+[stage 1] static gates (tags, ports, secrets, chart, vocabulary)
+=====================================================================
+jcs_vocabulary_gate: selftest OK
+jcs_vocabulary_gate: OK — 34 forward-design docs clean of forbidden JCS framings
+port-registry gate: OK — band 8600-8699, mcp_re_proxy=8600, Helm bindPort mirrors it.
+discriminator gate: OK — the SEP-2322 discriminator lives only in mcp-re-http-profile/src/result_class.rs
+selftest ok: 37 cases
+Credential material is reachable from a tracked file or a build upload:
+
+  work/security-audit-2026-08-03/BY-FILE.md:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/BY-FILE.md:1877  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/BY-FILE.md:1878  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/BY-FILE.md:1880  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/REPORT.md:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/REPORT.md:1434  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/REPORT.md:1438  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/briefs/I-deploy.md:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/briefs/I-deploy.md:129  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/clusters.json:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/clusters.json:3329  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/clusters.json:3332  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/results/I-deploy.json:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/results/I-deploy.json:74  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/stage2-raw-findings.json:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/stage2-raw-findings.json:2395  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/stage2-raw-findings.json:2397  [private-key-block] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/triage.json:0  [binary-private-key] a private key belongs in a secret store, never in git
+  work/security-audit-2026-08-03/triage.json:1634  [private-key-block] a private key belongs in a secret store, never in git
+
+For a tracked file: remove the value and rotate it — a tracked file is public history even after a later commit deletes it. Use a placeholder, or read it from the environment. If a match is a genuine false positive, add the path to ALLOWED_PATHS with the reason it is safe.
+For an upload-ignore gap: add the pattern verbatim. `.dockerignore` and `.gcloudignore` govern different transfers, so both need it.
+
+[stage 1] FAILED: static gates (tags, ports, secrets, chart, vocabulary)
+Fix it, then resume with: scripts/local_gate.sh --from 1
+FAST_EXIT=1
+2026-08-04T19:51:55Z
+=== stage 3 ===
+bazel-gazelle-gate: PASS — no unmanaged semantic drift.
+  (tracked known drift still allowlisted:)
+    - http_profile_client: MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic
+    - http_profile_proxy: MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic
+GAZELLE_EXIT=0
+//mcp-re-proxy:tls_test                                                  PASSED in 1.4s
+//mcp-re-proxy:transparency_e2e_test                                     PASSED in 4.2s
+//mcp-re-proxy:verified_context_carrier_test                             PASSED in 3.3s
+//mcp-re-transport:dos_hardening_test                                    PASSED in 4.4s
+//mcp-re-transport:fault_injection_test                                  PASSED in 0.8s
+//mcp-re-transport:mcp_re_transport_test                                 PASSED in 0.8s
+//mcp-re-transport:mtls_client_test                                      PASSED in 4.1s
+
+Executed 72 out of 78 tests: 78 tests pass.
+There were tests whose specified size is too big. Use the --test_verbose_timeout_warnings command line option to see which ones these are.
+BAZEL_EXIT=0
+2026-08-04T19:53:07Z

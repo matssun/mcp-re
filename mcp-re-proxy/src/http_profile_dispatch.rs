@@ -143,6 +143,7 @@ pub async fn dispatch_request_with_async_tier(
     tier: &AsyncReplayTier,
     continuation_ctx: Option<RetainedContinuation<'_>>,
     config: &ProxyDispatchConfig,
+    now_unix: i64,
 ) -> Result<DispatchOutcome, ProxyDispatchError> {
     // 1a. Deployment tier gate (proxy) — only meaningful under fleet-strict.
     if config.fleet_strict {
@@ -170,7 +171,7 @@ pub async fn dispatch_request_with_async_tier(
     // 4. Awaited atomic admission LAST — the only side-effecting step. A store
     //    failure fails closed (`replay_cache_unavailable`), never an admit.
     let decision = tier
-        .check_and_insert(&replay_key.to_core_replay_key(verified.expires))
+        .check_and_insert(&replay_key.to_core_replay_key(verified.expires), now_unix)
         .await
         .map_err(|_| ProxyDispatchError::Dispatch(DispatchError::ReplayCacheUnavailable))?;
     match decision {

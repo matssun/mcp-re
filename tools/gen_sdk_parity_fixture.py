@@ -167,6 +167,36 @@ def build() -> dict:
     # And under non-exporting custody: same bytes, key behind the device.
     cases["notification_non_exporting"] = case(ne.sign_notification(**note), {**note, **meta})
 
+    # Non-ASCII, carried raw as UTF-8 in both the params and a binding's reference
+    # value. Python's `json.dumps` escapes non-ASCII to `\uXXXX` by default while
+    # `JSON.stringify` emits the codepoint, so a serializer that reaches these bytes
+    # with the default settings lands on a different digest in each language. Every
+    # other case here is pure ASCII, where that divergence is invisible.
+    wide = dict(
+        BASE,
+        method="tools/call",
+        params_json='{"name":"read_file","arguments":{"path":"/tmp/naïve-Ω-文書.txt"}}',
+        id_json='"req-Ω"',
+        nonce="nonce-parity-0007-128bit",
+    )
+    wide_binding = AuthzSystemReferenceProvider(
+        "pdp-decision",
+        ARTIFACT_MATERIAL,
+        authorization_system_id="authz-Ω",
+        reference_scheme_id="scheme-1",
+        reference_value="grant-文書-123",
+    )
+    wide_ctx = BindingRequestContext(
+        audience_id=wide["audience_id"],
+        target_uri=wide["target_uri"],
+        method=wide["method"],
+    )
+    wide_json = json.dumps([wide_binding.spec(wide_ctx)], ensure_ascii=False)
+    cases["non_ascii_params_and_binding"] = case(
+        mcp_re_sdk.sign_request(SEED, KEY_ID, **wide, bindings_json=wide_json),
+        {**wide, **meta, "bindings_json": wide_json},
+    )
+
     return {
         "schema": "mcp-re-sdk-parity/v1",
         "comment": (

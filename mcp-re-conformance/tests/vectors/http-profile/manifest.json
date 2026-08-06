@@ -1,7 +1,7 @@
 {
   "schema": "mcp-re-http-profile-conformance/v1",
   "verify_at_unix": 1700000100,
-  "corpus_digest": "6aad7cf9d45efd10b626894801bb903de3979827da1e04c051a814a77ac7a10e",
+  "corpus_digest": "bf8815ed6a6c5d5b40d015fd467eaaf6827983dc1f4fe6d7a942e3eaa3a73cb9",
   "fixtures": [
     {
       "file": "h01_request_valid.json",
@@ -161,31 +161,31 @@
     },
     {
       "file": "h24_chain_multi_hop_complete.json",
-      "sha256": "9a7479434a2ec052507db22b0d428626c9b06f88662f5a5f25930ab4e6b9d6d7"
+      "sha256": "88a12dc6323a32b93e9f285aac7757b9d798d5feae78fd172c8135048c3b2b4c"
     },
     {
       "file": "h25_chain_missing_middle_hop_incomplete.json",
-      "sha256": "0a805fef565bf798f85e0dfd3a6feeec6cd1d985824f4b4f6c3e8420fcda6bc2"
+      "sha256": "57a7314c12a85ea4f442f133d3c9bcf7d8cfc7a7d13058dd312a4ae5271cbc6d"
     },
     {
       "file": "h26_chain_truncated_incomplete.json",
-      "sha256": "041eb4005fb5c18c5747a33f6eb619bc993c54e4365b7d095279b1944acf9901"
+      "sha256": "967a90b993a8b9e4c41620f1be9f93e772f6535f1558a4417021eda43d3144d8"
     },
     {
       "file": "h27_chain_foreign_continuation_incomplete.json",
-      "sha256": "5fed31e15cc083fc9d92d48db4f7634c8fe13be286fc9a315986e93df4938345"
+      "sha256": "68a7a0824ad73a628cdfa25733e368e5a7ef360bc85f55cef3f169986c1ef06a"
     },
     {
       "file": "h28_chain_role_swapped_handles_incomplete.json",
-      "sha256": "caa8b5644c26b603c3a6b035ee67d0bb76e61faf2ef6dc8dfdc65630244fcc8e"
+      "sha256": "fe92bcc11f59a931e986face967b528d290cfdb4c6c149b137d62a128f5281b5"
     },
     {
       "file": "h29_chain_terminal_spliced_incomplete.json",
-      "sha256": "b26daa51e8ee220a74aedfbabedb4274dc29ef139917ceb6c68a1a5ea7c272ad"
+      "sha256": "5713eae40eff126cbfc4824619559a554041993ad45c067c8dc9b7d2750e6033"
     },
     {
       "file": "h51_chain_unrecognized_result_type_incomplete.json",
-      "sha256": "11a982af013639fa17bd3c37c31bc855ffb14ad62c4aefc20630d03593b370d8"
+      "sha256": "1c23e77601e887241e77dfe41e784b8c434949777eb0a6ce2a2a67375c0711fb"
     },
     {
       "file": "h18_rejection_bound_valid.json",

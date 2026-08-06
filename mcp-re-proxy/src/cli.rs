@@ -104,9 +104,9 @@ pub enum AdmissionKind {
 ///
 /// The record is the deployment's only per-request attribution surface: which actor
 /// was admitted, which calls were refused and under exactly which frozen `mcp-re.*`
-/// wire code. A deployment that wants it must say so — and a deployment that does
-/// not gets a startup line saying it has none, rather than discovering the absence
-/// after an incident.
+/// wire code. It is therefore ON unless a deployment names the opposite — the absent
+/// case must not be the one that leaves an incident unreconstructable — and the
+/// startup line states which posture is in force either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditSinkKind {
     /// No per-request security record is emitted.
@@ -321,9 +321,13 @@ pub struct Config {
     /// request-signer key on a running replica, because every tier resolves against
     /// that one snapshot. Enabling it bounds the exposure window at the cadence.
     pub trust_reload_secs: Option<u64>,
-    /// ADR-MCPS-035: where the per-request security record goes. `None` by default —
-    /// the record is a write on every request, so it is a deployment's choice; the
-    /// startup line states which posture is in force either way.
+    /// ADR-MCPS-035: where the per-request security record goes. `Stderr` by default,
+    /// because the absent case has to be the safe one: an invocation that does not go
+    /// through the Helm chart — the container run directly, a harness, a hand-rolled
+    /// unit file — would otherwise serve production traffic with no per-request
+    /// attribution, and a compromise cannot be scoped after the fact from records that
+    /// were never written. Turning it off is available but explicit (`--audit-sink
+    /// none`), and the startup line states which posture is in force either way.
     pub audit_sink: AuditSinkKind,
     /// ADR-MCPRE-054: where retained evidence goes. `None` by default — nothing is
     /// retained and the request path is unchanged.
@@ -642,7 +646,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut admission_degraded_bound_secs: i64 = 0;
     let mut admission_allow_degraded = false;
     let mut trust_reload_secs: Option<u64> = None;
-    let mut audit_sink = AuditSinkKind::None;
+    let mut audit_sink = AuditSinkKind::Stderr;
     let mut retained_evidence_dir: Option<String> = None;
     let mut verified_context = VerifiedContextKind::Disabled;
     let mut replay = ReplayKind::Memory;
@@ -1661,13 +1665,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     //     unreachable on the serving path. `ocsp_rejection` is called only from
     //     `connection_rejection`, which only the blocking serve loops use; the
     //     production data plane is the per-core async fleet (ADR-MCPRE-051 §1), which
-    //     calls `connection_rejection_for_leaf` and performs only the cert-lifetime
-    //     check. Accepting `require` would print "ONLINE OCSP client-cert revocation
-    //     enabled" at startup while admitting every revoked client certificate — the
-    //     forbidden-claim shape (security-boundary §2). This holds with OR without the
-    //     `online_ocsp` feature: without it the code is absent, with it the code is
-    //     present but never called. Refused until the async path carries the full peer
-    //     chain and performs the responder round-trip off the runtime worker.
+    //     calls `connection_rejection_for_chain` and performs only the offline
+    //     cert-lifetime + CRL checks. Accepting `require` would print "ONLINE OCSP
+    //     client-cert revocation enabled" at startup while admitting every revoked
+    //     client certificate — the forbidden-claim shape (security-boundary §2). This
+    //     holds with OR without the `online_ocsp` feature: without it the code is
+    //     absent, with it the code is present but never called. Refused until the async
+    //     path performs the responder round-trip off the runtime worker.
     if client_ocsp == OcspKind::Require {
         return Err(
             "--client-ocsp require cannot be honored: online OCSP is implemented only on \
@@ -1980,6 +1984,17 @@ pub fn validate_tls_signing_exclusivity(
 /// is one source of truth, not a hand-picked magic number per fixture.
 pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 
+/// The ceiling on `--trust-reload-secs` for the tiers that advertise a NEAR-ZERO
+/// revocation window (`live`, `push`).
+///
+/// Those tiers describe how fast a revoked request-signer key stops being honoured, and
+/// the only thing that removes a key from the resolver on a running replica is the
+/// `--trust` re-read. The cadence is therefore the real window, whatever the tier
+/// string says. One minute is the coarsest cadence for which "near-zero" survives
+/// contact with an incident: it is inside the 300s default connection-age bound, so a
+/// revocation reaches every peer within one connection lifetime.
+pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
+
 /// Collect the parse-time unsafe-configuration violations for `config`.
 ///
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
@@ -2058,6 +2073,50 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
             "--revocation-tier live|push requires --trust-reload-secs: both tiers state a              revocation window in terms of consulting the trust store, but with --trust read              once at startup the store cannot change, so revoking a request-signer key would              need a restart of every replica while the startup line claims otherwise"
                 .to_string(),
         );
+    }
+    // The cadence is not merely PRESENT-or-absent: it IS the window. A tier's revocation
+    // claim is a statement about how fast a key removed from `--trust` stops resolving,
+    // and nothing resolves faster than the file is re-read — so a present-but-useless
+    // cadence makes the claim exactly as false as an absent one. Each tier is held to
+    // the strongest window it advertises.
+    if let Some(secs) = config.trust_reload_secs {
+        let (ceiling, claim) = match config.revocation_tier {
+            // "near-zero, no positive caching" — bounded by the general near-zero ceiling.
+            crate::revocation_tier::RevocationTier::Live => (
+                MAX_NEAR_ZERO_TRUST_RELOAD_SECS,
+                "--revocation-tier live states a NEAR-ZERO revocation window (the store is \
+                 consulted on every verification)"
+                    .to_string(),
+            ),
+            // Near-zero when the epoch source is healthy, bounded T otherwise — so the
+            // store has to be able to change within T as well as within the near-zero
+            // ceiling.
+            crate::revocation_tier::RevocationTier::Push { t_secs } => (
+                MAX_NEAR_ZERO_TRUST_RELOAD_SECS.min(t_secs.max(1) as u64),
+                format!(
+                    "--revocation-tier push:{t_secs} states a near-zero window with a bounded \
+                     {t_secs}s fallback"
+                ),
+            ),
+            // The declared window T is the whole claim: cached active state is usable
+            // only until T, then fail closed. A store that cannot change within T cannot
+            // deliver it.
+            crate::revocation_tier::RevocationTier::BoundedCache { t_secs } => (
+                t_secs.max(1) as u64,
+                format!(
+                    "--revocation-tier bounded-cache:{t_secs} states that revocation is \
+                     enforced fleet-wide within {t_secs}s"
+                ),
+            ),
+        };
+        if secs > ceiling {
+            violations.push(format!(
+                "--trust-reload-secs {secs} is longer than the revocation window the declared \
+                 tier claims: {claim}, but a key removed from --trust keeps resolving until the \
+                 file is re-read, which is every {secs}s. Set --trust-reload-secs <= {ceiling}, \
+                 or declare a tier whose window the deployment can keep"
+            ));
+        }
     }
     // MCPS-093/094: the socket timeouts and the aggregate read-phase deadline ARE the
     // slow-loris defense — a peer trickling bytes just under `read_timeout` is stopped
@@ -3095,6 +3154,7 @@ mod tests {
     use super::load_trust;
     use super::parse_args;
     use super::unsafe_config_violations;
+    use super::AuditSinkKind;
     use super::AuthzKind;
     use super::BindingKind;
     use super::IdentityPolicy;
@@ -5061,10 +5121,11 @@ mod tests {
         ] {
             let mut a = minimal_durable();
             // LIVE and PUSH both state their window in terms of consulting the trust
-            // store, so both require a reload cadence to make that true.
+            // store, so both require a reload cadence to make that true — and one no
+            // longer than the window each tier declares.
             a.splice(
                 0..0,
-                args(&["--revocation-tier", flag, "--trust-reload-secs", "60"]),
+                args(&["--revocation-tier", flag, "--trust-reload-secs", "30"]),
             );
             let config = parse_args(&a).unwrap_or_else(|e| panic!("parse {flag}: {e}"));
             assert_eq!(config.revocation_tier, expected, "flag {flag}");
@@ -5086,6 +5147,65 @@ mod tests {
         let mut a = minimal_durable();
         a.splice(0..0, args(&["--revocation-tier", "bounded-cache:90"]));
         parse_args(&a).expect("bounded-cache does not require a reload cadence");
+    }
+
+    /// PRESENCE is not the guarantee. A cadence longer than the window the tier
+    /// advertises leaves the same over-claim the absent-cadence refusal exists to stop:
+    /// the startup line promises near-zero while the store changes once a week.
+    #[test]
+    fn a_cadence_longer_than_the_declared_window_is_refused() {
+        for (tier, secs) in [
+            ("live", "604800"),
+            ("live", "61"),
+            ("push:60", "120"),
+            // The push fallback window is the tighter of the two ceilings.
+            ("push:10", "30"),
+            ("bounded-cache:60", "300"),
+        ] {
+            let mut a = minimal_durable();
+            a.splice(
+                0..0,
+                args(&["--revocation-tier", tier, "--trust-reload-secs", secs]),
+            );
+            let err = parse_args(&a)
+                .expect_err("a cadence longer than the declared window must be refused");
+            assert!(
+                err.contains("--trust-reload-secs"),
+                "tier {tier} cadence {secs}: got {err}"
+            );
+        }
+        // At the ceiling exactly, the claim is keepable — accepted.
+        for (tier, secs) in [
+            ("live", "60"),
+            ("push:60", "60"),
+            ("push:10", "10"),
+            ("bounded-cache:60", "60"),
+            ("bounded-cache:600", "60"),
+        ] {
+            let mut a = minimal_durable();
+            a.splice(
+                0..0,
+                args(&["--revocation-tier", tier, "--trust-reload-secs", secs]),
+            );
+            parse_args(&a)
+                .unwrap_or_else(|e| panic!("tier {tier} cadence {secs} must be accepted: {e}"));
+        }
+    }
+
+    /// ADR-MCPS-035: the ABSENT case has to be the safe one. An invocation that never
+    /// passes `--audit-sink` — the container run directly, a harness, a unit file — must
+    /// still write the per-request attribution record.
+    #[test]
+    fn the_audit_sink_defaults_to_on() {
+        let config = parse_args(&minimal_durable()).expect("minimal durable config parses");
+        assert_eq!(config.audit_sink, AuditSinkKind::Stderr);
+        // Turning it off stays possible, but only by naming it.
+        let mut a = minimal_durable();
+        a.splice(0..0, args(&["--audit-sink", "none"]));
+        assert_eq!(
+            parse_args(&a).expect("explicit none parses").audit_sink,
+            AuditSinkKind::None
+        );
     }
 
     #[test]
