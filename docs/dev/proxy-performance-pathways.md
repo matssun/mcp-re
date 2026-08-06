@@ -157,6 +157,37 @@ Redis parallelism (`io-threads`, cluster sharding, batching `WAIT` across a pipe
 therefore moot for this ceiling. None of it can move a component that is already 30× faster
 than the demand placed on it.
 
+### Loopback is not the ceiling either
+
+Two independent harnesses converging (~10.2k for the saturation rig, ~10.4k for the §7
+lane) with flat scaling across 2/4/8 cores looks exactly like the macOS loopback stack
+rather than the proxy. It is not. Measured with the rig's own backend, driven by `ab` over
+plain loopback HTTP with keepalive at c=128 — no proxy, no TLS, no pipelining, one request
+per socket round trip:
+
+```
+Requests per second:  174,481.30 [#/sec]
+Failed requests:      0
+```
+
+17× the proxy's ceiling. So `lo0` is not the constraint, the M/M+1 `PROXY` verdict stands,
+and ~10.2k is the proxy's own number — which is the question an off-host or cloud run
+would otherwise have been needed to settle.
+
+The store bench's 470k could NOT settle this on its own, and should not be cited for it:
+it pipelines many commands per socket round trip across 8 connections, while the proxy's
+HTTP path is one request per round trip across 768. Comparing them conflates throughput
+with syscall count.
+
+### Run-to-run variance is large — do not quote single figures
+
+The `multi_thread(8)` split-control store bench returned 21,314 rps in one batch against
+470,245 / 475,630 / 501,019 for the identical configuration in others, and the first row
+after the Redis containers start has been anomalous twice. Something is cold for the first
+measurement in a batch. Every configuration still lands well above the proxy's 10.2k, so
+the conclusions here survive, but any individual number needs repeats before it means
+anything.
+
 ### What the instrument still cannot see
 
 Nothing on the request path is CPU-bound: at ~10k rps the proxy used 0.44 of 14 cores and
