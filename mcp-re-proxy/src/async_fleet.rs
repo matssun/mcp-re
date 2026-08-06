@@ -212,7 +212,21 @@ where
                 // stalled signature costs one worker rather than a whole core. The
                 // share-nothing default is unchanged for the exported-key path, where
                 // signing is in-memory and never blocks.
-                let runtime = if options.tls_signing_may_block {
+                // DIAGNOSTIC: give each core a worker pool instead of the share-nothing
+                // single thread, to test whether that thread is the constraint. Not a
+                // supported knob — the share-nothing default is ADR-MCPRE-051 §1.
+                let diag_workers: Option<usize> = std::env::var("MCP_RE_DIAG_CORE_WORKERS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|n| *n > 1);
+                let runtime = if let Some(workers) = diag_workers {
+                    tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(workers)
+                        .thread_name(format!("mcp-re-serve-{core_index}-diag"))
+                        .enable_all()
+                        .build()
+                        .expect("per-core tokio runtime builds")
+                } else if options.tls_signing_may_block {
                     tokio::runtime::Builder::new_multi_thread()
                         .worker_threads(DELEGATED_TLS_WORKERS_PER_CORE)
                         .thread_name(format!("mcp-re-serve-{core_index}-w"))

@@ -77,6 +77,45 @@ struct Acc {
     nanos: [AtomicU64; STAGES],
     count: [AtomicU64; STAGES],
     reported: AtomicU64,
+    /// Replay calls currently between entry and exit.
+    inflight: AtomicU64,
+    /// Sum of the occupancy observed on entry, and how many entries — their ratio is
+    /// the mean concurrency actually reaching the store.
+    inflight_sum: AtomicU64,
+    inflight_samples: AtomicU64,
+    inflight_max: AtomicU64,
+}
+
+/// Counts replay calls in flight, so the store's OFFERED concurrency is measured rather
+/// than inferred.
+///
+/// Reading throughput back through the store's own latency curve suggested the proxy has
+/// only ~8-10 requests at the store while holding 768 connections. That is an inference
+/// from two separate measurements and it deserves a direct one: either the requests are
+/// held up before they reach the store, or they are all there and the store behaves
+/// differently inside the proxy than in the bench. This distinguishes those.
+pub struct InFlight(bool);
+
+impl InFlight {
+    pub fn enter() -> Self {
+        if !enabled() {
+            return InFlight(false);
+        }
+        let a = acc();
+        let now = a.inflight.fetch_add(1, Ordering::Relaxed) + 1;
+        a.inflight_sum.fetch_add(now, Ordering::Relaxed);
+        a.inflight_samples.fetch_add(1, Ordering::Relaxed);
+        a.inflight_max.fetch_max(now, Ordering::Relaxed);
+        InFlight(true)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if self.0 {
+            acc().inflight.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 }
 
 fn acc() -> &'static Acc {
@@ -85,6 +124,10 @@ fn acc() -> &'static Acc {
         nanos: std::array::from_fn(|_| AtomicU64::new(0)),
         count: std::array::from_fn(|_| AtomicU64::new(0)),
         reported: AtomicU64::new(0),
+        inflight: AtomicU64::new(0),
+        inflight_sum: AtomicU64::new(0),
+        inflight_samples: AtomicU64::new(0),
+        inflight_max: AtomicU64::new(0),
     })
 }
 
@@ -214,5 +257,19 @@ fn write_report() {
             mean_us
         ));
     }
+    // Occupancy, not a duration: the mean_us column carries the MEAN concurrency and the
+    // total_ms column the MAX, so the row fits the same CSV without a second format.
+    let samples = a.inflight_samples.load(Ordering::Relaxed);
+    let mean_inflight = if samples > 0 {
+        a.inflight_sum.load(Ordering::Relaxed) as f64 / samples as f64
+    } else {
+        0.0
+    };
+    out.push_str(&format!(
+        "replay_inflight,{},{},{:.1}\n",
+        samples,
+        a.inflight_max.load(Ordering::Relaxed),
+        mean_inflight
+    ));
     let _ = std::fs::write(path, out);
 }
