@@ -45,6 +45,13 @@ fn main() {
     // callers and drivers share one runtime, which is the arrangement that measured 421k.
     let mut split_runtime = false;
     let mut control_workers = 1usize;
+    // The proxy's per-core serving runtimes are `new_current_thread()` (ADR-MCPRE-051 §1
+    // share-nothing, `async_fleet.rs`), not the multi-worker runtime this bench used by
+    // default. That is a materially different wakeup path: a multi-worker runtime has
+    // sibling workers that can pick up a readied task, while a current-thread runtime has
+    // exactly one thread which parks in kqueue and must be woken by the kernel before
+    // anything can be polled. Every previous bench run hid that difference.
+    let mut caller_current_thread = false;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut val = || it.next().expect("flag needs a value");
@@ -57,17 +64,26 @@ fn main() {
             "--wait-timeout-ms" => wait_timeout_ms = val().parse().expect("timeout"),
             "--split-runtime" => split_runtime = true,
             "--control-workers" => control_workers = val().parse().expect("control workers"),
+            "--caller-current-thread" => caller_current_thread = true,
             other => panic!("unknown flag {other}"),
         }
     }
 
     // Worker threads well above the store's needs: this binary must not be the limit it
-    // is looking for.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(8)
-        .enable_all()
-        .build()
-        .expect("runtime");
+    // is looking for. `--caller-current-thread` instead reproduces one of the proxy's
+    // per-core serving runtimes exactly.
+    let rt = if caller_current_thread {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(8)
+            .enable_all()
+            .build()
+            .expect("runtime")
+    };
 
     let connect = |url: String| async move {
         let mut store = RedisAsyncAtomicReplayStore::connect_pooled(
@@ -137,10 +153,15 @@ fn main() {
             Some(q) => format!("SET NX PX + WAIT {q} {wait_timeout_ms}"),
             None => "SET NX PX only".to_string(),
         };
-        let topology = if split_runtime {
-            format!("split-runtime(control_workers={control_workers})")
+        let caller = if caller_current_thread {
+            "current_thread"
         } else {
-            "one-runtime".to_string()
+            "multi_thread(8)"
+        };
+        let topology = if split_runtime {
+            format!("caller={caller} split-control({control_workers})")
+        } else {
+            format!("caller={caller} one-runtime")
         };
         println!(
             "{tier} [{topology}]: pool={pool} concurrency={concurrency} ok={ok} \
