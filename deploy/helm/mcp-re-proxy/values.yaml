@@ -47,6 +47,14 @@ service:
 # (TLS) and a credentialed URL — `rediss://:<password>@host:6379`, or an ACL user as
 # `rediss://<user>:<password>@host:6379`. Supply the credential by overriding this
 # value from a Secret; do not commit it.
+#
+# The instance MUST run `maxmemory-policy noeviction`, and the proxy verifies it at
+# connect rather than trusting it: every replay record carries a TTL, so any
+# `volatile-*` or `allkeys-*` policy makes a live nonce evictable at `maxmemory` —
+# which silently re-opens the replay window with nothing in the logs. Managed
+# offerings are the hazard here: Memorystore defaults to `volatile-lru`, and
+# ElastiCache renames `CONFIG`, so the policy cannot be read and startup fails
+# closed. Set the policy on the instance before pointing a fleet at it.
 replay:
   redisUrl: "rediss://mcp-re-redis:6379"
   durabilityTier: "redis-wait-quorum:2:2000"
@@ -139,15 +147,19 @@ auditSink: stderr
 # inner backend is a same-pod sidecar you control.
 verifiedContextCarrier: disabled
 
-# Per-request ADMISSION control (MCPRE-114). With no ceiling the proxy accepts
-# in-flight requests without bound, so ONE client holding a valid mTLS certificate
-# can drive unbounded concurrent work — each admitted request buffering up to
-# --max-body-bytes. Over the ceiling the proxy answers 503 BEFORE the handler, so
-# the inner plane is never reached.
+# In-flight CONCURRENCY ceiling (MCPRE-114). This is a resource bound, NOT the
+# ADR-MCPRE-053 §7 admission-currency check — that is `admissionCurrency` below, and
+# the two are independent controls. Setting a ceiling here does not enable §7.
 #
-# Leaving both empty no longer means UNBOUNDED: the proxy carries a fail-safe
-# per-core ceiling (64) that applies when neither flag is rendered. Set one of these
-# to size the boundary against your own inner plane rather than take that default.
+# Over the ceiling the proxy answers 503 BEFORE the handler, so the inner plane is
+# never reached. Without one, ONE client holding a valid mTLS certificate can drive
+# unbounded concurrent work, each admitted request buffering up to --max-body-bytes.
+#
+# Leaving both empty does NOT mean unbounded: with neither flag rendered the proxy
+# applies its own fail-safe per-core ceiling of 256 (ServerLimits::default(), matched
+# to max_concurrent_connections so one in-flight request per admitted connection
+# tightens nothing already allowed). Set one of these to size the boundary against
+# your own inner plane rather than take that default.
 #
 #   maxInFlight       per-core ceiling, applied verbatim (wins if both are set)
 #   maxInFlightTotal  fleet-wide target that the async fleet divides evenly across
@@ -160,6 +172,59 @@ verifiedContextCarrier: disabled
 admission:
   maxInFlight: ""
   maxInFlightTotal: ""
+
+# ADR-MCPRE-053 §7 ADMISSION-CURRENCY control (ADM-1..ADM-5). Distinct from the
+# in-flight ceiling above in every respect: this checks that the caller's admission
+# assertion is still CURRENT against a shared authoritative record, before the replay
+# admission step and before the inner backend is reached.
+#
+#   mode  ""          omit the flag; the proxy's own default, AdmissionKind::Off —
+#                     no currency check runs at all
+#         "off"       the same thing, stated explicitly
+#         "optional"  requests carrying an assertion are checked; requests without
+#                     one are still served
+#         "required"  a request with no admission assertion is refused
+#
+# `optional` and `required` both REQUIRE authorityKid + authorityPubkey (an assertion
+# is only evidence if the issuer is one this deployment trusts) and redisUrl (the
+# shared authoritative record). The proxy refuses to start without them rather than
+# run a gate that verifies nothing while looking enabled, and the render guard says
+# so first.
+#
+# degraded serving: with the authority unreachable every call fails closed unless
+# allowDegraded is set, and then only for degradedBoundSecs after the last successful
+# read. A degraded window is a BOUNDED policy — an unbounded or zero one is not, and
+# both the CLI and the render guard refuse it.
+admissionCurrency:
+  mode: ""
+  # The kid of the admission AUTHORITY whose assertions this boundary accepts.
+  authorityKid: ""
+  # That authority's Ed25519 public key, base64url, no padding.
+  authorityPubkey: ""
+  # The shared authoritative record. Same scheme rule as replay.redisUrl and for the
+  # same reason — this hop decides whether a caller is still admitted, so an
+  # unauthenticated peer who can write it can re-admit a revoked actor fleet-wide.
+  # Use `rediss://` with credentials, supplied by overriding this from a Secret.
+  redisUrl: ""
+  allowDegraded: false
+  degradedBoundSecs: 0
+
+# SCITT evidence retention (SCT-2 / SCT-3). Retains the full request and response
+# messages of every served call into a content-addressed store, which is what makes
+# "we can account for what we served" checkable and what the auditor path
+# reconstructs receipt chains from. Empty = no retention (the proxy's own default).
+#
+# Set `dir` to a path INSIDE the container and the chart mounts an emptyDir there —
+# the only writable path in the pod, since containerSecurityContext pins
+# readOnlyRootFilesystem. emptyDir is node-local and dies with the pod, so it is a
+# staging area for a shipper, not the archive itself: a retention claim that has to
+# survive a rollout needs a PersistentVolumeClaim, which this chart does not render.
+# sizeLimit bounds it, because an unbounded emptyDir consumes node ephemeral storage
+# until the kubelet evicts the pod.
+retainedEvidence:
+  dir: ""
+  # e.g. "/var/lib/mcp-re/retained"
+  sizeLimit: "1Gi"
 
 # mTLS channel binding (ADR-MCPS-023). The ONLY two values this chart can render
 # into a pod that starts:
@@ -224,9 +289,12 @@ inner:
 # the material Secret (dev / on-prem). `gcpKms` keeps the signing key in GCP
 # Cloud KMS and, on GKE, authenticates via Workload Identity (useMetadata) so no
 # key material ever lands in the pod — this is the ADR-MCPRE-052 delegated-credential
-# ISSUER root (off the request path). The default image (deploy/docker/Dockerfile)
-# is built with the `gcp_kms_keysource` feature, so it serves both modes; the KMS
-# signer stays inert until `gcpKms` selects `--key-source gcp-kms`.
+# ISSUER root (off the request path). `awsKms` is the EKS counterpart, authenticating
+# via IRSA. The default image (deploy/docker/Dockerfile) is built with BOTH the
+# `gcp_kms_keysource` and `aws_kms_keysource` features, so one image serves all three
+# modes; each KMS signer stays inert until the matching `--key-source` selects it. An
+# image built without the feature a mode needs fails closed at startup with a
+# feature-flag error, so a custom --build-arg FEATURES= must cover the mode set here.
 keySource: fileSeed # fileSeed | gcpKms | awsKms
 
 # GCP Cloud KMS custody (used only when keySource == gcpKms).
@@ -289,6 +357,15 @@ awsKms:
 # The bound role needs kms:Sign + kms:GetPublicKey on the signing key. That
 # annotation is what makes EKS project the token and set AWS_ROLE_ARN /
 # AWS_WEB_IDENTITY_TOKEN_FILE; without it the proxy has no credentials.
+#
+# The kube-apiserver token is NOT automounted, on the ServiceAccount and again on the
+# pod spec (so it holds for serviceAccount.create=false too). The proxy makes no
+# Kubernetes API calls, and a container escape here already yields the signing seed
+# and the TLS private key — handing it a cluster credential as well widens a
+# single-pod key compromise into whatever that ServiceAccount is bound to. Neither
+# custody mode needs it: gcpKms reads the GKE metadata server, and awsKms/IRSA uses
+# the separate `aws-iam-token` projected volume the pod-identity webhook injects,
+# which this setting does not affect.
 serviceAccount:
   create: true
   # If empty, the fullname is used. Set to reuse an existing (WI-bound) account.
@@ -381,9 +458,17 @@ podSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# readOnlyRootFilesystem is set for the same reason the capability drop is: an
+# attacker with code execution in the key-holding container should be confined to
+# memory rather than able to drop persistent tooling on the writable layer. The
+# proxy needs no writable path in this posture — the audit sink is a stream
+# (--audit-sink stderr), the material Secret is mounted readOnly, and the only
+# component that writes files is the retained-evidence store, which is rendered
+# with its own emptyDir when retainedEvidence.dir is set.
 containerSecurityContext:
   allowPrivilegeEscalation: false
   privileged: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL

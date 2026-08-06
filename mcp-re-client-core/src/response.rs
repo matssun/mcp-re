@@ -337,6 +337,10 @@ pub struct TrustedIssuerSet {
     retired: HashMap<String, (ResolvedActor, i64)>,
     /// Withdrawn / compromised roots (by `issuer_kid`).
     revoked: HashSet<String>,
+    /// When the document that published this trust picture stops being usable (unix
+    /// seconds). `None` for a set assembled by hand, which has no document behind it
+    /// and therefore no expiry to enforce.
+    manifest_expires_at: Option<i64>,
 }
 
 impl TrustedIssuerSet {
@@ -370,16 +374,52 @@ impl TrustedIssuerSet {
         self
     }
 
+    /// Carry the publishing document's `expires_at` INTO the set, so "a stale trust
+    /// picture is never used" is a property of every verification rather than of the
+    /// one moment the document was loaded.
+    ///
+    /// Without it the expiry gate lives only in `load_signed_manifest` and in whatever
+    /// refresher a deployment happens to run: a client that disables refresh keeps
+    /// verifying against anchors from a document that expired weeks ago, and even one
+    /// that refreshes keeps them for up to a full reload interval past expiry. Every
+    /// root then resolves to `None` once `now` passes the deadline, so responses fail
+    /// closed as `delegation_issuer_untrusted` until a newer document is accepted.
+    pub fn with_manifest_expiry(mut self, expires_at: i64) -> Self {
+        self.manifest_expires_at = Some(expires_at);
+        self
+    }
+
+    /// When the document behind this trust picture stops being usable, if it came from
+    /// one.
+    pub fn manifest_expires_at(&self) -> Option<i64> {
+        self.manifest_expires_at
+    }
+
+    /// Whether the document that published this set has expired at `now`. A set with no
+    /// document behind it never expires.
+    pub fn is_expired(&self, now: i64) -> bool {
+        self.manifest_expires_at
+            .is_some_and(|expires_at| now > expires_at)
+    }
+
     /// Resolve an `issuer_kid` to its trusted ROOT actor AT `now`: a current root, or
     /// a retired root still inside its overlap window (`now <= valid_until`). A
-    /// retired root past its window, or an unknown issuer, resolves to `None`
-    /// (→ `delegation_issuer_untrusted`).
+    /// retired root past its window, an unknown issuer, or ANY issuer once the
+    /// publishing document's [`manifest_expires_at`](Self::manifest_expires_at) has
+    /// passed, resolves to `None` (→ `delegation_issuer_untrusted`).
     ///
     /// A revoked-but-still-current/retired root DOES resolve here on purpose: the
     /// credential's signature is then checked and the [`RevocationSource`] impl
     /// rejects it as `delegation_revoked` (the honest reason), rather than masking a
     /// revocation as an untrusted-issuer error.
     pub fn resolve_root(&self, issuer_kid: &str, now: i64) -> Option<ResolvedActor> {
+        // The whole picture has a deadline, and it outranks any individual root's:
+        // past the publishing document's `expires_at` nothing in it resolves, so a
+        // verifier that never refreshes fails closed instead of serving forever on
+        // anchors the org stopped standing behind.
+        if self.is_expired(now) {
+            return None;
+        }
         // RETIREMENT WINS. A kid listed as both current and retiring is a contradiction
         // in the manifest, and reading `current` first resolved it in the permissive
         // direction: the root stayed trusted unconditionally and its `valid_until`
@@ -459,26 +499,48 @@ pub struct DelegationPolicy {
     /// The accepted trust-epoch set (default `{ current }`, optionally
     /// `{ current, previous }` in a bounded rollout window).
     pub accepted_epochs: Vec<String>,
-    /// Clock-skew tolerance, seconds. Governs BOTH the credential window and the RFC
-    /// 9421 response-signature freshness gate.
+    /// Clock-skew tolerance, seconds, as CONFIGURED. The value actually applied is
+    /// [`DelegationPolicy::bounded_clock_skew`] — the field is `pub`, so nothing can
+    /// guarantee it was ever validated, and both windows read the bounded value rather
+    /// than this one.
     ///
-    /// It used to reach only the credential: both entry points built their
-    /// `DelegationExpectations` with `VerifierPolicy::default()`, pinning the
-    /// signature gate at the built-in 30s whatever the operator configured. A
-    /// deployment that widened the skew for a real clock spread got it on one of the
-    /// two windows and silently not the other.
+    /// It governs BOTH the credential's `nbf`/`exp` window and the RFC 9421
+    /// response-signature freshness gate, and the two must be the same number: a
+    /// deployment that widened the skew for a real clock spread and got it on one
+    /// window only is running two different notions of "close enough" on one message.
     pub max_clock_skew: i64,
 }
 
 impl DelegationPolicy {
+    /// The clock-skew tolerance this policy actually applies: the configured value
+    /// clamped to the profile's `0..=MAX_CLOCK_SKEW_BOUND` range.
+    ///
+    /// The bound is the profile's, not this crate's ([`VerifierPolicy::new`] refuses
+    /// anything outside it), and it has to be applied HERE because the delegation
+    /// credential's freshness check consumes the number raw: `DelegationExpectations`
+    /// carries it straight through to `DelegationVerifyParams.max_clock_skew`, which
+    /// widens `nbf`/`exp` with no cap of its own. Passing the configured value there
+    /// while the signature gate silently clamped it meant a policy of 604800 accepted a
+    /// delegated credential a week past its `exp` — the TTL is the primary bound on a
+    /// compromised delegated key, so that window has to stay bounded (DEL-4).
+    ///
+    /// Clamping rather than rejecting keeps a misconfiguration from turning every
+    /// response unverifiable, and unlike the previous fallback it leaves the two windows
+    /// equal: one number, bounded, on both gates.
+    ///
+    /// [`VerifierPolicy::new`]: mcp_re_http_profile::VerifierPolicy::new
+    fn bounded_clock_skew(&self) -> i64 {
+        self.max_clock_skew
+            .clamp(0, mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND)
+    }
+
     /// The RFC 9421 signature-acceptance policy this delegation policy implies.
     ///
-    /// One configured skew drives both windows. A skew outside the profile's bound
-    /// falls back to the default rather than failing the verification: the value was
-    /// already accepted into this struct, and refusing here would turn a
-    /// misconfiguration into an unverifiable response.
+    /// Built from [`bounded_clock_skew`](Self::bounded_clock_skew), so the construction
+    /// can no longer fail on the skew argument; the fallback remains only because
+    /// `new` is fallible in its algorithm argument too.
     fn verifier_policy(&self) -> mcp_re_http_profile::VerifierPolicy {
-        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], self.max_clock_skew)
+        mcp_re_http_profile::VerifierPolicy::new(&["ed25519"], self.bounded_clock_skew())
             .unwrap_or_default()
     }
 
@@ -562,7 +624,7 @@ pub fn verify_delegated_response<R: Into<ResolverOutcome>>(
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
-        max_clock_skew: policy.max_clock_skew,
+        max_clock_skew: policy.bounded_clock_skew(),
     };
     // Adapt the revocation seam to the http-profile verifier's closure form. The
     // verifier consults it with each identifier the credential carries.
@@ -686,8 +748,29 @@ pub fn verify_delegated_accepted_202_anchored(
     issuers: &TrustedIssuerSet,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
+    verify_delegated_accepted_202_anchored_pinned(response, request, policy, issuers, None, now)
+}
+
+/// [`verify_delegated_accepted_202_anchored`] with the route's PINNED root issuer
+/// enforced — the anchored form of [`verify_delegated_accepted_202_pinned`].
+pub fn verify_delegated_accepted_202_anchored_pinned(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    policy: &DelegationPolicy,
+    issuers: &TrustedIssuerSet,
+    expected_issuer_kid: Option<&str>,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
     let resolver = issuers.anchored_resolver(now);
-    verify_delegated_accepted_202(response, request, &resolver, policy, issuers, now)
+    verify_delegated_accepted_202_pinned(
+        response,
+        request,
+        &resolver,
+        policy,
+        issuers,
+        expected_issuer_kid,
+        now,
+    )
 }
 
 /// The server's frozen wire code from a (verified) rejection-receipt body
@@ -733,6 +816,43 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
     revocation: &dyn RevocationSource,
     now: i64,
 ) -> Result<ResolvedActor, HttpProfileError> {
+    verify_delegated_accepted_202_pinned(
+        response,
+        request,
+        resolve_actor,
+        policy,
+        revocation,
+        None,
+        now,
+    )
+}
+
+/// [`verify_delegated_accepted_202`] with the route's PINNED server signer enforced.
+///
+/// `expected_issuer_kid` is the same coordinate the bodied path pins
+/// (`check_expected_server_signer`): the credential's ROOT ISSUER kid, not the
+/// delegated kid that rotates every TTL. A verifying acknowledgement from some OTHER
+/// server whose credential chains to any trusted anchor and is scoped to this
+/// audience fails closed with `ResponseBindingMismatch`, exactly as it does on the
+/// bodied path — without this the pin was enforced on replies and silently absent on
+/// one-way notifications, so an operator's configured control read as enabled and did
+/// not run on half the traffic.
+///
+/// The kid is read from the credential AFTER the full verification succeeds: the
+/// credential header is a COVERED component of the 202's signature (an uncovered one
+/// is refused), the root signature covers the JWS header, and the credential verifier
+/// requires `header.kid == claims.issuer_kid` — so the value read here is the anchor
+/// the response provably chained to, not a self-asserted label.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_delegated_accepted_202_pinned<R: Into<ResolverOutcome>>(
+    response: &HttpResponse,
+    request: &HttpRequest,
+    resolve_actor: &dyn Fn(&str, SignerSlot) -> R,
+    policy: &DelegationPolicy,
+    revocation: &dyn RevocationSource,
+    expected_issuer_kid: Option<&str>,
+    now: i64,
+) -> Result<ResolvedActor, HttpProfileError> {
     let audiences: Vec<&str> = policy
         .verifier_audiences
         .iter()
@@ -744,17 +864,56 @@ pub fn verify_delegated_accepted_202<R: Into<ResolverOutcome>>(
         verifier_audiences: &audiences,
         expected_audience_hash: policy.expected_audience_hash.as_str(),
         accepted_epochs: &epochs,
-        max_clock_skew: policy.max_clock_skew,
+        max_clock_skew: policy.bounded_clock_skew(),
     };
     let is_revoked = |identifier: &str| revocation.is_revoked(identifier);
-    mcp_re_http_profile::verify_delegated_accepted_202(
+    let actor = mcp_re_http_profile::verify_delegated_accepted_202(
         response,
         request,
         resolve_actor,
         &expect,
         &is_revoked,
         now,
-    )
+    )?;
+    if let Some(pinned) = expected_issuer_kid {
+        if delegation_issuer_kid(response)? != pinned {
+            return Err(HttpProfileError::ResponseBindingMismatch);
+        }
+    }
+    Ok(actor)
+}
+
+/// The ROOT issuer kid of the delegation credential a response carries.
+///
+/// Read from the compact-JWS header's `kid`, which the credential verifier has already
+/// required to equal the root-signed `issuer_kid` claim. Call it only on a response
+/// whose credential has verified: on its own this parses an untrusted header.
+///
+/// A REPEATED credential header is a protocol error here as it is in the verifier, so
+/// the pin reads the same one the verification did rather than whichever the two
+/// happen to pick first.
+fn delegation_issuer_kid(response: &HttpResponse) -> Result<String, HttpProfileError> {
+    let mut found: Option<&str> = None;
+    for (name, value) in &response.headers {
+        if name.eq_ignore_ascii_case(mcp_re_http_profile::MCP_RE_DELEGATION_HEADER) {
+            if found.is_some() {
+                return Err(HttpProfileError::DuplicateHeader(
+                    mcp_re_http_profile::MCP_RE_DELEGATION_HEADER,
+                ));
+            }
+            found = Some(value.as_str());
+        }
+    }
+    let credential = found.ok_or(HttpProfileError::DelegationCredentialMissing)?;
+    let header_seg = credential
+        .split('.')
+        .next()
+        .ok_or(HttpProfileError::MalformedEvidence("delegation header"))?;
+    let decoded = mcp_re_core::b64url_decode(header_seg)
+        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
+    let header: mcp_re_http_profile::DelegationHeader = serde_json::from_slice(&decoded)
+        .map_err(|_| HttpProfileError::MalformedEvidence("delegation header"))?;
+    Ok(header.kid)
 }
 
 #[cfg(test)]
@@ -1393,6 +1552,263 @@ mod delegated_tests {
         )
         .unwrap_err();
         assert_eq!(err, HttpProfileError::DelegationRevoked);
+    }
+
+    // ---- the configured skew is BOUNDED on both windows ----------------------
+
+    /// The credential's `nbf`/`exp` window is widened by the configured skew and had no
+    /// cap of its own: `DelegationExpectations.max_clock_skew` reached
+    /// `DelegationVerifyParams` raw. An operator who set a week got a week on the
+    /// credential window — the TTL that bounds a compromised delegated key's exposure —
+    /// while the signature gate they could observe was silently clamped, so testing the
+    /// setting showed nothing wrong.
+    ///
+    /// The response signature here is fresh at the verification instant; only the
+    /// CREDENTIAL is stale, so the failure this asserts is the credential window's.
+    #[test]
+    fn an_out_of_range_skew_cannot_widen_the_credential_window() {
+        // A request whose own window brackets the (much later) verification instant.
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            bindings(),
+            "nonce-skew-padded-to-the-128-bit-floor",
+            CREATED,
+            NOW + 100_000,
+        );
+        let params: Map<String, Value> = json!({ "name": "read" }).as_object().cloned().unwrap();
+        let signed = build_signed_request(
+            &json!(1),
+            "tools/call",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("client signs request");
+
+        // A credential issued long ago: ttl is 300s, so it expired 3300s before `late`.
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let late = NOW + 3600;
+        assert!(
+            snap.exp < late - 300,
+            "the credential is stale by > the bound"
+        );
+
+        // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
+        let reason = RejectionReason {
+            wire_code: "mcp-re.replay_detected",
+            message: "replayed".into(),
+        };
+        let resp = build_delegated_rejection(
+            signed.request(),
+            signed.evidence(),
+            &reason,
+            409,
+            &snap.server_signer,
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            late,
+            late + 300,
+        )
+        .expect("server signs a fresh receipt off a stale credential");
+
+        let a_week = DelegationPolicy::new(
+            vec![AUD.to_string()],
+            AUD_SCOPE,
+            vec![EPOCH.to_string()],
+            604_800,
+        );
+        // The BEHAVIOUR first: what the credential window does, not what the accessor
+        // returns. Unclamped, 604800s of tolerance swallows the 3300s the credential is
+        // past `exp` and this verification succeeds.
+        let err = verify_delegated_response(
+            &resp,
+            &resolver(),
+            &expectation(&signed),
+            &a_week,
+            &StaticRevocationList::new(),
+            late,
+        )
+        .expect_err("a week of skew must not honour a credential 3300s past exp");
+        assert_eq!(err, HttpProfileError::DelegationCredentialExpired);
+
+        assert_eq!(
+            a_week.bounded_clock_skew(),
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+            "the configured value is clamped, not passed through",
+        );
+        // And the same clamped number reaches the signature gate, so the two windows
+        // are one policy rather than 30s on one and a week on the other.
+        assert_eq!(
+            a_week.verifier_policy().max_clock_skew(),
+            mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND,
+        );
+        // A negative configured value clamps to zero rather than narrowing asymmetrically.
+        assert_eq!(
+            DelegationPolicy::new(vec![], "", vec![], -5).bounded_clock_skew(),
+            0
+        );
+    }
+
+    // ---- the trust picture's own expiry -------------------------------------
+
+    /// The manifest `expires_at` gate lived only at load time, so a client that does not
+    /// refresh verified forever against a document the org stopped standing behind. Once
+    /// the set carries the deadline, every root in it stops resolving at `now > expires_at`
+    /// — the check is part of the verification rather than of a background loop.
+    #[test]
+    fn an_expired_trust_picture_stops_resolving_its_roots() {
+        let signed = signed();
+        let mut custody = custody();
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: success_body(),
+        };
+        custody
+            .sign_response(NOW, &mut resp, signed.request(), signed.evidence())
+            .expect("server delegated-signs the success response");
+
+        let root = ResolvedActor {
+            identity: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: ROOT_KID.into(),
+            },
+            verification_key: root_key().public_key(),
+            slot: SignerSlot::Response,
+        };
+        let live = TrustedIssuerSet::new().with_current(root.clone());
+        // A hand-assembled set has no document behind it and no deadline to enforce.
+        assert!(live.manifest_expires_at().is_none());
+        verify_delegated_response_anchored(&resp, &expectation(&signed), &policy(), &live, NOW)
+            .expect("a set with no expiry verifies");
+
+        let published = TrustedIssuerSet::new()
+            .with_current(root)
+            .with_manifest_expiry(NOW + 60);
+        assert!(published.resolve_root(ROOT_KID, NOW).is_some());
+        verify_delegated_response_anchored(
+            &resp,
+            &expectation(&signed),
+            &policy(),
+            &published,
+            NOW,
+        )
+        .expect("inside the document's window it verifies exactly as before");
+
+        // One second past the document's own deadline nothing in it resolves.
+        assert!(published.is_expired(NOW + 61));
+        assert!(published.resolve_root(ROOT_KID, NOW + 61).is_none());
+        let err = verify_delegated_response_anchored(
+            &resp,
+            &expectation(&signed),
+            &policy(),
+            &published,
+            NOW + 61,
+        )
+        .expect_err("an expired trust picture must not verify a response");
+        assert_eq!(err, HttpProfileError::DelegationIssuerUntrusted);
+    }
+
+    // ---- the route's pin on the one-way notification leg ---------------------
+
+    /// The signed bodyless 202 that acknowledges a notification. The bodied path pins
+    /// the credential's ROOT ISSUER; this leg took no expectation at all, so on a route
+    /// with a pinned server any holder of a delegated key under ANY trusted root could
+    /// acknowledge that route's `notifications/cancelled` and the client reported it as
+    /// accepted.
+    #[test]
+    fn a_pinned_route_refuses_a_202_from_another_root() {
+        let inputs = RequestSigningInputs::new(
+            CLIENT_KEY_ID.to_string(),
+            audience(),
+            bindings(),
+            "nonce-202-padded-to-the-128-bit-floor",
+            CREATED,
+            EXPIRES,
+        );
+        let params: Map<String, Value> = json!({ "reason": "user cancelled" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let notification = crate::build_signed_notification(
+            "notifications/cancelled",
+            params,
+            TARGET,
+            &inputs,
+            &client_key(),
+        )
+        .expect("client signs the notification");
+
+        let mut custody = custody();
+        custody.ensure_active(NOW).expect("issue");
+        let snap = custody.active_snapshot().unwrap();
+        let ack = mcp_re_http_profile::sign_delegated_accepted_202(
+            notification.request(),
+            &snap.credential,
+            snap.key.as_ref(),
+            &snap.delegated_kid,
+            NOW,
+            NOW + 300,
+        )
+        .expect("the boundary signs the acknowledgement");
+
+        // Unpinned: verifies, as it always did.
+        verify_delegated_accepted_202_pinned(
+            &ack,
+            notification.request(),
+            &resolver(),
+            &policy(),
+            &StaticRevocationList::new(),
+            None,
+            NOW,
+        )
+        .expect("an unpinned route still accepts a well-formed acknowledgement");
+
+        // Pinned to the root this credential chains to: verifies.
+        verify_delegated_accepted_202_pinned(
+            &ack,
+            notification.request(),
+            &resolver(),
+            &policy(),
+            &StaticRevocationList::new(),
+            Some(ROOT_KID),
+            NOW,
+        )
+        .expect("the acknowledgement chains to the pinned root");
+
+        // Pinned to a different root: fails closed, exactly as on the bodied path.
+        let err = verify_delegated_accepted_202_pinned(
+            &ack,
+            notification.request(),
+            &resolver(),
+            &policy(),
+            &StaticRevocationList::new(),
+            Some("some-other-root-kid"),
+            NOW,
+        )
+        .expect_err("a 202 from an unpinned root must not acknowledge this route");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
+
+        // And the pin is NOT the rotating delegated kid — pinning that would break on
+        // the first rotation and says nothing about which server answered.
+        let err = verify_delegated_accepted_202_pinned(
+            &ack,
+            notification.request(),
+            &resolver(),
+            &policy(),
+            &StaticRevocationList::new(),
+            Some(&snap.delegated_kid),
+            NOW,
+        )
+        .expect_err("the pin binds to the issuer, not to the delegated kid");
+        assert_eq!(err, HttpProfileError::ResponseBindingMismatch);
     }
 
     /// After rotation, a response signed by the NEW delegated key verifies even while

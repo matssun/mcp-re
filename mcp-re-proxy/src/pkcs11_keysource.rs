@@ -197,6 +197,55 @@ impl<S> AmortizedSession<S> {
     }
 }
 
+/// Concurrent delegated-TLS signing sessions opened on the token.
+///
+/// One session means one mutex, and [`AmortizedSession::with_session`] holds it across
+/// the whole blocking `C_Sign` — so with a single TLS session every handshake on every
+/// core queues behind one token operation, and a slow token stalls all of them. PKCS#11
+/// permits many sessions per slot (they all ride the one `C_Login`, which is
+/// per-token-per-application), so the handshake path gets several and signs that many
+/// at a time. Small: each entry is a session handle the token has to keep open, and
+/// tokens bound their session count. It matches
+/// `crate::async_fleet::DELEGATED_TLS_WORKERS_PER_CORE`, the number of blocking
+/// handshake-signing workers a core runs, so a core's workers do not queue on each
+/// other; it is deliberately NOT scaled by core count, because the ceiling that binds
+/// is the token's own session limit and its internal concurrency, not the host's.
+const TLS_SESSION_POOL_SIZE: usize = 4;
+
+/// A fixed set of interchangeable logged-in sessions for the delegated-TLS path.
+///
+/// Interchangeable is what makes this a pool and not a cache: a handshake signature
+/// needs *a* logged-in session, not a particular one, so callers are spread across the
+/// set by a rotating cursor and each blocks only on the one it was handed.
+struct SessionPool<S> {
+    sessions: Vec<AmortizedSession<S>>,
+    next: std::sync::atomic::AtomicUsize,
+}
+
+impl<S> SessionPool<S> {
+    fn new(size: usize) -> Self {
+        SessionPool {
+            sessions: (0..size.max(1)).map(|_| AmortizedSession::new()).collect(),
+            next: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Run `op` on one of the pool's logged-in sessions.
+    ///
+    /// The cursor is advanced with `Relaxed` ordering: it selects which session to try
+    /// and orders nothing, and the session's own mutex is what makes the operation
+    /// exclusive.
+    fn with_session<F, T, Op>(&self, factory: &F, op: Op) -> Result<T, KeyError>
+    where
+        F: LoginSessionFactory<Session = S>,
+        Op: Fn(&S) -> Result<T, SessionOpError>,
+    {
+        let index =
+            self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.sessions.len();
+        self.sessions[index].with_session(factory, op)
+    }
+}
+
 /// A cached, logged-in PKCS#11 session reduced to its raw `CK_SESSION_HANDLE`.
 ///
 /// This is the lifetime-free `S` that [`AmortizedSession`] caches for the real
@@ -305,29 +354,33 @@ pub struct Pkcs11KeySource {
 /// the delegated TLS signer. Owns the one module context and the one amortized login
 /// session; each consumer differs ONLY in which object label it finds and signs with.
 ///
-/// FIELD ORDER IS LOAD-BEARING. Rust drops fields in declaration order, so `session`
-/// MUST precede `context`: the cached [`LoggedInSession`] closes its handle
-/// (`C_CloseSession`, via its [`SessionCloser`]) on drop, dereferencing `context`'s
-/// function list — which [`Pkcs11Context::drop`] FINALIZES (`C_Finalize`). Dropping
-/// `context` first would call into a finalized module (use-after-finalize → crash).
-/// With `session` first, the cached handle is closed BEFORE `C_Finalize` runs.
+/// FIELD ORDER IS LOAD-BEARING. Rust drops fields in declaration order, so every
+/// session-holding field MUST precede `context`: a cached [`LoggedInSession`] closes
+/// its handle (`C_CloseSession`, via its [`SessionCloser`]) on drop, dereferencing
+/// `context`'s function list — which [`Pkcs11Context::drop`] FINALIZES (`C_Finalize`).
+/// Dropping `context` first would call into a finalized module (use-after-finalize →
+/// crash). With the sessions first, every cached handle is closed BEFORE `C_Finalize`.
 struct Pkcs11Token {
     /// The session used for ROOT operations: delegated-credential issuance and
     /// public-key reads (M16). A fresh login happens only on first use or after a
     /// transient session invalidation. Declared first so it drops before `context`.
     session: AmortizedSession<LoggedInSession>,
-    /// A SEPARATE session for TLS handshake signing.
+    /// SEPARATE sessions for TLS handshake signing, distinct from `session` and from
+    /// each other.
     ///
-    /// `with_session` holds its mutex across the whole blocking token op, and the TLS
-    /// sign is triggered by any peer opening a connection while the root issuance is
-    /// the cold path that mints response-signing keys. Sharing one mutex let a
-    /// handshake flood starve rotation — and a slow root issuance block handshakes —
-    /// across threads, coupling an unauthenticated trigger to the credential
-    /// lifecycle. PKCS#11 allows multiple sessions on a slot, so the two get their
-    /// own; they still share the module context and the single login PIN.
-    tls_session: AmortizedSession<LoggedInSession>,
+    /// `with_session` holds a session's mutex across the whole blocking token op. The
+    /// TLS sign is triggered by any peer opening a connection, while root issuance is
+    /// the cold path that mints response-signing keys, so they must not contend: a
+    /// shared mutex would let a handshake flood starve rotation and let a slow root
+    /// issuance block handshakes, coupling an unauthenticated trigger to the credential
+    /// lifecycle. The handshake path is a POOL rather than one session for the same
+    /// reason applied to itself — a single mutex would queue every handshake on every
+    /// core behind one token operation, which an unauthenticated peer can hold
+    /// continuously — so [`TLS_SESSION_POOL_SIZE`] sign at a time. All of them share
+    /// the module context and the single login PIN.
+    tls_sessions: SessionPool<LoggedInSession>,
     /// The loaded Cryptoki context (owns the module handle; finalized on drop, after
-    /// `session`). One `C_Initialize` per process.
+    /// every session). One `C_Initialize` per process.
     context: Pkcs11Context,
     /// The id of the slot whose token holds the key objects.
     slot: CK_SLOT_ID,
@@ -343,8 +396,9 @@ struct Pkcs11Token {
 //     thread-safe and may be called concurrently;
 //   * the function-list pointer is set ONCE at load and never mutated afterwards —
 //     every later access is a read used purely to dispatch an FFI call;
-//   * the only mutable shared state, the cached logged-in session handle, lives
-//     behind the `AmortizedSession`'s `Mutex`, serializing the token operations.
+//   * the only mutable shared state is the cached logged-in session handles, each
+//     behind its own `AmortizedSession` `Mutex`, which serializes the token operations
+//     on that session; the pool's cursor is an atomic that only selects one.
 // The slot and PIN (`Zeroizing<String>`) are ordinary `Send + Sync` values.
 unsafe impl Send for Pkcs11Token {}
 unsafe impl Sync for Pkcs11Token {}
@@ -407,14 +461,16 @@ impl Pkcs11KeySource {
         })?;
         let slot = find_token_slot(&context, token_label)?;
 
-        // ONE token, TWO sessions. PKCS#11 login is per-token-per-application, so both
-        // sessions ride the same login state (a second independent `C_Login` would be
+        // ONE token, several sessions: one for the cold issuance path and a pool for
+        // the handshake path. PKCS#11 login is per-token-per-application, so they all
+        // ride the same login state (a second independent `C_Login` would be
         // `CKR_USER_ALREADY_LOGGED_IN`) — but each carries its own session handle and
-        // its own mutex, so a TLS handshake sign and a root issuance no longer block
-        // each other. See the field docs on `tls_session`.
+        // its own mutex, so a TLS handshake sign and a root issuance never block each
+        // other, and handshakes do not queue behind one another. See the field docs on
+        // `tls_sessions`.
         let token = Arc::new(Pkcs11Token {
             session: AmortizedSession::new(),
-            tls_session: AmortizedSession::new(),
+            tls_sessions: SessionPool::new(TLS_SESSION_POOL_SIZE),
             context,
             slot,
             pin: Zeroizing::new(pin.to_string()),
@@ -757,7 +813,7 @@ impl Pkcs11TlsSigner {
 impl RawEd25519TlsSigner for Pkcs11TlsSigner {
     fn sign_tls_ed25519(&self, message: &[u8]) -> Result<Vec<u8>, KeyError> {
         self.token
-            .tls_session
+            .tls_sessions
             .with_session(self.token.as_ref(), |logged_in| {
                 let view = self.token.context.with_handle(logged_in.handle);
                 let private = find_key(&view, &self.tls_key_label, ObjectClass::Private)?;
@@ -813,8 +869,10 @@ mod tests {
     use super::KeyError;
     use super::LoginSessionFactory;
     use super::SessionOpError;
+    use super::SessionPool;
     use super::ED25519_PUBLIC_KEY_LEN;
     use super::ED25519_SIGNATURE_LEN;
+    use super::TLS_SESSION_POOL_SIZE;
 
     /// Issue #59 (test b, no token): the SPKI the TLS signer exports from a token's
     /// raw `CKA_EC_POINT` is a well-formed RFC 8410 Ed25519 `SubjectPublicKeyInfo`
@@ -1149,6 +1207,98 @@ mod tests {
         assert_eq!(
             gen, 3,
             "the next op must run on a freshly opened session, not the failed one"
+        );
+    }
+
+    /// A [`LoginSessionFactory`] that can be shared across threads, so the pool's
+    /// concurrency is observable.
+    struct SharedFactory {
+        logins: std::sync::atomic::AtomicU32,
+    }
+
+    impl LoginSessionFactory for SharedFactory {
+        type Session = FakeSession;
+
+        fn open_logged_in(&self) -> Result<FakeSession, KeyError> {
+            Ok(FakeSession {
+                generation: self
+                    .logins
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1,
+            })
+        }
+    }
+
+    /// R7-C085: the delegated-TLS path must sign several handshakes AT ONCE.
+    ///
+    /// `with_session` holds its session's mutex across the whole blocking `C_Sign`, so
+    /// a single session makes every handshake on every core queue behind one token
+    /// operation — an unauthenticated peer opening connections then denies new
+    /// connections process-wide. The property is observed concurrency, not a call
+    /// count: with one shared session the peak overlap is 1.
+    #[test]
+    fn the_tls_session_pool_signs_several_handshakes_at_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let factory = SharedFactory {
+            logins: std::sync::atomic::AtomicU32::new(0),
+        };
+        let pool: SessionPool<FakeSession> = SessionPool::new(TLS_SESSION_POOL_SIZE);
+        let in_flight = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+
+        std::thread::scope(|scope| {
+            for _ in 0..TLS_SESSION_POOL_SIZE {
+                scope.spawn(|| {
+                    pool.with_session(&factory, |_session| {
+                        let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        // Stands in for the blocking `C_Sign` the mutex is held across.
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
+                        Ok::<(), SessionOpError>(())
+                    })
+                    .expect("pooled op succeeds");
+                });
+            }
+        });
+
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            TLS_SESSION_POOL_SIZE,
+            "handshake signatures must overlap; one session serializes them all"
+        );
+    }
+
+    /// The pool spreads callers across its sessions and still amortizes the login:
+    /// one login per session, not one per operation.
+    #[test]
+    fn the_tls_session_pool_amortizes_one_login_per_session() {
+        let factory = SharedFactory {
+            logins: std::sync::atomic::AtomicU32::new(0),
+        };
+        let pool: SessionPool<FakeSession> = SessionPool::new(TLS_SESSION_POOL_SIZE);
+
+        let mut generations = Vec::new();
+        for _ in 0..TLS_SESSION_POOL_SIZE * 10 {
+            generations.push(
+                pool.with_session(&factory, |session| {
+                    Ok::<u32, SessionOpError>(session.generation)
+                })
+                .expect("pooled op succeeds"),
+            );
+        }
+
+        assert_eq!(
+            factory.logins.load(std::sync::atomic::Ordering::SeqCst) as usize,
+            TLS_SESSION_POOL_SIZE,
+            "the pool must log each of its sessions in ONCE, not once per operation"
+        );
+        let distinct: std::collections::BTreeSet<u32> = generations.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            TLS_SESSION_POOL_SIZE,
+            "every session in the pool must be used, got {generations:?}"
         );
     }
 }

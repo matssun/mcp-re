@@ -322,6 +322,13 @@ where
 
     /// Sign `response` with the current delegated key, issuing/rotating as needed.
     /// The root is NOT touched here unless a rotation is due.
+    ///
+    /// The RFC 9421 `expires` is clamped to the credential's own `exp`. `exp` is the
+    /// fail-closed bound — a signer MUST stop signing off this snapshot once
+    /// `now >= exp` — so a signature whose stated validity outlives it would advertise
+    /// a freshness window longer than the credential authorizing the key that made it.
+    /// Near the end of a credential's life `now + ttl` crosses that bound, which is
+    /// exactly when it matters.
     pub fn sign_response(
         &mut self,
         now: i64,
@@ -343,7 +350,7 @@ where
             a.key.as_ref(),
             &a.delegated_kid,
             now,
-            now + self.cfg.ttl,
+            (now + self.cfg.ttl).min(a.exp),
         )
         .map(|_base| ())
         .map_err(CustodyError::Sign)
@@ -661,6 +668,69 @@ mod tests {
                 .iter()
                 .any(|e| e.event_type == "mcp-re.delegated_key.retired"),
             "the expired key is retired in the audit trail"
+        );
+    }
+    /// The signature `expires` is clamped to the credential's own `exp`.
+    ///
+    /// `exp` is the fail-closed bound — a signer MUST stop signing off this snapshot
+    /// once `now >= exp` — so an unclamped `now + ttl` advertises a validity window
+    /// outliving the credential that authorizes the key. It is not an edge case: a key
+    /// issued at `t0` has `exp = t0 + ttl`, so EVERY signature after `t0` overran it.
+    /// The production serving path already clamps; this is the same contract on the
+    /// crate's own public signer.
+    #[test]
+    fn the_signature_expiry_never_outlives_the_credential() {
+        let mut c = DelegatedSigningCustody::new(cfg(), ok_issuer(), factory());
+        c.ensure_active(1_000).expect("issue");
+        let exp = c.active_snapshot().expect("active").exp;
+        assert_eq!(exp, 1_000 + T, "issued at 1_000 for one TTL");
+
+        let now = 1_100;
+        assert!(
+            now + T > exp,
+            "the unclamped window really would overrun: {} > {exp}",
+            now + T
+        );
+
+        let mut request = HttpRequest {
+            method: "POST".into(),
+            target_uri: "https://mcp.example.com/mcp".into(),
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#.to_vec(),
+        };
+        let evidence = crate::sign::sign_request(
+            &mut request,
+            &SigningKey::from_seed_bytes(&[77u8; 32]),
+            "client-key-1",
+            now,
+            now + 60,
+            "n-clamp",
+        )
+        .expect("request signs");
+
+        let mut response = crate::message::HttpResponse {
+            status: 200,
+            headers: vec![("Content-Type".into(), "application/json".into())],
+            body: br#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.to_vec(),
+        };
+        c.sign_response(now, &mut response, &request, &evidence)
+            .expect("response signs");
+
+        let input = response
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("signature-input"))
+            .map(|(_, v)| v.clone())
+            .expect("the signer emitted signature-input");
+        let emitted: i64 = input
+            .split(";expires=")
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .and_then(|n| n.parse().ok())
+            .expect("expires is present and an integer");
+        assert_eq!(
+            emitted, exp,
+            "the window must stop at the credential's exp, not at now + ttl ({input})"
         );
     }
 }

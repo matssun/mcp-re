@@ -442,3 +442,10 @@ async def test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_resul
     error = reply.message.error
     assert error.code == -31001
     assert error.message == rejection["expect_wire_code"]
+    # The core computes whether the receipt is bound to THIS transmission, and that fact
+    # must reach the application. An unbound (preflight) receipt carries no binding to
+    # this request's nonce or evidence, so one such signed receipt answers any request
+    # from any client of that issuer — the caller has to be able to tell "the boundary
+    # rejected MY request" from "a generic rejection arrived" (RSP-7). It travels beside
+    # the frozen token, never inside it. The TypeScript twin pins the same value.
+    assert error.data == {"requestBound": True}

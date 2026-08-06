@@ -286,7 +286,7 @@ What MCP-RE claims today, and what it does not:
 | **One-hop** — a single continuation binds its three handles | **Claimed** | `h15`–`h17`, `block.rs`; both SDK transport adapters construct the turn end-to-end and a recorded two-leg chain replays in each (#419) |
 | **Multi-hop** — consecutive non-terminal turns re-link to a terminal end | **Claimed** | `h24`, `chain_reconstruction_test` |
 | **Fleet-safe** — cross-replica atomic single-use | **Claimed** | shared-Redis correlation store; live open-on-A/answer-on-B proof (ADR-MCPS-047) |
-| **Complete retained-chain reconstruction** | **Claimed** | `chain.rs`; `h24`–`h29`; incomplete records name the failing hop |
+| **Complete retained-chain reconstruction** | **Claimed** | `chain.rs`; `h24`–`h29`; incomplete records name the failing hop; a `Complete` label asserts the FULL profile — audience-tuple equality and `artifact_bindings[]` are enforced through the same function the live path uses |
 
 Claims deliberately NOT made: per-event SSE evidence (deferred to a future
 companion profile, §3.4); tasks and elicitation models (#416 §1.4); portable

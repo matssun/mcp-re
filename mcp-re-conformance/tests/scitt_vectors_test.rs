@@ -53,6 +53,7 @@ use mcp_re_http_profile::scitt::CoseVerificationKey;
 use mcp_re_http_profile::scitt::EvidenceCommitment;
 use mcp_re_http_profile::scitt::PrototypeTransparencyService;
 use mcp_re_http_profile::scitt::Receipt;
+use mcp_re_http_profile::scitt::ReceiptPositionProfile;
 use mcp_re_http_profile::scitt::ResolvedTransparencyService;
 use mcp_re_http_profile::scitt::SignedStatement;
 use mcp_re_http_profile::scitt::StatementLeafProfile;
@@ -170,6 +171,10 @@ fn reconstruction(label: ChainLabel, hops: usize) -> ChainReconstruction {
                 ),
             })
             .collect(),
+        // A synthetic corpus fixture: the vectors pin the encoding of a commitment, not
+        // the bytes of a real submission, so this is a stable stand-in rather than a
+        // digest of hops that do not exist here.
+        submitted_commitment: format!("corpus-submitted-{hops}"),
     }
 }
 
@@ -510,6 +515,7 @@ fn verdict(f: &Fixture) -> String {
                 // This corpus is produced by the in-process prototype log, which hashes
                 // the statement's own octets as the entry.
                 leaf_profile: StatementLeafProfile::StatementBytes,
+                position_profile: ReceiptPositionProfile::Bound,
             })
         },
     ) {

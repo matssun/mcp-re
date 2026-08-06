@@ -41,6 +41,23 @@ nt_rust_binary(
     ],
 )
 
+# The CLI shell's own inline tests. Separate from `:mcp_re_client_test` because that
+# one is `crate = ":mcp_re_client"` — the library — and these live in the BINARY crate,
+# where `src/main.rs` decides what the operator-facing startup posture actually says.
+# Without this target `cargo test -p mcp-re-client` runs them and `bazel test //...`
+# does not.
+nt_rust_test(
+    name = "mcp_re_client_cli_test",
+    crate = ":mcp_re_client_cli",
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    edition = "2021",
+    deps = [
+        ":mcp_re_client",
+        "@crates_mcp_re//:libc",
+    ],
+)
+
 # Inline unit tests: config validation (the loopback guard, unknown fields, binding
 # resolution), the anchor loader/refresher (durable floor, rollback across a restart,
 # last-good on a failed refresh, withdrawal on expiry), and the local HTTP framing.
@@ -54,6 +71,10 @@ nt_rust_test(
         "//mcp-re-client-core:mcp_re_client_core",
         "//mcp-re-client-proxy:mcp_re_client_proxy",
         "//mcp-re-core:mcp_re_core",
+        # The config tests assert the client's clock-skew bound against the profile's
+        # own constant, and read a route's credential back through the verifier's
+        # extraction, rather than restating either locally.
+        "//mcp-re-http-profile:mcp_re_http_profile",
         "//mcp-re-host:mcp_re_host",
         "//mcp-re-transport:mcp_re_transport",
         "@crates_mcp_re//:libc",

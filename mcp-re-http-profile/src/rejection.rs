@@ -71,16 +71,48 @@ pub struct SignedRejection {
 /// Build the JSON-RPC error body bytes for a rejection. `id` echoes the
 /// rejected request's id when known (else JSON `null`).
 fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
+    let mut mcp_re_error = json!({ "wire_code": reason.wire_code });
+    // The retry contract is DERIVED from the frozen token, never passed beside it. Two
+    // independently-set values can disagree, and the disagreement that matters here is
+    // an indeterminate outcome labelled retry-safe.
+    if let Some(extra) = retry_semantics(reason.wire_code) {
+        if let (Some(target), Some(extra)) = (mcp_re_error.as_object_mut(), extra.as_object()) {
+            for (k, v) in extra {
+                target.insert(k.clone(), v.clone());
+            }
+        }
+    }
     let body = json!({
         "jsonrpc": "2.0",
         "id": id,
         "error": {
             "code": JSON_RPC_ERROR_CODE,
             "message": reason.message,
-            "data": { "mcp_re_error": { "wire_code": reason.wire_code } }
+            "data": { "mcp_re_error": mcp_re_error }
         }
     });
     serde_json::to_vec(&body).expect("rejection body serializes")
+}
+
+/// Explicit machine-readable execution/retry state, for the codes where the safe
+/// action is not inferable from the HTTP status.
+///
+/// Only `evidence_retention_indeterminate` carries it today, deliberately: every other
+/// frozen code either precedes execution or is already unambiguous, and adding fields
+/// to their bodies would change bytes that frozen conformance vectors pin.
+fn retry_semantics(wire_code: &str) -> Option<Value> {
+    if wire_code == mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code() {
+        // The backend ran; only the evidence write failed. A client that treats this
+        // as an ordinary outage and retries re-executes the action, and the retry's
+        // fresh nonce passes replay admission — so the state is stated rather than
+        // left to be guessed from a status code.
+        return Some(json!({
+            "execution_status": "possibly_executed",
+            "retention_status": "failed",
+            "retry_safety": "unsafe_without_reconciliation",
+        }));
+    }
+    None
 }
 
 /// Best-effort extraction of the JSON-RPC `id` from a request body (echoed into
@@ -252,6 +284,41 @@ fn extract_wire_code(body: &[u8]) -> Result<String, HttpProfileError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The indeterminate token must carry its retry contract explicitly.
+    ///
+    /// A client that reads only the HTTP status cannot tell "nothing happened" from
+    /// "it may have happened"; retrying the second re-executes the action, and the
+    /// retry's fresh nonce passes replay admission.
+    #[test]
+    fn the_indeterminate_rejection_states_that_a_retry_is_unsafe() {
+        let reason = RejectionReason {
+            wire_code: mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
+            message: "retention failed after execution".to_owned(),
+        };
+        let body = rejection_body(serde_json::json!(1), &reason);
+        let v: Value = serde_json::from_slice(&body).expect("body parses");
+        let e = &v["error"]["data"]["mcp_re_error"];
+        assert_eq!(e["wire_code"], "mcp-re.evidence_retention_indeterminate");
+        assert_eq!(e["execution_status"], "possibly_executed");
+        assert_eq!(e["retention_status"], "failed");
+        assert_eq!(e["retry_safety"], "unsafe_without_reconciliation");
+    }
+
+    /// Every OTHER code keeps the exact body shape frozen vectors pin.
+    #[test]
+    fn an_ordinary_rejection_body_gains_no_new_fields() {
+        let reason = RejectionReason {
+            wire_code: "mcp-re.invalid_audience",
+            message: "no".to_owned(),
+        };
+        let body = rejection_body(serde_json::json!(1), &reason);
+        let v: Value = serde_json::from_slice(&body).expect("body parses");
+        let e = v["error"]["data"]["mcp_re_error"]
+            .as_object()
+            .expect("object");
+        assert_eq!(e.len(), 1, "only wire_code: {e:?}");
+    }
     use super::*;
 
     const CLIENT_SEED: [u8; 32] = [11u8; 32];

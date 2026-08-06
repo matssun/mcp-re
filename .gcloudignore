@@ -9,3 +9,30 @@ node_modules/
 sdk/**/dist/
 sdk/**/native/
 *.log
+
+# CREDENTIAL EXCLUSIONS — the twin of the block in .dockerignore, stated separately
+# because the two lists govern different transfers. gcloud uses THIS file INSTEAD of
+# .gitignore when it exists, so a gitignored path is not excluded unless it is named
+# here; and `gcloud builds submit ... .` uploads the whole context to
+# gs://<project>_cloudbuild/source/*.tgz, readable by every principal with
+# project-level storage read and retained after the build. .dockerignore keeps a file
+# out of an image LAYER only — it does not keep it out of that tarball.
+#
+# `work/` is where the runbooks and the `scripts/test-*-cloud.sh.example` headers tell
+# an operator to keep FILLED-IN cloud credential scripts, precisely because it is
+# gitignored. That also makes `tracked_secrets_gate.py` blind to it by construction:
+# that gate scans TRACKED files. On this path the ignore list is the only control.
+work/
+**/work/
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*-seed
+**/*seed.txt
+**/kubeconfig
+.aws/
+.gcloud/
+.kube/

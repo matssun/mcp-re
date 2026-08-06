@@ -21,12 +21,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY . .
 # The PEP feature set: async per-core fleet (async_serve) + shared Redis replay
-# tier (redis_replay) + Cloud KMS custody (gcp_kms_keysource). gcp_kms_keysource is
-# ADDITIVE — the KMS signer is inert unless the chart selects `--key-source gcp-kms`
-# (keySource: gcpKms), so one image serves both the fileSeed and gcpKms deployments.
+# tier (redis_replay) + BOTH cloud KMS custodies (gcp_kms_keysource,
+# aws_kms_keysource). Every KMS backend is ADDITIVE — each signer is inert unless
+# the chart selects the matching `--key-source`, so one image serves the fileSeed,
+# gcpKms and awsKms deployments the chart offers (values.yaml `keySource`).
+#
+# Both are compiled because the chart renders all three and the un-compiled arm
+# fails closed at startup with a feature-flag error: an EKS/IRSA install would
+# CrashLoopBackOff after the operator had already provisioned a KMS key, an IAM role
+# and an OIDC provider. The image must be able to serve every posture the chart can
+# express.
+#
 # ADR-MCPRE-052: KMS is the delegated-credential ISSUER (off the request path).
 # Override --build-arg FEATURES=… to drop KMS from a fileSeed-only image.
-ARG FEATURES=async_serve,redis_replay,gcp_kms_keysource
+ARG FEATURES=async_serve,redis_replay,gcp_kms_keysource,aws_kms_keysource
 RUN cargo build --release --locked \
         -p mcp-re-proxy --features "${FEATURES}" \
         --bin mcp-re-proxy
@@ -34,10 +42,23 @@ RUN cargo build --release --locked \
 # --- runtime base ------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime-base
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 65532 --user-group --no-create-home --shell /usr/sbin/nologin nonroot
 
 # --- the PEP image -----------------------------------------------------------
 FROM runtime-base AS proxy
 COPY --from=builder /build/target/release/mcp-re-proxy /usr/local/bin/mcp-re-proxy
+# NON-ROOT, declared by the ARTIFACT. This image mounts the response-signing seed and
+# the TLS private key, so a container escape here is a key-compromise event — it is
+# the last process in the system that should run as uid 0. Stating it in the image
+# rather than only in the Helm chart's podSecurityContext means `docker run`, a plain
+# k8s manifest, a kind side-load or a chart fork all get the non-root posture, and it
+# gives `runAsNonRoot: true` a numeric uid to admit against.
+#
+# 65532 is the distroless `nonroot` uid, matching the chart's runAsUser/runAsGroup/
+# fsGroup and the inner backend image. That alignment is load-bearing: the material
+# Secret is mounted 0440 owned by fsGroup 65532, and the proxy reads the key files
+# through its group membership.
+USER 65532:65532
 # The Helm chart appends every flag as args; the binary is the entrypoint.
 ENTRYPOINT ["/usr/local/bin/mcp-re-proxy"]

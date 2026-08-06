@@ -26,6 +26,7 @@ from mcp.types import JSONRPCNotification, JSONRPCRequest  # noqa: E402
 
 from mcp_re_sdk import (  # noqa: E402
     AuthorizationBindingPolicy,
+    AuthzSystemReferenceProvider,
     ClientResponseUnsupported,
     CorrelationStore,
     HttpReply,
@@ -41,7 +42,7 @@ from mcp_re_sdk import (  # noqa: E402
     mcp_re_http_transport,
 )
 from mcp_re_sdk.transport import _binding_context
-from mcp_re_sdk.transport import _bindings_json, _pump  # noqa: E402
+from mcp_re_sdk.transport import _authz_binding_digest, _bindings_json, _pump  # noqa: E402
 
 CLIENT_SEED = bytes([11]) * 32
 TARGET = "https://proxy.internal:8600/mcp"
@@ -236,14 +237,60 @@ async def test_a_client_side_response_is_refused_rather_than_carried_as_a_notifi
     from mcp.types import JSONRPCResponse
 
     posted = []
-    with pytest.raises(BaseException) as ei:
-        await _send(
+    seen = []
+    with _capturing_notification_failures(seen):
+        out = await _send(
             _config(),
             _capturing_poster(posted),
             JSONRPCResponse(jsonrpc="2.0", id=1, result={}),
         )
-    assert [type(e) for e in _flatten(ei.value)] == [ClientResponseUnsupported]
+    assert out == [], "a refused message delivers nothing to the session"
+    assert [type(e) for _, e in seen] == [ClientResponseUnsupported]
     assert posted == [], "nothing fabricated may reach the wire"
+
+
+@pytest.mark.anyio
+async def test_a_refused_client_side_response_does_not_cancel_other_exchanges():
+    """The refusal is correct; ending the session over it is not.
+
+    ``_pump`` reads outbound messages in the parent task of the task group that runs
+    every concurrent exchange, so raising there cancelled all of them. The trigger is
+    peer-influenceable: a verified reply body carrying a ``method`` parses as a
+    server->client ``JSONRPCRequest``, ``ClientSession`` answers it with a
+    ``JSONRPCResponse``, and that answer lands on this branch — so one reply body ended
+    an entire session, including every unrelated in-flight signed tool call. The
+    TypeScript twin fails only the one ``send()``.
+    """
+    from mcp.types import JSONRPCResponse
+
+    read_writer, read_stream = anyio.create_memory_object_stream(8)
+    write_stream, write_reader = anyio.create_memory_object_stream(8)
+    # The refused message sits BETWEEN two ordinary requests, so a task-group unwind
+    # would take out the one already in flight and never start the one behind it.
+    await write_stream.send(SessionMessage(_request(id=1)))
+    await write_stream.send(SessionMessage(JSONRPCResponse(jsonrpc="2.0", id=99, result={})))
+    await write_stream.send(SessionMessage(_request(id=2)))
+    await write_stream.aclose()
+
+    seen = []
+    with _capturing_notification_failures(seen):
+        await _pump(
+            _config(),
+            _throwing_poster(McpReError("mcp-re.replay_detected")),
+            write_reader,
+            read_writer,
+        )
+
+    delivered = []
+    while True:
+        try:
+            delivered.append(read_stream.receive_nowait())
+        except (anyio.WouldBlock, anyio.EndOfStream):
+            break
+    assert sorted(m.message.id for m in delivered) == [1, 2], (
+        "the refusal cancelled the exchanges around it"
+    )
+    assert [type(e) for _, e in seen] == [ClientResponseUnsupported]
 
 
 @pytest.mark.anyio
@@ -314,11 +361,11 @@ async def test_the_cores_own_fail_closed_error_is_delivered_rather_than_hanging(
 
 @contextlib.contextmanager
 def _capturing_notification_failures(sink: list):
-    """Capture contained notification failures instead of printing them.
+    """Capture undeliverable outbound messages instead of printing them.
 
-    A one-way message has no reply channel, so this hook is the only place the outcome
-    is observable — which is exactly why it exists rather than the failure being
-    swallowed.
+    Neither a notification nor a refused client->server response has a reply channel, so
+    this hook is the only place either outcome is observable — which is exactly why it
+    exists rather than the failure being swallowed.
     """
     import mcp_re_sdk.transport as t
 
@@ -328,18 +375,6 @@ def _capturing_notification_failures(sink: list):
         yield
     finally:
         t.on_notification_failure = previous
-
-
-def _flatten(exc: BaseException) -> list:
-    """Every leaf of a (possibly nested) ExceptionGroup.
-
-    Exchanges run in a task group, so anything escaping one arrives wrapped. Callers
-    already saw this — ``mcp_re_http_transport`` runs the pump in a task group of its own
-    — so assert on what was raised, not on how many groups it came wrapped in.
-    """
-    if isinstance(exc, BaseExceptionGroup):
-        return [leaf for e in exc.exceptions for leaf in _flatten(e)]
-    return [exc]
 
 
 @pytest.mark.anyio
@@ -605,6 +640,41 @@ async def test_the_correlation_entry_records_the_authorization_binding_digest():
         )
 
 
+def test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify():
+    """A non-ASCII binding field must digest to the same bytes in both SDKs.
+
+    ``json.dumps`` escapes every non-ASCII character as ``\\uXXXX`` unless told not to;
+    ``JSON.stringify`` emits raw UTF-8. Since :func:`_authz_binding_digest` is taken over
+    exactly this text, an ``authorization_system_id``, ``reference_scheme_id`` or
+    ``reference_value`` carrying a non-ASCII character — a tenant name, a grant handle —
+    otherwise digested to two different values, and an audit pipeline reconciling a
+    Python client's record against a TypeScript client's read that as "the artifact
+    binding changed".
+
+    The expected string is a LITERAL, and the TypeScript twin's test pins the same one.
+    """
+    config = _config(
+        authorization=[
+            AuthzSystemReferenceProvider(
+                "pdp-decision",
+                b"doc",
+                authorization_system_id="pdp-sé",
+                reference_scheme_id="urn:système",
+                reference_value="grant-café-✓",
+            )
+        ]
+    )
+    canonical = _bindings_json(config, "tools/list")
+
+    assert canonical == (
+        '[{"artifact_type":"pdp-decision","authorization_system_id":"pdp-sé",'
+        '"form":"authz-system-reference","material_b64url":"ZG9j",'
+        '"reference_scheme_id":"urn:système","reference_value":"grant-café-✓"}]'
+    )
+    assert "\\u" not in canonical, "an escaped non-ASCII character is not JSON.stringify"
+    assert _authz_binding_digest(canonical) == "sha-256:5qndaYSZ4RWRPC68gVX125zTyK8XeWHdwWvnFZnr0XI"
+
+
 @pytest.mark.anyio
 async def test_a_request_with_no_bindings_records_no_digest():
     store = CorrelationStore()
@@ -647,6 +717,158 @@ def test_an_incomplete_trust_anchor_fails_at_construction(field):
         _config(**{field: empty})
     assert field in str(ei.value)
     assert "trust anchor is incomplete" in str(ei.value)
+
+
+# --- the revocation denylist -----------------------------------------------------
+#
+# `revoked_identifiers` is the one config field whose wrong value fails OPEN. Every
+# sibling anchor field degrades into "nothing verifies"; a malformed denylist degrades
+# into "nothing is revoked" while still reporting a denylist as configured. Mirrors
+# `McpReHttpTransport revocation denylist shape` in the TypeScript suite.
+
+
+def test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character():
+    """``list("kid-compromised")`` is a NON-EMPTY list of single characters.
+
+    None of them can match a `delegated_kid`, `issuer_kid` or credential `jti`, so the
+    compromised key stays accepted for its whole TTL and epoch window while the operator
+    believes revocation is in force. No type checker objects, because a `str` IS a
+    `Sequence[str]`.
+    """
+    with pytest.raises(McpReSdkError, match="must be a sequence of identifier strings"):
+        _config(revoked_identifiers="kid-compromised")
+
+
+@pytest.mark.parametrize("bad", [["kid-1", ""], [7], [None]])
+def test_a_denylist_entry_that_cannot_match_an_identifier_is_refused(bad):
+    with pytest.raises(McpReSdkError, match="non-empty strings"):
+        _config(revoked_identifiers=bad)
+
+
+def test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted():
+    assert _config(revoked_identifiers=["kid-1"]).revoked_identifiers == ["kid-1"]
+    assert _config(revoked_identifiers=[]).revoked_identifiers == []
+    assert _config().revoked_identifiers == ()
+
+
+# --- the frozen wire code --------------------------------------------------------
+#
+# The PyO3 binding spells every core failure `"mcp-re: mcp-re.<token>"`. What REQ-14/POL-6
+# make authoritative — and what a caller branches on without parsing prose — is the TOKEN,
+# so one wire event must have one spelling in both SDKs and on both message paths.
+
+
+@pytest.mark.anyio
+async def test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token():
+    """The real core's spelling, not a hand-made one.
+
+    A test that injects `ValueError("mcp-re.response_sig_invalid")` never exercises the
+    prefix the binding always emits, so it cannot see this.
+    """
+    out = await _send(
+        _config(),
+        _throwing_poster(ValueError("mcp-re: mcp-re.response_sig_invalid")),
+        _request(),
+    )
+    assert out[0].message.error.message == "mcp-re.response_sig_invalid"
+
+
+@pytest.mark.anyio
+async def test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition():
+    # A `ValueError` from the caller's `poster` doing real I/O must not occupy the field
+    # that otherwise only ever holds something the peer said.
+    out = await _send(_config(), _throwing_poster(ValueError("socket hang up")), _request())
+    message = out[0].message.error.message
+    assert message == "mcp-re-sdk: ValueError: socket hang up"
+
+
+@pytest.mark.anyio
+async def test_a_notifications_wire_code_is_the_bare_token_too():
+    """`wire_code` is documented as the frozen token, so the notification path strips the
+    binding's prefix exactly as the request path does. The TypeScript twin pins the same
+    assertion."""
+    import re
+
+    async def unsigned(method, target_uri, headers, body):
+        return HttpReply(status=202, headers=[], body=b"")
+
+    seen = []
+    with _capturing_notification_failures(seen):
+        await _send(
+            _config(),
+            unsigned,
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+    assert re.fullmatch(r"mcp-re\.[a-z0-9_]+", seen[0][1].wire_code), seen[0][1].wire_code
+
+
+# --- the rejection receipt's binding fact ----------------------------------------
+#
+# `test_a_verified_rejection_receipt_is_delivered_as_an_error_not_a_result` in
+# test_transport_replay.py pins the BOUND value against a recorded receipt. It cannot
+# distinguish reading `verified.bound` from hard-coding `True`, and the unbound case is
+# the security-relevant one, so it is pinned here against a stubbed verdict. The
+# TypeScript twin pins the same pair.
+
+
+@pytest.mark.anyio
+async def test_an_unbound_rejection_receipt_is_reported_as_not_request_bound(monkeypatch):
+    """A preflight-unbound receipt carries no binding to this request's evidence.
+
+    The core verifies a rejection receipt request-bound first and preflight-unbound
+    second, and says which one succeeded. An unbound receipt is genuine evidence from a
+    trusted issuer, but it answers no particular transmission — one of them is an answer
+    to every request from every client of that issuer for the credential's validity
+    window — so an application must be able to tell "the boundary rejected MY request"
+    from "a generic rejection arrived" (RSP-7). It is still an error and never a result.
+    """
+    import mcp_re_sdk.transport as t
+
+    class _Unbound:
+        outcome = "rejection"
+        wire_code = "mcp-re.authorization_binding_missing"
+        bound = False
+        request_state = None
+
+    monkeypatch.setattr(t._core, "verify_response", lambda *a, **k: _Unbound())
+
+    async def rejecting(method, target_uri, headers, body):
+        return HttpReply(status=409, headers=[], body=b"{}")
+
+    out = await _send(_config(), rejecting, _request())
+
+    error = out[0].message.error
+    assert error.message == "mcp-re.authorization_binding_missing", (
+        "the frozen token is what the peer said and must not be rewritten"
+    )
+    assert error.data == {"requestBound": False}
+
+
+# --- the undeliverable-message sink ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_the_config_hook_takes_precedence_over_the_process_global_sink():
+    """Two transports in one process must not swallow each other's failures.
+
+    A module-level sink is shared by every transport in the process, so one embedder's
+    assignment silently ate another's. The per-config hook is what an application
+    installs to learn that a message it emitted was NOT delivered.
+    """
+    async def unsigned(method, target_uri, headers, body):
+        return HttpReply(status=202, headers=[], body=b"")
+
+    mine = []
+    global_sink = []
+    with _capturing_notification_failures(global_sink):
+        await _send(
+            _config(on_undeliverable=lambda d, e: mine.append((d, e))),
+            unsigned,
+            JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized"),
+        )
+    assert [d for d, _ in mine] == ["notifications/initialized"]
+    assert [type(e) for _, e in mine] == [NotificationNotAcknowledged]
+    assert global_sink == [], "the config hook must not also reach the process global"
 
 
 # --- concurrency -----------------------------------------------------------------

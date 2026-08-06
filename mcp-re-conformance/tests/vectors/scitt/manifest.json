@@ -1,42 +1,42 @@
 {
   "schema": "mcp-re-scitt-conformance/v1",
-  "corpus_digest": "e17227dd4a8800639e9f44dc722e9cf0e3690a1debb72f0e6d7cafd697f5ca75",
+  "corpus_digest": "fb251a1c6c7927582977d5ad909e8b8df93a41e20517a978a4141b341e4580c7",
   "fixtures": [
     {
       "file": "s01_complete_record.json",
-      "sha256": "4623be578f80a7192c2578e3420da1a480be7ae8c525730b9833ac3c0e862a9f"
+      "sha256": "e69bf759d3ff20122b8aa9265cc3b3d3d7915edef6223ddff2c3aed291e9bc80"
     },
     {
       "file": "s02_incomplete_record.json",
-      "sha256": "1d5178fb1d8bb24515dddf6e38418bd4e234340b189820fbc85e0e187edd354e"
+      "sha256": "d09d84db10ec64b97e9d7e02173673f6f62c4bb9fbebbe0942e43c507ba82c12"
     },
     {
       "file": "s03_tampered_payload.json",
-      "sha256": "bf971790284f61aef48f43afb0a434d337ab1dc92ace78301c736ae40ec4380e"
+      "sha256": "0cf794a8f774e1af9d43c1d3c4dc4899ee433e4476cf515111c493ca7a977d8d"
     },
     {
       "file": "s04_receipt_for_another_statement.json",
-      "sha256": "ef615f794b3f7e4e22ecee84e8f0308c4323804fae13e6718035d69b193dcef4"
+      "sha256": "c149a7e6ea054eea0905dc25bf7e28e62d3cd455afa3ea53f7f882aa6c72acd8"
     },
     {
       "file": "s05_untrusted_issuer.json",
-      "sha256": "76cb4b81abde80ce9dc98efc8fcd7ebf4b6203f1edbd54e08690f45d43b44ad3"
+      "sha256": "2a5de9ee9e6bfd6f8ab63beb5f13c580d4711529033252c72167b59d3a6089a4"
     },
     {
       "file": "s06_forged_inclusion_path.json",
-      "sha256": "f2403303db219fd96fb528de9826203c98205ba7789b2adb008b7abfa555719f"
+      "sha256": "7fcd70890050019ce81331dd71c12b4b2e19f67c4c2c592357263fced1b8321b"
     },
     {
       "file": "s07_unsupported_vds.json",
-      "sha256": "48f837ccde3d53a7293cff3e82bd16cc293b40dc0f64e298324c1f85691b9311"
+      "sha256": "d110b1dbbb29165f6bbb083079b508839bc150321e1596dea5db7fb192d17745"
     },
     {
       "file": "s08_leaf_index_outside_tree.json",
-      "sha256": "8e4bd6c9a87e9b0a7c304e4d4435679be566005467a1fa6a99b00c86f8bc2aca"
+      "sha256": "da037b00520290a525bf825e0eff6ae299eb6697707f08b2586a10f350c66003"
     },
     {
       "file": "s09_right_edge_leaf_of_a_three_leaf_log.json",
-      "sha256": "2ab8b37b811532134f9c707581634c69b7045ebf25c4afdc85d8723ed4a9514e"
+      "sha256": "e27aef50293bfdbae66d2b8cd207a1adacc3efb86d63663deca7fb617d482f51"
     }
   ]
 }

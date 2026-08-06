@@ -1,0 +1,2280 @@
+{
+ "R7-C001": {
+  "cid": "R7-C001",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 206,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Evidence retention does blocking fsync I/O under one process-global mutex on the per-core async runtime",
+  "raw_ids": [
+   "F033",
+   "F140"
+  ],
+  "evidence": "Confirmed as stated, and it had got WORSE: the owner's execution-boundary work added `reserve()`, a SECOND synchronous fsync chain, pre-dispatch. Derivation appended to work/security-audit-2026-08-03/DESIGN-retention-state-machine.md as 'Part 2 — the concurrency and acknowledgement model' before any code was written, because `spawn_blocking` keeps the process-global mutex (it only moves the queue of blocked threads) and a fire-and-forget channel deletes the acknowledgement Part 1 exists to preserve.",
+  "action": "transparency.rs: the store is owned outright by ONE dedicated OS thread (`write_loop`, thread `mcp-re-retention`) — not a runtime worker, not a blocking-pool thread — so there is no mutex on the request path and no mutex at all. `reserve`/`complete`/`retain` are async: each serializes its record (CPU only), hands a `WriteJob` carrying a `oneshot::Sender` to the writer, and AWAITS the acknowledgement. The writer sends ONLY after the durability boundary for that job is crossed, never on enqueue, so it is not fire-and-forget: the reserve ack is a precondition of dispatch and the complete ack a precondition of the success result. Overload is a process-global semaphore of K=1024 reservations taken with `try_acquire` in `reserve` — pre-dispatch, retry-safe 503 `evidence_retention_unavailable`, backend untouched — and NEVER a post-execution drop; the channel is sized 2K so `complete` can never find it full. The directory barrier is group-committed (one `fsync(D)` per batch of up to 64 renames, derived from the fact that a directory fsync has no per-entry granularity); the per-object `sync_all` before its own rename stays, and is NOT downgraded to `sync_data` because the 0600 mode is not in fdatasync's obligation. Tests (transparency.rs): `the_fsync_does_not_run_on_the_runtime_worker` (on a `new_current_thread` runtime a spawned task only runs while the retaining task is suspended at an await — an inline write never yields, so the flag stays false without the fix), `an_acknowledged_write_is_already_at_its_final_name`, `a_full_reservation_queue_is_refused_at_reserve_and_the_slot_returns`, `completion_is_never_refused_for_capacity`, `a_reservation_marker_is_durable_before_dispatch_and_cleared_after`.",
+  "agent": "B-retention"
+ },
+ "R7-C002": {
+  "cid": "R7-C002",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 217,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Retention does a blocking fsync under one process-global mutex on the async serving path",
+  "raw_ids": [
+   "F128",
+   "F136"
+  ],
+  "evidence": "Same defect as R7-C001 from the lock-hold-duration angle, including the ~21 MiB-under-the-lock amplification at `--max-body-bytes` 16 MiB.",
+  "action": "Same fix as R7-C001: the lock does not exist any more, and the bytes are serialized on the request path (CPU) then handed to the writer, so a large record occupies the writer thread rather than every core. Aggregate resident body bytes are separately bounded by the per-core byte budget (see R7-C060/C061).",
+  "agent": "B-retention"
+ },
+ "R7-C003": {
+  "cid": "R7-C003",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-core/src/response.rs",
+  "line": 480,
+  "severity": "high",
+  "category": "fail-open-default",
+  "title": "Out-of-range clock skew bypasses the 300s cap on the delegation-credential window",
+  "raw_ids": [
+   "F073",
+   "F077"
+  ],
+  "evidence": "The finding's premise about VerifierPolicy::new(..).unwrap_or_default() being fail-OPEN is wrong - policy.rs enforces 0..=300 and the fallback is the TIGHTER 30s gate (response.rs:481 unwrap_or_default). The real hole is the one the finding also names: DelegationExpectations.max_clock_skew took policy.max_clock_skew RAW (response.rs:560-566 and :742-748 pre-fix), reaching mcp-re-http-profile/src/verify.rs:1254/:1406 and then delegation.rs:226-227, which widens the credential nbf/exp window with no cap. DelegationPolicy::new validates nothing and the field is pub; mcp-re-client/src/config.rs feeds it from JSON unchecked.",
+  "action": "Added DelegationPolicy::bounded_clock_skew() = max_clock_skew.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND) and used it at BOTH DelegationExpectations construction sites (response.rs bodied path and the 202 path) and for verifier_policy(), so one bounded number drives both windows. Clamping rather than rejecting keeps a misconfiguration from making every response unverifiable. Pinned by response.rs test an_out_of_range_skew_cannot_widen_the_credential_window, which asserts the BEHAVIOUR first (a policy of 604800 fails a credential 3300s past exp with DelegationCredentialExpired while the response signature is fresh at the verification instant) and only then the accessors: the same clamped value on verifier_policy().max_clock_skew(), and a negative configured value clamping to 0. Negative check: with the clamp removed the test fails at the expect_err, i.e. at the credential window rather than at an accessor equality. NOTE FOR GROUP G / THE OWNER: this closes the client path only. mcp-re-http-profile/src/delegation.rs:226-227 still consumes DelegationVerifyParams.max_clock_skew uncapped, so any other caller that builds DelegationExpectations by hand can still widen the credential window - the profile-level cap belongs to group G.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C004": {
+  "cid": "R7-C004",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/delegated_server_signer.rs",
+  "line": 266,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "Trust-epoch advance reports success when the re-issuance actually failed",
+  "raw_ids": [
+   "F047",
+   "F051"
+  ],
+  "evidence": "The same defect as R7-C029, reported against the round-6 rewrite of `reissue` that introduced it.",
+  "action": "Same fix and same test as R7-C029.",
+  "agent": "C-app-tls"
+ },
+ "R7-C005": {
+  "cid": "R7-C005",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/proxy.rs",
+  "line": 303,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "Notification 202 path skips the route's expected_server_keyid pin the bodied path enforces",
+  "raw_ids": [
+   "F072",
+   "F068"
+  ],
+  "evidence": "Confirmed: proxy.rs:209-211 built the pin into the ResponseExpectation and proxy.rs:217-219 diverted every notification to verify_notification_ack BEFORE the expectation was used; verify_notification_ack took no expectation and discarded the verifier's ResolvedActor. The pin comparison existed only in check_expected_server_signer (mcp-re-client-core/src/response.rs:146-157), called only from verify_delegated_response. The pin is real operator config on every route: mcp-re-client/src/lib.rs:165.",
+  "action": "Added verify_delegated_accepted_202_pinned / verify_delegated_accepted_202_anchored_pinned in mcp-re-client-core/src/response.rs, taking expected_issuer_kid: Option<&str>; after the profile verification succeeds they compare the credential's ROOT issuer kid (the compact-JWS header kid, which mcp-re-http-profile/src/delegation.rs:224-226 has already required to equal the root-signed claims.issuer_kid - the same coordinate check_expected_server_signer uses) and fail with ResponseBindingMismatch. proxy.rs verify_notification_ack passes route.expected_server_keyid on both ClientVerification arms. The unpinned entry points remain as None-passing wrappers so no other caller changes. Pinned by response.rs test a_pinned_route_refuses_a_202_from_another_root (unpinned accepts, correct root accepts, wrong root fails, and pinning the rotating delegated kid fails - the pin is the issuer, not the delegated key). The helper also rejects a REPEATED mcp-re-delegation header rather than reading whichever copy comes first.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C006": {
+  "cid": "R7-C006",
+  "disposition": "confirmed-fixed",
+  "file": ".gcloudignore",
+  "line": 11,
+  "severity": "high",
+  "category": "config-deploy",
+  "title": ".gcloudignore does not exclude work/ — the R6-C019 fix closed only the Docker path, not Cloud Build",
+  "raw_ids": [
+   "F115",
+   "F122"
+  ],
+  "evidence": "The same defect as R7-C032 in the same file, cited from the Cloud Build side rather than the incomplete-round-6 side. Both confirmed against the base .gcloudignore.",
+  "action": "Same fix and same pin. The parity check is specifically what makes the .dockerignore/.gcloudignore asymmetry non-reintroducible: round 6 added the block to one file and not the other and nothing detected it for a full round.",
+  "agent": "I-deploy"
+ },
+ "R7-C007": {
+  "cid": "R7-C007",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 334,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Per-actor replay budget does not protect the reserve: two actors still exhaust the ceiling and deny everyone",
+  "raw_ids": [
+   "F014"
+  ],
+  "evidence": "async_replay.rs:197 per_actor_budget now splits the SPENDABLE capacity (max_entries - reserve) instead of the full ceiling: (max - max/5)/actors. The sum of all budgets is therefore max-reserve for any k, not max.",
+  "action": "New test no_number_of_actors_can_spend_the_reserve asserts budget*k <= max-reserve for k in 1..=64. The old test pinned the defect (per_actor_budget(1_000_000,2)==500_000, i.e. 2x500k == the whole ceiling); it now pins 400_000."
+ },
+ "R7-C008": {
+  "cid": "R7-C008",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 197,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Per-actor replay reserve is dead for ≥2 actors: two signers reach the ceiling and deny everyone",
+  "raw_ids": [
+   "F019"
+  ],
+  "evidence": "async_replay.rs:197 per_actor_budget now splits the SPENDABLE capacity (max_entries - reserve) instead of the full ceiling: (max - max/5)/actors. The sum of all budgets is therefore max-reserve for any k, not max.",
+  "action": "New test no_number_of_actors_can_spend_the_reserve asserts budget*k <= max-reserve for k in 1..=64. The old test pinned the defect (per_actor_budget(1_000_000,2)==500_000, i.e. 2x500k == the whole ceiling); it now pins 400_000."
+ },
+ "R7-C009": {
+  "cid": "R7-C009",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 96,
+  "severity": "high",
+  "category": "dead-wire",
+  "title": "Round-6 per-actor replay budget lives only in a store `app.rs` unconditionally refuses to serve with",
+  "raw_ids": [
+   "F025"
+  ],
+  "evidence": "Verified: the round-6 per-actor budget (per_actor_budget/under_pressure) was implemented ONLY inside InMemoryAsyncAtomicReplayStore::insert_locked, a store that declares SingleProcessReference (async_replay.rs:103-105) and that app.rs:619 refuses to start with; async_redis_store.rs and async_etcd_store.rs both discarded insert.actor. Correct arithmetic, unreachable enforcement.",
+  "action": "Enforcement moved ABOVE the backend seam: new RetentionLedger inside AsyncReplayTier (mcp-re-proxy/src/async_replay.rs) charges every admitted nonce to key.principal before the store is touched, commits the charge on Fresh with the skew-folded retain_until, releases it on Replay/error, and prunes by expiry bucket against the verifier's now_unix. The ledger is Arc-shared by every clone of the tier, so one replica has one account. per_actor_budget is unchanged arithmetic except that it now splits the SPENDABLE capacity (ceiling minus reserve) instead of the full ceiling, so no number of actors can spend the reserve. The reservation is an RAII Charge guard rather than a hand-settled counter, because the serving path awaits the handler inside a hyper service: a peer that closes its connection drops the future mid-insert, and a charge settled only on the return paths would leak on exactly that one - permanently, so an actor cancelling in flight could walk the tier to its ceiling and fail every signer closed. Tests (async_replay.rs): the_tier_budgets_a_durable_backend_that_budgets_nothing_itself (drives a Durable store that budgets nothing; greedy actor stops at 8 of a 10-entry ceiling, quiet actor still admitted, over-budget refusal is McpReError::ReplayCacheUnavailable AND does not dispatch to the backend at all - dispatch counter asserted), a_replay_hands_the_charge_back, the_tier_releases_charges_once_their_retention_expires, no_number_of_actors_can_spend_the_reserve, the_budget_reserves_headroom_and_splits_evenly, an_abandoned_insert_does_not_leak_its_charge (50 abandoned inserts against a never-answering Durable store leave zero charges and the tier still serving). SIZING NOTE FOR THE OWNER: the ledger's ceiling is the pre-existing ASYNC_MAX_ENTRIES (1,000,000) and it now applies to the Redis and etcd deployments too, where before there was no per-replica ceiling at all. Since an entry is held for its whole retain_until, one principal's sustained per-replica rate is capped at roughly (max_entries - reserve) / retention_window - about 2,700 rps at a 300s window, about 200 rps at the 3900s worst case. That is above the SLO anchor (~4900 rps measured over a short run, ~150k entries) but it is a real production ceiling that did not exist before, so the constant should be sized deliberately against the §7 SLO rather than inherited.",
+  "agent": "D-stores"
+ },
+ "R7-C010": {
+  "cid": "R7-C010",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 704,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "Signed-202 notification path returns before evidence retention",
+  "raw_ids": [
+   "F029"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C011": {
+  "cid": "R7-C011",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 723,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "Notification (signed 202) accepted exit skips evidence retention entirely",
+  "raw_ids": [
+   "F132"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C012": {
+  "cid": "R7-C012",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 723,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "Notification (signed-202) exit returns before evidence retention — a client picks whether a served call is retained",
+  "raw_ids": [
+   "F138"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C013": {
+  "cid": "R7-C013",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-core/src/response.rs",
+  "line": 481,
+  "severity": "high",
+  "category": "fail-open-default",
+  "title": "Out-of-bounds max_clock_skew silently disables the 300 s cap on the delegated-credential window",
+  "raw_ids": [
+   "F067"
+  ],
+  "evidence": "Duplicate of R7-C003 (same lines, same raw-value path through verify.rs:1254 into delegation.rs:226-228). Its 'the signature gate silently falls back to 30s' half is a tightening, not a fail-open; its 'the delegation-credential freshness check has no cap' half is the real defect and is confirmed.",
+  "action": "Fixed by the same clamp - see R7-C003. Same test.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C014": {
+  "cid": "R7-C014",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 872,
+  "severity": "high",
+  "category": "sdk-parity",
+  "title": "Python transport tears down the WHOLE session on a client->server response; TS fails only that send()",
+  "raw_ids": [
+   "F093"
+  ],
+  "evidence": "Real and remotely reachable. _pump raised ClientResponseUnsupported from the `async for` body, which is the PARENT task of the task group that runs every concurrent exchange (transport.py:969), so one refused message cancelled every sibling exchange and tore the transport down. The trigger is peer-influenceable exactly as claimed: _plain_mcp_reply sets doc['id'] and jsonrpc_message_adapter.validate_json accepts a verified reply body carrying a `method` as a server->client JSONRPCRequest, which ClientSession answers with a JSONRPCResponse.",
+  "action": "Predecessor changed the branch to report via _report_undeliverable and `continue` (transport.py:981-1004): the refusal is unchanged, its blast radius is not, and it now matches TypeScript, which fails only that send(). Pinned by a MECHANISM test, not a status: sdk/python/tests/test_transport.py::test_a_refused_client_side_response_does_not_cancel_other_exchanges puts the refused message BETWEEN two ordinary requests and asserts both ids 1 and 2 were still delivered. Mutation check: restoring the raise fails that test and test_a_client_side_response_is_refused_rather_than_carried_as_a_notification. RESIDUAL FOR THE OWNER (file not mine): sdk/PARITY.md:80 is now stale — it says Python raises `ClientResponseUnsupported` 'from the pump' and calls the delivery difference cosmetic ('Delivery differs only where every other failure's does'), which was never true of a task-group unwind and is no longer true of the code. The Python cell should read: reported to `McpReConfig.on_undeliverable`; the pump continues and unrelated exchanges are untouched.",
+  "agent": "A-sdk"
+ },
+ "R7-C015": {
+  "cid": "R7-C015",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 872,
+  "severity": "high",
+  "category": "sdk-parity",
+  "title": "Python `_pump` raises into the shared task group: a server-shaped reply kills the whole session",
+  "raw_ids": [
+   "F104"
+  ],
+  "evidence": "Same defect and same line as R7-C014, reported with the reachability path spelled out. I confirmed the reachability claim against the current source rather than taking it: transport.py:_plain_mcp_reply + the adapter parse at the pump's read side.",
+  "action": "Covered by the R7-C014 fix and the same mechanism test. No separate change.",
+  "agent": "A-sdk"
+ },
+ "R7-C016": {
+  "cid": "R7-C016",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 366,
+  "severity": "high",
+  "category": "bypassable-gate",
+  "title": "Loopback guard lives only in a private validate(); bind()/build() do not enforce it",
+  "raw_ids": [
+   "F158"
+  ],
+  "evidence": "serve.rs:379 bind() now takes &LocalConfig and refuses a non-loopback address unless allow_non_loopback is set; config.rs validate() is pub; lib.rs build() calls it on whatever config it is handed.",
+  "action": "Guard moved to the chokepoint that opens the socket, plus defence in depth in build(). Test bind_refuses_a_non_loopback_address_unless_it_is_declared uses TEST-NET-1 so it proves the GUARD refused, not the OS."
+ },
+ "R7-C017": {
+  "cid": "R7-C017",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 275,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Local listener has no aggregate deadline; a byte-drip client holds a worker slot for days",
+  "raw_ids": [
+   "F159"
+  ],
+  "evidence": "serve.rs:124 computes one Instant deadline per exchange; arm() shrinks the per-read timeout to the remaining budget before every read (and reports 408 on a zero budget, where Duration::ZERO would mean block-forever); the head is read in 1KiB chunks instead of one byte per syscall.",
+  "action": "Aggregate wall-clock bound over head, body and drain. Test a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker drives a real socket at one byte per 20ms and asserts 408 within the budget."
+ },
+ "R7-C018": {
+  "cid": "R7-C018",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 849,
+  "severity": "high",
+  "category": "race-toctou",
+  "title": "Retention fails closed after the inner backend already ran, causing retry-driven duplicate execution",
+  "raw_ids": [
+   "F034"
+  ],
+  "evidence": "Derived the dispatch/retention state machine first (work/security-audit-2026-08-03/DESIGN-retention-state-machine.md) rather than adding a writability probe, which is a check-then-act race: a probe shows the store WAS writable, and ENOSPC/EIO/remount/permission-change/crash all fit between probe and commit.",
+  "action": "Two states, not one. (1) transparency.rs:216 reserve() takes DURABLE responsibility before dispatch (tmp+fsync+rename+dir-fsync of a <request-digest>.pending marker); http_profile_serve.rs:690 calls it BEFORE inner_async.dispatch, and a failure there is ABORTED_BEFORE_EXECUTION - kept at 503/evidence_retention_unavailable because there the call genuinely did not run and retry IS safe. (2) transparency.rs:279 complete() writes the hop then clears the marker; a failure is INDETERMINATE_AFTER_EXECUTION -> NEW frozen code mcp-re.evidence_retention_indeterminate at HTTP 500, never 503. No atomicity is claimed: the backend and the store share no transaction, so what the reservation establishes is that the crossing of the execution threshold is durable, and a surviving marker is the auditor's record of it."
+ },
+ "R7-C019": {
+  "cid": "R7-C019",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 704,
+  "severity": "high",
+  "category": "transparency-log",
+  "title": "Signed-202 notification exchanges bypass ADR-MCPRE-054 evidence retention entirely",
+  "raw_ids": [
+   "F037"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C020": {
+  "cid": "R7-C020",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/delegated_tls.rs",
+  "line": 103,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Every unauthenticated TLS ClientHello forces one KMS/HSM sign on the delegated-TLS path",
+  "raw_ids": [
+   "F042"
+  ],
+  "evidence": "Confirmed: `DelegatedEd25519Signer::sign` is the single choke point for the server's TLS CertificateVerify on the delegated custody paths, TLS 1.3 signs it before the client's Certificate is seen, and `refuse_session_resumption` makes every connection a full handshake — so cheap inbound TCP converted 1:1 into paid, quota-limited KMS Sign calls against the same account the cold-path delegated-key issuer uses.",
+  "action": "delegated_tls.rs: `TlsHandshakeSignBudget`, a token bucket (`DEFAULT_TLS_SIGN_RATE_PER_SEC` 100/s sustained, `DEFAULT_TLS_SIGN_BURST` 200) checked in `Signer::sign` BEFORE the remote signer is touched; exhaustion refuses the handshake with an explicit `rustls::Error`, which is the fail-closed direction (a refused connection costs the peer a retry; an exhausted KMS quota is a fleet-wide outage at the keys' exp). A poisoned lock counts as exhausted. Refusals are counted for the operator posture. The rate is sized against what legitimate traffic needs given no resumption and `max_connection_age` 300s. Tests: `handshake_signature_budget_bounds_remote_signer_invocations` (counts backend invocations, not just the error), `handshake_signature_budget_refills_over_time`.",
+  "agent": "C-app-tls"
+ },
+ "R7-C021": {
+  "cid": "R7-C021",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/delegated_tls.rs",
+  "line": 103,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Unauthenticated peer forces one remote KMS Sign per TLS handshake",
+  "raw_ids": [
+   "F052"
+  ],
+  "evidence": "The same defect as R7-C020, reported from the per-connection cost angle (one SigV4 HTTPS round trip, plus a possible STS AssumeRoleWithWebIdentity credential refresh, per ClientHello).",
+  "action": "Same fix and same tests as R7-C020. The CONCURRENCY half is R7-C022.",
+  "agent": "C-app-tls"
+ },
+ "R7-C022": {
+  "cid": "R7-C022",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_serve.rs",
+  "line": 322,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Unauthenticated peer forces one blocking KMS/PKCS#11 handshake signature per TCP connection, unbounded",
+  "raw_ids": [
+   "F089"
+  ],
+  "evidence": "Confirmed: nothing between the accept loop and `sign_tls_ed25519` bounded either the RATE or the CONCURRENCY of handshake signatures; `DELEGATED_TLS_WORKERS_PER_CORE = 4` is a pool, and the module's own doc says a pool 'only widens the window before the pool is exhausted'. TLS 1.3 signs CertificateVerify before the client's Certificate is seen, so no credential is needed to drive it.",
+  "action": "Two bounds, one per axis. RATE: the `TlsHandshakeSignBudget` token bucket in delegated_tls.rs (see R7-C020/C021). CONCURRENCY: async_serve.rs adds a per-core handshake admission semaphore of `DELEGATED_TLS_HANDSHAKES_PER_CORE = 2`, installed ONLY where a handshake can block (`options.tls_signing_may_block`; on the exported-key path the signature is in-memory and bounding it would cost throughput for nothing). Held strictly below the worker pool, so a core under handshake flood always retains workers for its accept loop, its established connections and its in-flight requests. Waiting for the permit is safe in a way the signature is not — that await YIELDS, so `request_deadline` really does preempt it, and a connection that cannot get in before the deadline is dropped rather than queued; the permit is released once the handshake completes, not at the end of the connection, because an established connection costs no further device signatures. Test: `async_serve::admission_bound_tests::the_handshake_bound_leaves_workers_for_the_rest_of_the_core` pins the strictly-below-the-pool invariant, which is the thing a future edit would silently undo.",
+  "agent": "B-retention"
+ },
+ "R7-C023": {
+  "cid": "R7-C023",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/typescript/src/transport.ts",
+  "line": 920,
+  "severity": "high",
+  "category": "signature-binding",
+  "title": "Both SDKs discard the `bound` flag: an unbound rejection receipt answers a specific request",
+  "raw_ids": [
+   "F103"
+  ],
+  "evidence": "Real. mcp-re-client-core/src/response.rs verifies a rejection receipt request-bound first and preflight-unbound second and reports which succeeded (DelegatedOutcome::Rejection { bound, .. }); both bindings surface it; neither transport read it. grep for `bound` over sdk/typescript/src and sdk/python/python confirmed no consumer.",
+  "action": "Both transports now carry the core's verdict beside the frozen token, in JSON-RPC error.data as {\"requestBound\": <bool>}: sdk/python/python/mcp_re_sdk/transport.py:673-691 and sdk/typescript/src/transport.ts:988-995 (errorMessage gained an optional `data`). It travels BESIDE the token, not inside it, because the token must stay exactly what the peer said. I ADDED the discriminating tests — the predecessor's two pinned only requestBound=true against the recorded receipt, which cannot tell a read field from a hard-coded `true`, and the unbound case is the security-relevant one. No fixture can carry an unbound receipt (it is signed WITHOUT the `;req` components, so it cannot be derived from a recording without the server's delegated key), so the verdict is forced: Python monkeypatches _core.verify_response (test_transport.py::test_an_unbound_rejection_receipt_is_reported_as_not_request_bound); TypeScript uses a pass-through vi.mock of ../native/binding.js that overrides only when armed (test/transport.test.ts 'McpReHttpTransport rejection receipt binding', both verdicts). Mutation check: dropping the data field fails 2 Python and 3 TypeScript tests.",
+  "agent": "A-sdk"
+ },
+ "R7-C024": {
+  "cid": "R7-C024",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/main.rs",
+  "line": 139,
+  "severity": "high",
+  "category": "fail-open-default",
+  "title": "Trust-manifest expiry is enforced only by the refresh thread; trust.reload_secs=0 disables it entirely",
+  "raw_ids": [
+   "F151"
+  ],
+  "evidence": "Predecessor's work, verified: `let _refresher = (config.trust.reload_secs > 0).then(|| AnchorRefresher::start(...))` was the only construction, and `refresh_once` (anchors.rs:202-208) is the only anchor-withdrawal path.",
+  "action": "main.rs now starts the refresher UNCONDITIONALLY, and config.rs::validate() bounds `trust.reload_secs` to `1..=MAX_MANIFEST_RELOAD_SECS` (3600) so the cadence is also a ceiling on how long a lapsed trust picture can stay in force. Pinned by config.rs `a_disabled_or_unbounded_reload_cadence_is_refused` (rejects 0 and 86400, accepts 3600).",
+  "agent": "E-keys-client"
+ },
+ "R7-C025": {
+  "cid": "R7-C025",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/chain.rs",
+  "line": 316,
+  "severity": "high",
+  "category": "transparency-log",
+  "title": "Front-truncated chain attests as Complete: hop 0's own continuation is never checked",
+  "raw_ids": [
+   "F010"
+  ],
+  "evidence": "Real (fixed by my predecessor, verified and re-pinned). The re-link match arm `(0, _) => {}` matched hop 0 for both None and Some(c), so a hop carrying a continuation naming an absent predecessor opened the record and the whole reconstruction was labelled Complete - the label scitt.rs:145 embeds and `is_complete_record()` reads.",
+  "action": "Arm split into `(0, None) => {}` and `(0, Some(_)) => incomplete(.., ContinuationDoesNotLink)` (an existing variant; no enum change, so no other crate's label tokens move). Pinned by tests/chain_reconstruction_test.rs `front_truncated_chain_is_incomplete_not_a_complete_record`, which takes a real 3-hop chain, submits hops 1 and 2, asserts BOTH submitted hops still verify on their own and are ;req-bound (so the test is about truncation, not broken messages), then asserts Incomplete { hop: 0, reason: ContinuationDoesNotLink } and an empty verified prefix - plus the positive control `an_opening_hop_without_a_continuation_still_opens_a_complete_record`.",
+  "agent": "G-http-profile"
+ },
+ "R7-C026": {
+  "cid": "R7-C026",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_redis_store.rs",
+  "line": 147,
+  "severity": "high",
+  "category": "replay-freshness",
+  "title": "Redis replay backend relies on an unverified `maxmemory-policy`; eviction of live nonce keys re-opens replay",
+  "raw_ids": [
+   "F024"
+  ],
+  "evidence": "Duplicate of R7-C027 at a different line of the same file (the module header stating the no-ceiling assumption). Both halves confirmed: no ceiling/no accounting (see R7-C009) and no eviction-policy assertion.",
+  "action": "Covered by the two fixes above: the connect-time noeviction assertion (R7-C027) and the tier-level per-actor retention bound (R7-C009). The module header at async_redis_store.rs:31-44 now states the eviction requirement as the reason the connect path refuses, and the insert-path comment states that insert.actor is budgeted above the seam.",
+  "agent": "D-stores"
+ },
+ "R7-C027": {
+  "cid": "R7-C027",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_redis_store.rs",
+  "line": 104,
+  "severity": "high",
+  "category": "replay-freshness",
+  "title": "Redis replay tier depends on an unchecked Redis eviction policy; eviction re-opens replay",
+  "raw_ids": [
+   "F064"
+  ],
+  "evidence": "Verified: connect_with_wait_timeout opened the ConnectionManager and returned with no policy assertion, atomic_insert_if_absent issued only SET key 1 NX PX ttl_ms and mapped absence to Fresh, and `grep -rni 'maxmemory|noeviction|allkeys'` over the whole repo returned zero hits. An evicted nonce is indistinguishable from one never presented, so nothing on the insert path can detect it after the fact.",
+  "action": "async_redis_store.rs now asserts the server-side eviction policy at connect: assert_no_eviction issues CONFIG GET maxmemory-policy, config_get_value reads either the RESP2 array or the RESP3 map reply, and eviction_policy_verdict accepts only `noeviction` (case-insensitive). Any evicting policy AND an unreadable policy both fail closed as ReplayStoreError::Unavailable with a message naming the policy and the remedy. Tests: the_policy_is_read_out_of_either_protocols_reply, every_evicting_policy_is_refused_and_so_is_an_unreadable_one (all four volatile-* and three allkeys-* plus the unreadable case), a_store_refuses_to_connect_to_an_evicting_redis and a_noeviction_redis_is_accepted - the last pair drive a scripted RESP server over a real socket so the refusal is proven to be the policy and not the harness. OPERATIONAL CONSEQUENCE the owner should weigh: a managed Redis that renames or blocks CONFIG (ElastiCache does) now fails startup on the unreadable-policy branch, and a Memorystore instance left on the volatile-lru default now fails startup on the evicting branch. Both are the intended fail-closed direction and both are visible at startup rather than silent, but the GKE/AWS fleet lanes will need the instance set to noeviction before they run. If an escape hatch is wanted it belongs in cli.rs (an explicit --replay-redis-unverified-eviction-policy opt-in, defaulting off), which is outside my ownership.",
+  "agent": "D-stores"
+ },
+ "R7-C028": {
+  "cid": "R7-C028",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 850,
+  "severity": "high",
+  "category": "resource-exhaustion",
+  "title": "Evidence retention does blocking fsync under a global mutex on the async runtime",
+  "raw_ids": [
+   "F030"
+  ],
+  "evidence": "The same defect as R7-C001/C002, reported at the call site (`retention.retain(&http_req, &response)`, a plain sync call inside `pub async fn handle`).",
+  "action": "The call site is now `retention.reserve(&http_req).await` before dispatch and `retention.complete(reservation, request, response).await` after it (http_profile_serve.rs steps 6a and `retain_accepted`), each awaiting an acknowledgement from the dedicated writer thread. See R7-C001 for the model and the tests.",
+  "agent": "B-retention"
+ },
+ "R7-C029": {
+  "cid": "R7-C029",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/delegated_server_signer.rs",
+  "line": 264,
+  "severity": "high",
+  "category": "unimplemented-contract",
+  "title": "advance_trust_epoch reports success when the re-issue silently did not happen",
+  "raw_ids": [
+   "F041"
+  ],
+  "evidence": "Confirmed: `custody.reissue` returns `Ok(())` both when a successor was minted AND when the root DECLINED while the predecessor — minted under the epoch just revoked — is still valid, and `advance_trust_epoch` mapped both to Ok, republishing the OLD snapshot. The caller then set `consecutive_failures = 0`, moved `last_label`, recorded a rotor success and printed 'trust epoch advanced', so the `if label != last_label` guard was false forever after and the advance was never retried.",
+  "action": "delegated_server_signer.rs: `advance_trust_epoch` returns `Result<TrustEpochAdvance, CustodyError>`. It captures the published kid BEFORE the attempt; since a successful issuance always mints a fresh keypair and the kid is that key's RFC 7638 thumbprint, an unchanged kid is proof no new credential was minted, and that case returns `TrustEpochAdvance::Declined` WITHOUT publishing. app.rs's rotation owner now has three arms: `Advanced` (success as before), `Declined` (records a FAILURE on the metrics, leaves `last_label` where it was so the next pass retries, backs off, and prints a WARNING naming what is still true — 'this replica is STILL MINTING under the prior epoch ... until that key's exp and then FAILS CLOSED'), and `Err` (root unavailable). The predecessor is deliberately not retired: a root blip must not compose an epoch advance into an outage. Test: `a_declined_advance_is_reported_as_declined_and_keeps_the_prior_key` (an issuer that succeeds once then declines; asserts the `Declined` variant AND that the published kid is unchanged); the existing advance test now asserts `Advanced` explicitly.",
+  "agent": "C-app-tls"
+ },
+ "R7-C030": {
+  "cid": "R7-C030",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/delegation.rs",
+  "line": 226,
+  "severity": "high",
+  "category": "replay-freshness",
+  "title": "Delegation-credential freshness skew is unbounded, bypassing the 300s hard cap",
+  "raw_ids": [
+   "F048"
+  ],
+  "evidence": "Real, and the owner's reading is confirmed against source. delegation.rs applied `params.max_clock_skew` raw to the nbf/exp window; `max_clock_skew` is a plain i64 on `DelegationVerifyParams` and on `DelegationExpectations` (verify.rs:1150), validated nowhere, while policy.rs:142 enforces 0..=MAX_CLOCK_SKEW_BOUND inside `VerifierPolicy::new` only.",
+  "action": "Added `bounded_skew(configured) = configured.clamp(0, VerifierPolicy::MAX_CLOCK_SKEW_BOUND)`, applied at the freshness gate: `if params.now + skew < claims.nbf || params.now - skew > claims.exp`. Pinned by delegation.rs `configured_skew_above_the_hard_cap_does_not_widen_the_credential_window` - max_clock_skew = 86_400 probed at exp + 300 + 1 and at nbf - 300 - 1 must both be DelegationCredentialExpired, and a third case AT the bound must still be accepted so the cap is a ceiling and not a replacement - and `negative_configured_skew_is_treated_as_zero`.",
+  "agent": "G-http-profile"
+ },
+ "R7-C031": {
+  "cid": "R7-C031",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_redis_store.rs",
+  "line": 176,
+  "severity": "high",
+  "category": "fail-open-default",
+  "title": "Shared Redis replay tier fails OPEN under any maxmemory eviction policy; nothing requires noeviction",
+  "raw_ids": [
+   "F059"
+  ],
+  "evidence": "Duplicate of R7-C027/C026 stated as fail-open-default. Confirmed against source: SET NX PX with Ok(Some) => Fresh / Ok(None) => Replay, no policy guard, while trust_epoch.rs:178-183 already treated LRU eviction as a hazard for its own key - the replay keyspace, whose keys all carry PX TTLs, had no equivalent.",
+  "action": "Covered by the connect-time noeviction assertion in async_redis_store.rs (tests under R7-C027). NOTE FOR THE OWNER, shared-file follow-up outside my ownership: deploy/helm/mcp-re-proxy/values.yaml and docs/fleet-deployment-guide.md still say nothing about maxmemory-policy. The runtime now refuses to start against an evicting instance, so the deployment cannot silently be in the bad state, but the guide should state the requirement (and that the replay keyspace wants its own instance if another keyspace needs eviction).",
+  "agent": "D-stores"
+ },
+ "R7-C032": {
+  "cid": "R7-C032",
+  "disposition": "confirmed-fixed",
+  "file": ".gcloudignore",
+  "line": 2,
+  "severity": "high",
+  "category": "incomplete-fix",
+  "title": "R6-C019 incomplete: .gcloudignore does not exclude work/, so `gcloud builds submit` uploads it",
+  "raw_ids": [
+   "F108"
+  ],
+  "evidence": "Confirmed. `git show HEAD:.gcloudignore` is 11 lines of build output only — no work/, .env, *.pem/*.key, kubeconfig, .aws/.gcloud/.kube — while .dockerignore:20-32 already carried all of them. gcloud reads .gcloudignore INSTEAD of .gitignore, so /work/ being gitignored gives no protection on the `gcloud builds submit .` path.",
+  "action": "Predecessor added the full credential-exclusion block to .gcloudignore. I verified it cannot break a build: `git ls-files` matching the new patterns returns 0 tracked files. I then gave it the CI pin it lacked, inside a file I own — scripts/tracked_secrets_gate.py now carries REQUIRED_UPLOAD_EXCLUSIONS + missing_upload_exclusions() + scan_upload_ignores(), asserting whole-line presence of each pattern in BOTH .dockerignore and .gcloudignore on every gate run. Whole-line rather than substring, because a pattern named only inside an explanatory comment is exactly what the unremediated file would have looked like. Four selftest cases including the verbatim pre-remediation .gcloudignore. Negative control: restoring the pre-fix file makes the gate exit 1 naming all 11 gaps.",
+  "agent": "I-deploy"
+ },
+ "R7-C033": {
+  "cid": "R7-C033",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/k8s/inner-fastmcp.yaml",
+  "line": 132,
+  "severity": "high",
+  "category": "tenant-isolation",
+  "title": "Inner-plane NetworkPolicy is Ingress-only — tool code has open egress to the replay Redis and trust-epoch key",
+  "raw_ids": [
+   "F123"
+  ],
+  "evidence": "Confirmed. The base NetworkPolicy declared `policyTypes: [Ingress]` only, and the base pod spec set securityContext then went straight to containers — no serviceAccountName, no automountServiceAccountToken. Tool code could therefore open a TCP connection to the replay Redis or the trust-epoch key and talk to the apiserver as system:serviceaccount:<ns>:default.",
+  "action": "Predecessor added `Egress` to policyTypes with a single DNS-only rule, and set automountServiceAccountToken: false on the pod spec. I verified the load-bearing detail the comment claims: `kubectl create --dry-run=client -o json` shows ONE NetworkPolicyPeer carrying BOTH namespaceSelector (kube-system) and podSelector (k8s-app: kube-dns), i.e. AND semantics — two list entries would have ORed into 'any pod in kube-system OR any kube-dns-labelled pod anywhere'. Also confirmed the backend needs no outbound: it is a pure Streamable-HTTP server on 8620 with tcpSocket probes, replies travel on the proxy's own connection (NetworkPolicy is connection-oriented), and the ADR-047 confirm_action shim runs proxy-side. Whole manifest validates under kubectl --dry-run=client. NOT PINNED BY A GATE: there is no structural gate over deploy/k8s/*.yaml and none of my owned files is a natural home for one; the live deny test lives in gke-multi-replica-validation.sh, an HITL cluster lane. Owner action below.",
+  "agent": "I-deploy"
+ },
+ "R7-C034": {
+  "cid": "R7-C034",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 704,
+  "severity": "high",
+  "category": "dead-wire",
+  "title": "Signed-202 notification exchanges are never retained — retention bypassed by omitting the JSON-RPC id",
+  "raw_ids": [
+   "F127"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C035": {
+  "cid": "R7-C035",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 280,
+  "severity": "medium",
+  "category": "dead-wire",
+  "title": "MCPS-08 pre-store staleness guard on the async store is a no-op; its doc claims a check the caller disables",
+  "raw_ids": [
+   "F015",
+   "F022"
+  ],
+  "evidence": "async_replay.rs:437 check_and_insert now takes now_unix and passes it to ReplayInsert; http_profile_dispatch.rs:141 dispatch_request_with_async_tier takes it; http_profile_serve.rs:567 passes the verifier's own now - the same reading the freshness gate used.",
+  "action": "The MCPS-08 pre-store staleness guard now evaluates against a real clock instead of the literal 0, which had reduced it to 'refuse a retain_until at or before the Unix epoch'. NOTE: I first tried judging it against the STORE's clock (matching Redis/etcd) and that broke 3 mcp-re-client e2e tests, which was the right answer - the harness pins a fixed 2023 verifier clock, so a store-clock comparison refuses every entry. The original comment's principle was correct and only its caller was wrong."
+ },
+ "R7-C036": {
+  "cid": "R7-C036",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 765,
+  "severity": "medium",
+  "category": "sdk-parity",
+  "title": "Delivered wire code diverges: Python keeps the 'mcp-re: ' binding prefix, TypeScript strips it",
+  "raw_ids": [
+   "F094",
+   "F098"
+  ],
+  "evidence": "Real. sdk/python/src/lib.rs:46 formats every core failure as `\"mcp-re: {wire_code}\"`, and transport.py delivered `str(e)` verbatim, so Python emitted `mcp-re: mcp-re.response_sig_invalid` where TypeScript emitted the bare token. The pre-existing Python test hid it by injecting an unprefixed ValueError.",
+  "action": "Predecessor added `_peer_wire_code` (transport.py:557-571), the exact twin of TS `peerWireCode`, applied on the request path (_one, transport.py:857-865) and the notification path (_notify, transport.py:828-834). A ValueError that is NOT a frozen token is now delivered as `mcp-re-sdk: <Type>: <msg>` rather than occupying the field that only ever holds something the peer said. Pinned by test_the_bindings_prefixed_spelling_is_delivered_as_the_bare_token (uses the binding's REAL spelling), test_a_value_error_that_is_not_a_token_is_labelled_a_local_condition, test_a_notifications_wire_code_is_the_bare_token_too. Mutation check: reverting either call site fails 2 and 1 tests.",
+  "agent": "A-sdk"
+ },
+ "R7-C037": {
+  "cid": "R7-C037",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 444,
+  "severity": "medium",
+  "category": "noop-substitution",
+  "title": "MCPS-08 pre-store staleness guard is a no-op on the default async replay store",
+  "raw_ids": [
+   "F055",
+   "F028"
+  ],
+  "evidence": "async_replay.rs:437 check_and_insert now takes now_unix and passes it to ReplayInsert; http_profile_dispatch.rs:141 dispatch_request_with_async_tier takes it; http_profile_serve.rs:567 passes the verifier's own now - the same reading the freshness gate used.",
+  "action": "The MCPS-08 pre-store staleness guard now evaluates against a real clock instead of the literal 0, which had reduced it to 'refuse a retain_until at or before the Unix epoch'. NOTE: I first tried judging it against the STORE's clock (matching Redis/etcd) and that broke 3 mcp-re-client e2e tests, which was the right answer - the harness pins a fixed 2023 verifier clock, so a store-clock comparison refuses every entry. The original comment's principle was correct and only its caller was wrong."
+ },
+ "R7-C038": {
+  "cid": "R7-C038",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/templates/deployment.yaml",
+  "line": 144,
+  "severity": "medium",
+  "category": "admission-control",
+  "title": "ADR-MCPRE-053 §7 admission control has no Helm surface; chart's `admission:` key means something else",
+  "raw_ids": [
+   "F110",
+   "F124"
+  ],
+  "evidence": "The same defect as R7-C111, filed against deployment.yaml instead of values.yaml. Both confirmed against the base tree.",
+  "action": "Same fix and same 10 regression cases. R7-C038 additionally names --admission-degraded-bound-secs, which the chart now renders as an inseparable pair with --admission-allow-degraded and refuses to render as a zero or absent window.",
+  "agent": "I-deploy"
+ },
+ "R7-C039": {
+  "cid": "R7-C039",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 197,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Replay budget divisor counts one-shot actors, refusing the busiest legitimate signer outright",
+  "raw_ids": [
+   "F016"
+  ],
+  "evidence": "mcp-re-core/src/replay.rs:110 ReplayKey gains a principal field; mcp-re-http-profile/src/replay.rs:58 principal_slot() drops the keyid (the last raw colon, since every actor-id component escapes ':' as %3A); the tier charges key.principal, not key.signer.",
+  "action": "The cheap version of this attack - inflate the divisor with keys of one subject - is closed by charging the resolved principal. The residual (many genuinely distinct trust-anchor-rooted subjects squeezing one high-volume subject) is equal-split fair-share under pressure operating as specified, and is now stated explicitly at per_actor_budget rather than left implicit."
+ },
+ "R7-C040": {
+  "cid": "R7-C040",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 335,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Budget divisor is the live actor count, so identity inflation refuses established legitimate signers",
+  "raw_ids": [
+   "F020"
+  ],
+  "evidence": "mcp-re-core/src/replay.rs:110 ReplayKey gains a principal field; mcp-re-http-profile/src/replay.rs:58 principal_slot() drops the keyid (the last raw colon, since every actor-id component escapes ':' as %3A); the tier charges key.principal, not key.signer.",
+  "action": "Same as R7-C039: identity inflation now costs a distinct trusted SUBJECT, which is the trust-rooted cost the design claims, not a second key of one subject."
+ },
+ "R7-C041": {
+  "cid": "R7-C041",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 306,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "O(max_entries) prune runs inside one process-wide Mutex on the async hot path",
+  "raw_ids": [
+   "F023"
+  ],
+  "evidence": "async_replay.rs:126 InMemoryState gains by_expiry: BTreeMap<i64, Vec<String>>; the prune at :313 uses split_off(&now) so it walks only expired buckets.",
+  "action": "Eviction is O(expired) instead of O(max_entries) under the process-wide mutex every per-core runtime shares. A prune with nothing expired now costs one B-tree descent instead of a 1M-entry scan."
+ },
+ "R7-C042": {
+  "cid": "R7-C042",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 207,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Budget pressure threshold equals the solo cap: 80% is unbudgeted, and crossing it denies busy actors",
+  "raw_ids": [
+   "F026"
+  ],
+  "evidence": "async_replay.rs:197 per_actor_budget now splits the SPENDABLE capacity (max_entries - reserve) instead of the full ceiling: (max - max/5)/actors. The sum of all budgets is therefore max-reserve for any k, not max. Solo cap is (max-reserve)/1 = 0.8max, which equals the under_pressure threshold, so a solo actor is capped exactly at the line rather than past it.",
+  "action": "Reserve is unspendable for any actor count. The residual C042 raises - that an actor over its share is refused while its existing entries drain - is the specified ordering (the greedy signer stops before the quiet one) and is bounded by the freshness window; documented at per_actor_budget."
+ },
+ "R7-C043": {
+  "cid": "R7-C043",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 197,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Per-actor replay budget preserves the reserve only when exactly one actor holds entries",
+  "raw_ids": [
+   "F056"
+  ],
+  "evidence": "async_replay.rs:197 per_actor_budget now splits the SPENDABLE capacity (max_entries - reserve) instead of the full ceiling: (max - max/5)/actors. The sum of all budgets is therefore max-reserve for any k, not max.",
+  "action": "New test no_number_of_actors_can_spend_the_reserve asserts budget*k <= max-reserve for k in 1..=64. The old test pinned the defect (per_actor_budget(1_000_000,2)==500_000, i.e. 2x500k == the whole ceiling); it now pins 400_000."
+ },
+ "R7-C044": {
+  "cid": "R7-C044",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 197,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Per-actor replay budget exists only on the backend a shipped proxy cannot select",
+  "raw_ids": [
+   "F065"
+  ],
+  "evidence": "Same defect as R7-C009 seen from the resource-exhaustion side, and it verified: cli.rs pushes an unconditional violation for ReplayKind::Memory, so the only budgeted backend could not be selected, and the two selectable backends grew the shared keyspace per admitted nonce with no per-actor accounting.",
+  "action": "Same fix: AsyncReplayTier::check_and_insert now reserves against the RetentionLedger before dispatching to the adapter, so one signature-valid actor is refused at its share (fail closed on mcp-re.replay_cache_unavailable) while other signers keep being served, on Redis and etcd alike. The refusal also prints a distinguishing operator line, because the frozen wire token cannot tell a budget refusal from a store outage. Pinned by the tests listed under R7-C009.",
+  "agent": "D-stores"
+ },
+ "R7-C045": {
+  "cid": "R7-C045",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 852,
+  "severity": "medium",
+  "category": "incomplete-fix",
+  "title": "Retention failure returns a retryable 503 after the inner backend already executed",
+  "raw_ids": [
+   "F039"
+  ],
+  "evidence": "Derived the dispatch/retention state machine first (work/security-audit-2026-08-03/DESIGN-retention-state-machine.md) rather than adding a writability probe, which is a check-then-act race: a probe shows the store WAS writable, and ENOSPC/EIO/remount/permission-change/crash all fit between probe and commit.",
+  "action": "Two states, not one. (1) transparency.rs:216 reserve() takes DURABLE responsibility before dispatch (tmp+fsync+rename+dir-fsync of a <request-digest>.pending marker); http_profile_serve.rs:690 calls it BEFORE inner_async.dispatch, and a failure there is ABORTED_BEFORE_EXECUTION - kept at 503/evidence_retention_unavailable because there the call genuinely did not run and retry IS safe. (2) transparency.rs:279 complete() writes the hop then clears the marker; a failure is INDETERMINATE_AFTER_EXECUTION -> NEW frozen code mcp-re.evidence_retention_indeterminate at HTTP 500, never 503. No atomicity is claimed: the backend and the store share no transaction, so what the reservation establishes is that the crossing of the execution threshold is durable, and a surviving marker is the auditor's record of it."
+ },
+ "R7-C046": {
+  "cid": "R7-C046",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 194,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Evidence retention blocks the async runtime: fs write + 2 fsyncs under a process-wide mutex",
+  "raw_ids": [
+   "F038"
+  ],
+  "evidence": "Confirmed: `EvidenceRetention` held `store: Mutex<FsRetainedEvidenceStore>` and `retain` was a sync fn taking that lock across create+write+fsync+rename+dir-fsync, called inline from the async `handle` at http_profile_serve.rs on a `new_current_thread` per-core runtime.",
+  "action": "Same fix as R7-C001/C002/C028 below — the mutex is gone outright (single-owner writer thread), the request path awaits an acknowledgement, and the deadline concern is answered by the future yielding rather than by a timer. See R7-C001.",
+  "agent": "B-retention"
+ },
+ "R7-C047": {
+  "cid": "R7-C047",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 435,
+  "severity": "medium",
+  "category": "sdk-parity",
+  "title": "authz_binding_digest still diverges across SDKs for non-ASCII binding fields (ensure_ascii)",
+  "raw_ids": [
+   "F099"
+  ],
+  "evidence": "Real. sdk/python/python/mcp_re_sdk/transport.py:_bindings_json left `ensure_ascii` at its default, so json.dumps escaped non-ASCII as \\uXXXX while sdk/typescript/src/authorization.ts JSON.stringify emits raw UTF-8; the digest at transport.py:_authz_binding_digest / transport.ts:authzBindingDigest is taken over exactly that text. Predecessor had already added `ensure_ascii=False` (transport.py:486).",
+  "action": "Verified the fix and that it is pinned by a LITERAL on both sides, which is what makes it a cross-language claim: sdk/python/tests/test_transport.py::test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify and sdk/typescript/test/authorization.test.ts 'canonical bindingsJson is byte-identical across SDKs' pin the same string and the same digest sha-256:5qndaYSZ4RWRPC68gVX125zTyK8XeWHdwWvnFZnr0XI. Mutation check: removing `ensure_ascii=False` fails the Python test. Residual for the owner (file not mine): tools/gen_sdk_parity_fixture.py still builds its vector with a plain json.dumps and never calls the canonical serializer, so the frozen fixture cannot catch a future regression here.",
+  "agent": "A-sdk"
+ },
+ "R7-C048": {
+  "cid": "R7-C048",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 813,
+  "severity": "medium",
+  "category": "sdk-parity",
+  "title": "Python treats an unverifiable notification acknowledgement as success at the app boundary; TS throws",
+  "raw_ids": [
+   "F105"
+  ],
+  "evidence": "Real as stated: _one_notification caught every Exception and routed it to a module-global stderr hook, so the application had no programmatic signal at all. NOT fixable as a raise, and I checked why before accepting the predecessor's shape: Python's send_notification writes to a memory object stream that _pump drains in a separate task, so there is no caller frame to raise into, and raising inside the task group is the remotely-triggerable session kill round 5 fixed (and R7-C014/015/108 below).",
+  "action": "Predecessor added McpReConfig.on_undeliverable (transport.py:324-339), consulted first by _report_undeliverable (transport.py:919-935), with the module global as fallback. An application now gets a per-transport programmatic signal for a notification whose 202 did not verify. Pinned by test_the_config_hook_takes_precedence_over_the_process_global_sink (asserts the global sink stays EMPTY, so precedence is the mechanism under test). Mutation check: ignoring config.on_undeliverable fails it. RESIDUAL FOR THE OWNER (file not mine): sdk/PARITY.md:81 is stale — the Python cell still names `on_notification_failure` (stderr by default) as the sink, and it should name `McpReConfig.on_undeliverable` with the module global as the process-wide fallback. The same row should keep recording that this outcome is a raise from send() in TypeScript and a config callback in Python, because the two transports have different shapes: TS send() is the caller's own frame, Python's pump is not. Exact behavioural parity is not reachable here; the observable-signal gap is what closed. The row's trailing change-narration sentence ('Python used to let it escape the pump's task group…') is also history in a doc that describes current behaviour.",
+  "agent": "A-sdk"
+ },
+ "R7-C049": {
+  "cid": "R7-C049",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 765,
+  "severity": "medium",
+  "category": "sdk-parity",
+  "title": "The frozen `mcp-re.*` wire code reaches apps in three spellings; round 6 fixed one of three paths",
+  "raw_ids": [
+   "F107"
+  ],
+  "evidence": "Real, and it was three paths: TS notification (transport.ts NotificationNotAcknowledged construction), Python request (_one), Python notification (_notify). The TS request path was the one round 6 fixed.",
+  "action": "All three normalized. TS notification path now applies `peerWireCode(e.message) ?? \\`mcp-re-sdk: ${e.name}: ${e.message}\\`` (sdk/typescript/src/transport.ts:852-862); the two Python paths are the R7-C036 fix. Pinned in TS by test/transport.test.ts 'reports the ack failure as the frozen token, not the binding's prefixed spelling' (asserts /^mcp-re\\.[a-z0-9_]+$/, so the prefixed spelling fails) and in Python by the three tests listed under R7-C036. Mutation check: reverting the TS notification path fails that test.",
+  "agent": "A-sdk"
+ },
+ "R7-C050": {
+  "cid": "R7-C050",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 366,
+  "severity": "medium",
+  "category": "bypassable-gate",
+  "title": "serve::bind() documents a loopback refusal it does not perform; build() never validates",
+  "raw_ids": [
+   "F146"
+  ],
+  "evidence": "serve.rs:379 bind() now takes &LocalConfig and refuses a non-loopback address unless allow_non_loopback is set; config.rs validate() is pub; lib.rs build() calls it on whatever config it is handed.",
+  "action": "Guard moved to the chokepoint that opens the socket, plus defence in depth in build(). Test bind_refuses_a_non_loopback_address_unless_it_is_declared uses TEST-NET-1 so it proves the GUARD refused, not the OS."
+ },
+ "R7-C051": {
+  "cid": "R7-C051",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 366,
+  "severity": "medium",
+  "category": "bypassable-gate",
+  "title": "Loopback guard is enforced only in ClientConfig::from_json; serve::bind claims a refusal it does not perform",
+  "raw_ids": [
+   "F155"
+  ],
+  "evidence": "serve.rs:379 bind() now takes &LocalConfig and refuses a non-loopback address unless allow_non_loopback is set; config.rs validate() is pub; lib.rs build() calls it on whatever config it is handed.",
+  "action": "Guard moved to the chokepoint that opens the socket, plus defence in depth in build(). Test bind_refuses_a_non_loopback_address_unless_it_is_declared uses TEST-NET-1 so it proves the GUARD refused, not the OS."
+ },
+ "R7-C052": {
+  "cid": "R7-C052",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 275,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Local listener has no whole-exchange deadline: one trickling connection holds an in-flight slot indefinitely",
+  "raw_ids": [
+   "F144"
+  ],
+  "evidence": "serve.rs:124 computes one Instant deadline per exchange; arm() shrinks the per-read timeout to the remaining budget before every read (and reports 408 on a zero budget, where Duration::ZERO would mean block-forever); the head is read in 1KiB chunks instead of one byte per syscall.",
+  "action": "Aggregate wall-clock bound over head, body and drain. Test a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker drives a real socket at one byte per 20ms and asserts 408 within the budget."
+ },
+ "R7-C053": {
+  "cid": "R7-C053",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 108,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "In-flight slot released by a statement after handle_connection, so a worker panic burns capacity forever",
+  "raw_ids": [
+   "F148"
+  ],
+  "evidence": "serve.rs:74 Slot(Arc<AtomicUsize>) releases the claim in Drop; the worker closure owns it, so the count is restored on unwind and on a spawn failure (which drops the closure).",
+  "action": "RAII guard replaces the trailing fetch_sub. Test a_panicking_worker_returns_its_in_flight_slot asserts the count returns to zero after a panicking worker."
+ },
+ "R7-C054": {
+  "cid": "R7-C054",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 275,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Local leg has per-read timeouts but no total request deadline — one slow client holds a worker slot ~indefinitely",
+  "raw_ids": [
+   "F152"
+  ],
+  "evidence": "serve.rs:124 computes one Instant deadline per exchange; arm() shrinks the per-read timeout to the remaining budget before every read (and reports 408 on a zero budget, where Duration::ZERO would mean block-forever); the head is read in 1KiB chunks instead of one byte per syscall.",
+  "action": "Aggregate wall-clock bound over head, body and drain. Test a_dripping_caller_hits_the_exchange_deadline_instead_of_holding_the_worker drives a real socket at one byte per 20ms and asserts 408 within the budget."
+ },
+ "R7-C055": {
+  "cid": "R7-C055",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 94,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "At-capacity 503 is written on the accept thread with no write timeout, so one non-reading peer stops the listener",
+  "raw_ids": [
+   "F153"
+  ],
+  "evidence": "serve.rs:150 sets a 2s write AND read timeout on the accepted socket before the at-capacity 503 is written on the accept thread.",
+  "action": "The accept loop can no longer be blocked by a peer that never drains, so it keeps accepting and keeps observing the stop flag."
+ },
+ "R7-C056": {
+  "cid": "R7-C056",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 104,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "In-flight slot is leaked on a worker panic — max_in_flight panics brick the listener permanently",
+  "raw_ids": [
+   "F154"
+  ],
+  "evidence": "serve.rs:74 Slot(Arc<AtomicUsize>) releases the claim in Drop; the worker closure owns it, so the count is restored on unwind and on a spawn failure (which drops the closure).",
+  "action": "RAII guard replaces the trailing fetch_sub. Test a_panicking_worker_returns_its_in_flight_slot asserts the count returns to zero after a panicking worker."
+ },
+ "R7-C057": {
+  "cid": "R7-C057",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 108,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "A panicking worker permanently leaks its in-flight slot, bricking the listener",
+  "raw_ids": [
+   "F160"
+  ],
+  "evidence": "serve.rs:74 Slot(Arc<AtomicUsize>) releases the claim in Drop; the worker closure owns it, so the count is restored on unwind and on a spawn failure (which drops the closure).",
+  "action": "RAII guard replaces the trailing fetch_sub. Test a_panicking_worker_returns_its_in_flight_slot asserts the count returns to zero after a panicking worker."
+ },
+ "R7-C058": {
+  "cid": "R7-C058",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 852,
+  "severity": "medium",
+  "category": "race-toctou",
+  "title": "Retention failure returns a retryable 503 after the inner backend already ran",
+  "raw_ids": [
+   "F031"
+  ],
+  "evidence": "Derived the dispatch/retention state machine first (work/security-audit-2026-08-03/DESIGN-retention-state-machine.md) rather than adding a writability probe, which is a check-then-act race: a probe shows the store WAS writable, and ENOSPC/EIO/remount/permission-change/crash all fit between probe and commit.",
+  "action": "Two states, not one. (1) transparency.rs:216 reserve() takes DURABLE responsibility before dispatch (tmp+fsync+rename+dir-fsync of a <request-digest>.pending marker); http_profile_serve.rs:690 calls it BEFORE inner_async.dispatch, and a failure there is ABORTED_BEFORE_EXECUTION - kept at 503/evidence_retention_unavailable because there the call genuinely did not run and retry IS safe. (2) transparency.rs:279 complete() writes the hop then clears the marker; a failure is INDETERMINATE_AFTER_EXECUTION -> NEW frozen code mcp-re.evidence_retention_indeterminate at HTTP 500, never 503. No atomicity is claimed: the backend and the store share no transaction, so what the reservation establishes is that the crossing of the execution threshold is durable, and a surviving marker is the auditor's record of it."
+ },
+ "R7-C059": {
+  "cid": "R7-C059",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 704,
+  "severity": "medium",
+  "category": "transparency-log",
+  "title": "Signed-202 notification path returns before the retention hook, so those exchanges are never retained",
+  "raw_ids": [
+   "F035"
+  ],
+  "evidence": "http_profile_serve.rs:906 new retain_accepted() is a single choke point every ACCEPTED exit funnels through; the notification branch at :716 now calls it before emitting response.signed and returning served(ack), on the same fail-closed 503 mcp-re.evidence_retention_unavailable terms as the bodied exit.",
+  "action": "Regression test a_served_notification_is_retained_like_any_other_accepted_exchange in transparency_e2e_test.rs serves a signed notifications/cancelled, asserts 202, and asserts exactly one retained hop. It is a real negative control: before the fix the branch returned at served(ack) without ever reaching the retention block, so the count was 0. The two signed-rejection exits are deliberately NOT routed through it - retention's scope is accepted-only per PR #512."
+ },
+ "R7-C060": {
+  "cid": "R7-C060",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_serve.rs",
+  "line": 542,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Pre-verification body buffering is bounded per core but unbounded in aggregate",
+  "raw_ids": [
+   "F032"
+  ],
+  "evidence": "Confirmed: the in-flight permit is taken before the body is read and bounds request COUNT only, so each admitted slot could buffer a whole `max_body_bytes`; the per-core product (256 x 16 MiB = 4 GiB) was reasoned about in the defaults comment and the fleet-wide product was bounded by nothing.",
+  "action": "async_serve.rs adds `BodyByteBudget`, a per-core ceiling on request-body bytes RESIDENT before verification, sized at `max_body_bytes * BUFFERED_BODY_BUDGET_MULTIPLE` (4) — a multiple rather than an absolute number, so raising the body cap gives a proportional budget and one maximum-size request is always admissible. `collect_body` charges as the bytes ARRIVE, frame by frame, rather than from a declared `Content-Length`: a chunked or HTTP/2 body declares no length and a declared one is the peer's claim about what it is about to send. The charge is an RAII `BodyBytes` guard held for as long as the caller holds the bytes and released on every path including an abandoned read; frames fold into one guard via `absorb`. Exceeding the budget is a 503 shed (retry-safe, the core saying 'not now'), distinct from the 413 an over-large or unreadable body gets — that distinction is why `BodyReadError` has two variants. NOTE: `collect_body` and `BodyReadError` did not exist — the predecessor had written the call site and the budget type but not the function, which is one of the four compile errors that had the workspace at exit 101. Tests: `the_core_budget_admits_a_maximum_size_body_and_refuses_past_the_ceiling`, `an_abandoned_body_read_returns_its_charge`, `absorbing_a_frame_does_not_release_its_bytes_twice`.",
+  "agent": "B-retention"
+ },
+ "R7-C061": {
+  "cid": "R7-C061",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_serve.rs",
+  "line": 542,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "In-flight ceiling bounds request count, not bytes: 256 x 16 MiB per core of buffered body",
+  "raw_ids": [
+   "F040"
+  ],
+  "evidence": "The same defect as R7-C060, reported with the fleet arithmetic (8 x 256 x 16 MiB = 32 GiB) and the extra `serde_json::Value` expansions downstream.",
+  "action": "Same fix and same tests as R7-C060. The budget bounds the RAW buffered body per core, which is the multiplier every downstream copy is a function of; the fleet total now scales with cores rather than with cores x 256.",
+  "agent": "B-retention"
+ },
+ "R7-C062": {
+  "cid": "R7-C062",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/main.rs",
+  "line": 139,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "trust.reload_secs = 0 silently disables the only enforcement of manifest expiry",
+  "raw_ids": [
+   "F145"
+  ],
+  "evidence": "Same defect as R7-C024, same two lines (main.rs:139, anchors.rs:202-208).",
+  "action": "Closed by the same change: unconditional `AnchorRefresher::start` in main.rs plus the `1..=3600` bound on `trust.reload_secs` in config.rs::validate(). Test `a_disabled_or_unbounded_reload_cadence_is_refused`.",
+  "agent": "E-keys-client"
+ },
+ "R7-C063": {
+  "cid": "R7-C063",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/sigbase.rs",
+  "line": 176,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "CR/LF rejection in covered values is applied only to field components, never to derived components",
+  "raw_ids": [
+   "F002"
+  ],
+  "evidence": "Same defect as R7-C064: the round-6 guard was unreachable from the derived-component branch (sigbase.rs:173-184 returning before sigbase.rs:209).",
+  "action": "See R7-C064 - the guard now wraps resolution of all component kinds, so @target-uri, @authority, @path, @status and @method can no longer carry a line break into the base on either the sign or the verify side.",
+  "agent": "G-http-profile"
+ },
+ "R7-C064": {
+  "cid": "R7-C064",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/sigbase.rs",
+  "line": 175,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "Round-6 CR/LF refusal skips every derived component; `@method` is also case-normalised",
+  "raw_ids": [
+   "F007"
+  ],
+  "evidence": "Real (fixed by my predecessor, verified against source and re-pinned). sigbase.rs `component_value` returned early for every `@`-prefixed derived component before the round-6 CR/LF guard, which sat inside the field-component branch after `let value = found.ok_or(...)?`. Separately `(\"method\", Some(r), _) => Ok(r.method.to_ascii_uppercase())` normalised the method, collapsing `post` and `POST` onto one signature base - RFC 9421 section 2.2.1 performs no case transformation.",
+  "action": "`component_value` split into an outer guard plus `resolve_component_value`, so the CR/LF refusal now runs on EVERY covered value, derived and field alike, with the error text generalised to \"covered component value contains CR or LF\". `@method` now returns `r.method.clone()`. Pinned by sigbase.rs `method_case_is_carried_verbatim_into_the_base`, `crlf_in_a_derived_component_fails_closed` (@target-uri and @method) and `crlf_in_a_field_value_fails_closed`. No fixture impact: sdk/fixtures/parity_vectors.json and the http-profile vectors all spell the method `POST`.",
+  "agent": "G-http-profile"
+ },
+ "R7-C065": {
+  "cid": "R7-C065",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/sigbase.rs",
+  "line": 176,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "Round-6 CR/LF guard covers only field components; @target-uri and @method enter the base unvalidated",
+  "raw_ids": [
+   "F011"
+  ],
+  "evidence": "Same defect as R7-C064/R7-C063.",
+  "action": "See R7-C064.",
+  "agent": "G-http-profile"
+ },
+ "R7-C066": {
+  "cid": "R7-C066",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/verify.rs",
+  "line": 254,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "Signature-Input dictionary member value is trimmed, so OWS after `=` still verifies",
+  "raw_ids": [
+   "F001"
+  ],
+  "evidence": "Real (fixed by my predecessor, verified and re-pinned). verify.rs `member_value` did `found = Some(v.trim())`, normalising OWS after the RFC 8941 section 3.2 dictionary `=`, which the grammar does not admit (OWS is legal only around the member-separating comma). The round-6 hardening lived one layer down in `parse_signature_input`, which the round-6 test called directly and so never exercised this layer. `member_value` is the sole reader of both Signature-Input and Signature, so every path inherited it.",
+  "action": "`member_value` now fails closed with MalformedEvidence(\"dictionary member spacing\") when the member value carries leading or trailing whitespace. Pinned by verify.rs `wire_form_tests::dictionary_member_spacing_is_refused_not_normalised`, covering space, tab and a multi-member header on Signature-Input, the same on the Signature byte sequence, and a positive control that OWS around the comma stays legal.",
+  "agent": "G-http-profile"
+ },
+ "R7-C067": {
+  "cid": "R7-C067",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/verify.rs",
+  "line": 254,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "Round-6 Signature-Input spelling collapse is closed inside the member value but not at the member boundary",
+  "raw_ids": [
+   "F006"
+  ],
+  "evidence": "Same defect as R7-C066.",
+  "action": "See R7-C066.",
+  "agent": "G-http-profile"
+ },
+ "R7-C068": {
+  "cid": "R7-C068",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/block.rs",
+  "line": 206,
+  "severity": "medium",
+  "category": "canonicalization",
+  "title": "AudienceTuple::canonical_bytes joins on U+001F unescaped: two distinct tuples share one audience_hash",
+  "raw_ids": [
+   "F003"
+  ],
+  "evidence": "Same defect as R7-C124, with the second collision pair.",
+  "action": "See R7-C124 - both pairs are in the regression test.",
+  "agent": "G-http-profile"
+ },
+ "R7-C069": {
+  "cid": "R7-C069",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/retained_evidence.rs",
+  "line": 33,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "Retention store open() does not verify writability, so an unwritable dir starts and refuses every request",
+  "raw_ids": [
+   "F036"
+  ],
+  "evidence": "Confirmed: `FsRetainedEvidenceStore::open` was `create_dir_all(&root)?` and nothing else, which returns Ok(()) for an existing directory whatever its permissions or mount state — so the SCT-3 startup gate app.rs claims to implement proved nothing about a read-only mount, a 0555 directory or a wrong fsGroup.",
+  "action": "Same fix as R7-C115: `open` creates the root 0700 (`create_root`) and then runs `probe_writable`, a 0600 probe object created, written, `sync_all`ed and removed. Tests: retained_evidence.rs `opening_an_unwritable_directory_fails_at_open` (0555 directory), `the_writability_probe_leaves_nothing_in_the_store`.",
+  "agent": "B-retention"
+ },
+ "R7-C070": {
+  "cid": "R7-C070",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/retained_evidence.rs",
+  "line": 35,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "Retained-evidence startup check does not establish writability, so every call 503s after the tool ran",
+  "raw_ids": [
+   "F141"
+  ],
+  "evidence": "The same defect as R7-C069, reported with the docs/sidecar-deployment-guide.md guarantee it contradicted. Its second half — 'every refused call has already executed its tool side effects, so client retries double-execute' — is the ordering defect the owner's two-phase reserve/complete already closed and which I preserved.",
+  "action": "Same probe fix. The ordering half stays closed: `reserve()` runs BEFORE `inner_async.dispatch` (http_profile_serve.rs step 6a) and a failure there is 503 `evidence_retention_unavailable` with the backend untouched, pinned by tests/transparency_e2e_test.rs `a_retention_store_that_cannot_accept_the_call_refuses_before_the_backend_runs`, which COUNTS inner dispatches rather than asserting a status.",
+  "agent": "B-retention"
+ },
+ "R7-C071": {
+  "cid": "R7-C071",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/proxy.rs",
+  "line": 371,
+  "severity": "medium",
+  "category": "unimplemented-contract",
+  "title": "A verified 200 with neither `result` nor `error` is delivered as a success returning null",
+  "raw_ids": [
+   "F075"
+  ],
+  "evidence": "Confirmed: the tail of plain_response_from_verified defaulted to result: Value::Null for a non-object body and for an object with neither member, and classify_result(None) -> Complete -> ResponseKind::Success, so a signed reply that is not a JSON-RPC response was delivered as a completed tool call returning null.",
+  "action": "plain_response_from_verified now fails closed with ProxyError::FailedClosed(MalformedEvidence) on a non-object body, on neither-member, and on BOTH members at once; exactly one of result/error rebuilds. Pinned by proxy.rs test a_reply_that_is_not_a_json_rpc_response_fails_closed (empty envelope, batch array, bare scalar, bare string, both members) plus an_ordinary_result_still_rebuilds so an empty {} result is not caught by the guard.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C072": {
+  "cid": "R7-C072",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/app.rs",
+  "line": 1524,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "Failing or dead trust/CRL reload thread keeps last-good forever, unbounded and unsignalled",
+  "raw_ids": [
+   "F091"
+  ],
+  "evidence": "Confirmed: the trust reload loop treated every read failure as 'keep last-good' with no counter, no bound and no health surface, and neither reload thread was wrapped in `catch_unwind` — while cli.rs refuses `--revocation-tier live|push` without `--trust-reload-secs` precisely because 'with --trust read once at startup the store cannot change'.",
+  "action": "app.rs: `TRUST_RELOAD_FAILURE_BUDGET = 5` consecutive failures, counted in `trust_reload_loop`; past the budget the loop calls `TrustStoreFreshness::mark_stale()`. `spawn_trust_reload_task` wraps the loop in `catch_unwind` and marks the store stale on a panic with a FATAL line saying the replica cannot recover on its own. A recovered reload calls `mark_fresh()` and logs RECOVERED. The state is now READ by the data plane, not merely logged — see R7-C104 for the resolver wiring. Test: `a_frozen_store_stops_answering_instead_of_serving_the_revoked_key` (app.rs `store_cadence_tests`).",
+  "agent": "C-app-tls"
+ },
+ "R7-C073": {
+  "cid": "R7-C073",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/docker/Dockerfile",
+  "line": 29,
+  "severity": "medium",
+  "category": "config-deploy",
+  "title": "Chart offers keySource: awsKms but the shipped image lacks aws_kms_keysource — IRSA deploys CrashLoop",
+  "raw_ids": [
+   "F109"
+  ],
+  "evidence": "Confirmed. Base Dockerfile:29 `ARG FEATURES=async_serve,redis_replay,gcp_kms_keysource` while values.yaml offers `keySource: fileSeed | gcpKms | awsKms` and _helpers.tpl validates the awsKms path in detail. The CLI arm behind `#[cfg(not(feature = \"aws_kms_keysource\"))]` fails closed at startup, so an IRSA install CrashLoopBackOffs after the operator has provisioned a KMS key, an IAM role and an OIDC provider.",
+  "action": "Predecessor added aws_kms_keysource to the default FEATURES and corrected the values.yaml sentence that enumerated only two modes. I verified this adds no build inputs: mcp-re-proxy/Cargo.toml declares `aws_kms_keysource = []` with zero optional dependencies (hmac/base64/ureq+tls are all non-optional and already in the closure), so the builder stage needs no new packages. I could not compile-verify — the workspace does not build, and per the brief that failure is not mine (recover-check.log lists only errors in Rust files owned by other groups; none of my nine files are Rust). Pinned by scripts/helm_render_gate.py check_image_serves_every_key_source(), which parses `ARG FEATURES=` and asserts every KMS keySource values.yaml offers has its feature compiled in. This is the exact false assurance the finding names — helm_render_gate.py asserted the awsKms render SUCCEEDS while nothing checked the image could serve it. Negative control against the pre-fix Dockerfile reports the awsKms gap.",
+  "agent": "I-deploy"
+ },
+ "R7-C074": {
+  "cid": "R7-C074",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/docker/Dockerfile",
+  "line": 43,
+  "severity": "medium",
+  "category": "config-deploy",
+  "title": "Proxy image runs as root by default — only the out-of-TCB inner image declares a non-root USER",
+  "raw_ids": [
+   "F118"
+  ],
+  "evidence": "The same defect as R7-C127 at the same lines. Its distinct point — that `runAsNonRoot: true` cannot act as an admission-time backstop unless the image declares a numeric uid — is correct and is why the pin asserts the uid is numeric rather than merely present.",
+  "action": "Same fix and same pin as R7-C127.",
+  "agent": "I-deploy"
+ },
+ "R7-C075": {
+  "cid": "R7-C075",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 152,
+  "severity": "medium",
+  "category": "key-custody",
+  "title": "Retained evidence stores raw Authorization/DPoP header bytes verbatim, forever, with no expiry",
+  "raw_ids": [
+   "F129"
+  ],
+  "evidence": "Confirmed against source: RetainedHopRecord::of cloned the entire inbound header vector, and the store root was created at the ambient umask (old retained_evidence.rs create_dir_all). The finding's own reasoning is accepted: the covered `authorization`/`dpop` bytes CANNOT be digested or dropped without making the retained hop unverifiable, which is the one thing retention exists to enable, so the tension is resolved by bounding the set and stating the cost rather than by removing the credential.",
+  "action": "transparency.rs:185-223 `covered_headers` keeps only the headers the message's OWN `Signature-Input` component list names, plus `signature`/`signature-input`; every other credential the client sent (`cookie`, `proxy-authorization`, bespoke API-key headers) is dropped. The covered set is read from inside the `( ... )` list only, so a `keyid=\"cookie\"` parameter cannot widen it. retained_evidence.rs:162-185 `create_root` creates the store 0700 and WARNS at startup when an existing root is looser, naming what is inside it. transparency.rs:65-84 states the boundary the module actually keeps. Tests: transparency.rs `only_the_signed_headers_are_retained` (asserts `cookie` is absent from the record AND from the bytes on disk, `authorization` present), `a_signature_parameter_cannot_widen_the_covered_set`, retained_evidence.rs `a_created_store_root_is_owner_only`.",
+  "agent": "B-retention"
+ },
+ "R7-C076": {
+  "cid": "R7-C076",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 152,
+  "severity": "medium",
+  "category": "key-custody",
+  "title": "Retained evidence persists raw Authorization/DPoP credentials to disk indefinitely, undocumented",
+  "raw_ids": [
+   "F142"
+  ],
+  "evidence": "Same defect as R7-C075 from the documentation angle: the module note claimed the store held 'the request and response signature bases' while it held the whole header list, and no operator-facing text said the directory is credential material.",
+  "action": "Same code fix as R7-C075. The module doc now states it outright (transparency.rs:65-84): 'this directory is credential material for every call since it was created, with no expiry ... Handing it to an auditor hands over replayable tokens.' Pinned by the same tests.",
+  "agent": "B-retention"
+ },
+ "R7-C077": {
+  "cid": "R7-C077",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/retained_evidence.rs",
+  "line": 95,
+  "severity": "medium",
+  "category": "race-toctou",
+  "title": "put reports success for a pre-existing file it never validates; a crashed write poisons that object",
+  "raw_ids": [
+   "F131"
+  ],
+  "evidence": "Confirmed both halves: `put` short-circuited on `path.exists()` and returned Ok without reading the file, and the temp name was `<digest>.tmp.<pid>` opened `create_new(true)`, so crash residue poisoned that object permanently.",
+  "action": "retained_evidence.rs: the `exists()` short-circuit is GONE — the final name is written unconditionally, which cannot lose data because the rename is atomic (an interrupted rewrite leaves whatever was there untouched) and which means a truncated or substituted file is repaired rather than reported as retained. Temp names come from `unique_suffix()` = pid + nanos + a process-wide counter, so a leftover sits under a name nothing will ever choose again and is inert. Tests: `a_truncated_object_is_rewritten_rather_than_reported_as_retained`, `temp_residue_from_an_interrupted_write_does_not_block_a_later_put` (writes residue under BOTH old schemes, including `tmp.1` for the container PID-1 case), `staging_the_same_object_concurrently_leaves_one_object_and_no_residue` (8 threads).",
+  "agent": "B-retention"
+ },
+ "R7-C078": {
+  "cid": "R7-C078",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/retained_evidence.rs",
+  "line": 104,
+  "severity": "medium",
+  "category": "race-toctou",
+  "title": "Retained-evidence temp filename is per-process, not per-write",
+  "raw_ids": [
+   "F134"
+  ],
+  "evidence": "Same defect as R7-C077 from the temp-name angle, including the false comment claiming 'A UNIQUE temp name per write'.",
+  "action": "Same fix. The comment now states what the name actually guarantees and why a per-process name is not per-write (pid is constant for the process lifetime and is 1 in a container, and two replicas sharing one volume collide live). Same tests.",
+  "agent": "B-retention"
+ },
+ "R7-C079": {
+  "cid": "R7-C079",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/scitt.rs",
+  "line": 126,
+  "severity": "medium",
+  "category": "signature-binding",
+  "title": "Zero-verified-hop reconstructions produce a degenerate evidence commitment",
+  "raw_ids": [
+   "F135"
+  ],
+  "evidence": "Real. scitt.rs:126-132 `match reconstruction.hop_evidence.first() { ... None => (String::new(), String::new()) }` plus the shape hasher folding over an empty `hop_evidence` at :133-139. Every reconstruction that breaks at hop 0 (chain.rs returns `incomplete(hop_evidence, 0, ..)` with `hop_evidence` still empty) and `EmptyChain` therefore produce the identical three identity fields: \"\", \"\" and b64url(sha256(\"\")). verify_retained_evidence (scitt.rs:966-1007) compared only those, so it returned Ok for any unrelated hop-0-failure record.",
+  "action": "verify_retained_evidence now fails closed before comparing: `if !commitment.commits_to_verified_evidence() || !recomputed.commits_to_verified_evidence()` -> MalformedEvidence(\"a record with no verified hop commits to no call, so retained evidence cannot be bound to it\"). Added `EvidenceCommitment::commits_to_verified_evidence()`. NO emitted bytes change: from_reconstruction is untouched, so the frozen SCITT corpus and every existing statement payload are byte-identical. Pinned by scitt.rs tests `a_record_with_no_verified_hop_has_no_identity` (proves the three fields really are constants and that two such records compare equal) and `retained_evidence_cannot_be_bound_to_a_record_with_no_verified_hop` (call A's commitment vs call B's reconstruction, vs the empty chain, plus a positive control that a 2-hop record still binds). Residual, tracked under R7-C114: the STATEMENT payload for such a record still carries no identity.",
+  "agent": "G-http-profile"
+ },
+ "R7-C080": {
+  "cid": "R7-C080",
+  "disposition": "implemented-pending-gate",
+  "file": "mcp-re-http-profile/src/scitt.rs",
+  "line": 661,
+  "severity": "medium",
+  "category": "signature-binding",
+  "title": "RFC 9162 fold still admits restated (leaf_index, tree_size) — the round-6 binding claim is false",
+  "raw_ids": [
+   "F139"
+  ],
+  "evidence": "The finding is CORRECT and the round-6 doc claim at scitt.rs:620-627 was false. I re-derived the fold by hand: for (leaf_index=1, tree_size=2) with one sibling the walk gives fnode=1 (odd) -> r=H(sib,r), fnode=0, snode=0, terminal check passes; for (2,3) fnode=2==snode=2 -> same branch, the promote-loop drives fnode/snode to 1/1 then 0/0, terminal check passes, SAME root. The whole (2^k, 2^k+1) family behaves identically. This is not a bug in the fold: RFC 9942's RFC9162_SHA256 receipt payload is the bare Merkle Tree Hash, which unlike an RFC 9162 signed tree head never covers `tree_size`, and a right-edge leaf is promoted past every level - so the tree hash of leaf 2^k of a 2^k+1-leaf log IS the same computation as leaf 1 of a 2-leaf log. No fold can separate them. Confirmed no consumer builds a security decision on the accessors: the only readers workspace-wide are assertions in scitt.rs, mcp-re-conformance/tests/scitt_interop_test.rs:157-158 and scitt_vectors_test.rs:466-467.",
+  "action": "FIXED THE FALSE CLAIM, RESIDUAL NEEDS AN OWNER DECISION. (1) scitt.rs:620-627 rewritten: the terminal `sn == 0` check makes the PATH LENGTH load-bearing (which is why (3,4),(7,8),(21,32),(1,4) are refused) and the comment now states explicitly what it cannot bind and why. (2) `Receipt::tree_size` / `Receipt::leaf_index` - both the struct fields and the public accessors - documented as UNAUTHENTICATED transport hints that no ordering, anchoring, freshness or log-maturity reasoning may rest on. (3) The regression test was pinning only the positions that already failed; renamed to `restating_the_log_position_at_a_different_path_length_does_not_verify` and added `a_right_edge_restatement_is_indistinguishable_and_still_verifies`, which asserts every (2^k, 2^k+1) for k in 1..8 verifies AND folds to the honest 2-leaf root, so the residual is pinned rather than latent. OWNER DECISION: binding the log position needs the transparency service to SIGN the tree size - an RFC 9162 STH profile beyond RFC 9942's RFC9162_SHA256 - which changes receipt wire bytes and the frozen mcp-re-conformance/tests/vectors/scitt/ corpus. Alternative: remove the accessors.",
+  "agent": "G-http-profile",
+  "owner_correction": "Scope was understated. Exhaustive enumeration over every pair with tree_size <= 1024 (mirroring rfc9162_root_from_inclusion_proof): 98.4% of positions lie in a class with at least one other member, across 251 distinct classes; only 4 of 524,800 pairs are unique. The (2^k, 2^k+1) family named in `action` is one class among many, so refusing ambiguous positions is not an available defence. Recorded as an exhaustive finite measurement, not an algebraic characterisation. Separately measured: no class contains two members sharing a tree_size. That is NOT the chosen fix — it is a property of the current verification algorithm rather than of the evidence. RULING: bind the tuple explicitly in a versioned, domain-separated protected-header commitment, coordinated with C082 and C114 in ONE corpus revision with a visible profile transition. See HANDOFF.md.",
+  "resolution": "CLOSED by the v2 contract revision. `position_commitment()` in scitt.rs binds H(domain | profile | log_identity | vds | tree_size | leaf_index | root) with every component length-delimited, placed in the receipt's PROTECTED header and marked CRITICAL. `Receipt::from_cose` refuses any critical label it does not understand, so a v1-only implementation cannot verify a v2 receipt while ignoring the commitment. The pinned `ReceiptPositionProfile` (Bound|Unbound, default Unbound) decides whether ABSENCE is tolerated; a present-but-wrong commitment is refused under either. Checked AFTER the receipt signature, against the DERIVED root. Test `a_receipt_restated_at_another_position_is_refused_only_when_the_position_is_bound` reproduces the finding — a genuine pre-v2 receipt restated (1,2)->(2,3) VERIFIES — then shows the v2 receipt refusing the same restatement."
+ },
+ "R7-C081": {
+  "cid": "R7-C081",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/body.rs",
+  "line": 44,
+  "severity": "medium",
+  "category": "other",
+  "title": "insert_meta_block silently renormalises the application JSON body before it is digested and signed",
+  "raw_ids": [
+   "F004"
+  ],
+  "evidence": "Real. body.rs `insert_meta_block` round-trips the WHOLE body through serde_json::Value (from_slice ... to_vec), and sign.rs composes the block before Content-Digest and the signature (sign.rs:202/221 request, :253/:284 response), so whatever the round trip alters is what gets signed and delivered as authentic. The workspace pins plain serde_json with neither arbitrary_precision nor preserve_order. Reproduced in-test: {\"big\":123456789012345678901234567890} does not survive the round trip.",
+  "action": "Added `reject_unrepresentable_json(body)`, called from `insert_meta_block` after the parse. A single linear scan over the raw bytes (string literals tracked so their contents are not read as structure, a frame stack for object nesting) refuses (1) an INTEGER-syntax number token that fits neither i64 nor u64 - MalformedEvidence(\"body carries an integer this profile cannot sign without altering it\") - and (2) a duplicate member name in any object. Tokens with a fraction or exponent are left alone: f64 is their carrier by construction (RFC 8259 section 6) and round-trips exactly. Pinned by body.rs `an_integer_the_round_trip_would_alter_is_refused_not_rewritten` (with a negative control proving the round trip really is lossy), `representable_numbers_still_compose` (i64/u64 extremes, negatives, floats, exponent form) and `a_duplicate_member_name_is_refused_and_lookalikes_are_not` (digits and a fake \"dup\":1,\"dup\":2 inside a STRING, and the same name in two sibling objects and in array elements, all still compose). NO emitted bytes change - every conforming body composes exactly as before. RESIDUAL, deliberately not fixed and documented in the function: member ORDER is still rewritten. Preserving it needs a byte-splice instead of a re-serialization, which would change the emitted body of EVERY signed message and invalidate every frozen http-profile vector and SDK parity vector. RFC 8259 section 4 makes object members unordered, and unlike the two refused cases it changes no value any reader sees.",
+  "agent": "G-http-profile"
+ },
+ "R7-C082": {
+  "cid": "R7-C082",
+  "disposition": "implemented-pending-gate",
+  "file": "mcp-re-http-profile/src/chain.rs",
+  "line": 287,
+  "severity": "medium",
+  "category": "unimplemented-contract",
+  "title": "Chain reconstruction uses the MINIMAL request path: no evidence block, audience or artifact-binding check",
+  "raw_ids": [
+   "F012"
+  ],
+  "evidence": "G landed block presence/validate/target-URI binding in chain.rs, verified against all seven frozen chain vectors with no label movement",
+  "action": "REMAINDER IS AN OWNER DECISION, not an ownership boundary. Audience-tuple equality + artifact_bindings[] need reconstruct_chain to take expected_audience and artifact material, which breaks mcp-re-proxy/transparency.rs:696 and mcp-re-conformance/http_profile_vectors_test.rs:2309 AND flips all seven frozen chain vectors: expected_audience_hash is the synthetic string 'aud-scope-1' in the fixtures rather than a real AudienceTuple hash, and the frozen hops carry an oauth-dpop binding with no Authorization header. QUESTION: regenerate the frozen chain corpus to carry real audience tuples and consistent bindings, or accept that a Complete label asserts hop linkage and target-URI binding but NOT audience-tuple equality or artifact bindings (which the module docstring now states)?",
+  "agent": "G-http-profile",
+  "resolution": "CLOSED. `reconstruct_chain` takes a `ChainAudit` carrying the verifier's own AudienceTuple and the artifact credential surface, and enforces both through `verify::enforce_full_profile_bindings` — the SAME function the live path uses, so an auditor's Complete cannot mean less than an admission. Frozen chain corpus regenerated; ChainCheck now freezes expected_audience and artifact_material_b64 rather than deriving the expectation from the hops under test. Tests: `a_hop_whose_audience_is_not_the_verifiers_own_breaks_the_chain`, `a_binding_with_no_obtainable_credential_breaks_the_chain`."
+ },
+ "R7-C083": {
+  "cid": "R7-C083",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 444,
+  "severity": "medium",
+  "category": "tenant-isolation",
+  "title": "Budgeted 'actor' is the signer slot including the KEYID, so one subject with N keys gets N budgets",
+  "raw_ids": [
+   "F021"
+  ],
+  "evidence": "mcp-re-core/src/replay.rs:110 ReplayKey gains a principal field; mcp-re-http-profile/src/replay.rs:58 principal_slot() drops the keyid (the last raw colon, since every actor-id component escapes ':' as %3A); the tier charges key.principal, not key.signer.",
+  "action": "The replay KEY keeps the keyid for collision safety; the ACCOUNTING identity collapses a subject's keys into one bucket, so rotation overlap or a client key per replica no longer reads as several principals - which had both multiplied one subject's allowance and inflated the divisor everyone else is measured against."
+ },
+ "R7-C084": {
+  "cid": "R7-C084",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_etcd_store.rs",
+  "line": 204,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "etcd replay backend grants one unbounded lease per nonce; quota exhaustion is a sticky manual outage",
+  "raw_ids": [
+   "F027"
+  ],
+  "evidence": "Verified: async_etcd_store.rs granted one lease per admitted nonce with no ceiling and no per-actor accounting (compute_ttl_secs has no upper clamp beyond max_signature_validity + skew), and nothing in app.rs's etcd arm bounded outstanding leases or keys.",
+  "action": "Two bounds, both new. (1) The tier-level RetentionLedger (R7-C009) now caps what this replica may hold and splits it per principal, so the lease/key count one actor can drive is bounded and refusals are fail closed. (2) In async_etcd_store.rs, leases are now pooled per retain-until instant: a lease is granted only when no live lease already expires at this key's exact second, so the outstanding-lease count grows with the freshness window (<= max_signature_validity + skew seconds) instead of with request volume. The pool drops any lease whose instant has arrived (never reuses one etcd may already have revoked), retries once with a fresh grant if a put under a reused lease fails, and the previous best-effort revoke-on-replay is gone because revoking a shared lease would drop other requests' keys a freshness window early. Tests: nonces_retained_to_the_same_instant_share_one_lease (25 nonces at one instant => 25 txns but 1 lease grant, and a different retain-until takes its own lease) and an_expired_lease_is_never_reused, both against a scripted etcd JSON gateway on a real socket.",
+  "agent": "D-stores"
+ },
+ "R7-C085": {
+  "cid": "R7-C085",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/pkcs11_keysource.rs",
+  "line": 758,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "PKCS#11 delegated TLS serializes every handshake process-wide behind one mutex",
+  "raw_ids": [
+   "F043"
+  ],
+  "evidence": "Confirmed: pkcs11_keysource.rs had ONE `tls_session: AmortizedSession<LoggedInSession>` (field decl, ex-line 328) whose `with_session` holds `self.cached.lock()` (pkcs11_keysource.rs:153) across the blocking FFI `C_Sign`, and `Pkcs11TlsSigner::sign_tls_ed25519` is the only handshake path. The predecessor had added `SessionPool` + `TLS_SESSION_POOL_SIZE` and renamed the field to `tls_sessions`, but had NOT updated either use site, so the file did not compile.",
+  "action": "Finished the half-done edit: `Pkcs11Token` construction now builds `tls_sessions: SessionPool::new(TLS_SESSION_POOL_SIZE)` (pkcs11_keysource.rs:466) and `sign_tls_ed25519` dispatches through `self.token.tls_sessions` (pkcs11_keysource.rs:811); the ONE-token-TWO-sessions comment at :459 now describes the pool. Added the missing regression tests: `the_tls_session_pool_signs_several_handshakes_at_once` (observes PEAK concurrency across TLS_SESSION_POOL_SIZE threads, not a call count) and `the_tls_session_pool_amortizes_one_login_per_session`. RED proved by forcing the pool cursor to index 0: both fail (peak 1 vs 4, logins 1 vs 4).",
+  "agent": "E-keys-client"
+ },
+ "R7-C086": {
+  "cid": "R7-C086",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/aws_sts.rs",
+  "line": 194,
+  "severity": "medium",
+  "category": "config-deploy",
+  "title": "IRSA STS endpoint is interpolated from an unvalidated --aws-kms-region",
+  "raw_ids": [
+   "F044"
+  ],
+  "evidence": "Predecessor's work, verified: `endpoint.unwrap_or_else(|| format!(\"https://sts.{region}.amazonaws.com\"))` with no authority check, while `--aws-sts-endpoint`/`--gcp-kms-endpoint` go through `validated_kms_endpoint`.",
+  "action": "aws_sts.rs `WebIdentityConfig::from_env` calls a new `validate_region` (ASCII `[a-z0-9-]`, non-empty) before anything else, and ONLY on the path that derives the endpoint from the region. Pinned by `a_region_that_could_redirect_the_token_is_refused` (`evil.example.com/`, `x@…`, `x#`, `x?y`, `x:443`, uppercase, backslash) and `a_hostile_region_stops_the_default_endpoint_being_built`.",
+  "agent": "E-keys-client"
+ },
+ "R7-C087": {
+  "cid": "R7-C087",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/trust_epoch.rs",
+  "line": 148,
+  "severity": "medium",
+  "category": "config-deploy",
+  "title": "Trust-epoch read timeout exceeds the default rotation overlap window",
+  "raw_ids": [
+   "F045"
+  ],
+  "evidence": "Verified: TRUST_EPOCH_TIMEOUT was 30s per socket operation, read_epoch can spend that on the connect, the GET, the reconnect and the retried GET (four operations, up to 120s), and app.rs calls current_label() synchronously in the rotation loop at exp - overlap with a default overlap of 60s (cli.rs). One half-open connection consumed the whole minting window and took response signing down fleet-wide at the current key's exp.",
+  "action": "The budget is now expressed as a property of the whole READ rather than of one socket op: TRUST_EPOCH_READ_BUDGET = 8s, TRUST_EPOCH_OPS_PER_READ = 4, and TRUST_EPOCH_TIMEOUT is derived as the quotient (2s), so a complete read - including the reconnect and retry - fits in 8s and leaves the great majority of the 60s overlap for the mint it precedes. Test: one_epoch_read_cannot_consume_the_rotation_overlap asserts TRUST_EPOCH_TIMEOUT * TRUST_EPOCH_OPS_PER_READ <= TRUST_EPOCH_READ_BUDGET and TRUST_EPOCH_READ_BUDGET * 2 <= the 60s default overlap, so re-raising the timeout without re-deriving the budget fails the build (feature redis_replay).",
+  "agent": "D-stores"
+ },
+ "R7-C088": {
+  "cid": "R7-C088",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/aws_kms_keysource.rs",
+  "line": 528,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Delegated TLS via KMS: one KMS Sign per handshake, unauthenticated trigger, shared quota with issuance",
+  "raw_ids": [
+   "F049"
+  ],
+  "evidence": "Predecessor's work, verified against source and completed: `RawEd25519TlsSigner::sign_tls_ed25519` was a bare `self.sign_raw_ed25519(message)` (one blocking KMS Sign per handshake) sharing the account quota with `delegated_wiring.rs` root issuance.",
+  "action": "aws_kms_keysource.rs now routes the handshake through `tls_sign_at(message, Instant)` with a `TLS_SIGN_THROTTLE_COOLDOWN` (2s) quota-preservation window keyed off `is_kms_throttling`; inside a cooldown the handshake is refused WITHOUT reaching KMS so the issuance path keeps its quota share. Pinned by `a_throttled_tls_sign_stops_calling_kms_for_the_cooldown` (counts calls AT the fake transport) and `only_quota_failures_open_the_cooldown`. EXTENDED to the GCP sibling the finding names in its claim ('or the GCP equivalent'): gcp_kms_keysource.rs `GcpKmsEd25519Backend` had the identical bare `sign_tls_ed25519 -> sign_raw_ed25519` (ex-line 556-560) and now carries the same `tls_cooldown_until` / `tls_sign_at` / `is_kms_throttling` (RESOURCE_EXHAUSTED, UNAVAILABLE, HTTP 429/503) with the same two tests. RESIDUAL, for the owner: this is a reactive circuit breaker — it separates the handshake path from the issuance path once the account/project is throttled, but KMS Sign calls before that point are still billed and still one-per-handshake. A proactive local rate reservation would need an operator-set rate and is out of scope for a file-level fix.",
+  "agent": "E-keys-client"
+ },
+ "R7-C089": {
+  "cid": "R7-C089",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/aws_sts.rs",
+  "line": 437,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "IRSA credentials with an unparseable STS Expiration are never cached, so every KMS call re-assumes the role",
+  "raw_ids": [
+   "F050"
+  ],
+  "evidence": "Predecessor's work, verified: `unwrap_or(UNIX_EPOCH)` for an unparseable Expiration against a cache gate `now + MARGIN < c.expires_at` that can never hold, and no lock across `exchange()`.",
+  "action": "aws_sts.rs adds `UNKNOWN_EXPIRY_REUSE` (300s, well inside the 900s AssumeRoleWithWebIdentity minimum) applied ONLY when the stated expiry is at or before the exchange instant, plus an `exchanging: Mutex<()>` single-flight with a re-read of the cache after acquiring it. Refactored into `cached_or_exchange(now, &dyn Fn)` so both are provable without an STS endpoint. Pinned by `an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call`, `a_stated_expiry_is_never_extended_by_the_reuse_floor`, `concurrent_callers_perform_one_exchange_between_them`.",
+  "agent": "E-keys-client"
+ },
+ "R7-C090": {
+  "cid": "R7-C090",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/trust_epoch.rs",
+  "line": 301,
+  "severity": "medium",
+  "category": "dead-wire",
+  "title": "Trust-epoch poller is unsupervised and its health flag latches true",
+  "raw_ids": [
+   "F053"
+  ],
+  "evidence": "Verified: spawn_trust_epoch_poller did a bare thread::spawn with the JoinHandle dropped, no catch_unwind and no liveness record, while is_healthy() read a latch only poll_once writes - so a dead poller left the replica reporting healthy and silently degraded Tier-3 revocation from one poll interval to the trust-cache TTL. A poisoned pending/last_seen mutex additionally dropped the FlushAll permanently without touching healthy.",
+  "action": "Three changes in trust_epoch.rs. (1) Liveness: the source records last_poll on every poll_once and spawn_trust_epoch_poller installs a bound of (tolerated missed rounds + one read) via require_polling_within; is_healthy() is now `polled_recently() && healthy`, so silence past the bound is unhealthy on its own and a source with a poller that never produced a first read is not healthy. A source nobody spawned a poller over keeps no bound. (2) Supervision: the poll loop runs inside catch_unwind and an unwinding thread calls report_poller_death, which flips healthy false and warns on stderr. (3) Poison: a recover() helper takes the guard back on a poisoned mutex, so a revocation is no longer dropped on the floor; poll_once also pushes the FlushAll BEFORE advancing the baseline, so the flush cannot be lost by advancing without queueing. Tests: a_source_that_stops_being_polled_stops_reporting_healthy, a_poller_that_never_ran_is_not_healthy, a_directly_driven_source_is_not_subject_to_the_liveness_bound, a_poisoned_queue_still_delivers_the_flush, plus the pre-existing read_error_marks_unhealthy_and_emits_nothing and recovery_after_outage_catches_an_epoch_that_advanced_during_it.",
+  "agent": "D-stores"
+ },
+ "R7-C091": {
+  "cid": "R7-C091",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/app.rs",
+  "line": 1200,
+  "severity": "medium",
+  "category": "dead-wire",
+  "title": "MRTR cross-replica continuation silently absent on the etcd/linearizable fleet, with no startup line",
+  "raw_ids": [
+   "F060"
+  ],
+  "evidence": "Confirmed at app.rs: the continuation store was wired only when `config.replay_redis_url` AND the Redis-only `replay_control_rt` both existed, with no `else`. On `--replay-durability-tier linearizable` both are absent, so `continuation_store: None` and every MRTR answer leg fails closed forever while the proxy still RETURNS `input_required` replies it cannot honour — and nothing said so, unlike the retention and audit seams which both print an OFF line.",
+  "action": "Two changes. (1) The runtime coupling is gone: the store now takes a control runtime built on demand (`control_runtime`), so it depends only on `--replay-redis-url`. (2) An explicit OFF posture line (`CONTINUATION_STORE_OFF`) is printed in the `else`, and also in a build without `redis_replay`, naming exactly what is lost: 'multi-round-trip flows are SINGLE-REPLICA only. A client that receives an `input_required` reply from one replica and answers on another is refused (mcp-re.continuation_binding_failed).' NOT closed as an etcd-backed continuation store: none exists, and inventing one to close a posture gap would be building the wrong thing — the honest OFF line is the fix the finding asks for (its stated impact is undiagnosability, not the fail-closed itself).",
+  "agent": "C-app-tls"
+ },
+ "R7-C092": {
+  "cid": "R7-C092",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/app.rs",
+  "line": 1222,
+  "severity": "medium",
+  "category": "unimplemented-contract",
+  "title": "--admission cannot be deployed on the linearizable replay tier; refusal blames a flag the operator supplied",
+  "raw_ids": [
+   "F061"
+  ],
+  "evidence": "Confirmed at app.rs: `--admission` required `(admission_redis_url, replay_control_rt)`, and `replay_control_rt` was `Some` only inside the Redis replay branch (the etcd branch and the memory branch both set it to None). So `--admission required` + `--replay-durability-tier linearizable` aborted at startup with '--admission requires --admission-redis-url and the replay control runtime' even when the operator HAD supplied `--admission-redis-url` — misattributing the cause to a flag they had passed, whose natural resolution is to turn admission off.",
+  "action": "The admission source is an independent endpoint and is now wired as one: `let Some(url) = config.admission_redis_url.as_ref() else { return Err(\"--admission requires --admission-redis-url\") }` followed by `control_runtime(&mut control_rt)?`, which builds the shared process-lifetime control runtime on demand. `replay_control_rt` is renamed `control_rt` and is now created by whichever seam needs it first (replay reconnect task, admission source, continuation store), so no seam is gated on another having created it. Admission control is therefore deployable on every replay tier, and the error text names only the flag that is actually missing.",
+  "agent": "C-app-tls"
+ },
+ "R7-C093": {
+  "cid": "R7-C093",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/http_profile_serve.rs",
+  "line": 412,
+  "severity": "medium",
+  "category": "admission-control",
+  "title": "Admission degraded window is bounded by assertion age, not by authority-outage duration",
+  "raw_ids": [
+   "F066"
+  ],
+  "evidence": "Confirmed: `admission_gate` mapped every source error to `authoritative = None` and kept no record of when the source was last reachable, so `check_admission`'s unreachable branch tested only `now - claims.iat > P + skew`. Since the revocation channel IS the store, during a store outage the issuer never learns of a revocation and keeps minting assertions with a current `iat` — so a caller that kept fetching them was served for the whole outage.",
+  "action": "http_profile_serve.rs: `AdmissionEnforcer` gains `last_authoritative_read: AtomicI64` (i64::MIN until the first successful read — a replica that never reached the authority has no last-known state, so startup is not a confirmation). `record_authoritative_read` is called on BOTH Ok(Some) and Ok(None), because a definitive negative means the authority answered, which is what P measures; it uses `fetch_max` so an out-of-order read cannot rewind the window. `degraded_window_exhausted(now)` decides whether the §5.2 degraded fork may be entered at all, BEFORE `check_admission` sees the assertion. Tests: unit `http_profile_serve::admission_window_tests` (4: never-read, closes at P+skew exactly, no rewind, no window without the opt-in) and e2e tests/admission_currency_serving_test.rs `an_unreachable_authority_serves_within_p_and_fails_closed_past_it` — REWRITTEN, since the old one drove the window with the assertion's iat, i.e. asserted the defect: every assertion in it is now fresh and only the outage ages — plus a new `a_replica_that_never_reached_the_authority_does_not_enter_degraded_mode`. NOT closed: `VerifiedAdmission::degraded` is still discarded, so a degraded serve is indistinguishable from a live-confirmed one in audit. That is a separate finding's ground (the ADR-MCPS-035 success-event allowlist is frozen and adding a third success event needs an ADR); it is named in the code at the discard site.",
+  "agent": "B-retention"
+ },
+ "R7-C094": {
+  "cid": "R7-C094",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-core/src/response.rs",
+  "line": 657,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "TrustedIssuerSet carries no manifest validity window, so an expired trust picture keeps verifying responses",
+  "raw_ids": [
+   "F069"
+  ],
+  "evidence": "mechanism was in response.rs but load_signed_manifest never populated it (trust_manifest.rs:333)",
+  "action": "Owner-merged: issuer_set: set.with_manifest_expiry(signed.manifest.expires_at). Pinned by the_manifests_deadline_travels_with_the_anchors_it_published; negative control exits 101.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C095": {
+  "cid": "R7-C095",
+  "disposition": "partially-mitigated-pending-gate",
+  "file": "mcp-re-client-proxy/src/manifest_floor.rs",
+  "line": 111,
+  "severity": "medium",
+  "category": "trust-resolution",
+  "title": "The manifest rollback floor can be raised without bound by anyone who can write the floor directory",
+  "raw_ids": [
+   "F070"
+  ],
+  "evidence": "TRUE as a mechanism and NOT fixable inside the module. mcp-re-client-proxy/src/manifest_floor.rs:read_floor takes max() over marker names with no ceiling, and min_version() is max(directory, bootstrap), so one file named 18446744073709551615 pins the floor at u64::MAX and mcp-re-client-core/src/trust_manifest.rs:298-303 then rejects every future manifest as Stale (including a break-glass revocation). The floor is reached on the serving path: mcp-re-client/src/anchors.rs:104-112 constructs FileManifestFloor::with_bootstrap for FloorConfig::Durable and AnchorLoader::load feeds it to load_signed_manifest_with_floor.",
+  "action": "No code change. Every in-module bound is either bypassable (a fixed ceiling is a number the same directory-writer stays under) or harmful (an operator ceiling clamps a LEGITIMATE floor down and re-opens the rollback window). The module doc now states the boundary explicitly (manifest_floor.rs:45-56): the floor directory must be permissioned no more widely than the trust store itself; the bootstrap bounds what a directory-writer can take away, not what it can add. Owner ruling wanted on whether that deployment control is accepted as the answer, or whether the floor should move to authenticated storage.",
+  "agent": "F-client-proxy",
+  "owner_correction": "The `action` field's rejection of an operator ceiling is WRONG as stated. It argues a ceiling 'clamps a LEGITIMATE floor down and re-opens the rollback window' — that describes a defective ceiling, not a property of ceilings. Correct behaviour: stored_floor <= trusted_ceiling -> continue normal validation; stored_floor > trusted_ceiling -> FAIL-STOP, inconsistent trusted state. NEVER effective_floor = min(stored_floor, trusted_ceiling). The ceiling must come from a trust domain the floor-directory writer cannot modify or it adds no security. This does not close the finding — it cannot preserve availability after a malicious fast-forward, only fail safely — but it is a real local gain. RULING: security-critical floor state must not be authoritative state writable by the actor it constrains; close as superseded by a trusted-floor-store issue once that issue carries enforceable acceptance criteria. See work/security-audit-2026-08-03/HANDOFF.md.",
+  "resolution": "FAIL-STOP CEILING LANDED; the finding itself is superseded, not closed. `FileManifestFloor::with_bounds(path, bootstrap, ceiling)` plus config `floor.ceiling_version`. stored_floor <= ceiling -> normal; stored_floor > ceiling -> TrustManifestError::FloorAboveCeiling. NEVER min(). Also refused at `record()` before it can brick the floor, and at construction when bootstrap > ceiling. Test `the_ceiling_never_clamps_the_floor_downward` is the negative control. This buys DETECTION, not availability: a malicious fast-forward still stops the client, but loudly and at a named error instead of silently withdrawing every anchor at manifest expiry. RULING STANDS: security-critical floor state must not be authoritative state writable by the actor it constrains; close as superseded by a trusted-floor-store issue carrying the acceptance criteria in HANDOFF.md."
+ },
+ "R7-C096": {
+  "cid": "R7-C096",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/route.rs",
+  "line": 79,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "Trust anchors carry no expiry into the verification path; an expired manifest can stay in force",
+  "raw_ids": [
+   "F074"
+  ],
+  "evidence": "route.rs correctly needed no change; the deadline belongs on the TrustedIssuerSet every verification consults",
+  "action": "Owner-merged via the same trust_manifest.rs wiring as C094.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C097": {
+  "cid": "R7-C097",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/proxy.rs",
+  "line": 311,
+  "severity": "medium",
+  "category": "signature-binding",
+  "title": "The route's pinned server signer is never enforced on the notification 202 leg",
+  "raw_ids": [
+   "F078"
+  ],
+  "evidence": "Same defect as R7-C005 seen from the verify_notification_ack side; both cite the missing root-issuer pin on the signed bodyless 202 leg.",
+  "action": "Fixed by the same change - see R7-C005. Both ClientVerification::DelegatedRequired and ::DelegatedAnchored notification paths now enforce route.expected_server_keyid.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C098": {
+  "cid": "R7-C098",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/manifest_floor.rs",
+  "line": 115,
+  "severity": "medium",
+  "category": "replay-freshness",
+  "title": "FileManifestFloor::record short-circuits against the bootstrap, so no accepted version at or below it is ever persisted",
+  "raw_ids": [
+   "F079"
+  ],
+  "evidence": "Confirmed: record() compared against min_version() = max(read_floor(dir), bootstrap), so with bootstrap=100 an accepted v100 wrote nothing and read_floor(dir) stayed 0 for every other process on the same volume (mcp-re-client/src/config.rs FloorConfig::Durable.bootstrap_version is per-process config, default 0).",
+  "action": "record() now compares against read_floor(&self.dir) alone - the bootstrap governs the ACCEPT decision (min_version), the directory records what was accepted. Pinned by manifest_floor.rs test a_declared_bootstrap_does_not_suppress_the_durable_record: a floor opened with bootstrap 100 records v100, and a second handle opened with NO bootstrap reads 100 from the shared volume.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C099": {
+  "cid": "R7-C099",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/manifest_floor.rs",
+  "line": 150,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "One unparsable name in the floor directory permanently bricks the client and later withdraws all anchors",
+  "raw_ids": [
+   "F080"
+  ],
+  "evidence": "Confirmed: read_floor mapped any non-u64 / non-UTF-8 entry name to FloorUnreadable, which is a startup refusal via anchors.rs:104-110 and, at runtime, makes refresh_once publish an EMPTY TrustedIssuerSet once the in-force manifest expires (anchors.rs:200-209). Reachable with no attacker at all: lost+found on an ext4 PVC, .DS_Store on a dev volume.",
+  "action": "read_floor now ignores entries that are not markers and keeps failing closed only on a genuine I/O failure (unreadable directory / unenumerable entry). marker_version() accepts exactly what persist() writes - decimal ASCII digits, no leading '+', no leading zero - so no name has two spellings. prune_below uses the same predicate, so the module never deletes a file it did not write. Pinned by a_non_marker_entry_is_ignored_and_does_not_lower_the_floor (junk, .DS_Store, near-miss '99x', padded '0099', a lost+found directory).",
+  "agent": "F-client-proxy"
+ },
+ "R7-C100": {
+  "cid": "R7-C100",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/cli.rs",
+  "line": 2055,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "live|push accepts any --trust-reload-secs, so the near-zero revocation claim is bounded by an unbounded cadence",
+  "raw_ids": [
+   "F082"
+  ],
+  "evidence": "The same defect as R7-C147, reported against the live|push gate specifically.",
+  "action": "Same fix and same test as R7-C147; additionally the `--fleet` LIVE bound now names the reload floor it sits over (`fleet_trust_bound`, see R7-C126), which is the asymmetry this finding called out against the sibling CRL bound.",
+  "agent": "C-app-tls"
+ },
+ "R7-C101": {
+  "cid": "R7-C101",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/client_revocation.rs",
+  "line": 178,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "Per-request revocation checks only the leaf while the handshake checks the whole chain, despite claiming an exact mirror",
+  "raw_ids": [
+   "F084"
+  ],
+  "evidence": "The claim is correct and only PARTLY closed. In my file the false parity claim is gone: client_revocation.rs:19-44 no longer asserts that verdict() mirrors build_client_verifier exactly, and now states that each call judges ONE certificate and that the caller must hand it every certificate the peer presented. The chain walk itself lives in the caller. The BLOCKING path has it: tls.rs cert_lifetime_rejection() collects the whole peer_certificates() chain and cert_lifetime_rejection_for_chain() calls chain_issuers_not_revoked() over chain[1..] (added in the working tree by the C-app-tls agent). The ASYNC serving path - the production path under ADR-MCPRE-051 - still does NOT: async_serve.rs:537-543 captures `peer_certificates().and_then(|chain| chain.first())` into an Arc<Option<Vec<u8>>>, and async_serve.rs:764-781 passes that single leaf to tls::connection_rejection_for_leaf, which forwards to cert_lifetime_rejection_for_leaf and therefore builds a one-element chain (tls.rs:914-916). Re-checked at the end of my session: async_serve.rs:547-552 now captures the whole chain and async_serve.rs:787 calls tls::connection_rejection_for_chain, so the async residual has since been closed too.",
+  "action": "In my file: the module doc no longer claims exact handshake parity and instead states the one-certificate contract plus the caller's obligation to pass every certificate the peer presented (client_revocation.rs:19-44). The load-bearing chain walk is NOT in my file and I did not write it - it is tls.rs cert_lifetime_rejection_for_chain / chain_issuers_not_revoked (group C-app-tls) and the full-chain capture in async_serve.rs (group B-retention), both landed in this same working tree while I was working, and pinned by mcp-re-proxy/tests/per_request_revocation_test.rs::revoking_an_intermediate_refuses_the_next_request_on_an_open_connection and ::an_unrevoked_intermediate_keeps_its_peers_served. OWNER: this finding is only fixed if those two groups' edits survive the merge - if either is reverted, this reverts to confirmed-open.",
+  "agent": "D-stores"
+ },
+ "R7-C102": {
+  "cid": "R7-C102",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/tls.rs",
+  "line": 929,
+  "severity": "medium",
+  "category": "bypassable-gate",
+  "title": "Per-request client-cert expiry check is silently skipped when no lifetime ceiling is configured",
+  "raw_ids": [
+   "F085"
+  ],
+  "evidence": "Confirmed: the validity-window comparison sat inside `ceiling.is_none_or(|max| ...)`, and `Option::is_none_or` returns true for `None` — so with a CRL installed and no lifetime ceiling the whole `now >= not_before && now < not_after` test was skipped while the CRL arm still ran, contradicting the doc contract and the unconditional `per_request_cert_validity=enforced` startup line.",
+  "action": "tls.rs `cert_lifetime_rejection_for_chain`: the window check is now its own term — `let within_window = now >= facts.not_before && now < facts.not_after;` — evaluated whenever ANY per-request certificate control is configured, because it is a property of the certificate rather than of the ceiling. `within_lifetime` keeps only the SPAN comparison against the ceiling. The two controls are now independent in fact as well as in the docs.",
+  "agent": "C-app-tls"
+ },
+ "R7-C103": {
+  "cid": "R7-C103",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/client_revocation.rs",
+  "line": 178,
+  "severity": "medium",
+  "category": "incomplete-fix",
+  "title": "Per-request revocation checks only the leaf; a revoked intermediate CA is not caught on an established connection",
+  "raw_ids": [
+   "F086"
+  ],
+  "evidence": "Same defect as R7-C101 restated; identical verification and identical resolution. Leaf-only per-request revocation was real (ClientRevocationIndex::verdict takes one certificate coordinate; rustls checks the full chain by default), and it is now walked on BOTH serving paths: tls.rs cert_lifetime_rejection() / cert_lifetime_rejection_for_chain() for the blocking loop and async_serve.rs:547-552 + :787 for the async data plane.",
+  "action": "Same as R7-C101. My file carries the corrected contract; the chain walk and the chain capture belong to C-app-tls (tls.rs) and B-retention (async_serve.rs) and are pinned by mcp-re-proxy/tests/per_request_revocation_test.rs. Same caveat: fixed only as long as those edits survive the merge.",
+  "agent": "D-stores"
+ },
+ "R7-C104": {
+  "cid": "R7-C104",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/app.rs",
+  "line": 1532,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "A permanently failing trust reload keeps the last-good store forever, unbounded and unsignalled",
+  "raw_ids": [
+   "F087"
+  ],
+  "evidence": "Same defect as R7-C072 from the fail-open angle, and the load-bearing half: an `InMemoryTrustResolver` carries no expiry, so unlike the CRL sibling (whose keep-last-good IS bounded by `nextUpdate`) nothing makes a frozen trust snapshot stop being honoured on its own. A counter that only writes to stderr changes nothing about which keys keep verifying.",
+  "action": "app.rs: `StaleFailsClosed` wraps the revocation-tier resolver OUTSIDE the tier wrappers (so a bounded-cache hit cannot answer from a snapshot the reload can no longer refresh) and returns `TrustResolverError::Unavailable` — not `NotFound` — once the store is stale; the verifier maps that to `mcp-re.trust_resolver_unavailable`. It is installed only when `--trust-reload-secs` is set: without a reload the store is frozen by design and the startup line already says so. NOTE: the predecessor had written `StaleFailsClosed` and `TrustStoreFreshness` but never wired them — `spawn_trust_reload_task` took 6 arguments while the caller passed 5, which is one of the four compile errors that had the workspace at exit 101. Test: `a_frozen_store_stops_answering_instead_of_serving_the_revoked_key` asserts the `Unavailable` variant specifically, and that a recovered reload serves again.",
+  "agent": "C-app-tls"
+ },
+ "R7-C105": {
+  "cid": "R7-C105",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/tls.rs",
+  "line": 938,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "Per-request revocation checks the leaf only while the handshake checks the whole chain; revoked CA survives",
+  "raw_ids": [
+   "F090"
+  ],
+  "evidence": "Confirmed, and only HALF-fixed when I opened the file: `cert_lifetime_rejection_for_chain` + `chain_issuers_not_revoked` existed and the BLOCKING path handed them the whole chain, but the async fleet — THE production data plane — still captured only the leaf (`Arc<Option<Vec<u8>>>` from `peer_certificates().and_then(|chain| chain.first())`) and called `connection_rejection_for_leaf`, so the per-request check was still strictly weaker than the handshake's `RevocationCheckDepth::Chain` on the path that serves traffic.",
+  "action": "async_serve.rs now captures the FULL verified peer chain once at handshake (`peer_chain: Arc<Vec<Vec<u8>>>`, leaf-first, empty for an absent peer certificate) and hands it per request to the new `tls::connection_rejection_for_chain`; `connection_rejection_for_leaf` is gone. An intermediate is refused only on an EXPLICIT `Revoked` verdict, never on `Unknown`, because whether the chain reaches a CRL-covered issuer is a path-building question the handshake already settled. Tests (mcp-re-proxy/tests/per_request_revocation_test.rs, which drives `async_serve::serve` over real mTLS): `revoking_an_intermediate_refuses_the_next_request_on_an_open_connection` — a leaf issued by an intermediate, the leaf never revoked, only the CA above it published on the ROOT's CRL, and the SAME warm connection must go 200 -> 403 — plus `an_unrevoked_intermediate_keeps_its_peers_served` as the converse.",
+  "agent": "C-app-tls"
+ },
+ "R7-C106": {
+  "cid": "R7-C106",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/typescript/src/transport.ts",
+  "line": 855,
+  "severity": "medium",
+  "category": "sdk-parity",
+  "title": "TS close() does not stop an in-flight continuation chain: answer legs are signed and POSTed after teardown",
+  "raw_ids": [
+   "F092"
+  ],
+  "evidence": "Real. #exchange's `for(;;)` loop referenced neither #abort nor #state anywhere between the loop head and the answer-leg re-sign; the only check was before the loop. Promise.race in send() does not cancel the losing arm, so a continuation chain kept signing and POSTing answer legs and calling answerInputRequired after close() and onclose. Python's twin genuinely cancels (transport.py mcp_re_http_transport: tg.cancel_scope.cancel()), so this was TS-only.",
+  "action": "Predecessor added an abort check at the top of every leg and a second immediately before answerInputRequired (sdk/typescript/src/transport.ts:901-909 and :1030-1033). The throw enters the existing finally, which abandons outstanding correlation entries, so pendingCorrelations returns to 0. Pinned by sdk/typescript/test/transport_replay.test.ts 'stops the continuation chain when close() lands mid-call' (counts POSTs: exactly ONE leg reached the wire) — and I ADDED 'does not prompt a human for an answer leg a closed transport will never send', because the pre-handler check was unpinned: the existing test closes INSIDE answerInputRequired, so it never exercises it. The new test closes from onInputRequired and asserts the handler was never called. Mutation check: removing the loop-top check fails the first, removing the pre-handler check fails the second.",
+  "agent": "A-sdk"
+ },
+ "R7-C107": {
+  "cid": "R7-C107",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/typescript/src/transport.ts",
+  "line": 811,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "revokedIdentifiers has no runtime type check: a string spreads to characters, denylist silently dead",
+  "raw_ids": [
+   "F100"
+  ],
+  "evidence": "The TypeScript twin of R7-C109. `revokedIdentifiers?: readonly string[]` is erased at runtime and `[...\"kid-1\"]` spreads per character; the constructor's completeness check omitted it.",
+  "action": "Predecessor added the same shape check in the McpReHttpTransport constructor (sdk/typescript/src/transport.ts:568-594). Pinned by sdk/typescript/test/transport.test.ts 'McpReHttpTransport revocation denylist shape' (3 tests). Mutation check: neutralising the check fails 2 of them.",
+  "agent": "A-sdk"
+ },
+ "R7-C108": {
+  "cid": "R7-C108",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 872,
+  "severity": "medium",
+  "category": "resource-exhaustion",
+  "title": "Python `_pump` raises inside the task group: one refused message kills every in-flight exchange",
+  "raw_ids": [
+   "F101"
+  ],
+  "evidence": "Same defect and same line as R7-C014/R7-C015.",
+  "action": "Covered by the R7-C014 fix and the same mechanism test. No separate change.",
+  "agent": "A-sdk"
+ },
+ "R7-C109": {
+  "cid": "R7-C109",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 593,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "`revoked_identifiers` accepts a bare string and expands to a per-character denylist that revokes nothing",
+  "raw_ids": [
+   "F106"
+  ],
+  "evidence": "Real, and fails OPEN. `revoked_identifiers: Sequence[str] = ()` accepts a bare str with no type-checker complaint, and `list(\"kid-1\")` is a NON-EMPTY list of single characters that matches no delegated_kid/issuer_kid/jti. __post_init__ validated every sibling anchor field and skipped this one.",
+  "action": "Predecessor added a shape check in McpReConfig.__post_init__ (transport.py:396-414): a bare str/bytes/bytearray is refused, and every entry must be a non-empty str. Pinned by sdk/python/tests/test_transport.py::test_a_bare_string_denylist_is_refused_rather_than_expanded_per_character, ::test_a_denylist_entry_that_cannot_match_an_identifier_is_refused[3 cases], ::test_a_well_formed_denylist_and_the_empty_ttl_only_posture_are_accepted. Mutation check: disabling either arm of the check fails 1 and 3 tests respectively.",
+  "agent": "A-sdk"
+ },
+ "R7-C110": {
+  "cid": "R7-C110",
+  "disposition": "confirmed-fixed",
+  "file": "scripts/tracked_secrets_gate.py",
+  "line": 152,
+  "severity": "medium",
+  "category": "key-custody",
+  "title": "tracked_secrets_gate.py skips binary files, so the PKCS#12/DER key material it claims to forbid is unscanned",
+  "raw_ids": [
+   "F112"
+  ],
+  "evidence": "Confirmed. scan_repo() called read_text(encoding='utf-8') and `continue`d on UnicodeDecodeError, so a .p12/DER/JKS key was structurally unscannable; PATTERNS had no extension rule and SELFTEST_CASES no binary case. The PGP arm spelled `<PEM private-key armor>`, which no tool emits (real OpenPGP armor is `... PRIVATE KEY BLOCK-----`), so that alternative never matched either.",
+  "action": "Predecessor added BINARY_KEY_SUFFIXES, der_private_key_kind(), binary_key_signature() and scan_binary(), routed EVERY tracked file through the binary detector before the UTF-8 decode, and widened the PEM pattern to `-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----`. I found and closed a real gap it left: der_private_key_kind() handled only version INTEGER 3 (PKCS#12) and 0 (PKCS#8/PKCS#1), so a SEC1 ECPrivateKey (RFC 5915, version INTEGER 1) — literally what `openssl ecparam -genkey -outform DER` writes, i.e. an EC TLS or signing key in its most ordinary binary form — was still missed. Added the `\\x02\\x01\\x01` arm with a selftest case, and documented the one form still uncovered (PKCS#8 EncryptedPrivateKeyInfo, whose first member is an AlgorithmIdentifier SEQUENCE and is therefore shaped exactly like a certificate; distinguishing it needs OID matching, so the .p8/.pk8 suffix rule catches it by name instead). Also fixed two dangling `BINARY_PATTERNS` docstring references the predecessor left — no such symbol exists. Validated against REAL openssl output, not just hand-made bytes: PKCS#8 DER, PKCS#12, SEC1 EC and PKCS#8 EC all flagged; DER X.509 and DER SubjectPublicKeyInfo not flagged; the full-tree scan stays clean, which is the false-positive test at scale. Pinned by `--selftest` (37 cases, run in local_gate.sh stage 1 and ci.yml). Negative control: reverting the detector and the PEM pattern fails 8 cases.",
+  "agent": "I-deploy"
+ },
+ "R7-C111": {
+  "cid": "R7-C111",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/values.yaml",
+  "line": 160,
+  "severity": "medium",
+  "category": "admission-control",
+  "title": "Helm chart cannot enable ADR-MCPRE-053 §7 admission control, and its `admission:` key means something else",
+  "raw_ids": [
+   "F116"
+  ],
+  "evidence": "Confirmed. `grep -n admission` on the base deployment.yaml returned only the --max-in-flight block; no --admission flag was renderable under any values, so every chart-deployed fleet ran AdmissionKind::Off while the values key literally named `admission:` configured a concurrency bound.",
+  "action": "Predecessor added a separate `admissionCurrency:` values block (mode/authorityKid/authorityPubkey/redisUrl/allowDegraded/degradedBoundSecs), renamed the `admission:` prose to 'in-flight CONCURRENCY ceiling ... NOT the §7 admission-currency check', and added render guards refusing every half-configured state. I verified all six guards actually refuse and the flags actually render, then added 10 regression cases to scripts/helm_render_gate.py: unknown mode, missing authority, missing shared record, plaintext admission redis under fleet, unbounded degraded window, anchors set while mode is off, the full config rendering, argv for all four flags plus the bounded-degraded pair, and — the property the finding is really about — that no admission flag is emitted when the block is untouched. Negative control against the pre-fix chart fails 8 of them.",
+  "agent": "I-deploy"
+ },
+ "R7-C112": {
+  "cid": "R7-C112",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/templates/serviceaccount.yaml",
+  "line": 6,
+  "severity": "medium",
+  "category": "config-deploy",
+  "title": "Chart mounts the default Kubernetes API token into the pod that holds the signing seed and TLS key",
+  "raw_ids": [
+   "F117"
+  ],
+  "evidence": "Confirmed. The base serviceaccount.yaml was 15 lines of metadata only, and the base pod spec set serviceAccountName/terminationGracePeriodSeconds/securityContext but never automountServiceAccountToken — so the pod holding the signing seed and TLS key also carried a projected apiserver token it never uses.",
+  "action": "Predecessor set `automountServiceAccountToken: false` on BOTH the ServiceAccount and the pod spec — correct, because the pod-spec field is the one that still governs when serviceAccount.create=false names an existing account. I moved the ServiceAccount field from between `kind:` and `metadata:` (valid YAML but reads as a mistake) to after the metadata block, and pinned both objects with 2 MANIFEST_CASES, including the serviceAccount.create=false case where no ServiceAccount is rendered at all and only the pod spec carries it. `kubectl apply --dry-run=client` accepts the rendered chart. Negative control: both cases fail against the pre-fix chart.",
+  "agent": "I-deploy"
+ },
+ "R7-C113": {
+  "cid": "R7-C113",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/templates/deployment.yaml",
+  "line": 133,
+  "severity": "medium",
+  "category": "transparency-log",
+  "title": "SCITT evidence retention is documented as deployable but is unrenderable from the shipped Helm chart",
+  "raw_ids": [
+   "F119"
+  ],
+  "evidence": "Confirmed. `grep -rn 'retained-evidence|retainedEvidence' deploy/` returned nothing on the base tree; the only volume was `material`, mounted readOnly. mcp-re-proxy/src/retained_evidence.rs:189 create_dir_all confirms the flag needs a writable path, so rendering the flag alone would have produced a proxy that fails on first write under the new readOnlyRootFilesystem.",
+  "action": "Predecessor added `retainedEvidence: {dir, sizeLimit}`, rendering --retained-evidence-dir plus a matching emptyDir volume and mount, with sizeLimit bounding node ephemeral storage. I confirmed the rendered manifest carries flag + mount + emptyDir + sizeLimit and that an untouched block renders none of them, then pinned both directions (2 ARGV_CASES + 2 MANIFEST_CASES). Note recorded for the owner: emptyDir is node-local and dies with the pod, so this is a staging area for a shipper, not an archive — the chart says so in values.yaml and renders no PersistentVolumeClaim.",
+  "agent": "I-deploy"
+ },
+ "R7-C114": {
+  "cid": "R7-C114",
+  "disposition": "implemented-pending-gate",
+  "file": "mcp-re-http-profile/src/scitt.rs",
+  "line": 131,
+  "severity": "medium",
+  "category": "transparency-log",
+  "title": "A Signed Statement about a chain broken at hop 0 has no identity — all such records collapse",
+  "raw_ids": [
+   "F130"
+  ],
+  "evidence": "a Signed Statement about a chain broken at hop 0 has no identity - all such records are byte-identical, so one cannot be told from another",
+  "action": "OWNER DECISION: the record needs an identity derived from the SUBMITTED hop bytes, which ChainReconstruction never carries (it holds only the VERIFIED prefix). Blocked on two frozen artifacts: mcp-re-conformance/tests/vectors/scitt/*.json are frozen COSE octets embedding the serialized payload, and scitt_vectors_test.rs:160-174 builds ChainReconstruction as an exhaustive struct literal so ANY new field breaks that crate. QUESTION: regenerate the SCITT corpus so a hop-0 failure carries a submitted-bytes digest, or accept that a zero-verified-hop statement identifies no call - which commits_to_verified_evidence() now makes machine-readable rather than implicit?",
+  "agent": "G-http-profile",
+  "resolution": "CLOSED. `ChainReconstruction.submitted_commitment` is a length-delimited digest over the SUBMITTED hops (method, target URI, bodies, response status, signature headers), computed before anything is judged so every exit path carries it, including the ones that verify nothing. Surfaced on EvidenceCommitment plus `identifies_a_submission()`. Read with serde(default) because a v1 statement genuinely has no submission identity — safe here and NOT safe for the receipt header, since this field is inside the payload the issuer's COSE_Sign1 covers. Tests: `two_records_that_verified_nothing_are_still_distinguishable`, `the_submitted_identity_is_a_function_of_the_bytes_alone`."
+ },
+ "R7-C115": {
+  "cid": "R7-C115",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/transparency.rs",
+  "line": 199,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "Retention store opened at startup without proving writability",
+  "raw_ids": [
+   "F133"
+  ],
+  "evidence": "Confirmed: `FsRetainedEvidenceStore::open` called only `create_dir_all`, which returns Ok(()) for an existing directory whatever its mode or mount, so the documented startup gate proved nothing.",
+  "action": "retained_evidence.rs:44-67: `open` now creates the root 0700 and then runs `probe_writable` — a private 0600 probe object created, written, `sync_all`ed and removed. A read-only mount, a 0555 directory or a wrong fsGroup now fails at startup where an operator is looking. Documented as a startup gate and explicitly NOT a guarantee about any later write (which is what the reservation is for). Tests: `opening_an_unwritable_directory_fails_at_open`, `the_writability_probe_leaves_nothing_in_the_store`.",
+  "agent": "B-retention"
+ },
+ "R7-C116": {
+  "cid": "R7-C116",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 141,
+  "severity": "medium",
+  "category": "other",
+  "title": "Success path closes without draining, so a caller with bytes in flight can lose a verified reply to RST",
+  "raw_ids": [
+   "F147"
+  ],
+  "evidence": "serve.rs:196 drain_pending() after a successful write_response; drain_pending is NON-BLOCKING (set_nonblocking, read until WouldBlock).",
+  "action": "Bytes already queued are what turn close() into RST, so a non-blocking drain takes exactly the right set. Deliberately NOT the blocking drain used on the refusal path: the caller is reading our response by then, so a blocking drain would add its full bound to every exchange (measured: e2e suite unchanged at 0.94s)."
+ },
+ "R7-C117": {
+  "cid": "R7-C117",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 74,
+  "severity": "medium",
+  "category": "other",
+  "title": "SIGTERM drops in-flight exchanges: serve() returns without waiting for worker threads",
+  "raw_ids": [
+   "F149"
+  ],
+  "evidence": "serve.rs:169 after the accept loop, serve() waits for in_flight to reach zero bounded by SHUTDOWN_GRACE (10s) and names any stranded exchanges on stderr.",
+  "action": "An accepted exchange has already been executed by the remote server; it now completes or is reported, rather than dropped as a reset for work that happened."
+ },
+ "R7-C118": {
+  "cid": "R7-C118",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/config.rs",
+  "line": 350,
+  "severity": "medium",
+  "category": "signature-binding",
+  "title": "A literal artifact binding can digest bytes the request never carries",
+  "raw_ids": [
+   "F156"
+  ],
+  "evidence": "Predecessor's work, verified: validate() applied the send-check only under `if let BindingSource::Header { name }`, so a `Literal`/`File` source for a header-carried artifact type passed.",
+  "action": "config.rs::validate() now matches on `(artifact_type, source)`: an `oauth-dpop` artifact must come from the `Authorization` header (literal/file refused as \"a binding to nothing\", any other header refused as \"and no other header\", a non-Bearer value refused), and an `oauth-mtls` artifact may not come from a literal. `resolve_bindings` also digests the Bearer TOKEN, matching `mcp_re_http_profile::authorization_bearer_bytes`, so the binding is one a verifier can actually match. Pinned by `a_literal_or_file_dpop_binding_is_refused`, `a_dpop_binding_on_another_header_is_refused`, `a_dpop_binding_on_a_non_bearer_authorization_is_refused`, `a_literal_mtls_binding_is_refused`, `a_dpop_binding_digests_what_the_verifier_digests`, `a_non_dpop_header_binding_digests_the_value_verbatim`.",
+  "agent": "E-keys-client"
+ },
+ "R7-C119": {
+  "cid": "R7-C119",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/config.rs",
+  "line": 318,
+  "severity": "medium",
+  "category": "fail-open-default",
+  "title": "delegation.max_clock_skew is unvalidated and widens the credential window raw",
+  "raw_ids": [
+   "F161"
+  ],
+  "evidence": "Predecessor's work, verified: `pub max_clock_skew: i64` with `#[serde(default = \"default_skew\")]` and no bound in validate(), reaching `DelegationExpectations` raw (delegation.rs:226-227) while `VerifierPolicy::new(...).unwrap_or_default()` swallows the same value.",
+  "action": "config.rs::validate() rejects `delegation.max_clock_skew` outside `0..=MAX_CLOCK_SKEW_SECS` (300), and `a_config_skew_bound_matches_the_profile_bound` pins that constant equal to `mcp_re_http_profile::VerifierPolicy::MAX_CLOCK_SKEW_BOUND` so the two cannot drift. Pinned by `an_out_of_range_clock_skew_is_refused` (31536000, -1, and the bound itself).",
+  "agent": "E-keys-client"
+ },
+ "R7-C120": {
+  "cid": "R7-C120",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/main.rs",
+  "line": 139,
+  "severity": "medium",
+  "category": "revocation",
+  "title": "trust.reload_secs = 0 disables the only path that withdraws expired anchors",
+  "raw_ids": [
+   "F162"
+  ],
+  "evidence": "Same defect as R7-C024/R7-C062.",
+  "action": "Closed by the same change. Test `a_disabled_or_unbounded_reload_cadence_is_refused`.",
+  "agent": "E-keys-client"
+ },
+ "R7-C121": {
+  "cid": "R7-C121",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 435,
+  "severity": "low",
+  "category": "sdk-parity",
+  "title": "Round-6 canonical bindings_json fix is incomplete: json.dumps escapes non-ASCII, JSON.stringify does not",
+  "raw_ids": [
+   "F095"
+  ],
+  "evidence": "Same defect as R7-C047, same line (transport.py:_bindings_json). The round-6 fix set separators and sort_keys but not ensure_ascii.",
+  "action": "Covered by the R7-C047 fix and the same two literal-pinned tests. No separate change.",
+  "agent": "A-sdk"
+ },
+ "R7-C122": {
+  "cid": "R7-C122",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/python/python/mcp_re_sdk/transport.py",
+  "line": 838,
+  "severity": "low",
+  "category": "sdk-parity",
+  "title": "Python notification-acknowledgement failure is only observable through a process-global hook",
+  "raw_ids": [
+   "F096"
+  ],
+  "evidence": "Real: the sink was the module attribute `on_notification_failure`, shared by every transport in the process, so one embedder's assignment swallowed another's failures.",
+  "action": "Closed by the same McpReConfig.on_undeliverable field as R7-C048 and the same test. The module global survives only as the process-wide fallback for a config that installs no hook.",
+  "agent": "A-sdk"
+ },
+ "R7-C123": {
+  "cid": "R7-C123",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/typescript/src/transport.ts",
+  "line": 920,
+  "severity": "low",
+  "category": "signature-binding",
+  "title": "Rejection receipt `bound` flag is computed by the core and consulted by neither SDK",
+  "raw_ids": [
+   "F102"
+  ],
+  "evidence": "Same defect as R7-C023, both SDKs.",
+  "action": "Covered by the R7-C023 fix and the same four tests. No separate change.",
+  "agent": "A-sdk"
+ },
+ "R7-C124": {
+  "cid": "R7-C124",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/block.rs",
+  "line": 204,
+  "severity": "low",
+  "category": "canonicalization",
+  "title": "AudienceTuple::canonical_bytes joins on U+001F unescaped — sibling of the round-6 field_escape fix",
+  "raw_ids": [
+   "F008"
+  ],
+  "evidence": "Real (fixed by my predecessor, verified and re-pinned). block.rs `AudienceTuple::canonical_bytes` joined three serde-deserialized JSON Strings on U+001F with no escaping, while the doc comment asserted 0x1F cannot appear in a URI or identity token. The sibling `field_escape` (block.rs:79-82) had been taught to escape exactly that separator in round 6.",
+  "action": "Each of the three slots now runs through the same `field_escape` (% -> %25, : -> %3A, U+001F -> %1F), which is reversible and leaves no 0x1F in any slot. Pinned by block.rs `a_separator_inside_a_field_does_not_collapse_two_audiences` (both collision pairs from the two findings) and `the_escape_marker_itself_does_not_create_a_collision` (a field literally containing %1F must not collide with the escaped form). BYTE IMPACT, checked: audience_hash() VALUES CHANGE (target_uri now escapes its colon). No fixture pins one - the SDK fixtures use the literal scope string \"aud-scope-1\" (sdk/fixtures/*.json), the docs use \"verifier-1\", and every Rust caller computes it from a tuple on both sides. OPERATIONAL NOTE FOR THE OWNER: a delegated credential minted BEFORE this change carries the old mcp_re_audience_hash and will not match a verifier running after it - this is a credential-rotation boundary, not a hot upgrade.",
+  "agent": "G-http-profile"
+ },
+ "R7-C125": {
+  "cid": "R7-C125",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/proxy.rs",
+  "line": 260,
+  "severity": "low",
+  "category": "unimplemented-contract",
+  "title": "A JSON-RPC error reply is still labelled Mcp-Re-Verified-Kind: success",
+  "raw_ids": [
+   "F081"
+  ],
+  "evidence": "classify_result reads 'result'; an error reply has none, so it classified Terminal and serve.rs wrote Mcp-Re-Verified-Kind: success for a failed call",
+  "action": "Owner-merged across both files: ResponseKind::CallFailed{code} + the serve.rs 'call-failed' arm. Pinned by a_verified_error_reply_is_classified_as_a_failed_call_not_a_success (19 passed).",
+  "agent": "F-client-proxy"
+ },
+ "R7-C126": {
+  "cid": "R7-C126",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/app.rs",
+  "line": 746,
+  "severity": "low",
+  "category": "revocation",
+  "title": "Fleet revocation-lag line still claims a per-request push flush after the epoch poller landed",
+  "raw_ids": [
+   "F057"
+  ],
+  "evidence": "Confirmed: the `--fleet` Push arm stated 'flush on the next request after an epoch advance', a mechanism removed when the epoch read moved to a background poller (trust_epoch.rs `drain_pending` does `std::mem::take` and no I/O; the read happens in `poll_once` on a spawned thread at TRUST_EPOCH_POLL_SECS = 5). The sibling line at the trust-epoch startup print had been updated; this one had not.",
+  "action": "app.rs: the per-tier bound is now built by `fleet_trust_bound(tier, epoch_source_configured, trust_reload_secs)`, extracted so it is testable. The Push/healthy arm reads 'cache flush within one {TRUST_EPOCH_POLL_SECS}s trust-epoch poll interval of an advance', the Push/no-source arm says the channel is inert, and EVERY arm now names the `--trust` reload floor under its number (nothing resolves faster than the store is re-read). `TRUST_EPOCH_POLL_SECS` lost its `#[cfg(feature = \"redis_replay\")]` so the honest number is available in every build. Tests (app.rs `store_cadence_tests`): `the_push_tier_bound_states_the_poll_interval_not_the_next_request` (asserts the string does NOT contain 'next request' and DOES contain the poll interval), `a_push_tier_without_a_source_reports_the_fallback_only`, `every_tier_names_the_reload_floor_under_its_number`.",
+  "agent": "C-app-tls"
+ },
+ "R7-C127": {
+  "cid": "R7-C127",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/docker/Dockerfile",
+  "line": 41,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "Proxy runtime image has no USER — runs as uid 0 outside the Helm chart",
+  "raw_ids": [
+   "F113"
+  ],
+  "evidence": "Confirmed. `grep -n USER deploy/docker/Dockerfile*` on the base tree matched only Dockerfile.inner:39, so the proxy image — the one that mounts the response-signing seed and the TLS private key — defaulted to uid 0, with the non-root posture existing only in the chart's podSecurityContext.",
+  "action": "Predecessor added `useradd --uid 65532` to runtime-base and `USER 65532:65532` to the proxy stage, matching the chart's runAsUser/runAsGroup/fsGroup and the inner image. I verified runtime-base has exactly one consumer (the `proxy` stage), so nothing else loses root. Pinned by scripts/helm_render_gate.py check_image_declares_non_root(), which asserts the proxy stage declares a NUMERIC non-root USER and that its uid equals the chart's runAsUser/runAsGroup/fsGroup — the last part matters because the material Secret is delivered 0440 owned by fsGroup and read through group membership. Negative controls: the pre-fix Dockerfile reports 'declares no USER', and a synthetic `USER 1000:1000` reports the drift against runAsUser 65532.",
+  "agent": "I-deploy"
+ },
+ "R7-C128": {
+  "cid": "R7-C128",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/scitt.rs",
+  "line": 131,
+  "severity": "low",
+  "category": "signature-binding",
+  "title": "A statement about a chain that breaks at hop 0 commits to no call, and the retained-evidence check is vacuous",
+  "raw_ids": [
+   "F143"
+  ],
+  "evidence": "Same defect as R7-C079, verified at the cited lines (scitt.rs:126-147, chain.rs:286-292, scitt.rs:161-166, scitt.rs:966-1008). Its stated impact - 'the retained-evidence check that is supposed to bind a statement to the bytes it was about becomes vacuous' - is the half now closed.",
+  "action": "Same fix and same tests as R7-C079. The commitment-identity residual is tracked under R7-C114.",
+  "agent": "G-http-profile"
+ },
+ "R7-C129": {
+  "cid": "R7-C129",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/cli.rs",
+  "line": 2051,
+  "severity": "low",
+  "category": "revocation",
+  "title": "bounded-cache tier claims a fleet revocation window with no --trust-reload-secs; only live|push refused",
+  "raw_ids": [
+   "F058"
+  ],
+  "evidence": "Confirmed: `bounded-cache` — the tier a deployment gets by omission — is accepted with no `--trust-reload-secs` while `revocation_tier.rs` emits 'revocation enforced fleet-wide within the bounded window T', which without a reload needs a restart of every replica. The mitigating disclaimer was a SEPARATE startup line further down.",
+  "action": "Resolved by honesty on the same line rather than by refusal, because refusing would make `--trust-reload-secs` mandatory for every deployment: app.rs now prints `... store-change-cadence=<store_change_cadence(...)>` appended to the tier's own audit line, reading 'NONE: --trust is read once at startup, so the window above bounds CACHING only — the store itself changes only when every replica restarts'. The correction can no longer be separated from the claim by quoting the tier line alone. A present cadence is additionally magnitude-checked for bounded-cache too (see R7-C147). Tests: `a_tier_with_no_reload_cadence_says_the_store_cannot_change`, `a_configured_cadence_is_named_on_the_tier_line`.",
+  "agent": "C-app-tls"
+ },
+ "R7-C130": {
+  "cid": "R7-C130",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/values.yaml",
+  "line": 149,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "In-flight ceiling default stated three ways: chart says \"unbounded\", values says 64, code says 256",
+  "raw_ids": [
+   "F111"
+  ],
+  "evidence": "The same defect as R7-C131, filed from the code side. The cli.rs assertion it cites still exists (mcp-re-proxy/src/cli.rs:3535, \"a per-core ceiling applies with no flags at all\") and pins the 256 default in code.",
+  "action": "Same fix and same pin as R7-C131. The code side was already pinned by cli.rs:3535; what was missing was anything coupling the chart's prose to it, which check_documented_in_flight_default() now supplies.",
+  "agent": "I-deploy"
+ },
+ "R7-C131": {
+  "cid": "R7-C131",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/values.yaml",
+  "line": 148,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "Chart and its own guard message state three different in-flight ceiling defaults, none the code's",
+  "raw_ids": [
+   "F120"
+  ],
+  "evidence": "Confirmed, three-way. Base values.yaml:148-150 said the absent-flag per-core ceiling is 64; base deployment.yaml:144-145 said the proxy 'reads as unbounded'; mcp-re-proxy/src/tls.rs:148 is `max_in_flight_requests: Some(256)` with the 'MATCHED TO max_concurrent_connections on purpose' comment. Runtime posture is the safe 256, so this was a truthfulness defect in the deployment artifact, as the finding says.",
+  "action": "Predecessor rewrote both comments to state 256 and to separate the in-flight CONCURRENCY ceiling from the ADR-MCPRE-053 §7 admission-currency check it was being confused with. I pinned it: scripts/helm_render_gate.py check_documented_in_flight_default() parses `max_in_flight_requests: Some(N)` out of tls.rs and asserts both chart files state that N and neither calls the default unbounded, matching on comment text normalised for wrapping. Negative control against the pre-fix chart reports all three original faults. RESIDUAL, NOT MINE TO FIX: deploy/helm/mcp-re-proxy/templates/_helpers.tpl:168 — the `fail` message an operator actually hits — still ends `or \"\" to omit the flag (UNBOUNDED).`. That file is not in my brief (AGENT-RULES ownership), so I did not edit it and did not add it to the check, since a check that fails on landing breaks the build for everyone. Owner action below.",
+  "agent": "I-deploy"
+ },
+ "R7-C132": {
+  "cid": "R7-C132",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/helm/mcp-re-proxy/values.yaml",
+  "line": 384,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "Proxy container omits readOnlyRootFilesystem while the out-of-TCB inner backend sets it",
+  "raw_ids": [
+   "F125"
+  ],
+  "evidence": "Confirmed. Base containerSecurityContext had allowPrivilegeEscalation/privileged/capabilities but no readOnlyRootFilesystem, while deploy/k8s/inner-fastmcp.yaml:48 sets it on the out-of-TCB container. The finding's premise that the proxy writes nothing also checks out: the only rendered flags in a default install are the argv listed by `helm template` (no writable path among them; --audit-sink is stderr, --replay-cache is shared, the material Secret is readOnly), and the only runtime writers in mcp-re-proxy/src are retained_evidence.rs and durable_replay.rs, neither of which the chart can render a path for by default.",
+  "action": "Predecessor set `readOnlyRootFilesystem: true`. Because that makes retention (R7-C113) unserveable without a writable path, the two fixes are coupled: retainedEvidence.dir renders a size-bounded emptyDir as the pod's only writable mount. Pinned by two MANIFEST_CASES in helm_render_gate.py asserting readOnlyRootFilesystem: true in the default render, and that retention brings its own bounded emptyDir. Negative control: both fail against the pre-fix chart.",
+  "agent": "I-deploy"
+ },
+ "R7-C133": {
+  "cid": "R7-C133",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/manifest_floor.rs",
+  "line": 166,
+  "severity": "low",
+  "category": "race-toctou",
+  "title": "FileManifestFloor::record reports durable persistence without the directory fsync on the concurrent-writer path",
+  "raw_ids": [
+   "F071"
+  ],
+  "evidence": "Confirmed: persist() returned Ok(()) from the AlreadyExists arm before File::open(dir)?.sync_all(), so record() reported durability for an entry a concurrent writer had created but not yet made durable - against the contract at mcp-re-client-core/src/trust_manifest.rs:182-183 that load_signed_manifest_with_floor relies on.",
+  "action": "The AlreadyExists arm now falls through to the directory fsync instead of returning. Pinned by an_already_existing_marker_still_syncs_the_directory.",
+  "agent": "F-client-proxy"
+ },
+ "R7-C134": {
+  "cid": "R7-C134",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client-proxy/src/manifest_floor.rs",
+  "line": 114,
+  "severity": "low",
+  "category": "race-toctou",
+  "title": "Floor accept decision is never re-validated, so a concurrent raise admits a rolled-back manifest",
+  "raw_ids": [
+   "F076"
+  ],
+  "evidence": "Confirmed against source: record() previously short-circuited to Ok(()) for version <= min_version(), and load_signed_manifest_with_floor (trust_manifest.rs:360-369) never re-compares the loaded version to the floor, so a manifest that passed a now-stale floor snapshot was handed back as usable.",
+  "action": "manifest_floor.rs record() now reads the DURABLE floor and returns TrustManifestError::FloorNotPersisted(\"trust-anchor floor was raised past this version concurrently\") when another writer has passed this version; equal is still a no-op Ok. Pinned by manifest_floor.rs test a_concurrent_raise_makes_the_accepted_version_unrecordable and by the tightened the_floor_is_monotonic / a_floor_raised_by_another_writer_is_honoured. SHARED-FILE FOLLOW-UP FOR THE OWNER: the trait doc at mcp-re-client-core/src/trust_manifest.rs:187-189 still says \"A lower version MUST leave the floor unchanged rather than error\" - that sentence now contradicts the durable impl and needs rewording (the permissive behaviour stays correct for InMemoryVersionFloor, which has a single writer by construction).",
+  "agent": "F-client-proxy"
+ },
+ "R7-C135": {
+  "cid": "R7-C135",
+  "disposition": "confirmed-fixed",
+  "file": "tools/scitt_fetch_service_key.py",
+  "line": 79,
+  "severity": "low",
+  "category": "transport-binding",
+  "title": "scitt_fetch_service_key.py https-only guard checks the initial URI only; urllib follows https→http redirects",
+  "raw_ids": [
+   "F114"
+  ],
+  "evidence": "Confirmed. fetch() checked the scheme of the URI it was handed and then called `urllib.request.urlopen`, whose default HTTPRedirectHandler permits http/https/ftp targets; no opener or redirect handler was installed anywhere in the file. Note the finding's parenthetical is slightly off — stdlib's scheme filter lives in http_error_302, not redirect_request — but the conclusion holds exactly: http:// is permitted on redirect.",
+  "action": "Predecessor added HttpsOnlyRedirectHandler overriding redirect_request (the right hook: http_error_302 resolves relative redirects to absolute and then calls it, so every hop is re-checked) plus a `--selftest`. THE SELFTEST COULD NOT RUN: `import cbor2` at module scope aborted the process on every machine lacking that package, which is every machine here — this was the predecessor's unfinished last act. I made the cbor2 import lazy via `_cbor2()`, called only from key normalisation, and added an eighth case asserting the WIRING rather than the class: that _opener()'s handler chain holds exactly one HTTPRedirectHandler and that it is the https-only subclass. That case matters because build_opener silently installs the permissive default unless passed a subclass, so a guard class that existed but was not consulted would leave the plaintext hop open with every other case still green. `--selftest` exits 0 with 8 cases; negative control (bare urlopen + pass-through redirect_request) fails 5.",
+  "agent": "I-deploy"
+ },
+ "R7-C136": {
+  "cid": "R7-C136",
+  "disposition": "confirmed-fixed",
+  "file": "tools/scitt_fetch_service_key.py",
+  "line": 79,
+  "severity": "low",
+  "category": "transport-binding",
+  "title": "Trust-pin fetcher's HTTPS-only guard is bypassed by an HTTP redirect",
+  "raw_ids": [
+   "F137"
+  ],
+  "evidence": "The same defect as R7-C135 at the same source lines, filed twice. Its added point is correct: --expect-thumbprint is optional, so the default path is trust-on-first-use over the channel the guard is supposed to authenticate.",
+  "action": "Same fix and same selftest. Owner action below: the selftest is now runnable but is NOT invoked by local_gate.sh or ci.yml, so nothing runs it automatically.",
+  "agent": "I-deploy"
+ },
+ "R7-C137": {
+  "cid": "R7-C137",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/bodyless.rs",
+  "line": 671,
+  "severity": "low",
+  "category": "unimplemented-contract",
+  "title": "verify_bodyless_request omits the Mcp-Method divergence check and the whole MCP transport policy",
+  "raw_ids": [
+   "F005"
+  ],
+  "evidence": "verify_bodyless_request accepted a VerifierPolicy and never consulted its mcp_transport contract; a deployment configured for 2026-07-28 had no supported-version gate on GET/DELETE while believing it had one",
+  "action": "Owner-merged: added McpTransportPolicy::enforce_bodyless() (supported-version set only - the one arm that never needed a body) and call it from bodyless.rs AFTER signature verification, replacing G's blanket refusal. Mcp-Method/Mcp-Name presence deliberately not required on a shape with nothing to describe. Pinned by a_configured_transport_contract_is_refused_rather_than_ignored (unsupported version refused, supported version verifies, no contract still verifies); negative control exits 101.",
+  "agent": "G-http-profile"
+ },
+ "R7-C138": {
+  "cid": "R7-C138",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/sign.rs",
+  "line": 171,
+  "severity": "low",
+  "category": "sdk-parity",
+  "title": "Round-6 nonce length bound is verify-side only; the signer can emit a nonce its own verifier refuses",
+  "raw_ids": [
+   "F009"
+  ],
+  "evidence": "Real. MAX_NONCE_CHARS was defined and enforced only in verify.rs `parse_signature_input`; the signers took the nonce as an opaque &str and the only producer-side validation was `validate_sf_string`, a character-class check with no length bound.",
+  "action": "MAX_NONCE_CHARS and a new `validate_nonce_length` moved into sigbase.rs and called from `SignatureParams::serialize_with` alongside validate_sf_string; verify.rs now calls the same function so there is one bound, not two. Every signer routes through that serializer - sign.rs:68 (sign_request, sign_request_with_signer and the _full variants), bodyless.rs:133 (sign_bodyless_request) and sigbase.rs:302 (signature_base) - so none can emit a nonce its own verifier refuses. Pinned by sigbase.rs `a_nonce_the_profile_cannot_carry_is_never_emitted`: the serializer refuses 257 characters and accepts exactly 256, and both sign_request and sign_bodyless_request are driven end-to-end with the oversized value and must return MalformedEvidence(\"nonce signature parameter exceeds the length bound\").",
+  "agent": "G-http-profile"
+ },
+ "R7-C139": {
+  "cid": "R7-C139",
+  "disposition": "accepted-by-design",
+  "file": "mcp-re-http-profile/src/verify.rs",
+  "line": 800,
+  "severity": "low",
+  "category": "resource-exhaustion",
+  "title": "Content-Digest hashes the full 16 MiB body before any signature or keyid work (CPU amplification)",
+  "raw_ids": [
+   "F013"
+  ],
+  "evidence": "Real, and the finding's own caveat is the operative one. Confirmed the ordering at verify.rs:807-808 (`required_header(\"content-digest\")` then `verify_content_digest_sha256(digest_header, &request.body)`) with the signature untouched until ~verify.rs:830, and the same shape at verify.rs:1000, 1227, 1379, 1518 and bodyless.rs:670. The signature base needs only the Content-Digest HEADER value, so the ordering is not forced. Availability only, no bypass.",
+  "action": "RULED, NOT FIXED - accepted by design; the ordering stands and no policy knob is added. Both candidate fixes are wrong, and the finding's severity framing does not survive measurement.\n\n(a) Reordering (signature first, digest after) is permanently rejected: it puts the trust store on the path of digest-mismatched traffic, reversing the deliberate v0.11 grill C.1 choice, and it changes which wire code fires for a message that is BOTH digest-mismatched and signature-invalid - i.e. it moves frozen conformance vectors.\n\n(b) A body ceiling on VerifierPolicy is rejected, and for a stronger reason than the ownership one first given. Every path into verify_request already passes a read-time ceiling that fails closed BEFORE the body is allocated: ServerLimits::max_body_bytes (16 MiB default, enforced in async_serve.rs collect_body against a per-core byte budget and an aggregate read deadline, so slow-loris on a trickled body is covered too) on the serving path, and ClientLimits::max_response_bytes (16 MiB, mcp-re-transport) on the client. A ceiling re-checked inside verify_request would fire only AFTER that allocation, so it narrows nothing the existing bound does not already refuse, and it hands a deployment two ceilings that can silently disagree.\n\nMEASUREMENT (arm64, OpenSSL 3.x, `openssl speed`, 2026-08-05): SHA-256 2.63 GB/s; AES-256-GCM 6.81 GB/s; Ed25519 verify 18435/s = 54.2 us. For a max-size 16 MiB body: digest ~6.4 ms, the AES-GCM decrypt the server already paid unconditionally ~2.5 ms, signature check 0.054 ms. The finding's 'amplification' is digest/signature ~= 118x - a ratio against the CHEAPEST step, not against the unavoidable per-request cost. Against that cost it is ~2.6x. And to buy 6.4 ms of server SHA-256 the sender must place 16 MiB on the wire, which occupies ~134 ms of a 1 Gbps link: ~0.05 ms of server CPU per ms of attacker link time. It DE-amplifies by roughly 20x. Concurrency is separately bounded at max_in_flight_requests = 256 per core.\n\nCode change: none to control flow. The comment at verify.rs:805 previously asserted that 'the body ceiling is the deployment's' without naming it; it now states the actual invariant (which two ceilings, that they fire before allocation, and why a third here would narrow nothing).",
+  "agent": "G-http-profile"
+ },
+ "R7-C140": {
+  "cid": "R7-C140",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/async_replay.rs",
+  "line": 338,
+  "severity": "low",
+  "category": "error-disclosure",
+  "title": "A per-actor budget refusal is indistinguishable from a replay-store outage on the wire and in audit",
+  "raw_ids": [
+   "F017"
+  ],
+  "evidence": "async_replay.rs:352 emits a distinct 'replay budget refusal (NOT a store outage)' line naming the actor, its holdings, its budget and current occupancy, before returning the frozen token.",
+  "action": "The wire token stays frozen at mcp-re.replay_cache_unavailable; the operational signal that distinguishes a quota decision from a backend outage now exists in the log."
+ },
+ "R7-C141": {
+  "cid": "R7-C141",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/shared_replay.rs",
+  "line": 416,
+  "severity": "low",
+  "category": "other",
+  "title": "Inline eviction in the shared in-memory store uses a boundary that contradicts the documented alignment",
+  "raw_ids": [
+   "F018"
+  ],
+  "evidence": "Verified: shared_replay.rs's inline sweep used `until > now` while its own prune() used `retain_until >= now_unix`, and durable_replay.rs:200-207 claimed the >= boundary was the in-memory reference store's canonical semantics. The async twin (async_replay.rs) also uses >=, so the inline sweep was the lone outlier.",
+  "action": "The inline sweep now uses `until >= now`, the same boundary as prune() and every sibling store, and it anchors on an injectable clock field so the boundary is observable in a test. Test: the_inline_sweep_uses_the_same_boundary_as_the_explicit_prune - entries retained to exactly `now` survive the inline sweep (which is the path production takes; nothing calls prune), the explicit prune at the same instant agrees, and one second later both drop them.",
+  "agent": "D-stores"
+ },
+ "R7-C142": {
+  "cid": "R7-C142",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-http-profile/src/custody.rs",
+  "line": 346,
+  "severity": "low",
+  "category": "replay-freshness",
+  "title": "custody sign_response does not clamp the signature expiry to the credential exp",
+  "raw_ids": [
+   "F046"
+  ],
+  "evidence": "Real, and worse than 'latent': custody.rs `sign_response` passed `now + self.cfg.ttl` as the RFC 9421 expires with no clamp, and a key issued at t0 has exp = t0 + ttl, so EVERY signature after t0 - not just ones near the boundary - advertised a window outliving the credential authorizing the key. The serving path already clamps (`let expires = (now + self.sig_ttl_secs).min(a.exp)`, mcp-re-proxy/src/http_profile_serve.rs:610 and :959), and custody.rs:129-131 documents exp as the fail-closed bound.",
+  "action": "`sign_response` now passes `(now + self.cfg.ttl).min(a.exp)`, with the reason stated on the method. Pinned by custody.rs `the_signature_expiry_never_outlives_the_credential`: issue at 1_000 (exp 1_300, ttl 300), assert the unclamped window would have overrun, sign at 1_100, then parse `;expires=` out of the emitted Signature-Input and require it to equal exp rather than now + ttl.",
+  "agent": "G-http-profile"
+ },
+ "R7-C143": {
+  "cid": "R7-C143",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/gcp_kms_keysource.rs",
+  "line": 162,
+  "severity": "low",
+  "category": "key-custody",
+  "title": "GCP metadata OAuth token parsed through unscrubbed heap allocations",
+  "raw_ids": [
+   "F054"
+  ],
+  "evidence": "Predecessor's work, verified: `let mut buf = String::new()` and `serde_json::Value`-held `access_token` both dropped unscrubbed (ex gcp_kms_keysource.rs:162/175).",
+  "action": "The response body is `Zeroizing<String>` from first allocation, and `take_access_token` MOVES the token out of the parsed document with `std::mem::take` so the `Value` keeps no copy. Pinned by `the_access_token_is_moved_out_of_the_parsed_document`, `a_token_response_yields_the_credential_and_its_lifetime`, `an_empty_or_absent_access_token_is_refused`. No plaintext reaches a log, error message or Debug impl.",
+  "agent": "E-keys-client"
+ },
+ "R7-C144": {
+  "cid": "R7-C144",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/redis_admission_source.rs",
+  "line": 52,
+  "severity": "low",
+  "category": "incomplete-fix",
+  "title": "Stale module doc inverts the round-6 malformed-admission-record fix it sits next to",
+  "raw_ids": [
+   "F062"
+  ],
+  "evidence": "Verified: redis_admission_source.rs:52-56 still instructed that a malformed record becomes an outage reaching the §5.2 degraded fork, while the code at :150-168 returns Ok(decode(&value)) - a definitive negative - and its own comment says the opposite. The round-6 change had touched only the call site.",
+  "action": "decode's doc now states the behaviour the code has: a malformed record is the same answer as an absent one, and must never become an outage, because under --admission-allow-degraded that would make corrupting a `revoked` record a cheaper un-revoke than issuing a new admission. The existing test was renamed a_malformed_record_is_a_definitive_negative_not_an_outage and its comment inverted with it, so the pinned property and its stated reason now agree.",
+  "agent": "D-stores"
+ },
+ "R7-C145": {
+  "cid": "R7-C145",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/audit_sink.rs",
+  "line": 74,
+  "severity": "low",
+  "category": "resource-exhaustion",
+  "title": "Shipped audit sink does a synchronous unbounded stderr write per decision, drivable unauthenticated",
+  "raw_ids": [
+   "F063"
+  ],
+  "evidence": "Confirmed: `StderrAuditSink::record` was a bare `eprintln!` inline on the request path, reached from `rejection` on EVERY preflight failure — before any signature verifies, so an unauthenticated peer set its rate — violating the trait's own 'MUST NOT block the request path' contract.",
+  "action": "audit_sink.rs: the line is formatted on the request path and then HANDED OFF to a dedicated `mcp-re-audit` thread that owns stderr, over a bounded `sync_channel` (`STDERR_AUDIT_QUEUE_DEPTH` 4096). `offer` uses `try_send` and counts a full queue as a DROP rather than waiting — which is the same intent from the other side, since a sink must never fail or delay a request — and the drop count is reported on the channel itself so a gap in the record is visible as a gap rather than inferred from silence. Write errors are swallowed on the writer thread, so a closed stderr can no longer panic a connection task. Test: `a_full_audit_queue_drops_rather_than_blocking_the_caller` (1000 offers into a capacity-1 channel nobody reads; asserts exactly 999 counted drops and that the caller returned).",
+  "agent": "B-retention"
+ },
+ "R7-C146": {
+  "cid": "R7-C146",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/tls.rs",
+  "line": 929,
+  "severity": "low",
+  "category": "fail-open-default",
+  "title": "Per-request cert validity-window check is fused to max_client_cert_lifetime and skipped when no ceiling is set",
+  "raw_ids": [
+   "F083"
+  ],
+  "evidence": "Same defect as R7-C102, reported from the fail-open-default angle (a `ServerOptions` built by an embedder with `client_revocation` set and `max_client_cert_lifetime: None` served an EXPIRED client certificate for the life of a keep-alive/H2 connection).",
+  "action": "Same fix as R7-C102.",
+  "agent": "C-app-tls"
+ },
+ "R7-C147": {
+  "cid": "R7-C147",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/cli.rs",
+  "line": 960,
+  "severity": "low",
+  "category": "bypassable-gate",
+  "title": "--trust-reload-secs is unbounded, so the live/push tier refusal is satisfiable with a useless cadence",
+  "raw_ids": [
+   "F088"
+  ],
+  "evidence": "Confirmed: the round-6 refusal tested only `config.trust_reload_secs.is_none()`, so `--revocation-tier live --trust-reload-secs 604800` started cleanly and printed a near-zero window over a store that could change once a week.",
+  "action": "cli.rs `unsafe_config_violations`: a PRESENT cadence is now held to the strongest window the declared tier advertises — Live to `MAX_NEAR_ZERO_TRUST_RELOAD_SECS`, Push to `min(that, t_secs)`, BoundedCache to `t_secs` — with the violation naming the specific claim being broken. Test: `a_reload_cadence_longer_than_the_declared_window_is_refused` (refuses over-long cadences per tier, and accepts each tier at its ceiling exactly).",
+  "agent": "C-app-tls"
+ },
+ "R7-C148": {
+  "cid": "R7-C148",
+  "disposition": "confirmed-fixed",
+  "file": "sdk/typescript/src/transport.ts",
+  "line": 920,
+  "severity": "low",
+  "category": "dead-wire",
+  "title": "Both SDKs discard VerifyResult.bound, so an unbound rejection receipt is reported as this request's outcome",
+  "raw_ids": [
+   "F097"
+  ],
+  "evidence": "Same defect as R7-C023/R7-C123: VerifyResult.bound computed by both bindings and read by neither transport.",
+  "action": "Covered by the R7-C023 fix and the same four tests. No separate change.",
+  "agent": "A-sdk"
+ },
+ "R7-C149": {
+  "cid": "R7-C149",
+  "disposition": "confirmed-fixed",
+  "file": "deploy/codebuild/mcp-re-slo-bench.yaml",
+  "line": 58,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "CodeBuild service role trust policy has no aws:SourceAccount / aws:SourceArn condition",
+  "raw_ids": [
+   "F121"
+  ],
+  "evidence": "Confirmed by reading. The base AssumeRolePolicyDocument trusted the bare codebuild.amazonaws.com service principal with no Condition block at all, while the role holds ECR push on mcp-re-slo-bench (the image executed on the SLO cluster) and the project runs PrivilegedMode: true.",
+  "action": "Predecessor added `Condition: StringEquals` on aws:SourceAccount (!Ref AWS::AccountId) and aws:SourceArn (!Sub arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/mcp-re-slo-bench) — the AWS-documented confused-deputy pattern for service-principal trust policies. I verified the literal in the ARN is held equal by the project's own literal `Name: mcp-re-slo-bench` at line 112, so the spelled-out ARN (used to avoid a circular !GetAtt, since the project names this role) cannot silently diverge. Both are StringEquals, not StringLike, as the comment requires. NOT PINNED: no CFN linter is installed and there is no gate over deploy/codebuild; the template is not YAML-parseable without CFN short-form tag support (PyYAML is absent from this environment). Settled by reading, as a structural finding.",
+  "agent": "I-deploy"
+ },
+ "R7-C150": {
+  "cid": "R7-C150",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-proxy/src/cli.rs",
+  "line": 645,
+  "severity": "low",
+  "category": "fail-open-default",
+  "title": "--audit-sink defaults to none: absent means the deployment keeps no per-request attribution",
+  "raw_ids": [
+   "F126"
+  ],
+  "evidence": "Confirmed: `let mut audit_sink = AuditSinkKind::None;` made the absent case the unsafe one, so any invocation not going through the Helm chart kept no per-request attribution, and `unsafe_config_violations` had no branch for it.",
+  "action": "cli.rs:649 the default is now `AuditSinkKind::Stderr` — the ABSENT case is the safe one, and turning it off stays possible but only by naming it (`--audit-sink none`). Test: `the_audit_sink_defaults_to_on` (cli.rs) asserts both directions. This finding also carried one of the four blocking compile errors: the test existed with no `use super::AuditSinkKind`.",
+  "agent": "C-app-tls"
+ },
+ "R7-C151": {
+  "cid": "R7-C151",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/serve.rs",
+  "line": 218,
+  "severity": "low",
+  "category": "error-disclosure",
+  "title": "A locally-malformed request is reported as HTTP 502 \"remote leg unavailable\"",
+  "raw_ids": [
+   "F150"
+  ],
+  "evidence": "serve.rs:288 ProxyError::MalformedRequest now maps to 400; the match is exhaustive so Transport/FailedClosed alone keep 502.",
+  "action": "502 regains its single documented meaning: a reply that could not be verified. MalformedRequest is raised locally before anything is signed or sent."
+ },
+ "R7-C152": {
+  "cid": "R7-C152",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/main.rs",
+  "line": 171,
+  "severity": "low",
+  "category": "unimplemented-contract",
+  "title": "SIGTERM drops in-flight exchanges: the process exits while worker threads are mid-call",
+  "raw_ids": [
+   "F157"
+  ],
+  "evidence": "The finding cites main.rs:163-172, but the defect is in `serve`, and it was already closed by the serve.rs owner this round: mcp-re-client/src/serve.rs:65-66 adds `SHUTDOWN_GRACE = 10s` and :166-176 drains — `while in_flight.load(Acquire) > 0 && Instant::now() < deadline { sleep }` — then names the stranded exchanges on stderr. The `Slot` RAII guard (serve.rs:98-104) is what makes `in_flight` an honest count, including on an unwinding worker. main.rs:201 is unchanged and needs no change: `serve` no longer returns while an accepted exchange is running.",
+  "action": "No source change (serve.rs is not my file and needed none). The behaviour was UNPINNED, so I added the regression test in my crate's test dir: mcp-re-client/tests/local_leg_e2e_test.rs `shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it` — sends a head plus a PARTIAL body so a worker is accepted and in flight, sets the stop flag, and asserts `!handle.is_finished()` (the mechanism: serve is still running), then completes the request and asserts a 200 and a prompt join. RED against the old `serve`, which returned as soon as the flag was observed.",
+  "agent": "E-keys-client"
+ },
+ "R7-C153": {
+  "cid": "R7-C153",
+  "disposition": "confirmed-fixed",
+  "file": "mcp-re-client/src/main.rs",
+  "line": 117,
+  "severity": "low",
+  "category": "config-deploy",
+  "title": "Durable floor defaults bootstrap_version to 0 while startup reports \"durable\" unconditionally",
+  "raw_ids": [
+   "F163"
+  ],
+  "evidence": "Predecessor's work, verified: the posture line matched `FloorConfig::Durable { dir, .. }` and printed only \"durable at <dir>\", discarding bootstrap_version.",
+  "action": "mcp-re-client/src/main.rs adds `floor_posture()`, which reports `bootstrap_version` for every variant and names a durable floor with bootstrap 0 as \"NO bootstrap_version — a restart over lost storage resets the floor to 0\". `trust.reload_secs` is also now on the startup line. Pinned by `the_posture_line_reports_the_bootstrap_the_floor_actually_has`.",
+  "agent": "E-keys-client"
+ }
+}

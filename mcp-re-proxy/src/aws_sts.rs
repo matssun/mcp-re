@@ -77,6 +77,22 @@ const REQUESTED_DURATION_SECS: u32 = 3600;
 /// The STS API version the query protocol requires.
 const STS_API_VERSION: &str = "2011-06-15";
 
+/// How long a credential whose response carried NO usable `Expiration` is reused.
+///
+/// An absent, unparseable or already-past `Expiration` parses to `UNIX_EPOCH`, which no
+/// cache gate can ever satisfy — so without a floor every KMS operation performs its
+/// own `AssumeRoleWithWebIdentity`. The module used to call that affordable because the
+/// KMS path is cold; under delegated TLS it is one STS exchange per TLS handshake,
+/// driven by unauthenticated connections, against a far tighter quota than KMS `Sign`,
+/// and STS throttling then also stops the cold-path rotor refreshing credentials.
+///
+/// The floor is not a guess at the credential's life. `AssumeRoleWithWebIdentity`
+/// refuses a `DurationSeconds` below 900, so a session AWS has just issued is valid for
+/// at least that long whatever the response said, and this window is well inside it. It
+/// applies ONLY when the stated expiry is at or before the exchange instant: a real
+/// expiry, including one about to lapse, is never extended.
+const UNKNOWN_EXPIRY_REUSE: Duration = Duration::from_secs(300);
+
 /// Default session name when `AWS_ROLE_SESSION_NAME` is unset. It lands in
 /// CloudTrail as the assumed-role session, so it names the software, not the pod:
 /// a per-pod name would make every replica a distinct principal in the audit trail
@@ -158,6 +174,11 @@ impl WebIdentityConfig {
     /// single region's availability wearing a global name, and its credentials are
     /// not valid in opt-in regions.
     pub fn from_env(region: &str, endpoint: Option<String>) -> Result<Self, KeyError> {
+        // Before anything else, and only on the path that derives the endpoint from it:
+        // the region decides which host receives the projected token.
+        if endpoint.is_none() {
+            validate_region(region)?;
+        }
         let role_arn = std::env::var("AWS_ROLE_ARN").map_err(|_| {
             KeyError::NotFound(
                 "aws-kms: --aws-kms-use-web-identity needs AWS_ROLE_ARN (set by EKS on a \
@@ -187,13 +208,45 @@ impl WebIdentityConfig {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| DEFAULT_SESSION_NAME.to_string());
         validate_session_name(&session_name)?;
+        let endpoint = endpoint.unwrap_or_else(|| format!("https://sts.{region}.amazonaws.com"));
         Ok(WebIdentityConfig {
             role_arn,
             token_file,
             session_name,
-            endpoint: endpoint.unwrap_or_else(|| format!("https://sts.{region}.amazonaws.com")),
+            endpoint,
         })
     }
+}
+
+/// An AWS region label: lowercase letters, digits and hyphens, e.g. `eu-north-1`.
+///
+/// Checked before it is interpolated into the STS endpoint, because the interpolation
+/// decides WHO receives the pod's OIDC assertion. A region carrying `/`, `@`, `:`, `#`
+/// or `?` re-points `https://sts.{region}.amazonaws.com` at an attacker-chosen
+/// authority — `evil.example.com/` alone is enough — and whoever receives that
+/// assertion can assume the IRSA role and obtain KMS `Sign` on the root
+/// response-signing key. The explicit `--aws-sts-endpoint` and `--gcp-kms-endpoint`
+/// overrides are validated for the same reason; the region-derived URL is the one path
+/// that reaches an authority without an operator having typed it.
+fn validate_region(region: &str) -> Result<(), KeyError> {
+    if region.is_empty() {
+        return Err(KeyError::Malformed(
+            "aws-kms: --aws-kms-region is empty, so the STS endpoint would resolve to \
+             https://sts..amazonaws.com"
+                .to_string(),
+        ));
+    }
+    if let Some(bad) = region
+        .chars()
+        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-'))
+    {
+        return Err(KeyError::Malformed(format!(
+            "aws-kms: --aws-kms-region {region:?} is not an AWS region label \
+             ([a-z0-9-]); it is interpolated into the STS endpoint, so a character \
+             like {bad:?} sends this pod's web identity token to another host"
+        )));
+    }
+    Ok(())
 }
 
 /// STS accepts `[\w+=,.@-]{2,64}` for a role session name. Rejecting here rather
@@ -253,6 +306,13 @@ pub struct WebIdentityCredentialSource {
     agent: ureq::Agent,
     config: WebIdentityConfig,
     cache: Mutex<Option<CachedCredentials>>,
+    /// Held across an exchange so concurrent callers coalesce onto one.
+    ///
+    /// The cache lock is deliberately NOT held across the round trip — that would put a
+    /// 5-second network call under a lock every KMS operation takes. This one is, and
+    /// the cache is re-read after acquiring it, so a burst of callers that all miss the
+    /// cache produces a single `AssumeRoleWithWebIdentity` rather than one each.
+    exchanging: Mutex<()>,
 }
 
 impl WebIdentityCredentialSource {
@@ -261,7 +321,55 @@ impl WebIdentityCredentialSource {
             agent: ureq::AgentBuilder::new().build(),
             config,
             cache: Mutex::new(None),
+            exchanging: Mutex::new(()),
         }
+    }
+
+    /// The cached credentials, if they are still fresh enough to sign with.
+    fn cached(&self, now: SystemTime) -> Result<Option<AwsCredentials>, KeyError> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|e| KeyError::NotFound(format!("aws-kms: credential cache poisoned: {e}")))?;
+        Ok(cache.as_ref().and_then(|c| {
+            (now + CREDENTIAL_REFRESH_MARGIN < c.expires_at).then(|| c.credentials.clone())
+        }))
+    }
+
+    /// Serve the cached credentials, or run ONE exchange and cache what it returns.
+    ///
+    /// `exchange` is a parameter so the single-flight and the reuse floor are provable
+    /// without an STS endpoint.
+    fn cached_or_exchange(
+        &self,
+        now: SystemTime,
+        exchange: &dyn Fn() -> Result<CachedCredentials, KeyError>,
+    ) -> Result<AwsCredentials, KeyError> {
+        if let Some(credentials) = self.cached(now)? {
+            return Ok(credentials);
+        }
+        let _flight = self.exchanging.lock().map_err(|e| {
+            KeyError::NotFound(format!("aws-kms: credential exchange poisoned: {e}"))
+        })?;
+        // Whoever held this lock may have just filled the cache.
+        if let Some(credentials) = self.cached(now)? {
+            return Ok(credentials);
+        }
+        let mut fresh = exchange()?;
+        // A credential that is already expired the instant it was issued is one whose
+        // `Expiration` could not be read, not one AWS has stopped honouring. Reusing it
+        // briefly is what stops a response-shape drift turning every KMS call — and so
+        // every delegated-TLS handshake — into its own STS round trip.
+        if fresh.expires_at <= now {
+            fresh.expires_at = now + UNKNOWN_EXPIRY_REUSE;
+        }
+        let credentials = fresh.credentials.clone();
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|e| KeyError::NotFound(format!("aws-kms: credential cache poisoned: {e}")))?;
+        *cache = Some(fresh);
+        Ok(credentials)
     }
 
     /// Read the projected token from disk. Done on every exchange, never cached:
@@ -347,25 +455,7 @@ impl WebIdentityCredentialSource {
 
 impl AwsCredentialSource for WebIdentityCredentialSource {
     fn credentials(&self) -> Result<AwsCredentials, KeyError> {
-        let now = SystemTime::now();
-        {
-            let cache = self.cache.lock().map_err(|e| {
-                KeyError::NotFound(format!("aws-kms: credential cache poisoned: {e}"))
-            })?;
-            if let Some(c) = cache.as_ref() {
-                if now + CREDENTIAL_REFRESH_MARGIN < c.expires_at {
-                    return Ok(c.credentials.clone());
-                }
-            }
-        }
-        let fresh = self.exchange()?;
-        let credentials = fresh.credentials.clone();
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|e| KeyError::NotFound(format!("aws-kms: credential cache poisoned: {e}")))?;
-        *cache = Some(fresh);
-        Ok(credentials)
+        self.cached_or_exchange(SystemTime::now(), &|| self.exchange())
     }
 
     fn describe(&self) -> String {
@@ -534,7 +624,9 @@ mod tests {
     fn an_unparseable_expiration_reads_as_already_expired_not_as_unlimited() {
         let parsed = parse_assume_role_response(&response_with("not-a-timestamp")).unwrap();
         assert_eq!(parsed.expires_at, UNIX_EPOCH);
-        // And that is what makes the cache refuse to serve it.
+        // No freshness gate can ever be satisfied by it, which is why
+        // `cached_or_exchange` replaces an at-or-before-now expiry with the bounded
+        // `UNKNOWN_EXPIRY_REUSE` floor instead of caching the raw value.
         assert!(SystemTime::now() + CREDENTIAL_REFRESH_MARGIN >= parsed.expires_at);
     }
 
@@ -626,6 +718,155 @@ mod tests {
         assert_eq!(
             decode_xml_entities("plain/base64+value=="),
             "plain/base64+value=="
+        );
+    }
+
+    fn source() -> WebIdentityCredentialSource {
+        WebIdentityCredentialSource::new(WebIdentityConfig {
+            role_arn: "arn:aws:iam::1:role/r".to_string(),
+            token_file: "/dev/null".to_string(),
+            session_name: DEFAULT_SESSION_NAME.to_string(),
+            endpoint: "https://sts.eu-north-1.amazonaws.com".to_string(),
+        })
+    }
+
+    fn parsed(expiration: &str) -> CachedCredentials {
+        parse_assume_role_response(&response_with(expiration)).expect("parses")
+    }
+
+    /// The region is interpolated into the endpoint the pod posts its OIDC assertion
+    /// to, so anything that can move the authority has to be refused before it is.
+    #[test]
+    fn a_region_that_could_redirect_the_token_is_refused() {
+        assert!(validate_region("eu-north-1").is_ok());
+        assert!(validate_region("us-gov-east-1").is_ok());
+        for hostile in [
+            "",
+            "evil.example.com/",
+            "x@evil.example.com",
+            "x#",
+            "x?y",
+            "x:443",
+            "EU-NORTH-1",
+            "x\\y",
+        ] {
+            assert!(
+                validate_region(hostile).is_err(),
+                "{hostile:?} must not reach the STS endpoint"
+            );
+        }
+    }
+
+    /// The default endpoint is region-derived, so `from_env` is where the check has to
+    /// bite; an explicit `--aws-sts-endpoint` is validated by the CLI instead.
+    #[test]
+    fn a_hostile_region_stops_the_default_endpoint_being_built() {
+        let err = WebIdentityConfig::from_env("evil.example.com/", None)
+            .expect_err("a region that moves the authority must fail closed");
+        assert!(
+            matches!(&err, KeyError::Malformed(m) if m.contains("region")),
+            "got {err:?}"
+        );
+    }
+
+    /// A credential whose `Expiration` could not be read must still be CACHED for a
+    /// bounded window. Without that, the gate can never hold and every KMS operation —
+    /// under delegated TLS, every unauthenticated handshake — runs its own STS
+    /// exchange.
+    #[test]
+    fn an_unreadable_expiration_is_reused_briefly_rather_than_re_exchanged_every_call() {
+        let source = source();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let exchange = || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(parsed("not-a-timestamp"))
+        };
+        let now = SystemTime::now();
+        for _ in 0..5 {
+            source
+                .cached_or_exchange(now, &exchange)
+                .expect("credentials");
+        }
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an unreadable Expiration must not mean one AssumeRoleWithWebIdentity per call"
+        );
+        // And the reuse is bounded: past the window the next call re-exchanges.
+        source
+            .cached_or_exchange(now + UNKNOWN_EXPIRY_REUSE, &exchange)
+            .expect("credentials");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// The floor must never extend a real expiry. A credential with 100 seconds left is
+    /// served while it is still fresh and re-exchanged after that, not held for the
+    /// unknown-expiry window.
+    #[test]
+    fn a_stated_expiry_is_never_extended_by_the_reuse_floor() {
+        let source = source();
+        let now = SystemTime::now();
+        let short = CachedCredentials {
+            credentials: parsed("2026-08-03T12:34:56Z").credentials,
+            expires_at: now + Duration::from_secs(100),
+        };
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        source
+            .cached_or_exchange(now, &|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(CachedCredentials {
+                    credentials: short.credentials.clone(),
+                    expires_at: short.expires_at,
+                })
+            })
+            .expect("credentials");
+        source
+            .cached_or_exchange(now + Duration::from_secs(60), &|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(CachedCredentials {
+                    credentials: short.credentials.clone(),
+                    expires_at: short.expires_at,
+                })
+            })
+            .expect("credentials");
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a credential inside the refresh margin must be re-exchanged, not reused"
+        );
+    }
+
+    /// Concurrent callers coalesce onto ONE exchange. Without the single-flight lock
+    /// each thread that misses the cache posts its own token to STS, which is the
+    /// amplification a handshake burst turns into an STS rate limit.
+    #[test]
+    fn concurrent_callers_perform_one_exchange_between_them() {
+        let source = std::sync::Arc::new(source());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let now = SystemTime::now();
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let source = std::sync::Arc::clone(&source);
+                let calls = std::sync::Arc::clone(&calls);
+                std::thread::spawn(move || {
+                    source
+                        .cached_or_exchange(now, &|| {
+                            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            // Long enough that every thread is in the miss path.
+                            std::thread::sleep(Duration::from_millis(50));
+                            Ok(parsed("2126-08-03T12:34:56Z"))
+                        })
+                        .expect("credentials");
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("joined");
+        }
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "8 concurrent callers must not each post the projected token to STS"
         );
     }
 

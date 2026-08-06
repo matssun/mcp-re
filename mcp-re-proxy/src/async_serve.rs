@@ -12,7 +12,7 @@
 //!   * the verified client identity, the per-connection cert-lifetime rejection,
 //!     the routing-header hygiene rejection, and the Tier-3 assertion extraction
 //!     all go through the SAME `tls` helpers the blocking loop uses
-//!     ([`resolve_identity_from_leaf`], [`connection_rejection_for_leaf`],
+//!     ([`resolve_identity_from_leaf`], [`connection_rejection_for_chain`],
 //!     [`routing_header_rejection`], [`assertion_header`]);
 //!   * the request handler is the SAME `Proxy` handler (`Proxy` is `Send + Sync`
 //!     since MCPRE-111, which is why this work was blocked on it).
@@ -27,7 +27,7 @@
 //! SCOPE (this increment): the async path is opt-in dev scaffolding — a single
 //! shared runtime, never a release (ADR-MCPRE-051 §1); per-core runtimes +
 //! `SO_REUSEPORT` are MCPRE-113. Online-OCSP revocation on the async path needs the
-//! full peer chain and is a tracked follow-up (see [`connection_rejection_for_leaf`]);
+//! full peer chain and is a tracked follow-up (see [`connection_rejection_for_chain`]);
 //! the default + shared-replay-tier builds have full parity. Precise `write_timeout`
 //! mapping onto `hyper` is likewise deferred (the load-bearing slow-loris defense is
 //! the READ side, which is mapped).
@@ -57,7 +57,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::tls::assertion_header;
-use crate::tls::connection_rejection_for_leaf;
+use crate::tls::connection_rejection_for_chain;
 use crate::tls::resolve_identity_from_leaf;
 use crate::tls::routing_header_rejection;
 use crate::tls::ServerOptions;
@@ -147,6 +147,40 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// `--max-header-bytes` is clamped up to it rather than passed through.
 const MIN_HYPER_BUF_BYTES: usize = 8192;
 
+/// How many TLS handshakes may be in progress at once on a core whose handshake
+/// signature is produced by a device or a KMS.
+///
+/// On that path `acceptor.accept` occupies its worker thread for a whole `C_Sign` /
+/// `asymmetricSign`, and nothing else on the runtime runs meanwhile: the future does not
+/// yield, so the handshake deadline cannot preempt it. `async_fleet` answers this with a
+/// small worker pool per core, but a pool is not a bound — a peer needs only as many
+/// concurrent connections as there are workers to occupy every one of them, and it needs
+/// no client certificate to do it, because TLS 1.3 signs `CertificateVerify` before the
+/// client's `Certificate` is ever seen.
+///
+/// This is the bound. Held strictly below the per-core worker pool, so a core under
+/// handshake flood always retains workers for its accept loop, its established
+/// connections and its in-flight requests. Raising it re-opens exactly what it closes.
+const DELEGATED_TLS_HANDSHAKES_PER_CORE: usize = 2;
+
+/// The per-core ceiling on request-body bytes buffered before verification, expressed as
+/// a multiple of `max_body_bytes`.
+///
+/// The in-flight ceiling bounds request COUNT, and was reasoned about as if that bounded
+/// memory. It does not: each admitted slot may buffer a whole `max_body_bytes` body, and
+/// the permit is taken before the body is read, so the per-core product is
+/// `max_in_flight_requests x max_body_bytes` (256 x 16 MiB = 4 GiB by default) and the
+/// fleet product multiplies that by the core count. A peer holding a valid client
+/// certificate and NO valid signing key — one that cannot get a single request past the
+/// verifier — can drive all of it.
+///
+/// A multiple of `max_body_bytes` rather than an absolute number, so a deployment that
+/// raises the body limit gets a proportional budget and a single maximum-size request is
+/// always admissible. Four is enough that ordinary traffic (JSON-RPC bodies orders of
+/// magnitude below the cap) never meets it, and small enough that the fleet total scales
+/// with cores instead of with cores x 256.
+const BUFFERED_BODY_BUDGET_MULTIPLE: usize = 4;
+
 /// RAII counter of requests currently being served on a core (MCPRE-115). Constructed
 /// once a request is admitted and about to be processed; the increment/decrement pair
 /// is exactly balanced by `Drop`, so the count reflects live in-flight requests on
@@ -165,6 +199,122 @@ impl Drop for InFlightGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
+}
+
+/// A per-core ceiling on request-body bytes resident before verification.
+///
+/// Charged as the body arrives rather than from a declared `Content-Length`, so a
+/// chunked or HTTP/2 body with no declared length is bounded by the same budget, and a
+/// peer cannot understate what it is about to send.
+struct BodyByteBudget {
+    ceiling: usize,
+    charged: AtomicUsize,
+}
+
+impl BodyByteBudget {
+    fn new(ceiling: usize) -> Self {
+        BodyByteBudget {
+            ceiling,
+            charged: AtomicUsize::new(0),
+        }
+    }
+
+    /// Reserve `bytes`, or `None` when the core is already holding its ceiling. The
+    /// returned guard releases on every path, including an aborted body read.
+    fn charge(self: &Arc<Self>, bytes: usize) -> Option<BodyBytes> {
+        let mut current = self.charged.load(Ordering::Acquire);
+        loop {
+            if current.saturating_add(bytes) > self.ceiling {
+                return None;
+            }
+            match self.charged.compare_exchange_weak(
+                current,
+                current + bytes,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(BodyBytes {
+                        budget: Arc::clone(self),
+                        bytes,
+                    })
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+
+/// Bytes charged against a [`BodyByteBudget`], returned on drop.
+struct BodyBytes {
+    budget: Arc<BodyByteBudget>,
+    bytes: usize,
+}
+
+impl BodyBytes {
+    /// Fold `other` into this reservation, so a streamed body holds one guard rather
+    /// than one per frame.
+    fn absorb(&mut self, mut other: BodyBytes) {
+        self.bytes += other.bytes;
+        // `other`'s bytes are now this guard's; it must not release them twice.
+        other.bytes = 0;
+    }
+}
+
+impl Drop for BodyBytes {
+    fn drop(&mut self) {
+        self.budget.charged.fetch_sub(self.bytes, Ordering::AcqRel);
+    }
+}
+
+/// Why a request body could not be buffered.
+///
+/// The two are distinct on the wire because they mean different things to the peer. A
+/// body that is too large, unreadable or too slow is that peer's own request being
+/// refused (`413`). A body the core has no budget for is the core saying "not now" to a
+/// request that may be perfectly well formed (`503`), which is a retry-safe shed.
+enum BodyReadError {
+    /// The core is already holding its ceiling of pre-verification body bytes.
+    BudgetExhausted,
+    /// Over `max_body_bytes`, or the connection failed part-way through the body.
+    Unreadable,
+}
+
+/// Buffer a request body under BOTH the per-request size cap and the core's aggregate
+/// byte budget, charging as the bytes arrive.
+///
+/// Charging per frame rather than from `Content-Length` is what makes the budget hold: a
+/// chunked or HTTP/2 body declares no length, and a declared one is the peer's claim
+/// about what it is about to send. The returned [`BodyBytes`] holds the whole charge for
+/// as long as the caller holds the bytes, and releases it on drop — including on a body
+/// read that is abandoned part-way.
+async fn collect_body(
+    body: Incoming,
+    max_body: usize,
+    budget: &Arc<BodyByteBudget>,
+) -> Result<(Bytes, BodyBytes), BodyReadError> {
+    // `Limited` enforces `max_body_bytes` with the same semantics the whole serving path
+    // is documented to have; the budget is the aggregate bound layered over it.
+    let limited = Limited::new(body, max_body);
+    let mut limited = std::pin::pin!(limited);
+    // A zero-byte charge always succeeds and gives an empty body a guard to return.
+    let mut charge = budget.charge(0).ok_or(BodyReadError::BudgetExhausted)?;
+    let mut collected: Vec<u8> = Vec::new();
+    while let Some(frame) = limited.frame().await {
+        let frame = frame.map_err(|_| BodyReadError::Unreadable)?;
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        // Charged BEFORE the bytes are copied into `collected`, so the ceiling bounds
+        // what is resident rather than trailing it by one frame.
+        charge.absorb(
+            budget
+                .charge(data.len())
+                .ok_or(BodyReadError::BudgetExhausted)?,
+        );
+        collected.extend_from_slice(&data);
+    }
+    Ok((Bytes::from(collected), charge))
 }
 
 /// Run the async accept loop until `shutdown` flips. Each accepted connection is
@@ -198,6 +348,24 @@ pub async fn serve<H: AsyncRequestHandler>(
     // not extend the drain.
     let in_flight_requests = Arc::new(AtomicUsize::new(0));
 
+    // The byte half of admission. `max_in_flight_requests` bounds how many requests a
+    // core serves at once; this bounds how much attacker-supplied body they may hold
+    // between them, which the count alone never did.
+    let body_budget = Arc::new(BodyByteBudget::new(
+        options
+            .limits
+            .max_body_bytes
+            .saturating_mul(BUFFERED_BODY_BUDGET_MULTIPLE),
+    ));
+
+    // Handshake admission, and ONLY where a handshake can block: on the exported-key
+    // path the signature is in-memory and bounding it would cost throughput for nothing.
+    let handshakes = options.tls_signing_may_block.then(|| {
+        Arc::new(tokio::sync::Semaphore::new(
+            DELEGATED_TLS_HANDSHAKES_PER_CORE,
+        ))
+    });
+
     while !shutdown.load(Ordering::SeqCst) {
         // Poll-with-timeout so the shutdown flag is observed within one interval
         // even under an idle listener.
@@ -229,6 +397,8 @@ pub async fn serve<H: AsyncRequestHandler>(
         let handler = Arc::clone(&handler);
         let in_flight = in_flight.clone();
         let in_flight_requests = Arc::clone(&in_flight_requests);
+        let body_budget = Arc::clone(&body_budget);
+        let handshakes = handshakes.clone();
         tokio::spawn(async move {
             let _permit = permit; // released when the connection task ends
             let _ = serve_connection(
@@ -238,6 +408,8 @@ pub async fn serve<H: AsyncRequestHandler>(
                 handler,
                 in_flight,
                 in_flight_requests,
+                body_budget,
+                handshakes,
             )
             .await;
         });
@@ -300,6 +472,9 @@ fn origin_form_of(absolute: &str) -> Option<String> {
 /// it. The handshake is bounded by the aggregate `request_deadline` (slow-loris on
 /// the handshake read); the peer leaf certificate is captured once (hyper then owns
 /// the stream) and drives per-request identity + cert-lifetime decisions.
+// Every argument is a distinct per-connection collaborator captured from the serve
+// loop; bundling them into a struct would only rename the same set.
+#[allow(clippy::too_many_arguments)]
 async fn serve_connection<H: AsyncRequestHandler>(
     tcp: tokio::net::TcpStream,
     acceptor: TlsAcceptor,
@@ -307,6 +482,8 @@ async fn serve_connection<H: AsyncRequestHandler>(
     handler: Arc<H>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
     in_flight_requests: Arc<AtomicUsize>,
+    body_budget: Arc<BodyByteBudget>,
+    handshakes: Option<Arc<tokio::sync::Semaphore>>,
 ) -> std::io::Result<()> {
     // Handshake, bounded by the aggregate read deadline: a peer that never
     // completes the handshake cannot hold the connection task forever. Reading
@@ -319,6 +496,34 @@ async fn serve_connection<H: AsyncRequestHandler>(
     // never runs. `async_fleet` gives those deployments a multi-worker runtime per
     // core for exactly this reason: the stall then costs one worker rather than the
     // core's accept loop and every other connection on it.
+    //
+    // The pool is not a bound, though — a peer with no credentials of any kind can open
+    // as many connections as there are workers and occupy every one, because TLS 1.3
+    // signs CertificateVerify before it has seen the client's Certificate. So on that
+    // path the number of handshakes allowed to be signing at once is capped strictly
+    // below the pool. Waiting for the cap is safe in a way the signature is not: this
+    // await yields, so `request_deadline` really does preempt it, and a connection that
+    // cannot get in before the deadline is dropped rather than queued indefinitely.
+    let _handshake = match (&handshakes, options.limits.request_deadline) {
+        (None, _) => None,
+        (Some(semaphore), Some(deadline)) => Some(
+            tokio::time::timeout(deadline, Arc::clone(semaphore).acquire_owned())
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "TLS handshake admission deadline",
+                    )
+                })?
+                .map_err(|_| std::io::Error::other("TLS handshake admission closed"))?,
+        ),
+        (Some(semaphore), None) => Some(
+            Arc::clone(semaphore)
+                .acquire_owned()
+                .await
+                .map_err(|_| std::io::Error::other("TLS handshake admission closed"))?,
+        ),
+    };
     let tls = match options.limits.request_deadline {
         Some(deadline) => tokio::time::timeout(deadline, acceptor.accept(tcp))
             .await
@@ -327,16 +532,25 @@ async fn serve_connection<H: AsyncRequestHandler>(
             })??,
         None => acceptor.accept(tcp).await?,
     };
+    // Released here, not at the end of the connection: the bound is on handshakes in
+    // progress, and an established connection costs no further device signatures.
+    drop(_handshake);
 
-    // Capture the verified peer leaf DER ONCE (connection-constant). hyper takes
+    // Capture the verified peer CHAIN ONCE (connection-constant). hyper takes
     // ownership of the TLS stream next, so per-request identity/cert-lifetime
-    // decisions read this captured leaf via the shared `tls` leaf-DER helpers.
-    let leaf_der: Arc<Option<Vec<u8>>> = Arc::new(
+    // decisions read this captured chain via the shared `tls` helpers.
+    //
+    // The whole chain, not just the leaf: the handshake verifier checks revocation to
+    // the trust anchor (`RevocationCheckDepth::Chain`), so a per-request check that
+    // stopped at the leaf would keep honouring a peer whose INTERMEDIATE was revoked
+    // for as long as it held the connection open. An absent peer certificate is an
+    // empty chain rather than a special case, so the fail-closed core decides it.
+    let peer_chain: Arc<Vec<Vec<u8>>> = Arc::new(
         tls.get_ref()
             .1
             .peer_certificates()
-            .and_then(|chain| chain.first())
-            .map(|leaf| leaf.as_ref().to_vec()),
+            .map(|chain| chain.iter().map(|cert| cert.as_ref().to_vec()).collect())
+            .unwrap_or_default(),
     );
 
     // Capture the header-read deadline before `options` moves into the service.
@@ -354,17 +568,19 @@ async fn serve_connection<H: AsyncRequestHandler>(
     let service = service_fn(move |req: Request<Incoming>| {
         let options = Arc::clone(&options);
         let handler = Arc::clone(&handler);
-        let leaf_der = Arc::clone(&leaf_der);
+        let peer_chain = Arc::clone(&peer_chain);
         let in_flight = in_flight.clone();
         let in_flight_requests = Arc::clone(&in_flight_requests);
+        let body_budget = Arc::clone(&body_budget);
         async move {
             handle_request(
                 req,
                 options,
                 handler,
-                leaf_der,
+                peer_chain,
                 in_flight,
                 in_flight_requests,
+                body_budget,
             )
             .await
         }
@@ -466,9 +682,10 @@ async fn handle_request<H: AsyncRequestHandler>(
     req: Request<Incoming>,
     options: Arc<ServerOptions>,
     handler: Arc<H>,
-    leaf_der: Arc<Option<Vec<u8>>>,
+    peer_chain: Arc<Vec<Vec<u8>>>,
     in_flight: Option<Arc<tokio::sync::Semaphore>>,
     in_flight_requests: Arc<AtomicUsize>,
+    body_budget: Arc<BodyByteBudget>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // MCPRE-114: per-core admission control. Acquire an in-flight permit FIRST — if
     // the per-core ceiling is full, reject with 503 fail-closed BEFORE reading the
@@ -548,23 +765,27 @@ async fn handle_request<H: AsyncRequestHandler>(
         })
         .collect();
 
-    // Read the body, capped at `max_body_bytes` and bounded by the aggregate read
-    // deadline (slow-loris on a trickled body). Either bound tripping fails closed:
-    // the inner server is never reached.
+    // Read the body, capped at `max_body_bytes`, charged against the core's byte budget
+    // as it arrives, and bounded by the aggregate read deadline (slow-loris on a
+    // trickled body). Any of the three tripping fails closed: the inner server is never
+    // reached.
     let max_body = options.limits.max_body_bytes;
-    let collect = Limited::new(req.into_body(), max_body).collect();
-    let body_bytes = match options.limits.request_deadline {
+    let collect = collect_body(req.into_body(), max_body, &body_budget);
+    let (body_bytes, _body_charge) = match options.limits.request_deadline {
         Some(deadline) => match tokio::time::timeout(deadline, collect).await {
-            Ok(Ok(collected)) => collected.to_bytes(),
+            Ok(Ok(collected)) => collected,
+            Ok(Err(BodyReadError::BudgetExhausted)) => return Ok(overloaded_response()),
             _ => return Ok(fail_closed_response()),
         },
         None => match collect.await {
-            Ok(collected) => collected.to_bytes(),
+            Ok(collected) => collected,
+            Err(BodyReadError::BudgetExhausted) => return Ok(overloaded_response()),
             Err(_) => return Ok(fail_closed_response()),
         },
     };
 
-    let leaf = (*leaf_der).as_deref();
+    let chain: Vec<&[u8]> = peer_chain.iter().map(Vec::as_slice).collect();
+    let leaf = chain.first().copied();
     let identity = resolve_identity_from_leaf(leaf, &options, &headers);
     let assertion = assertion_header(&options, &headers);
 
@@ -577,8 +798,8 @@ async fn handle_request<H: AsyncRequestHandler>(
     // The clock is read PER REQUEST, not per connection: the leaf is captured once at
     // handshake, so this is the only point at which a certificate that has since
     // passed `notAfter` can be caught on a connection the peer keeps open.
-    let served = match connection_rejection_for_leaf(
-        leaf,
+    let served = match connection_rejection_for_chain(
+        &chain,
         &options,
         &body_bytes,
         crate::tls::wall_clock_unix(),
@@ -733,5 +954,100 @@ mod target_uri_tests {
     #[test]
     fn an_empty_configured_target_is_not_checked_here() {
         assert_eq!(target_uri_mismatch("", &uri("/anything")), None);
+    }
+}
+
+#[cfg(test)]
+mod admission_bound_tests {
+    use super::*;
+
+    /// R7-C060/C061: the in-flight ceiling bounds request COUNT, not bytes.
+    ///
+    /// Each admitted slot may buffer a whole `max_body_bytes` body and the permit is
+    /// taken before the body is read, so the per-core product was
+    /// `max_in_flight_requests x max_body_bytes` (256 x 16 MiB = 4 GiB) and the fleet
+    /// product multiplied that by the core count. A peer holding a valid client
+    /// certificate and no valid signing key — one that cannot get a single request past
+    /// the verifier — could drive all of it. The budget is what turns that into a bound.
+    #[test]
+    fn the_core_budget_admits_a_maximum_size_body_and_refuses_past_the_ceiling() {
+        let max_body = 16 * 1024 * 1024usize;
+        let budget = Arc::new(BodyByteBudget::new(
+            max_body * BUFFERED_BODY_BUDGET_MULTIPLE,
+        ));
+
+        // A single maximum-size request is always admissible: the budget is a multiple
+        // of the per-request cap precisely so raising the cap cannot make one legal
+        // request unservable.
+        let held: Vec<BodyBytes> = (0..BUFFERED_BODY_BUDGET_MULTIPLE)
+            .map(|i| {
+                budget
+                    .charge(max_body)
+                    .unwrap_or_else(|| panic!("body {i} within the budget"))
+            })
+            .collect();
+
+        assert!(
+            budget.charge(1).is_none(),
+            "the core is at its ceiling: one more byte of attacker-supplied body must \
+             be refused, not buffered"
+        );
+
+        drop(held);
+        assert!(
+            budget.charge(max_body).is_some(),
+            "the charge is released when the bytes are, so the ceiling is a bound on \
+             what is RESIDENT rather than a lifetime quota"
+        );
+    }
+
+    /// The charge is returned on every path, including a body read abandoned part-way.
+    #[test]
+    fn an_abandoned_body_read_returns_its_charge() {
+        let budget = Arc::new(BodyByteBudget::new(100));
+        {
+            let mut charge = budget.charge(10).expect("first frame");
+            charge.absorb(budget.charge(20).expect("second frame"));
+            assert!(budget.charge(71).is_none(), "30 bytes are held");
+        }
+        assert!(
+            budget.charge(100).is_some(),
+            "dropping the guard mid-read returns everything it had charged"
+        );
+    }
+
+    /// Folding frames into one guard must not double-release: the absorbed guard's
+    /// bytes belong to the survivor.
+    #[test]
+    fn absorbing_a_frame_does_not_release_its_bytes_twice() {
+        let budget = Arc::new(BodyByteBudget::new(10));
+        let mut charge = budget.charge(4).expect("first");
+        charge.absorb(budget.charge(6).expect("second"));
+        assert!(
+            budget.charge(1).is_none(),
+            "all ten bytes are held by one guard"
+        );
+        drop(charge);
+        assert!(budget.charge(10).is_some(), "and exactly ten come back");
+    }
+
+    /// R7-C022: the handshake bound must stay strictly below the per-core worker pool.
+    ///
+    /// `async_fleet` gives a delegated-TLS core a small multi-worker runtime
+    /// (`DELEGATED_TLS_WORKERS_PER_CORE`, 4) because `acceptor.accept` occupies its
+    /// worker for a whole device/KMS signature. A pool is not a bound: a peer with no
+    /// credentials needs only as many concurrent connections as there are workers to
+    /// occupy every one, since TLS 1.3 signs `CertificateVerify` before the client's
+    /// `Certificate` is seen. Raising this to the pool size re-opens exactly that.
+    #[test]
+    fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
+        const {
+            // A bound of zero would refuse every handshake.
+            assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE >= 1);
+            // Strictly below `async_fleet::DELEGATED_TLS_WORKERS_PER_CORE` (4), or a
+            // handshake flood occupies every worker on the core — its accept loop, its
+            // established connections and every in-flight request included.
+            assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE < 4);
+        }
     }
 }

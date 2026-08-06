@@ -66,7 +66,7 @@ shape where one route's bindings can silently attach to another.
     "manifest_path": "/etc/mcp-re/trust-anchors.json",
     "profile": "mcp-re-http-v1",
     "org_keys": [{ "kid": "org-admin-1", "public_key": "<base64url>" }],
-    "floor": { "kind": "durable", "dir": "/var/lib/mcp-re/anchor-floor", "bootstrap_version": 7 },
+    "floor": { "kind": "durable", "dir": "/var/lib/mcp-re/anchor-floor", "bootstrap_version": 7, "ceiling_version": 500 },
     "reload_secs": 300
   },
   "delegation": {
@@ -124,6 +124,24 @@ filesystem says, no manifest below it is ever accepted. Unlinking a directory is
 cheaper capability than corrupting a file, and an ephemeral volume loses it on every
 restart, so without a bootstrap "the floor is gone" and "nothing has been accepted yet"
 are indistinguishable to the code and very different in fact.
+
+Set `ceiling_version` for the opposite direction. The markers are unauthenticated by
+construction, so whoever can write the floor directory can create `18446744073709551615`
+and pin the floor at `u64::MAX`, after which every later manifest — including a
+break-glass revocation — is refused as stale. That is the TUF fast-forward attack, and
+it is reachable by the cheapest write capability in the deployment.
+
+A stored floor above the ceiling **stops the client** at
+`FloorAboveCeiling { floor, ceiling }`. It does not clamp the floor down to the ceiling,
+and it must not: that would lower a floor on the say-so of the storage that just proved
+untrustworthy, silently re-opening the rollback window and letting the attacker choose
+which versions come back by picking how far to overshoot.
+
+Two consequences worth stating plainly. The ceiling is worth only the trust domain it
+comes from — read from a file the floor-directory writer can also edit, it bounds
+nothing, so it belongs wherever the org keys do. And it buys detection, not availability:
+a malicious fast-forward still stops the client. It stops it at a named error an operator
+can act on, instead of quietly withdrawing every anchor once the loaded manifest expires.
 
 **A refresh keeps the last good anchors — except on expiry.** A truncated file or a
 briefly-absent volume must not withdraw trust; dropping the anchors would turn a

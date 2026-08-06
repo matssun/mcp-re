@@ -274,6 +274,7 @@ fn trust_config(scratch: &Scratch) -> TrustConfig {
         floor: FloorConfig::Durable {
             dir: scratch.join("floor"),
             bootstrap_version: 0,
+            ceiling_version: None,
         },
         reload_secs: 300,
     }
@@ -353,8 +354,14 @@ fn start_sidecar(scratch: &Scratch, default_route: Option<&str>) -> Sidecar {
         nonce: Box::new(mcp_re_client::next_nonce),
     });
 
-    let listener = mcp_re_client::serve::bind("127.0.0.1:0".parse().expect("addr"))
-        .expect("bind an ephemeral loopback port");
+    let listener = mcp_re_client::serve::bind(&mcp_re_client::config::LocalConfig {
+        bind: "127.0.0.1:0".parse().expect("addr"),
+        allow_non_loopback: false,
+        request_lifetime_secs: 300,
+        default_route: None,
+        max_in_flight: 8,
+    })
+    .expect("bind an ephemeral loopback port");
     let addr = listener.local_addr().expect("local addr");
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
@@ -616,4 +623,78 @@ fn concurrent_local_callers_are_served_in_parallel() {
     for worker in workers {
         assert_eq!(worker.join().expect("worker"), 200);
     }
+}
+
+/// SIGTERM must not discard an exchange that is already under way.
+///
+/// A call the listener has accepted is one it will sign under this client's identity
+/// and send to a remote server that may execute it. Returning from `serve` while that
+/// is in flight hands the local caller a connection reset for work that DID happen, and
+/// a caller that retries a reset duplicates the side effect — an at-most-once
+/// expectation the sidecar cannot honour if shutdown only stops the accept loop.
+///
+/// The assertion is on the mechanism: with the stop flag set and one exchange accepted,
+/// `serve` must still be running.
+#[test]
+fn shutdown_waits_for_an_accepted_exchange_instead_of_dropping_it() {
+    let scratch = Scratch::new("shutdown-drain");
+    let mut sidecar = start_sidecar(&scratch, None);
+
+    // A head that promises a body, and only part of that body: the worker is accepted
+    // and in flight, still reading, when the stop flag is set.
+    let mut stream = TcpStream::connect(sidecar.addr).expect("connect");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .expect("timeout");
+    let (head_bytes, tail_bytes) = CALL.split_at(20);
+    stream
+        .write_all(
+            format!(
+                "POST /route/r1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{}",
+                CALL.len(),
+                head_bytes
+            )
+            .as_bytes(),
+        )
+        .expect("write the head and a partial body");
+    stream.flush().expect("flush");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    sidecar
+        .stop
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(
+        !sidecar
+            .handle
+            .as_ref()
+            .expect("the listener thread is running")
+            .is_finished(),
+        "serve returned while an accepted exchange was still in flight"
+    );
+
+    // Finish the call: it must complete normally, not die with the accept loop.
+    stream.write_all(tail_bytes.as_bytes()).expect("write tail");
+    stream.flush().expect("flush");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("read the reply");
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    assert!(
+        text.starts_with("HTTP/1.1 200 "),
+        "the in-flight exchange must complete: {text}"
+    );
+
+    // And once it has drained, `serve` returns without waiting out the whole grace.
+    let started = std::time::Instant::now();
+    sidecar
+        .handle
+        .take()
+        .expect("handle")
+        .join()
+        .expect("the listener thread joins");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "serve waited {:?} after the last exchange drained",
+        started.elapsed()
+    );
 }

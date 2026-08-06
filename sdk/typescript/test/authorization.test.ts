@@ -241,3 +241,38 @@ describe("policy fails closed", () => {
     expect(() => AuthorizationBindingPolicy.permitting(["pdp-decision"]).check([])).not.toThrow();
   });
 });
+
+describe("canonical bindingsJson is byte-identical across SDKs", () => {
+  it("emits raw UTF-8 for a non-ASCII binding field, and the same digest Python records", () => {
+    // `authzBindingDigest` is taken over exactly this text, and SDK-1/SDK-4 require the
+    // two languages to record the same digest for the same bindings — an audit pipeline
+    // reconciling a Python client's record against a TypeScript client's must not read a
+    // difference in serializer as "the artifact binding changed". `JSON.stringify` emits
+    // raw UTF-8; `json.dumps` escapes non-ASCII as `\uXXXX` unless told not to, so a
+    // tenant name or grant handle carrying one diverged.
+    //
+    // LITERALS, not a recomputation: the Python twin pins these same two strings, which
+    // is the whole point of writing them down
+    // (`test_the_canonical_bindings_json_emits_raw_utf8_like_json_stringify`).
+    const json = bindingsJson(
+      [
+        new AuthzSystemReferenceProvider("pdp-decision", Buffer.from("doc"), {
+          authorizationSystemId: "pdp-sé",
+          referenceSchemeId: "urn:système",
+          referenceValue: "grant-café-✓",
+        }),
+      ],
+      CTX,
+    );
+
+    expect(json).toBe(
+      '[{"artifact_type":"pdp-decision","authorization_system_id":"pdp-sé",' +
+        '"form":"authz-system-reference","material_b64url":"ZG9j",' +
+        '"reference_scheme_id":"urn:système","reference_value":"grant-café-✓"}]',
+    );
+    expect(json).not.toContain("\\u");
+    expect(`sha-256:${createHash("sha256").update(json!, "utf8").digest("base64url")}`).toBe(
+      "sha-256:5qndaYSZ4RWRPC68gVX125zTyK8XeWHdwWvnFZnr0XI",
+    );
+  });
+});

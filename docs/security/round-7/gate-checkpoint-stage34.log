@@ -1,0 +1,234 @@
+
+[stage 1] static gates (tags, ports, secrets, chart, vocabulary)   SKIPPED
+
+[stage 2] cargo suites + SDK downloaders (workspace, features, py/ts) SKIPPED
+
+=====================================================================
+[stage 3] bazel parity (//...)
+=====================================================================
+bazel-gazelle-gate: PASS — no unmanaged semantic drift.
+  (tracked known drift still allowlisted:)
+    - http_profile_client: MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic
+    - http_profile_proxy: MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic
+INFO: Checking for file changes...
+Computing main repo mapping: 
+Loading: 
+Loading: 0 packages loaded
+Analyzing: 113 targets (0 packages loaded, 0 targets configured)
+Analyzing: 113 targets (0 packages loaded, 0 targets configured)
+
+INFO: Analyzed 113 targets (0 packages loaded, 1169 targets configured).
+[1,286 / 1,541] 6 / 78 tests; Compiling Rust bin mcp_re_core_test (11 files); 0s darwin-sandbox ... (12 actions running)
+[1,413 / 1,562] 9 / 78 tests; Compiling Rust bin mcp_re_http_profile_test (26 files); 2s darwin-sandbox ... (14 actions running)
+[1,437 / 1,572] 11 / 78 tests; Compiling Rust bin mcp_re_http_profile_test (26 files); 3s darwin-sandbox ... (14 actions, 13 running)
+[1,458 / 1,579] 16 / 78 tests; Compiling Rust bin mcp_re_http_profile_test (26 files); 4s darwin-sandbox ... (14 actions running)
+[1,474 / 1,583] 21 / 78 tests; Compiling Rust rlib mcp_re_proxy_ext (48 files); 4s darwin-sandbox ... (14 actions running)
+[1,487 / 1,587] 25 / 78 tests; Compiling Rust bin proxy_ext_unit_test (48 files); 5s darwin-sandbox ... (14 actions, 13 running)
+[1,501 / 1,592] 29 / 78 tests; Compiling Rust bin proxy_ext_unit_test (48 files); 6s darwin-sandbox ... (14 actions running)
+[1,515 / 1,597] 33 / 78 tests; Compiling Rust bin proxy_ext_unit_test (48 files); 7s darwin-sandbox ... (14 actions running)
+[1,539 / 1,604] 37 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 1s darwin-sandbox ... (14 actions running)
+[1,549 / 1,608] 38 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 2s darwin-sandbox ... (14 actions, 13 running)
+[1,557 / 1,610] 43 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 3s darwin-sandbox ... (14 actions running)
+[1,561 / 1,611] 45 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 5s darwin-sandbox ... (14 actions running)
+[1,568 / 1,613] 47 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 6s darwin-sandbox ... (14 actions, 13 running)
+[1,579 / 1,617] 50 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 7s darwin-sandbox ... (14 actions, 13 running)
+[1,587 / 1,619] 55 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 8s darwin-sandbox ... (14 actions running)
+[1,591 / 1,619] 58 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 9s darwin-sandbox ... (14 actions, 12 running)
+[1,594 / 1,619] 61 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 10s darwin-sandbox ... (14 actions running)
+[1,598 / 1,619] 66 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 11s darwin-sandbox ... (14 actions running)
+[1,601 / 1,619] 69 / 78 tests; Testing //mcp-re-proxy:proxy_unit_test; 12s darwin-sandbox ... (11 actions running)
+[1,607 / 1,619] 74 / 78 tests; Testing //mcp-re-proxy:proxy_ext_unit_test; 12s darwin-sandbox ... (5 actions running)
+INFO: Found 35 targets and 78 test targets...
+INFO: Elapsed time: 27.244s, Critical Path: 21.29s
+INFO: 224 processes: 1395 action cache hit, 70 internal, 226 darwin-sandbox, 1 local.
+INFO: Build completed successfully, 224 total actions
+//mcp-re-client:mcp_re_client_cli_test                          (cached) PASSED in 0.4s
+//mcp-re-client:mcp_re_client_test                              (cached) PASSED in 1.1s
+//mcp-re-conformance:corpus_pinning_test                        (cached) PASSED in 0.1s
+//mcp-re-conformance:forbidden_claim_guard_test                 (cached) PASSED in 0.3s
+//mcp-re-core:firewall_test                                     (cached) PASSED in 0.3s
+//mcp-re-client:local_leg_e2e_test                                       PASSED in 3.8s
+//mcp-re-client-core:mcp_re_client_core_test                             PASSED in 2.0s
+//mcp-re-client-proxy:mcp_re_client_proxy_test                           PASSED in 0.5s
+//mcp-re-conformance:audit_vocabulary_guard_test                         PASSED in 0.1s
+//mcp-re-conformance:delegation_cross_verification_test                  PASSED in 0.4s
+//mcp-re-conformance:delegation_vectors_test                             PASSED in 1.3s
+//mcp-re-conformance:full_profile_parity_test                            PASSED in 1.1s
+//mcp-re-conformance:http_profile_vectors_test                           PASSED in 0.4s
+//mcp-re-conformance:mcp_2026_07_28_alignment_test                       PASSED in 0.6s
+//mcp-re-conformance:method_name_drift_guard_test                        PASSED in 0.1s
+//mcp-re-conformance:method_transparency_test                            PASSED in 1.6s
+//mcp-re-conformance:rfc9421_cross_verification_test                     PASSED in 0.4s
+//mcp-re-conformance:rfc9421_security_properties_test                    PASSED in 2.1s
+//mcp-re-conformance:scitt_cross_verification_test                       PASSED in 1.6s
+//mcp-re-conformance:scitt_interop_test                                  PASSED in 1.3s
+//mcp-re-conformance:scitt_vectors_test                                  PASSED in 0.5s
+//mcp-re-conformance:security_traceability_guard_test                    PASSED in 0.1s
+//mcp-re-core:mcp_re_core_test                                           PASSED in 1.2s
+//mcp-re-demo:demo_fixtures_test                                         PASSED in 1.9s
+//mcp-re-http-profile:admission_binding_test                             PASSED in 1.5s
+//mcp-re-http-profile:algorithm_confusion_test                           PASSED in 0.1s
+//mcp-re-http-profile:binding_identifier_test                            PASSED in 2.0s
+//mcp-re-http-profile:bodyless_202_test                                  PASSED in 0.9s
+//mcp-re-http-profile:chain_reconstruction_test                          PASSED in 3.2s
+//mcp-re-http-profile:delegated_202_test                                 PASSED in 2.0s
+//mcp-re-http-profile:delegation_e2e_test                                PASSED in 2.0s
+//mcp-re-http-profile:dispatch_test                                      PASSED in 0.5s
+//mcp-re-http-profile:full_profile_test                                  PASSED in 3.0s
+//mcp-re-http-profile:json_mode_test                                     PASSED in 1.7s
+//mcp-re-http-profile:mcp_re_http_profile_test                           PASSED in 1.8s
+//mcp-re-http-profile:mcp_transport_headers_test                         PASSED in 0.1s
+//mcp-re-http-profile:proof_path_test                                    PASSED in 1.5s
+//mcp-re-http-profile:rfc9421_kat                                        PASSED in 3.2s
+//mcp-re-http-profile:signer_seam_test                                   PASSED in 3.2s
+//mcp-re-http-profile:structured_fields_strictness_test                  PASSED in 2.0s
+//mcp-re-policy:mcp_re_policy_test                                       PASSED in 0.4s
+//mcp-re-proxy:admission_currency_serving_test                           PASSED in 2.7s
+//mcp-re-proxy:async_drain_test                                          PASSED in 4.7s
+//mcp-re-proxy:async_replay_test                                         PASSED in 2.9s
+//mcp-re-proxy:aws_irsa_web_identity_test                                PASSED in 3.4s
+//mcp-re-proxy:config_snapshot_hot_reload_test                           PASSED in 2.8s
+//mcp-re-proxy:cpstore_etcd_e2e_test                                     PASSED in 2.8s
+//mcp-re-proxy:delegated_client_server_e2e_test                          PASSED in 2.8s
+//mcp-re-proxy:delegated_production_wiring_test                          PASSED in 2.5s
+//mcp-re-proxy:delegated_serving_test                                    PASSED in 2.0s
+//mcp-re-proxy:dev_env_key_source_test                                   PASSED in 2.8s
+//mcp-re-proxy:fault_injection_test                                      PASSED in 2.0s
+//mcp-re-proxy:http_inner_test                                           PASSED in 2.6s
+//mcp-re-proxy:http_profile_dispatch_test                                PASSED in 2.0s
+//mcp-re-proxy:key_source_test                                           PASSED in 1.9s
+//mcp-re-proxy:mrt_continuation_serving_test                             PASSED in 1.8s
+//mcp-re-proxy:mtls_client_leg_e2e_test                                  PASSED in 3.1s
+//mcp-re-proxy:mtls_transport_binding_test                               PASSED in 2.4s
+//mcp-re-proxy:ocsp_e2e_test                                             PASSED in 1.7s
+//mcp-re-proxy:per_request_revocation_test                               PASSED in 2.9s
+//mcp-re-proxy:pkcs11_keysource_e2e_test                                 PASSED in 1.7s
+//mcp-re-proxy:proxy_ext_unit_test                                       PASSED in 12.8s
+//mcp-re-proxy:proxy_unit_test                                           PASSED in 13.1s
+//mcp-re-proxy:redis_continuation_e2e_test                               PASSED in 2.7s
+//mcp-re-proxy:redis_replay_e2e_test                                     PASSED in 2.6s
+//mcp-re-proxy:redis_trust_epoch_e2e_test                                PASSED in 1.7s
+//mcp-re-proxy:replay_race_harness_test                                  PASSED in 2.8s
+//mcp-re-proxy:revocation_serving_wiring_test                            PASSED in 3.0s
+//mcp-re-proxy:rfc9421_round_trip_test                                   PASSED in 1.9s
+//mcp-re-proxy:root_authority_manifest_test                              PASSED in 2.8s
+//mcp-re-proxy:root_key_lifecycle_test                                   PASSED in 2.2s
+//mcp-re-proxy:tls_test                                                  PASSED in 2.5s
+//mcp-re-proxy:transparency_e2e_test                                     PASSED in 2.8s
+//mcp-re-proxy:verified_context_carrier_test                             PASSED in 2.7s
+//mcp-re-transport:dos_hardening_test                                    PASSED in 3.2s
+//mcp-re-transport:fault_injection_test                                  PASSED in 2.0s
+//mcp-re-transport:mcp_re_transport_test                                 PASSED in 0.7s
+//mcp-re-transport:mtls_client_test                                      PASSED in 2.1s
+
+Executed 73 out of 78 tests: 78 tests pass.
+There were tests whose specified size is too big. Use the --test_verbose_timeout_warnings command line option to see which ones these are.
+
+=====================================================================
+[stage 4] local SLO lane (ADR-051 §7 anchor + gate)
+=====================================================================
+local-slo-lane: load 9.31 on 14 cores — waiting up to 300s for the box to settle...
+local-slo-lane: settled at load 4.03 after 135s.
+=== building (release, --features async_serve,redis_replay) ===
+   Compiling mcp-re-core v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-core)
+   Compiling mcp-re-policy v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-policy)
+   Compiling mcp-re-http-profile v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-http-profile)
+   Compiling mcp-re-proxy v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-proxy)
+    Finished `release` profile [optimized] target(s) in 32.06s
+   Compiling mcp-re-client-core v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-client-core)
+   Compiling mcp-re-test-paths v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-test-paths)
+   Compiling mcp-re-client-proxy v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-client-proxy)
+   Compiling mcp-re-transport v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-transport)
+   Compiling mcp-re-proxy v0.14.0 (/Users/mats/dev/mcp-re/mcp-re-proxy)
+    Finished `release` profile [optimized] target(s) in 30.26s
+  Executable tests/tls_load_harness_bench.rs (target/release/deps/tls_load_harness_bench-b9816cc776a59984)
+
+=== anchor: 6 rep(s) @ apple-m4-pro-14c-dev / 1 core / concurrency 128 / 8000 req / cold mTLS ===
+--- rep 1/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4491.1 req/s
+added_latency (us) : p50=24478 p99=42905 p999=49525 min=8525 mean=28387 max=50855
+--- rep 2/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4466.8 req/s
+added_latency (us) : p50=24414 p99=42371 p999=50301 min=8494 mean=28543 max=67897
+--- rep 3/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4445.8 req/s
+added_latency (us) : p50=24683 p99=43287 p999=49342 min=7349 mean=28680 max=52160
+--- rep 4/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4450.6 req/s
+added_latency (us) : p50=24824 p99=44786 p999=50498 min=13751 mean=28639 max=52430
+--- rep 5/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4450.8 req/s
+added_latency (us) : p50=24842 p99=44327 p999=56813 min=8073 mean=28646 max=60523
+--- rep 6/6
+declared_cores     : 1 (per-core async fleet, SO_REUSEPORT; pinned via --cores, workers served == this count)
+successes/failures : 8000/0
+throughput         : 4427.6 req/s
+added_latency (us) : p50=24984 p99=44489 p999=58110 min=8463 mean=28792 max=62626
+
+=== gate: each rep vs docs/bench/adr-051-baseline-local.json ===
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4491.1  (bound >= 4701.3)
+  [PASS] p50_added_us         24478  (bound <= 27242)
+  [PASS] p99_added_us         42905  (bound <= 54517)
+  [PASS] p999_added_us        49525  (bound <= 84759)
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4466.8  (bound >= 4701.3)
+  [PASS] p50_added_us         24414  (bound <= 27242)
+  [PASS] p99_added_us         42371  (bound <= 54517)
+  [PASS] p999_added_us        50301  (bound <= 84759)
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4445.8  (bound >= 4701.3)
+  [PASS] p50_added_us         24683  (bound <= 27242)
+  [PASS] p99_added_us         43287  (bound <= 54517)
+  [PASS] p999_added_us        49342  (bound <= 84759)
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4450.6  (bound >= 4701.3)
+  [PASS] p50_added_us         24824  (bound <= 27242)
+  [PASS] p99_added_us         44786  (bound <= 54517)
+  [PASS] p999_added_us        50498  (bound <= 84759)
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4450.8  (bound >= 4701.3)
+  [PASS] p50_added_us         24842  (bound <= 27242)
+  [PASS] p99_added_us         44327  (bound <= 54517)
+  [PASS] p999_added_us        56813  (bound <= 84759)
+
+RESULT: FAIL — throughput regressed below floor
+=== ADR-051 §7 local-regression SLO gate ===
+baseline: adr-051-baseline-local.json  (anchor rps=5530.9, p50=21794us p99=41936us p999=56506us)
+  [FAIL] throughput_rps      4427.6  (bound >= 4701.3)
+  [PASS] p50_added_us         24984  (bound <= 27242)
+  [PASS] p99_added_us         44489  (bound <= 54517)
+  [PASS] p999_added_us        58110  (bound <= 84759)
+
+median throughput over 6 rep(s): 4450.7 rps  (min 4427.6, max 4491.1)
+
+RESULT: FAIL — 6 of 6 rep(s) outside local-regression tolerances.
+
+[stage 4] FAILED: local SLO lane (ADR-051 §7 anchor + gate)
+Fix it, then resume with: scripts/local_gate.sh --from 4
+GATE34_EXIT=1

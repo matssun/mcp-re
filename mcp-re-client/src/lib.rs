@@ -140,6 +140,11 @@ pub struct BuiltClient {
 /// trusts has no basis to verify anything, so it refuses to start rather than serving
 /// while it waits for a manifest to appear.
 pub fn build(config: &ClientConfig, now: i64) -> Result<BuiltClient, StartupError> {
+    // Re-establish the document invariants on whatever was handed in. `from_json`
+    // validates what it parses, but this function takes a `&ClientConfig` whose fields
+    // are all public, so a caller that constructed or mutated one would otherwise reach
+    // the signing pipeline with a config that has never been checked.
+    config.validate().map_err(StartupError::Config)?;
     warn_if_permissive(&config.identity.signing_key_seed_path);
     let signing_key = read_signing_key(&config.identity.signing_key_seed_path)?;
 

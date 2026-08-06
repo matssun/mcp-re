@@ -400,5 +400,104 @@ describe("McpReHttpTransport replaying a recorded delegated session", () => {
       id: 0,
       error: { code: -31001, message: rejection.expect_wire_code },
     });
+    // The core computes whether the receipt is bound to THIS transmission, and that fact
+    // must reach the application. An unbound (preflight) receipt carries no binding to
+    // this request's nonce or evidence, so one such signed receipt answers any request
+    // from any client of that issuer — the caller has to be able to tell "the boundary
+    // rejected MY request" from "a generic rejection arrived" (RSP-7). It travels beside
+    // the frozen token, never inside it. The Python twin pins the same value.
+    expect((reply as { error: { data: unknown } }).error.data).toEqual({ requestBound: true });
+  });
+
+  it("stops the continuation chain when close() lands mid-call", async () => {
+    // close() aborts, but `Promise.race` in send() only decides which result the CALLER
+    // sees — the losing arm keeps running. Without an abort check inside the loop the
+    // chain went on signing and POSTing fresh answer legs, re-populating the correlation
+    // store, after `onclose` had already fired: valid, correctly-signed requests reaching
+    // the server for a call the caller believes it cancelled.
+    const legs = [ELICIT.exchange, ANSWER.exchange];
+    let posted = 0;
+    let transport!: McpReHttpTransport;
+    transport = new McpReHttpTransport(
+      config({
+        nonceFactory: elicitNonces(),
+        answerInputRequired: async () => {
+          // The application closes while the elicitation is being answered — a timeout,
+          // a user cancelling, a shutdown.
+          await transport.close();
+          return ANSWER.responses;
+        },
+      }),
+      async (_m: string, _u: string, _h: unknown, body: Buffer) => {
+        const leg = legs[posted++];
+        expect(body.toString("base64")).toBe(leg.request_body_b64);
+        return {
+          status: leg.status,
+          headers: (leg.headers as [string, string][]).map(([key, value]) => ({ key, value })),
+          body: Buffer.from(leg.body_b64, "base64"),
+        };
+      },
+    );
+    await transport.start();
+    await expect(
+      transport.send({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "tools/call",
+        params: { name: ELICIT.tool, arguments: {} },
+      }),
+    ).rejects.toThrow(/transport was closed/);
+
+    // The mechanism, not just the status: exactly ONE leg reached the wire. The answer
+    // leg was never signed and never posted.
+    expect(posted, "an answer leg was signed and POSTed after close()").toBe(1);
+    expect(transport.pendingCorrelations, "correlation state outlived the transport").toBe(0);
+  });
+
+  it("does not prompt a human for an answer leg a closed transport will never send", async () => {
+    // The other half of the same obligation: close() can also land BEFORE the handler
+    // runs, and `answerInputRequired` is where a human is asked to approve something.
+    // Prompting for an answer leg that can never be signed spends a person's attention
+    // on a call the caller already abandoned, and an approval collected that way has
+    // nowhere to go.
+    let transport!: McpReHttpTransport;
+    let prompted = 0;
+    let posted = 0;
+    transport = new McpReHttpTransport(
+      config({
+        nonceFactory: elicitNonces(),
+        onInputRequired: () => {
+          void transport.close();
+        },
+        answerInputRequired: async () => {
+          prompted += 1;
+          return ANSWER.responses;
+        },
+      }),
+      async () => {
+        posted += 1;
+        return {
+          status: ELICIT.exchange.status,
+          headers: (ELICIT.exchange.headers as [string, string][]).map(([key, value]) => ({
+            key,
+            value,
+          })),
+          body: Buffer.from(ELICIT.exchange.body_b64, "base64"),
+        };
+      },
+    );
+    await transport.start();
+    await expect(
+      transport.send({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "tools/call",
+        params: { name: ELICIT.tool, arguments: {} },
+      }),
+    ).rejects.toThrow(/transport was closed/);
+
+    expect(prompted, "a human was prompted after close()").toBe(0);
+    expect(posted, "an answer leg reached the wire after close()").toBe(1);
+    expect(transport.pendingCorrelations, "correlation state outlived the transport").toBe(0);
   });
 });

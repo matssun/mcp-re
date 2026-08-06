@@ -47,13 +47,16 @@ fn encode(state: &AuthoritativeAdmission) -> String {
     format!("{}:{}", state.generation, status)
 }
 
-/// Inverse of [`encode`]. `None` on a malformed record.
+/// Inverse of [`encode`]. `None` on a malformed record — the same answer as a record
+/// that is absent, and for the same reason: neither is the authority admitting this
+/// workload, so both are refused outright.
 ///
-/// A malformed record is NOT read as "absent": absent means the authority has no
-/// record, which is a definitive negative the caller refuses, while malformed means
-/// the store answered with something this reader cannot trust to mean anything. The
-/// caller turns that into an outage, so it reaches the degraded fork rather than
-/// silently denying every call in a fleet whose store got corrupted.
+/// A malformed record must never become an OUTAGE. An outage reaches the §5.2 degraded
+/// fork, which serves on the caller's own assertion within P — so overwriting a
+/// `revoked` record with garbage would restore service to the revoked workload under
+/// `--admission-allow-degraded true`, making corruption a cheaper un-revoke than
+/// issuing a new admission. See [`RedisAdmissionSource::current_state`] for the call
+/// site that holds that line.
 fn decode(value: &str) -> Option<AuthoritativeAdmission> {
     let (generation, status) = value.split_once(':')?;
     Some(AuthoritativeAdmission {
@@ -204,9 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_record_is_not_read_as_absent() {
-        // Absent is a verdict about the workload; malformed is a broken store. Reading
-        // one as the other would deny every call in a fleet whose store got corrupted.
+    fn a_malformed_record_is_a_definitive_negative_not_an_outage() {
+        // `None` is the authority saying it has no valid record, which the gate refuses
+        // outright. Reporting an outage instead would route the call to the §5.2
+        // degraded fork, where corrupting a `revoked` record un-revokes the workload.
         for bad in ["", "7", "seven:admitted", "7:unknown", "7:", ":admitted"] {
             assert_eq!(decode(bad), None, "{bad:?} must not decode");
         }

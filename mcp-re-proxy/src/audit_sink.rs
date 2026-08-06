@@ -66,12 +66,70 @@ pub trait AuditSink: Send + Sync {
 /// Deliberately plain text with stable `key=value` fields rather than JSON — the
 /// startup lines and rotation warnings on this channel already use this shape, and a
 /// deployment that wants structured audit ships its own [`AuditSink`].
+///
+/// The line is formatted on the request path and then HANDED OFF: a dedicated thread
+/// owns stderr, so the trait's "MUST NOT block the request path" is a property of the
+/// implementation rather than a hope about the writer. It matters because `record` is
+/// reached from the preflight rejection path — before any signature verifies — so an
+/// unauthenticated peer decides how often it is called. Writing inline meant a log
+/// collector applying backpressure, a rotation, or a full volume stalled the serving
+/// core inside the request future, and a closed stderr PANICKED the connection task.
+/// Neither degrades to "audit lost, request served", which is the documented intent.
+///
+/// The hand-off queue is bounded and DROPS when full, which is the same intent from the
+/// other side: audit must never fail or delay a request. Drops are counted and reported
+/// on the channel itself, so a gap in the record is visible as a gap rather than
+/// inferred from silence.
 #[derive(Debug, Default)]
 pub struct StderrAuditSink;
 
+/// Bounded hand-off depth. Deep enough to absorb a burst while the writer is inside one
+/// `write` syscall, shallow enough that a stalled writer costs bounded memory.
+const STDERR_AUDIT_QUEUE_DEPTH: usize = 4096;
+
+/// The writer's channel, started on first use.
+///
+/// Process-global because the sink is a unit type installed once and shared by every
+/// core: one stderr, one thread that owns it, one queue in front of it.
+static STDERR_AUDIT_WRITER: std::sync::OnceLock<std::sync::mpsc::SyncSender<String>> =
+    std::sync::OnceLock::new();
+
+/// Records that never reached the writer because the queue was full.
+static STDERR_AUDIT_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn stderr_audit_writer() -> &'static std::sync::mpsc::SyncSender<String> {
+    STDERR_AUDIT_WRITER.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<String>(STDERR_AUDIT_QUEUE_DEPTH);
+        // A detached thread: it lives as long as the process, and the sink it drains for
+        // is a `static`. Errors from the write are swallowed — a sink that cannot write
+        // must not fail a request, and there is nowhere else to report them.
+        let _ = std::thread::Builder::new()
+            .name("mcp-re-audit".to_owned())
+            .spawn(move || {
+                use std::io::Write;
+                while let Ok(line) = receiver.recv() {
+                    let dropped =
+                        STDERR_AUDIT_DROPPED.swap(0, std::sync::atomic::Ordering::Relaxed);
+                    let mut stderr = std::io::stderr().lock();
+                    if dropped > 0 {
+                        let _ = writeln!(
+                            stderr,
+                            "mcp-re-proxy: audit dropped={dropped} (the audit hand-off \
+                             queue was full; that many decisions are missing from this \
+                             stream)"
+                        );
+                    }
+                    let _ = stderr.write_all(line.as_bytes());
+                    let _ = stderr.write_all(b"\n");
+                }
+            });
+        sender
+    })
+}
+
 impl AuditSink for StderrAuditSink {
     fn record(&self, record: &AuditRecord) {
-        eprintln!(
+        let line = format!(
             "mcp-re-proxy: audit event={} decision={:?} reason={} actor={} status={} at={}",
             record.event.event_type,
             record.event.decision,
@@ -80,6 +138,22 @@ impl AuditSink for StderrAuditSink {
             record.status,
             record.at_unix,
         );
+        offer(stderr_audit_writer(), &STDERR_AUDIT_DROPPED, line);
+    }
+}
+
+/// Hand one line to a writer, counting it as dropped rather than waiting for room.
+///
+/// Never blocks and never fails the caller: this is called on the request path, and a
+/// full queue means the audit stream has a gap — not that the request must stall or be
+/// refused.
+fn offer(
+    queue: &std::sync::mpsc::SyncSender<String>,
+    dropped: &std::sync::atomic::AtomicU64,
+    line: String,
+) {
+    if queue.try_send(line).is_err() {
+        dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -144,6 +218,28 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].event.event_type, "mcp-re.request.accepted");
         assert_eq!(records[1].event.reason, Some("mcp-re.replay_detected"));
+    }
+
+    /// R7-C145: the emission must never wait on the reader. `record` is reached from
+    /// the preflight rejection path, so an unauthenticated peer sets its rate; a
+    /// stalled log collector would otherwise stall the serving core inside the request
+    /// future.
+    #[test]
+    fn a_full_audit_queue_drops_rather_than_blocking_the_caller() {
+        let (queue, held) = std::sync::mpsc::sync_channel::<String>(1);
+        let dropped = std::sync::atomic::AtomicU64::new(0);
+
+        // Nothing ever receives from `held`, so after one line the queue is full.
+        for i in 0..1000 {
+            offer(&queue, &dropped, format!("line {i}"));
+        }
+
+        assert_eq!(
+            dropped.load(std::sync::atomic::Ordering::SeqCst),
+            999,
+            "every line past the queue's capacity is dropped and counted, not queued"
+        );
+        drop(held);
     }
 
     #[test]

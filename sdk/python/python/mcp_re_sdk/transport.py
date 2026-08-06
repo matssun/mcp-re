@@ -44,6 +44,7 @@ import base64
 import hashlib
 import inspect
 import json
+import re
 import secrets
 import sys
 import time
@@ -100,12 +101,14 @@ class NotificationNotAcknowledged(McpReSdkError):
     boundary authenticated and accepted it: the 202 was absent, unsigned, signed by an
     untrusted key, or bound to a different transmission.
 
-    **This tears the transport down**, because a notification has no reply for an error
-    to ride back on. There is no request id to correlate a failure to and no application
-    call awaiting an answer, so the only alternatives are to continue a session in which
-    an unverifiable claim of acceptance was accepted, or to say nothing at all. Both
-    reduce to taking the peer's word for it, which is the posture this protocol exists to
-    remove. ``wire_code`` carries the frozen reason when the failure has one.
+    A notification has no reply for a JSON-RPC error to ride back on and no request id to
+    correlate one to, so this is reported to :attr:`McpReConfig.on_undeliverable` rather
+    than delivered to the session. The notification is NOT treated as delivered — nothing
+    acknowledges it, which is the honest outcome for a message whose acknowledgement did
+    not verify — and unrelated exchanges are untouched: the peer decides when a 202 fails
+    to verify, so ending the session on one would hand it a session kill.
+
+    ``wire_code`` carries the frozen ``mcp-re.*`` reason when the failure has one.
     """
 
     def __init__(self, method: str, wire_code: str) -> None:
@@ -318,6 +321,22 @@ class McpReConfig:
     #: ack for `notifications/cancelled` does not mean anything was cancelled.
     on_notification_acknowledged: Optional[Callable[[str, str], None]] = None
 
+    #: Called with `(descriptor, error)` when an outbound message's outcome cannot be
+    #: correlated to a request id, so it cannot be delivered as a JSON-RPC error. Two
+    #: events reach it: a notification whose signed 202 did not verify
+    #: (:class:`NotificationNotAcknowledged`, descriptor = the method), and a
+    #: client->server response, which MCP-RE profiles no carrier for
+    #: (:class:`ClientResponseUnsupported`, descriptor = the JSON-RPC message type).
+    #:
+    #: This is the only place either outcome is observable, so it is where an embedder
+    #: learns that a message it emitted was NOT delivered. It belongs to the config
+    #: rather than the module because a process-global sink lets one embedder's
+    #: assignment swallow another transport's failures.
+    #:
+    #: Unset, the module-level ``mcp_re_sdk.transport.on_notification_failure`` is the
+    #: process-wide fallback, and it prints to stderr.
+    on_undeliverable: Optional[Callable[[str, BaseException], None]] = None
+
     #: Called when a verified response is an ADR-MCPS-047 `InputRequiredResult`, with the
     #: handles its answer leg must sign over. Observability only: it fires once per
     #: continuation round, and it does not decide anything. Answering is
@@ -374,6 +393,26 @@ class McpReConfig:
                 f"max_clock_skew must be an integer in 0..={MAX_CLOCK_SKEW_BOUND} "
                 f"seconds, got {s!r}"
             )
+        # The revocation denylist, checked for SHAPE because this is the one field whose
+        # wrong value fails OPEN. A single identifier written as a bare string satisfies
+        # `Sequence[str]`, so no type checker objects, and `list("kid-1")` expands it to
+        # one entry per character: the denylist is non-empty, reports as configured, and
+        # matches no `delegated_kid`, `issuer_kid` or `jti` that can exist. The operator
+        # believes a compromised key is revoked while the client accepts it for its whole
+        # TTL and epoch window.
+        if isinstance(self.revoked_identifiers, (str, bytes, bytearray)):
+            raise McpReSdkError(
+                "revoked_identifiers must be a sequence of identifier strings, not a "
+                f"bare {type(self.revoked_identifiers).__name__}: it would be expanded "
+                "one character per entry, matching no identifier and disabling "
+                "revocation while reporting a denylist as configured"
+            )
+        bad = [v for v in self.revoked_identifiers if not isinstance(v, str) or not v]
+        if bad:
+            raise McpReSdkError(
+                f"revoked_identifiers entries must be non-empty strings, got {bad!r}; "
+                "an entry that cannot match an identifier silently revokes nothing"
+            )
         # The delegated-verification anchor. Every field below is compared against the
         # credential the server presents, and an empty value cannot match anything: an
         # empty `accepted_epochs` fails every response as a stale trust epoch, an empty
@@ -416,15 +455,23 @@ def _binding_context(config: McpReConfig, method: str) -> BindingRequestContext:
 
 
 def _bindings_json(config: McpReConfig, method: str) -> Optional[str]:
-    """The provider specs, serialized CANONICALLY (compact separators, sorted keys).
+    """The provider specs, serialized CANONICALLY, byte-identical to TypeScript.
 
-    Byte-identical to the TypeScript twin's ``bindingsJson``. It was not: ``json.dumps``
-    defaults to ``", "``/``": "`` separators and ``JSON.stringify`` emits none, so the
-    same bindings produced two different ``authz_binding_digest`` values and an audit
-    pipeline reconciling records across the two SDKs saw a false "artifact binding
-    changed" on byte-identical requests. Neither SDK's own test could see it — each
-    recomputed the expectation with its own serializer — and the parity fixture replays
-    the Python string verbatim.
+    Three settings are what make it byte-identical to the TypeScript twin's
+    ``bindingsJson``, and each one is a way the two serializers differ by default:
+
+    * ``separators=(",", ":")`` — ``json.dumps`` pads with ``", "``/``": "``,
+      ``JSON.stringify`` emits none;
+    * ``sort_keys=True`` — key order is otherwise whatever each provider built;
+    * ``ensure_ascii=False`` — ``json.dumps`` escapes every non-ASCII character as
+      ``\\uXXXX``, ``JSON.stringify`` emits raw UTF-8, so an ``authorization_system_id``,
+      ``reference_scheme_id`` or ``reference_value`` carrying a non-ASCII character
+      (a tenant name, a grant handle) would digest to two different values.
+
+    :func:`_authz_binding_digest` is taken over exactly this text, and SDK-1/SDK-4
+    require the two languages to record the same digest for the same bindings — an audit
+    pipeline reconciling a Python client's record against a TypeScript client's must not
+    read a difference in serializer as "the artifact binding changed".
 
     The wire is unaffected either way: the native core re-parses this structurally and
     digests the decoded material, never this text.
@@ -436,6 +483,7 @@ def _bindings_json(config: McpReConfig, method: str) -> Optional[str]:
         [p.spec(ctx) for p in config.authorization],
         separators=(",", ":"),
         sort_keys=True,
+        ensure_ascii=False,
     )
 
 
@@ -498,13 +546,42 @@ def _answer_leg_id(request_id, round_index: int) -> str:
     return f"{request_id}/mrt-{round_index}"
 
 
-def _error_message(request_id, wire_code: str) -> SessionMessage:
-    """A JSON-RPC error correlated to the request, so the awaiting call raises."""
+#: How the native binding spells a core failure: ``"mcp-re: mcp-re.<token>"``.
+_WIRE_PREFIX = "mcp-re: "
+
+#: The shape of a frozen wire code. Anything else is not one.
+_WIRE_CODE = re.compile(r"^mcp-re\.[a-z0-9_]+$")
+
+
+def _peer_wire_code(message: str) -> Optional[str]:
+    """The frozen ``mcp-re.*`` token in a core error's message, or ``None``.
+
+    The PyO3 binding formats every core failure as ``"mcp-re: mcp-re.<token>"``. What the
+    taxonomy pins — and what a caller branches on without parsing prose (REQ-14/POL-6) —
+    is the TOKEN, so the binding's prefix is stripped before the code is delivered.
+    Byte-identical to the TypeScript twin's ``peerWireCode``: both spellings are accepted,
+    since the prefix is a binding detail.
+
+    ``None`` for anything that is not a token, so a local condition — a reset connection,
+    a TLS error, a timeout raised by the caller's ``poster`` — can be delivered under the
+    ``mcp-re-sdk:`` prefix instead of occupying the field that otherwise only ever holds
+    something the peer said.
+    """
+    token = message[len(_WIRE_PREFIX):] if message.startswith(_WIRE_PREFIX) else message
+    return token if _WIRE_CODE.match(token) else None
+
+
+def _error_message(request_id, wire_code: str, data: Any = None) -> SessionMessage:
+    """A JSON-RPC error correlated to the request, so the awaiting call raises.
+
+    ``data`` carries structured facts about the verdict that are not part of the frozen
+    token — the token itself stays exactly what the peer said.
+    """
     return SessionMessage(
         JSONRPCError(
             jsonrpc="2.0",
             id=request_id,
-            error=ErrorData(code=_MCP_RE_ERROR_CODE, message=wire_code),
+            error=ErrorData(code=_MCP_RE_ERROR_CODE, message=wire_code, data=data),
         )
     )
 
@@ -596,11 +673,22 @@ async def _exchange(
 
             # A verified rejection receipt is genuine evidence, but it is NOT an
             # acceptance: it must reach the app as an error, never as a result.
+            #
+            # `bound` is the core's verdict on whether the receipt is tied to THIS
+            # transmission. A preflight-unbound receipt carries no binding to this
+            # request's nonce or evidence, so one such signed receipt answers any request
+            # from any client of that issuer for the credential's whole validity window.
+            # It is still an error and never a result, but the application must be able
+            # to tell "the boundary rejected MY request" from "a generic rejection
+            # arrived" (RSP-7), so the binding fact travels in `data` — beside the frozen
+            # token rather than inside it, because the token is what the peer said.
             if verified.outcome != "success":
                 correlation.take(correlation_id, now=config.clock())
                 outstanding.discard(correlation_id)
                 return _error_message(
-                    request.id, verified.wire_code or "mcp-re.response_sig_invalid"
+                    request.id,
+                    verified.wire_code or "mcp-re.response_sig_invalid",
+                    data={"requestBound": bool(verified.bound)},
                 )
 
             if verified.request_state is None:
@@ -737,8 +825,14 @@ async def _notify(config: McpReConfig, poster: Poster, method: str, params) -> N
     except McpReError as e:
         raise NotificationNotAcknowledged(method, e.wire_code) from e
     except ValueError as e:
-        # The core's fail-closed errors arrive as ValueError carrying the frozen token.
-        raise NotificationNotAcknowledged(method, str(e)) from e
+        # The core's fail-closed errors arrive as ValueError carrying the frozen token,
+        # spelled by the binding as `"mcp-re: mcp-re.<token>"`. `wire_code` is documented
+        # as the frozen token, so the prefix is stripped; anything that is not a token is
+        # a local condition and says so.
+        raise NotificationNotAcknowledged(
+            method,
+            _peer_wire_code(str(e)) or f"mcp-re-sdk: {type(e).__name__}: {e}",
+        ) from e
 
     if config.on_notification_acknowledged is not None:
         config.on_notification_acknowledged(method, accepted.server_keyid)
@@ -760,9 +854,18 @@ async def _one(config: McpReConfig, poster: Poster, request: JSONRPCRequest, rea
             # A local failure (e.g. the signing device). No wire code describes it.
             message = _error_message(request.id, f"mcp-re-sdk: {e}")
         except ValueError as e:
-            # The core's own fail-closed errors arrive as ValueError carrying the
-            # frozen token; deliver it rather than letting the caller hang.
-            message = _error_message(request.id, str(e))
+            # The core's own fail-closed errors arrive as ValueError carrying the frozen
+            # token, which the binding spells `"mcp-re: mcp-re.<token>"`; deliver the
+            # TOKEN rather than letting the caller hang, because that is what the
+            # taxonomy pins and what a caller branches on.
+            #
+            # A `ValueError` that is NOT a token came from somewhere else — the caller's
+            # `poster` doing real I/O, say — and is delivered under the prefix that means
+            # "local condition", so it can never be read as something the peer said.
+            message = _error_message(
+                request.id,
+                _peer_wire_code(str(e)) or f"mcp-re-sdk: {type(e).__name__}: {e}",
+            )
         except Exception as e:
             # Anything else — and in practice that is dominated by the caller's `poster`
             # doing real I/O: a reset connection, a TLS error, a timeout. Exchanges run
@@ -811,31 +914,41 @@ async def _one_notification(config: McpReConfig, poster: Poster, method: str, pa
         try:
             await _notify(config, poster, method, params)
         except Exception as e:  # noqa: BLE001 - see the docstring
-            _report_notification_failure(method, e)
+            _report_undeliverable(config, method, e)
 
 
-def _report_notification_failure(method: str, error: BaseException) -> None:
-    """Surface a contained notification failure without ending the session.
+def _report_undeliverable(
+    config: McpReConfig, descriptor: str, error: BaseException
+) -> None:
+    """Surface an outbound message that was not delivered, without ending the session.
 
-    A hook rather than a bare ``print`` so an embedder can route it: there is no reply
-    channel for a one-way message, so this is the only place the outcome can be
-    observed, and swallowing it entirely would be its own defect. Assign
-    ``mcp_re_sdk.transport.on_notification_failure`` to override.
+    Two events reach here, and neither has a request id a JSON-RPC error could be
+    correlated to: a notification whose signed 202 did not verify, and a client->server
+    response, which MCP-RE profiles no carrier for. This is therefore the only place
+    either outcome is observable, and swallowing it entirely would be its own defect.
+
+    :attr:`McpReConfig.on_undeliverable` first, so two transports in one process cannot
+    swallow each other's failures; the module-level ``on_notification_failure`` is the
+    process-wide fallback for a config that installs no hook of its own.
     """
-    on_notification_failure(method, error)
+    hook = config.on_undeliverable
+    if hook is None:
+        hook = on_notification_failure
+    hook(descriptor, error)
 
 
-def _default_notification_failure(method: str, error: BaseException) -> None:
+def _default_undeliverable(descriptor: str, error: BaseException) -> None:
     print(
-        f"mcp-re-sdk: notification {method!r} was not acknowledged: "
-        f"{type(error).__name__}: {error}",
+        f"mcp-re-sdk: {descriptor} was not delivered: {type(error).__name__}: {error}",
         file=sys.stderr,
     )
 
 
-#: Called when a notification's acknowledgement did not verify. Replaceable by an
-#: embedder that wants the event routed somewhere other than stderr.
-on_notification_failure = _default_notification_failure
+#: The process-wide fallback sink for an outbound message that was not delivered — a
+#: notification whose acknowledgement did not verify, or a refused client->server
+#: response. Replaceable by an embedder that wants the event routed somewhere other than
+#: stderr; :attr:`McpReConfig.on_undeliverable` overrides it per transport.
+on_notification_failure = _default_undeliverable
 
 
 async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
@@ -869,11 +982,25 @@ async def _pump(config: McpReConfig, poster: Poster, write_reader, read_writer,
                     # A client->server RESPONSE or error. It has no `method`, so the
                     # notification path above could only carry it by signing a fabricated
                     # message; refuse it instead of inventing one.
-                    raise ClientResponseUnsupported(
-                        f"{type(message).__name__} is a client->server response; MCP-RE "
-                        f"profiles a signed request and a signed notification, and a "
-                        f"response is neither"
+                    #
+                    # REPORTED, not raised. This loop is the parent task of the task
+                    # group that runs every concurrent exchange, so raising here cancels
+                    # all of them and ends the transport — and the trigger is
+                    # peer-influenceable: a verified reply body carrying a `method`
+                    # parses as a server->client request, `ClientSession` answers it with
+                    # a response, and that answer arrives right here. One reply body
+                    # would end an entire session, including every unrelated in-flight
+                    # signed tool call. The TypeScript twin fails only the one `send()`.
+                    _report_undeliverable(
+                        config,
+                        type(message).__name__,
+                        ClientResponseUnsupported(
+                            f"{type(message).__name__} is a client->server response; "
+                            f"MCP-RE profiles a signed request and a signed "
+                            f"notification, and a response is neither"
+                        ),
                     )
+                    continue
                 tg.start_soon(_one, config, poster, message, read_writer, limiter, correlation)
 
 

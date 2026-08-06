@@ -21,9 +21,26 @@
 //! reader, proven by the gated live e2e.
 
 use std::sync::Mutex;
+use std::sync::MutexGuard;
+use std::sync::PoisonError;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::push_trust::InvalidationChannel;
 use crate::push_trust::InvalidationEvent;
+
+/// Take a lock, recovering it if a panic elsewhere poisoned it.
+///
+/// What these mutexes guard is a queue of pending invalidations, the last epoch this
+/// node saw, and two liveness readings — none of which a panic can leave in a state
+/// that is unsafe to read. Treating poison as a failure instead drops an operator's
+/// revocation on the floor permanently and silently, because the queue is the only
+/// path a `FlushAll` has to the trust cache.
+fn recover<'a, T>(
+    lock: Result<MutexGuard<'a, T>, PoisonError<MutexGuard<'a, T>>>,
+) -> MutexGuard<'a, T> {
+    lock.unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Default Redis key holding the monotonic trust epoch.
 pub const DEFAULT_TRUST_EPOCH_KEY: &str = "mcp-re:trust:epoch";
@@ -58,6 +75,12 @@ pub struct TrustEpochSource<R: EpochReader> {
     /// Events produced by [`poll_once`](TrustEpochSource::poll_once) and not yet
     /// drained. This is what keeps the store read OFF the request path.
     pending: Mutex<Vec<InvalidationEvent>>,
+    /// When [`poll_once`](TrustEpochSource::poll_once) last ran to completion.
+    last_poll: Mutex<Option<Instant>>,
+    /// How long this source may go unpolled before it stops calling itself healthy.
+    /// `None` when no poller was spawned over it (a directly-driven source has no
+    /// cadence to fall behind).
+    liveness_bound: Mutex<Option<Duration>>,
 }
 
 impl<R: EpochReader> TrustEpochSource<R> {
@@ -69,7 +92,48 @@ impl<R: EpochReader> TrustEpochSource<R> {
             last_seen: Mutex::new(None),
             healthy: Mutex::new(true),
             pending: Mutex::new(Vec::new()),
+            last_poll: Mutex::new(None),
+            liveness_bound: Mutex::new(None),
         }
+    }
+
+    /// Start requiring a poll within `bound`, because a poller is now responsible for
+    /// producing one. Called by [`spawn_trust_epoch_poller`].
+    fn require_polling_within(&self, bound: Duration) {
+        *recover(self.liveness_bound.lock()) = Some(bound);
+    }
+
+    /// Whether this source has been polled recently enough for `healthy` to still
+    /// describe it.
+    ///
+    /// `healthy` is a latch that only `poll_once` writes, so a poller that has stopped
+    /// running — a panic, a thread that never started, a wedged read — leaves it at
+    /// whatever it last said, which is `true` for every replica that was working when
+    /// it stopped. That replica would keep asserting a one-poll-interval revocation
+    /// window it no longer provides, and an operator's `INCR` would never reach its
+    /// trust cache. Silence past the bound is therefore unhealthy on its own.
+    fn polled_recently(&self) -> bool {
+        let Some(bound) = *recover(self.liveness_bound.lock()) else {
+            return true;
+        };
+        match *recover(self.last_poll.lock()) {
+            Some(at) => at.elapsed() <= bound,
+            // A poller is expected but has not produced its first poll yet: there is no
+            // baseline, so there is no invalidation guarantee to claim.
+            None => false,
+        }
+    }
+
+    /// Record that the poller is gone, so `healthy` stops describing a source nothing
+    /// is driving.
+    fn report_poller_death(&self) {
+        *recover(self.healthy.lock()) = false;
+        *recover(self.last_poll.lock()) = None;
+        eprintln!(
+            "mcp-re-proxy: WARNING: the trust-epoch poller thread has stopped; this replica no \
+             longer detects epoch advances and now reports its push tier UNHEALTHY, which \
+             reverts the surfaced guarantee to the bounded-T trust-cache TTL."
+        );
     }
 
     /// Read the epoch ONCE and queue a [`InvalidationEvent::FlushAll`] if it moved.
@@ -88,35 +152,32 @@ impl<R: EpochReader> TrustEpochSource<R> {
     /// request after an advance" to "flush within one poll interval", which is what
     /// the startup line now says.
     pub fn poll_once(&self) {
+        // Recorded whatever the read says: this timestamp is proof the POLLER is
+        // running, which is a different question from whether the STORE answered.
+        *recover(self.last_poll.lock()) = Some(Instant::now());
         let epoch = match self.reader.read_epoch() {
             Ok(e) => e,
             Err(_) => {
                 // Fail closed: mark unhealthy so the honesty contract reverts to
                 // bounded-`T`; do NOT advance the baseline, so a change that
                 // happened during the outage is still caught on recovery.
-                if let Ok(mut h) = self.healthy.lock() {
-                    *h = false;
-                }
+                *recover(self.healthy.lock()) = false;
                 return;
             }
         };
-        if let Ok(mut h) = self.healthy.lock() {
-            *h = true;
-        }
-        let mut last = match self.last_seen.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
+        *recover(self.healthy.lock()) = true;
+        let mut last = recover(self.last_seen.lock());
         match *last {
             None => {
                 // First poll: establish the baseline, emit nothing.
                 *last = Some(epoch);
             }
             Some(prev) if epoch != prev => {
+                // The queue push and the baseline advance have to happen together:
+                // advancing without queueing loses the flush permanently, since the
+                // next poll sees no further change.
+                recover(self.pending.lock()).push(InvalidationEvent::FlushAll);
                 *last = Some(epoch);
-                if let Ok(mut pending) = self.pending.lock() {
-                    pending.push(InvalidationEvent::FlushAll);
-                }
             }
             Some(_) => {}
         }
@@ -128,24 +189,46 @@ impl<R: EpochReader> InvalidationChannel for TrustEpochSource<R> {
     /// path (`PushInvalidationTrustCache::resolve` calls it before every lookup), so
     /// it must cost a mutex acquisition and nothing more.
     fn drain_pending(&self) -> Vec<InvalidationEvent> {
-        match self.pending.lock() {
-            Ok(mut pending) => std::mem::take(&mut *pending),
-            Err(_) => Vec::new(),
-        }
+        std::mem::take(&mut *recover(self.pending.lock()))
     }
 
+    /// Healthy means BOTH that the last read succeeded and that a read is still
+    /// happening: a latch nothing writes any more says only what was true when the
+    /// poller was last alive.
     fn is_healthy(&self) -> bool {
-        self.healthy.lock().map(|h| *h).unwrap_or(false)
+        self.polled_recently() && *recover(self.healthy.lock())
     }
 }
 
 // --- Redis-backed reader (feature `redis_replay`) -----------------------------
 
+/// Worst-case wall time ONE [`EpochReader::read_epoch`] may consume.
+///
+/// The delegated rotation loop reads the epoch on its critical path at `exp - overlap`
+/// and cannot mint a successor until the read returns, so this budget is spent out of
+/// the rotation overlap. A read allowed to outlast the overlap lets a single
+/// half-open (not down) connection consume the whole minting window: the successor is
+/// never issued, the current key reaches its `exp`, and every replica answers
+/// `mcp-re.delegated_signing_unavailable` on 100% of requests while the root issuer is
+/// healthy and the epoch never changed. The default overlap is 60s, so the budget
+/// leaves the great majority of it for the mint itself.
+#[cfg(feature = "redis_replay")]
+const TRUST_EPOCH_READ_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Bounded network operations in one read: connect, `GET`, and — on a transient error
+/// — a reconnect and the retried `GET`.
+#[cfg(feature = "redis_replay")]
+const TRUST_EPOCH_OPS_PER_READ: u32 = 4;
+
 /// Bounded connect/op timeout so a sinkholed/half-open Redis cannot wedge the
 /// serve loop: the trust lookup runs before dispatch, so an unbounded blocking GET
-/// would stall the whole proxy. Mirrors `redis_store::DEFAULT_REDIS_TIMEOUT`.
+/// would stall the whole proxy. Sized so the WHOLE read fits in
+/// [`TRUST_EPOCH_READ_BUDGET`], since it is the read the caller waits on, not one
+/// socket operation.
 #[cfg(feature = "redis_replay")]
-const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const TRUST_EPOCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
+    TRUST_EPOCH_READ_BUDGET.as_secs() / TRUST_EPOCH_OPS_PER_READ as u64,
+);
 
 /// A [`EpochReader`] that reads the trust epoch from a Redis key via `GET`, with a
 /// bounded connection and ONE reconnect-and-retry on a broken connection (mirrors
@@ -293,29 +376,54 @@ pub fn redis_trust_epoch_source(
     Ok(TrustEpochSource::new(reader))
 }
 
+/// Missed poll rounds tolerated before a source calls itself unhealthy. A poll that
+/// is merely late — a scheduling delay, a slow read inside its own timeout — must not
+/// read as a dead poller.
+const TRUST_EPOCH_MISSED_POLLS_TOLERATED: u64 = 3;
+
 /// Poll `source` on a cadence from a dedicated thread until `shutdown` flips.
 ///
 /// The poller is what keeps the blocking store read off the request path (see
 /// [`TrustEpochSource::poll_once`]). An immediate first poll establishes the baseline
 /// before serving, so the first advance after startup is detected rather than adopted.
+///
+/// SUPERVISED, because everything downstream believes what this thread last wrote: the
+/// source now requires a poll within a bound before it will call itself healthy, and a
+/// thread that unwinds says so on its way out instead of leaving the latch at `true`.
+/// The `JoinHandle` is still dropped — nothing waits on a process-lifetime poller —
+/// but its death is no longer silent.
 pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
     source: std::sync::Arc<TrustEpochSource<R>>,
     interval_secs: u64,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    source.require_polling_within(Duration::from_secs(
+        interval_secs
+            .max(1)
+            .saturating_mul(TRUST_EPOCH_MISSED_POLLS_TOLERATED)
+            // The read itself is bounded, and a poll that is out reading has not
+            // fallen behind; allow for one full read on top of the missed rounds.
+            .saturating_add(interval_secs.max(1)),
+    ));
+    let poller = std::sync::Arc::clone(&source);
     std::thread::spawn(move || {
-        source.poll_once();
-        // Nap in small increments so a shutdown signal is observed within one
-        // increment rather than after a whole interval.
-        let ticks = interval_secs.saturating_mul(20).max(1); // 20 * 50ms = 1s
-        loop {
-            for _ in 0..ticks {
-                if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
-                    return;
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            poller.poll_once();
+            // Nap in small increments so a shutdown signal is observed within one
+            // increment rather than after a whole interval.
+            let ticks = interval_secs.saturating_mul(20).max(1); // 20 * 50ms = 1s
+            loop {
+                for _ in 0..ticks {
+                    if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                poller.poll_once();
             }
-            source.poll_once();
+        }));
+        if ran.is_err() {
+            source.report_poller_death();
         }
     });
 }
@@ -424,6 +532,26 @@ mod tests {
         );
     }
 
+    /// The delegated rotation loop blocks on ONE `read_epoch` at `exp - overlap` and
+    /// cannot mint until it returns, so the read's worst case is spent out of the
+    /// overlap. Sized above it, a single half-open connection consumes the whole
+    /// minting window and takes response signing down fleet-wide at the current key's
+    /// `exp` — an outage produced by timeout sizing, not by a lost kill switch.
+    #[cfg(feature = "redis_replay")]
+    #[test]
+    fn one_epoch_read_cannot_consume_the_rotation_overlap() {
+        /// `--delegated-overlap-secs` default (cli.rs).
+        const DEFAULT_OVERLAP: std::time::Duration = std::time::Duration::from_secs(60);
+        assert!(
+            TRUST_EPOCH_TIMEOUT * TRUST_EPOCH_OPS_PER_READ <= TRUST_EPOCH_READ_BUDGET,
+            "every network operation a single read can issue must fit the budget"
+        );
+        assert!(
+            TRUST_EPOCH_READ_BUDGET * 2 <= DEFAULT_OVERLAP,
+            "the read must leave the overlap mostly free for the mint it precedes"
+        );
+    }
+
     #[test]
     fn read_error_marks_unhealthy_and_emits_nothing() {
         let src = TrustEpochSource::new(FakeReader::new(3));
@@ -436,6 +564,70 @@ mod tests {
             "a read error emits no events"
         );
         assert!(!src.is_healthy(), "a read error marks the source unhealthy");
+    }
+
+    /// `healthy` is a latch only `poll_once` writes, so a source nothing polls any
+    /// more keeps reporting whatever was true when its poller was last alive — which
+    /// is `true` for every replica that was working when the thread died. The replica
+    /// then asserts a revocation guarantee (`channel_is_healthy`, the startup posture
+    /// line) that it no longer provides.
+    #[test]
+    fn a_source_that_stops_being_polled_stops_reporting_healthy() {
+        let src = TrustEpochSource::new(FakeReader::new(1));
+        src.require_polling_within(std::time::Duration::from_millis(40));
+        src.poll_once();
+        assert!(src.is_healthy(), "a freshly polled source is healthy");
+        // Nothing polls it again.
+        std::thread::sleep(std::time::Duration::from_millis(90));
+        assert!(
+            !src.is_healthy(),
+            "silence past the bound is unhealthy on its own"
+        );
+        // And it recovers the moment polling resumes.
+        src.poll_once();
+        assert!(src.is_healthy());
+    }
+
+    /// A source under a poller that has not produced its first read has no baseline,
+    /// so it has no invalidation guarantee to claim either.
+    #[test]
+    fn a_poller_that_never_ran_is_not_healthy() {
+        let src = TrustEpochSource::new(FakeReader::new(1));
+        src.require_polling_within(std::time::Duration::from_secs(60));
+        assert!(!src.is_healthy());
+    }
+
+    /// A source nobody spawned a poller over is driven directly, so it has no cadence
+    /// to fall behind and the liveness bound must not apply to it.
+    #[test]
+    fn a_directly_driven_source_is_not_subject_to_the_liveness_bound() {
+        let src = TrustEpochSource::new(FakeReader::new(1));
+        src.poll_once();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert!(src.is_healthy());
+    }
+
+    /// A poisoned queue used to swallow the FlushAll silently — `poll_once` skipped
+    /// the push, `drain_pending` returned an empty vec forever, and neither touched
+    /// `healthy`. The operator's `INCR` then never reached this node's trust cache.
+    #[test]
+    fn a_poisoned_queue_still_delivers_the_flush() {
+        let src = std::sync::Arc::new(TrustEpochSource::new(FakeReader::new(1)));
+        src.poll_once(); // baseline @1
+        let poisoner = std::sync::Arc::clone(&src);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoner.pending.lock().expect("first acquisition");
+            panic!("poison the queue");
+        })
+        .join();
+
+        src.reader.set(2);
+        src.poll_once();
+        assert_eq!(
+            src.drain_pending(),
+            vec![InvalidationEvent::FlushAll],
+            "a revocation must not be lost because a lock is poisoned"
+        );
     }
 
     #[test]

@@ -55,6 +55,25 @@ impl HttpReplayKey {
         )
     }
 
+    /// The composite `principal` slot: the `signer` slot with the keyid dropped.
+    ///
+    /// `actor_id` is `role:trust_domain:subject:keyid` and every component escapes `:`
+    /// as `%3A` before the join, so the LAST raw colon is exactly the keyid separator
+    /// and splitting there is unambiguous. What remains identifies the subject rather
+    /// than the key it signed with — the identity an occupancy budget must be charged
+    /// to, so that rotating a key or running one client key per replica does not read
+    /// as several independent principals.
+    fn principal_slot(&self) -> String {
+        let subject = match self.actor_id.rsplit_once(':') {
+            Some((subject, _keyid)) => subject,
+            None => &self.actor_id,
+        };
+        format!(
+            "{}{SEP}{}{SEP}{}",
+            self.profile_id, self.signature_label, subject
+        )
+    }
+
     /// The composite `audience` slot: the audience hash (already opaque).
     fn audience_slot(&self) -> &str {
         &self.audience_hash
@@ -94,6 +113,7 @@ impl HttpReplayKey {
     pub fn to_core_replay_key(&self, expires_at_unix: i64) -> mcp_re_core::ReplayKey {
         mcp_re_core::ReplayKey {
             signer: self.signer_slot(),
+            principal: self.principal_slot(),
             audience: self.audience_slot().to_owned(),
             nonce: self.nonce.clone(),
             expires_at_unix,
