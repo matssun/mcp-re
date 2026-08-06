@@ -12,6 +12,29 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-06
+
+### Changed — TLS session resumption is restored, bound to a trust epoch (ADR-MCPRE-055)
+
+v0.14.0 refused TLS session resumption outright. That was a real security fix — a resumed
+session skips chain building, so a withdrawn CA stayed honoured for the lifetime of a
+ticket — but it cost 21% of throughput, and refusing was a heavier answer than the problem
+needed.
+
+Resumption is restored and bound to a **trust epoch**: a digest over the client-CA set and
+the client-auth policy, computed at config build and carried in every stored session.
+Withdrawing a CA or changing the policy changes the epoch, which invalidates every
+outstanding ticket — so a resumed session can never outlive the trust that admitted it.
+Sessions whose epoch no longer matches are evicted rather than merely rejected. Early data
+stays disabled (`max_early_data_size = 0`).
+
+CRL contents are deliberately **excluded** from the epoch: a CRL refresh must not
+invalidate the whole session cache, and per-request revocation already covers it.
+
+The startup line now reads `tls_session_resumption=epoch-bound`. Four tests drive real
+in-memory rustls handshakes and assert on `HandshakeKind`, including that withdrawing a CA
+forces a full handshake with the verifier deliberately left unchanged.
+
 ### Changed — serving runtime topology: shards keep a worker pool (ADR-MCPRE-051 §1 amended)
 
 Each serving shard was a single-threaded `tokio` runtime: one thread driving the I/O

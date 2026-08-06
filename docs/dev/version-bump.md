@@ -60,9 +60,9 @@ Two of these are routinely got wrong:
 
 Pre-1.0, so the middle number carries the weight:
 
-* **minor** (`0.14.0` → `0.15.0`) — behaviour a deployment can notice: a changed default,
+* **minor** (`0.15.0` → `0.16.0`) — behaviour a deployment can notice: a changed default,
   a new flag, a serving-path change, a new refusal. Most releases here.
-* **patch** (`0.14.0` → `0.14.1`) — fixes with no configuration or behavioural surface.
+* **patch** (`0.15.0` → `0.15.1`) — fixes with no configuration or behavioural surface.
 * A **default change is a minor bump even when the code change is small.** ADR-MCPRE-051
   §1's runtime topology is the worked example: a few lines, but every deployment gets a
   different thread layout on upgrade.

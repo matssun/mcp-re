@@ -8,7 +8,10 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
-**Unreleased on this branch (2026-08-06):** the serving runtime's topology changed
+**v0.15.0 — prepared, not yet released (2026-08-06).** The version is bumped and the
+changelog written, but a release exists once it is merged, tagged and the images are built
+at that tag; none of that has happened, so "current release" below still reads v0.14.0.
+The serving runtime's topology changed
 (ADR-MCPRE-051 §1 amended) — each shard now carries a Tokio worker pool instead of a
 single thread, and `--cores` / `--workers-per-shard` are independent knobs. The local §7
 anchor moved 5,530.9 → 15,454.9 rps and was re-baselined to v6. A live GKE run on
