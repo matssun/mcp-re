@@ -72,6 +72,20 @@ pub struct FleetConfig {
     /// Number of per-core worker runtimes. `0` means "auto" —
     /// [`std::thread::available_parallelism`] (falling back to 1 if unavailable).
     pub cores: usize,
+    /// Tokio worker threads inside EACH shard's runtime. `0`/`1` keeps the
+    /// single-threaded share-nothing runtime; `>1` gives the shard a work-stealing pool.
+    ///
+    /// Sharding and thread count are NOT interchangeable, and the shards are what cost:
+    /// measured at an identical 16 threads, 8 shards x 2 workers reached 19,910 rps while
+    /// 2 shards x 8 reached 44,816 — 2.25x, because Tokio steals work only WITHIN a
+    /// runtime, so a task readied on a busy 2-worker shard cannot be picked up by an idle
+    /// worker in another. `2 x 8` (16 threads) also matched `8 x 8` (64 threads), so past
+    /// a useful pool depth the extra shards buy nothing but threads.
+    ///
+    /// The optimum is hardware- and kernel-specific — cache domains, SMT, P/E cores, and
+    /// epoll-vs-kqueue wakeup behaviour all move it — so this is configuration, not a
+    /// constant. `scripts/runtime_topology_sweep.sh` measures it for a given host.
+    pub workers_per_shard: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
     /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request ceiling. When set (and
@@ -90,6 +104,7 @@ impl FleetConfig {
         FleetConfig {
             addr,
             cores: 0,
+            workers_per_shard: 0,
             listen_backlog: DEFAULT_LISTEN_BACKLOG,
             max_in_flight_total: None,
         }
@@ -165,6 +180,7 @@ where
     F: Fn(usize) -> Arc<H>,
 {
     let cores = resolve_core_count(cfg.cores);
+    let workers_per_shard = cfg.workers_per_shard;
 
     // MCPRE-114: translate an optional fleet-GLOBAL in-flight ceiling into an
     // evenly-divided PER-CORE ceiling, so admission control stays lock-free across
@@ -212,17 +228,12 @@ where
                 // stalled signature costs one worker rather than a whole core. The
                 // share-nothing default is unchanged for the exported-key path, where
                 // signing is in-memory and never blocks.
-                // DIAGNOSTIC: give each core a worker pool instead of the share-nothing
-                // single thread, to test whether that thread is the constraint. Not a
-                // supported knob — the share-nothing default is ADR-MCPRE-051 §1.
-                let diag_workers: Option<usize> = std::env::var("MCP_RE_DIAG_CORE_WORKERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .filter(|n| *n > 1);
-                let runtime = if let Some(workers) = diag_workers {
+                // A configured pool depth gives this shard a work-stealing runtime; see
+                // `FleetConfig::workers_per_shard` for why depth beats shard count.
+                let runtime = if workers_per_shard > 1 {
                     tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(workers)
-                        .thread_name(format!("mcp-re-serve-{core_index}-diag"))
+                        .worker_threads(workers_per_shard)
+                        .thread_name(format!("mcp-re-serve-{core_index}-w"))
                         .enable_all()
                         .build()
                         .expect("per-core tokio runtime builds")

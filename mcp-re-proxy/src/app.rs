@@ -1334,6 +1334,7 @@ fn serve_fleet(
     let fleet_cfg = crate::async_fleet::FleetConfig {
         addr,
         cores: config.cores, // 0 = auto (one worker per core); --cores pins it
+        workers_per_shard: config.workers_per_shard,
         listen_backlog: crate::async_fleet::DEFAULT_LISTEN_BACKLOG,
         // MCPRE-114: the operator's fleet-global ceiling, divided evenly per core by
         // `async_fleet::apply_global_admission`. `None` = no global target.

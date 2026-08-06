@@ -289,6 +289,10 @@ fn spawn_proxy(
 ) -> (Proc, String) {
     let lifetime = MAX_CLIENT_CERT_LIFETIME_SECS.to_string();
     let cores_s = cores.to_string();
+    // The second topology axis. Read from the environment rather than a flag so
+    // `runtime_topology_sweep.sh` can drive it without every rig caller growing an
+    // argument it does not use.
+    let workers_s = std::env::var("MCP_RE_SAT_WORKERS_PER_SHARD").unwrap_or_else(|_| "0".into());
     let maxconn_s = max_connections.to_string();
     let inflight_s = max_in_flight.to_string();
     let inner_url = format!("http://{inner}/mcp");
@@ -334,6 +338,8 @@ fn spawn_proxy(
             tier,
             "--cores",
             &cores_s,
+            "--workers-per-shard",
+            &workers_s,
             // Headroom, so a shed connection never masquerades as a throughput ceiling.
             // The rig measures how fast the proxy serves, not where it starts refusing —
             // that is admission control and it has its own tests.
