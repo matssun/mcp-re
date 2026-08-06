@@ -4,6 +4,25 @@
 
 Use this checklist before a public release or MCP proposal submission.
 
+This checklist is about whether the project is READY to release. The mechanics of moving
+the version number — which of the ~22 files carry it, what deliberately does not move, and
+why an uneven bump surfaces as `ImagePullBackOff` on a billing cluster rather than as a
+build failure — are in [`docs/dev/version-bump.md`](dev/version-bump.md). Run
+`scripts/bump_version.sh` from there; do the readiness items here.
+
+## Bump the version
+
+- [ ] `scripts/bump_version.sh <new-version>` has run on a clean tree, after the
+      functional work is merged ([`docs/dev/version-bump.md`](dev/version-bump.md)).
+- [ ] `CHANGELOG.md` has a hand-written entry for the release — what changed for someone
+      deciding whether to upgrade, not a list of commits.
+- [ ] The Helm chart's own `version:` moved **only** if `deploy/helm/` changed; its
+      `appVersion` tracks `VERSION` and moves every time.
+- [ ] The SDK versions were **not** bumped in sympathy — they are on an independent
+      cadence.
+- [ ] `gcloud builds submit --config deploy/cloudbuild/mcp-re-images.yaml .` has run: the
+      images do not exist at the new tag until it does, and no local gate can tell you so.
+
 ## Run the local gate first
 
 - [ ] `scripts/local_gate.sh --with-kind` is green — every stage, on this machine,

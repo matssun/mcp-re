@@ -248,6 +248,35 @@ changed. Verified as a working detector, not just new numbers: a fresh run at th
 passes, and reverting to `--workers-per-shard 1` FAILS all four metrics
 (5,328 rps against a 13,136.7 floor, p50 21,256us against a 9,909us ceiling).
 
+## What the GKE run added (2026-08-06)
+
+**The default was wrong, and the cloud run is what showed it.** The local sweep concluded
+"fewer, deeper shards" from the keepalive saturation rig. On the cold-mTLS §7 envelope the
+opposite holds, because each shard owns an `SO_REUSEPORT` listener and shards parallelise
+`accept` — which a single listener serialises and no pool depth can fix. On an 8-vCPU node
+at a CONSTANT 8 threads (release build):
+
+| topology | rps |
+| --- | --- |
+| 8 shards x 1 worker | 4,628.8 |
+| 8 shards x 8 workers (shipped default) | 4,390.0 |
+| 1 shard x 8 workers | 1,538.9 |
+
+3.0x across the same thread count. The corrected default keeps ONE SHARD PER CPU and adds
+depth on top: ~5% cost on cold, ~4.3x gain on keepalive. Never trade shards for depth.
+
+**The cloud lane was measuring a DEBUG build.** `cargo test` without `--release`, in both
+the Job and `Dockerfile.bench`. That was 12.3x of a ~240x local-vs-cloud gap that had been
+read as hardware; the rest is genuine class difference. See the runbook's machine-class
+table — `e2-standard-8` is cost-optimised, and `c4-highcpu-16` reaches the dev box's
+p50 latency at 72% of its throughput.
+
+**Open:** at the shipped default on release, the §7 scaling ratio is 0.357 at 8 cores
+(4,390.0 / (1,538.9 x 8)) against a 0.6 floor, because `--cores 1` now resolves to 8
+workers. With `WORKERS_PER_SHARD=1` the pair is 8x1 = 4,628.8 against an unmeasured 1x1.
+That pinned pair is what the runbook prescribes for the scaling obligation, and it has not
+been measured end-to-end on release.
+
 ### What the instrument still cannot see
 
 Nothing on the request path is CPU-bound: at ~10k rps the proxy used 0.44 of 14 cores and
