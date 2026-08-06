@@ -139,6 +139,18 @@ $NODE_SELECTOR
             - { name: MCP_RE_LOADGEN_REDIS_URL, value: "redis://127.0.0.1:6379" }
             - { name: MCP_RE_LOADGEN_HW_CLASS, value: "$HW" }
             - { name: MCP_RE_LOADGEN_CORES, value: "$CORES" }
+            # ADR-MCPRE-051 §1 (amended 2026-08-06) second topology axis. Unset lets the
+            # proxy auto-resolve min(8, cpus) workers per shard — the SHIPPED default,
+            # which is what a CAPACITY number must be measured at.
+            #
+            # The SCALING run must pin WORKERS_PER_SHARD=1 instead. The gate computes
+            # tput_N / (tput_1 * N) and expects >= 0.6, which assumes --cores N means N
+            # serving threads. Under the default it does not: on an 8-vCPU node --cores 1
+            # already resolves to 8 workers and saturates the node, so the ratio tends to
+            # 1/N by construction. Measured locally at the default: 0.123 at N=8, against
+            # a 0.6 floor. Pinning 1 restores cores == threads and makes the ratio mean
+            # what the gate reads it as.
+            - { name: MCP_RE_LOADGEN_WORKERS_PER_SHARD, value: "${WORKERS_PER_SHARD:-0}" }
             # Pin the CANONICAL v2 envelope (concurrency 128 / 8000 requests) so the
             # GKE run is the SAME involved config as the local baseline — never the
             # lighter v1 defaults. Overridable via CONCURRENCY / REQUESTS env below.

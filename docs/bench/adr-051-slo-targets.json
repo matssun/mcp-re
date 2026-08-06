@@ -1,9 +1,9 @@
 {
   "schema": "mcp-re-slo-targets/v1",
   "adr": "ADR-MCPRE-051",
-  "section": "\u00a77 proof obligation \u2014 benchmark-first, SLO-gated releases",
+  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
   "issue": "MCPRE-110 (#317) + MCPRE-123",
-  "description": "The declared release-gate thresholds for ADR-051 \u00a77. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
   "baseline_ref": "docs/bench/adr-051-baseline-local.json",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
   "local_regression_gate": "scripts/adr051_slo_gate.py",
@@ -40,7 +40,8 @@
       "gated": true,
       "linear_tolerance_min": 0.6,
       "cores_under_test": 8,
-      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Weaker measured factor e2 0.703 (c3 0.671); floor 0.6 with margin."
+      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Weaker measured factor e2 0.703 (c3 0.671); floor 0.6 with margin.",
+      "measurement_topology": "MUST be measured with WORKERS_PER_SHARD=1 so `--cores N` means N serving threads. Since the ADR-MCPRE-051 §1 amendment (2026-08-06) the default resolves each shard to min(8, cpus) workers, so on an 8-vCPU node `--cores 1` already saturates the node and tput_N/(tput_1*N) tends to 1/N by construction — measured 0.123 at N=8 locally, against this 0.6 floor. The floor is unchanged and still describes the serving path's ability to use N threads; only the invocation has to pin the topology. Capacity, by contrast, is measured at the SHIPPED default because that is what a deployment gets."
     },
     "measurements": {
       "note": "v2 canonical envelope (RFC 9421 carrier, concurrency 128 / 8000 requests), GKE 2026-07-14 (current-source re-measurement on the delegated-required-only path, KMS-rooted via Workload Identity). throughput=verified responses/sec; latency microseconds; scaling = tput_8/(tput_1*8). Tracks the 2026-07-12 declaration within run-to-run variance (e2 402.1->395.6, c3 499.4->492.9); floors unchanged.",
@@ -83,7 +84,7 @@
   },
   "absolute_gates": {
     "status": "active",
-    "kind": "hardware-independent correctness gates \u2014 always required, every release",
+    "kind": "hardware-independent correctness gates — always required, every release",
     "gates": [
       {
         "name": "replay-race",
@@ -91,7 +92,7 @@
         "enforced_by": [
           "//mcp-re-proxy:replay_race_harness_test"
         ],
-        "adr_ref": "ADR-MCPRE-051 \u00a74"
+        "adr_ref": "ADR-MCPRE-051 §4"
       },
       {
         "name": "bounded-drain",
@@ -99,7 +100,7 @@
         "enforced_by": [
           "//mcp-re-proxy:async_drain_test"
         ],
-        "adr_ref": "ADR-MCPRE-051 \u00a76"
+        "adr_ref": "ADR-MCPRE-051 §6"
       }
     ]
   }

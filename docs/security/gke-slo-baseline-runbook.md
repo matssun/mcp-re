@@ -201,12 +201,24 @@ gcloud container node-pools create pool-e2s8 --cluster mcp-re-fleet --zone us-ce
   --machine-type e2-standard-8 --num-nodes 1 --disk-size 40
 gcloud container node-pools create pool-c3s8 --cluster mcp-re-fleet --zone us-central1-a \
   --machine-type c3-standard-8 --num-nodes 1 --disk-size 40
-tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 1 e2_1core.json
-tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
-tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 1 c3_1core.json
-tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_8core.json
-# Gate: capacity on the N-core report + 1->N scaling (per class)
-python3 scripts/slo_gate.py --report e2_8core.json --baseline e2_1core.json --scaled e2_8core.json \
+# CAPACITY at the SHIPPED topology (auto: min(8,cpus) workers per shard).
+tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_capacity.json
+tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_capacity.json
+
+# SCALING with WORKERS_PER_SHARD=1, so `--cores N` means N serving threads.
+# The gate computes tput_N / (tput_1 * N) >= 0.6, which assumes cores == threads. Since
+# the ADR-MCPRE-051 §1 amendment that is NOT true at the default: on an 8-vCPU node
+# `--cores 1` resolves to 8 workers and already saturates the node, so the ratio tends to
+# 1/N by construction — measured locally at 0.123 for N=8 against the 0.6 floor. Running
+# the scaling pair at the default would fail the gate on a paid cluster while telling you
+# nothing about the serving path.
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 1 e2_1core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 1 c3_1core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_8core.json
+
+# Gate: capacity from the SHIPPED-topology report; scaling from the pinned pair.
+python3 scripts/slo_gate.py --report e2_capacity.json --baseline e2_1core.json --scaled e2_8core.json \
   --targets docs/bench/adr-051-slo-targets.json
 ```
 
