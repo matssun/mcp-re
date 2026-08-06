@@ -241,6 +241,24 @@ async fn read_response(
         }
     };
     let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+    // A READABLE response is not a SERVED one. This used to count any parseable reply as
+    // a success, so a proxy rejecting every request at the replay tier reported zero
+    // failures and a healthy rate — while serving nothing. A rejection is cheaper than a
+    // real request (no backend dispatch, no response signature), so counting it inflates
+    // throughput precisely when the run is least valid.
+    let status_ok = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse::<u16>().ok())
+        .is_some_and(|c| (200..300).contains(&c));
+    if !status_ok {
+        let status_line = head
+            .lines()
+            .next()
+            .unwrap_or("(no status line)")
+            .to_string();
+        return Err(format!("non-2xx response: {status_line}"));
+    }
     let Some(len) = head
         .split("content-length:")
         .nth(1)
@@ -288,9 +306,30 @@ fn main() {
     // measured window contains no client-side asymmetric crypto.
     let signer = SigningKey::from_seed_bytes(&[1u8; 32]);
     let sign_started = Instant::now();
+    // The nonce must be unique across RUNS, not just across generators within one run.
+    // It used to be `sat-{id}-{i}`, which is identical in every run — so the
+    // orchestrator's M+1 saturation probe replayed the measurement run's corpus verbatim
+    // and the proxy correctly rejected 6 of every 7 requests at the replay tier. Those
+    // rejections skip the backend AND the response signature, so they are cheap, the
+    // probe looked FASTER than the run it was probing, and every row was stamped CLIENT
+    // on a gain that was pure replay rejection. The pid/start salt makes each process's
+    // corpus its own.
+    let salt = format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    );
     let corpus: Arc<Vec<Vec<u8>>> = Arc::new(
         (0..a.requests)
-            .map(|i| wire(&sign(&format!("sat-{}-{i}", a.id), &signer), keep_alive))
+            .map(|i| {
+                wire(
+                    &sign(&format!("sat-{salt}-{}-{i}", a.id), &signer),
+                    keep_alive,
+                )
+            })
             .collect(),
     );
     let presign_secs = sign_started.elapsed().as_secs_f64();
