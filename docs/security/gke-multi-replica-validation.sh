@@ -403,6 +403,20 @@ done
   || fail "only ${acks:-0} of $REDIS_REPLICAS Redis replicas acknowledge writes — the declared wait-quorum tier cannot be satisfied, and every replay insert would fail closed"
 echo "  OK: $REDIS_REPLICAS replica(s) acknowledging writes; the declared wait quorum is satisfiable."
 
+# SEED the trust-epoch counter before the fleet starts.
+#
+# The proxy refuses to serve when the key is ABSENT, and it is right to: an absent key is
+# indistinguishable from a counter that was deleted, evicted, or lost to a restore, so
+# reading it as epoch 0 would leave the push kill switch inert or let a restarted replica
+# mint under a rolled-back epoch. This harness only ever GETs and INCRs the key, so on a
+# FRESH Redis every replica CrashLoopBackOff'd on that guard and the fleet never became
+# available — the harness predates the guard. `SETNX` so an existing counter is never
+# rolled back to 0, which would be the very regression the guard exists to prevent.
+kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+  redis-cli SETNX mcp-re:trust:epoch 0 >/dev/null 2>&1 \
+  || fail "could not seed the trust-epoch counter mcp-re:trust:epoch"
+echo "  OK: trust-epoch counter present (SETNX; an existing value is left untouched)."
+
 # --- 3. Deploy the fleet (strict + fleet + shared tiers) ---------------------
 # The chart REFUSES to start a --fleet deployment on a node-local replay cache
 # (ADR-MCPS-049 guardrail), so a green rollout already proves the shared tier is

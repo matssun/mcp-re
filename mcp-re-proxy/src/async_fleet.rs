@@ -71,22 +71,18 @@ pub struct FleetConfig {
     /// `SO_REUSEPORT`). A `:0` port is resolved to a concrete OS-assigned port on
     /// the first bind and reused for the rest, so the whole fleet shares one port.
     pub addr: SocketAddr,
-    /// Number of serving SHARDS. `0` means "auto" — see [`resolve_topology`], which is
-    /// `ceil(cpus / workers_per_shard)` and NOT one shard per cpu.
+    /// Number of serving SHARDS, each with its own `SO_REUSEPORT` listener. `0` means
+    /// "auto" — one per cpu (see [`resolve_topology`]).
     pub cores: usize,
     /// Tokio worker threads inside EACH shard's runtime. `0` means auto (`min(8, cpus)`);
     /// an explicit `1` restores the single-threaded share-nothing runtime.
     ///
-    /// Sharding and thread count are NOT interchangeable, and the shards are what cost:
-    /// measured at an identical 16 threads, 8 shards x 2 workers reached 19,910 rps while
-    /// 2 shards x 8 reached 44,816 — 2.25x, because Tokio steals work only WITHIN a
-    /// runtime, so a task readied on a busy 2-worker shard cannot be picked up by an idle
-    /// worker in another. `2 x 8` (16 threads) also matched `8 x 8` (64 threads), so past
-    /// a useful pool depth the extra shards buy nothing but threads.
+    /// Depth parallelises POLLING; shards parallelise `accept`. Which dominates depends
+    /// on the connection profile, so neither substitutes for the other — see
+    /// [`resolve_topology`] for the measurements on both.
     ///
-    /// The optimum is hardware- and kernel-specific — cache domains, SMT, P/E cores, and
-    /// epoll-vs-kqueue wakeup behaviour all move it — so this is configuration, not a
-    /// constant. `scripts/runtime_topology_sweep.sh` measures it for a given host.
+    /// The optimum is hardware-, kernel- AND workload-specific, so this is configuration
+    /// rather than a constant. `scripts/runtime_topology_sweep.sh` measures a given host.
     pub workers_per_shard: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
@@ -337,34 +333,49 @@ const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
 /// Resolve `(shards, workers_per_shard)` from what the operator configured, filling in
 /// either from the host when it is `0`.
 ///
-/// The default is DEEP SHARDS, FEW OF THEM, which is the opposite of what this fleet did
-/// originally (one single-threaded shard per core). Tokio steals work only within a
-/// runtime, so shards are scheduling silos: a task readied on a busy shard cannot be
-/// picked up by an idle worker in another. Measured at an identical 16 threads, 8 shards
-/// x 2 workers reached 19,910 rps against 44,816 for 2 shards x 8 — and 2x8 (16 threads)
-/// matched 8x8 (64 threads), so extra shards past a useful depth buy only threads.
+/// The default is ONE SHARD PER CPU, each with a worker pool — shard count is NOT reduced
+/// to pay for depth.
 ///
-/// Fill order matters: depth is chosen first, then just enough shards to cover the host's
-/// parallelism. On a 14-cpu host that yields 2 shards x 8 workers, the measured optimum;
-/// on a single-cpu host it yields 1 x 1, which is exactly the old single-threaded shard,
-/// so small deployments are not handed a thread pool they cannot use.
+/// Both axes matter, for different reasons, and which one dominates depends on the
+/// WORKLOAD rather than the hardware:
 ///
-/// The optimum is host-specific — cache domains, SMT, P/E-core asymmetry and
-/// epoll-vs-kqueue wakeups all move it — so this is a defensible starting point to be
-/// measured with `scripts/runtime_topology_sweep.sh`, never a claim of optimality.
+/// * **Shards parallelise `accept`.** Each shard owns its own `SO_REUSEPORT` listener, and
+///   a single listener serialises connection establishment. On the cold-mTLS §7 envelope
+///   (every request a new connection + full handshake) this dominates everything else:
+///   measured on an 8-vCPU GKE node at a constant 8 threads, 8 shards x 1 worker reached
+///   369.0 rps against 125.9 for 2 x 4 and 65.5 for 1 x 8 — 5.6x across the same thread
+///   count.
+/// * **Depth parallelises polling.** A single-threaded shard has one thread driving the
+///   I/O reactor AND polling every task, so with hundreds of concurrent futures a readied
+///   task waits milliseconds. On a keepalive workload, where `accept` is amortised, this
+///   dominates instead: 8 shards x 8 workers reached 44,803 rps against 10,362 for
+///   8 x 1 on a 14-cpu host.
+///
+/// An earlier version of this function traded shards away for depth (`ceil(cpus/workers)`
+/// shards). That was inferred from the keepalive rig alone and is wrong: it resolved an
+/// 8-vCPU host to ONE shard, which measured 65.5 rps against the previous default's 369.0
+/// on the cold envelope — a 5.6x regression on the profile production actually serves.
+/// Keeping a shard per cpu and adding depth costs ~3% cold (369.0 -> 358.1) and gains
+/// ~4.3x keepalive, so it is the defensible default; trading shards away is not.
+///
+/// A single-cpu host still resolves to 1 x 1, exactly the old single-threaded shard.
+///
+/// This remains a STARTING POINT, not a claim of optimality: cache domains, SMT,
+/// P/E-core asymmetry and epoll-vs-kqueue wakeups all move the optimum, and so does the
+/// connection profile. Measure a given host with `scripts/runtime_topology_sweep.sh`.
 pub fn resolve_topology(configured_shards: usize, configured_workers: usize) -> (usize, usize) {
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
+    let shards = if configured_shards != 0 {
+        configured_shards
+    } else {
+        available
+    };
     let workers = if configured_workers != 0 {
         configured_workers
     } else {
         DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
-    };
-    let shards = if configured_shards != 0 {
-        configured_shards
-    } else {
-        available.div_ceil(workers).max(1)
     };
     (shards, workers)
 }
@@ -565,18 +576,16 @@ mod topology_tests {
         assert_eq!(resolve_topology(8, 1), (8, 1));
     }
 
-    /// The default is DEEP shards and FEW of them. Shards are scheduling silos (Tokio
-    /// steals work only within a runtime), so filling depth first and then covering the
-    /// host is what avoids the starvation the one-shard-per-core default caused.
+    /// The default keeps ONE SHARD PER CPU and adds depth on top; it never trades shards
+    /// away for depth. Shards own the `SO_REUSEPORT` listeners that parallelise `accept`,
+    /// and on a cold-connection workload that dominates: at a constant 8 threads on an
+    /// 8-vCPU node, 8x1 measured 369.0 rps against 65.5 for 1x8.
     #[test]
-    fn auto_fills_depth_first_then_just_enough_shards() {
-        // Depth is capped, so a large host gets more shards rather than deeper ones.
-        assert_eq!(auto_for(64), (8, 8));
-        // The measured optimum on the 14-cpu box this was characterised on.
-        assert_eq!(auto_for(14), (2, 8));
-        // At or below the cap, one shard holds the whole host.
-        assert_eq!(auto_for(8), (1, 8));
-        assert_eq!(auto_for(4), (1, 4));
+    fn auto_keeps_a_shard_per_cpu_and_adds_depth() {
+        assert_eq!(auto_for(64), (64, 8));
+        assert_eq!(auto_for(14), (14, 8));
+        assert_eq!(auto_for(8), (8, 8));
+        assert_eq!(auto_for(4), (4, 4));
         // A single-cpu host gets exactly the old single-threaded shard: a deployment that
         // cannot use a pool must not be handed one.
         assert_eq!(auto_for(1), (1, 1));
@@ -591,9 +600,15 @@ mod topology_tests {
                 shards >= 1 && workers >= 1,
                 "cpus={cpus} → {shards}x{workers}"
             );
-            // Enough threads to cover the host, without wildly overshooting it.
-            assert!(shards * workers >= cpus.min(DEFAULT_MAX_WORKERS_PER_SHARD));
-            assert!(shards * workers < cpus + DEFAULT_MAX_WORKERS_PER_SHARD);
+            // One listener per cpu: `accept` is never serialised below the host's width,
+            // which is what dominates a cold-connection workload.
+            assert_eq!(shards, cpus);
+            // Threads DO exceed the cpu count once the host is wider than one worker, and
+            // that is deliberate rather than an accident to bound: the pool exists so a
+            // readied task finds a thread to poll it, and those threads are parked, not
+            // spinning. It cost ~3% on the cold GKE envelope and gained ~4.3x keepalive.
+            assert!(shards * workers >= cpus);
+            assert!(workers <= DEFAULT_MAX_WORKERS_PER_SHARD);
         }
     }
 
@@ -601,7 +616,6 @@ mod topology_tests {
     /// expectations above are about the POLICY and not about whichever machine runs the
     /// suite.
     fn auto_for(cpus: usize) -> (usize, usize) {
-        let workers = DEFAULT_MAX_WORKERS_PER_SHARD.min(cpus).max(1);
-        (cpus.div_ceil(workers).max(1), workers)
+        (cpus, DEFAULT_MAX_WORKERS_PER_SHARD.min(cpus).max(1))
     }
 }
