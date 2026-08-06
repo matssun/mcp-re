@@ -179,6 +179,45 @@ with `/tmp/gke_mat/client_cert_short.pem` + `client_key_short.pem` (see
 `gke-multi-replica-validation.sh` for the four-proof harness; note it also drives
 Proof 2 trust-epoch — see the [trust-epoch note](#trust-epoch-caveat)).
 
+## What the 2026-08-06 run changed (read before quoting any number here)
+
+* **Every GKE §7 figure recorded before 2026-08-06 is a DEBUG build.** The Job and
+  `Dockerfile.bench` both ran `cargo test` without `--release`. Both now pass it, and they
+  must stay in agreement or the runtime `cargo test` recompiles from scratch in the other
+  profile. Re-measured on the same cluster and envelope: e2-standard-8 358.1 → **4,390.0
+  rps**, c3-standard-8 452.1 → **5,228.5 rps**. That 12.3x is the bulk of what used to
+  look like a hardware gap against the dev box.
+* **`e2-standard-8` is a cost-optimised class, not a performance one.** It was picked to
+  fit a 16-vCPU free-trial quota. Release-build, cold-mTLS 128/8000, same cluster:
+
+  | class | vCPU | rps | p50 |
+  | --- | --- | --- | --- |
+  | e2-standard-8 | 8 | 4,390.0 | 25,498us |
+  | c3-standard-8 | 8 | 5,228.5 | 20,910us |
+  | c3-highcpu-22 | 22 | 10,437.9 | 8,729us |
+  | **c4-highcpu-16** | 16 | **11,150.5** | **8,706us** |
+  | *(dev box, Apple M4 Pro 14c)* | 14 | *15,454.9* | *7,927us* |
+
+  c4-highcpu-16 matches the dev box's LATENCY at 72% of its throughput. Prefer c4 for any
+  capacity claim; c4 is also faster per-core than c3 (11,150 at 16 vCPU beats 10,438 at 22).
+* **The declared production targets are INVALIDATED** (`docs/bench/adr-051-slo-targets.json`,
+  `status: invalidated-pending-remeasurement`) because they derive from the debug numbers.
+  The gate now SKIPS the capacity checks and says so, rather than passing against a floor
+  that is ~45x too low. Re-declaring needs a deliberate run on the class being declared.
+* **Zone stockouts are routine.** `us-central1-a` AND `-c` both failed with `GCE_STOCKOUT`
+  (35 min to fail, 0 nodes) before `us-east1-b` worked first try. If node creation shows
+  zero instances after ~10 minutes, abandon the zone rather than waiting out the timeout.
+* **`CPUS_PER_VM_FAMILY` is a separate quota from `CPUS_ALL_REGIONS`.** us-east1 allows 24
+  per family, so a c4-highcpu-32 pool fails even with 32 total CPUs free. Each family has
+  its own budget, which is why swapping c4→c3 at 22 vCPU worked.
+* **Size the fleet pool for 3 replicas.** 2 × e2-standard-2 (3,860m allocatable) cannot
+  hold 3 × 500m proxies plus the inner backend, three Redis pods and Calico — the third
+  replica sits `Pending` on `Insufficient cpu` and the Helm install times out.
+* **`CPU_REQUEST` must fit the node's ALLOCATABLE, not its nominal size.** A 22-vCPU node
+  will not admit `CPU_REQUEST=20` once kubelet reservations are taken out.
+* **c4a (Axion) is ARM.** The images are amd64-only, so it needs an arm64 build before it
+  can be measured — likely the best fit for this crypto-heavy path, and untested.
+
 ## 4. The SLO baseline (§7 declared-hardware run)
 
 > **The SLO Job is self-contained.** `tools/slo/run_slo_job.sh` runs
@@ -201,12 +240,24 @@ gcloud container node-pools create pool-e2s8 --cluster mcp-re-fleet --zone us-ce
   --machine-type e2-standard-8 --num-nodes 1 --disk-size 40
 gcloud container node-pools create pool-c3s8 --cluster mcp-re-fleet --zone us-central1-a \
   --machine-type c3-standard-8 --num-nodes 1 --disk-size 40
-tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 1 e2_1core.json
-tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
-tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 1 c3_1core.json
-tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_8core.json
-# Gate: capacity on the N-core report + 1->N scaling (per class)
-python3 scripts/slo_gate.py --report e2_8core.json --baseline e2_1core.json --scaled e2_8core.json \
+# CAPACITY at the SHIPPED topology (auto: min(8,cpus) workers per shard).
+tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_capacity.json
+tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_capacity.json
+
+# SCALING with WORKERS_PER_SHARD=1, so `--cores N` means N serving threads.
+# The gate computes tput_N / (tput_1 * N) >= 0.6, which assumes cores == threads. Since
+# the ADR-MCPRE-051 §1 amendment that is NOT true at the default: on an 8-vCPU node
+# `--cores 1` resolves to 8 workers and already saturates the node, so the ratio tends to
+# 1/N by construction — measured locally at 0.123 for N=8 against the 0.6 floor. Running
+# the scaling pair at the default would fail the gate on a paid cluster while telling you
+# nothing about the serving path.
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 1 e2_1core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-e2s8 e2-standard-8 8 e2_8core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 1 c3_1core.json
+WORKERS_PER_SHARD=1 tools/slo/run_slo_job.sh pool-c3s8 c3-standard-8 8 c3_8core.json
+
+# Gate: capacity from the SHIPPED-topology report; scaling from the pinned pair.
+python3 scripts/slo_gate.py --report e2_capacity.json --baseline e2_1core.json --scaled e2_8core.json \
   --targets docs/bench/adr-051-slo-targets.json
 ```
 

@@ -1075,7 +1075,7 @@
           "FILE:@@//Cargo.toml 311433775370242b843c5495e75482d440a990c08693fe924eb9f7720b5147a4",
           "FILE:@@//mcp-re-core/Cargo.toml dc6a9fdba28f7df139082e98be9a7c4b8ba5d88ac581326a22f69210f589c077",
           "FILE:@@//mcp-re-conformance/Cargo.toml dd24dd87ecba371324a7fb412d8678ce0e2dac38806906ea682bec726a394254",
-          "FILE:@@//mcp-re-proxy/Cargo.toml 08b65b7b2109ae5bcc221e83182ce9439802df427f0f1beec2c41a69966d7922",
+          "FILE:@@//mcp-re-proxy/Cargo.toml 7c0a66eba2b665f01f0b6a59eb5507cae862af23bf9d98aaf7b267d361bf07a1",
           "FILE:@@//mcp-re-http-profile/Cargo.toml 3e2714bf2dcbf3cae2f9bd0607168edf1467459a626dd791de77bc751ae41030",
           "FILE:@@//mcp-re-policy/Cargo.toml 4a2ceb1288442895677c2f3ffbbf1872daeb3b63266e33805d87851859187e1f",
           "FILE:@@//mcp-re-host/Cargo.toml fa077b625b4ab9f1ac712ae1d5a7b5b86e7e352f15e9737f1a827ab0ee1b63fc",

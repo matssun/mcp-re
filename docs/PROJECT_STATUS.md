@@ -8,6 +8,19 @@ MCP-RE is an experimental third-party security extension proposal for MCP.
 
 It is not an official MCP extension unless accepted through the official MCP governance and proposal process.
 
+**v0.15.0 — prepared, not yet released (2026-08-06).** The version is bumped and the
+changelog written, but a release exists once it is merged, tagged and the images are built
+at that tag; none of that has happened, so "current release" below still reads v0.14.0.
+The serving runtime's topology changed
+(ADR-MCPRE-051 §1 amended) — each shard now carries a Tokio worker pool instead of a
+single thread, and `--cores` / `--workers-per-shard` are independent knobs. The local §7
+anchor moved 5,530.9 → 15,454.9 rps and was re-baselined to v6. A live GKE run on
+`us-east1-b` passed three of the four fleet proofs and both SLO classes; Proof 4
+(zero-drop rolling update) fails on GKE while passing on kind, and is open. That run also
+found the cloud SLO lane had always measured a **debug** build, so the declared production
+targets are marked `invalidated-pending-remeasurement` — see
+[`docs/security/gke-slo-baseline-runbook.md`](security/gke-slo-baseline-runbook.md).
+
 **Current release: v0.14.0** (2026-07-28) — a security-audit release: fourteen rounds
 of the audit funnel closed 57 finding clusters, each fix carrying a negative control,
 over the HTTP-profile serving stack landed in v0.11–v0.12 and the first live

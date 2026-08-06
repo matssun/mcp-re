@@ -245,7 +245,7 @@ burstable instance — and is recorded only to show the lane ran. What it establ
 pod node      = ip-192-168-24-104.eu-north-1.compute.internal
 pod selector  = {"eks.amazonaws.com/nodegroup":"ng-t4gs"}
 pull event    = Successfully pulled image
-                455880745808.dkr.ecr.eu-north-1.amazonaws.com/mcp-re-slo-bench:0.14.0
+                455880745808.dkr.ecr.eu-north-1.amazonaws.com/mcp-re-slo-bench:0.15.0
                 in 36.158s. Image size: 887881847 bytes.
 ```
 

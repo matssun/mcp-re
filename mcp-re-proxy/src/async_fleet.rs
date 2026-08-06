@@ -1,16 +1,17 @@
 //! MCPRE-113 (ADR-MCPRE-051 §1, Phase 2) — per-core async serving fleet.
 //!
-//! The target data-plane shape: **one worker thread per core, each a current-thread
-//! `tokio` runtime with its own `SO_REUSEPORT` listener and (on Linux) CPU-affinity
-//! pinning, running one [`crate::async_serve::serve`] loop over one `Proxy` per
-//! core.** The kernel's `SO_REUSEPORT` group load-balances accepted connections
-//! across the per-core listeners, so there is:
+//! The data-plane shape: **a small number of SHARDS, each a `tokio` runtime with a
+//! work-stealing worker pool, its own `SO_REUSEPORT` listener and (on Linux)
+//! CPU-affinity pinning, running one [`crate::async_serve::serve`] loop over one `Proxy`
+//! per shard.** The kernel's `SO_REUSEPORT` group load-balances accepted connections
+//! across the shard listeners, so there is:
 //!
 //!   * **no shared accept lock** — every core `accept()`s on its own listener fd;
 //!   * **no cross-core connection handoff** — a connection is served start-to-finish
 //!     on the core that accepted it;
-//!   * **no contended cross-core hot-path state** — each worker owns its runtime,
-//!     its listener, and its `Proxy` handler; the ONLY state shared across cores is
+//!   * **no contended cross-shard hot-path state** — each shard owns its runtime,
+//!     its listener, and its `Proxy` handler; work stealing happens strictly WITHIN a
+//!     shard's pool and never across shards. The ONLY state shared across shards is
 //!     the coherent replay/trust store (designed server-side-atomic, ADR-MCPS-020)
 //!     and the `ServerConfigSnapshot`/`ServerOptions` handles (shared read-only
 //!     behind `Arc`). See the module-level "Cross-core sharing audit" below.
@@ -23,8 +24,8 @@
 //! request path")
 //!
 //! Per request, a worker touches only:
-//!   * its own `tokio` current-thread runtime (thread-local, uncontended);
-//!   * its own listener fd (per-core, not shared);
+//!   * its own shard's `tokio` runtime (uncontended across shards);
+//!   * its own listener fd (per-shard, not shared);
 //!   * the per-core `Proxy` handler (`make_handler(core)` returns a distinct handler
 //!     per core; nothing forces cores to share one);
 //!   * read-only `Arc<ServerConfigSnapshot>` / `Arc<ServerOptions>` (the TLS config is
@@ -38,7 +39,8 @@
 //!
 //! ## Scope (this increment)
 //!
-//! Per-core runtimes + `SO_REUSEPORT` + pinning + configurable core count, with a
+//! Shard runtimes + `SO_REUSEPORT` + pinning + configurable shard count and pool depth,
+//! with a
 //! deterministic always-on suite proving N independent per-core runtimes serve the
 //! full mTLS pipeline correctly and shut down cleanly. **Near-linear 1→N throughput
 //! scaling is measured on the load harness (MCPRE-108) in the SLO/CI lane**, not in a
@@ -69,9 +71,19 @@ pub struct FleetConfig {
     /// `SO_REUSEPORT`). A `:0` port is resolved to a concrete OS-assigned port on
     /// the first bind and reused for the rest, so the whole fleet shares one port.
     pub addr: SocketAddr,
-    /// Number of per-core worker runtimes. `0` means "auto" —
-    /// [`std::thread::available_parallelism`] (falling back to 1 if unavailable).
+    /// Number of serving SHARDS, each with its own `SO_REUSEPORT` listener. `0` means
+    /// "auto" — one per cpu (see [`resolve_topology`]).
     pub cores: usize,
+    /// Tokio worker threads inside EACH shard's runtime. `0` means auto (`min(8, cpus)`);
+    /// an explicit `1` restores the single-threaded share-nothing runtime.
+    ///
+    /// Depth parallelises POLLING; shards parallelise `accept`. Which dominates depends
+    /// on the connection profile, so neither substitutes for the other — see
+    /// [`resolve_topology`] for the measurements on both.
+    ///
+    /// The optimum is hardware-, kernel- AND workload-specific, so this is configuration
+    /// rather than a constant. `scripts/runtime_topology_sweep.sh` measures a given host.
+    pub workers_per_shard: usize,
     /// `listen(2)` backlog for each per-core listener.
     pub listen_backlog: i32,
     /// MCPRE-114: an optional FLEET-GLOBAL in-flight-request ceiling. When set (and
@@ -90,6 +102,7 @@ impl FleetConfig {
         FleetConfig {
             addr,
             cores: 0,
+            workers_per_shard: 0,
             listen_backlog: DEFAULT_LISTEN_BACKLOG,
             max_in_flight_total: None,
         }
@@ -164,7 +177,7 @@ where
     H: AsyncRequestHandler,
     F: Fn(usize) -> Arc<H>,
 {
-    let cores = resolve_core_count(cfg.cores);
+    let (cores, workers_per_shard) = resolve_topology(cfg.cores, cfg.workers_per_shard);
 
     // MCPRE-114: translate an optional fleet-GLOBAL in-flight ceiling into an
     // evenly-divided PER-CORE ceiling, so admission control stays lock-free across
@@ -212,7 +225,16 @@ where
                 // stalled signature costs one worker rather than a whole core. The
                 // share-nothing default is unchanged for the exported-key path, where
                 // signing is in-memory and never blocks.
-                let runtime = if options.tls_signing_may_block {
+                // A configured pool depth gives this shard a work-stealing runtime; see
+                // `FleetConfig::workers_per_shard` for why depth beats shard count.
+                let runtime = if workers_per_shard > 1 {
+                    tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(workers_per_shard)
+                        .thread_name(format!("mcp-re-serve-{core_index}-w"))
+                        .enable_all()
+                        .build()
+                        .expect("per-core tokio runtime builds")
+                } else if options.tls_signing_may_block {
                     tokio::runtime::Builder::new_multi_thread()
                         .worker_threads(DELEGATED_TLS_WORKERS_PER_CORE)
                         .thread_name(format!("mcp-re-serve-{core_index}-w"))
@@ -298,12 +320,64 @@ const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.
 pub fn resolve_core_count(configured: usize) -> usize {
-    if configured != 0 {
-        return configured;
-    }
-    std::thread::available_parallelism()
+    resolve_topology(configured, 0).0
+}
+
+/// Pool depth a shard is given when the operator does not choose one, capped.
+///
+/// Depth past this bought nothing measurable and started costing: 8 workers/shard reached
+/// 44,803 rps and 16 reached 46,325 (+3.4%) while scheduler latency rose from 60us to
+/// 83us. The cap is where the curve flattens, not a hardware constant.
+const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
+
+/// Resolve `(shards, workers_per_shard)` from what the operator configured, filling in
+/// either from the host when it is `0`.
+///
+/// The default is ONE SHARD PER CPU, each with a worker pool — shard count is NOT reduced
+/// to pay for depth.
+///
+/// Both axes matter, for different reasons, and which one dominates depends on the
+/// WORKLOAD rather than the hardware:
+///
+/// * **Shards parallelise `accept`.** Each shard owns its own `SO_REUSEPORT` listener, and
+///   a single listener serialises connection establishment. On the cold-mTLS §7 envelope
+///   (every request a new connection + full handshake) this dominates everything else:
+///   measured on an 8-vCPU GKE node at a constant 8 threads, 8 shards x 1 worker reached
+///   369.0 rps against 125.9 for 2 x 4 and 65.5 for 1 x 8 — 5.6x across the same thread
+///   count.
+/// * **Depth parallelises polling.** A single-threaded shard has one thread driving the
+///   I/O reactor AND polling every task, so with hundreds of concurrent futures a readied
+///   task waits milliseconds. On a keepalive workload, where `accept` is amortised, this
+///   dominates instead: 8 shards x 8 workers reached 44,803 rps against 10,362 for
+///   8 x 1 on a 14-cpu host.
+///
+/// An earlier version of this function traded shards away for depth (`ceil(cpus/workers)`
+/// shards). That was inferred from the keepalive rig alone and is wrong: it resolved an
+/// 8-vCPU host to ONE shard, which measured 65.5 rps against the previous default's 369.0
+/// on the cold envelope — a 5.6x regression on the profile production actually serves.
+/// Keeping a shard per cpu and adding depth costs ~3% cold (369.0 -> 358.1) and gains
+/// ~4.3x keepalive, so it is the defensible default; trading shards away is not.
+///
+/// A single-cpu host still resolves to 1 x 1, exactly the old single-threaded shard.
+///
+/// This remains a STARTING POINT, not a claim of optimality: cache domains, SMT,
+/// P/E-core asymmetry and epoll-vs-kqueue wakeups all move the optimum, and so does the
+/// connection profile. Measure a given host with `scripts/runtime_topology_sweep.sh`.
+pub fn resolve_topology(configured_shards: usize, configured_workers: usize) -> (usize, usize) {
+    let available = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(1)
+        .unwrap_or(1);
+    let shards = if configured_shards != 0 {
+        configured_shards
+    } else {
+        available
+    };
+    let workers = if configured_workers != 0 {
+        configured_workers
+    } else {
+        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+    };
+    (shards, workers)
 }
 
 /// Create a `SO_REUSEPORT` (+ `SO_REUSEADDR`) TCP listener bound to `addr` and put it
@@ -485,4 +559,63 @@ fn online_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(|x| x.get())
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod topology_tests {
+    use super::*;
+
+    /// Explicit configuration always wins over the host-derived default — an operator who
+    /// measured their own hardware must not be second-guessed.
+    #[test]
+    fn explicit_topology_is_never_overridden() {
+        assert_eq!(resolve_topology(4, 4), (4, 4));
+        assert_eq!(resolve_topology(1, 16), (1, 16));
+        // An explicit 1 is how the old single-threaded share-nothing shard is restored,
+        // so it must survive as 1 and not be auto-filled to the default depth.
+        assert_eq!(resolve_topology(8, 1), (8, 1));
+    }
+
+    /// The default keeps ONE SHARD PER CPU and adds depth on top; it never trades shards
+    /// away for depth. Shards own the `SO_REUSEPORT` listeners that parallelise `accept`,
+    /// and on a cold-connection workload that dominates: at a constant 8 threads on an
+    /// 8-vCPU node, 8x1 measured 369.0 rps against 65.5 for 1x8.
+    #[test]
+    fn auto_keeps_a_shard_per_cpu_and_adds_depth() {
+        assert_eq!(auto_for(64), (64, 8));
+        assert_eq!(auto_for(14), (14, 8));
+        assert_eq!(auto_for(8), (8, 8));
+        assert_eq!(auto_for(4), (4, 4));
+        // A single-cpu host gets exactly the old single-threaded shard: a deployment that
+        // cannot use a pool must not be handed one.
+        assert_eq!(auto_for(1), (1, 1));
+    }
+
+    /// Auto never yields a degenerate topology, whatever the host reports.
+    #[test]
+    fn auto_is_always_at_least_one_shard_of_one_worker() {
+        for cpus in 1..=64 {
+            let (shards, workers) = auto_for(cpus);
+            assert!(
+                shards >= 1 && workers >= 1,
+                "cpus={cpus} → {shards}x{workers}"
+            );
+            // One listener per cpu: `accept` is never serialised below the host's width,
+            // which is what dominates a cold-connection workload.
+            assert_eq!(shards, cpus);
+            // Threads DO exceed the cpu count once the host is wider than one worker, and
+            // that is deliberate rather than an accident to bound: the pool exists so a
+            // readied task finds a thread to poll it, and those threads are parked, not
+            // spinning. It cost ~3% on the cold GKE envelope and gained ~4.3x keepalive.
+            assert!(shards * workers >= cpus);
+            assert!(workers <= DEFAULT_MAX_WORKERS_PER_SHARD);
+        }
+    }
+
+    /// `resolve_topology`'s auto path with the host's cpu count injected, so the
+    /// expectations above are about the POLICY and not about whichever machine runs the
+    /// suite.
+    fn auto_for(cpus: usize) -> (usize, usize) {
+        (cpus, DEFAULT_MAX_WORKERS_PER_SHARD.min(cpus).max(1))
+    }
 }

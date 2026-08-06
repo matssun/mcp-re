@@ -246,13 +246,40 @@ else
                   "inner:$INNER_IMAGE:deploy/docker/Dockerfile.inner" \
                   "loadgen:$LOADGEN_IMAGE:deploy/docker/Dockerfile.loadgen"; do
     tgt="${img_spec%%:*}"; rest="${img_spec#*:}"; img="${rest%:*}"; dfile="${rest##*:}"
-    if ! docker image inspect "$img" >/dev/null 2>&1; then
-      log "build $img ($tgt) — not present locally"
-      if [[ "$tgt" == proxy ]]; then
-        docker build -f "$dfile" --target proxy -t "$img" "$REPO_ROOT"
+    # Rebuild when the image does not match the SOURCE, not merely when it is absent.
+    #
+    # "Absent" alone is the wrong test. Image tags come from VERSION, so every commit
+    # within a version reuses one tag: a `docker image inspect` hit is satisfied by an
+    # arbitrarily old build. This lane is the documented precondition for cloud spend and
+    # claims to run "the SAME image the GKE build produces", so a stale hit means the
+    # gate validates an old binary against today's chart and passes. That is not
+    # hypothetical — a 4-day-old proxy image was CrashLoopBackOff-ing on
+    # `unknown flag --trust-reload-secs`, a flag the chart had gained and the binary
+    # predated, while every other stage was green.
+    #
+    # So the built revision is stamped on the image and compared to HEAD. A dirty tree
+    # always rebuilds: the commit alone cannot describe uncommitted source.
+    src_rev="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    [[ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]] && src_rev="${src_rev}-dirty"
+    img_rev="$(docker image inspect --format \
+      '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$img" 2>/dev/null || true)"
+    if [[ "$img_rev" != "$src_rev" || "$src_rev" == *-dirty ]]; then
+      if ! docker image inspect "$img" >/dev/null 2>&1; then
+        log "build $img ($tgt) — not present locally"
+      elif [[ "$src_rev" == *-dirty ]]; then
+        log "rebuild $img ($tgt) — working tree is dirty; a commit cannot describe it"
       else
-        docker build -f "$dfile" -t "$img" "$REPO_ROOT"
+        log "rebuild $img ($tgt) — image revision '${img_rev:-none}' != source '$src_rev'"
       fi
+      if [[ "$tgt" == proxy ]]; then
+        docker build -f "$dfile" --target proxy \
+          --label "org.opencontainers.image.revision=$src_rev" -t "$img" "$REPO_ROOT"
+      else
+        docker build -f "$dfile" \
+          --label "org.opencontainers.image.revision=$src_rev" -t "$img" "$REPO_ROOT"
+      fi
+    else
+      log "reuse $img ($tgt) — built from this exact revision ($src_rev)"
     fi
     log "kind load $img"
     kind load docker-image "$img" --name "$KIND_CLUSTER"
@@ -375,6 +402,20 @@ done
 [[ -n "$redis_synced" ]] \
   || fail "only ${acks:-0} of $REDIS_REPLICAS Redis replicas acknowledge writes — the declared wait-quorum tier cannot be satisfied, and every replay insert would fail closed"
 echo "  OK: $REDIS_REPLICAS replica(s) acknowledging writes; the declared wait quorum is satisfiable."
+
+# SEED the trust-epoch counter before the fleet starts.
+#
+# The proxy refuses to serve when the key is ABSENT, and it is right to: an absent key is
+# indistinguishable from a counter that was deleted, evicted, or lost to a restore, so
+# reading it as epoch 0 would leave the push kill switch inert or let a restarted replica
+# mint under a rolled-back epoch. This harness only ever GETs and INCRs the key, so on a
+# FRESH Redis every replica CrashLoopBackOff'd on that guard and the fleet never became
+# available — the harness predates the guard. `SETNX` so an existing counter is never
+# rolled back to 0, which would be the very regression the guard exists to prevent.
+kubectl -n "$NAMESPACE" exec deploy/mcp-re-redis -- \
+  redis-cli SETNX mcp-re:trust:epoch 0 >/dev/null 2>&1 \
+  || fail "could not seed the trust-epoch counter mcp-re:trust:epoch"
+echo "  OK: trust-epoch counter present (SETNX; an existing value is left untouched)."
 
 # --- 3. Deploy the fleet (strict + fleet + shared tiers) ---------------------
 # The chart REFUSES to start a --fleet deployment on a node-local replay cache
@@ -551,10 +592,70 @@ while IFS= read -r _pod; do [[ -n "$_pod" ]] && PODS+=("$_pod"); done < <(
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' \
   | awk -F'\t' '$2=="True"{print $1}' | tail -2)
 [[ "${#PODS[@]}" -ge 2 ]] || fail "need >= 2 ready pods to prove cross-replica coherence"
+# Refuse a local port that is already taken, BEFORE forwarding through it. `kubectl
+# port-forward` fails to bind and exits, the client then reaches whatever else holds the
+# port, and a plaintext listener answers a TLS ClientHello with WRONG_VERSION_NUMBER —
+# which reads as a serving or coherence defect. These ports are in the mcp-re registry
+# band (config/ports.toml), so the usual squatter is another mcp-re process on the box.
+port_free() {
+  local port="$1" label="$2" holder
+  python3 -c "
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('127.0.0.1', $port))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+" 2>/dev/null && return 0
+  holder="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2{print $1" (pid "$2")"}')"
+  fail "local port $port for $label is already in use by ${holder:-another process}; free it or set the port override"
+}
+port_free "$LOCAL_PORT_A" "replica A"
+port_free "$LOCAL_PORT_B" "replica B"
+
 kubectl -n "$NAMESPACE" port-forward "pod/${PODS[0]}" "${LOCAL_PORT_A}:${BIND_PORT}" >/dev/null 2>&1 & PF_A=$!
 kubectl -n "$NAMESPACE" port-forward "pod/${PODS[1]}" "${LOCAL_PORT_B}:${BIND_PORT}" >/dev/null 2>&1 & PF_B=$!
 trap 'kill $PF_A $PF_B 2>/dev/null || true' EXIT
-sleep 3
+
+# WAIT for each tunnel to actually accept, rather than sleeping and hoping.
+#
+# A fixed `sleep 3` used to stand in for this. When a forwarder was not serving yet the
+# client's TLS handshake got a non-TLS answer — `SSL: WRONG_VERSION_NUMBER` — and Proof 1
+# then reported "replica B accepted a nonce already spent on A (replay coherence broken)".
+# That is a false SECURITY alarm about a request that was never sent, on the lane that
+# gates cloud spend.
+# The readiness test is a real TLS HANDSHAKE, not a TCP connect. `kubectl port-forward`
+# binds its local socket immediately and accepts connections before the tunnel to the pod
+# is wired, then closes them — which is precisely what surfaces as WRONG_VERSION_NUMBER.
+# A TCP connect therefore proves nothing. Certificate verification is off here on purpose:
+# this only has to establish that the peer speaks TLS. The proofs themselves verify the
+# chain, and weakening that is what would matter.
+wait_forward() {
+  local port="$1" pid="$2" label="$3"
+  for _ in $(seq 1 100); do
+    kill -0 "$pid" 2>/dev/null || fail "port-forward for $label exited; is the pod still ready?"
+    # Plain `python3`: this needs only stdlib socket/ssl, never the SDK, and $CLIENT_PY
+    # is not defined until further down.
+    if python3 -c "
+import socket, ssl, sys
+try:
+    s = socket.create_connection(('127.0.0.1', $port), 0.5)
+    c = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
+    c.wrap_socket(s, server_hostname='${MCP_RE_SERVER_NAME:-proxy.internal}').close()
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  fail "port-forward for $label never completed a TLS handshake on 127.0.0.1:$port"
+}
+wait_forward "$LOCAL_PORT_A" "$PF_A" "replica A (${PODS[0]})"
+wait_forward "$LOCAL_PORT_B" "$PF_B" "replica B (${PODS[1]})"
 # The client's --remote-addr takes host:port (mTLS + scheme come from --server-name
 # and the CA); NOT a URL. Both forward to the one in-cluster BIND_PORT.
 REPLICA_A="127.0.0.1:${LOCAL_PORT_A}"
@@ -616,6 +717,32 @@ epoch_label() {
 # Every client invocation goes through this so the accepted epoch is always current.
 client() {
   $CLIENT "${CLIENT_COMMON[@]}" --trust-epoch "$(epoch_label)" "$@"
+}
+
+# Run the client and distinguish "the server gave the wrong verdict" from "the client
+# never got an answer".
+#
+# `client` exits non-zero for BOTH, so a proof that only tests its status attributes a
+# TLS failure, a dead tunnel or a traceback to the security property under test — Proof 1
+# reported a broken replay-coherence guarantee for a request whose handshake never
+# completed. The client prints `verdict=<token>` when it reached a verdict; absent that,
+# this reports a HARNESS failure and prints the client's own diagnosis, so the security
+# claim is only ever made about a request that was actually served.
+#
+# Usage: prove <security-failure-message> -- <client args...>
+prove() {
+  local msg="$1"; shift
+  [[ "${1:-}" == "--" ]] && shift
+  # `|| rc=$?` rather than a bare assignment then `$?`: the script runs under `set -e`,
+  # where a failing command substitution aborts on the assignment itself and this
+  # function never reaches its own reporting.
+  local err rc=0
+  err="$(printf '%s\n' "$REQ" | client "$@" 2>&1)" || rc=$?
+  if (( rc != 0 )) && ! grep -q 'verdict=' <<<"$err"; then
+    printf '%s\n' "$err" >&2
+    fail "the proof client did not reach a verdict (no 'verdict=' in its output) — this is a HARNESS failure, NOT evidence about: $msg"
+  fi
+  (( rc == 0 )) || { printf '%s\n' "$err" >&2; fail "$msg"; }
 }
 # A minimal plain-MCP request the non-MRT proofs send. Override MCP_RE_REQ for your inner.
 REQ="${MCP_RE_REQ:-}"
@@ -709,12 +836,10 @@ log "Proof 1 — cross-replica replay coherence"
 # proof that gates a release is worse than a common one — it is rare enough to be
 # dismissed as a fluke and re-run.
 NONCE="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
-printf '%s\n' "$REQ" | client \
-  --remote-addr "$REPLICA_A" --nonce="$NONCE" --expect accepted \
-  || fail "replica A did not accept a fresh pinned nonce"
-printf '%s\n' "$REQ" | client \
-  --remote-addr "$REPLICA_B" --nonce="$NONCE" --expect replay \
-  || fail "replica B accepted a nonce already spent on A (replay coherence broken)"
+prove "replica A did not accept a fresh pinned nonce" -- \
+  --remote-addr "$REPLICA_A" --nonce="$NONCE" --expect accepted
+prove "replica B accepted a nonce already spent on A (replay coherence broken)" -- \
+  --remote-addr "$REPLICA_B" --nonce="$NONCE" --expect replay
 echo "  OK: nonce Fresh on A, Replay on B."
 
 # --- Proof 2: cross-replica trust revocation ---------------------------------

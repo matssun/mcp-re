@@ -398,6 +398,7 @@ impl HttpInnerPool {
             .map_err(|_| ())?;
 
         // Bound the whole round-trip. Timeout OR transport error ⇒ failure.
+        let _t_inner = crate::stage_timers::Timed::start(crate::stage_timers::Stage::InnerDispatch);
         let resp = match tokio::time::timeout(timeout, client.request(req)).await {
             Ok(Ok(resp)) => resp,
             _ => return Err(()),

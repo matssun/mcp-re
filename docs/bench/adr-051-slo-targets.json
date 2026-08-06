@@ -1,9 +1,9 @@
 {
   "schema": "mcp-re-slo-targets/v1",
   "adr": "ADR-MCPRE-051",
-  "section": "\u00a77 proof obligation \u2014 benchmark-first, SLO-gated releases",
+  "section": "§7 proof obligation — benchmark-first, SLO-gated releases",
   "issue": "MCPRE-110 (#317) + MCPRE-123",
-  "description": "The declared release-gate thresholds for ADR-051 \u00a77. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
+  "description": "The declared release-gate thresholds for ADR-051 §7. Split into (1) ACTIVE local-regression tolerances that gate day-to-day changes against the committed provisional baseline (scripts/adr051_slo_gate.py), (2) the production SLOs whose absolute numbers are measured on the declared hardware class via the GKE fleet run and enforced by scripts/slo_gate.py, and (3) the ALWAYS-ON absolute correctness gates that are hardware-independent.",
   "baseline_ref": "docs/bench/adr-051-baseline-local.json",
   "envelope_ref": "docs/bench/adr-051-benchmark-envelope.json",
   "local_regression_gate": "scripts/adr051_slo_gate.py",
@@ -25,7 +25,7 @@
     }
   },
   "production_slo": {
-    "status": "declared",
+    "status": "invalidated-pending-remeasurement",
     "measured_on": "2026-07-14; GKE us-central1-a STANDARD zonal cluster mcp-re-fleet (project MCP-S tests), branch mcpre-122 delegated-required-only serving path (RFC 9421 + RFC 9530), proxy image 0.12.1-wifix (fixes the WI metadata token URL). ROOT ISSUER in Cloud KMS via WORKLOAD IDENTITY (metadata token bound to mcp-re-kms-signer with cloudkms.signerVerifier; no key material in-pod, no user token). tls_load_harness_bench built --features async_serve,redis_replay, run as a K8s Job with in-pod primary+2-replica Redis native-sidecar (durability tier redis-wait-quorum:2:2000); cold TLS1.3-mTLS, concurrency 128, 8000 requests/run (v2 canonical envelope); MCP_RE_LOADGEN_CORES 1 then 8; in-process HTTP echo inner. Enforced by scripts/slo_gate.py; both classes gated PASS.",
     "kind": "absolute-per-hardware-profile",
     "hardware_class": "e2-standard-8",
@@ -40,7 +40,8 @@
       "gated": true,
       "linear_tolerance_min": 0.6,
       "cores_under_test": 8,
-      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Weaker measured factor e2 0.703 (c3 0.671); floor 0.6 with margin."
+      "comment": "achieved_N_core_throughput / (single_core_throughput * N) must be >= linear_tolerance_min. Weaker measured factor e2 0.703 (c3 0.671); floor 0.6 with margin.",
+      "measurement_topology": "MUST be measured with WORKERS_PER_SHARD=1 so `--cores N` means N serving threads. Since the ADR-MCPRE-051 §1 amendment (2026-08-06) the default resolves each shard to min(8, cpus) workers, so on an 8-vCPU node `--cores 1` already saturates the node and tput_N/(tput_1*N) tends to 1/N by construction — measured 0.123 at N=8 locally, against this 0.6 floor. The floor is unchanged and still describes the serving path's ability to use N threads; only the invocation has to pin the topology. Capacity, by contrast, is measured at the SHIPPED default because that is what a deployment gets."
     },
     "measurements": {
       "note": "v2 canonical envelope (RFC 9421 carrier, concurrency 128 / 8000 requests), GKE 2026-07-14 (current-source re-measurement on the delegated-required-only path, KMS-rooted via Workload Identity). throughput=verified responses/sec; latency microseconds; scaling = tput_8/(tput_1*8). Tracks the 2026-07-12 declaration within run-to-run variance (e2 402.1->395.6, c3 499.4->492.9); floors unchanged.",
@@ -79,11 +80,14 @@
         "per_core_linear_factor": 0.668
       }
     },
-    "envelope_note": "v2 canonical envelope: RFC 9421 carrier, concurrency 128 / 8000 requests, cold TLS1.3-mTLS (keepalive_reuse=0). These are cold-connection ENVELOPE figures for regression detection on declared hardware, not user-facing steady-state latency (production reuses connections). Tails are fatter than the superseded v1 (64/2000) run because concurrency doubled and requests 4x'd."
+    "envelope_note": "v2 canonical envelope: RFC 9421 carrier, concurrency 128 / 8000 requests, cold TLS1.3-mTLS (keepalive_reuse=0). These are cold-connection ENVELOPE figures for regression detection on declared hardware, not user-facing steady-state latency (production reuses connections). Tails are fatter than the superseded v1 (64/2000) run because concurrency doubled and requests 4x'd.",
+    "INVALIDATED": "2026-08-06: these absolute numbers were measured on a DEBUG build and MUST NOT be cited as capacity. tools/slo/run_slo_job.sh and deploy/docker/Dockerfile.bench both ran `cargo test` with no `--release`, so every GKE §7 figure recorded before this date — e2-standard-8 402.1 / c3-standard-8 499.4 (2026-07-14) and 358.1 / 452.1 (2026-08-06) — is unoptimised. Re-measured on the SAME cluster and envelope with --release: e2-standard-8 4390.0 rps (p50 25498us) and c3-standard-8 5228.5 rps (p50 20910us), i.e. 12.3x higher. The floor below (250 rps) is therefore ~45x too low and the latency ceilings correspondingly too loose. It is left in place rather than silently rewritten because re-declaring a production SLO needs a deliberate run on the class being declared, not an edit.",
+    "build_profile_required": "release. The local §7 lane always used --release; the cloud lane did not, and nothing recorded the profile, which is how a two-order-of-magnitude discrepancy survived across several runs and was read as a hardware story.",
+    "hardware_class_note_2026_08_06": "e2-standard-8 is Google's COST-OPTIMISED class (8 vCPUs are hyperthreads on older Xeons); it was chosen to fit a 16-vCPU free-trial quota, not for performance, and it should not anchor a capacity claim. Release-build measurements on the same cluster, cold-mTLS 128/8000: e2-standard-8 4390.0, c3-standard-8 5228.5, c3-highcpu-22 10437.9, c4-highcpu-16 11150.5 rps. For reference the local dev box (Apple M4 Pro, 14 cores) reaches 15454.9 with p50 7927us, and c4-highcpu-16 matches its LATENCY (p50 8706us) at 72% of its throughput. c4-highcpu-24/32 is blocked by CPUS_PER_VM_FAMILY=24 in us-east1; c4a (Axion, ARM) is untested because the images are amd64-only."
   },
   "absolute_gates": {
     "status": "active",
-    "kind": "hardware-independent correctness gates \u2014 always required, every release",
+    "kind": "hardware-independent correctness gates — always required, every release",
     "gates": [
       {
         "name": "replay-race",
@@ -91,7 +95,7 @@
         "enforced_by": [
           "//mcp-re-proxy:replay_race_harness_test"
         ],
-        "adr_ref": "ADR-MCPRE-051 \u00a74"
+        "adr_ref": "ADR-MCPRE-051 §4"
       },
       {
         "name": "bounded-drain",
@@ -99,7 +103,7 @@
         "enforced_by": [
           "//mcp-re-proxy:async_drain_test"
         ],
-        "adr_ref": "ADR-MCPRE-051 \u00a76"
+        "adr_ref": "ADR-MCPRE-051 §6"
       }
     ]
   }

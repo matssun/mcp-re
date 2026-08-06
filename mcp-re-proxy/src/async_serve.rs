@@ -670,6 +670,11 @@ async fn serve_connection<H: AsyncRequestHandler>(
     Ok(())
 }
 
+/// How often the scheduler-latency probe is sampled, in requests. The probe is itself a
+/// spawned task, so sampling every request would measure a runtime perturbed by the
+/// measurement; this is rare enough to be free and frequent enough to average out.
+const SCHEDULER_PROBE_EVERY_N_REQUESTS: u64 = 500;
+
 /// Serve one HTTP request: reconstruct the header view, read the body (capped),
 /// run the SAME identity/rejection/handler pipeline as the blocking serve loop, and
 /// frame the signed response bytes.
@@ -688,12 +693,19 @@ async fn handle_request<H: AsyncRequestHandler>(
     // owned permit is held for the rest of this request and released on return (RAII),
     // so the ceiling bounds requests actually in flight, never queuing them without
     // bound. `None` ⇒ no ceiling (unbounded in-flight).
-    let _admission = match &in_flight {
-        Some(semaphore) => match Arc::clone(semaphore).try_acquire_owned() {
-            Ok(permit) => Some(permit),
-            Err(_) => return Ok(overloaded_response()),
-        },
-        None => None,
+    let _timed_total = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Total);
+    // Sampled from the serving path so the probe queues behind exactly what a request
+    // queues behind; see `probe_scheduler`.
+    crate::stage_timers::probe_scheduler(SCHEDULER_PROBE_EVERY_N_REQUESTS);
+    let _admission = {
+        let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Admission);
+        match &in_flight {
+            Some(semaphore) => match Arc::clone(semaphore).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(_) => return Ok(overloaded_response()),
+            },
+            None => None,
+        }
     };
 
     // MCPRE-115: count this request as in flight for the duration of its processing
@@ -806,6 +818,7 @@ async fn handle_request<H: AsyncRequestHandler>(
                 identity,
                 assertion: assertion.map(str::to_string),
             };
+            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Handler);
             handler(served_req).await
         }
     };

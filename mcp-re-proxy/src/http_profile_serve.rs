@@ -532,14 +532,19 @@ impl HttpProfileProxy {
         // no external material is supplied here; any binding lacking a credential
         // still fails closed.
         let no_material = |_b: &ArtifactBinding| None;
-        let verified = match verify_request_full_with_policy(
-            &http_req,
-            &self.expected_audience,
-            &no_material,
-            self.resolve_actor.as_ref(),
-            &self.verifier_policy,
-            now,
-        ) {
+        // Scoped so the timer covers the verification and nothing after it.
+        let verify_result = {
+            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Verify);
+            verify_request_full_with_policy(
+                &http_req,
+                &self.expected_audience,
+                &no_material,
+                self.resolve_actor.as_ref(),
+                &self.verifier_policy,
+                now,
+            )
+        };
+        let verified = match verify_result {
             Ok(v) => v,
             // Preflight failure: the request never verified, so there is no
             // trustworthy request hash — the rejection is signed unbound, and there is
@@ -877,17 +882,22 @@ impl HttpProfileProxy {
             );
         }
 
-        let response_base = match sign_delegated_response_full(
-            &mut response,
-            &http_req,
-            &verified.evidence,
-            &a.server_signer,
-            &a.credential,
-            a.key.as_ref(),
-            &a.delegated_kid,
-            now,
-            expires,
-        ) {
+        // Scoped so the timer covers the signature and nothing after it.
+        let sign_result = {
+            let _t = crate::stage_timers::Timed::start(crate::stage_timers::Stage::Sign);
+            sign_delegated_response_full(
+                &mut response,
+                &http_req,
+                &verified.evidence,
+                &a.server_signer,
+                &a.credential,
+                a.key.as_ref(),
+                &a.delegated_kid,
+                now,
+                expires,
+            )
+        };
+        let response_base = match sign_result {
             Ok(base) => base,
             Err(e) => {
                 return self.response_rejection(

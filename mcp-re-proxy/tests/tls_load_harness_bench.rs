@@ -588,6 +588,11 @@ fn spawn_proxy(
     // report is the count actually served, and so the 1→N linear-scaling curve is
     // reproducible — run the bench at MCP_RE_LOADGEN_CORES=1 then =N. `0` = auto.
     let cores_str = cores.to_string();
+    // ADR-MCPRE-051 §1 second topology axis. Default "0" keeps the single-threaded
+    // share-nothing shard, so an unset environment measures exactly what the committed
+    // anchor measured and the gate stays a like-for-like comparison.
+    let workers_per_shard =
+        std::env::var("MCP_RE_LOADGEN_WORKERS_PER_SHARD").unwrap_or_else(|_| "0".to_string());
 
     // The proxy always runs the maximal-security posture, so the bench config must be
     // production-valid. The cert-lifetime arg is the SAME constant the proxy enforces
@@ -651,6 +656,8 @@ fn spawn_proxy(
             "redis-wait-quorum:2:2000",
             "--cores",
             &cores_str,
+            "--workers-per-shard",
+            &workers_per_shard,
             // ADR-MCPRE-051 §3: serve on the async fleet forwarding to the stateless
             // in-process HTTP echo backend.
             "--inner-http-url",

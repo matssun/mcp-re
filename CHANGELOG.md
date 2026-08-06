@@ -12,6 +12,78 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-06
+
+### Changed — TLS session resumption is restored, bound to a trust epoch (ADR-MCPRE-055)
+
+v0.14.0 refused TLS session resumption outright. That was a real security fix — a resumed
+session skips chain building, so a withdrawn CA stayed honoured for the lifetime of a
+ticket — but it cost 21% of throughput, and refusing was a heavier answer than the problem
+needed.
+
+Resumption is restored and bound to a **trust epoch**: a digest over the client-CA set and
+the client-auth policy, computed at config build and carried in every stored session.
+Withdrawing a CA or changing the policy changes the epoch, which invalidates every
+outstanding ticket — so a resumed session can never outlive the trust that admitted it.
+Sessions whose epoch no longer matches are evicted rather than merely rejected. Early data
+stays disabled (`max_early_data_size = 0`).
+
+CRL contents are deliberately **excluded** from the epoch: a CRL refresh must not
+invalidate the whole session cache, and per-request revocation already covers it.
+
+The startup line now reads `tls_session_resumption=epoch-bound`. Four tests drive real
+in-memory rustls handshakes and assert on `HandshakeKind`, including that withdrawing a CA
+forces a full handshake with the verifier deliberately left unchanged.
+
+### Changed — serving runtime topology: shards keep a worker pool (ADR-MCPRE-051 §1 amended)
+
+Each serving shard was a single-threaded `tokio` runtime: one thread driving the I/O
+reactor *and* polling every task. With hundreds of concurrent futures per shard a readied
+task waited ~10.6 ms to be polled while the process used 0.49 of 14 cores — nothing
+CPU-bound, nothing I/O-bound, the work simply not scheduled.
+
+Shard count and pool depth are now independent, configured parameters:
+
+* `--cores N` — serving shards, each an `SO_REUSEPORT` listener. Default: one per cpu.
+* `--workers-per-shard W` — Tokio workers inside each shard. Default `min(8, cpus)`.
+  `1` restores the previous single-threaded shard.
+
+The two are **not** interchangeable and neither substitutes for the other: shards
+parallelise `accept` (a single listener serialises connection establishment — 8x1 measured
+4,628.8 rps against 1x8's 1,538.9 on a cold-mTLS envelope), while depth parallelises
+polling (8x8 reached 44,803 rps against 8x1's 10,362 on a keepalive workload). The default
+therefore keeps a shard per cpu and adds depth on top, never trading one for the other.
+
+The local §7 anchor moved 5,530.9 → **15,454.9 rps** (p50 21,794 → 7,927 us) and was
+re-baselined to v6. `scripts/runtime_topology_sweep.sh` measures the matrix on a given
+host, because the optimum is hardware-, kernel- **and workload**-specific.
+
+Security posture unchanged: replay integrity never depended on single-threaded sequencing
+(admission is a server-side atomic `SET NX PX`, and `Fresh` can only come from a winning L2
+insert), and `--max-in-flight` is still divided per shard so deeper pools do not widen the
+in-flight bound.
+
+### Fixed — the cloud SLO lane measured a debug build
+
+`tools/slo/run_slo_job.sh` and `deploy/docker/Dockerfile.bench` ran `cargo test` without
+`--release` while the local lane used it throughout, so every GKE §7 number ever recorded
+was unoptimised — e2-standard-8 4,390.0 rps on release against 358.1 debug, 12.3x. The
+declared production targets derive from those numbers and are now marked
+`invalidated-pending-remeasurement`; the gate skips the capacity checks and says why rather
+than passing against a floor ~45x too low.
+
+### Fixed — the kind fleet lane could pass on stale evidence
+
+Three defects in the lane that gates cloud spend: it rebuilt images only when ABSENT (so a
+4-day-old binary was validated against today's chart, CrashLooping on a flag it predated);
+Proof 1 reported a client TLS failure as "replica B accepted a nonce already spent on A",
+a false security alarm about a request never sent; and port-forward readiness was a
+`sleep`, which cannot distinguish a bound socket from a wired tunnel. Images are now
+stamped with the build revision, a security claim requires the client to have reached a
+verdict, and readiness is a real TLS handshake. The GKE harness also seeds the
+trust-epoch counter it previously only read — the proxy's fail-closed guard on an absent
+key was newer than the harness.
+
 ### Added — the client-side ambassador ships as a binary (`mcp-re-client`)
 
 `FileManifestFloor` and `load_signed_manifest_with_floor` had no caller outside tests,

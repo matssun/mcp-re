@@ -512,15 +512,23 @@ impl AsyncReplayTier {
         // every deployable adapter — see [`RetentionLedger`].
         let charge = Charge::reserve(&self.ledger, &key.principal, now_unix)
             .map_err(ReplayCacheError::from)?;
-        let outcome = self
-            .store
-            .atomic_insert_if_absent(ReplayInsert::new(
-                &composite,
-                &key.principal,
-                retain_until,
-                now_unix,
-            ))
-            .await;
+        // Scoped to the STORE round trip alone, so the span does not also cover the
+        // charge accounting around it. This is the only awaited I/O a request performs,
+        // which is why every scheduling delay in the process lands here — see
+        // `stage_timers`.
+        let outcome = {
+            let _t_replay =
+                crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplayInsert);
+            let _inflight = crate::stage_timers::InFlight::enter();
+            self.store
+                .atomic_insert_if_absent(ReplayInsert::new(
+                    &composite,
+                    &key.principal,
+                    retain_until,
+                    now_unix,
+                ))
+                .await
+        };
         match outcome {
             // The nonce is retained until `retain_until`, and so is its charge.
             Ok(ReplayDecision::Fresh) => {

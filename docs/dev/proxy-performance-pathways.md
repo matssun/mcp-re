@@ -105,15 +105,189 @@ rig that can saturate the proxy.
    handshake. Ticket-encryption keys derived from the trust epoch, erased on epoch change,
    would extend resumption fleet-wide. This is the largest *security-relevant* design item
    remaining, and it is genuinely harder than what has been built.
-6. **Replay-tier round trips.** Earlier instrumentation put Redis admission at ~6.5 ms of
-   wall time per request. Pipelining, batching, or a local negative cache are all plausible;
-   none has been measured since the async serving path landed.
+6. ~~**Replay-tier round trips.**~~ **Closed — the replay tier is not a bottleneck.** See
+   "The replay tier is exonerated" below before spending any effort here.
 7. **TLS 1.3 only.** Dropping the `tls12` feature narrows the handshake state machine and
    the attack surface. Small, and a compatibility decision rather than purely technical.
 8. **Certificate algorithm and chain depth.** Ed25519 certificates would cut both the ECDSA
    cost and handshake bytes, but the client PKI is usually not ours to choose, and the
    benchmark's P-256 comes from `rcgen`'s default rather than from a deployment decision.
    Explore only with a real PKI in view.
+
+## The replay tier is exonerated
+
+Stage timers (`MCP_RE_STAGE_TIMERS`) attribute 92-94% of every request to `replay_insert`
+at every concurrency — 1,500 µs of 1,624 µs unloaded at 4 connections, 50,454 µs of 53,774 µs
+saturated. That reads as a bottleneck and is not one.
+
+`mcp-re-proxy/examples/replay_store_bench.rs` drives the SAME store code with no proxy in
+the picture, across the same published Redis port, against the same primary + 2 replicas:
+
+| path | concurrency | rps |
+| --- | --- | --- |
+| `SET NX PX` only | 512 | 421,850 |
+| `SET NX PX` + `WAIT 2 2000` | 512 | 463,760 |
+| the proxy's exact topology (pool 8, `WAIT 2 2000`, separate 1-worker control runtime) | 512 | 470,245 / 475,630 / 501,019 |
+| the same, with 8 control workers | 512 | 391,523 / 416,246 |
+
+Redis itself, measured inside the container with `redis-benchmark` under a concurrent write
+stream so `WAIT` blocks on genuinely un-acked offsets: `SET NX PX` 31 µs at c=1 and 202,020/s
+at c=512; `WAIT 2 2000` 31 µs at c=1 and 238,095/s at c=512.
+
+The store path sustains ~470k rps against a proxy that sustains ~13k. It is over-provisioned
+by more than 30×, so `replay_insert`'s stage time is **scheduling delay attributed to the
+sole await point on the request path**, not work. `AsyncReplayTier::check_and_insert` is the
+only `.await` of real I/O a request performs, so every scheduling delay in the process has
+exactly one place to land — which is also why its *share* stays constant across concurrency,
+something a work bottleneck would not do.
+
+### Hypotheses killed by measurement, so nobody re-runs them
+
+| hypothesis | how it died |
+| --- | --- |
+| `Mutex<redis::Connection>` serialises inserts | that is the *sync* store; `app.rs` wires the async one |
+| single Redis connection | pool swept 1/2/4/8/16, flat at ~13k |
+| `WAIT` head-of-line blocking on the replication ACK loop | `WAIT` measures 31 µs and 238k/s under real write load, and is *faster* than the bare `SET` in the store bench |
+| Redis command execution is single-threaded and saturated | Redis measured 2.8% busy at the ceiling; 202k `SET`/s available |
+| Colima's port forwarder is a fixed-rate path | the 470k store bench crosses that exact forwarder |
+| cross-runtime wakeups between serving cores and the 1-worker control runtime | split-runtime bench is indistinguishable from single-runtime (475k vs 470k) |
+| the control runtime needs more workers | 8 workers measured *slower* than 1, in both the bench and the rig |
+
+Redis parallelism (`io-threads`, cluster sharding, batching `WAIT` across a pipeline) is
+therefore moot for this ceiling. None of it can move a component that is already 30× faster
+than the demand placed on it.
+
+### Loopback is not the ceiling either
+
+Two independent harnesses converging (~10.2k for the saturation rig, ~10.4k for the §7
+lane) with flat scaling across 2/4/8 cores looks exactly like the macOS loopback stack
+rather than the proxy. It is not. Measured with the rig's own backend, driven by `ab` over
+plain loopback HTTP with keepalive at c=128 — no proxy, no TLS, no pipelining, one request
+per socket round trip:
+
+```
+Requests per second:  174,481.30 [#/sec]
+Failed requests:      0
+```
+
+17× the proxy's ceiling. So `lo0` is not the constraint, the M/M+1 `PROXY` verdict stands,
+and ~10.2k is the proxy's own number — which is the question an off-host or cloud run
+would otherwise have been needed to settle.
+
+The store bench's 470k could NOT settle this on its own, and should not be cited for it:
+it pipelines many commands per socket round trip across 8 connections, while the proxy's
+HTTP path is one request per round trip across 768. Comparing them conflates throughput
+with syscall count.
+
+### Run-to-run variance is large — do not quote single figures
+
+The `multi_thread(8)` split-control store bench returned 21,314 rps in one batch against
+470,245 / 475,630 / 501,019 for the identical configuration in others, and the first row
+after the Redis containers start has been anomalous twice. Something is cold for the first
+measurement in a batch. Every configuration still lands well above the proxy's 10.2k, so
+the conclusions here survive, but any individual number needs repeats before it means
+anything.
+
+## The ceiling is the per-core runtime shape (5x on the table)
+
+The in-flight gauge shows all ~820 requests are inside `replay_insert` at once
+(`replay_inflight` mean 820.1, max 896), so nothing is gated upstream of the store. Yet
+the same store at the same concurrency is 13-19x slower inside the proxy than in the
+bench, and `inner_dispatch` — which never touches Redis — inflates identically
+(91us -> 922us). Everything the proxy AWAITS slows down together while the process burns
+0.49 cores.
+
+The cause is ADR-MCPRE-051 §1's `new_current_thread()` per-core runtime: one thread drives
+the kqueue I/O driver AND polls every task, so with ~96 TLS connections plus ~100 store
+futures per core a cross-runtime wake waits ~10ms to be polled.
+
+Worker-pool sweep at 8 cores, 6 generators, 128 connections/generator:
+
+| workers/core | threads | rps | verdict | p50 | scheduler_latency |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 8 | 8,636 | CLIENT | 89,026us | 13,468us |
+| 2 | 16 | 19,963 | PROXY +0.3% | 36,492us | 46.6us |
+| 4 | 32 | 38,730 | PROXY +1.7% | 19,403us | 46.3us |
+| 8 | 64 | 44,803 | PROXY +1.1% | 16,277us | 60.3us |
+| 16 | 128 | 46,325 | PROXY +3.6% | 15,502us | 82.6us |
+
+Diminishing returns arrive at 8; 16 adds 3.4% and starts raising scheduler latency again.
+
+**Shard count is not the same as thread count, and it is the shards that hurt.** At an
+identical 16 total threads:
+
+| layout | threads | rps |
+| --- | --- | --- |
+| 8 cores x 2 workers | 16 | 19,910 |
+| 2 cores x 8 workers | 16 | 44,816 |
+
+2.25x apart. A task readied on an 8-shard/2-worker layout can only be picked up by its own
+two workers; a 2-shard/8-worker layout steals work within each pool. And `2 cores x 8
+workers` (16 threads) matches `8 cores x 8 workers` (64 threads) at 44,803 — four times the
+threads buys nothing once the pools are big enough.
+
+So the per-core sharding was not paying for itself: fewer, larger pools reach the same
+throughput with a quarter of the threads.
+
+**This is now the default** ([ADR-MCPRE-051 §1 amendment, 2026-08-06](https://github.com/matssun/mcp-re/discussions/399#discussioncomment-17918976)).
+`--cores` and `--workers-per-shard` are independent flags; auto resolves to
+`min(8, cpus)` workers and `ceil(cpus / workers)` shards — 2 x 8 on a 14-cpu host, and
+1 x 1 on a single-cpu host, which is exactly the old single-threaded shard. Restore the old
+behaviour explicitly with `--workers-per-shard 1`.
+
+Confirmed on the §7 anchor lane running the new default with no override:
+**15,217.3 rps median, PASS 6/6**, against the committed anchor of 5,530.9 — 2.75x.
+
+Measure it for a given host with `scripts/runtime_topology_sweep.sh`; the cap of 8 is
+where the curve flattened on one macOS/kqueue box and is not a hardware constant.
+
+**The §7 anchor was re-baselined to v6** (2026-08-06): 15,454.9 rps median of 6 reps,
+p50 7,927us / p99 16,037us, replacing the v5 anchor's 5,530.9 / 21,794 / 41,936. Same box,
+same 128/8000/1-core cold-mTLS envelope, same pinned toolchain — only the runtime topology
+changed. Verified as a working detector, not just new numbers: a fresh run at the default
+passes, and reverting to `--workers-per-shard 1` FAILS all four metrics
+(5,328 rps against a 13,136.7 floor, p50 21,256us against a 9,909us ceiling).
+
+## What the GKE run added (2026-08-06)
+
+**The default was wrong, and the cloud run is what showed it.** The local sweep concluded
+"fewer, deeper shards" from the keepalive saturation rig. On the cold-mTLS §7 envelope the
+opposite holds, because each shard owns an `SO_REUSEPORT` listener and shards parallelise
+`accept` — which a single listener serialises and no pool depth can fix. On an 8-vCPU node
+at a CONSTANT 8 threads (release build):
+
+| topology | rps |
+| --- | --- |
+| 8 shards x 1 worker | 4,628.8 |
+| 8 shards x 8 workers (shipped default) | 4,390.0 |
+| 1 shard x 8 workers | 1,538.9 |
+
+3.0x across the same thread count. The corrected default keeps ONE SHARD PER CPU and adds
+depth on top: ~5% cost on cold, ~4.3x gain on keepalive. Never trade shards for depth.
+
+**The cloud lane was measuring a DEBUG build.** `cargo test` without `--release`, in both
+the Job and `Dockerfile.bench`. That was 12.3x of a ~240x local-vs-cloud gap that had been
+read as hardware; the rest is genuine class difference. See the runbook's machine-class
+table — `e2-standard-8` is cost-optimised, and `c4-highcpu-16` reaches the dev box's
+p50 latency at 72% of its throughput.
+
+**Open:** at the shipped default on release, the §7 scaling ratio is 0.357 at 8 cores
+(4,390.0 / (1,538.9 x 8)) against a 0.6 floor, because `--cores 1` now resolves to 8
+workers. With `WORKERS_PER_SHARD=1` the pair is 8x1 = 4,628.8 against an unmeasured 1x1.
+That pinned pair is what the runbook prescribes for the scaling obligation, and it has not
+been measured end-to-end on release.
+
+### What the instrument still cannot see
+
+Nothing on the request path is CPU-bound: at ~10k rps the proxy used 0.44 of 14 cores and
+each generator 0.07. Nothing is I/O-bound either, per the above. The rig's M/M+1 probe still
+returned `CLIENT` at 6 generators (+18%), so the ~13k figure is a floor and not yet the
+proxy's ceiling.
+
+The next instrument needs to separate *work* from *waiting*, which the current stage timers
+cannot: they only bracket spans, and one span contains the only await. Measuring scheduler
+latency directly — spawn-to-first-poll on each serving runtime — would split "our code is
+slow" from "tasks are not being scheduled", and that split is the open question.
 
 ## Rules for anyone continuing this
 

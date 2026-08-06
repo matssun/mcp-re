@@ -120,6 +120,7 @@ _PROXY_LIB_SRCS = [
     # Per-request client-cert revocation: the revoked-serial index the serving path
     # consults on every request, since rustls consults the CRLs at the handshake alone.
     "src/client_revocation.rs",
+    "src/stage_timers.rs",
     "src/tls_auth_epoch.rs",
     # ADR-MCPS-021 Tier 3: push-invalidation trust cache (bounded-T cache + injected
     # invalidation channel; bounded-T fallback when the channel is unhealthy).

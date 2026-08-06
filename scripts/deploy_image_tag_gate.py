@@ -65,6 +65,14 @@ def expected_version() -> str:
     return (REPO / "VERSION").read_text().strip()
 
 
+# A Helm chart writes its image tag as a BARE `tag:` value, split from the repository it
+# belongs to, so `IMAGE_TAG` (which needs `name:tag` on one line) cannot see it. That is
+# not a theoretical gap: `deploy/helm/mcp-re-proxy/values.yaml` carries the tag the FLEET
+# ACTUALLY PULLS, and a stale one there deploys the previous image under a release that
+# claims to be the new one — with every file still validating and this gate still green.
+BARE_TAG = re.compile(r"^\s*tag:\s*\"?(\d+\.\d+\.\d+)\"?\s*$")
+
+
 def scan(root: Path, version: str) -> list[str]:
     """Return one finding per image reference whose literal tag != version."""
     findings: list[str] = []
@@ -80,6 +88,13 @@ def scan(root: Path, version: str) -> list[str]:
                             f"!= VERSION {version} — read the tag from VERSION "
                             f"rather than restating it"
                         )
+                bare = BARE_TAG.match(line)
+                if bare and bare.group(1) != version:
+                    findings.append(
+                        f"{path.relative_to(root)}:{lineno}: image tag "
+                        f"{bare.group(1)} != VERSION {version} — this is the tag the "
+                        f"chart deploys; see docs/dev/version-bump.md"
+                    )
     return findings
 
 
@@ -102,6 +117,21 @@ def selftest() -> int:
         if scan(root, "9.9.9"):
             print("SELFTEST FAILED: a correctly-pinned tree still reported findings")
             return 1
+
+        # A Helm-style BARE `tag:` must be caught too. Its own fixture, because the
+        # name:tag matcher cannot see this form at all — the check that missed it looked
+        # exactly as green as one that covers it.
+        values = root / "deploy" / "values.yaml"
+        values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"0.12.1\"\n")
+        findings = scan(root, "9.9.9")
+        if len(findings) != 1 or "values.yaml" not in findings[0]:
+            print(f"SELFTEST FAILED: a drifted bare `tag:` was not caught, got {findings}")
+            return 1
+        values.write_text("image:\n  repository: mcp-re-proxy\n  tag: \"9.9.9\"\n")
+        if scan(root, "9.9.9"):
+            print("SELFTEST FAILED: a correct bare `tag:` still reported findings")
+            return 1
+        values.unlink()
 
     # Coverage: an image something DEPLOYS but no cloudbuild config BUILDS. Its own
     # fixture, so the two checks cannot mask each other. The orphan is asserted with an

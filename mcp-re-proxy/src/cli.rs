@@ -274,12 +274,31 @@ pub struct Config {
     /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
     /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
     pub inner_http_urls: Vec<String>,
-    /// ADR-MCPRE-051 §1: number of per-core async worker runtimes (SO_REUSEPORT
-    /// listeners). `0` (default) means auto — one worker per core via
-    /// `std::thread::available_parallelism`. Pinning an explicit count makes the
-    /// per-core linear-scaling benchmark reproducible (drive N=1 then N=cores) and
-    /// lets an operator cap workers below the core count.
+    /// ADR-MCPRE-051 §1: number of serving SHARDS (each an `SO_REUSEPORT` listener with
+    /// its own runtime). `0` (default) means auto.
+    ///
+    /// Auto is no longer "one shard per core": it is `ceil(cpus / workers_per_shard)`,
+    /// which on a 14-cpu host gives 2 shards of 8 rather than 14 of 1. Shards are
+    /// scheduling silos — Tokio steals work only within a runtime — so over-sharding
+    /// starves ready tasks. Pinning an explicit count still makes the scaling benchmark
+    /// reproducible.
     pub cores: usize,
+    /// ADR-MCPRE-051 §1: Tokio worker threads inside EACH serving shard. `0` (default)
+    /// means auto — `min(8, cpus)`; an explicit `1` restores the single-threaded
+    /// share-nothing shard.
+    ///
+    /// Depth is what buys throughput: on the cold §7 anchor lane, 1 worker measured
+    /// 5,320 rps against 15,454 at 8, and on the warm saturation rig 10,362 against
+    /// 44,803. Replay integrity does not depend on single-threaded sequencing — admission
+    /// is a server-side atomic `SET NX PX` and `Fresh` can only come from a winning L2
+    /// insert — so two workers racing one nonce is the case the tier already handles
+    /// across replicas.
+    ///
+    /// This is configuration rather than a constant because the optimum is a property of
+    /// the host: cache domains, SMT, P/E-core asymmetry and epoll-vs-kqueue wakeup
+    /// behaviour all move it. Measure it with `scripts/runtime_topology_sweep.sh` rather
+    /// than assuming a number carries across machines.
+    pub workers_per_shard: usize,
     /// MCPRE-114: fleet-GLOBAL in-flight ceiling, divided evenly across cores by
     /// `async_fleet`. `None` = no global target (a per-core `limits
     /// .max_in_flight_requests` may still apply; with neither there is no ceiling).
@@ -627,6 +646,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut inner_http_urls: Vec<String> = Vec::new();
     // ADR-MCPRE-051 §1: per-core worker count; 0 = auto (one per core).
     let mut cores: usize = 0;
+    let mut workers_per_shard: usize = 0;
     let mut max_in_flight_total: Option<usize> = None;
     // Whether `--max-in-flight` was given. `ServerLimits::max_in_flight_requests` now
     // carries a fail-safe DEFAULT, so its being `Some` no longer means the operator
@@ -1239,6 +1259,16 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
                 max_in_flight_total = Some(n);
             }
             "--max-client-cert-lifetime" => max_client_cert_lifetime = parse_cert_lifetime(value)?,
+            "--workers-per-shard" => {
+                // Sharding and thread count are not interchangeable: at an identical 16
+                // threads, 8 shards x 2 workers measured 19,910 rps against 44,816 for
+                // 2 shards x 8, because Tokio steals work only within one runtime.
+                workers_per_shard = value.parse().map_err(|_| {
+                    "invalid --workers-per-shard (expected a non-negative integer; \
+                     0/1 = single-threaded shard)"
+                        .to_string()
+                })?;
+            }
             "--cores" => {
                 // ADR-MCPRE-051 §1: pin the per-core worker count. `0` = auto (one
                 // per core). An explicit count makes the 1→N linear-scaling
@@ -1841,6 +1871,7 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         client_crl_paths,
         inner_http_urls,
         cores,
+        workers_per_shard,
         max_in_flight_total,
         client_crl_reload_secs,
         client_ocsp,

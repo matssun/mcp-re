@@ -347,7 +347,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "mcp-re-client-core"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "mcp-re-core",
  "mcp-re-http-profile",
@@ -357,7 +357,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-core"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-re-http-profile"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "base64",
  "ciborium",
