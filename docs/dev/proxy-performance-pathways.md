@@ -188,6 +188,49 @@ measurement in a batch. Every configuration still lands well above the proxy's 1
 the conclusions here survive, but any individual number needs repeats before it means
 anything.
 
+## The ceiling is the per-core runtime shape (5x on the table)
+
+The in-flight gauge shows all ~820 requests are inside `replay_insert` at once
+(`replay_inflight` mean 820.1, max 896), so nothing is gated upstream of the store. Yet
+the same store at the same concurrency is 13-19x slower inside the proxy than in the
+bench, and `inner_dispatch` — which never touches Redis — inflates identically
+(91us -> 922us). Everything the proxy AWAITS slows down together while the process burns
+0.49 cores.
+
+The cause is ADR-MCPRE-051 §1's `new_current_thread()` per-core runtime: one thread drives
+the kqueue I/O driver AND polls every task, so with ~96 TLS connections plus ~100 store
+futures per core a cross-runtime wake waits ~10ms to be polled.
+
+Worker-pool sweep at 8 cores, 6 generators, 128 connections/generator:
+
+| workers/core | threads | rps | verdict | p50 | scheduler_latency |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 8 | 8,636 | CLIENT | 89,026us | 13,468us |
+| 2 | 16 | 19,963 | PROXY +0.3% | 36,492us | 46.6us |
+| 4 | 32 | 38,730 | PROXY +1.7% | 19,403us | 46.3us |
+| 8 | 64 | 44,803 | PROXY +1.1% | 16,277us | 60.3us |
+| 16 | 128 | 46,325 | PROXY +3.6% | 15,502us | 82.6us |
+
+Diminishing returns arrive at 8; 16 adds 3.4% and starts raising scheduler latency again.
+
+**Shard count is not the same as thread count, and it is the shards that hurt.** At an
+identical 16 total threads:
+
+| layout | threads | rps |
+| --- | --- | --- |
+| 8 cores x 2 workers | 16 | 19,910 |
+| 2 cores x 8 workers | 16 | 44,816 |
+
+2.25x apart. A task readied on an 8-shard/2-worker layout can only be picked up by its own
+two workers; a 2-shard/8-worker layout steals work within each pool. And `2 cores x 8
+workers` (16 threads) matches `8 cores x 8 workers` (64 threads) at 44,803 — four times the
+threads buys nothing once the pools are big enough.
+
+So the per-core sharding is not paying for itself on this workload: fewer, larger pools
+reach the same throughput with a quarter of the threads. Changing it is an ADR-MCPRE-051 §1
+amendment — the share-nothing property is a stated design choice, not an oversight — so the
+knob stays behind `MCP_RE_DIAG_CORE_WORKERS` and off by default until that decision is made.
+
 ### What the instrument still cannot see
 
 Nothing on the request path is CPU-bound: at ~10k rps the proxy used 0.44 of 14 cores and
