@@ -134,7 +134,7 @@ $NODE_SELECTOR
           # with an explicit PATH. Wait for the two replicas to report online (so WAIT 2
           # is satisfiable), then run ONLY tls_load_harness_bench (the file's other tests
           # need Docker) built WITH redis_replay, and emit the report between markers.
-          command: ["bash","-c","export PATH=/usr/local/cargo/bin:\$PATH && sleep 8 && cargo test -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
+          command: ["bash","-c","export PATH=/usr/local/cargo/bin:\$PATH && sleep 8 && cargo test --release -p mcp-re-proxy --features async_serve,redis_replay --test tls_load_harness_bench tls_load_harness_bench -- --exact --nocapture && echo && echo '===REPORT_JSON_BEGIN===' && cat \"\$MCP_RE_LOADGEN_OUT\" && echo && echo '===REPORT_JSON_END==='"]
           env:
             - { name: MCP_RE_LOADGEN_REDIS_URL, value: "redis://127.0.0.1:6379" }
             - { name: MCP_RE_LOADGEN_HW_CLASS, value: "$HW" }
