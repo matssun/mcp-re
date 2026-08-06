@@ -48,6 +48,9 @@ const NAMES: [&str; STAGES] = [
     "total",
 ];
 
+/// How often the snapshot is rewritten, in completed requests.
+const REPORT_EVERY_N_REQUESTS: u64 = 5000;
+
 struct Acc {
     nanos: [AtomicU64; STAGES],
     count: [AtomicU64; STAGES],
@@ -107,11 +110,13 @@ impl Drop for Timed {
             let a = acc();
             a.nanos[i].fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
             a.count[i].fetch_add(1, Ordering::Relaxed);
-            // Rewrite the report every 5000 completed requests. The proxy is killed by
+            // Rewrite the report periodically. The proxy is killed by
             // the harness rather than shut down, so a report written only at exit would
             // never survive; rewriting the same path keeps the last snapshot readable.
             if matches!(self.stage, Stage::Total)
-                && a.count[Stage::Total as usize].load(Ordering::Relaxed) % 5000 == 0
+                && a.count[Stage::Total as usize]
+                    .load(Ordering::Relaxed)
+                    .is_multiple_of(REPORT_EVERY_N_REQUESTS)
             {
                 write_report();
             }
@@ -124,7 +129,7 @@ fn write_report() {
     let a = acc();
     a.reported.fetch_add(1, Ordering::Relaxed);
     let mut out = String::from("stage,count,total_ms,mean_us\n");
-    for i in 0..STAGES {
+    for (i, name) in NAMES.iter().enumerate() {
         let n = a.count[i].load(Ordering::Relaxed);
         let ns = a.nanos[i].load(Ordering::Relaxed);
         let mean_us = if n > 0 {
@@ -134,7 +139,7 @@ fn write_report() {
         };
         out.push_str(&format!(
             "{},{},{:.1},{:.1}\n",
-            NAMES[i],
+            name,
             n,
             ns as f64 / 1e6,
             mean_us

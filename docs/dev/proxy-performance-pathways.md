@@ -105,15 +105,69 @@ rig that can saturate the proxy.
    handshake. Ticket-encryption keys derived from the trust epoch, erased on epoch change,
    would extend resumption fleet-wide. This is the largest *security-relevant* design item
    remaining, and it is genuinely harder than what has been built.
-6. **Replay-tier round trips.** Earlier instrumentation put Redis admission at ~6.5 ms of
-   wall time per request. Pipelining, batching, or a local negative cache are all plausible;
-   none has been measured since the async serving path landed.
+6. ~~**Replay-tier round trips.**~~ **Closed — the replay tier is not a bottleneck.** See
+   "The replay tier is exonerated" below before spending any effort here.
 7. **TLS 1.3 only.** Dropping the `tls12` feature narrows the handshake state machine and
    the attack surface. Small, and a compatibility decision rather than purely technical.
 8. **Certificate algorithm and chain depth.** Ed25519 certificates would cut both the ECDSA
    cost and handshake bytes, but the client PKI is usually not ours to choose, and the
    benchmark's P-256 comes from `rcgen`'s default rather than from a deployment decision.
    Explore only with a real PKI in view.
+
+## The replay tier is exonerated
+
+Stage timers (`MCP_RE_STAGE_TIMERS`) attribute 92-94% of every request to `replay_insert`
+at every concurrency — 1,500 µs of 1,624 µs unloaded at 4 connections, 50,454 µs of 53,774 µs
+saturated. That reads as a bottleneck and is not one.
+
+`mcp-re-proxy/examples/replay_store_bench.rs` drives the SAME store code with no proxy in
+the picture, across the same published Redis port, against the same primary + 2 replicas:
+
+| path | concurrency | rps |
+| --- | --- | --- |
+| `SET NX PX` only | 512 | 421,850 |
+| `SET NX PX` + `WAIT 2 2000` | 512 | 463,760 |
+| the proxy's exact topology (pool 8, `WAIT 2 2000`, separate 1-worker control runtime) | 512 | 470,245 / 475,630 / 501,019 |
+| the same, with 8 control workers | 512 | 391,523 / 416,246 |
+
+Redis itself, measured inside the container with `redis-benchmark` under a concurrent write
+stream so `WAIT` blocks on genuinely un-acked offsets: `SET NX PX` 31 µs at c=1 and 202,020/s
+at c=512; `WAIT 2 2000` 31 µs at c=1 and 238,095/s at c=512.
+
+The store path sustains ~470k rps against a proxy that sustains ~13k. It is over-provisioned
+by more than 30×, so `replay_insert`'s stage time is **scheduling delay attributed to the
+sole await point on the request path**, not work. `AsyncReplayTier::check_and_insert` is the
+only `.await` of real I/O a request performs, so every scheduling delay in the process has
+exactly one place to land — which is also why its *share* stays constant across concurrency,
+something a work bottleneck would not do.
+
+### Hypotheses killed by measurement, so nobody re-runs them
+
+| hypothesis | how it died |
+| --- | --- |
+| `Mutex<redis::Connection>` serialises inserts | that is the *sync* store; `app.rs` wires the async one |
+| single Redis connection | pool swept 1/2/4/8/16, flat at ~13k |
+| `WAIT` head-of-line blocking on the replication ACK loop | `WAIT` measures 31 µs and 238k/s under real write load, and is *faster* than the bare `SET` in the store bench |
+| Redis command execution is single-threaded and saturated | Redis measured 2.8% busy at the ceiling; 202k `SET`/s available |
+| Colima's port forwarder is a fixed-rate path | the 470k store bench crosses that exact forwarder |
+| cross-runtime wakeups between serving cores and the 1-worker control runtime | split-runtime bench is indistinguishable from single-runtime (475k vs 470k) |
+| the control runtime needs more workers | 8 workers measured *slower* than 1, in both the bench and the rig |
+
+Redis parallelism (`io-threads`, cluster sharding, batching `WAIT` across a pipeline) is
+therefore moot for this ceiling. None of it can move a component that is already 30× faster
+than the demand placed on it.
+
+### What the instrument still cannot see
+
+Nothing on the request path is CPU-bound: at ~10k rps the proxy used 0.44 of 14 cores and
+each generator 0.07. Nothing is I/O-bound either, per the above. The rig's M/M+1 probe still
+returned `CLIENT` at 6 generators (+18%), so the ~13k figure is a floor and not yet the
+proxy's ceiling.
+
+The next instrument needs to separate *work* from *waiting*, which the current stage timers
+cannot: they only bracket spans, and one span contains the only await. Measuring scheduler
+latency directly — spawn-to-first-poll on each serving runtime — would split "our code is
+slow" from "tasks are not being scheduled", and that split is the open question.
 
 ## Rules for anyone continuing this
 
