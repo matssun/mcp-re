@@ -1,16 +1,17 @@
 //! MCPRE-113 (ADR-MCPRE-051 §1, Phase 2) — per-core async serving fleet.
 //!
-//! The target data-plane shape: **one worker thread per core, each a current-thread
-//! `tokio` runtime with its own `SO_REUSEPORT` listener and (on Linux) CPU-affinity
-//! pinning, running one [`crate::async_serve::serve`] loop over one `Proxy` per
-//! core.** The kernel's `SO_REUSEPORT` group load-balances accepted connections
-//! across the per-core listeners, so there is:
+//! The data-plane shape: **a small number of SHARDS, each a `tokio` runtime with a
+//! work-stealing worker pool, its own `SO_REUSEPORT` listener and (on Linux)
+//! CPU-affinity pinning, running one [`crate::async_serve::serve`] loop over one `Proxy`
+//! per shard.** The kernel's `SO_REUSEPORT` group load-balances accepted connections
+//! across the shard listeners, so there is:
 //!
 //!   * **no shared accept lock** — every core `accept()`s on its own listener fd;
 //!   * **no cross-core connection handoff** — a connection is served start-to-finish
 //!     on the core that accepted it;
-//!   * **no contended cross-core hot-path state** — each worker owns its runtime,
-//!     its listener, and its `Proxy` handler; the ONLY state shared across cores is
+//!   * **no contended cross-shard hot-path state** — each shard owns its runtime,
+//!     its listener, and its `Proxy` handler; work stealing happens strictly WITHIN a
+//!     shard's pool and never across shards. The ONLY state shared across shards is
 //!     the coherent replay/trust store (designed server-side-atomic, ADR-MCPS-020)
 //!     and the `ServerConfigSnapshot`/`ServerOptions` handles (shared read-only
 //!     behind `Arc`). See the module-level "Cross-core sharing audit" below.
@@ -23,8 +24,8 @@
 //! request path")
 //!
 //! Per request, a worker touches only:
-//!   * its own `tokio` current-thread runtime (thread-local, uncontended);
-//!   * its own listener fd (per-core, not shared);
+//!   * its own shard's `tokio` runtime (uncontended across shards);
+//!   * its own listener fd (per-shard, not shared);
 //!   * the per-core `Proxy` handler (`make_handler(core)` returns a distinct handler
 //!     per core; nothing forces cores to share one);
 //!   * read-only `Arc<ServerConfigSnapshot>` / `Arc<ServerOptions>` (the TLS config is
@@ -38,7 +39,8 @@
 //!
 //! ## Scope (this increment)
 //!
-//! Per-core runtimes + `SO_REUSEPORT` + pinning + configurable core count, with a
+//! Shard runtimes + `SO_REUSEPORT` + pinning + configurable shard count and pool depth,
+//! with a
 //! deterministic always-on suite proving N independent per-core runtimes serve the
 //! full mTLS pipeline correctly and shut down cleanly. **Near-linear 1→N throughput
 //! scaling is measured on the load harness (MCPRE-108) in the SLO/CI lane**, not in a
@@ -69,11 +71,11 @@ pub struct FleetConfig {
     /// `SO_REUSEPORT`). A `:0` port is resolved to a concrete OS-assigned port on
     /// the first bind and reused for the rest, so the whole fleet shares one port.
     pub addr: SocketAddr,
-    /// Number of per-core worker runtimes. `0` means "auto" —
-    /// [`std::thread::available_parallelism`] (falling back to 1 if unavailable).
+    /// Number of serving SHARDS. `0` means "auto" — see [`resolve_topology`], which is
+    /// `ceil(cpus / workers_per_shard)` and NOT one shard per cpu.
     pub cores: usize,
-    /// Tokio worker threads inside EACH shard's runtime. `0`/`1` keeps the
-    /// single-threaded share-nothing runtime; `>1` gives the shard a work-stealing pool.
+    /// Tokio worker threads inside EACH shard's runtime. `0` means auto (`min(8, cpus)`);
+    /// an explicit `1` restores the single-threaded share-nothing runtime.
     ///
     /// Sharding and thread count are NOT interchangeable, and the shards are what cost:
     /// measured at an identical 16 threads, 8 shards x 2 workers reached 19,910 rps while
@@ -179,8 +181,7 @@ where
     H: AsyncRequestHandler,
     F: Fn(usize) -> Arc<H>,
 {
-    let cores = resolve_core_count(cfg.cores);
-    let workers_per_shard = cfg.workers_per_shard;
+    let (cores, workers_per_shard) = resolve_topology(cfg.cores, cfg.workers_per_shard);
 
     // MCPRE-114: translate an optional fleet-GLOBAL in-flight ceiling into an
     // evenly-divided PER-CORE ceiling, so admission control stays lock-free across
@@ -323,12 +324,49 @@ const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.
 pub fn resolve_core_count(configured: usize) -> usize {
-    if configured != 0 {
-        return configured;
-    }
-    std::thread::available_parallelism()
+    resolve_topology(configured, 0).0
+}
+
+/// Pool depth a shard is given when the operator does not choose one, capped.
+///
+/// Depth past this bought nothing measurable and started costing: 8 workers/shard reached
+/// 44,803 rps and 16 reached 46,325 (+3.4%) while scheduler latency rose from 60us to
+/// 83us. The cap is where the curve flattens, not a hardware constant.
+const DEFAULT_MAX_WORKERS_PER_SHARD: usize = 8;
+
+/// Resolve `(shards, workers_per_shard)` from what the operator configured, filling in
+/// either from the host when it is `0`.
+///
+/// The default is DEEP SHARDS, FEW OF THEM, which is the opposite of what this fleet did
+/// originally (one single-threaded shard per core). Tokio steals work only within a
+/// runtime, so shards are scheduling silos: a task readied on a busy shard cannot be
+/// picked up by an idle worker in another. Measured at an identical 16 threads, 8 shards
+/// x 2 workers reached 19,910 rps against 44,816 for 2 shards x 8 — and 2x8 (16 threads)
+/// matched 8x8 (64 threads), so extra shards past a useful depth buy only threads.
+///
+/// Fill order matters: depth is chosen first, then just enough shards to cover the host's
+/// parallelism. On a 14-cpu host that yields 2 shards x 8 workers, the measured optimum;
+/// on a single-cpu host it yields 1 x 1, which is exactly the old single-threaded shard,
+/// so small deployments are not handed a thread pool they cannot use.
+///
+/// The optimum is host-specific — cache domains, SMT, P/E-core asymmetry and
+/// epoll-vs-kqueue wakeups all move it — so this is a defensible starting point to be
+/// measured with `scripts/runtime_topology_sweep.sh`, never a claim of optimality.
+pub fn resolve_topology(configured_shards: usize, configured_workers: usize) -> (usize, usize) {
+    let available = std::thread::available_parallelism()
         .map(|n| n.get())
-        .unwrap_or(1)
+        .unwrap_or(1);
+    let workers = if configured_workers != 0 {
+        configured_workers
+    } else {
+        DEFAULT_MAX_WORKERS_PER_SHARD.min(available).max(1)
+    };
+    let shards = if configured_shards != 0 {
+        configured_shards
+    } else {
+        available.div_ceil(workers).max(1)
+    };
+    (shards, workers)
 }
 
 /// Create a `SO_REUSEPORT` (+ `SO_REUSEADDR`) TCP listener bound to `addr` and put it
@@ -510,4 +548,60 @@ fn online_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(|x| x.get())
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod topology_tests {
+    use super::*;
+
+    /// Explicit configuration always wins over the host-derived default — an operator who
+    /// measured their own hardware must not be second-guessed.
+    #[test]
+    fn explicit_topology_is_never_overridden() {
+        assert_eq!(resolve_topology(4, 4), (4, 4));
+        assert_eq!(resolve_topology(1, 16), (1, 16));
+        // An explicit 1 is how the old single-threaded share-nothing shard is restored,
+        // so it must survive as 1 and not be auto-filled to the default depth.
+        assert_eq!(resolve_topology(8, 1), (8, 1));
+    }
+
+    /// The default is DEEP shards and FEW of them. Shards are scheduling silos (Tokio
+    /// steals work only within a runtime), so filling depth first and then covering the
+    /// host is what avoids the starvation the one-shard-per-core default caused.
+    #[test]
+    fn auto_fills_depth_first_then_just_enough_shards() {
+        // Depth is capped, so a large host gets more shards rather than deeper ones.
+        assert_eq!(auto_for(64), (8, 8));
+        // The measured optimum on the 14-cpu box this was characterised on.
+        assert_eq!(auto_for(14), (2, 8));
+        // At or below the cap, one shard holds the whole host.
+        assert_eq!(auto_for(8), (1, 8));
+        assert_eq!(auto_for(4), (1, 4));
+        // A single-cpu host gets exactly the old single-threaded shard: a deployment that
+        // cannot use a pool must not be handed one.
+        assert_eq!(auto_for(1), (1, 1));
+    }
+
+    /// Auto never yields a degenerate topology, whatever the host reports.
+    #[test]
+    fn auto_is_always_at_least_one_shard_of_one_worker() {
+        for cpus in 1..=64 {
+            let (shards, workers) = auto_for(cpus);
+            assert!(
+                shards >= 1 && workers >= 1,
+                "cpus={cpus} → {shards}x{workers}"
+            );
+            // Enough threads to cover the host, without wildly overshooting it.
+            assert!(shards * workers >= cpus.min(DEFAULT_MAX_WORKERS_PER_SHARD));
+            assert!(shards * workers < cpus + DEFAULT_MAX_WORKERS_PER_SHARD);
+        }
+    }
+
+    /// `resolve_topology`'s auto path with the host's cpu count injected, so the
+    /// expectations above are about the POLICY and not about whichever machine runs the
+    /// suite.
+    fn auto_for(cpus: usize) -> (usize, usize) {
+        let workers = DEFAULT_MAX_WORKERS_PER_SHARD.min(cpus).max(1);
+        (cpus.div_ceil(workers).max(1), workers)
+    }
 }

@@ -192,3 +192,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "mcp-re-proxy"
 path = "src/main.rs"
+
+# Uses the feature-gated async Redis store directly, so it cannot build in the default
+# feature set the way the other examples can.
+[[example]]
+name = "replay_store_bench"
+path = "examples/replay_store_bench.rs"
+required-features = ["redis_replay"]

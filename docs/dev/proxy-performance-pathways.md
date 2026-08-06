@@ -226,10 +226,24 @@ two workers; a 2-shard/8-worker layout steals work within each pool. And `2 core
 workers` (16 threads) matches `8 cores x 8 workers` (64 threads) at 44,803 — four times the
 threads buys nothing once the pools are big enough.
 
-So the per-core sharding is not paying for itself on this workload: fewer, larger pools
-reach the same throughput with a quarter of the threads. Changing it is an ADR-MCPRE-051 §1
-amendment — the share-nothing property is a stated design choice, not an oversight — so the
-knob stays behind `MCP_RE_DIAG_CORE_WORKERS` and off by default until that decision is made.
+So the per-core sharding was not paying for itself: fewer, larger pools reach the same
+throughput with a quarter of the threads.
+
+**This is now the default** ([ADR-MCPRE-051 §1 amendment, 2026-08-06](https://github.com/matssun/mcp-re/discussions/399#discussioncomment-17918976)).
+`--cores` and `--workers-per-shard` are independent flags; auto resolves to
+`min(8, cpus)` workers and `ceil(cpus / workers)` shards — 2 x 8 on a 14-cpu host, and
+1 x 1 on a single-cpu host, which is exactly the old single-threaded shard. Restore the old
+behaviour explicitly with `--workers-per-shard 1`.
+
+Confirmed on the §7 anchor lane running the new default with no override:
+**15,217.3 rps median, PASS 6/6**, against the committed anchor of 5,530.9 — 2.75x.
+
+Measure it for a given host with `scripts/runtime_topology_sweep.sh`; the cap of 8 is
+where the curve flattened on one macOS/kqueue box and is not a hardware constant.
+
+**The §7 anchor is now loose.** It was set at 5,530.9 rps and the default measures ~15,200,
+so the regression detector has 2.75x of headroom and will not catch much. Re-baselining §7
+is a separate, deliberate decision and has NOT been taken.
 
 ### What the instrument still cannot see
 

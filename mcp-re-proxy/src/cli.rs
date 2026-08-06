@@ -274,15 +274,25 @@ pub struct Config {
     /// REQUIRED — the proxy has no in-tree stdio inner mode (MCPRE-118); a
     /// stdio-only server is fronted by the out-of-TCB `mcp-re-stdio-bridge`.
     pub inner_http_urls: Vec<String>,
-    /// ADR-MCPRE-051 §1: number of per-core async worker runtimes (SO_REUSEPORT
-    /// listeners). `0` (default) means auto — one worker per core via
-    /// `std::thread::available_parallelism`. Pinning an explicit count makes the
-    /// per-core linear-scaling benchmark reproducible (drive N=1 then N=cores) and
-    /// lets an operator cap workers below the core count.
+    /// ADR-MCPRE-051 §1: number of serving SHARDS (each an `SO_REUSEPORT` listener with
+    /// its own runtime). `0` (default) means auto.
+    ///
+    /// Auto is no longer "one shard per core": it is `ceil(cpus / workers_per_shard)`,
+    /// which on a 14-cpu host gives 2 shards of 8 rather than 14 of 1. Shards are
+    /// scheduling silos — Tokio steals work only within a runtime — so over-sharding
+    /// starves ready tasks. Pinning an explicit count still makes the scaling benchmark
+    /// reproducible.
     pub cores: usize,
-    /// ADR-MCPRE-051 §1: Tokio worker threads inside EACH serving shard. `0`/`1` keeps
-    /// the single-threaded share-nothing runtime; `>1` gives each shard a work-stealing
-    /// pool.
+    /// ADR-MCPRE-051 §1: Tokio worker threads inside EACH serving shard. `0` (default)
+    /// means auto — `min(8, cpus)`; an explicit `1` restores the single-threaded
+    /// share-nothing shard.
+    ///
+    /// Depth is what buys throughput: on the cold §7 anchor lane, 1 worker measured
+    /// 5,320 rps against 15,454 at 8, and on the warm saturation rig 10,362 against
+    /// 44,803. Replay integrity does not depend on single-threaded sequencing — admission
+    /// is a server-side atomic `SET NX PX` and `Fresh` can only come from a winning L2
+    /// insert — so two workers racing one nonce is the case the tier already handles
+    /// across replicas.
     ///
     /// This is configuration rather than a constant because the optimum is a property of
     /// the host: cache domains, SMT, P/E-core asymmetry and epoll-vs-kqueue wakeup

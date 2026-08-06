@@ -145,6 +145,16 @@ ALLOW_TRACKED_DRIFT = {
     # Bazel-wired if/when the HTTP persona-ladder walkthrough is made hermetic.
     "http_profile_client": "MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic",
     "http_profile_proxy": "MCPRE-123 — cargo example; needs external FastMCP backend, not hermetic",
+    # The saturation rig and the replay-store bench: MEASUREMENT tools, not tests. Each
+    # needs a Docker Redis primary+2-replica fleet, several co-operating processes, and a
+    # QUIET BOX to mean anything — under the Bazel sandbox they would either fail to
+    # start or, worse, produce a number measured against contended CPU and report it as
+    # a result. They are driven by scripts/saturation_rig.sh and
+    # scripts/runtime_topology_sweep.sh. Structurally non-hermetic, not "not yet wired".
+    "saturation_rig": "ADR-MCPRE-051 §1 — cargo example; needs Docker Redis + a quiet box",
+    "saturation_loadgen": "ADR-MCPRE-051 §1 — cargo example; load generator process for the rig",
+    "saturation_backend": "ADR-MCPRE-051 §1 — cargo example; inner backend process for the rig",
+    "replay_store_bench": "ADR-MCPRE-051 §1 — cargo example; needs Docker Redis, redis_replay feature",
 }
 
 ALLOWLIST = (
