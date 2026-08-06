@@ -36,9 +36,12 @@ pub enum Stage {
     InnerDispatch = 4,
     /// Everything from entry to response, including the stages above.
     Total = 5,
+    /// Scheduler latency: how long a freshly spawned task waited before it was first
+    /// polled. See [`probe_scheduler`].
+    SchedulerLatency = 6,
 }
 
-const STAGES: usize = 6;
+const STAGES: usize = 7;
 const NAMES: [&str; STAGES] = [
     "admission",
     "body_read",
@@ -46,6 +49,7 @@ const NAMES: [&str; STAGES] = [
     "replay_insert",
     "inner_dispatch",
     "total",
+    "scheduler_latency",
 ];
 
 /// How often the snapshot is rewritten, in completed requests.
@@ -86,6 +90,44 @@ pub fn enabled() -> bool {
         ENABLED.store(output_path().is_some(), Ordering::Relaxed);
     });
     ENABLED.load(Ordering::Relaxed)
+}
+
+/// Measure how long this runtime takes to first poll a freshly spawned task, and record
+/// it under [`Stage::SchedulerLatency`].
+///
+/// The other stages bracket spans, and one of those spans —
+/// [`Stage::ReplayInsert`] — contains the only awaited I/O a request performs. So every
+/// scheduling delay in the process lands there and is indistinguishable from store work.
+/// Measuring the store separately showed it sustains more than 30x the proxy's
+/// throughput, which means most of that span is a task waiting to be polled rather than
+/// a store waiting to answer.
+///
+/// This probe measures the wait directly. Spawned from the serving path itself, so it
+/// queues behind exactly the work a request queues behind: a large value here means the
+/// runtime's workers are not getting to their tasks, and a small one means the time is
+/// being spent somewhere the timers do not yet bracket.
+///
+/// One probe per `every` requests — the probe is itself a task, so probing every request
+/// would measure a runtime perturbed by the measurement.
+pub fn probe_scheduler(every: u64) {
+    if !enabled() {
+        return;
+    }
+    let a = acc();
+    if !a.count[Stage::Total as usize]
+        .load(Ordering::Relaxed)
+        .is_multiple_of(every.max(1))
+    {
+        return;
+    }
+    let spawned_at = Instant::now();
+    tokio::spawn(async move {
+        let waited = spawned_at.elapsed();
+        let a = acc();
+        let i = Stage::SchedulerLatency as usize;
+        a.nanos[i].fetch_add(waited.as_nanos() as u64, Ordering::Relaxed);
+        a.count[i].fetch_add(1, Ordering::Relaxed);
+    });
 }
 
 /// A running stage timer. Dropping it records the elapsed time.
