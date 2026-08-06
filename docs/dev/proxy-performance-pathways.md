@@ -241,9 +241,12 @@ Confirmed on the §7 anchor lane running the new default with no override:
 Measure it for a given host with `scripts/runtime_topology_sweep.sh`; the cap of 8 is
 where the curve flattened on one macOS/kqueue box and is not a hardware constant.
 
-**The §7 anchor is now loose.** It was set at 5,530.9 rps and the default measures ~15,200,
-so the regression detector has 2.75x of headroom and will not catch much. Re-baselining §7
-is a separate, deliberate decision and has NOT been taken.
+**The §7 anchor was re-baselined to v6** (2026-08-06): 15,454.9 rps median of 6 reps,
+p50 7,927us / p99 16,037us, replacing the v5 anchor's 5,530.9 / 21,794 / 41,936. Same box,
+same 128/8000/1-core cold-mTLS envelope, same pinned toolchain — only the runtime topology
+changed. Verified as a working detector, not just new numbers: a fresh run at the default
+passes, and reverting to `--workers-per-shard 1` FAILS all four metrics
+(5,328 rps against a 13,136.7 floor, p50 21,256us against a 9,909us ceiling).
 
 ### What the instrument still cannot see
 

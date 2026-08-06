@@ -11,19 +11,21 @@
     "production release SLOs (absolute throughput/latency thresholds)",
     "per-core linear-scaling acceptance"
   ],
-  "supersedes": "v4 anchor (2026-07-14, 4906.9 rps / p99 37587): retired because it was recorded before two conditions that materially affect the measurement were fixed. (1) The local toolchain was NOT the pinned one: Homebrew's `rust` formula shadowed rustup on PATH, so local cargo builds silently used a different compiler than CI and Bazel. (2) The tree carried a FORKED RustCrypto stack (sha2 0.10 and 0.11 simultaneously), which also broke the Bazel build outright. Both are fixed; this v5 anchor is the first recorded with local == CI == Bazel on one compiler and one crypto generation. v3 anchor (2026-07-14): re-established on the DELEGATED-REQUIRED-ONLY serving path (21f722c, 2026-07-13 \u2014 direct-root response signing deleted; the proxy now ALWAYS issues a delegated-credential-backed response signature per request). The prior v2 anchor (5866.4 rps, recorded 2026-07-12) measured the pre-cutover sign_response_full path and is retired: always-delegated-signing costs ~16% throughput (5866.4 -> 4906.9) and ~18% p50 added latency (21450 -> 25334us) on this box, the expected cost of the mandated architecture, not a regression. (The v2 note itself retired the v1 object/JCS carrier baseline.) Same box, same 128/8000/1-core config; the serving path is what changed.",
+  "supersedes": "v5 anchor (2026-07-30, 5530.9 rps / p50 21794 / p99 41936): retired because the SERVING RUNTIME TOPOLOGY changed, not because the box or the toolchain did. ADR-MCPRE-051 §1 was amended on 2026-08-06 (discussion #399) to replace one single-threaded `new_current_thread()` runtime per core with a small number of SHARDS each holding a work-stealing worker pool; auto now resolves to min(8, cpus) workers and ceil(cpus / workers) shards. The single-threaded shard was starving its own run queue: one thread drove the reactor AND polled every task, so a readied task waited ~10.6ms to be polled while the process used 0.49 of 14 cores. Fixing it moved this anchor config from 5530.9 to 15454.9 rps (2.79x) and p50 added latency from 21794us to 7927us on the SAME box, same 128/8000/1-core cold-mTLS envelope, same pinned toolchain. Keeping the v5 numbers would have left the regression detector with 2.75x of slack, which is why it is replaced rather than kept as a floor. Nothing about the measurement method changed. v4 anchor (2026-07-14, 4906.9 rps / p99 37587): retired because it was recorded before two conditions that materially affect the measurement were fixed. (1) The local toolchain was NOT the pinned one: Homebrew's `rust` formula shadowed rustup on PATH, so local cargo builds silently used a different compiler than CI and Bazel. (2) The tree carried a FORKED RustCrypto stack (sha2 0.10 and 0.11 simultaneously), which also broke the Bazel build outright. Both are fixed; this v5 anchor is the first recorded with local == CI == Bazel on one compiler and one crypto generation. v3 anchor (2026-07-14): re-established on the DELEGATED-REQUIRED-ONLY serving path (21f722c, 2026-07-13 — direct-root response signing deleted; the proxy now ALWAYS issues a delegated-credential-backed response signature per request). The prior v2 anchor (5866.4 rps, recorded 2026-07-12) measured the pre-cutover sign_response_full path and is retired: always-delegated-signing costs ~16% throughput (5866.4 -> 4906.9) and ~18% p50 added latency (21450 -> 25334us) on this box, the expected cost of the mandated architecture, not a regression. (The v2 note itself retired the v1 object/JCS carrier baseline.) Same box, same 128/8000/1-core config; the serving path is what changed.",
   "caveat": "Recorded on a single developer workstation with the load generator CO-LOCATED with the proxy on the same cores. At the concurrency this anchor uses the run is client-concurrency-bound (128 concurrent cold mTLS handshakes; client-side Ed25519/TLS crypto costs as much as server-side), so throughput is a stable REGRESSION anchor but is NOT a production capacity number, and the 1->N core sweep below is recorded-but-NON-AUTHORITATIVE: on one box the loadgen contends with the fleet for cores and flattens the curve. Authoritative absolute SLOs and the real scaling curve require a dedicated load-generator host driving the proxy on the production hardware class (MCPRE-110 production half; the GKE fleet run, now at the canonical 128/8000 envelope).",
   "recorded": {
-    "date": "2026-07-30",
+    "date": "2026-08-06",
     "harness": "mcp-re-proxy/tests/tls_load_harness_bench.rs",
     "build_profile": "release",
     "rust_toolchain": "1.97.1 (pinned in rust-toolchain.toml and MODULE.bazel; enforced locally by scripts/use_pinned_toolchain.sh)",
     "serving_mode": "delegated-required-only (ADR-MCPRE-052; delegated-credential-backed response signature per request)",
     "carrier": "RFC 9421 HTTP Message Signatures + RFC 9530 Content-Digest (signature in HTTP headers; no object/JCS _meta signature)",
-    "crypto_generation": "RustCrypto digest 0.11 (sha2 0.11, ed25519-dalek 3, hmac 0.13, curve25519-dalek 5) \u2014 ONE generation; //deny.toml denies a second via deny-multiple-versions"
+    "crypto_generation": "RustCrypto digest 0.11 (sha2 0.11, ed25519-dalek 3, hmac 0.13, curve25519-dalek 5) — ONE generation; //deny.toml denies a second via deny-multiple-versions",
+    "commit": "cd5e2dc",
+    "serving_topology": "ADR-MCPRE-051 §1 as amended 2026-08-06: sharded work-stealing runtimes. This anchor declares 1 core, so it runs ONE shard whose pool is the auto default min(8, cpus) = 8 workers. Reproduce with the lane's defaults; `--workers-per-shard 1` restores the pre-amendment single-threaded shard that produced the v5 anchor."
   },
   "anchor": {
-    "comment": "The regression anchor on the delegated-required serving path: single served core, moderate concurrency (least loadgen-distorted, most reproducible). Values are the MEDIAN of 6 reps on a developer workstation with co-located loadgen. Recorded on a QUIET box (background kind clusters stopped, load average ~3.6) and with the toolchain pinned via rust-toolchain.toml + scripts/use_pinned_toolchain.sh, so the compiler that produced these numbers is the one CI uses. Throughput spread is 5486.0-5555.7 (+/-0.6%, far tighter than the v4 anchor's +/-3%); the p99 spread (37877-49339) is wider because the co-located load GENERATOR is descheduled by desktop background activity and that jitter is measured client-side. adr051_slo_gate.py compares a fresh run of THIS config against these numbers.",
+    "comment": "The regression anchor on the delegated-required serving path with sharded work-stealing runtimes: one served shard, moderate concurrency (least loadgen-distorted, most reproducible). Values are the MEDIAN of 6 reps on a developer workstation with co-located loadgen, recorded on a QUIET box (1-min load ~2.5 on 14 cpus) with the toolchain pinned via rust-toolchain.toml + scripts/use_pinned_toolchain.sh, so the compiler that produced these numbers is the one CI uses. Throughput spread is 14602.0-15860.2 (+/-4%), wider than the v5 anchor's +/-0.6%: at ~15.5k rps each rep is a ~0.5s wall-clock window, so startup and scheduling jitter are a larger fraction of it than they were at 5.5k. The 0.85 throughput tolerance in adr-051-slo-targets.json covers that spread with room to spare. adr051_slo_gate.py compares a fresh run of THIS config against these numbers.",
     "config": {
       "hardware_class": "apple-m4-pro-14c-dev",
       "declared_cores": 1,
@@ -34,53 +36,53 @@
       "tls_mode": "TLS1.3-mTLS"
     },
     "results": {
-      "throughput_rps": 5530.9,
+      "throughput_rps": 15454.9,
       "added_latency_us": {
-        "p50": 21794,
-        "p99": 41936,
-        "p999": 56506,
-        "mean": 23024,
-        "min": 6541,
-        "max": 74855
+        "p50": 7927,
+        "p99": 16037,
+        "p999": 19495,
+        "mean": 8175,
+        "min": 3504,
+        "max": 21949
       },
       "reps": {
         "throughput_rps": [
-          5486.0,
-          5488.3,
-          5529.1,
-          5532.7,
-          5533.6,
-          5555.7
+          14602.0,
+          15061.0,
+          15444.3,
+          15465.5,
+          15565.2,
+          15860.2
         ],
         "p50_us": [
-          20338,
-          20345,
-          20754,
-          22834,
-          23285,
-          24774
+          7616,
+          7859,
+          7909,
+          7945,
+          7961,
+          8385
         ],
         "p99_us": [
-          37877,
-          40088,
-          41669,
-          42204,
-          49289,
-          49339
+          15565,
+          15807,
+          16023,
+          16052,
+          17025,
+          17635
         ],
         "p999_us": [
-          53877,
-          54865,
-          55421,
-          57592,
-          57997,
-          64046
+          17845,
+          18914,
+          19454,
+          19536,
+          19630,
+          19872
         ]
       }
     }
   },
   "recorded_core_sweep_non_authoritative": {
-    "comment": "PRE-CUTOVER, retained for the record only (measured on the old sign_response_full path, 2026-07-12) and NON-AUTHORITATIVE: throughput is flat-to-noisy as served cores rise because the co-located loadgen is the limiter, not per-core scaling. Do NOT gate on this curve; the authoritative 1->N curve is the GKE fleet run.",
+    "comment": "PRE-CUTOVER AND PRE-AMENDMENT, retained for the record only. Measured on the old sign_response_full path (2026-07-12) AND on the withdrawn one-single-threaded-runtime-per-core topology, so it describes neither the current serving path nor the current runtime shape. It was already NON-AUTHORITATIVE because the co-located loadgen, not per-core scaling, is the limiter. Do NOT gate on this curve; the authoritative 1->N curve is the GKE fleet run, and the current local topology curve is measured by scripts/runtime_topology_sweep.sh.",
     "points": [
       {
         "declared_cores": 1,
