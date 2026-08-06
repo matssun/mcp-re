@@ -45,9 +45,16 @@ pub enum Stage {
     Verify = 7,
     /// Signing the response (inside `Handler`). No `await` either, same reasoning.
     Sign = 8,
+    /// Our own work before the store is touched: composite key, skew fold, connection
+    /// checkout. No I/O, so this isolates the caller-side cost from the round trip.
+    ReplayPrep = 9,
+    /// The `SET NX PX` round trip alone (inside `ReplayInsert`).
+    ReplaySet = 10,
+    /// The `WAIT <quorum> <timeout>` round trip alone (inside `ReplayInsert`).
+    ReplayWait = 11,
 }
 
-const STAGES: usize = 9;
+const STAGES: usize = 12;
 const NAMES: [&str; STAGES] = [
     "admission",
     "body_read",
@@ -58,6 +65,9 @@ const NAMES: [&str; STAGES] = [
     "scheduler_latency",
     "verify",
     "sign",
+    "replay_prep",
+    "replay_set",
+    "replay_wait",
 ];
 
 /// How often the snapshot is rewritten, in completed requests.
@@ -171,6 +181,15 @@ impl Drop for Timed {
                 write_report();
             }
         }
+    }
+}
+
+/// Write the snapshot now. The periodic rewrite is driven by [`Stage::Total`], which only
+/// the serving path records — a caller that exercises the store directly (the store bench)
+/// has no `Total` and would otherwise never emit a report.
+pub fn report() {
+    if enabled() {
+        write_report();
     }
 }
 

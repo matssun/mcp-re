@@ -197,6 +197,10 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
         // Retention here is a Redis-side `SET NX PX` TTL, not a bounded local set, so
         // this backend holds no ceiling for one actor to exhaust and nothing to budget
         // `insert.actor` against.
+        // Caller-side work only — no I/O — so this separates our own cost from the round
+        // trips below. The three spans together split the replay call into "before the
+        // wire", "the SET", and "the WAIT".
+        let _t_prep = crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplayPrep);
         let expires_at_unix = insert.expires_at_unix;
         let key = insert.key.to_string();
         let mut conn = self.checkout();
@@ -204,6 +208,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
         // Read the store's OWN clock once (ignore the trait's vestigial 0), and reuse
         // it for both the staleness guard and the TTL window.
         let now = (self.clock)();
+        drop(_t_prep);
         Box::pin(async move {
             // MCPS-08 pre-store staleness guard: an already-stale request (a
             // non-positive remaining window) is rejected fail-closed BEFORE Redis is
@@ -223,6 +228,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
             // Replay. ANY error fails closed (Unavailable) — no retry, so an outage is
             // never a fresh nonce and the SET-NX non-idempotency-under-retry subtlety
             // cannot arise.
+            let t_set = crate::stage_timers::Timed::start(crate::stage_timers::Stage::ReplaySet);
             let result: Result<Option<String>, redis::RedisError> = redis::cmd("SET")
                 .arg(&key)
                 .arg(1)
@@ -231,6 +237,7 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
                 .arg(ttl_ms)
                 .query_async(&mut conn)
                 .await;
+            drop(t_set);
             match result {
                 Ok(Some(_)) => match wait_quorum {
                     // REDIS_ASYNC / SINGLE_STORE_FAIL_CLOSED: the primary's ack is the
@@ -246,11 +253,15 @@ impl AsyncAtomicReplayStore for RedisAsyncAtomicReplayStore {
                     // store must reason about: a re-run would find the key it just
                     // wrote and report a false `Replay`.
                     Some(WaitQuorum { quorum, timeout_ms }) => {
+                        let t_wait = crate::stage_timers::Timed::start(
+                            crate::stage_timers::Stage::ReplayWait,
+                        );
                         let acked: Result<i64, redis::RedisError> = redis::cmd("WAIT")
                             .arg(quorum)
                             .arg(timeout_ms)
                             .query_async(&mut conn)
                             .await;
+                        drop(t_wait);
                         match acked {
                             Ok(acked) => classify_wait_acks(acked, quorum, timeout_ms),
                             Err(e) => Err(ReplayStoreError::Unavailable {

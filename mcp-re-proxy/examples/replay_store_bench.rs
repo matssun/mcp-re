@@ -120,6 +120,20 @@ fn main() {
         // the write path entirely and measure nothing of interest.
         let now = system_clock()();
         let expires = now + 3600;
+        // Keys must be unique across RUNS, not just within one. They used to be
+        // `bench:{task}:{i}`, identical every run, so the second and later runs against a
+        // live Redis hit keys the earlier ones had inserted: those return `Replay`, which
+        // skips the `WAIT` entirely and is far cheaper than the `Fresh` path being
+        // measured. Every figure after the first run of a batch was inflated by it, and
+        // the giveaway was `replay_wait` counting half of `replay_set`.
+        let salt = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
         let done = Arc::new(AtomicU64::new(0));
         let per_task = requests / concurrency.max(1);
 
@@ -128,9 +142,10 @@ fn main() {
         for task in 0..concurrency {
             let store = Arc::clone(&store);
             let done = Arc::clone(&done);
+            let salt = salt.clone();
             handles.push(tokio::spawn(async move {
                 for i in 0..per_task {
-                    let key = format!("bench:{task}:{i}");
+                    let key = format!("bench:{salt}:{task}:{i}");
                     if store
                         .atomic_insert_if_absent(ReplayInsert::new(&key, ACTOR, expires, 0))
                         .await
@@ -163,6 +178,10 @@ fn main() {
         } else {
             format!("caller={caller} one-runtime")
         };
+        // The serving path's periodic rewrite is driven by a stage this binary never
+        // records, so emit the snapshot explicitly. Same timers as the proxy, so the two
+        // breakdowns are directly comparable.
+        mcp_re_proxy::stage_timers::report();
         println!(
             "{tier} [{topology}]: pool={pool} concurrency={concurrency} ok={ok} \
              elapsed={:.2}s rps={rps:.0} mean_latency={mean_us:.0}us",
