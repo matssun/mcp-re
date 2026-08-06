@@ -39,9 +39,15 @@ pub enum Stage {
     /// Scheduler latency: how long a freshly spawned task waited before it was first
     /// polled. See [`probe_scheduler`].
     SchedulerLatency = 6,
+    /// RFC 9421 request verification (inside `Handler`). Contains no `await`, so its
+    /// wall time IS CPU time — which is the point: it measures what the per-core thread
+    /// is actually spending, rather than what it is waiting for.
+    Verify = 7,
+    /// Signing the response (inside `Handler`). No `await` either, same reasoning.
+    Sign = 8,
 }
 
-const STAGES: usize = 7;
+const STAGES: usize = 9;
 const NAMES: [&str; STAGES] = [
     "admission",
     "body_read",
@@ -50,6 +56,8 @@ const NAMES: [&str; STAGES] = [
     "inner_dispatch",
     "total",
     "scheduler_latency",
+    "verify",
+    "sign",
 ];
 
 /// How often the snapshot is rewritten, in completed requests.
