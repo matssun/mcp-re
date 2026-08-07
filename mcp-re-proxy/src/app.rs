@@ -395,19 +395,22 @@ fn run_validated(
     // The redis ConnectionManager's reconnect task lives on a process-lifetime
     // control runtime (`control_rt`), distinct from the per-core serving
     // runtimes; it is held alive for the whole serve.
-    // ONE process-lifetime control runtime for every networked control-plane client:
-    // the redis replay ConnectionManager's reconnect task, the admission source and the
-    // MRTR continuation store. Distinct from the per-core serving runtimes and held
-    // alive for the whole serve. Created on demand by [`control_runtime`], so a seam
-    // that needs it is never gated on some OTHER seam having created it first.
-    // `mut` only bites where a networked control-plane client exists to build it.
-    #[cfg_attr(not(feature = "redis_replay"), allow(unused_mut))]
-    let mut control_rt: Option<tokio::runtime::Runtime> = None;
     // Which tier this deployment asked for is decided purely, from configuration alone;
     // the arms below only establish it. Every refusal the plan can raise is a statement
     // about the config; every refusal left here is a statement about the build or the
     // environment.
     let replay_plan = crate::startup_plan::ReplayPlan::from_config(config)?;
+    // ONE process-lifetime control runtime for every networked control-plane client:
+    // the redis replay ConnectionManager's reconnect task, the admission source and the
+    // MRTR continuation store. Distinct from the per-core serving runtimes and held
+    // alive for the whole serve.
+    //
+    // Whether it exists is decided by the PLANS, aggregated across every capability that
+    // can need one — not by whichever seam reaches for it first. Deriving it from replay
+    // once made admission unimplementable on the CP/linearizable tier.
+    let control_rt = crate::control_runtime::ControlRuntime::start(
+        crate::startup_plan::control_runtime_requirement(config, &replay_plan),
+    )?;
     match &replay_plan {
         ReplayPlan::Memory => {
             // Proxy::new already installed the in-memory async tier (single-replica).
@@ -442,14 +445,16 @@ fn run_validated(
                     "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
                 );
                 eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
-                // The ConnectionManager's reconnect task runs on this dedicated
-                // process-lifetime runtime, distinct from the per-core serving
-                // runtimes; held alive by `control_rt` for the whole serve.
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("build replay control runtime: {e}"))?;
+                // Connected ON the control runtime, and that is not merely where the
+                // connect happens: redis's `ConnectionManager` captures the runtime it
+                // is CREATED in (`Runtime::locate()`) and schedules its disconnect-watch
+                // and reconnect work there for life. So the substrate must outlive every
+                // USE of this store, not just its construction — which is why ownership
+                // of it is passed into `serve_fleet` rather than dropped here.
+                let rt = control_rt
+                    .as_ref()
+                    .expect("the plan declared the redis replay tier needs the control runtime")
+                    .handle();
                 // The client-side response timeout is sized for the DECLARED WAIT
                 // timeout before connecting: the library defaults to 500ms per
                 // command, and `WAIT` is an ordinary command — so a declared
@@ -481,7 +486,6 @@ fn run_validated(
                     fleet_strict: true,
                     tier: Some(tier.clone()),
                 };
-                control_rt = Some(rt);
             }
             #[cfg(not(feature = "redis_replay"))]
             {
@@ -1072,7 +1076,10 @@ fn run_validated(
     // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
     #[cfg(feature = "redis_replay")]
     if let Some(url) = config.replay_redis_url.as_ref() {
-        let rt = control_runtime(&mut control_rt)?;
+        let rt = control_rt
+            .as_ref()
+            .expect("the plan declared the continuation store needs the control runtime")
+            .handle();
         let store = rt
             .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
             .map_err(|e| format!("connect redis continuation store: {e}"))?;
@@ -1106,7 +1113,10 @@ fn run_validated(
         // runtime made admission unimplementable on the CP/linearizable tier — the
         // operator supplied `--admission-redis-url`, was told the flag was missing, and
         // the natural resolution was to turn a security control off.
-        let rt = control_runtime(&mut control_rt)?;
+        let rt = control_rt
+            .as_ref()
+            .expect("the plan declared the admission source needs the control runtime")
+            .handle();
         let source = rt
             .block_on(crate::redis_admission_source::RedisAdmissionSource::connect(url))
             .map_err(|e| format!("connect redis admission source: {e}"))?;
@@ -1196,7 +1206,7 @@ fn serve_fleet(
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
     serve_options: crate::ServerOptions,
     config: &cli::Config,
-    _control_rt: Option<tokio::runtime::Runtime>,
+    _control_rt: Option<crate::control_runtime::ControlRuntime>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     use std::net::ToSocketAddrs;
@@ -1366,28 +1376,6 @@ const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay
      multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
      `input_required` reply from one replica and answers on another is refused \
      (mcp-re.continuation_binding_failed). Set --replay-redis-url for the shared store.";
-
-/// The process-lifetime control runtime, built on first use.
-///
-/// Every networked control-plane client shares it — the redis replay reconnect task,
-/// the admission source, the MRTR continuation store. Building it lazily is what keeps
-/// them independent: an admission source is its OWN endpoint and must not be gated on
-/// the replay tier having happened to create a runtime.
-#[cfg_attr(not(feature = "redis_replay"), allow(dead_code))]
-fn control_runtime(
-    slot: &mut Option<tokio::runtime::Runtime>,
-) -> Result<&tokio::runtime::Runtime, String> {
-    if slot.is_none() {
-        *slot = Some(
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()
-                .map_err(|e| format!("build control runtime: {e}"))?,
-        );
-    }
-    Ok(slot.as_ref().expect("just created"))
-}
 
 /// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
 /// and a panic in it would silently stop CRL reloading for the process lifetime.

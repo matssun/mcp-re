@@ -119,6 +119,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §8: the trust plane — owns the swappable store and its refresh
     # workers; hands out a verification resolver and a read-only signer directory.
     "src/trust_plane.rs",
+    # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
+    # execution; consumers get a tokio Handle (access, not ownership).
+    "src/control_runtime.rs",
     # ADR-MCPS-021 Axis 2: declared revocation tier (Tier 1 bounded-cache / Tier 2
     # live / Tier 3 push) — semantic names + honest per-tier guarantee. Pure type.
     "src/revocation_tier.rs",

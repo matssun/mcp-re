@@ -189,6 +189,10 @@ pub(crate) mod managed_worker;
 // and the two narrow live handles it hands out. Owns the authority to CHANGE trust
 // state; consumers get read/observe capabilities only.
 pub(crate) mod trust_plane;
+// ADR-MCPRE-056 §8: the shared control runtime — execution substrate for every
+// networked control-plane client, distinct from the per-core serving runtimes. Owns
+// execution lifetime; consumers receive a tokio Handle, which conveys access only.
+pub(crate) mod control_runtime;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete

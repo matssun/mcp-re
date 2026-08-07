@@ -81,6 +81,51 @@ impl ReplayPlan {
             }
         }
     }
+
+    /// Whether establishing THIS tier needs the shared control runtime.
+    ///
+    /// Only the Redis tier: the etcd store drives its own requests and the in-memory
+    /// tier does no I/O. One contributor to the aggregate — never the decision itself.
+    pub fn needs_control_runtime(&self) -> bool {
+        cfg!(feature = "redis_replay") && matches!(self, ReplayPlan::Redis { .. })
+    }
+}
+
+/// Whether the MRTR continuation store will be wired (ADR-MCPS-047).
+///
+/// Keyed on a shared Redis URL, NOT on the replay tier: a linearizable/etcd deployment
+/// that also names a Redis URL still gets cross-replica continuation.
+pub fn continuation_needs_control_runtime(config: &ValidatedConfig) -> bool {
+    cfg!(feature = "redis_replay") && config.replay_redis_url.is_some()
+}
+
+/// Whether the §7 admission-currency gate will be wired (MCPRE-493).
+///
+/// Its Redis endpoint is its OWN; it has nothing to do with which replay tier was
+/// chosen. Deriving it from replay once made admission unimplementable on the
+/// CP/linearizable tier, and the natural resolution was to turn the control off.
+pub fn admission_needs_control_runtime(config: &ValidatedConfig) -> bool {
+    cfg!(feature = "redis_replay") && config.admission != crate::cli::AdmissionKind::Off
+}
+
+/// Aggregate the control-runtime requirement across EVERY capability that can need it.
+///
+/// No single consumer owns this decision; each declares, the aggregate decides.
+///
+/// The `cfg!` guards yield a compile-time `false` without `redis_replay`, and the
+/// predicates beside them touch only configuration types present in every build — no
+/// Redis-only symbol appears here. `cfg!` does not remove code from compilation the way
+/// `#[cfg]` does, so a future contributor that names a feature-gated type would fail to
+/// build in the default lane rather than being silently excluded. Keep them that way.
+pub fn control_runtime_requirement(
+    config: &ValidatedConfig,
+    replay: &ReplayPlan,
+) -> crate::control_runtime::ControlRuntimeRequirement {
+    crate::control_runtime::ControlRuntimeRequirement::any([
+        replay.needs_control_runtime(),
+        continuation_needs_control_runtime(config),
+        admission_needs_control_runtime(config),
+    ])
 }
 
 #[cfg(test)]
@@ -285,5 +330,108 @@ mod tests {
         ])
         .expect("a plan is produced without contacting anything");
         assert!(matches!(plan, ReplayPlan::Redis { .. }));
+    }
+
+    // ---- control-runtime requirement -------------------------------------------
+    //
+    // Each contributor is asserted on its own, then the aggregation separately. A test
+    // that only exercised the aggregate boolean could not tell which consumer had
+    // stopped declaring its requirement — and the historical defect was exactly one
+    // consumer's need being inferred from another's.
+
+    /// The feature lane is the only one where any of these can be true, because every
+    /// Redis-dependent capability refuses outright in a build without the backend.
+    const REDIS: bool = cfg!(feature = "redis_replay");
+
+    #[test]
+    fn only_the_redis_replay_tier_declares_a_need() {
+        let redis = plan_for(SHARED_REDIS).expect("plan");
+        assert_eq!(redis.needs_control_runtime(), REDIS);
+
+        let etcd = plan_for(SHARED_LINEARIZABLE).expect("plan");
+        assert!(
+            !etcd.needs_control_runtime(),
+            "the etcd store drives its own requests"
+        );
+        assert!(
+            !ReplayPlan::Memory.needs_control_runtime(),
+            "the in-memory tier does no I/O"
+        );
+    }
+
+    /// Keyed on the Redis URL, not the tier: an etcd deployment that also names one
+    /// still gets cross-replica continuation, so it still declares the need.
+    #[test]
+    fn continuation_declares_on_the_redis_url_not_the_replay_tier() {
+        let with_etcd_and_url = parse(&[
+            "--replay-cache",
+            "shared",
+            "--replay-durability-tier",
+            "linearizable",
+            "--cpstore-etcd-endpoint",
+            "http://127.0.0.1:2379",
+            "--replay-redis-url",
+            "redis://127.0.0.1:6379",
+        ])
+        .expect("args parse");
+        let validated = ValidatedConfig::try_from(with_etcd_and_url).expect("validates");
+        assert_eq!(continuation_needs_control_runtime(&validated), REDIS);
+        assert!(
+            !ReplayPlan::from_config(&validated)
+                .expect("plan")
+                .needs_control_runtime(),
+            "the tier is etcd, so replay itself declares nothing"
+        );
+
+        let no_url = parse(SHARED_LINEARIZABLE).expect("args parse");
+        let validated = ValidatedConfig::try_from(no_url).expect("validates");
+        assert!(!continuation_needs_control_runtime(&validated));
+    }
+
+    /// Admission's endpoint is its own. Declaring it independently is what stopped it
+    /// being unimplementable on the CP/linearizable tier.
+    #[test]
+    fn admission_declares_independently_of_replay() {
+        let off = ValidatedConfig::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
+            .expect("validates");
+        assert!(!admission_needs_control_runtime(&off));
+
+        let mut on = parse(SHARED_LINEARIZABLE).expect("parse");
+        on.admission = crate::cli::AdmissionKind::Required;
+        let on = ValidatedConfig::try_from(on).expect("validates");
+        assert_eq!(admission_needs_control_runtime(&on), REDIS);
+        assert!(
+            !ReplayPlan::from_config(&on)
+                .expect("plan")
+                .needs_control_runtime(),
+            "admission must not need the replay tier to have asked first"
+        );
+    }
+
+    /// The aggregation itself: any contributor is enough, none means none.
+    #[test]
+    fn the_requirement_is_the_or_of_every_contributor() {
+        use crate::control_runtime::ControlRuntimeRequirement as Req;
+
+        // Admission alone, on a tier that declares nothing.
+        let mut admission_only = parse(SHARED_LINEARIZABLE).expect("parse");
+        admission_only.admission = crate::cli::AdmissionKind::Required;
+        let admission_only = ValidatedConfig::try_from(admission_only).expect("validates");
+        let plan = ReplayPlan::from_config(&admission_only).expect("plan");
+        assert_eq!(
+            control_runtime_requirement(&admission_only, &plan).is_required(),
+            REDIS,
+            "one contributor is enough"
+        );
+
+        // Nothing networked at all.
+        let none = ValidatedConfig::try_from(parse(SHARED_LINEARIZABLE).expect("parse"))
+            .expect("validates");
+        let plan = ReplayPlan::from_config(&none).expect("plan");
+        assert_eq!(
+            control_runtime_requirement(&none, &plan),
+            Req::NotRequired,
+            "no contributor declared a need, so no substrate is built"
+        );
     }
 }
