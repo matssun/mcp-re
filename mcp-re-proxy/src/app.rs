@@ -221,8 +221,25 @@ fn check_key_file_perms(_path: &str, _allow_group_read: bool) -> Result<(), Stri
 /// `shutdown` is flipped (SIGTERM/SIGINT in the binary; a test flag in tests). The
 /// binary's `main` is a thin shim over this; keeping it in the library makes the
 /// whole deployed serving path in-process-testable.
+///
+/// The signature still takes a raw [`crate::cli::Config`], and validation happens HERE
+/// rather than being the caller's job. `Config` has 76 public fields, so a caller that
+/// builds one in code — an embedder, a harness, a test — used to reach the serving path
+/// having run none of the parse-time safety guards. Validating at the boundary closes
+/// that without breaking any existing caller: every guard now runs whichever way the
+/// config was produced, and nothing past this point sees an unchecked `Config`.
 pub fn run(
     config: crate::cli::Config,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(), String> {
+    let validated = crate::cli::ValidatedConfig::try_from(config)?;
+    run_validated(&validated, shutdown)
+}
+
+/// The serving path proper. Reachable only with a [`crate::cli::ValidatedConfig`], which
+/// is the whole point: there is no route into it that skips the guards.
+fn run_validated(
+    config: &crate::cli::ValidatedConfig,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
@@ -280,7 +297,7 @@ pub fn run(
     // A group/world-readable key file is a HARD error (refuse startup). The other
     // guards are parse-time and already enforced inside `cli::parse_args`; this one is
     // filesystem-dependent so it lives here.
-    for path in key_files_read_from_disk(&config) {
+    for path in key_files_read_from_disk(config) {
         check_key_file_perms(path, config.allow_group_readable_key_files)?;
     }
     // A disabled (`none`/`0`) or over-ceiling `--max-client-cert-lifetime` is
@@ -296,7 +313,7 @@ pub fn run(
     // signs by delegation (`sign_response`), so a non-exporting HSM/KMS source would
     // never need to surrender its private key — there is deliberately no
     // `signing_key()` export call on the wiring path anymore.
-    let key_source = cli::build_key_source(&config).map_err(|e| e.to_string())?;
+    let key_source = cli::build_key_source(config).map_err(|e| e.to_string())?;
     let server_chain = key_source
         .tls_server_cert_chain()
         .map_err(|e| e.to_string())?;
@@ -352,7 +369,7 @@ pub fn run(
     // line above would be a claim the resolver does not enforce.
     // MCPS-84: connect the networked trust-epoch invalidation channel if one is
     // configured (only under --revocation-tier push; enforced at parse time).
-    let push_channel = build_trust_epoch_channel(&config, Arc::clone(&shutdown))?;
+    let push_channel = build_trust_epoch_channel(config, Arc::clone(&shutdown))?;
     if let RevocationTier::Push { .. } = config.revocation_tier {
         if push_channel.is_none() {
             // Honesty (Tier 3): with no networked source wired, the in-process
@@ -931,7 +948,7 @@ pub fn run(
     // `online_ocsp` feature; `parse_args` already fails closed for
     // `--client-ocsp require` in a build without the feature.
     #[cfg(feature = "online_ocsp")]
-    let ocsp_checker = cli::build_ocsp_checker(&config);
+    let ocsp_checker = cli::build_ocsp_checker(config);
     #[cfg(feature = "online_ocsp")]
     if let Some(checker) = &ocsp_checker {
         eprintln!(
@@ -1009,12 +1026,12 @@ pub fn run(
             signer,
             mut rotor,
             overlap,
-        } = crate::delegated_wiring::build_delegated_signing(&config, key_source)?;
+        } = crate::delegated_wiring::build_delegated_signing(config, key_source)?;
         // Resolve the shared trust epoch BEFORE the first key is minted, so the very
         // first credential carries the globally comparable `<base>#<counter>` label
         // rather than the bare base. Minting under the bare label is what let a
         // restarted replica appear unrevoked to verifiers pinned past an `INCR`.
-        let epoch_watch = build_delegated_epoch_watch(&config, rotor.trust_epoch().to_string());
+        let epoch_watch = build_delegated_epoch_watch(config, rotor.trust_epoch().to_string());
         if let Some(watch) = epoch_watch.as_ref() {
             // FAIL CLOSED FOR MINTING: a configured kill switch whose state cannot be
             // read means we cannot produce an epoch verifiers can compare, so we must
@@ -1290,7 +1307,7 @@ pub fn run(
         proxy,
         Arc::clone(&config_snapshot),
         serve_options,
-        &config,
+        config,
         control_rt,
         shutdown,
     )

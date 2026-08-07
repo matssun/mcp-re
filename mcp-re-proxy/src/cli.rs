@@ -1972,15 +1972,67 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // black-box testable and shared with `main.rs` (which adds the filesystem-
     // dependent key-file-permission check). The proxy never even constructs when a
     // parse-time violation is present.
-    let violations = unsafe_config_violations(&config);
-    if !violations.is_empty() {
-        return Err(format!(
-            "mcp-re-proxy refuses unsafe configuration:\n  - {}",
-            violations.join("\n  - ")
-        ));
-    }
+    ValidatedConfig::try_from(config).map(ValidatedConfig::into_inner)
+}
 
-    Ok(config)
+/// A [`Config`] whose PURE guards have been checked.
+///
+/// The guards themselves are not new — [`unsafe_config_violations`] has always run at
+/// the end of [`parse_args`]. What was missing is that passing through `parse_args` was
+/// the ONLY thing that ran them. `Config` has 76 public fields, so any caller that built
+/// one in code and handed it to `app::run` got a proxy with cn_legacy identity, a
+/// non-durable replay tier, a disabled client-cert lifetime or reverse-proxy header
+/// ingress — every posture the project refuses — with nothing to stop it. The guard was
+/// at the wrong altitude: on one path into the runtime rather than on the runtime.
+///
+/// This type moves it onto the runtime. The serving path accepts only a
+/// `ValidatedConfig`, and the only way to obtain one is [`TryFrom`], so there is no
+/// route past the check whether the config came from argv or from a caller's struct
+/// literal.
+///
+/// **Purely knowable checks only.** These are deterministic and environment-independent:
+/// ranges, mutually exclusive modes, required values missing from a selected mode. This
+/// type makes NO claim about the environment — whether a file exists, whether a
+/// certificate matches its key, whether a KMS answers, whether the clock is sane. Those
+/// are observations, they can change between the check and the use, and they belong to
+/// startup materialization (ADR-MCPRE-056 §5.1).
+#[derive(Debug, Clone)]
+pub struct ValidatedConfig(Config);
+
+impl ValidatedConfig {
+    /// The validated configuration. Named rather than a public field so the wrapper
+    /// cannot be reconstructed around an unchecked `Config`.
+    pub fn into_inner(self) -> Config {
+        self.0
+    }
+}
+
+impl TryFrom<Config> for ValidatedConfig {
+    type Error = String;
+
+    fn try_from(config: Config) -> Result<Self, Self::Error> {
+        let violations = unsafe_config_violations(&config);
+        if !violations.is_empty() {
+            return Err(format!(
+                "mcp-re-proxy refuses unsafe configuration:\n  - {}",
+                violations.join("\n  - ")
+            ));
+        }
+        Ok(ValidatedConfig(config))
+    }
+}
+
+/// Read the validated configuration.
+///
+/// `Deref` rather than 76 accessors: the wrapper's job is to make the *construction*
+/// checked, not to ration reads. Handing out a `&Config` is harmless — the invariant is
+/// that this value was validated, and a shared reference cannot undo that.
+impl std::ops::Deref for ValidatedConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Config {
+        &self.0
+    }
 }
 
 /// Enforce the delegated-XOR-exported TLS-signing rule (ADR-MCPS-028 §G, issue

@@ -178,6 +178,42 @@ fn an_unopenable_replay_tier_refuses_startup_and_names_the_missing_feature() {
     }
 }
 
+/// A `Config` that never went through the parser cannot bypass the safety guards.
+///
+/// `Config` has 76 public fields. Until the validation boundary landed, the hard guards
+/// ran only inside `parse_args`, so anything that built a `Config` in code — an
+/// embedder, a harness, a bespoke launcher — reached the serving path having run none of
+/// them. This mutates a parsed config AFTER parsing, which is the cheapest way to
+/// reproduce exactly what such a caller can construct, and asserts `run` refuses it.
+///
+/// The posture chosen is the disabled client-cert lifetime: with no bound, a stolen
+/// certificate authenticates for as long as its issuer allows, which is the revocation
+/// posture the whole Mode-A design rests on.
+#[test]
+fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    // `parse_args` would have refused this. Setting it afterwards is not a contrived
+    // move — it is the only shape an in-code caller has.
+    config.max_client_cert_lifetime = None;
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("an unsafe configuration must be refused however it was built");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "expected the unsafe-configuration refusal, got: {err}"
+    );
+    assert!(
+        err.contains("--max-client-cert-lifetime"),
+        "the refusal must name the offending setting, got: {err}"
+    );
+}
+
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
 /// replay-tier branches that never execute on the happy path. Each returns `Err` early
 /// (no listener, no Redis), so this is a fast in-process test that covers the
