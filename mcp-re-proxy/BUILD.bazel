@@ -595,6 +595,8 @@ nt_rust_test(
         ":mcp_re_proxy",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-test-paths:mcp_re_test_paths",
+        # The transcript harness signals the child with SIGTERM to reach the drain path.
+        "@crates_mcp_re//:libc",
         "@crates_mcp_re//:rcgen",
         "@crates_mcp_re//:serde_json",
     ],
