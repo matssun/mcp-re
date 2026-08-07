@@ -553,28 +553,6 @@ nt_rust_test(
 # No `async_serve`: unlike its siblings this file carries no `#![cfg(feature = ...)]`,
 # so cargo builds it under DEFAULT features and Bazel must match — the resolver seam it
 # drives is in the default build.
-# ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
-# DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
-# which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
-# `manual` (so `bazel test //...` skips it) — the composition root was exercised by
-# neither. Hermetic: no Redis, no Docker, no listener; every case is refused before the
-# serve loop.
-nt_rust_test(
-    name = "app_startup_characterization_test",
-    srcs = [
-        "tests/app_startup_characterization_test.rs",
-        "tests/serving_fixtures/mod.rs",
-    ],
-    auto_cargo_toml = False,
-    bazel_build_cfg = False,
-    edition = "2021",
-    deps = [
-        ":mcp_re_proxy",  # keep
-        "//mcp-re-core:mcp_re_core",
-        "@crates_mcp_re//:rcgen",
-        "@crates_mcp_re//:serde_json",
-    ],
-)
 nt_rust_test(
     name = "revocation_serving_wiring_test",
     srcs = ["tests/revocation_serving_wiring_test.rs"],
@@ -585,6 +563,37 @@ nt_rust_test(
         ":mcp_re_proxy",  # keep
         "//mcp-re-core:mcp_re_core",
         "//mcp-re-http-profile:mcp_re_http_profile",
+    ],
+)
+# ADR-MCPRE-056 Phase 0: characterization of `app::run`'s STARTUP behaviour, in the
+# DEFAULT lane. Every test that drove `app::run` used to live in tls_load_harness_bench,
+# which is `redis_replay`-gated (so `cargo test --workspace` skips it) and tagged
+# `manual` (so `bazel test //...` skips it) — the composition root was exercised by
+# neither. Hermetic: no Redis, no Docker, no listener; every case is refused before the
+# serve loop, and the transcript is read from the REAL binary's stderr so the harness
+# observes the system from outside while its internals are restructured.
+nt_rust_test(
+    name = "app_startup_characterization_test",
+    srcs = [
+        "tests/app_startup_characterization_test.rs",
+        "tests/serving_fixtures/mod.rs",
+        "tests/startup_transcript/mod.rs",
+    ],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = [
+        ":mcp_re_proxy_cli",
+    ],
+    edition = "2021",
+    env = {
+        "MCP_RE_PROXY_CLI": "$(rlocationpath :mcp_re_proxy_cli)",
+    },
+    deps = [
+        ":mcp_re_proxy",  # keep
+        "//mcp-re-core:mcp_re_core",
+        "//mcp-re-test-paths:mcp_re_test_paths",
+        "@crates_mcp_re//:rcgen",
+        "@crates_mcp_re//:serde_json",
     ],
 )
 # ADR-MCPRE-052 delegated-signing serving cutover (MCPRE-122): drives the
