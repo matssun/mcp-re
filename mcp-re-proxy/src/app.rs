@@ -241,6 +241,13 @@ fn run_validated(
     config: &crate::cli::ValidatedConfig,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
+    // Every long-lived thread startup creates belongs to this set (ADR-MCPRE-056 §9).
+    // It is declared before the first of them and dropped when this function returns by
+    // ANY path, so the ~38 fallible expressions between here and `serve_fleet` each halt
+    // and reclaim the workers already running on their way out. None of them says so:
+    // that is the point of expressing the lifetime as ownership instead of as cleanup
+    // nobody was going to write at 38 return points.
+    let mut workers = crate::managed_worker::WorkerSet::new(Arc::clone(&shutdown));
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
     // freshness check rather than admitting a stale one), but a clock that reads
@@ -400,12 +407,12 @@ fn run_validated(
     let trust_freshness = Arc::new(TrustStoreFreshness::default());
     if let Some(interval_secs) = config.trust_reload_secs {
         spawn_trust_reload_task(
+            &mut workers,
             Arc::clone(&trust_store),
             config.trust_path.clone(),
             response_kid.clone(),
             interval_secs,
             Arc::clone(&trust_freshness),
-            Arc::clone(&shutdown),
         );
         eprintln!(
             "mcp-re-proxy: trust store reload ACTIVE every {interval_secs}s: a key removed              from {} stops resolving within one cadence, with no restart.",
@@ -879,17 +886,19 @@ fn run_validated(
             );
         } else {
             let custody = tls_material.label();
-            spawn_crl_reload_task(CrlReloadTask {
-                snapshot: Arc::clone(&config_snapshot),
-                server_chain: reload_chain,
-                material: tls_material,
-                client_ca: reload_client_ca,
-                crl_paths: reload_crl_paths,
-                allow_unknown_status: reload_allow_unknown,
-                interval_secs: reload_secs,
-                shutdown: Arc::clone(&shutdown),
-                revocation: client_revocation.clone(),
-            });
+            spawn_crl_reload_task(
+                &mut workers,
+                CrlReloadTask {
+                    snapshot: Arc::clone(&config_snapshot),
+                    server_chain: reload_chain,
+                    material: tls_material,
+                    client_ca: reload_client_ca,
+                    crl_paths: reload_crl_paths,
+                    allow_unknown_status: reload_allow_unknown,
+                    interval_secs: reload_secs,
+                    revocation: client_revocation.clone(),
+                },
+            );
             eprintln!(
                 "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
                  {custody} TLS custody; refreshed --client-crl honored without restart; \
@@ -1055,11 +1064,11 @@ fn run_validated(
         // advance, so an operator `INCR` revokes the outstanding delegated keys across
         // the fleet (ADR-MCPRE-052 §7).
         spawn_delegated_rotation_task(
+            &mut workers,
             rotor,
             Arc::clone(&signer),
             overlap,
             epoch_watch,
-            Arc::clone(&shutdown),
         );
         HttpProfileProxy::new_delegated(
             resolve_actor,
@@ -1466,7 +1475,6 @@ struct CrlReloadTask {
     crl_paths: Vec<String>,
     allow_unknown_status: bool,
     interval_secs: u64,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// The per-request revocation index, republished from the same re-read bytes as
     /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
     /// reaching new connections alone — which is the gap the per-request check exists
@@ -1682,14 +1690,15 @@ impl mcp_re_core::TrustResolver for StaleFailsClosed {
 /// thread, so a panic (a poisoned lock, a closed stderr) would otherwise end reloading
 /// for the process lifetime while every surface still read healthy.
 fn spawn_trust_reload_task(
+    workers: &mut crate::managed_worker::WorkerSet,
     store: Arc<crate::reloading_trust::ReloadingTrustStore>,
     trust_path: String,
     response_kid: String,
     interval_secs: u64,
     freshness: Arc<TrustStoreFreshness>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    std::thread::spawn(move || {
+    let halt = workers.halt();
+    workers.spawn("trust store reload", move || {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             trust_reload_loop(
                 &store,
@@ -1697,7 +1706,7 @@ fn spawn_trust_reload_task(
                 &response_kid,
                 interval_secs,
                 &freshness,
-                &shutdown,
+                &halt,
             );
         }));
         if outcome.is_err() {
@@ -1721,18 +1730,14 @@ fn trust_reload_loop(
     response_kid: &str,
     interval_secs: u64,
     freshness: &TrustStoreFreshness,
-    shutdown: &std::sync::atomic::AtomicBool,
+    halt: &crate::managed_worker::Halt,
 ) {
-    // Nap in small increments so a shutdown signal is observed within one
-    // increment rather than after a whole reload interval.
-    let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
     let mut consecutive_failures: u32 = 0;
     loop {
-        for _ in 0..ticks {
-            if shutdown.load(Ordering::SeqCst) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+        // Naps in small increments, so a halt is observed within one increment rather
+        // than after a whole reload interval.
+        if halt.sleep(Duration::from_secs(interval_secs)) {
+            return;
         }
         match read_trust_file(trust_path, response_kid) {
             Ok((resolver, signers)) => {
@@ -1783,10 +1788,11 @@ fn trust_reload_loop(
 /// covers nothing, so its issuer's certificates become `Unknown` and are refused. A
 /// failed reload therefore never widens what is accepted, and the escalation here is a
 /// loud operator signal rather than a second fail-closed transition.
-fn spawn_crl_reload_task(task: CrlReloadTask) {
-    std::thread::spawn(move || {
+fn spawn_crl_reload_task(workers: &mut crate::managed_worker::WorkerSet, task: CrlReloadTask) {
+    let halt = workers.halt();
+    workers.spawn("client CRL reload", move || {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crl_reload_loop(task);
+            crl_reload_loop(task, &halt);
         }));
         if outcome.is_err() {
             eprintln!(
@@ -1800,7 +1806,7 @@ fn spawn_crl_reload_task(task: CrlReloadTask) {
 }
 
 /// The CRL reload loop proper. Split out so the supervisor above can catch a panic.
-fn crl_reload_loop(task: CrlReloadTask) {
+fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
     let CrlReloadTask {
         snapshot,
         server_chain,
@@ -1809,20 +1815,15 @@ fn crl_reload_loop(task: CrlReloadTask) {
         crl_paths,
         allow_unknown_status,
         interval_secs,
-        shutdown,
         revocation,
     } = task;
     {
-        // Nap in small increments so a shutdown signal is observed within one
-        // increment rather than after a whole reload interval.
-        let ticks = interval_secs.saturating_mul(20); // 20 * 50ms = 1s
         let mut consecutive_failures: u32 = 0;
         loop {
-            for _ in 0..ticks {
-                if shutdown.load(Ordering::SeqCst) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
+            // Naps in small increments, so a halt is observed within one increment
+            // rather than after a whole reload interval.
+            if halt.sleep(Duration::from_secs(interval_secs)) {
+                return;
             }
             let outcome = config_snapshot::reload_once(&snapshot, || {
                 let crls = cli::load_client_crls(&crl_paths)?;
@@ -1883,15 +1884,16 @@ fn crl_reload_loop(task: CrlReloadTask) {
 /// current key until then (no gap). If issuance fails while the current key is still
 /// valid, serving continues until that key expires and THEN fails closed
 /// (ADR-MCPRE-052 §6) — never a stale-key extension or a direct-root fallback. The
-/// thread observes `shutdown` between naps so it exits promptly on a rolling deploy.
+/// thread observes its halt between naps so it exits promptly on a rolling deploy.
 fn spawn_delegated_rotation_task(
+    workers: &mut crate::managed_worker::WorkerSet,
     mut rotor: crate::delegated_wiring::ProdDelegatedRotor,
     signer: Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     overlap: i64,
     epoch_watch: Option<DelegatedEpochWatch>,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    std::thread::spawn(move || {
+    let halt = workers.halt();
+    workers.spawn("delegated key rotation", move || {
         // SUPERVISION (C040). This thread is the ONLY thing that mints delegated keys, and
         // its `JoinHandle` is dropped, so nothing joins it. Left bare, a panic on any
         // reachable `.expect()` (the CSPRNG draw, the two custody invariants) would end all
@@ -1907,13 +1909,7 @@ fn spawn_delegated_rotation_task(
         // resume — after a panic the rotor's state is not known good, and continuing to
         // mint from it would be worse than refusing.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            rotation_loop(
-                &mut rotor,
-                &signer,
-                overlap,
-                epoch_watch.as_ref(),
-                &shutdown,
-            )
+            rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt)
         }));
         if outcome.is_err() {
             signer.retire();
@@ -1936,7 +1932,7 @@ fn rotation_loop(
     signer: &Arc<crate::delegated_server_signer::DelegatedServerSigner>,
     overlap: i64,
     epoch_watch: Option<&DelegatedEpochWatch>,
-    shutdown: &Arc<std::sync::atomic::AtomicBool>,
+    halt: &crate::managed_worker::Halt,
 ) {
     use crate::delegated_server_signer::rotation_backoff;
     {
@@ -1947,7 +1943,7 @@ fn rotation_loop(
         // moves it; verifiers pinned to the old label then reject across replicas.
         let mut last_label = rotor.trust_epoch().to_string();
         loop {
-            if shutdown.load(Ordering::SeqCst) {
+            if halt.requested() {
                 return;
             }
             // In steady state, sleep until the overlap window opens (`exp - overlap`) so
@@ -1963,7 +1959,7 @@ fn rotation_loop(
                 };
                 let mut ticks = 0u32;
                 while now_unix() < wake_at {
-                    if shutdown.load(Ordering::SeqCst) {
+                    if halt.requested() {
                         return;
                     }
                     // Poll the shared trust epoch ~every 500ms (10 * 50ms).
@@ -1978,7 +1974,7 @@ fn rotation_loop(
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
-            if shutdown.load(Ordering::SeqCst) {
+            if halt.requested() {
                 return;
             }
             // Trust-epoch advance takes priority over the scheduled rotation: swap to
@@ -2006,7 +2002,7 @@ fn rotation_loop(
                         ttl.unwrap_or(0),
                         backoff.as_millis(),
                     );
-                    if interruptible_sleep(backoff, shutdown) {
+                    if halt.sleep(backoff) {
                         return;
                     }
                     continue;
@@ -2049,7 +2045,7 @@ fn rotation_loop(
                                     consecutive_failures,
                                     backoff.as_millis(),
                                 );
-                                if interruptible_sleep(backoff, shutdown) {
+                                if halt.sleep(backoff) {
                                     return;
                                 }
                                 continue;
@@ -2065,7 +2061,7 @@ fn rotation_loop(
                                     consecutive_failures,
                                     backoff.as_millis(),
                                 );
-                                if interruptible_sleep(backoff, shutdown) {
+                                if halt.sleep(backoff) {
                                     return;
                                 }
                                 continue;
@@ -2099,7 +2095,7 @@ fn rotation_loop(
                         ttl.unwrap_or(0),
                         backoff.as_millis(),
                     );
-                    if interruptible_sleep(backoff, shutdown) {
+                    if halt.sleep(backoff) {
                         return;
                     }
                 }
@@ -2138,7 +2134,7 @@ fn rotation_loop(
                     );
                     // Interruptible backoff so a persistent root outage does not hot-spin;
                     // the hot path keeps signing off the current key until its exp.
-                    if interruptible_sleep(backoff, shutdown) {
+                    if halt.sleep(backoff) {
                         return;
                     }
                 }
@@ -2174,22 +2170,6 @@ fn rotation_made_progress(
     }
     // Same kid. Only a rotation that was DUE and did not happen is a failure.
     now < active.exp - overlap
-}
-
-/// Sleep `dur` in small increments, returning `true` as soon as `shutdown` is observed
-/// (so a rolling deploy is not delayed by a long backoff nap). `false` if the full
-/// duration elapsed.
-fn interruptible_sleep(dur: Duration, shutdown: &std::sync::atomic::AtomicBool) -> bool {
-    let step = Duration::from_millis(50);
-    let mut slept = Duration::ZERO;
-    while slept < dur {
-        if shutdown.load(Ordering::SeqCst) {
-            return true;
-        }
-        std::thread::sleep(step);
-        slept += step;
-    }
-    false
 }
 
 /// A fresh random u64 from the OS CSPRNG for backoff jitter. On the (astronomically

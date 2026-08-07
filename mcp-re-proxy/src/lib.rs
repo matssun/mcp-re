@@ -181,6 +181,10 @@ pub mod app;
 // builds against.
 pub mod async_fleet;
 pub(crate) mod startup_plan;
+// ADR-MCPRE-056 §9: owned background workers. A startup phase may not spawn a
+// long-lived thread whose lifetime is not represented by an owned value, so every
+// runtime worker belongs to a `WorkerSet` that halts and reclaims it on drop.
+pub(crate) mod managed_worker;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
