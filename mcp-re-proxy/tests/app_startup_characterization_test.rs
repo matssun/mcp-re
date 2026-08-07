@@ -22,9 +22,10 @@ mod startup_transcript;
 use serving_fixtures::Material;
 
 /// The flags every case below shares: enough to get through parsing and preflight, with
-/// a replay tier that cannot be opened in this build. Startup therefore always reaches
-/// the trust plane and always stops at the replay stage, which is what makes these
-/// hermetic — no Redis, no Docker, no listener.
+/// a replay tier that cannot be opened — either because the backend is not compiled into
+/// this build, or because nothing answers on `127.0.0.1:1`. Startup therefore always
+/// reaches the trust plane and always stops at the replay stage in every cargo lane,
+/// which is what makes these hermetic — no Redis, no Docker, no listener.
 fn base_args(m: &Material) -> Vec<String> {
     [
         "--bind",
@@ -158,10 +159,26 @@ fn a_push_tier_without_an_event_source_is_qualified_where_it_is_declared() {
     );
 }
 
-/// A build without `redis_replay` refuses a shared replay tier BEFORE serving, and says
-/// which feature is missing. Pins the exit shape the transcript harness depends on.
+/// A shared replay tier that cannot be opened refuses startup BEFORE serving, and names
+/// the reason it could not be opened. Pins the exit shape the transcript harness depends
+/// on.
+///
+/// The refusal is invariant across builds; the reason is not. Without `redis_replay` the
+/// backend is not compiled in at all and the refusal names the missing feature. With it
+/// compiled in, the same config gets as far as dialling `redis://127.0.0.1:1` and is
+/// refused by the connection failure. Asserting one fixed substring would therefore pass
+/// in one cargo lane and fail in the other — as it did — so the lanes are distinguished
+/// here rather than the test being narrowed to whichever lane it was written in.
 #[test]
-fn an_unopenable_replay_tier_refuses_startup_and_names_the_missing_feature() {
+fn an_unopenable_replay_tier_refuses_startup_and_names_why() {
+    // Kept as a `cfg!` value rather than a `#[cfg]` on the test so BOTH lanes assert
+    // fail-closed startup; only the diagnostic they expect differs.
+    let expected = if cfg!(feature = "redis_replay") {
+        "connect redis"
+    } else {
+        "redis_replay"
+    };
+
     let m = serving_fixtures::write_material();
     let t = startup_transcript::capture(&base_args(&m));
 
@@ -170,8 +187,9 @@ fn an_unopenable_replay_tier_refuses_startup_and_names_the_missing_feature() {
             assert!(!success, "startup must fail closed:\n{}", t.dump());
             let refused = refused.as_deref().unwrap_or("");
             assert!(
-                refused.contains("redis_replay"),
-                "the refusal must name the missing feature, got {refused:?}"
+                refused.contains(expected),
+                "the refusal must say why the tier could not be opened, \
+                 expected {expected:?}, got {refused:?}"
             );
         }
         other => panic!("expected an early exit, got {other:?}:\n{}", t.dump()),
