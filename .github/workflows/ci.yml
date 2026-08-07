@@ -163,6 +163,15 @@ jobs:
           python3 scripts/es256_containment_gate.py --selftest
           python3 scripts/es256_containment_gate.py
 
+      # Owned workers (ADR-MCPRE-056 §9): a long-lived thread must belong to a
+      # `WorkerSet`. Four detached startup threads shipped before this existed, and the
+      # fourth was found by accident after a survey that swept one file and concluded
+      # there were three — the invariant does not survive as a habit.
+      - name: Owned-worker gate
+        run: |
+          python3 scripts/owned_worker_gate.py --selftest
+          python3 scripts/owned_worker_gate.py
+
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the
