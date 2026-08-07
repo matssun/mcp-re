@@ -53,6 +53,7 @@ impl ReplayPlan {
             ReplayKind::Memory => Ok(ReplayPlan::Memory),
             // Not a missing feature — a shape that does not fit the data plane at all
             // (ADR-MCPRE-051 §1).
+            //
             // The remedy names only `shared`, because it is the only one that can start:
             // `--replay-cache memory` is refused by validation in every build, so
             // recommending it would send an operator to a second dead end.
@@ -92,6 +93,28 @@ impl ReplayPlan {
     pub fn needs_control_runtime(&self) -> bool {
         cfg!(feature = "redis_replay") && matches!(self, ReplayPlan::Redis { .. })
     }
+}
+
+/// The kid naming the ROOT issuer that delegated credentials chain to (ADR-MCPRE-052).
+///
+/// Planned, not materialized: it is a two-field derivation over configuration, and both
+/// the trust plane and the signing plane are handed it rather than either producing it.
+/// That ordering is forced — trust is established well before the root issuer is invoked
+/// — but it is also correct, because the kid is a statement of INTENT about which issuer
+/// this deployment will chain to, not evidence that the issuer answered.
+///
+/// `--delegated-issuer-kid` wins when set; otherwise the server key id names the issuer,
+/// which is the single-key deployment where root and issuer coincide.
+///
+/// The invariant that makes it safe belongs to signing, and the two planes consume
+/// opposite halves of it: this kid answers the Response slot, and it is never enrolled as
+/// a REQUEST signer. Splitting the derivation across the two consumers would let them
+/// disagree about which key that is, which is the one thing this must not permit.
+pub fn response_issuer_kid(config: &ValidatedConfig) -> String {
+    config
+        .delegated_issuer_kid
+        .clone()
+        .unwrap_or_else(|| config.server_key_id.clone())
 }
 
 /// Whether the MRTR continuation store will be wired (ADR-MCPS-047).
@@ -333,6 +356,24 @@ mod tests {
         ])
         .expect("a plan is produced without contacting anything");
         assert!(matches!(plan, ReplayPlan::Redis { .. }));
+    }
+
+    /// The explicit issuer kid wins; without one the server key id names the issuer.
+    /// Both planes must be handed the SAME answer, which is why it is derived here.
+    #[test]
+    fn the_issuer_kid_falls_back_to_the_server_key_id() {
+        let config = parse(SHARED_REDIS).expect("args parse");
+        let validated = ValidatedConfig::try_from(config).expect("config validates");
+        assert_eq!(
+            response_issuer_kid(&validated),
+            "k1",
+            "with no --delegated-issuer-kid the server key id names the issuer"
+        );
+
+        let explicit = parse(&[SHARED_REDIS, &["--delegated-issuer-kid", "root-kms-1"]].concat())
+            .expect("args parse");
+        let validated = ValidatedConfig::try_from(explicit).expect("config validates");
+        assert_eq!(response_issuer_kid(&validated), "root-kms-1");
     }
 
     // ---- control-runtime requirement -------------------------------------------

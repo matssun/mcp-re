@@ -189,6 +189,10 @@ pub(crate) mod managed_worker;
 // and the two narrow live handles it hands out. Owns the authority to CHANGE trust
 // state; consumers get read/observe capabilities only.
 pub(crate) mod trust_plane;
+// ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — owns the root issuer, the
+// delegated key snapshot and the rotation worker. A signer that outlives it is retired,
+// so it cannot keep signing off a key nothing rotates and no epoch advance can revoke.
+pub(crate) mod signing_plane;
 // ADR-MCPRE-056 §8: the shared control runtime — execution substrate for every
 // networked control-plane client, distinct from the per-core serving runtimes. Owns
 // execution lifetime; consumers receive a tokio Handle, which conveys access only.
