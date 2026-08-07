@@ -16,18 +16,17 @@ use crate::async_serve::ServedHttpRequest;
 use crate::cli;
 use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
-use crate::cli::ReplayKind;
 use crate::client_revocation;
 use crate::config_snapshot;
 use crate::delegated_server_signer::TrustEpochAdvance;
 use crate::http_inner::HttpInnerPool;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
+use crate::startup_plan::ReplayPlan;
 use crate::tls;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
 use crate::HttpProfileProxy;
 use crate::IdentityStrategy;
-use crate::ReplayDurabilityTier;
 use crate::ReverseProxyMtlsProvider;
 use crate::RevocationTier;
 use crate::ServerOptions;
@@ -524,106 +523,90 @@ fn run_validated(
     // `mut` only bites where a networked control-plane client exists to build it.
     #[cfg_attr(not(feature = "redis_replay"), allow(unused_mut))]
     let mut control_rt: Option<tokio::runtime::Runtime> = None;
-    match config.replay {
-        ReplayKind::Memory => {
+    // Which tier this deployment asked for is decided purely, from configuration alone;
+    // the arms below only establish it. Every refusal the plan can raise is a statement
+    // about the config; every refusal left here is a statement about the build or the
+    // environment.
+    let replay_plan = crate::startup_plan::ReplayPlan::from_config(config)?;
+    match &replay_plan {
+        ReplayPlan::Memory => {
             // Proxy::new already installed the in-memory async tier (single-replica).
         }
-        ReplayKind::File => {
-            return Err(
-                "--replay-cache file is not supported on the async serving path: a single \
-                 file-backed cache does not fit the per-core share-nothing data plane. Use \
-                 --replay-cache shared (redis/etcd) for durable cross-replica replay, or \
-                 --replay-cache memory for single-replica development."
-                    .to_string(),
-            );
+        ReplayPlan::Etcd { endpoint, tier } => {
+            #[cfg(feature = "cpstore_etcd")]
+            {
+                eprintln!(
+                    "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
+                );
+                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("etcd"));
+                let store = Arc::new(
+                    crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
+                );
+                replay_async =
+                    crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
+                dispatch_cfg = ProxyDispatchConfig {
+                    fleet_strict: true,
+                    tier: Some(tier.clone()),
+                };
+            }
+            #[cfg(not(feature = "cpstore_etcd"))]
+            {
+                let _ = (endpoint, tier);
+                return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
+            }
         }
-        ReplayKind::Shared => {
-            let tier_kind = config
-                .replay_durability_tier
-                .as_ref()
-                .ok_or("--replay-cache shared requires --replay-durability-tier")?;
-            if matches!(tier_kind, ReplayDurabilityTier::Linearizable) {
-                let endpoint = config.cpstore_etcd_endpoint.clone().ok_or(
-                    "--replay-durability-tier linearizable requires --cpstore-etcd-endpoint",
-                )?;
-                #[cfg(feature = "cpstore_etcd")]
-                {
-                    eprintln!(
-                        "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
-                    );
-                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("etcd"));
-                    let store = Arc::new(
-                        crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(&endpoint),
-                    );
-                    replay_async =
-                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                    dispatch_cfg = ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: config.replay_durability_tier.clone(),
-                    };
+        ReplayPlan::Redis { url, tier } => {
+            #[cfg(feature = "redis_replay")]
+            {
+                eprintln!(
+                    "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
+                );
+                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
+                // The ConnectionManager's reconnect task runs on this dedicated
+                // process-lifetime runtime, distinct from the per-core serving
+                // runtimes; held alive by `control_rt` for the whole serve.
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("build replay control runtime: {e}"))?;
+                // The client-side response timeout is sized for the DECLARED WAIT
+                // timeout before connecting: the library defaults to 500ms per
+                // command, and `WAIT` is an ordinary command — so a declared
+                // `redis-wait-quorum:2:2000` could never wait 2000ms, and any
+                // replica ack slower than 500ms failed the request closed while the
+                // startup line advertised the fuller window.
+                let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
+                let mut store = rt
+                    .block_on(
+                        crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
+                            url,
+                            crate::redis_store::system_clock(),
+                            wait_timeout_ms,
+                        ),
+                    )
+                    .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
+                // Apply the DECLARED durability tier to the store that actually
+                // serves. `startup_audit_line` above promises "WAIT timeout or
+                // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
+                // this the store would run plain SET NX PX and the promise would
+                // be audited but unenforced.
+                if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
+                    store = store.with_wait_quorum(quorum, timeout_ms);
                 }
-                #[cfg(not(feature = "cpstore_etcd"))]
-                {
-                    let _ = endpoint;
-                    return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
-                }
-            } else {
-                let url = config
-                    .replay_redis_url
-                    .clone()
-                    .ok_or("--replay-cache shared requires --replay-redis-url")?;
-                #[cfg(feature = "redis_replay")]
-                {
-                    eprintln!(
-                        "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
-                    );
-                    eprintln!("mcp-re-proxy: {}", tier_kind.startup_audit_line("redis"));
-                    // The ConnectionManager's reconnect task runs on this dedicated
-                    // process-lifetime runtime, distinct from the per-core serving
-                    // runtimes; held alive by `control_rt` for the whole serve.
-                    let rt = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()
-                        .map_err(|e| format!("build replay control runtime: {e}"))?;
-                    // The client-side response timeout is sized for the DECLARED WAIT
-                    // timeout before connecting: the library defaults to 500ms per
-                    // command, and `WAIT` is an ordinary command — so a declared
-                    // `redis-wait-quorum:2:2000` could never wait 2000ms, and any
-                    // replica ack slower than 500ms failed the request closed while the
-                    // startup line advertised the fuller window.
-                    let wait_timeout_ms = tier_kind.wait_quorum_params().map(|(_, ms)| ms);
-                    let mut store = rt
-                        .block_on(
-                            crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
-                                &url,
-                                crate::redis_store::system_clock(),
-                                wait_timeout_ms,
-                            ),
-                        )
-                        .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
-                    // Apply the DECLARED durability tier to the store that actually
-                    // serves. `startup_audit_line` above promises "WAIT timeout or
-                    // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
-                    // this the store would run plain SET NX PX and the promise would
-                    // be audited but unenforced.
-                    if let Some((quorum, timeout_ms)) = tier_kind.wait_quorum_params() {
-                        store = store.with_wait_quorum(quorum, timeout_ms);
-                    }
-                    let store = Arc::new(store);
-                    replay_async =
-                        crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                    dispatch_cfg = ProxyDispatchConfig {
-                        fleet_strict: true,
-                        tier: config.replay_durability_tier.clone(),
-                    };
-                    control_rt = Some(rt);
-                }
-                #[cfg(not(feature = "redis_replay"))]
-                {
-                    let _ = url;
-                    return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
-                }
+                let store = Arc::new(store);
+                replay_async =
+                    crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
+                dispatch_cfg = ProxyDispatchConfig {
+                    fleet_strict: true,
+                    tier: Some(tier.clone()),
+                };
+                control_rt = Some(rt);
+            }
+            #[cfg(not(feature = "redis_replay"))]
+            {
+                let _ = (url, tier);
+                return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
             }
         }
     }

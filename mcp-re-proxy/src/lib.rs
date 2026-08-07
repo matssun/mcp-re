@@ -174,7 +174,13 @@ pub mod async_serve;
 // core, each a current-thread tokio runtime with its own SO_REUSEPORT listener +
 // Linux CPU pinning, over one Proxy per core. THE production data plane.
 pub mod app;
+// ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
+// configuration alone. Pure — no I/O, no environment, no clock — so a plan describes
+// intent and never doubles as evidence that the thing was established. Internal to the
+// crate: it is the composition root's own decomposition, not a surface anything outside
+// builds against.
 pub mod async_fleet;
+pub(crate) mod startup_plan;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
