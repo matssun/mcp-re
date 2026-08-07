@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Owned-worker gate — a long-lived thread must have an owner (ADR-MCPRE-056 §9).
+"""Owned-worker gate — no unreviewed direct thread spawn in production code.
 
-No startup phase may spawn a long-lived thread whose lifetime is not represented by an
-owned value. A bare `std::thread::spawn(..)` whose `JoinHandle` is dropped outlives every
+WHAT THIS PROVES, exactly: no library source outside `managed_worker.rs` starts an OS
+thread through `thread::spawn` or `thread::Builder` except in test code or in a file
+listed below with a reason. That is a syntactic check on two spellings, and the claim
+stops there.
+
+WHAT IT DOES NOT PROVE: that no detached runtime worker exists. A helper that wraps the
+spawn, a type alias, a re-export, a `tokio::spawn` or `Runtime::spawn` task, or a thread
+started inside a dependency all pass it untouched. Keeping the contract narrow is
+deliberate — this gate is not a Rust compiler, and overstating it would be worse than
+not having it, because the overstatement is what stops people looking. The real
+enforcement is that runtime-owned work goes through `WorkerSet`; this gate makes the
+common bypass loud.
+
+WHY. ADR-MCPRE-056 §9: no startup phase may spawn a long-lived thread whose lifetime is
+not represented by an owned value. A bare `std::thread::spawn(..)` whose `JoinHandle` is dropped outlives every
 value it was conceptually part of: nothing can stop it, and nothing can observe that it
 stopped. Startup had four of them — trust reload, client CRL reload, delegated key
 rotation, trust-epoch poll — each looping on the caller's SIGTERM flag, which no error
@@ -14,13 +27,8 @@ They are now owned by `managed_worker::WorkerSet`. This gate is what keeps them 
 because the invariant does not survive as a habit: the fourth was found by accident, days
 after a survey that swept one file and concluded there were three.
 
-The rule: in library sources, `thread::spawn` may appear only in `managed_worker.rs`, in
-test code, or in a file listed below with a reason. Anything else must go through
-`WorkerSet::spawn`, which owns the handle and cannot hand it back.
-
-SCOPE. This gate is about OS threads. Tokio tasks on the per-core serving runtimes are a
-different lifetime question — the fleet owns its runtimes and joins them on drain — and
-are deliberately not covered here.
+Tokio tasks on the per-core serving runtimes are a different lifetime question — the
+fleet owns its runtimes and joins them on drain — and are deliberately out of scope.
 
 Run:  python3 scripts/owned_worker_gate.py
       python3 scripts/owned_worker_gate.py --selftest
@@ -38,8 +46,17 @@ REPO = Path(__file__).resolve().parent.parent
 # The one module allowed to start a thread: it is the thing that owns them.
 OWNER_MODULE = "src/managed_worker.rs"
 
-# Files permitted to spawn directly, each for a reason that is NOT "a runtime worker".
-# Adding an entry is a decision; it should be as hard to justify as it looks.
+# Every thread in the system that is not started through `WorkerSet`, and why it is
+# sound. Two kinds appear here and they are not equivalent:
+#
+#   - satisfies §9 by hand: the handle IS owned and joined, just not by `WorkerSet`
+#     (the fleet, the retention writer, the anchor refresher)
+#   - out of §9's scope: a per-connection, per-operation or per-process thread whose
+#     lifetime is not a runtime's (the signal bridges, the connection handlers, the
+#     audit writer)
+#
+# Adding an entry is a decision, and the asymmetry is the point: an existing entry has
+# to stay explainable, a new one has to argue for itself.
 ALLOWED = {
     "mcp-re-proxy/src/main.rs": (
         "the SIGTERM/SIGINT bridge thread belongs to the PROCESS, not to any runtime: it "
@@ -58,9 +75,32 @@ ALLOWED = {
         "the client binary's SIGTERM bridge, the same process-lifetime signal thread as "
         "the proxy's — it belongs to the process, not to a runtime"
     ),
+    "mcp-re-proxy/src/audit_sink.rs": (
+        "the stderr audit writer drains a `static` OnceLock channel and is scoped to the "
+        "PROCESS by construction; there is no runtime whose lifetime it could take"
+    ),
+    "mcp-re-proxy/src/transparency.rs": (
+        "the retention writer already satisfies §9 by hand: `EvidenceRetention` owns the "
+        "handle, closing the job channel is its halt, and `Drop` joins it"
+    ),
+    "mcp-re-proxy/src/async_fleet.rs": (
+        "the per-core serving threads satisfy §9 by hand: their handles are `Fleet.workers` "
+        "and `Fleet::shutdown_and_join` stops and joins every one of them"
+    ),
+    "mcp-re-client/src/anchors.rs": (
+        "the anchor-refresh thread's handle is owned by the refresher it belongs to, which "
+        "sets its stop flag and joins on drop"
+    ),
+    "mcp-re-client/src/serve.rs": (
+        "the client's per-connection handler lives as long as one connection; its capacity "
+        "slot is released by the same destructor on success, unwind, and spawn failure"
+    ),
 }
 
-SPAWN = re.compile(r"\bthread\s*::\s*spawn\b")
+# Both spellings that start an OS thread. `Builder` is not a hypothetical bypass: two
+# production sites already used it, and a gate that watched only `thread::spawn` would
+# have reported a clean tree over them.
+SPAWN = re.compile(r"\bthread\s*::\s*(?:spawn\b|Builder\b)")
 CFG_TEST = re.compile(r"#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]")
 
 
@@ -266,8 +306,8 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print(
-        "owned-worker gate: OK — every library thread is owned by a WorkerSet, "
-        f"except {len(ALLOWED)} justified non-runtime threads."
+        "owned-worker gate: OK — no direct thread spawn in production library code "
+        f"outside {OWNER_MODULE}, except {len(ALLOWED)} files that name a reason."
     )
     return 0
 
