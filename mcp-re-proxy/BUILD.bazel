@@ -122,6 +122,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §8 (ADR-MCPRE-052): the signing plane — root issuer, delegated
     # snapshot and rotation worker; retires the snapshot before it stops rotating.
     "src/signing_plane.rs",
+    # ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, the
+    # per-request revocation index and the CRL reload worker.
+    "src/tls_plane.rs",
     # ADR-MCPRE-056 §8: the shared control runtime — one owner for control-plane
     # execution; consumers get a tokio Handle (access, not ownership).
     "src/control_runtime.rs",

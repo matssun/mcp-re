@@ -193,6 +193,10 @@ pub(crate) mod trust_plane;
 // delegated key snapshot and the rotation worker. A signer that outlives it is retired,
 // so it cannot keep signing off a key nothing rotates and no epoch advance can revoke.
 pub(crate) mod signing_plane;
+// ADR-MCPRE-056 §8 (ADR-MCPRE-051 §6): the TLS plane — serving TLS config, per-request
+// revocation index and the CRL reload worker. Its snapshot needs no fail-closed
+// transition on drop: a CRL states its own nextUpdate and unknown status is refused.
+pub(crate) mod tls_plane;
 // ADR-MCPRE-056 §8: the shared control runtime — execution substrate for every
 // networked control-plane client, distinct from the per-core serving runtimes. Owns
 // execution lifetime; consumers receive a tokio Handle, which conveys access only.

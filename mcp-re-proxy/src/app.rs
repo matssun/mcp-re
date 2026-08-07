@@ -14,10 +14,8 @@ use crate::async_serve::ServedHttpRequest;
 use crate::cli;
 use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
-use crate::client_revocation;
 use crate::config_snapshot;
 use crate::http_inner::HttpInnerPool;
-use crate::tls;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
 use crate::HttpProfileProxy;
@@ -220,13 +218,6 @@ fn run_validated(
     config: &crate::cli::ValidatedConfig,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    // Every long-lived thread startup creates belongs to this set (ADR-MCPRE-056 §9).
-    // It is declared before the first of them and dropped when this function returns by
-    // ANY path, so the ~38 fallible expressions between here and `serve_fleet` each halt
-    // and reclaim the workers already running on their way out. None of them says so:
-    // that is the point of expressing the lifetime as ownership instead of as cleanup
-    // nobody was going to write at 38 return points.
-    let mut workers = crate::managed_worker::WorkerSet::new(Arc::clone(&shutdown));
     // Clock-fault diagnosis (audit #94 F5). `now_unix()` deliberately maps a
     // pre-epoch SystemTime error to 0 (fail CLOSED — every request then fails its
     // freshness check rather than admitting a stale one), but a clock that reads
@@ -313,9 +304,18 @@ fn run_validated(
     // property of the value rather than an agreement between two `Option`s that later
     // code has to re-derive.
     let tls_material = match key_source.tls_delegated_signer() {
-        Some(signer) => TlsKeyMaterial::Delegated(signer),
-        None => TlsKeyMaterial::Exported(key_source.tls_server_key().map_err(|e| e.to_string())?),
+        Some(signer) => crate::tls_plane::TlsKeyMaterial::Delegated(signer),
+        None => crate::tls_plane::TlsKeyMaterial::Exported(
+            key_source.tls_server_key().map_err(|e| e.to_string())?,
+        ),
     };
+    // ADR-MCPRE-056 §9: there is no shared worker set here any more. EVERY long-lived
+    // thread startup creates belongs to the plane that owns the resource it maintains, so
+    // the ~38 fallible expressions between here and `serve_fleet` each halt and reclaim
+    // whatever is already running on their way out — and each plane also gets to say what
+    // its own resource means once it stops. None of those expressions says so: that is
+    // the point of expressing the lifetime as ownership instead of as cleanup nobody was
+    // going to write at 38 return points.
     // Trust (ADR-MCPRE-056 §8). The plane owns the store, the freshness flag and the
     // workers that refresh them; what comes back is two narrow live handles.
     //
@@ -417,45 +417,24 @@ fn run_validated(
         );
     }
 
-    // Offline client-cert CRLs (#3839). Loaded once at startup; a missing or
-    // malformed CRL file fails closed here. OFFLINE revocation only — there is no
-    // online OCSP / distribution-point fetching (deferred to a follow-up).
-    let client_crls = cli::load_client_crls(&config.client_crl_paths)?;
-    if !client_crls.is_empty() {
-        eprintln!(
-            "mcp-re-proxy: offline client-cert revocation enabled — {} CRL file(s), unknown status \
-             DENIED (fail closed) (OFFLINE only; no online OCSP/CRL-DP fetching)",
-            config.client_crl_paths.len(),
-        );
-        // ADR-MCPS-023 §A1 (MCPS-58): the verifier enforces CRL nextUpdate, so a
-        // stale CRL fails every new handshake closed. Surface that at BOOT — refuse
-        // to start on a stale CRL — and warn while a CRL is near expiry so a
-        // refreshed CRL can be installed before the cutover ("restart before
-        // nextUpdate"; the in-process hot-reloader is a v0.10 follow-up). A malformed
-        // CRL is a hard startup error (fail closed).
-        const CRL_NEAR_EXPIRY_WARN_SECS: i64 = 6 * 3600;
-        for (i, crl) in client_crls.iter().enumerate() {
-            match tls::crl_freshness(crl.as_ref(), startup_now_unix, CRL_NEAR_EXPIRY_WARN_SECS)
-                .map_err(|e| e.to_string())?
-            {
-                tls::CrlFreshness::Fresh => {}
-                tls::CrlFreshness::NearExpiry { next_update_unix } => eprintln!(
-                    "mcp-re-proxy: WARNING: client CRL #{i} is near expiry (nextUpdate={next_update_unix}); \
-                     install a refreshed CRL and restart before then, or new handshakes will fail closed."
-                ),
-                tls::CrlFreshness::Stale { next_update_unix } => {
-                    let msg = format!(
-                        "client CRL #{i} is STALE (nextUpdate={next_update_unix} <= now={startup_now_unix}): \
-                         with CRL expiration enforced, every new client handshake fails closed. Install a \
-                         CRL published within its nextUpdate window."
-                    );
-                    return Err(format!(
-                        "mcp-re-proxy refuses to start with a stale client CRL: {msg}"
-                    ));
-                }
-            }
-        }
-    }
+    // Materialized HERE, not where `tls_material` is built, so the CRL load and its
+    // stale-CRL refusal keep the position they had before the extraction: after the trust
+    // posture, before the revocation posture. A deployment with both a stale CRL and an
+    // unreadable trust file must still see the same diagnostic first.
+    // Transport custody (ADR-MCPRE-056 §8). The plane owns the serving TLS config, the
+    // per-request revocation index and the CRL reload worker; `tls_material` is MOVED in
+    // so no second copy of the key material can drift from the one a reload rebuilds.
+    let tls = crate::tls_plane::TlsPlane::materialize(
+        config,
+        tls_material,
+        server_chain,
+        client_ca,
+        startup_now_unix,
+        Arc::clone(&shutdown),
+    )?;
+    let is_delegated_tls = tls.is_delegated();
+    let client_revocation = tls.revocation();
+    let config_snapshot = tls.snapshot();
 
     // ADR-MCPS-023 §A1 (MCPS-58): operator-visible revocation POSTURE DIAGNOSTIC.
     // This is a posture diagnostic, NOT a structured per-request audit guarantee —
@@ -487,13 +466,13 @@ fn run_validated(
             // this a revoked peer serves every later request on the connection it
             // already holds and the reload cadence below describes new connections
             // alone.
-            if client_crls.is_empty() {
+            if tls.crls().is_empty() {
                 "not_configured"
             } else {
                 "enforced"
             }
         );
-        if client_crls.is_empty() {
+        if tls.crls().is_empty() {
             let max_lifetime = match config.max_client_cert_lifetime {
                 Some(d) => format!("{}s", d.as_secs()),
                 None => "none".to_string(),
@@ -503,8 +482,8 @@ fn run_validated(
                  exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
             );
         } else {
-            for (i, crl) in client_crls.iter().enumerate() {
-                let posture = tls::crl_posture(crl.as_ref()).map_err(|e| e.to_string())?;
+            // Facts parsed once by the plane that loaded the CRLs, rendered here.
+            for (i, posture) in tls.crls().postures.iter().enumerate() {
                 let next_update = posture
                     .next_update_unix
                     .map(|n| n.to_string())
@@ -530,7 +509,7 @@ fn run_validated(
             config.trust_epoch_redis_url.is_some(),
             config.trust_reload_secs,
         );
-        let crl_bound = if client_crls.is_empty() {
+        let crl_bound = if tls.crls().is_empty() {
             let window = config
                 .max_client_cert_lifetime
                 .map(|d| format!("{}s", d.as_secs()))
@@ -557,26 +536,9 @@ fn run_validated(
         );
     }
 
-    // TLS server. ADR-MCPS-028 §G / issue #58: on the delegated path rustls drives
-    // the handshake signature through the device/KMS signer (TLS private key never
-    // exported); the validated builder fails closed at construction if the leaf cert
-    // is not Ed25519 or its key does not match the signer. Otherwise the exported-key
-    // path is used verbatim.
-    // ADR-MCPRE-051 §6 (MCPRE-116): capture the rebuild inputs BEFORE the match
-    // consumes them, so the opt-in CRL hot-reload task can rebuild the verifier from a
-    // refreshed `--client-crl` without a restart.
-    //
-    // BOTH custody paths are reloadable. The delegated path used to warn and keep a
-    // static snapshot, which put the weakest revocation posture on the deployments
-    // with the STRONGEST key custody: a client certificate revoked after startup kept
-    // authenticating for the whole process lifetime, silently, on exactly the
-    // configurations that took the most care with keys. The signer is an `Arc` and the
-    // certificate material is immutable, so a rebuild needs nothing the exported path
-    // does not also need.
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    let is_delegated_tls = tls_material.is_delegated();
     if is_delegated_tls {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
@@ -584,77 +546,6 @@ fn run_validated(
              small worker pool rather than the single-threaded share-nothing default. A \
              stalled signer then costs one worker instead of a whole core."
         );
-    }
-    // Cloned because the initial build below consumes the originals; the reload re-reads
-    // only the CRLs, never these.
-    let reload_chain = server_chain.clone();
-    let reload_client_ca = client_ca.clone();
-    let reload_crl_paths = config.client_crl_paths.clone();
-    // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
-    // is no relax knob. `false` = deny-unknown, threaded to every verifier builder.
-    let reload_allow_unknown = false;
-
-    // The PER-REQUEST revocation index, built from the same CRL bytes the handshake
-    // verifier is about to be given. Installed only when CRLs are configured: with
-    // none, rustls performs no revocation checking, and installing an index would put
-    // a check on the request path that the handshake does not perform.
-    //
-    // Without this, revocation reaches only NEW connections. rustls runs client
-    // authentication on a full handshake alone, so a peer added to a reloaded CRL keeps
-    // serving every request on the connection it already holds.
-    let client_revocation = if client_crls.is_empty() {
-        None
-    } else {
-        let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-            &client_crls
-                .iter()
-                .map(|crl| crl.as_ref().to_vec())
-                .collect::<Vec<_>>(),
-            reload_allow_unknown,
-        )
-        .map_err(|e| e.to_string())?;
-        Some(Arc::new(client_revocation::SharedClientRevocation::new(
-            index,
-        )))
-    };
-
-    // The same construction a CRL reload performs, so the serving config a reload
-    // installs cannot diverge from the one startup installed.
-    let server_config = tls_material.rebuild(server_chain, client_ca, client_crls, false)?;
-    // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
-    // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
-    // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
-    // byte-identical to the static posture.
-    let config_snapshot = Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(
-        server_config,
-    )));
-    if let Some(reload_secs) = config.client_crl_reload_secs {
-        if reload_crl_paths.is_empty() {
-            eprintln!(
-                "mcp-re-proxy: --client-crl-reload-secs set but no --client-crl configured; \
-                 no CRL reload scheduled"
-            );
-        } else {
-            let custody = tls_material.label();
-            spawn_crl_reload_task(
-                &mut workers,
-                CrlReloadTask {
-                    snapshot: Arc::clone(&config_snapshot),
-                    server_chain: reload_chain,
-                    material: tls_material,
-                    client_ca: reload_client_ca,
-                    crl_paths: reload_crl_paths,
-                    allow_unknown_status: reload_allow_unknown,
-                    interval_secs: reload_secs,
-                    revocation: client_revocation.clone(),
-                },
-            );
-            eprintln!(
-                "mcp-re-proxy: in-process CRL hot-reload enabled (every {reload_secs}s, \
-                 {custody} TLS custody; refreshed --client-crl honored without restart; \
-                 failed reload keeps last-good)"
-            );
-        }
     }
     // Select the identity strategy (MCPS-3840): direct mTLS (default) extracts the
     // identity from the verified peer certificate; reverse-proxy mode reads it from
@@ -1124,93 +1015,6 @@ fn serve_fleet(
     Ok(())
 }
 
-/// ADR-MCPRE-051 §6 (MCPRE-116): the in-process CRL hot-reload task. Every
-/// `interval_secs` it re-reads the `--client-crl` files and rebuilds the direct-TLS
-/// verifier from the SAME immutable server key material, atomically swapping the
-/// result into `snapshot`. A read/parse/build failure keeps the last-good config
-/// (which still fails closed once its CRL passes `nextUpdate`), so a bad reload
-/// never widens what is accepted. The task observes `SHUTDOWN` between naps so it
-/// exits promptly on a rolling deploy. Spawned only when `--client-crl-reload-secs`
-/// is set with a non-empty `--client-crl` on the direct-TLS path.
-/// The TLS server key the verifier is rebuilt around, under either custody.
-///
-/// A CRL reload re-reads only the CRLs; this is carried verbatim across the rebuild.
-/// Both variants exist so the reload does not depend on which custody the deployment
-/// chose — a revocation control that works only on the weaker custody is the wrong way
-/// round.
-enum TlsKeyMaterial {
-    /// The exported private key read from disk.
-    Exported(rustls_pki_types::PrivateKeyDer<'static>),
-    /// A non-exporting device/KMS signer (PKCS#11, AWS KMS, Cloud KMS).
-    Delegated(Arc<dyn crate::delegated_tls::RawEd25519TlsSigner>),
-}
-
-impl TlsKeyMaterial {
-    /// Whether the handshake signature goes through a non-exporting device/KMS.
-    ///
-    /// The serving runtime shape depends on this: a delegated signer blocks inside
-    /// rustls' synchronous `Signer::sign`, so each core needs a worker pool rather than
-    /// the single-threaded share-nothing default.
-    fn is_delegated(&self) -> bool {
-        matches!(self, TlsKeyMaterial::Delegated(_))
-    }
-
-    /// The custody word for the operator-facing startup line.
-    fn label(&self) -> &'static str {
-        match self {
-            TlsKeyMaterial::Exported(_) => "exported-key",
-            TlsKeyMaterial::Delegated(_) => "delegated",
-        }
-    }
-
-    /// Rebuild the serving config around `crls`, under whichever custody applies.
-    fn rebuild(
-        &self,
-        server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-        client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-        crls: Vec<rustls_pki_types::CertificateRevocationListDer<'static>>,
-        allow_unknown_status: bool,
-    ) -> Result<rustls::ServerConfig, String> {
-        match self {
-            TlsKeyMaterial::Exported(key) => {
-                tls::RustlsDirectProvider::build_server_config_with_crls(
-                    server_chain,
-                    key.clone_key(),
-                    client_ca,
-                    crls,
-                    allow_unknown_status,
-                )
-                .map_err(|e| e.to_string())
-            }
-            TlsKeyMaterial::Delegated(signer) => tls::build_server_config_delegated_validated(
-                server_chain,
-                Arc::clone(signer),
-                client_ca,
-                crls,
-                allow_unknown_status,
-            )
-            .map_err(|e| e.to_string()),
-        }
-    }
-}
-
-struct CrlReloadTask {
-    snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    /// The immutable server key material the verifier is rebuilt from; a reload
-    /// re-reads only the CRLs, never these.
-    server_chain: Vec<rustls_pki_types::CertificateDer<'static>>,
-    material: TlsKeyMaterial,
-    client_ca: Vec<rustls_pki_types::CertificateDer<'static>>,
-    crl_paths: Vec<String>,
-    allow_unknown_status: bool,
-    interval_secs: u64,
-    /// The per-request revocation index, republished from the same re-read bytes as
-    /// the rebuilt verifier. Rebuilding only the verifier would leave the reload
-    /// reaching new connections alone — which is the gap the per-request check exists
-    /// to close.
-    revocation: Option<Arc<client_revocation::SharedClientRevocation>>,
-}
-
 /// The posture line for a deployment with no cross-replica MRTR continuation store.
 ///
 /// Every other optional seam prints its OFF posture; this one printed nothing, so an
@@ -1222,101 +1026,6 @@ const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay
      multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
      `input_required` reply from one replica and answers on another is refused \
      (mcp-re.continuation_binding_failed). Set --replay-redis-url for the shared store.";
-
-/// SUPERVISED like the trust reload and the rotation owner: nothing joins this thread,
-/// and a panic in it would silently stop CRL reloading for the process lifetime.
-///
-/// Unlike the trust store, a stale CRL index bounds ITSELF — a CRL past its `nextUpdate`
-/// covers nothing, so its issuer's certificates become `Unknown` and are refused. A
-/// failed reload therefore never widens what is accepted, and the escalation here is a
-/// loud operator signal rather than a second fail-closed transition.
-fn spawn_crl_reload_task(workers: &mut crate::managed_worker::WorkerSet, task: CrlReloadTask) {
-    let halt = workers.halt();
-    workers.spawn("client CRL reload", move || {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crl_reload_loop(task, &halt);
-        }));
-        if outcome.is_err() {
-            eprintln!(
-                "mcp-re-proxy: FATAL: the client-CRL reload thread PANICKED. --client-crl is no \
-                 longer being re-read, so a newly revoked client certificate reaches this replica \
-                 only when its CRL passes nextUpdate (after which that issuer's certificates are \
-                 refused outright). This replica cannot recover on its own — restart it."
-            );
-        }
-    });
-}
-
-/// The CRL reload loop proper. Split out so the supervisor above can catch a panic.
-fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
-    let CrlReloadTask {
-        snapshot,
-        server_chain,
-        material,
-        client_ca,
-        crl_paths,
-        allow_unknown_status,
-        interval_secs,
-        revocation,
-    } = task;
-    {
-        let mut consecutive_failures: u32 = 0;
-        loop {
-            // Naps in small increments, so a halt is observed within one increment
-            // rather than after a whole reload interval.
-            if halt.sleep(Duration::from_secs(interval_secs)) {
-                return;
-            }
-            let outcome = config_snapshot::reload_once(&snapshot, || {
-                let crls = cli::load_client_crls(&crl_paths)?;
-                // Build the per-request index from the SAME bytes, BEFORE the verifier
-                // is rebuilt, so a malformed CRL keeps last-good on both rather than
-                // swapping one and failing the other.
-                let index = client_revocation::ClientRevocationIndex::from_crl_ders(
-                    &crls
-                        .iter()
-                        .map(|crl| crl.as_ref().to_vec())
-                        .collect::<Vec<_>>(),
-                    allow_unknown_status,
-                )
-                .map_err(|e| e.to_string())?;
-                let rebuilt = material.rebuild(
-                    server_chain.clone(),
-                    client_ca.clone(),
-                    crls,
-                    allow_unknown_status,
-                )?;
-                if let Some(revocation) = revocation.as_ref() {
-                    revocation.store(index);
-                }
-                Ok(Arc::new(rebuilt))
-            });
-            match outcome {
-                config_snapshot::ReloadOutcome::Swapped => {
-                    let recovered = consecutive_failures > 0;
-                    consecutive_failures = 0;
-                    if recovered {
-                        eprintln!(
-                            "mcp-re-proxy: client CRL reload RECOVERED; new verifier and \
-                             per-request index are live"
-                        );
-                    } else {
-                        eprintln!("mcp-re-proxy: client CRL reloaded; new verifier is live");
-                    }
-                }
-                config_snapshot::ReloadOutcome::KeptLastGood { reason } => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    eprintln!(
-                        "mcp-re-proxy: WARNING: client CRL reload FAILED {consecutive_failures}x \
-                         in a row, keeping last-good config: {reason}. Newly revoked certificates \
-                         are NOT reaching this replica; when the last-good CRL passes its \
-                         nextUpdate its issuer's certificates are refused outright."
-                    );
-                }
-            }
-        }
-    }
-}
 
 #[cfg(all(test, unix))]
 mod key_file_perm_tests {
