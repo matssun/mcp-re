@@ -119,6 +119,24 @@ impl TrustResolver for ReloadingTrustStore {
 /// This narrows the grant without hiding the dependency: the actor resolver's signature
 /// still says it reads live trust state, which is security-significant and should stay
 /// visible.
+///
+/// # Security invariant
+///
+/// **A `SignerDirectory` is descriptive, not independently authoritative.** A lookup
+/// cannot establish request authenticity: it yields an identity COORDINATE, and that
+/// binding is consumed only in conjunction with a successful verification through the
+/// trust resolver, which supplies the key. `None` refuses; `Some` admits nothing on its
+/// own.
+///
+/// That invariant is what makes this type's lifetime safe. A directory outliving the
+/// plane that produced it keeps answering from the last snapshot — deliberately, and
+/// tested in `trust_plane` — while a resolver in the same position fails closed. Only
+/// the asymmetry above justifies the difference.
+///
+/// So widening this type is not a local change. Giving it verification material, a
+/// revocation opinion, or any answer that could admit a request on its own would
+/// invalidate the reason a frozen directory is harmless, and the lifetime tests would
+/// still pass while the argument beneath them had gone.
 #[derive(Clone)]
 pub struct SignerDirectory(Arc<ReloadingTrustStore>);
 

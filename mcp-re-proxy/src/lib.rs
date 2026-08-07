@@ -185,6 +185,10 @@ pub(crate) mod startup_plan;
 // long-lived thread whose lifetime is not represented by an owned value, so every
 // runtime worker belongs to a `WorkerSet` that halts and reclaims it on drop.
 pub(crate) mod managed_worker;
+// ADR-MCPRE-056 §8: the trust plane — the swappable trust store, its refresh workers,
+// and the two narrow live handles it hands out. Owns the authority to CHANGE trust
+// state; consumers get read/observe capabilities only.
+pub(crate) mod trust_plane;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
