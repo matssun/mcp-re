@@ -10,8 +10,6 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use crate::async_replay::AsyncReplayTier;
-use crate::async_replay::InMemoryAsyncAtomicReplayStore;
 use crate::async_serve::ServedHttpRequest;
 use crate::cli;
 use crate::cli::BindingKind;
@@ -20,8 +18,6 @@ use crate::client_revocation;
 use crate::config_snapshot;
 use crate::delegated_server_signer::TrustEpochAdvance;
 use crate::http_inner::HttpInnerPool;
-use crate::http_profile_dispatch::ProxyDispatchConfig;
-use crate::startup_plan::ReplayPlan;
 use crate::tls;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
@@ -364,41 +360,17 @@ fn run_validated(
         target_uri: config.target_uri.clone(),
         route: config.route.clone(),
     };
-    // The authoritative async replay tier (§4) + deployment durability posture,
-    // selected below; default is the single-replica in-memory tier.
-    // `mut` is load-bearing only under the durable-store features, whose match arms
-    // reassign these below; without those features the bindings are never rewritten.
-    #[cfg_attr(
-        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
-        allow(unused_mut)
-    )]
-    let mut replay_async = AsyncReplayTier::new(
-        Arc::new(InMemoryAsyncAtomicReplayStore::new()),
-        config.max_clock_skew,
-    );
-    #[cfg_attr(
-        not(any(feature = "cpstore_etcd", feature = "redis_replay")),
-        allow(unused_mut)
-    )]
-    let mut dispatch_cfg = ProxyDispatchConfig {
-        fleet_strict: false,
-        tier: None,
-    };
     let mut transport_binding: Option<Box<dyn TransportBindingPolicy + Send + Sync>> = None;
-    // ADR-MCPRE-051 §4: select the AUTHORITATIVE async replay tier. The atomic
+    // ADR-MCPRE-051 §4: the AUTHORITATIVE async replay tier. The atomic
     // insert-if-absent is AWAITED on the per-core request path without blocking a
-    // runtime worker. Memory (default) is single-replica; Shared selects a durable
-    // networked store — etcd (CP/linearizable) or redis (horizontally scaled) —
-    // both fail closed on any store error (an outage is never a fresh nonce).
-    // `--replay-cache file` is not offered on the async fleet: a single file-backed
-    // cache does not fit the per-core, share-nothing data plane (ADR-MCPRE-051 §1).
-    // The redis ConnectionManager's reconnect task lives on a process-lifetime
-    // control runtime (`control_rt`), distinct from the per-core serving
-    // runtimes; it is held alive for the whole serve.
-    // Which tier this deployment asked for is decided purely, from configuration alone;
-    // the arms below only establish it. Every refusal the plan can raise is a statement
-    // about the config; every refusal left here is a statement about the build or the
-    // environment.
+    // runtime worker. Shared selects a durable networked store — etcd (CP/linearizable)
+    // or redis (horizontally scaled) — both fail closed on any store error (an outage is
+    // never a fresh nonce).
+    //
+    // Which tier this deployment asked for is decided PURELY, from configuration alone;
+    // `replay_plane` only establishes it. Every refusal the plan can raise is a statement
+    // about the config; every refusal materialization raises is a statement about the
+    // build or the environment.
     let replay_plan = crate::startup_plan::ReplayPlan::from_config(config)?;
     // ONE process-lifetime control runtime for every networked control-plane client:
     // the redis replay ConnectionManager's reconnect task, the admission source and the
@@ -411,108 +383,13 @@ fn run_validated(
     let control_rt = crate::control_runtime::ControlRuntime::start(
         crate::startup_plan::control_runtime_requirement(config, &replay_plan),
     )?;
-    match &replay_plan {
-        ReplayPlan::Memory => {
-            // Proxy::new already installed the in-memory async tier (single-replica).
-        }
-        ReplayPlan::Etcd { endpoint, tier } => {
-            #[cfg(feature = "cpstore_etcd")]
-            {
-                eprintln!(
-                    "mcp-re-proxy: replay tier = shared (CP/linearizable; async etcd backend)"
-                );
-                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("etcd"));
-                let store = Arc::new(
-                    crate::async_etcd_store::EtcdAsyncAtomicReplayStore::connect(endpoint),
-                );
-                replay_async =
-                    crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                dispatch_cfg = ProxyDispatchConfig {
-                    fleet_strict: true,
-                    tier: Some(tier.clone()),
-                };
-            }
-            #[cfg(not(feature = "cpstore_etcd"))]
-            {
-                let _ = (endpoint, tier);
-                return Err("--replay-durability-tier linearizable requires a build with the `cpstore_etcd` feature".to_string());
-            }
-        }
-        ReplayPlan::Redis { url, tier } => {
-            #[cfg(feature = "redis_replay")]
-            {
-                eprintln!(
-                    "mcp-re-proxy: replay tier = shared (horizontally-scaled; async Redis backend)"
-                );
-                eprintln!("mcp-re-proxy: {}", tier.startup_audit_line("redis"));
-                // Connected ON the control runtime, and that is not merely where the
-                // connect happens: redis's `ConnectionManager` captures the runtime it
-                // is CREATED in (`Runtime::locate()`) and schedules its disconnect-watch
-                // and reconnect work there for life. So the substrate must outlive every
-                // USE of this store, not just its construction — which is why ownership
-                // of it is passed into `serve_fleet` rather than dropped here.
-                let rt = control_rt
-                    .as_ref()
-                    .expect("the plan declared the redis replay tier needs the control runtime")
-                    .handle();
-                // The client-side response timeout is sized for the DECLARED WAIT
-                // timeout before connecting: the library defaults to 500ms per
-                // command, and `WAIT` is an ordinary command — so a declared
-                // `redis-wait-quorum:2:2000` could never wait 2000ms, and any
-                // replica ack slower than 500ms failed the request closed while the
-                // startup line advertised the fuller window.
-                let wait_timeout_ms = tier.wait_quorum_params().map(|(_, ms)| ms);
-                let mut store = rt
-                    .block_on(
-                        crate::RedisAsyncAtomicReplayStore::connect_with_wait_timeout(
-                            url,
-                            crate::redis_store::system_clock(),
-                            wait_timeout_ms,
-                        ),
-                    )
-                    .map_err(|e| format!("connect redis async replay store: {e:?}"))?;
-                // Apply the DECLARED durability tier to the store that actually
-                // serves. `startup_audit_line` above promises "WAIT timeout or
-                // insufficient acks fail closed" for REDIS_WAIT_QUORUM; without
-                // this the store would run plain SET NX PX and the promise would
-                // be audited but unenforced.
-                if let Some((quorum, timeout_ms)) = tier.wait_quorum_params() {
-                    store = store.with_wait_quorum(quorum, timeout_ms);
-                }
-                let store = Arc::new(store);
-                replay_async =
-                    crate::async_replay::AsyncReplayTier::new(store, config.max_clock_skew);
-                dispatch_cfg = ProxyDispatchConfig {
-                    fleet_strict: true,
-                    tier: Some(tier.clone()),
-                };
-            }
-            #[cfg(not(feature = "redis_replay"))]
-            {
-                let _ = (url, tier);
-                return Err("--replay-cache shared (redis) requires a build with the `redis_replay` feature".to_string());
-            }
-        }
-    }
-    // #78 (ADR-MCPS-020), OBJECT-LEVEL defense in depth beneath the CLI-flag gate:
-    // the CLI's unsafe_config_violations rejects the `--replay-cache memory`
-    // SELECTION, but the proxy's replay cache is a `Box<dyn ReplayCache>` that can
-    // also be INJECTED (`with_replay_cache`). Assert the cache the proxy actually
-    // holds self-declares a durable posture, so a volatile single-process reference
-    // cache can never reach a production verify path even if it arrived by injection
-    // rather than the default selection. mcp-re-core's `durability_class()` defaults
-    // (fail closed) to the single-process reference, so an undeclared cache is
-    // rejected here too.
-    if replay_async.durability_class() == mcp_re_core::ReplayDurabilityClass::SingleProcessReference
-    {
-        return Err(
-            "the configured replay cache self-declares the volatile single-process reference \
-             posture (admitted nonces are lost on restart and invisible to peer verifiers); \
-             a durable replay store is required — use --replay-cache file or --replay-cache \
-             shared, or inject a cache that declares ReplayDurabilityClass::Durable"
-                .into(),
-        );
-    }
+    // The redis store's reconnect machinery binds to the runtime it is CREATED in, so the
+    // substrate must outlive every USE of the tier — discharged by draining the fleet
+    // before anything is reclaimed, not by drop order. See `replay_plane`.
+    let crate::replay_plane::MaterializedReplay {
+        tier: replay_async,
+        dispatch: dispatch_cfg,
+    } = crate::replay_plane::materialize(&replay_plan, config.max_clock_skew, control_rt.as_ref())?;
     // Authorization policy enforcement is DEFERRED on the RFC 9421 serving path — the
     // authorization evaluator is not yet built on this carrier. A configured policy
     // fails closed rather than silently not enforce.
@@ -1070,10 +947,23 @@ fn run_validated(
 
     // ADR-MCPS-047: wire the MRTR continuation correlation store on the SAME shared
     // Redis the fleet uses for replay coherence, so a multi-round-trip continuation
-    // opened on one replica is honoured on any other. Connected on the replay control
+    // opened on one replica is honoured on any other. Connected on the shared control
     // runtime (held alive for the whole serve). Present only when a shared redis URL
-    // AND that runtime exist; single-store / in-memory replay deployments run without
-    // cross-replica MRTR (an answer leg then fails closed on the continuation binding).
+    // exists.
+    //
+    // ABSENCE IS ANNOUNCED HERE, WHILE ADMISSION BELOW REFUSES TO START. The two look
+    // inconsistent until the difference is named: admission is an EXPLICITLY REQUESTED
+    // capability, so a build that cannot provide it must fail closed rather than serve a
+    // proxy that quietly does not enforce it. Cross-replica MRTR is OPPORTUNISTIC — no
+    // flag asks for it; it appears when a shared Redis happens to be configured. Refusing
+    // startup for its absence would make every single-store deployment unstartable, and
+    // it is safe not to, because the dependent leg fails closed on its own: an answer
+    // without a correlated continuation is rejected at the binding
+    // (`mcp-re.continuation_binding_failed`), not admitted unbound.
+    //
+    // The rule, for the next capability that has to choose: explicitly requested and
+    // unavailable => refuse startup; opportunistic and unavailable => announce the
+    // absence, and verify the dependent leg still fails closed without it.
     #[cfg(feature = "redis_replay")]
     if let Some(url) = config.replay_redis_url.as_ref() {
         let rt = control_rt
@@ -1201,6 +1091,15 @@ fn run_validated(
 /// `proxy` by the caller (`run`) from the `--replay-cache` / `--inner-http-url`
 /// selection. `_control_rt` (when any networked control-plane client was wired) holds
 /// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
+///
+/// # Drain before reclaim
+///
+/// `fleet.shutdown_and_join()` returns before any drop here runs, so no request can be
+/// using the replay tier or the continuation store when the control runtime goes. THAT is
+/// what makes the teardown safe — not the order in which `proxy` and `_control_rt` are
+/// dropped, which is currently a consequence of parameter declaration order and would be
+/// a fragile thing to depend on. A later owner holding both in one struct inherits the
+/// same obligation: drain, then reclaim.
 fn serve_fleet(
     proxy: HttpProfileProxy,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,

@@ -53,11 +53,14 @@ impl ReplayPlan {
             ReplayKind::Memory => Ok(ReplayPlan::Memory),
             // Not a missing feature — a shape that does not fit the data plane at all
             // (ADR-MCPRE-051 §1).
+            // The remedy names only `shared`, because it is the only one that can start:
+            // `--replay-cache memory` is refused by validation in every build, so
+            // recommending it would send an operator to a second dead end.
             ReplayKind::File => Err(
                 "--replay-cache file is not supported on the async serving path: a single \
                  file-backed cache does not fit the per-core share-nothing data plane. Use \
-                 --replay-cache shared (redis/etcd) for durable cross-replica replay, or \
-                 --replay-cache memory for single-replica development."
+                 --replay-cache shared with --replay-durability-tier (redis-wait-quorum or \
+                 linearizable) for durable cross-replica replay."
                     .to_string(),
             ),
             ReplayKind::Shared => {

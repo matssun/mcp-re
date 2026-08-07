@@ -193,6 +193,10 @@ pub(crate) mod trust_plane;
 // networked control-plane client, distinct from the per-core serving runtimes. Owns
 // execution lifetime; consumers receive a tokio Handle, which conveys access only.
 pub(crate) mod control_runtime;
+// ADR-MCPRE-056 §6: the replay plane — establishes the planned tier and hands it over by
+// value. Owns nothing afterwards; the substrate its Redis arm binds to must outlive every
+// USE of the result, which the fleet drain discharges.
+pub(crate) mod replay_plane;
 // MCPRE-117 (ADR-MCPRE-051 §4): the async authoritative replay tier — the async
 // AtomicReplayStore + the per-core L1-never-Fresh fast-reject wrapper, so the
 // per-core data plane checks replay without blocking a runtime worker. Concrete
