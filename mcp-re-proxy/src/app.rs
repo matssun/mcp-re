@@ -303,13 +303,16 @@ pub fn run(
     let client_ca = key_source.client_ca_roots().map_err(|e| e.to_string())?;
     // ADR-MCPS-028 §G / issue #58: TLS signing is DELEGATED xor EXPORTED. When the
     // source offers a delegated TLS signer the server private key never leaves the
-    // device — we never call `tls_server_key()`. The exported key is loaded ONLY on
-    // the non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already
-    // rejected a config that asks for both.
-    let tls_delegated_signer = key_source.tls_delegated_signer();
-    let server_key = match &tls_delegated_signer {
-        Some(_) => None,
-        None => Some(key_source.tls_server_key().map_err(|e| e.to_string())?),
+    // device — `tls_server_key()` is never called. The exported key is read ONLY on the
+    // non-delegated path. The CLI exclusivity guard (`cli::parse_args`) already rejected
+    // a config that asks for both.
+    //
+    // The sum type is built HERE, where custody becomes known, so the exclusivity is a
+    // property of the value rather than an agreement between two `Option`s that later
+    // code has to re-derive.
+    let tls_material = match key_source.tls_delegated_signer() {
+        Some(signer) => TlsKeyMaterial::Delegated(signer),
+        None => TlsKeyMaterial::Exported(key_source.tls_server_key().map_err(|e| e.to_string())?),
     };
     // ADR-MCPS-021 Axis 2: the base trust store the revocation tiers resolve against.
     //
@@ -816,7 +819,7 @@ pub fn run(
     // The delegated-TLS custody paths sign the handshake through a KMS or a PKCS#11
     // token, synchronously, inside rustls' `Signer::sign` — so the serving runtime
     // shape has to account for a blocking signer (see `async_fleet`).
-    let is_delegated_tls = tls_delegated_signer.is_some();
+    let is_delegated_tls = tls_material.is_delegated();
     if is_delegated_tls {
         eprintln!(
             "mcp-re-proxy: TLS custody = DELEGATED: the handshake signature is a blocking \
@@ -825,17 +828,10 @@ pub fn run(
              stalled signer then costs one worker instead of a whole core."
         );
     }
+    // Cloned because the initial build below consumes the originals; the reload re-reads
+    // only the CRLs, never these.
     let reload_chain = server_chain.clone();
     let reload_client_ca = client_ca.clone();
-    let reload_material = match &tls_delegated_signer {
-        Some(signer) => TlsKeyMaterial::Delegated(Arc::clone(signer)),
-        None => TlsKeyMaterial::Exported(
-            server_key
-                .as_ref()
-                .map(|k| k.clone_key())
-                .ok_or_else(|| "internal error: no TLS key on the exported path".to_string())?,
-        ),
-    };
     let reload_crl_paths = config.client_crl_paths.clone();
     // The CRL verifier ALWAYS fails closed on an unknown revocation status — there
     // is no relax knob. `false` = deny-unknown, threaded to every verifier builder.
@@ -865,29 +861,9 @@ pub fn run(
         )))
     };
 
-    let server_config = match tls_delegated_signer {
-        Some(signer) => tls::build_server_config_delegated_validated(
-            server_chain,
-            signer,
-            client_ca,
-            client_crls,
-            false,
-        )
-        .map_err(|e| e.to_string())?,
-        None => {
-            let server_key = server_key.ok_or_else(|| {
-                "internal error: exported TLS key missing on the non-delegated path".to_string()
-            })?;
-            tls::RustlsDirectProvider::build_server_config_with_crls(
-                server_chain,
-                server_key,
-                client_ca,
-                client_crls,
-                false,
-            )
-            .map_err(|e| e.to_string())?
-        }
-    };
+    // The same construction a CRL reload performs, so the serving config a reload
+    // installs cannot diverge from the one startup installed.
+    let server_config = tls_material.rebuild(server_chain, client_ca, client_crls, false)?;
     // ADR-MCPRE-051 §6 (MCPRE-116): the serve loop reads the current config from a
     // versioned, atomically-swappable snapshot instead of a fixed `Arc`. With no
     // `--client-crl-reload-secs` the snapshot is never swapped, so behavior is
@@ -902,11 +878,11 @@ pub fn run(
                  no CRL reload scheduled"
             );
         } else {
-            let custody = reload_material.label();
+            let custody = tls_material.label();
             spawn_crl_reload_task(CrlReloadTask {
                 snapshot: Arc::clone(&config_snapshot),
                 server_chain: reload_chain,
-                material: reload_material,
+                material: tls_material,
                 client_ca: reload_client_ca,
                 crl_paths: reload_crl_paths,
                 allow_unknown_status: reload_allow_unknown,
@@ -1432,6 +1408,15 @@ enum TlsKeyMaterial {
 }
 
 impl TlsKeyMaterial {
+    /// Whether the handshake signature goes through a non-exporting device/KMS.
+    ///
+    /// The serving runtime shape depends on this: a delegated signer blocks inside
+    /// rustls' synchronous `Signer::sign`, so each core needs a worker pool rather than
+    /// the single-threaded share-nothing default.
+    fn is_delegated(&self) -> bool {
+        matches!(self, TlsKeyMaterial::Delegated(_))
+    }
+
     /// The custody word for the operator-facing startup line.
     fn label(&self) -> &'static str {
         match self {
