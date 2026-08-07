@@ -381,22 +381,30 @@ pub fn redis_trust_epoch_source(
 /// read as a dead poller.
 const TRUST_EPOCH_MISSED_POLLS_TOLERATED: u64 = 3;
 
-/// Poll `source` on a cadence from a dedicated thread until `shutdown` flips.
+/// The body of the trust-epoch poller: poll `source` on a cadence until `stop` says to
+/// finish. Returns the work; it does NOT start a thread.
+///
+/// The caller spawns it through whatever owns its lifetime, so a process-lifetime poller
+/// cannot be started by a module that has no way to stop it (ADR-MCPRE-056 §9). Handing
+/// back a body rather than taking the owner as a parameter keeps this module free of the
+/// runtime's internal lifecycle types.
 ///
 /// The poller is what keeps the blocking store read off the request path (see
 /// [`TrustEpochSource::poll_once`]). An immediate first poll establishes the baseline
 /// before serving, so the first advance after startup is detected rather than adopted.
 ///
 /// SUPERVISED, because everything downstream believes what this thread last wrote: the
-/// source now requires a poll within a bound before it will call itself healthy, and a
-/// thread that unwinds says so on its way out instead of leaving the latch at `true`.
-/// The `JoinHandle` is still dropped — nothing waits on a process-lifetime poller —
-/// but its death is no longer silent.
-pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
+/// source requires a poll within a bound before it will call itself healthy, and a body
+/// that unwinds says so on its way out instead of leaving the latch at `true`.
+///
+/// The liveness bound is registered HERE, before the body is handed back, so a caller
+/// that takes the body and never runs it leaves the source failing closed rather than
+/// reporting a health it has no poller to earn.
+pub fn trust_epoch_poller_body<R: EpochReader + Send + Sync + 'static>(
     source: std::sync::Arc<TrustEpochSource<R>>,
     interval_secs: u64,
-    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
+    stop: impl Fn() -> bool + Send + 'static,
+) -> impl FnOnce() + Send + 'static {
     source.require_polling_within(Duration::from_secs(
         interval_secs
             .max(1)
@@ -406,15 +414,15 @@ pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
             .saturating_add(interval_secs.max(1)),
     ));
     let poller = std::sync::Arc::clone(&source);
-    std::thread::spawn(move || {
+    move || {
         let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             poller.poll_once();
-            // Nap in small increments so a shutdown signal is observed within one
-            // increment rather than after a whole interval.
+            // Nap in small increments so a stop is observed within one increment rather
+            // than after a whole interval.
             let ticks = interval_secs.saturating_mul(20).max(1); // 20 * 50ms = 1s
             loop {
                 for _ in 0..ticks {
-                    if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    if stop() {
                         return;
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -425,7 +433,7 @@ pub fn spawn_trust_epoch_poller<R: EpochReader + Send + Sync + 'static>(
         if ran.is_err() {
             source.report_poller_death();
         }
-    });
+    }
 }
 
 /// An [`InvalidationChannel`] view of a shared [`TrustEpochSource`], so the poller

@@ -375,7 +375,7 @@ fn run_validated(
     // line above would be a claim the resolver does not enforce.
     // MCPS-84: connect the networked trust-epoch invalidation channel if one is
     // configured (only under --revocation-tier push; enforced at parse time).
-    let push_channel = build_trust_epoch_channel(config, Arc::clone(&shutdown))?;
+    let push_channel = build_trust_epoch_channel(config, &mut workers)?;
     if let RevocationTier::Push { .. } = config.revocation_tier {
         if push_channel.is_none() {
             // Honesty (Tier 3): with no networked source wired, the in-process
@@ -2191,7 +2191,7 @@ fn rotation_jitter() -> u64 {
 #[cfg(feature = "redis_replay")]
 fn build_trust_epoch_channel(
     config: &cli::Config,
-    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    workers: &mut crate::managed_worker::WorkerSet,
 ) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
     match &config.trust_epoch_redis_url {
         Some(url) => {
@@ -2208,10 +2208,14 @@ fn build_trust_epoch_channel(
             // verification on every request. Polled from a dedicated thread instead,
             // so the request path costs a mutex acquisition and the whole per-core
             // fleet is not serialized on one Redis connection.
-            crate::trust_epoch::spawn_trust_epoch_poller(
-                std::sync::Arc::clone(&source),
-                TRUST_EPOCH_POLL_SECS,
-                shutdown,
+            let halt = workers.halt();
+            workers.spawn(
+                "trust epoch poll",
+                crate::trust_epoch::trust_epoch_poller_body(
+                    std::sync::Arc::clone(&source),
+                    TRUST_EPOCH_POLL_SECS,
+                    move || halt.requested(),
+                ),
             );
             eprintln!(
                 "mcp-re-proxy: revocation-tier PUSH: networked trust-epoch source ACTIVE (redis, \
@@ -2230,7 +2234,7 @@ fn build_trust_epoch_channel(
 #[cfg(not(feature = "redis_replay"))]
 fn build_trust_epoch_channel(
     config: &cli::Config,
-    _shutdown: Arc<std::sync::atomic::AtomicBool>,
+    _workers: &mut crate::managed_worker::WorkerSet,
 ) -> Result<Option<Box<dyn crate::InvalidationChannel + Send + Sync>>, String> {
     if config.trust_epoch_redis_url.is_some() {
         return Err(
