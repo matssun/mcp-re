@@ -84,7 +84,7 @@ fn trust_clock() -> crate::trust_cache::UnixClock {
 /// yields no actor, which the verifier surfaces as `actor_binding_failed`; an
 /// operational failure is never softened into an allow.
 pub fn build_actor_resolver(
-    trust_store: Arc<crate::reloading_trust::ReloadingTrustStore>,
+    signers: crate::reloading_trust::SignerDirectory,
     request_trust: Arc<dyn mcp_re_core::TrustResolver + Send + Sync>,
     trust_domain: String,
     response_kid: String,
@@ -101,7 +101,7 @@ pub fn build_actor_resolver(
         }
         SignerSlot::Request => {
             // An unknown kid is a definitive negative from a healthy resolver.
-            let Some(signer) = trust_store.signer_for(kid) else {
+            let Some(signer) = signers.signer_for(kid) else {
                 return ResolverOutcome::NotTrusted;
             };
             // C079: `.ok()?` used to throw this error away, so a store OUTAGE and an
@@ -479,7 +479,7 @@ fn run_validated(
         keyid: response_kid.clone(),
     };
     let resolve_actor = build_actor_resolver(
-        Arc::clone(&trust_store),
+        trust_store.signer_directory(),
         Arc::clone(&resolver),
         config.trust_domain.clone(),
         response_kid.clone(),

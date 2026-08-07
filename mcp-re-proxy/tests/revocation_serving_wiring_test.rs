@@ -82,7 +82,7 @@ fn trust_store(kid: &str, signer: &str) -> Arc<mcp_re_proxy::reloading_trust::Re
 
 fn resolver_over(trust: Arc<dyn TrustResolver + Send + Sync>) -> mcp_re_proxy::ActorResolver {
     build_actor_resolver(
-        trust_store(CLIENT_KID, CLIENT_SIGNER),
+        trust_store(CLIENT_KID, CLIENT_SIGNER).signer_directory(),
         trust,
         "example.com".to_string(),
         ROOT_KID.to_string(),
@@ -288,7 +288,7 @@ fn the_production_resolver_surfaces_a_store_outage() {
     }
 
     let resolve = mcp_re_proxy::app::build_actor_resolver(
-        trust_store(CLIENT_KID, "did:example:client"),
+        trust_store(CLIENT_KID, "did:example:client").signer_directory(),
         std::sync::Arc::new(DownStore),
         "example.com".to_string(),
         "server-key-1".to_string(),

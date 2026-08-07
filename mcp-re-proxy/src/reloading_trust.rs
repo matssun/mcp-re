@@ -74,6 +74,12 @@ impl ReloadingTrustStore {
         }
     }
 
+    /// A live read-only view of the signer coordinate, for consumers that must observe
+    /// reloads but must not be able to cause one.
+    pub fn signer_directory(self: &Arc<Self>) -> SignerDirectory {
+        SignerDirectory(Arc::clone(self))
+    }
+
     /// The signer identity enrolled for `key_id`, or `None` when this store does not
     /// know it. `None` is a refusal at the actor seam: a kid never introduces trust.
     pub fn signer_for(&self, key_id: &str) -> Option<String> {
@@ -98,6 +104,28 @@ impl ReloadingTrustStore {
 impl TrustResolver for ReloadingTrustStore {
     fn resolve(&self, signer: &str, key_id: &str) -> Result<VerificationKey, TrustResolverError> {
         self.resolver().resolve(signer, key_id)
+    }
+}
+
+/// A live, read-only view of the kid -> signer-identity coordinate.
+///
+/// The actor seam needs to look a kid up on every request and must see reloads as they
+/// land, so it needs an ongoing handle rather than a snapshot. What it does NOT need is
+/// [`ReloadingTrustStore::store`] — the swap the reload worker performs. Holding the
+/// whole `Arc<ReloadingTrustStore>` to call one read method grants the request path the
+/// ability to replace the entire trust map; nothing exercises that, but a capability
+/// that only the reload worker should have does not belong on the hot path.
+///
+/// This narrows the grant without hiding the dependency: the actor resolver's signature
+/// still says it reads live trust state, which is security-significant and should stay
+/// visible.
+#[derive(Clone)]
+pub struct SignerDirectory(Arc<ReloadingTrustStore>);
+
+impl SignerDirectory {
+    /// The signer identity enrolled for `key_id` in the CURRENT snapshot, or `None`.
+    pub fn signer_for(&self, key_id: &str) -> Option<String> {
+        self.0.signer_for(key_id)
     }
 }
 

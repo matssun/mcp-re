@@ -252,7 +252,7 @@ mod serving_path {
             client_signers,
         ));
         let resolve_actor = build_actor_resolver(
-            trust_store,
+            trust_store.signer_directory(),
             Arc::new(cache),
             "example.com".to_string(),
             ROOT_KID.to_string(),
