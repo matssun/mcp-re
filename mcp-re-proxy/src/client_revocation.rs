@@ -361,6 +361,43 @@ mod tests {
         );
     }
 
+    /// PREMISE OF `tls_plane`'s POST-OWNER CONTRACT (ADR-MCPRE-056 §I.5.1).
+    ///
+    /// This is not ordinary revocation coverage. `TlsPlane` lets its serving snapshot
+    /// outlive the plane and perform NO fail-closed transition on drop, unlike the trust
+    /// and signing planes. That is only safe because an unrefreshed CRL converges on
+    /// REFUSING its issuer rather than on admitting it — which is what this asserts.
+    ///
+    /// The second half shows what the contract rests on: flip `allow_unknown_status` and
+    /// the same expired CRL starts ADMITTING. Production wires it to a hard `false` on
+    /// every verifier builder, with no operator knob.
+    ///
+    /// **If a knob for `allow_unknown_status` is introduced, `TlsPlane`'s post-owner
+    /// contract must be re-derived before that change lands** — a surviving snapshot would
+    /// otherwise become exactly the frozen authorization state `trust_plane` fails closed
+    /// to avoid.
+    #[test]
+    fn an_expired_crl_refuses_its_issuer_rather_than_admitting_it() {
+        let unrefreshed = index(&[], Some(5_000), false);
+        assert!(
+            unrefreshed.admits(ISSUER, b"\x09", 4_999),
+            "in force before nextUpdate, so an unlisted serial is admitted"
+        );
+        assert!(
+            !unrefreshed.admits(ISSUER, b"\x09", 5_000),
+            "past nextUpdate an unrefreshed CRL must refuse its issuer, not admit it — \
+             this is what lets a TLS snapshot safely outlive its reload worker"
+        );
+
+        // The counterfactual, stated so the dependency is visible rather than implied.
+        let if_unknown_were_admissible = index(&[], Some(5_000), true);
+        assert!(
+            if_unknown_were_admissible.admits(ISSUER, b"\x09", 5_000),
+            "with unknown status admissible the same expired CRL admits — the premise \
+             behind TlsPlane's post-owner contract would no longer hold"
+        );
+    }
+
     /// No CRLs configured means rustls performs no revocation checking, so the index
     /// must admit rather than refuse — otherwise installing it would take down every
     /// deployment that configures none.

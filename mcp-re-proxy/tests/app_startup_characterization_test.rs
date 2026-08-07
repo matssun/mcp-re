@@ -196,6 +196,58 @@ fn an_unopenable_replay_tier_refuses_startup_and_names_why() {
     }
 }
 
+/// Refusal PRECEDENCE, not merely the refusal set (ADR-MCPRE-056 §K1).
+///
+/// Two independent fallible startup checks are broken at once: the trust store cannot be
+/// read, and `--client-crl` names a file that does not exist. Both refuse. The assertion
+/// is about WHICH ONE the operator is told about, because that determines the log trail
+/// and the remediation path they follow.
+///
+/// This guards a defect the restructuring nearly introduced. Extracting the TLS block
+/// into a plane made it natural to materialize it beside the key material it derives
+/// from, which would have moved the CRL checks ahead of the trust store. Same refusal
+/// set, same eventual outcome, different first error — and every one of the suite's 2232
+/// tests still passed. In a security proxy failure precedence is observable behaviour, so
+/// it gets an assertion rather than a convention.
+#[test]
+fn the_trust_store_is_refused_before_the_client_crls_are_read() {
+    let m = serving_fixtures::write_material();
+    // Replace the good trust path rather than appending a second `--trust`.
+    let args: Vec<String> = base_args(&m)
+        .into_iter()
+        .scan(false, |replace_next, arg| {
+            let out = if *replace_next {
+                "/nonexistent/trust".to_string()
+            } else {
+                arg.clone()
+            };
+            *replace_next = arg == "--trust";
+            Some(out)
+        })
+        .collect();
+    let mut args = args;
+    args.extend(["--client-crl".to_string(), "/nonexistent/crl".to_string()]);
+
+    let t = startup_transcript::capture(&args);
+    match &t.outcome {
+        startup_transcript::Outcome::Exited { success, refused } => {
+            assert!(!success, "startup must fail closed:\n{}", t.dump());
+            let refused = refused.as_deref().unwrap_or("");
+            assert!(
+                !refused.contains("CRL") && !refused.contains("crl"),
+                "the CRL failure must not preempt the trust failure — reordering \
+                 independent fallible checks changes which remediation an operator \
+                 follows. Got {refused:?}"
+            );
+            assert!(
+                refused.contains("trust"),
+                "expected the trust-store refusal first, got {refused:?}"
+            );
+        }
+        other => panic!("expected an early exit, got {other:?}:\n{}", t.dump()),
+    }
+}
+
 /// A `Config` that never went through the parser cannot bypass the safety guards.
 ///
 /// `Config` has 76 public fields. Until the validation boundary landed, the hard guards

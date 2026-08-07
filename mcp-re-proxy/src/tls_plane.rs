@@ -24,9 +24,20 @@
 //!   ones. The artifact bounds itself; the plane does not have to.
 //!
 //! That is why [`Drop`] here performs no security transition. It is a deliberate
-//! conclusion from the CRL's own semantics, not the absence of the question — and it
-//! stops holding the moment unknown status becomes admissible. Anyone adding that knob is
-//! also removing the argument for this paragraph.
+//! conclusion from the CRL's own semantics, not the absence of the question.
+//!
+//! Stated as the conditional it actually is:
+//!
+//! > A TLS snapshot may outlive its `TlsPlane`
+//! >   ONLY BECAUSE its authorization-relevant validity is self-bounded,
+//! >   AND unknown revocation state cannot become admissible.
+//!
+//! The second clause is the one that could quietly stop being true, so it is pinned by
+//! `client_revocation`'s `an_expired_crl_refuses_its_issuer_rather_than_admitting_it`,
+//! which also asserts the counterfactual. **Introducing an operator knob for
+//! `allow_unknown_status` means re-deriving this contract before the change lands** — with
+//! unknown admissible, a surviving snapshot becomes exactly the frozen authorization state
+//! `trust_plane` fails closed to avoid.
 //!
 //! A failed reload keeps the last-good configuration, for the same reason
 //! `reloading_trust` does: a truncated file mid-write must not empty what is enforced.
