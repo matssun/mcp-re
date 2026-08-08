@@ -1924,14 +1924,8 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // external profile). It is never accepted as the sole production authorization
     // authority — there is no ack to override this. Until a production authz profile
     // lands, run with `--authz off`.
-    if config.authz == AuthzKind::Reference {
-        return Err(
-            "--authz reference selects the reference/conformance signed-authorization \
-             profile, which is NOT accepted as the production authorization authority \
-             (ADR-MCPS-013; Biscuit is the intended production profile). Run --authz off \
-             until a production authorization profile is available."
-                .to_string(),
-        );
+    if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
+        return Err(refusal);
     }
 
     // ADR-MCPS-013: the policy-layer deny-list is consumed by the authorization layer
@@ -2061,6 +2055,35 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// revocation reaches every peer within one connection lifetime.
 pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
+/// The one decision about whether a configured authorization profile can be honored.
+///
+/// `Some(diagnostic)` means it cannot. Two independent facts make it so, and the
+/// diagnostic carries both because an operator needs both to know what to do:
+///
+/// - the reference profile is a CONFORMANCE implementation, never accepted as the
+///   production authorization authority (ADR-MCPS-013; Biscuit is the intended one);
+/// - authorization enforcement is not wired on the RFC 9421 serving path at all — the
+///   evaluator has not been rebuilt on the HTTP-profile request evidence.
+///
+/// Either alone is sufficient to refuse. A configured policy that would silently not
+/// enforce is the forbidden-claim shape (security-boundary §2).
+///
+/// One function because this prohibition was previously stated TWICE, in two places, with
+/// two different messages: once in `parse_args` and once in the composition root. Neither
+/// was at the validation boundary. That is not a bypass — the composition root did catch a
+/// programmatically built `Config` — but two independent statements of one prohibition can
+/// drift, and a policy decision does not belong in a composition root (ADR-MCPRE-056 §12).
+pub(crate) fn unaccepted_authz_profile_refusal(authz: AuthzKind) -> Option<String> {
+    (authz == AuthzKind::Reference).then(|| {
+        "--authz reference selects the reference/conformance signed-authorization \
+         profile, which is NOT accepted as the production authorization authority \
+         (ADR-MCPS-013; Biscuit is the intended production profile), and authorization \
+         enforcement is not wired on the RFC 9421 serving path in any case — the evaluator \
+         must be rebuilt on the HTTP-profile request evidence first. Run --authz off."
+            .to_string()
+    })
+}
+
 /// The one decision about whether a policy-layer deny-list can be enforced.
 ///
 /// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
@@ -2157,6 +2180,11 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // and `revocation_list_paths` is a public field, so a caller that builds the struct in
     // code reaches the serving path without meeting a parser.
     if let Some(refusal) = unenforceable_revocation_list_refusal(&config.revocation_list_paths) {
+        violations.push(refusal);
+    }
+    // Third instance of the same shape. This one was not a bypass — the composition root
+    // refused it too — but it was stated twice, in two places, with two messages.
+    if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
         violations.push(refusal);
     }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime

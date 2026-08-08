@@ -357,6 +357,41 @@ fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
     );
 }
 
+/// An unaccepted authorization profile is refused at the VALIDATION boundary.
+///
+/// Third instance of the family, and the one that was never a bypass: the composition root
+/// carried its own copy of this refusal, so a programmatically built `Config` was already
+/// caught. What was wrong is that one prohibition was stated twice, in two places, with two
+/// different diagnostics — free to drift, and a policy decision sitting in a composition
+/// root (ADR-MCPRE-056 §12).
+///
+/// The composition-root copy is gone, so this test is what keeps the prohibition alive off
+/// the parsed path. Without it, deleting the boundary consultation would leave nothing
+/// refusing a programmatic `authz = Reference` at all.
+#[test]
+fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    config.authz = mcp_re_proxy::cli::AuthzKind::Reference;
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("an unaccepted authorization profile must be refused however it was built");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "the refusal must come from the validation boundary, not a later ad-hoc check, \
+         got: {err}"
+    );
+    assert!(
+        err.contains("--authz reference"),
+        "the refusal must name the offending setting, got: {err}"
+    );
+}
+
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
 /// replay-tier branches that never execute on the happy path. Each returns `Err` early
 /// (no listener, no Redis), so this is a fast in-process test that covers the

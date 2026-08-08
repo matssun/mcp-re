@@ -389,17 +389,6 @@ fn run_validated(
         tier: replay_async,
         dispatch: dispatch_cfg,
     } = crate::replay_plane::materialize(&replay_plan, config.max_clock_skew, control_rt.as_ref())?;
-    // Authorization policy enforcement is DEFERRED on the RFC 9421 serving path — the
-    // authorization evaluator is not yet built on this carrier. A configured policy
-    // fails closed rather than silently not enforce.
-    if config.authz == cli::AuthzKind::Reference {
-        return Err(
-            "authorization policy enforcement is not yet wired on the RFC 9421 serving path \
-             (the authorization evaluator is not yet built on this carrier); it must be rebuilt on \
-             the HTTP-profile request evidence before an authz profile can be enabled"
-                .to_string(),
-        );
-    }
     // Mode-A transport binding: bind the verified request actor to the mTLS peer.
     if config.binding == BindingKind::Exact {
         transport_binding = Some(Box::new(ExactMatchBinding::new()));
@@ -644,22 +633,27 @@ fn run_validated(
     // signed `inner server unavailable` at a capacity cliff no configured flag names —
     // and the shedding decision would move from the admission gate, where it is
     // deliberate, to the inner pool, where it is an accident of core count.
+    // The RULE is pure and lives in the plan; the core count is the environment reading it
+    // needs, and the wiring is this function's business.
     let cores = crate::async_fleet::resolve_core_count(config.cores);
-    let aggregate_ceiling = config
-        .limits
-        .max_in_flight_requests
-        .map(|per_core| per_core.saturating_mul(cores))
-        .or(config.max_in_flight_total);
-    let pool = match aggregate_ceiling {
-        Some(ceiling) if ceiling > crate::http_inner::DEFAULT_MAX_IN_FLIGHT => {
+    let ceiling = crate::startup_plan::inner_plane_ceiling(
+        config.limits.max_in_flight_requests,
+        config.max_in_flight_total,
+        cores,
+    );
+    let pool = match crate::startup_plan::inner_plane_raise(
+        ceiling,
+        crate::http_inner::DEFAULT_MAX_IN_FLIGHT,
+    ) {
+        Some(raised) => {
             eprintln!(
-                "mcp-re-proxy: inner-plane in-flight bound raised to {ceiling} to stay at or \
+                "mcp-re-proxy: inner-plane in-flight bound raised to {raised} to stay at or \
                  above the fleet admission ceiling ({cores} cores); the admission gate sheds, \
                  not the inner pool."
             );
-            pool.with_max_in_flight(ceiling)
+            pool.with_max_in_flight(raised)
         }
-        _ => pool,
+        None => pool,
     };
 
     // Response-signing custody (ADR-MCPRE-056 §8; ADR-MCPRE-052). The plane owns the

@@ -94,6 +94,39 @@ impl ReplayPlan {
         cfg!(feature = "redis_replay") && matches!(self, ReplayPlan::Redis { .. })
     }
 }
+/// The in-flight bound the inner plane must not sit below, or `None` to leave its default.
+///
+/// PURE: `cores` is passed in rather than resolved here, because resolving it reads
+/// `available_parallelism` and §5.2 keeps planning free of the environment. The RULE is
+/// the pure part and is what needed testing; the machine's core count is an input to it.
+///
+/// # Why the inner pool is raised to meet the fleet
+///
+/// The pool is PROCESS-WIDE — one instance behind the `Arc` every core shares — so a bound
+/// below the fleet's aggregate admission ceiling means requests that passed every security
+/// gate are answered with a signed `inner server unavailable` at a capacity cliff no
+/// configured flag names. The shedding decision would move from the admission gate, where
+/// it is deliberate and measured, to the inner pool, where it is an accident of core count.
+///
+/// `--max-in-flight-requests` is per-core, so it multiplies; `--max-in-flight-total` is
+/// already fleet-wide. The per-core flag wins when both are set, matching the CLI's own
+/// precedence.
+pub fn inner_plane_ceiling(
+    per_core: Option<usize>,
+    total: Option<usize>,
+    cores: usize,
+) -> Option<usize> {
+    per_core.map(|n| n.saturating_mul(cores)).or(total)
+}
+
+/// Whether that ceiling requires raising the inner plane's default bound.
+///
+/// Separate from [`inner_plane_ceiling`] because "what is the fleet's ceiling" and "does it
+/// exceed the pool's default" are different questions, and only the second one decides
+/// whether an operator sees a startup line.
+pub fn inner_plane_raise(ceiling: Option<usize>, default_bound: usize) -> Option<usize> {
+    ceiling.filter(|c| *c > default_bound)
+}
 
 /// The kid naming the ROOT issuer that delegated credentials chain to (ADR-MCPRE-052).
 ///
@@ -477,5 +510,40 @@ mod tests {
             Req::NotRequired,
             "no contributor declared a need, so no substrate is built"
         );
+    }
+    /// The per-core flag multiplies by the core count; the fleet-wide flag does not.
+    #[test]
+    fn the_per_core_bound_scales_with_cores_and_the_total_does_not() {
+        assert_eq!(inner_plane_ceiling(Some(10), None, 8), Some(80));
+        assert_eq!(inner_plane_ceiling(None, Some(10), 8), Some(10));
+        assert_eq!(inner_plane_ceiling(None, None, 8), None);
+    }
+
+    /// The per-core flag wins when both are set, matching the CLI's own precedence. A
+    /// deployment that set both and silently got the smaller one would shed at a bound no
+    /// flag names.
+    #[test]
+    fn the_per_core_bound_wins_when_both_are_set() {
+        assert_eq!(inner_plane_ceiling(Some(10), Some(999), 4), Some(40));
+    }
+
+    /// A huge per-core bound on a many-core box must not wrap. Saturating rather than
+    /// wrapping matters because a wrapped ceiling would be SMALLER than the default and
+    /// would silently lower the pool instead of raising it.
+    #[test]
+    fn a_ceiling_that_would_overflow_saturates_rather_than_wrapping() {
+        let huge = inner_plane_ceiling(Some(usize::MAX), None, 64);
+        assert_eq!(huge, Some(usize::MAX));
+        assert_eq!(inner_plane_raise(huge, 1024), Some(usize::MAX));
+    }
+
+    /// The pool is raised only when the fleet's ceiling actually exceeds its default —
+    /// equal is not "raised", or every start would print a line saying nothing changed.
+    #[test]
+    fn the_pool_is_raised_only_when_the_fleet_ceiling_exceeds_its_default() {
+        assert_eq!(inner_plane_raise(Some(2048), 1024), Some(2048));
+        assert_eq!(inner_plane_raise(Some(1024), 1024), None);
+        assert_eq!(inner_plane_raise(Some(512), 1024), None);
+        assert_eq!(inner_plane_raise(None, 1024), None);
     }
 }
