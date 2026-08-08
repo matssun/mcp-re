@@ -2055,6 +2055,41 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// revocation reaches every peer within one connection lifetime.
 pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
+/// The one decision about whether a transport-binding mode can be deployed.
+///
+/// `Some(diagnostic)` means it cannot. Mode-C attested ingress binds the request hash under
+/// the OWNER-SIGNED security boundary, and re-binding it to the RFC 9421 request-evidence
+/// digest is not designed yet — not merely unimplemented. Admitting it would require
+/// answering what the attestor is authorized to ASSERT versus what it is authorized to
+/// AUTHORIZE, and those are different claims:
+///
+/// > ingress A says "user U asked for operation X"
+/// > is NOT
+/// > ingress A holds authority "user U may perform X"
+///
+/// unless policy explicitly delegates that authority to A. Attestation must not become
+/// authority by implication. Until that is specified — attestor identity, what bytes the
+/// attestation binds, audience enforcement, replay, key rotation and revocation, and how an
+/// ingress attestation appears in the evidence chain — the mode is refused deliberately
+/// rather than left to whether the dormant builder happens to work.
+///
+/// Refused, NOT removed: attested ingress is the shape a broker-mediated deployment needs
+/// (an enterprise access broker attesting a request it forwarded under an authenticated
+/// customer context), so the capability is expected to be designed rather than deleted.
+///
+/// `--transport-binding lb-assertion` is refused separately, by the unsafe-configuration
+/// guard that names why a load balancer in the trusted computing base is unacceptable.
+pub(crate) fn undeployable_transport_binding_refusal(binding: BindingKind) -> Option<String> {
+    (binding == BindingKind::AttestedIngress).then(|| {
+        "--transport-binding attested-ingress is not a supported deployment mode: Mode-C \
+         attested ingress binds the request under the owner-signed security boundary, and \
+         its rebinding onto the RFC 9421 request evidence is not yet specified (what the \
+         attestor may assert, what its attestation binds, and how it appears in the \
+         evidence chain). Use --binding exact (end-to-end mTLS)."
+            .to_string()
+    })
+}
+
 /// The one decision about whether a configured authorization profile can be honored.
 ///
 /// `Some(diagnostic)` means it cannot. Two independent facts make it so, and the
@@ -2185,6 +2220,12 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // Third instance of the same shape. This one was not a bypass — the composition root
     // refused it too — but it was stated twice, in two places, with two messages.
     if let Some(refusal) = unaccepted_authz_profile_refusal(config.authz) {
+        violations.push(refusal);
+    }
+    // Mode-C: the refusal used to live in the composition root and nowhere else, so it was
+    // a policy decision at the wrong altitude (ADR-MCPRE-056 §12). Deliberately refused for
+    // v0.16 — see `undeployable_transport_binding_refusal`.
+    if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
         violations.push(refusal);
     }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
@@ -4115,40 +4156,42 @@ mod tests {
     }
 
     #[test]
-    fn parses_attested_ingress_binding_fully_configured() {
-        // Attested ingress is strict-ADMITTED, so a durable-replay base parses.
+    fn a_fully_configured_mode_c_clears_every_completeness_check_and_is_still_refused() {
+        // Mode-C is deliberately non-deployable in v0.16 (ADR-MCPRE-056 §Y6): refused, not
+        // removed. This config is COMPLETE — attestor key, ingress identity, audience and
+        // the pinned-mTLS acknowledgement are all present — so the refusal it receives must
+        // be the MODE refusal and not a completeness diagnostic. That is what keeps the
+        // completeness validation meaningful while the mode is unsupported: if one of those
+        // checks broke, this test would start reporting its error instead.
         let mut a = minimal_durable();
         a.splice(0..0, attested_ingress_flags());
-        let config = parse_args(&a).expect("parse");
-        assert_eq!(config.binding, BindingKind::AttestedIngress);
-        assert_eq!(config.ingress_attestor_keys.len(), 1);
-        assert_eq!(
-            config.ingress_identities,
-            vec!["spiffe://example.org/ingress-1"]
+        let err = parse_args(&a).expect_err("Mode C is not a supported deployment mode");
+        assert!(
+            err.contains("attested-ingress is not a supported deployment mode"),
+            "a complete Mode-C config must be refused for the MODE, not for its shape; \
+             got: {err}"
         );
-        assert_eq!(
-            config.ingress_audience.as_deref(),
-            Some("did:example:server-1")
-        );
-        assert!(config.ingress_pinned_mtls);
-        // The verifier builds.
-        assert!(build_attested_ingress_binding(&config)
-            .expect("build")
-            .is_some());
     }
 
     #[test]
-    fn attested_ingress_is_admitted_under_strict() {
-        // Unlike Mode B (lb-assertion), Mode C is a strict-ADMITTED explicit opt-in.
-        let mut a = minimal();
-        a.splice(0..0, durable_replay());
-        a.splice(0..0, attested_ingress_flags());
-        let config = parse_args(&a).expect("Mode C must be admitted under the strict posture");
-        assert_eq!(config.binding, BindingKind::AttestedIngress);
+    fn mode_c_is_refused_by_the_unsafe_configuration_guard_itself() {
+        // This test previously asserted the opposite — that Mode C raised NO strict
+        // violation — because the only thing refusing the mode lived in the composition
+        // root. The refusal moved to the validation boundary once Mode C was ruled
+        // deliberately non-deployable, so the guard is now where it is enforced and this is
+        // the assertion that holds it there.
+        //
+        // Reached by mutating a parsed config rather than through `parse_args`, because
+        // `parse_args` now ends at this same guard: going through it would prove only that
+        // SOMETHING refused, not that this guard did.
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.binding = BindingKind::AttestedIngress;
+        let violations = unsafe_config_violations(&config);
         assert!(
-            unsafe_config_violations(&config).is_empty(),
-            "Mode C is strict-admitted: it must raise no strict violations, got {:?}",
-            unsafe_config_violations(&config)
+            violations
+                .iter()
+                .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
+            "the unsafe-configuration guard must be what refuses Mode C, got {violations:?}"
         );
     }
 

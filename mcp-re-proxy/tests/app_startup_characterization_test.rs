@@ -392,6 +392,78 @@ fn a_programmatic_config_cannot_enable_an_unaccepted_authz_profile() {
     );
 }
 
+/// `--transport-binding lb-assertion` is refused by the validation boundary alone.
+///
+/// The composition root used to refuse it too, in the same `matches!` arm as Mode-C
+/// attested ingress. That arm now covers Mode-C only, so this test is what establishes
+/// that dropping the duplicate did not drop the prohibition: the boundary refuses
+/// lb-assertion on its own, for a `Config` that never met the parser.
+///
+/// Asserts the boundary's own wrapper rather than merely `is_err()` — with the guard gone,
+/// this config would still fail later for an unrelated reason, and a weaker test would
+/// report protection that had moved somewhere accidental.
+#[test]
+fn the_boundary_alone_refuses_an_lb_assertion_binding() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    config.binding = mcp_re_proxy::cli::BindingKind::LbAssertion;
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("lb-assertion binding must be refused however it was built");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "the refusal must come from the validation boundary, got: {err}"
+    );
+    assert!(
+        err.contains("lb-assertion"),
+        "the refusal must name the offending setting, got: {err}"
+    );
+}
+
+/// Mode-C attested ingress is refused at the configuration boundary, not later.
+///
+/// The refusal used to live in `run_validated` and NOWHERE else — a policy decision in a
+/// composition root, and the only thing refusing the mode at all. It moved to the boundary
+/// once the ruling was made that Mode-C is deliberately non-deployable in v0.16: refused,
+/// not removed, because attested ingress is the shape a broker-mediated deployment needs
+/// and is expected to be designed rather than deleted.
+///
+/// The order matters — the ruling came first, then the move. Relocating it earlier would
+/// have made the product declaration as a side effect of a refactor.
+///
+/// Asserts the boundary's own wrapper: with the guard deleted, this config would still fail
+/// somewhere downstream, and `is_err()` would report protection that had silently moved.
+/// This test does NOT assert anything about the dormant Mode-C internals — the boundary
+/// contract is the durable thing.
+#[test]
+fn mode_c_attested_ingress_is_refused_at_the_configuration_boundary() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    config.binding = mcp_re_proxy::cli::BindingKind::AttestedIngress;
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a non-deployable transport-binding mode must be refused");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "the refusal must come from the validation boundary, not a later ad-hoc check, \
+         got: {err}"
+    );
+    assert!(
+        err.contains("attested-ingress"),
+        "the refusal must name the offending mode, got: {err}"
+    );
+}
+
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
 /// replay-tier branches that never execute on the happy path. Each returns `Err` early
 /// (no listener, no Redis), so this is a fast in-process test that covers the

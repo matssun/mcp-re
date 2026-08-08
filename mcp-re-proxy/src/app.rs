@@ -393,21 +393,6 @@ fn run_validated(
     if config.binding == BindingKind::Exact {
         transport_binding = Some(Box::new(ExactMatchBinding::new()));
     }
-    // Tier-3 LB assertion (Mode B) and Mode-C attested ingress bind the request hash
-    // under the OWNER-SIGNED security boundary; re-binding them to the RFC 9421
-    // request-evidence digest is pending owner authorization — fail closed rather than
-    // silently drop the channel binding.
-    if matches!(
-        config.binding,
-        BindingKind::LbAssertion | BindingKind::AttestedIngress
-    ) {
-        return Err(
-            "Tier-3 LB / Mode-C attested-ingress transport binding is not yet supported on the \
-             RFC 9421 serving path (owner-signed security-boundary rebinding pending); use \
-             --binding exact (end-to-end mTLS) for the RFC 9421 carrier"
-                .to_string(),
-        );
-    }
 
     // Materialized HERE, not where `tls_material` is built, so the CRL load and its
     // stale-CRL refusal keep the position they had before the extraction: after the trust
