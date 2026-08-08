@@ -116,6 +116,9 @@ _PROXY_LIB_SRCS = [
     # ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary — every seam
     # states ON or OFF, and an undeclared seam fails the debug build. Crate-internal.
     "src/startup_posture.rs",
+    # ADR-MCPRE-056 §10: the assembled runtime — owns every resource with a teardown
+    # obligation and enforces drain -> transition -> reclaim. Crate-internal.
+    "src/materialized_runtime.rs",
     # ADR-MCPRE-056 §9: owned background workers — structural halt, bounded
     # reclamation, named stragglers. Crate-internal.
     "src/managed_worker.rs",

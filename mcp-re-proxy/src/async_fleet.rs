@@ -315,7 +315,9 @@ pub fn derived_per_core_ceiling(
 /// It is not a throughput knob: on the exported-key path the runtime stays
 /// single-threaded, and raising this would not make a wedged token any less wedged —
 /// it only widens the window before the pool is exhausted.
-const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
+/// `pub(crate)` so `async_serve`'s handshake bound can be checked AGAINST it rather than
+/// against a copy of its value. The two constants are one decision.
+pub(crate) const DELEGATED_TLS_WORKERS_PER_CORE: usize = 4;
 
 /// Resolve the configured core count: `0` → [`std::thread::available_parallelism`]
 /// (min 1), otherwise the configured value.

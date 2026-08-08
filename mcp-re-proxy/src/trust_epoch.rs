@@ -655,4 +655,72 @@ mod tests {
         assert_eq!(src.drain_pending(), vec![InvalidationEvent::FlushAll]);
         assert!(src.is_healthy(), "a successful read restores health");
     }
+
+    /// A reader that PARKS inside `read_epoch`, so a test can hold the poller in the
+    /// middle of its network round trip and drive the request path meanwhile.
+    struct StalledReader {
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl EpochReader for StalledReader {
+        fn read_epoch(&self) -> Result<i64, EpochReadError> {
+            // Announce that the "network call" has begun, then block in it.
+            let _ = self.entered.send(());
+            let _ = recover(self.release.lock()).recv();
+            Ok(1)
+        }
+    }
+
+    /// The request path does not wait on the epoch reader's network round trip.
+    ///
+    /// This is the executable form of the claim in `trust_plane`: "the whole per-core
+    /// fleet is not serialized on one Redis connection". `PushInvalidationTrustCache`
+    /// calls `drain_pending` before every lookup, so if that call could ever wait on a
+    /// Redis read, one stalled connection would serialize every request on the core —
+    /// the failure mode this design exists to avoid.
+    ///
+    /// Written because the implementation could be "simplified" into exactly that bug:
+    /// take the pending mutex, then read the network under it. The result still LOOKS
+    /// like background polling — same threads, same function names — and every existing
+    /// test still passes, because none of them holds a read open while touching the
+    /// request path. This one does.
+    ///
+    /// A violation would BLOCK rather than assert, so the drain runs on its own thread
+    /// and the test fails on a timeout instead of hanging the suite.
+    #[test]
+    fn the_request_path_does_not_wait_on_a_stalled_epoch_read() {
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let src = std::sync::Arc::new(TrustEpochSource::new(StalledReader {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }));
+
+        let poller = std::sync::Arc::clone(&src);
+        let polling = std::thread::spawn(move || poller.poll_once());
+
+        // The poller is now INSIDE the blocking read and cannot leave until released.
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the poller reaches the read");
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let requester = std::sync::Arc::clone(&src);
+        std::thread::spawn(move || {
+            // Exactly what the resolver does before every lookup.
+            let events = requester.drain_pending();
+            let _ = done_tx.send(events.len());
+        });
+
+        let served = done_rx.recv_timeout(Duration::from_secs(5));
+        assert!(
+            served.is_ok(),
+            "drain_pending blocked while the epoch read was stalled: the request path is \
+             serialized on the reader's connection"
+        );
+
+        // Only now let the read finish, proving the drain above genuinely overlapped it.
+        let _ = release_tx.send(());
+        polling.join().expect("poller thread joins");
+    }
 }

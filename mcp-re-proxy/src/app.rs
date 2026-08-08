@@ -974,19 +974,20 @@ fn run_validated(
     // not read a list that silently omits an entry.
     posture.assert_complete()?;
 
-    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
-    // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
-    // `control_rt` (if any) is handed in so the redis ConnectionManager's reconnect
-    // task, the admission source and the continuation store stay alive for the whole
-    // serve.
-    serve_fleet(
-        proxy,
-        Arc::clone(&config_snapshot),
-        serve_options,
-        config,
-        control_rt,
-        shutdown,
-    )
+    // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio), the
+    // production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
+    //
+    // ADR-MCPRE-056 §10: every resource with a teardown obligation goes to one owner —
+    // the three planes, the proxy, and the control runtime the proxy's networked clients
+    // are bound to. The order they come apart in is stated and enforced there, rather
+    // than being whatever order these locals happen to be declared in.
+    crate::materialized_runtime::MaterializedRuntime::new(trust, signing, tls, proxy, control_rt)
+        .serve(
+            Arc::clone(&config_snapshot),
+            Arc::new(serve_options),
+            config,
+            shutdown,
+        )
 }
 
 /// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the
@@ -999,24 +1000,23 @@ fn run_validated(
 /// SIGTERM/SIGINT drains the fleet within the bounded grace window.
 ///
 /// The authoritative replay tier and async HTTP inner have already been wired into
-/// `proxy` by the caller (`run`) from the `--replay-cache` / `--inner-http-url`
-/// selection. `_control_rt` (when any networked control-plane client was wired) holds
-/// the redis `ConnectionManager`'s reconnect runtime alive for the whole serve.
+/// `proxy` by the caller.
 ///
-/// # Drain before reclaim
+/// # This function owns no teardown obligation
 ///
-/// `fleet.shutdown_and_join()` returns before any drop here runs, so no request can be
-/// using the replay tier or the continuation store when the control runtime goes. THAT is
-/// what makes the teardown safe — not the order in which `proxy` and `_control_rt` are
-/// dropped, which is currently a consequence of parameter declaration order and would be
-/// a fragile thing to depend on. A later owner holding both in one struct inherits the
-/// same obligation: drain, then reclaim.
-fn serve_fleet(
-    proxy: HttpProfileProxy,
+/// It borrows the proxy through an `Arc` and returns once `fleet.shutdown_and_join()` has
+/// returned, which is the DRAIN: no request can be in flight afterwards. Everything that
+/// must then happen in a particular order — each plane's post-owner transition, and
+/// reclaiming the control runtime the proxy's networked clients are bound to — belongs to
+/// [`crate::materialized_runtime::MaterializedRuntime`], which calls this and then tears
+/// down. Keeping the drain here and the ordering there is deliberate: this function's
+/// contract is "no request is running when I return", and that is all a caller should
+/// have to know to sequence anything after it.
+pub(crate) fn serve_fleet(
+    proxy: Arc<HttpProfileProxy>,
     config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
-    serve_options: crate::ServerOptions,
+    serve_options: Arc<crate::ServerOptions>,
     config: &cli::Config,
-    _control_rt: Option<crate::control_runtime::ControlRuntime>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     use std::net::ToSocketAddrs;
@@ -1028,8 +1028,6 @@ fn serve_fleet(
         .map_err(|e| format!("resolve --bind {}: {e}", config.bind))?
         .next()
         .ok_or_else(|| format!("--bind {} resolved to no address", config.bind))?;
-
-    let proxy = Arc::new(proxy);
 
     let fleet_cfg = crate::async_fleet::FleetConfig {
         addr,
@@ -1045,7 +1043,6 @@ fn serve_fleet(
     // observed by the next handshake instead of being written to a config nothing
     // reads again.
     let server_config = Arc::clone(&config_snapshot);
-    let serve_options = Arc::new(serve_options);
     // The caller owns the shutdown flag (the binary wires it to SIGTERM/SIGINT; a
     // test flips it directly). We hand a clone to the fleet and poll the same flag.
 

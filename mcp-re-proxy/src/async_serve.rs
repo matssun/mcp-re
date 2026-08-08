@@ -1039,15 +1039,27 @@ mod admission_bound_tests {
     /// credentials needs only as many concurrent connections as there are workers to
     /// occupy every one, since TLS 1.3 signs `CertificateVerify` before the client's
     /// `Certificate` is seen. Raising this to the pool size re-opens exactly that.
+    ///
+    /// The comparison is against the OTHER CONSTANT, not a copy of its value. This
+    /// assertion read `< 4`, which pins the wrong relation: lowering
+    /// `DELEGATED_TLS_WORKERS_PER_CORE` to 2 leaves `2 < 4` true and this test green while
+    /// the property it exists to protect — a worker left over for the rest of the core —
+    /// is violated. A guard on a literal only looks load-bearing.
     #[test]
     fn the_handshake_bound_leaves_workers_for_the_rest_of_the_core() {
         const {
             // A bound of zero would refuse every handshake.
             assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE >= 1);
-            // Strictly below `async_fleet::DELEGATED_TLS_WORKERS_PER_CORE` (4), or a
-            // handshake flood occupies every worker on the core — its accept loop, its
-            // established connections and every in-flight request included.
-            assert!(DELEGATED_TLS_HANDSHAKES_PER_CORE < 4);
+            // The PROPERTY: a core under a full handshake flood still has a worker for its
+            // accept loop, its established connections and its in-flight requests. Stated
+            // as the subtraction rather than as an inequality against the pool size,
+            // because the leftover worker is the thing that matters — the ordering is just
+            // today's way of obtaining it.
+            assert!(
+                crate::async_fleet::DELEGATED_TLS_WORKERS_PER_CORE
+                    .saturating_sub(DELEGATED_TLS_HANDSHAKES_PER_CORE)
+                    >= 1
+            );
         }
     }
 }
