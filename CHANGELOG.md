@@ -12,6 +12,25 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Fixed — `--client-ocsp require` could bypass its refusal off the parsed path
+
+Fixed programmatic configuration validation so `client_ocsp = Require` cannot bypass the
+existing CLI refusal. No policy changed: the flag was already refused, because online OCSP
+is implemented only on the blocking serve loop while the production data plane is the
+per-core async fleet, which performs no responder round trip. What changed is that *all*
+construction paths now enforce that same restriction.
+
+The refusal lived only in `parse_args`. `Config` has public fields, so a caller building
+one in code — an embedder, a harness, a bespoke launcher — could set `client_ocsp` and
+reach the serving path, where startup announced `ONLINE OCSP client-cert revocation
+enabled` on a deployment that admits every revoked client certificate. The decision now
+lives in one predicate consulted from both `parse_args` (which keeps the flag's specific
+diagnostic and its position in the refusal order) and `unsafe_config_violations`, which is
+what `ValidatedConfig::try_from` runs and which no route into the runtime can skip.
+
+Operators passing `--client-ocsp require` on the command line see no change: it was
+refused before and is refused now, with the same message pointing at `--client-crl`.
+
 ## [0.15.0] — 2026-08-06
 
 ### Changed — TLS session resumption is restored, bound to a trust epoch (ADR-MCPRE-055)

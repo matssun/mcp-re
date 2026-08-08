@@ -1691,27 +1691,13 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if client_ocsp != OcspKind::Require && ocsp_responder_url.is_some() {
         return Err("--ocsp-responder-url has no effect without --client-ocsp require".to_string());
     }
-    // (b) `--client-ocsp require` is refused unconditionally: the online-OCSP check is
-    //     unreachable on the serving path. `ocsp_rejection` is called only from
-    //     `connection_rejection`, which only the blocking serve loops use; the
-    //     production data plane is the per-core async fleet (ADR-MCPRE-051 §1), which
-    //     calls `connection_rejection_for_chain` and performs only the offline
-    //     cert-lifetime + CRL checks. Accepting `require` would print "ONLINE OCSP
-    //     client-cert revocation enabled" at startup while admitting every revoked
-    //     client certificate — the forbidden-claim shape (security-boundary §2). This
-    //     holds with OR without the `online_ocsp` feature: without it the code is
-    //     absent, with it the code is present but never called. Refused until the async
-    //     path performs the responder round-trip off the runtime worker.
-    if client_ocsp == OcspKind::Require {
-        return Err(
-            "--client-ocsp require cannot be honored: online OCSP is implemented only on \
-             the blocking serve loop, while the production data plane is the per-core \
-             async fleet, which performs no OCSP revocation check. Accepting it would \
-             announce enforcement that does not happen. Use --client-crl (with \
-             --client-crl-reload-secs for restart-free refresh) for client-certificate \
-             revocation on the async serving path."
-                .to_string(),
-        );
+    // (b) `--client-ocsp require` is refused. Raised here so an operator gets the flag's
+    //     own diagnostic rather than the generic unsafe-configuration list, and so the
+    //     refusal keeps its position ahead of (c). The DECISION is not made here — it is
+    //     [`online_ocsp_refusal`], which `unsafe_config_violations` also consults, so the
+    //     prohibition holds on every route into the runtime and not merely on this one.
+    if let Some(refusal) = online_ocsp_refusal(client_ocsp) {
+        return Err(refusal);
     }
     // (c) Under the feature, OCSP checks the LOCALLY-terminated client cert, which
     //     does not exist in reverse-proxy (forwarded-header) ingress mode.
@@ -2078,6 +2064,39 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// revocation reaches every peer within one connection lifetime.
 pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
+/// The one decision about whether `--client-ocsp require` can be honored.
+///
+/// `Some(diagnostic)` means it cannot. Today that is unconditional, and the reason is a
+/// property of the SERVING PATH rather than of the build: `ocsp_rejection` is reached only
+/// from `connection_rejection`, which only the blocking serve loops call. The production
+/// data plane is the per-core async fleet (ADR-MCPRE-051 §1), which calls
+/// `connection_rejection_for_chain` and performs only the offline cert-lifetime and CRL
+/// checks. So the responder round trip never happens, with or without the `online_ocsp`
+/// feature — without it the code is absent, with it the code is present but never called.
+///
+/// Accepting it would announce `ONLINE OCSP client-cert revocation enabled` at startup on
+/// a deployment that admits every revoked client certificate: the forbidden-claim shape
+/// (security-boundary §2). The refusal lifts when the async path performs the round trip
+/// off the runtime worker, and this is the single place that would have to change.
+///
+/// A function rather than two copies of the condition because it is consulted from two
+/// altitudes — [`parse_args`], for the specific diagnostic, and
+/// [`unsafe_config_violations`], which is what a programmatically built `Config` meets.
+/// Two copies is how the two drifted in the first place: the parser refused, the
+/// validation boundary did not, and a caller that skipped the parser reached the serving
+/// path with the claim intact.
+pub(crate) fn online_ocsp_refusal(client_ocsp: OcspKind) -> Option<String> {
+    (client_ocsp == OcspKind::Require).then(|| {
+        "--client-ocsp require cannot be honored: online OCSP is implemented only on \
+         the blocking serve loop, while the production data plane is the per-core \
+         async fleet, which performs no OCSP revocation check. Accepting it would \
+         announce enforcement that does not happen. Use --client-crl (with \
+         --client-crl-reload-secs for restart-free refresh) for client-certificate \
+         revocation on the async serving path."
+            .to_string()
+    })
+}
+
 /// Collect the parse-time unsafe-configuration violations for `config`.
 ///
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
@@ -2099,6 +2118,13 @@ pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 /// (#90/ADR-MCPS-020), lb-assertion binding, and cn_legacy identity.
 pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     let mut violations = Vec::new();
+    // Online OCSP cannot be honored on the production data plane. Checked HERE, not only
+    // in `parse_args`, because this is the boundary the runtime actually goes through:
+    // `client_ocsp` is one of `Config`'s public fields, so a caller that builds the struct
+    // in code reaches the serving path without ever meeting a parser.
+    if let Some(refusal) = online_ocsp_refusal(config.client_ocsp) {
+        violations.push(refusal);
+    }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
     // above the ceiling would let a NOT-short-lived cert be audited as
     // `short_lived_cert`. Both fail closed.

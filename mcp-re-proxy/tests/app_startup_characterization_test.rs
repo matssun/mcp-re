@@ -284,6 +284,43 @@ fn a_config_that_skipped_the_parser_still_cannot_bypass_the_safety_guards() {
     );
 }
 
+/// The same bypass, for the posture that says an online revocation check is running.
+///
+/// `--client-ocsp require` is refused because the check is implemented only on the
+/// blocking serve loop, while the production data plane is the per-core async fleet, which
+/// performs no OCSP round trip at all. That refusal used to live only in `parse_args`, so
+/// a caller building a `Config` in code could set `client_ocsp = Require`, reach the
+/// serving path, and have startup announce `ONLINE OCSP client-cert revocation enabled` on
+/// a deployment that admits every revoked client certificate.
+///
+/// The gap was found by writing the OFF branch of the startup posture: stating what an
+/// operator should do INSTEAD required knowing whether the ON state was reachable, and it
+/// was — but only off the parsed path.
+#[test]
+fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    // What an in-code caller can write. `parse_args` refuses the flag, so this is the
+    // only shape the configuration can take.
+    config.client_ocsp = mcp_re_proxy::cli::OcspKind::Require;
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a claim the serving path cannot deliver must be refused however it was built");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "expected the unsafe-configuration refusal, got: {err}"
+    );
+    assert!(
+        err.contains("--client-ocsp require cannot be honored"),
+        "the refusal must name the offending setting, got: {err}"
+    );
+}
+
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
 /// replay-tier branches that never execute on the happy path. Each returns `Err` early
 /// (no listener, no Redis), so this is a fast in-process test that covers the
