@@ -68,27 +68,28 @@ pub enum StartupEvent {
     TlsCustody { delegated: bool },
     /// In-process CRL hot-reload, and whether it was actually scheduled.
     CrlReload { scheduled: bool },
-    /// Online OCSP client-cert revocation is enabled.
-    OcspEnabled,
+    /// Whether online OCSP client-cert revocation is consulted per handshake.
+    OnlineOcsp { enabled: bool },
     /// The inner-plane in-flight bound was raised to match the fleet ceiling.
     InFlightCeilingRaised,
     /// The shared trust-epoch watch is active for delegated minting.
     DelegatedEpochWatch,
     /// Response signing is delegated and the first key has been issued.
     ResponseSigningDelegated,
-    /// The MCP transport contract is enforced.
-    McpTransportContract,
+    /// Whether the MCP transport/version contract is enforced.
+    McpTransportContract { enforced: bool },
     /// The RFC 9421 freshness gate's configured skew, in seconds.
     FreshnessGate { skew_secs: u64 },
     /// Where the per-request security record goes.
     AuditSink { mode: String },
     /// Whether accepted exchanges are retained.
     EvidenceRetention { enabled: bool },
-    /// The PEP writes its own verified context into the forwarded body.
-    VerifiedContextTrusted,
+    /// Whether the PEP writes its own verified context into the forwarded body.
+    VerifiedContextCarrier { trusted: bool },
     /// Whether MRTR continuations are shared across replicas.
     ContinuationStore { shared: bool },
-    /// The admission-currency gate's enforcement level.
+    /// The admission-currency gate's enforcement level — `required`, `optional`, or
+    /// `off`.
     AdmissionCurrency { enforcement: String },
     /// The fleet bound its listener and is serving. Startup finished.
     FleetServing,
@@ -318,8 +319,14 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     if l.contains("no --client-crl configured; no CRL reload scheduled") {
         return Some(StartupEvent::CrlReload { scheduled: false });
     }
-    if l.contains("ONLINE OCSP client-cert revocation enabled") {
-        return Some(StartupEvent::OcspEnabled);
+    if l.contains("ONLINE OCSP client-cert revocation") {
+        return Some(StartupEvent::OnlineOcsp {
+            enabled: match () {
+                () if l.contains("revocation enabled") => true,
+                () if l.contains("revocation = OFF") => false,
+                () => unknown_state("ONLINE OCSP client-cert revocation", &l),
+            },
+        });
     }
     if l.contains("inner-plane in-flight bound raised") {
         return Some(StartupEvent::InFlightCeilingRaised);
@@ -330,8 +337,14 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     if l.contains("response signing = DELEGATED") {
         return Some(StartupEvent::ResponseSigningDelegated);
     }
-    if l.contains("MCP transport contract ENFORCED") {
-        return Some(StartupEvent::McpTransportContract);
+    if l.contains("MCP transport contract") {
+        return Some(StartupEvent::McpTransportContract {
+            enforced: match () {
+                () if l.contains("contract ENFORCED") => true,
+                () if l.contains("contract = OFF") => false,
+                () => unknown_state("MCP transport contract", &l),
+            },
+        });
     }
     if l.contains("freshness gate = created-") {
         return Some(StartupEvent::FreshnessGate {
@@ -343,8 +356,10 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     if l.contains("security audit record = ") {
         let mode = if l.contains("record = NONE") {
             "none"
-        } else {
+        } else if l.contains("record = STDERR") {
             "stderr"
+        } else {
+            unknown_state("security audit record", &l);
         };
         return Some(StartupEvent::AuditSink {
             mode: mode.to_string(),
@@ -352,11 +367,21 @@ fn normalize(line: &str) -> Option<StartupEvent> {
     }
     if l.contains("evidence retention = ") {
         return Some(StartupEvent::EvidenceRetention {
-            enabled: !l.contains("evidence retention = OFF"),
+            enabled: match () {
+                () if l.contains("evidence retention = ON") => true,
+                () if l.contains("evidence retention = OFF") => false,
+                () => unknown_state("evidence retention", &l),
+            },
         });
     }
-    if l.contains("verified-context carrier = TRUSTED") {
-        return Some(StartupEvent::VerifiedContextTrusted);
+    if l.contains("verified-context carrier = ") {
+        return Some(StartupEvent::VerifiedContextCarrier {
+            trusted: match () {
+                () if l.contains("carrier = TRUSTED") => true,
+                () if l.contains("carrier = OFF") => false,
+                () => unknown_state("verified-context carrier", &l),
+            },
+        });
     }
     if l.contains("MRTR continuation store = shared") {
         return Some(StartupEvent::ContinuationStore { shared: true });
@@ -365,10 +390,14 @@ fn normalize(line: &str) -> Option<StartupEvent> {
         return Some(StartupEvent::ContinuationStore { shared: false });
     }
     if l.contains("admission currency = ") {
-        let enforcement = if l.contains("= REQUIRED") {
+        let enforcement = if l.contains("admission currency = OFF") {
+            "off"
+        } else if l.contains("admission currency = REQUIRED") {
             "required"
-        } else {
+        } else if l.contains("admission currency = optional") {
             "optional"
+        } else {
+            unknown_state("admission currency", &l)
         };
         return Some(StartupEvent::AdmissionCurrency {
             enforcement: enforcement.to_string(),
@@ -386,4 +415,140 @@ fn normalize(line: &str) -> Option<StartupEvent> {
 /// The remainder of `haystack` after the first occurrence of `needle`.
 fn after<'a>(haystack: &'a str, needle: &str) -> Option<&'a str> {
     haystack.find(needle).map(|i| &haystack[i + needle.len()..])
+}
+
+/// A line that names a seam but whose STATE this harness does not recognize.
+///
+/// Unrecognized STATE is a hard failure, while an unrecognized LINE is dropped. The
+/// asymmetry is the whole point, and it is not fussiness — it is the difference between
+/// "I have nothing to say about this line" and "I am about to claim something I did not
+/// observe".
+///
+/// `AdmissionCurrency` had the permissive shape and it was actively wrong: it matched
+/// `"admission currency = "` and mapped anything that was not `REQUIRED` to `optional`. So
+/// the moment production learned to announce the gate being OFF, this harness would have
+/// reported *the admission-currency gate is running in optional mode* — a false ON,
+/// produced silently, in the exact test whose job is to characterize what the deployment
+/// enforces. A new posture state must never be able to enter a transcript as a weaker
+/// existing one.
+fn unknown_state(seam: &str, line: &str) -> ! {
+    panic!(
+        "startup_transcript: the {seam} line states a posture this harness does not \
+         recognize, so it cannot be characterized without guessing:\n  {line}\n\
+         Add the new state to `normalize` — do NOT let it fall through to an existing \
+         one, and do not drop it silently."
+    );
+}
+
+/// Tests for the normalizer itself, which need no subprocess.
+///
+/// Worth having on their own terms — the harness is the instrument every characterization
+/// assertion is read through, and an instrument that silently mis-reports is worse than a
+/// missing one. They also happen to be the only coverage of `normalize` that runs when
+/// spawning the proxy is unavailable.
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize;
+    use super::StartupEvent;
+
+    fn ev(line: &str) -> Option<StartupEvent> {
+        normalize(&format!("mcp-re-proxy: {line}"))
+    }
+
+    /// Each seam is observable in BOTH directions, which is the property step 13 added to
+    /// production and this harness exists to read back.
+    #[test]
+    fn every_state_carrying_seam_is_read_in_both_directions() {
+        let cases: Vec<(&str, StartupEvent)> = vec![
+            (
+                "ONLINE OCSP client-cert revocation enabled (SHA-256 CertIDs)",
+                StartupEvent::OnlineOcsp { enabled: true },
+            ),
+            (
+                "ONLINE OCSP client-cert revocation = OFF: no responder is consulted",
+                StartupEvent::OnlineOcsp { enabled: false },
+            ),
+            (
+                "MCP transport contract ENFORCED for protocol version(s) [\"2026-07-28\"]",
+                StartupEvent::McpTransportContract { enforced: true },
+            ),
+            (
+                "MCP transport contract = OFF (no --mcp-protocol-version)",
+                StartupEvent::McpTransportContract { enforced: false },
+            ),
+            (
+                "verified-context carrier = TRUSTED (#415 §10)",
+                StartupEvent::VerifiedContextCarrier { trusted: true },
+            ),
+            (
+                "verified-context carrier = OFF (#415 §10)",
+                StartupEvent::VerifiedContextCarrier { trusted: false },
+            ),
+            (
+                "evidence retention = ON at /tmp/x (ADR-MCPRE-054)",
+                StartupEvent::EvidenceRetention { enabled: true },
+            ),
+            (
+                "evidence retention = OFF: nothing is retained",
+                StartupEvent::EvidenceRetention { enabled: false },
+            ),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(ev(line), Some(expected), "misread: {line}");
+        }
+    }
+
+    /// The three admission states are distinguished, including the one that used to be
+    /// unreachable. `off` must NOT arrive as `optional`.
+    #[test]
+    fn admission_currency_never_reads_off_as_a_running_mode() {
+        let off = ev(
+            "admission currency = OFF (--admission off): a call carrying a fresh \
+                      assertion is served even after its workload has been revoked",
+        );
+        assert_eq!(
+            off,
+            Some(StartupEvent::AdmissionCurrency {
+                enforcement: "off".to_string()
+            }),
+            "an OFF gate must never be reported as a running enforcement mode"
+        );
+        assert_eq!(
+            ev("admission currency = REQUIRED (authority k1, shared record over redis)"),
+            Some(StartupEvent::AdmissionCurrency {
+                enforcement: "required".to_string()
+            })
+        );
+        assert_eq!(
+            ev("admission currency = optional (authority k1, shared record over redis)"),
+            Some(StartupEvent::AdmissionCurrency {
+                enforcement: "optional".to_string()
+            })
+        );
+    }
+
+    /// A line carrying no startup fact is DROPPED. The proxy also writes per-request audit
+    /// records and operational diagnostics to this channel, and a harness that failed on
+    /// each of them would be unusable.
+    #[test]
+    fn a_line_that_states_no_seam_is_dropped_not_failed() {
+        assert_eq!(normalize("mcp-re-proxy: some unrelated diagnostic"), None);
+        assert_eq!(normalize(""), None);
+    }
+
+    /// A line that names a seam but states an UNKNOWN posture fails loudly. This is the
+    /// asymmetry: silence about a line is fine, guessing about a state is not.
+    #[test]
+    #[should_panic(expected = "states a posture this harness does not recognize")]
+    fn an_unrecognized_admission_state_fails_rather_than_guessing() {
+        ev("admission currency = ADVISORY (authority k1)");
+    }
+
+    /// The same rule for a seam whose two states are spelled quite differently, to show it
+    /// is the rule and not one lucky matcher.
+    #[test]
+    #[should_panic(expected = "states a posture this harness does not recognize")]
+    fn an_unrecognized_audit_sink_state_fails_rather_than_guessing() {
+        ev("security audit record = SYSLOG (ADR-MCPS-035)");
+    }
 }

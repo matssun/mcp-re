@@ -16,6 +16,9 @@ use crate::cli::BindingKind;
 use crate::cli::KeySourceKind;
 use crate::config_snapshot;
 use crate::http_inner::HttpInnerPool;
+use crate::startup_posture::PostureLog;
+use crate::startup_posture::Seam;
+use crate::startup_posture::SeamState;
 use crate::transport::ExactMatchBinding;
 use crate::transport::TransportBindingPolicy;
 use crate::HttpProfileProxy;
@@ -577,15 +580,20 @@ fn run_validated(
             )),
         }
     };
+    // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
+    // BOTH directions through `posture`. `assert_complete` below fails a debug build
+    // that leaves one silent.
+    let mut posture = PostureLog::new();
+
     // #4030 ONLINE OCSP client-cert revocation. Built only under the
     // `online_ocsp` feature; `parse_args` already fails closed for
     // `--client-ocsp require` in a build without the feature.
     #[cfg(feature = "online_ocsp")]
     let ocsp_checker = cli::build_ocsp_checker(config);
     #[cfg(feature = "online_ocsp")]
-    if let Some(checker) = &ocsp_checker {
-        eprintln!(
-            "mcp-re-proxy: ONLINE OCSP client-cert revocation enabled (SHA-256 CertIDs; \
+    let ocsp_state = match &ocsp_checker {
+        Some(checker) => SeamState::on(format!(
+            "ONLINE OCSP client-cert revocation enabled (SHA-256 CertIDs; \
              responder URL {}; on indeterminate result: {}). The OCSP responder must answer \
              SHA-256 CertIDs.",
             config
@@ -598,8 +606,16 @@ fn run_validated(
             } else {
                 "REJECT (hard-fail)"
             },
-        );
-    }
+        )),
+        None => SeamState::off(OCSP_OFF),
+    };
+    // A capability compiled out is still declared, because "this build cannot do it" and
+    // "this deployment did not ask for it" need different responses from an operator.
+    // Here they happen to coincide: `--client-ocsp require` is refused in every build, so
+    // both arms say the same thing rather than inventing a distinction.
+    #[cfg(not(feature = "online_ocsp"))]
+    let ocsp_state = SeamState::off(OCSP_OFF);
+    posture.declare(Seam::OnlineOcspClientRevocation, ocsp_state);
     let serve_options = ServerOptions {
         identity_policy: config.identity_source,
         identity_strategy,
@@ -694,21 +710,30 @@ fn run_validated(
     // declares the protocol versions this deployment serves. Absent the flag there
     // is no contract, so required-header presence and `Mcp-Name`/`params.name`
     // agreement are not asserted — declared explicitly rather than defaulted.
-    if !config.mcp_protocol_versions.is_empty() {
+    let transport_state = if config.mcp_protocol_versions.is_empty() {
+        SeamState::off(
+            "MCP transport contract = OFF (no --mcp-protocol-version): the required \
+             transport headers are not asserted and Mcp-Name is not checked against \
+             params.name, so a signed request may name one tool in its header and invoke \
+             another in its body. Declare the protocol version(s) this deployment serves \
+             to enforce the contract.",
+        )
+    } else {
         let versions: Vec<&str> = config
             .mcp_protocol_versions
             .iter()
             .map(String::as_str)
             .collect();
-        eprintln!(
-            "mcp-re-proxy: MCP transport contract ENFORCED for protocol version(s) {:?} \
-             (required transport headers covered; Mcp-Name must equal params.name)",
-            config.mcp_protocol_versions
-        );
         verifier_policy = verifier_policy.with_mcp_transport(
             mcp_re_http_profile::McpTransportPolicy::mcp_2026_07_28(&versions),
         );
-    }
+        SeamState::on(format!(
+            "MCP transport contract ENFORCED for protocol version(s) {:?} \
+             (required transport headers covered; Mcp-Name must equal params.name)",
+            config.mcp_protocol_versions
+        ))
+    };
+    posture.declare(Seam::McpTransportContract, transport_state);
     eprintln!(
         "mcp-re-proxy: freshness gate = created-{skew}s .. expires+{skew}s (RFC 9421 §5.1)",
         skew = config.max_clock_skew
@@ -721,29 +746,30 @@ fn run_validated(
     // ADR-MCPS-035: install the per-request security record. Stated at startup in
     // both directions — a deployment without a sink has NO per-request attribution,
     // and finding that out after an incident is too late.
-    match config.audit_sink {
+    let audit_state = match config.audit_sink {
         cli::AuditSinkKind::Stderr => {
             proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::StderrAuditSink));
-            eprintln!(
-                "mcp-re-proxy: security audit record = STDERR (ADR-MCPS-035): one line per \
+            SeamState::on(
+                "security audit record = STDERR (ADR-MCPS-035): one line per \
                  accepted / rejected / signed decision, carrying the verifier-resolved actor \
-                 and the frozen mcp-re.* wire code."
-            );
+                 and the frozen mcp-re.* wire code.",
+            )
         }
         cli::AuditSinkKind::None => {
             proxy = proxy.with_audit_sink(Arc::new(crate::audit_sink::NoAuditSink));
-            eprintln!(
-                "mcp-re-proxy: security audit record = NONE: no per-request accepted/rejected \
+            SeamState::off(
+                "security audit record = NONE: no per-request accepted/rejected \
                  record is emitted, so this deployment has no attribution surface for a later \
-                 incident. Pass --audit-sink stderr to enable it."
-            );
+                 incident. Pass --audit-sink stderr to enable it.",
+            )
         }
-    }
+    };
+    posture.declare(Seam::SecurityAuditRecord, audit_state);
 
     // ADR-MCPRE-054: evidence retention. Stated at startup in both directions because
     // it changes what this deployment STORES about every call, and because a reader of
     // the posture line should never have to infer a data-retention decision.
-    match &config.retained_evidence_dir {
+    let retention_state = match &config.retained_evidence_dir {
         Some(dir) => {
             let retention = crate::transparency::EvidenceRetention::open(dir).map_err(|e| {
                 // Fail at startup, not at the first served call: a deployment that
@@ -752,36 +778,46 @@ fn run_validated(
                 format!("--retained-evidence-dir {dir}: {e}")
             })?;
             proxy = proxy.with_evidence_retention(Arc::new(retention));
-            eprintln!(
-                "mcp-re-proxy: evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
+            SeamState::on(format!(
+                "evidence retention = ON at {dir} (ADR-MCPRE-054): the full \
                  request and response messages of every ACCEPTED call are retained (rejected \
                  requests are not), and a store failure refuses the exchange with \
                  mcp-re.evidence_retention_unavailable. The store has NO expiry or quota — \
                  a full volume is therefore a total outage. Put it on a dedicated volume \
                  with a retention policy and free-space alerting."
-            );
+            ))
         }
-        None => eprintln!(
-            "mcp-re-proxy: evidence retention = OFF: nothing is retained, so no SCITT \
+        None => SeamState::off(
+            "evidence retention = OFF: nothing is retained, so no SCITT \
              statement can later be issued about a call served here. Pass \
-             --retained-evidence-dir <path> to enable it."
+             --retained-evidence-dir <path> to enable it.",
         ),
-    }
+    };
+    posture.declare(Seam::EvidenceRetention, retention_state);
 
     // #415 rev 2 §10: the verified-context carrier. Caller-seeded context is stripped
     // regardless; this decides only whether the PEP writes its OWN context in its
     // place, and `trusted` is an operator assertion about the inner channel that
     // nothing here can verify.
-    if config.verified_context == cli::VerifiedContextKind::Trusted {
+    let verified_context_state = if config.verified_context == cli::VerifiedContextKind::Trusted {
         proxy = proxy
             .with_verified_context_carrier(mcp_re_http_profile::VerifiedContextPolicy::Trusted);
-        eprintln!(
-            "mcp-re-proxy: verified-context carrier = TRUSTED (#415 §10): the PEP writes its \
+        SeamState::on(
+            "verified-context carrier = TRUSTED (#415 §10): the PEP writes its \
              resolved actor into the forwarded body. The carrier is UNSIGNED — this asserts \
              that nothing but this proxy can reach the inner server, and nothing here can \
-             check that."
-        );
-    }
+             check that.",
+        )
+    } else {
+        SeamState::off(
+            "verified-context carrier = OFF (#415 §10): caller-seeded context is stripped \
+             and the PEP writes nothing in its place, so the inner server receives no \
+             resolved actor and must not make an authorization decision on identity. Pass \
+             --verified-context trusted only where nothing but this proxy can reach the \
+             inner server.",
+        )
+    };
+    posture.declare(Seam::VerifiedContextCarrier, verified_context_state);
 
     // ADR-MCPS-047: wire the MRTR continuation correlation store on the SAME shared
     // Redis the fleet uses for replay coherence, so a multi-round-trip continuation
@@ -803,7 +839,7 @@ fn run_validated(
     // unavailable => refuse startup; opportunistic and unavailable => announce the
     // absence, and verify the dependent leg still fails closed without it.
     #[cfg(feature = "redis_replay")]
-    if let Some(url) = config.replay_redis_url.as_ref() {
+    let continuation_state = if let Some(url) = config.replay_redis_url.as_ref() {
         let rt = control_rt
             .as_ref()
             .expect("the plan declared the continuation store needs the control runtime")
@@ -811,19 +847,27 @@ fn run_validated(
         let store = rt
             .block_on(crate::redis_continuation_store::RedisContinuationStore::connect(url))
             .map_err(|e| format!("connect redis continuation store: {e}"))?;
-        eprintln!(
-            "mcp-re-proxy: MRTR continuation store = shared (async Redis backend, TTL {}s)",
-            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
-        );
         proxy = proxy.with_continuation_store(
             Arc::new(store),
             crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS,
         );
+        SeamState::on(format!(
+            "MRTR continuation store = shared (async Redis backend, TTL {}s)",
+            crate::http_profile_serve::DEFAULT_CONTINUATION_TTL_SECS
+        ))
     } else {
-        eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
-    }
+        SeamState::off(CONTINUATION_STORE_OFF)
+    };
+    // A build without the backend cannot be talked into the shared store, so it must not
+    // be told to set the flag that would enable it.
     #[cfg(not(feature = "redis_replay"))]
-    eprintln!("mcp-re-proxy: {}", CONTINUATION_STORE_OFF);
+    let continuation_state = SeamState::off(
+        "MRTR continuation store = OFF: this build lacks the `redis_replay` feature, so \
+         multi-round-trip flows are SINGLE-REPLICA only regardless of configuration. A \
+         client that receives an `input_required` reply from one replica and answers on \
+         another is refused (mcp-re.continuation_binding_failed).",
+    );
+    posture.declare(Seam::MrtrContinuationStore, continuation_state);
 
     // MCPRE-493: wire the §7 admission-currency gate. Without a source the assertion
     // and its binding are verified evidence that decides nothing — a call carrying a
@@ -832,7 +876,7 @@ fn run_validated(
     // supply. The CLI has already refused any combination that would leave the gate
     // enabled but toothless.
     #[cfg(feature = "redis_replay")]
-    if config.admission != crate::cli::AdmissionKind::Off {
+    let admission_state = if config.admission != crate::cli::AdmissionKind::Off {
         let Some(url) = config.admission_redis_url.as_ref() else {
             return Err("--admission requires --admission-redis-url".to_string());
         };
@@ -865,8 +909,10 @@ fn run_validated(
             }
             _ => crate::http_profile_serve::AdmissionEnforcement::Optional,
         };
-        eprintln!(
-            "mcp-re-proxy: admission currency = {} (authority {kid}, shared record over redis, \
+        // Rendered before `with_admission`, which moves `kid` into the key-resolver
+        // closure.
+        let line = format!(
+            "admission currency = {} (authority {kid}, shared record over redis, \
              degraded {})",
             match enforcement {
                 crate::http_profile_serve::AdmissionEnforcement::Required => "REQUIRED",
@@ -889,17 +935,44 @@ fn run_validated(
             enforcement,
             Arc::new(move |presented: &str| (presented == kid).then(|| key.clone())),
         );
-    }
+        SeamState::on(line)
+    } else {
+        SeamState::off(
+            "admission currency = OFF (--admission off): a call carrying a fresh, \
+             correctly-bound assertion is served even after its workload has been revoked, \
+             because currency is a comparison against state only the deployment can supply. \
+             Pass --admission with --admission-redis-url to enforce it.",
+        )
+    };
     #[cfg(not(feature = "redis_replay"))]
-    if config.admission != crate::cli::AdmissionKind::Off {
-        // Fail closed rather than serve with admission silently disabled: an operator
-        // who asked for it must not get a proxy that quietly does not do it.
-        return Err(
-            "--admission requires a build with the `redis_replay` feature (the \
+    let admission_state = {
+        if config.admission != crate::cli::AdmissionKind::Off {
+            // Fail closed rather than serve with admission silently disabled: an operator
+            // who asked for it must not get a proxy that quietly does not do it. This is
+            // the OPPOSITE choice from the continuation store above, and the difference is
+            // that admission was explicitly requested: an explicitly requested capability
+            // that cannot be provided must refuse startup, while an opportunistic one
+            // announces its absence and relies on the dependent leg failing closed.
+            return Err(
+                "--admission requires a build with the `redis_replay` feature (the \
                     shared authoritative admission record)"
-                .to_string(),
-        );
-    }
+                    .to_string(),
+            );
+        }
+        SeamState::off(
+            "admission currency = OFF: this build lacks the `redis_replay` feature (the \
+             shared authoritative admission record), so --admission is refused at startup \
+             rather than enforced. A workload revoked at the authority keeps being served \
+             here until its assertion expires.",
+        )
+    };
+    posture.declare(Seam::AdmissionCurrency, admission_state);
+
+    // Every optional capability has now stated its posture. Serving with an incomplete
+    // one is refused in EVERY build profile (ADR-MCPRE-056 §5.4): the transcript is this
+    // deployment's statement of which security controls are running, and an operator must
+    // not read a list that silently omits an entry.
+    posture.assert_complete()?;
 
     // ADR-MCPRE-051 §1: serve on the per-core async fleet (SO_REUSEPORT + tokio),
     // the production data plane. Blocks until SIGTERM/SIGINT drains the fleet.
@@ -1015,13 +1088,28 @@ fn serve_fleet(
     Ok(())
 }
 
-/// The posture line for a deployment with no cross-replica MRTR continuation store.
+/// The posture line for a deployment with no online client-certificate revocation.
 ///
-/// Every other optional seam prints its OFF posture; this one printed nothing, so an
-/// operator on the CP/linearizable replay tier — the tier the claim matrix presents as
-/// strongest — silently lost every human-approval / multi-round-trip flow. The failure
-/// is closed but reads on the wire as a client or attack signal, which is exactly what
-/// the startup posture exists to prevent.
+/// It does NOT recommend `--client-ocsp require`, because validation refuses that flag
+/// unconditionally, in every build: the check is implemented only on the blocking serve
+/// loop, and the production data plane is the per-core async fleet. A diagnostic that
+/// names a mode which always refuses sends an operator into a dead end, so this points at
+/// `--client-crl`, which is what actually works on the serving path.
+const OCSP_OFF: &str = "ONLINE OCSP client-cert revocation = OFF: no responder is \
+     consulted, so a client certificate revoked at its issuing CA is still accepted unless \
+     an offline CRL covers it. Online OCSP is unavailable on the async serving path \
+     (--client-ocsp require is refused at startup); use --client-crl, with \
+     --client-crl-reload-secs for restart-free refresh.";
+
+/// The posture line for a build that HAS the shared-store backend but was not given a
+/// URL for it. The feature-absent case says something different, because there the flag
+/// this line recommends would not help.
+///
+/// Stated rather than left silent because an operator on the CP/linearizable replay
+/// tier — the tier the claim matrix presents as strongest — otherwise loses every
+/// human-approval / multi-round-trip flow with no indication why. The failure is closed,
+/// but on the wire it reads as a client or attack signal.
+#[cfg(feature = "redis_replay")]
 const CONTINUATION_STORE_OFF: &str = "MRTR continuation store = OFF (no --replay-redis-url): \
      multi-round-trip flows are SINGLE-REPLICA only. A client that receives an \
      `input_required` reply from one replica and answers on another is refused \

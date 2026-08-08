@@ -181,6 +181,11 @@ pub mod app;
 // builds against.
 pub mod async_fleet;
 pub(crate) mod startup_plan;
+// ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary. Every seam states
+// whether it is ON or OFF, because silence cannot distinguish "not configured here"
+// from "not in this build". Declaring takes a value, so the OFF branch is a type
+// obligation rather than a convention.
+pub(crate) mod startup_posture;
 // ADR-MCPRE-056 §9: owned background workers. A startup phase may not spawn a
 // long-lived thread whose lifetime is not represented by an owned value, so every
 // runtime worker belongs to a `WorkerSet` that halts and reclaims it on drop.
