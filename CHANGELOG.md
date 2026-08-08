@@ -12,6 +12,25 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Fixed — `--revocation-list` could bypass its refusal off the parsed path
+
+Fixed programmatic configuration validation so `--revocation-list` cannot bypass the
+existing CLI refusal. No policy changed and no capability was added: the flag was already
+refused, because the policy-layer deny-list is consumed only by an authorization profile
+and no production profile has landed, so a supplied list would enforce nothing.
+
+The refusal lived only in `parse_args`, and `revocation_list_paths` is a public field of
+`Config`, so a caller building one in code reached the serving path carrying a revocation
+control that nothing reads — an operator would believe a compromised grant was revoked
+while it kept being authorized. The decision now lives in one predicate consulted from both
+`parse_args` (which keeps the flag's diagnostic and its place in the refusal order) and
+`unsafe_config_violations`, which `ValidatedConfig::try_from` runs and which no route into
+the runtime skips.
+
+Operators passing `--revocation-list` on the command line see no change: it was refused
+before and is refused now, with the same message. Whether the capability is later
+implemented, formally deprecated or redefined is left to a future release.
+
 ### Fixed — `--client-ocsp require` could bypass its refusal off the parsed path
 
 Fixed programmatic configuration validation so `client_ocsp = Require` cannot bypass the

@@ -1941,15 +1941,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     // could only be silently ignored — an operator would believe a compromised grant
     // was revoked while it kept being authorized. Refused rather than accepted-and-
     // ignored (security-boundary §2: never surface a capability that is not delivered).
-    if !config.revocation_list_paths.is_empty() {
-        return Err(
-            "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
-             consulted only by an authorization profile and no production profile is \
-             available (--authz is always off), so the list would enforce NOTHING. Remove \
-             --revocation-list; use the trust store and --revocation-tier for key \
-             revocation on the request path."
-                .to_string(),
-        );
+    // The DECISION is [`unenforceable_revocation_list_refusal`], which
+    // `unsafe_config_violations` also consults, so the prohibition holds on every route
+    // into the runtime. Raised here so an operator gets the flag's own diagnostic and its
+    // position in the refusal order, rather than the generic unsafe-configuration list.
+    if let Some(refusal) = unenforceable_revocation_list_refusal(&config.revocation_list_paths) {
+        return Err(refusal);
     }
 
     // The proxy ALWAYS runs the maximal-security posture — there is no toggle. Any
@@ -2064,6 +2061,37 @@ pub const MAX_CLIENT_CERT_LIFETIME: Duration = Duration::from_secs(3600);
 /// revocation reaches every peer within one connection lifetime.
 pub const MAX_NEAR_ZERO_TRUST_RELOAD_SECS: u64 = 60;
 
+/// The one decision about whether a policy-layer deny-list can be enforced.
+///
+/// `Some(diagnostic)` means it cannot. Today that is unconditional whenever paths are
+/// supplied: the deny-list is consumed by `LiveTrustResolver::resolve_with_revocation_id`,
+/// which only runs under an authorization profile, and no production profile has landed —
+/// `--authz reference` is itself refused. So a supplied list could only be silently
+/// ignored, and an operator would believe a compromised grant was revoked while it kept
+/// being authorized.
+///
+/// Refused rather than accepted-and-ignored (security-boundary §2: never surface a
+/// capability that is not delivered). v0.16 deliberately REFUSES rather than implementing
+/// enforcement — wiring it would be a new runtime capability, which this release does not
+/// add — and rather than deleting the flag, which would turn a security-correctness fix
+/// into a CLI compatibility decision. A later release can implement, deprecate or redefine
+/// it; this is the single place that would change.
+///
+/// A function for the same reason as [`online_ocsp_refusal`]: consulted from
+/// [`parse_args`] for the specific diagnostic, and from [`unsafe_config_violations`],
+/// which is what a programmatically built `Config` meets. Two copies of a condition is how
+/// the parser and the validation boundary drifted apart the first time.
+pub(crate) fn unenforceable_revocation_list_refusal(paths: &[String]) -> Option<String> {
+    (!paths.is_empty()).then(|| {
+        "--revocation-list supplies a policy-layer deny-list (ADR-MCPS-013), but it is \
+         consulted only by an authorization profile and no production profile is \
+         available (--authz is always off), so the list would enforce NOTHING. Remove \
+         --revocation-list; use the trust store and --revocation-tier for key \
+         revocation on the request path."
+            .to_string()
+    })
+}
+
 /// The one decision about whether `--client-ocsp require` can be honored.
 ///
 /// `Some(diagnostic)` means it cannot. Today that is unconditional, and the reason is a
@@ -2123,6 +2151,12 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // `client_ocsp` is one of `Config`'s public fields, so a caller that builds the struct
     // in code reaches the serving path without ever meeting a parser.
     if let Some(refusal) = online_ocsp_refusal(config.client_ocsp) {
+        violations.push(refusal);
+    }
+    // Same shape, second instance: the parser refuses a deny-list that nothing enforces,
+    // and `revocation_list_paths` is a public field, so a caller that builds the struct in
+    // code reaches the serving path without meeting a parser.
+    if let Some(refusal) = unenforceable_revocation_list_refusal(&config.revocation_list_paths) {
         violations.push(refusal);
     }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime

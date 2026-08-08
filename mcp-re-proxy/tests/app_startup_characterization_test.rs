@@ -321,6 +321,42 @@ fn a_programmatic_config_cannot_claim_an_ocsp_check_the_serving_path_never_makes
     );
 }
 
+/// The same bypass again, for a revocation control that nothing enforces.
+///
+/// `--revocation-list` supplies a policy-layer deny-list consumed only by an authorization
+/// profile, and no production profile has landed, so the list would enforce nothing. The
+/// parser refuses it — but `revocation_list_paths` is a public field, so a caller building
+/// a `Config` in code reached the serving path carrying a revocation control that is never
+/// read. An operator would believe a compromised grant was revoked while it kept being
+/// authorized.
+///
+/// Deliberately drives `app::run`, not `parse_args`: a parser test would only exercise the
+/// path that was already correct, which is the lesson the `--client-ocsp` case taught.
+#[test]
+fn a_programmatic_config_cannot_carry_a_deny_list_nothing_enforces() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let mut config = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    // What an in-code caller can write; `parse_args` refuses the flag, so this is the only
+    // shape the configuration can take.
+    config.revocation_list_paths = vec!["/tmp/deny-list.json".to_string()];
+
+    let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+        .expect_err("a revocation control nothing enforces must be refused however it was built");
+
+    assert!(
+        err.contains("refuses unsafe configuration"),
+        "expected the unsafe-configuration refusal, got: {err}"
+    );
+    assert!(
+        err.contains("--revocation-list"),
+        "the refusal must name the offending setting, got: {err}"
+    );
+}
+
 /// `app::run` refuses configs it cannot build BEFORE serving — the key-source and
 /// replay-tier branches that never execute on the happy path. Each returns `Err` early
 /// (no listener, no Redis), so this is a fast in-process test that covers the
