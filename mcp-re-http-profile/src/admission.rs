@@ -672,4 +672,36 @@ mod tests {
             HttpProfileError::AdmissionStateUnavailable,
         );
     }
+
+    /// `P = 0` with degraded mode ENABLED is not a closed door: the effective window is
+    /// `max_clock_skew`, so an unreachable authority still admits a recent assertion.
+    ///
+    /// This is why the CLI refuses that combination, and it is a sharper reason than the
+    /// one the refusal used to give. "Zero is not a policy" suggests the deployment merely
+    /// gets nothing; in fact it gets a `max_clock_skew`-wide window in which a REVOKED
+    /// workload keeps being served, without having asked for one. The skew term is
+    /// deliberate — it tolerates disagreeing clocks — but it means P is a floor on the
+    /// window, never the whole of it.
+    #[test]
+    fn a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew() {
+        let pol = AdmissionPolicy {
+            allow_degraded_mode: true,
+            degraded_propagation_bound: 0,
+            ..AdmissionPolicy::default()
+        };
+        assert_eq!(pol.max_clock_skew, 30, "the arithmetic below assumes it");
+
+        // Inside the skew term, with P contributing nothing: still SERVED.
+        let inside = claims(5, AdmissionStatus::Admitted, NOW - 10);
+        let v = check(&inside, None, &pol).expect("P=0 does not close the window");
+        assert!(v.degraded);
+
+        // Past the skew term: closed, which is the only reason P=0 looks safe from far
+        // enough away.
+        let outside = claims(5, AdmissionStatus::Admitted, NOW - 40);
+        assert_eq!(
+            check(&outside, None, &pol).unwrap_err(),
+            HttpProfileError::AdmissionStateUnavailable,
+        );
+    }
 }

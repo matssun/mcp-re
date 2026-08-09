@@ -843,9 +843,14 @@ fn run_validated(
     // enabled but toothless.
     #[cfg(feature = "redis_replay")]
     let admission_state = if config.admission != crate::cli::AdmissionKind::Off {
-        let Some(url) = config.admission_redis_url.as_ref() else {
-            return Err("--admission requires --admission-redis-url".to_string());
-        };
+        // Validation has already refused an admission configuration missing any of its
+        // four required parts (`cli::unenforceable_admission_refusal`), so these are
+        // reconstructions, not checks: each fails closed with a precise internal error if
+        // an invariant were ever violated, and none of them is where the rule lives.
+        let url = config
+            .admission_redis_url
+            .as_ref()
+            .ok_or("internal error: admission enabled without --admission-redis-url")?;
         // The admission record is an INDEPENDENT endpoint; it has nothing to do with
         // which replay tier the deployment chose. Coupling it to the replay control
         // runtime made admission unimplementable on the CP/linearizable tier — the
@@ -861,14 +866,14 @@ fn run_validated(
         let kid = config
             .admission_authority_kid
             .clone()
-            .ok_or("--admission-authority-kid is required")?;
+            .ok_or("internal error: admission enabled without --admission-authority-kid")?;
         let key = mcp_re_core::VerificationKey::from_b64url(
             config
                 .admission_authority_pubkey_b64url
                 .as_deref()
-                .ok_or("--admission-authority-pubkey is required")?,
+                .ok_or("internal error: admission enabled without --admission-authority-pubkey")?,
         )
-        .map_err(|e| format!("--admission-authority-pubkey is not a valid Ed25519 key: {e:?}"))?;
+        .map_err(|e| format!("internal error: --admission-authority-pubkey did not decode after validation accepted it: {e:?}"))?;
         let enforcement = match config.admission {
             crate::cli::AdmissionKind::Required => {
                 crate::http_profile_serve::AdmissionEnforcement::Required

@@ -485,6 +485,19 @@ mod tests {
         assert!(!continuation_needs_control_runtime(&validated));
     }
 
+    /// A COMPLETE admission configuration. Setting only `admission` used to be enough
+    /// here, which was itself a symptom: the validation boundary did not check admission
+    /// at all, so a half-configured gate reached planning. It does now (FF4), and a plan
+    /// test must exercise a configuration a deployment could actually hold.
+    fn with_admission(mut config: crate::cli::Config) -> crate::cli::Config {
+        config.admission = crate::cli::AdmissionKind::Required;
+        config.admission_authority_kid = Some("admission-root-1".to_string());
+        config.admission_authority_pubkey_b64url =
+            Some("1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg".to_string());
+        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        config
+    }
+
     /// Admission's endpoint is its own. Declaring it independently is what stopped it
     /// being unimplementable on the CP/linearizable tier.
     #[test]
@@ -493,8 +506,7 @@ mod tests {
             .expect("validates");
         assert!(!admission_needs_control_runtime(&off));
 
-        let mut on = parse(SHARED_LINEARIZABLE).expect("parse");
-        on.admission = crate::cli::AdmissionKind::Required;
+        let on = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let on = ValidatedConfig::try_from(on).expect("validates");
         assert_eq!(admission_needs_control_runtime(&on), REDIS);
         assert!(
@@ -511,8 +523,7 @@ mod tests {
         use crate::control_runtime::ControlRuntimeRequirement as Req;
 
         // Admission alone, on a tier that declares nothing.
-        let mut admission_only = parse(SHARED_LINEARIZABLE).expect("parse");
-        admission_only.admission = crate::cli::AdmissionKind::Required;
+        let admission_only = with_admission(parse(SHARED_LINEARIZABLE).expect("parse"));
         let admission_only = ValidatedConfig::try_from(admission_only).expect("validates");
         let plan = ReplayPlan::from_config(&admission_only).expect("plan");
         assert_eq!(

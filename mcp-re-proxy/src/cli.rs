@@ -1331,45 +1331,18 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     if replay == ReplayKind::File && replay_path.is_none() {
         return Err("--replay-cache file requires --replay-path".to_string());
     }
-    // MCPRE-493: enforcing admission needs BOTH an authority to verify assertions
-    // against and a source to check currency against. With neither, the gate would
-    // verify nothing while looking enabled — the most dangerous of the three states,
-    // because the deployment believes it has admission control.
-    if admission != AdmissionKind::Off {
-        if admission_authority_kid.is_none() || admission_authority_pubkey_b64url.is_none() {
-            return Err("--admission optional|required requires \
-                        --admission-authority-kid and --admission-authority-pubkey \
-                        (an assertion is only evidence if the issuer is one this \
-                        deployment trusts)"
-                .to_string());
-        }
-        if admission_redis_url.is_none() {
-            return Err(
-                "--admission optional|required requires --admission-redis-url \
-                        (the shared authoritative record; without it every call fails \
-                        closed on an unreachable authority)"
-                    .to_string(),
-            );
-        }
-    }
-    // A degraded window of zero is not a window: it would fail closed on every
-    // unreachable-authority call while claiming a degraded mode is available.
-    if admission_allow_degraded && admission_degraded_bound_secs <= 0 {
-        return Err("--admission-allow-degraded true requires a positive \
-                    --admission-degraded-bound-secs (P); degraded mode is a BOUNDED \
-                    window, and an unbounded or zero one is not a policy"
-            .to_string());
-    }
-    if admission == AdmissionKind::Off
-        && (admission_redis_url.is_some() || admission_authority_kid.is_some())
-    {
-        // A dangling admission setting reads as "admission is configured" to anyone
-        // auditing the command line, while nothing is enforced.
-        return Err(
-            "--admission-authority-kid / --admission-redis-url are set but \
-                    --admission is off; enable it or remove them"
-                .to_string(),
-        );
+    // MCPRE-493: the admission gate's own coherence, consulted from the same predicate
+    // the validation boundary uses. Kept HERE, at the position these checks always
+    // occupied, so the diagnostic a CLI user meets first does not change (§K1).
+    if let Some(refusal) = unenforceable_admission_refusal(
+        admission,
+        admission_authority_kid.as_deref(),
+        admission_authority_pubkey_b64url.as_deref(),
+        admission_redis_url.as_deref(),
+        admission_allow_degraded,
+        admission_degraded_bound_secs,
+    ) {
+        return Err(refusal);
     }
     // ADR-MCPS-020: the durability tier is an explicit deployment assertion that
     // determines the horizontal replay-safety claim, so a shared store MUST
@@ -2183,6 +2156,97 @@ pub(crate) fn online_ocsp_refusal(client_ocsp: OcspKind) -> Option<String> {
     })
 }
 
+/// Both halves of the authority are required, and the diagnostic must not tell an operator
+/// which half is missing in a way that implies the other alone would do.
+const MISSING_ADMISSION_AUTHORITY: &str =
+    "--admission optional|required requires --admission-authority-kid and \
+     --admission-authority-pubkey (an assertion is only evidence if the issuer is one this \
+     deployment trusts)";
+
+/// The one decision about whether an admission-currency configuration can be enforced.
+///
+/// `Some(diagnostic)` means it cannot. Every clause here is a property of the parsed
+/// configuration alone, so this is the boundary that owns them (ADR-MCPRE-056 §AA):
+/// `Config` has public fields, and until this moved, all four lived in `parse_args` where
+/// a programmatically built configuration walked past them.
+///
+/// # Why a zero degraded window is refused
+///
+/// Not because "zero is not a policy" — that reads as though the deployment merely gets
+/// nothing. `check_admission` compares the assertion's age against
+/// `degraded_propagation_bound + max_clock_skew`, so P is a FLOOR on the degraded window,
+/// never the whole of it. With degraded mode on and P zero, an unreachable authority still
+/// serves any assertion younger than the skew tolerance — a window in which a REVOKED
+/// workload keeps being admitted, on a deployment that asked for no window at all. Pinned
+/// by `admission::a_zero_p_still_leaves_a_degraded_window_the_width_of_the_clock_skew`.
+///
+/// A NEGATIVE bound does fail closed on every call, but it is refused by the same clause:
+/// a policy nobody can satisfy is not a safer spelling of "off".
+pub(crate) fn unenforceable_admission_refusal(
+    admission: AdmissionKind,
+    authority_kid: Option<&str>,
+    authority_pubkey_b64url: Option<&str>,
+    redis_url: Option<&str>,
+    allow_degraded: bool,
+    degraded_bound_secs: i64,
+) -> Option<String> {
+    // Clause order is the order these checks always ran in, so the diagnostic a CLI user
+    // meets first does not change (§K1).
+    if admission != AdmissionKind::Off {
+        // Enforcing admission needs BOTH an authority to verify assertions against and a
+        // source to check currency against. With neither, the gate would verify nothing
+        // while looking enabled — the most dangerous of the three states, because the
+        // deployment believes it has admission control.
+        let Some(pubkey) = authority_pubkey_b64url else {
+            return Some(MISSING_ADMISSION_AUTHORITY.to_string());
+        };
+        if authority_kid.is_none() {
+            return Some(MISSING_ADMISSION_AUTHORITY.to_string());
+        }
+        // Checked HERE rather than where the verifier is built: an unusable authority key
+        // is a property of the configuration, and catching it at materialization left the
+        // composition root as the only thing between a programmatic config and a gate with
+        // no usable issuer.
+        if VerificationKey::from_b64url(pubkey).is_err() {
+            return Some(
+                "--admission-authority-pubkey is not a valid base64url-no-pad 32-byte \
+                 Ed25519 public key"
+                    .to_string(),
+            );
+        }
+        if redis_url.is_none() {
+            return Some(
+                "--admission optional|required requires --admission-redis-url (the shared \
+                 authoritative record; without it every call fails closed on an unreachable \
+                 authority)"
+                    .to_string(),
+            );
+        }
+    }
+    // Deliberately NOT nested under `admission != Off`: a degraded window configured
+    // without a gate to apply it to is still a setting that reads as enforced.
+    if allow_degraded && degraded_bound_secs <= 0 {
+        return Some(
+            "--admission-allow-degraded true requires a positive \
+             --admission-degraded-bound-secs (P). P is a FLOOR on the degraded window, not \
+             the whole of it: the PEP serves an unreachable authority for \
+             P + --max-clock-skew seconds, so P=0 still admits a revoked workload for the \
+             skew tolerance while claiming no window was configured"
+                .to_string(),
+        );
+    }
+    if admission == AdmissionKind::Off && (redis_url.is_some() || authority_kid.is_some()) {
+        // A dangling setting reads as "admission is configured" to anyone auditing the
+        // command line, while nothing is enforced.
+        return Some(
+            "--admission-authority-kid / --admission-redis-url are set but --admission is \
+             off; enable it or remove them"
+                .to_string(),
+        );
+    }
+    None
+}
+
 /// Collect the parse-time unsafe-configuration violations for `config`.
 ///
 /// The proxy has NO security toggle — it always runs the maximal-security posture,
@@ -2226,6 +2290,21 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // a policy decision at the wrong altitude (ADR-MCPRE-056 §12). Deliberately refused for
     // v0.16 — see `undeployable_transport_binding_refusal`.
     if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
+        violations.push(refusal);
+    }
+    // The admission gate. Its four clauses were the LAST parse-only invariants of this
+    // shape, and one of them was a genuine bypass rather than a misplacement: nothing
+    // downstream re-checked the degraded window, so a programmatic config reached the
+    // serving path with `allow_degraded` on and P zero — a revoked workload served for
+    // the clock-skew tolerance on a deployment that configured no window at all.
+    if let Some(refusal) = unenforceable_admission_refusal(
+        config.admission,
+        config.admission_authority_kid.as_deref(),
+        config.admission_authority_pubkey_b64url.as_deref(),
+        config.admission_redis_url.as_deref(),
+        config.admission_allow_degraded,
+        config.admission_degraded_bound_secs,
+    ) {
         violations.push(refusal);
     }
     // ADR-MCPS-023 §A1 (MCPS-57): `None` disables enforcement outright; a lifetime
@@ -3565,6 +3644,99 @@ mod tests {
             "--admission-redis-url",
             "redis://127.0.0.1:6379",
         ])
+    }
+
+    /// The degraded-window rule was the LAST parse-only admission invariant, and unlike
+    /// the others nothing downstream re-checked it: the composition root passed
+    /// `allow_degraded` and P straight into `AdmissionPolicy`. So a `Config` built in code
+    /// reached the serving path with degraded mode on and no window configured, and got
+    /// one `--max-clock-skew` wide — a revoked workload served against an unreachable
+    /// authority on a deployment that asked for no degraded window at all.
+    ///
+    /// Reached by mutating a parsed config, because `parse_args` now consults the same
+    /// predicate: going through it would prove only that SOMETHING refused.
+    #[test]
+    fn a_programmatic_config_cannot_open_a_degraded_window_it_did_not_configure() {
+        // The dangerous shape: the gate is ENABLED, so the window it opens is real.
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let mut config = parse_args(&a).expect("a complete admission config parses");
+        config.admission_allow_degraded = true;
+        config.admission_degraded_bound_secs = 0;
+        let violations = unsafe_config_violations(&config);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--admission-degraded-bound-secs")),
+            "the validation boundary must refuse a zero degraded window on an ENABLED \
+             gate, got {violations:?}"
+        );
+
+        // And with the gate off, where the setting enforces nothing but still reads as
+        // configured to anyone auditing the deployment.
+        let mut off = parse_args(&minimal_durable()).expect("the base config parses");
+        off.admission_allow_degraded = true;
+        off.admission_degraded_bound_secs = 0;
+        assert!(
+            unsafe_config_violations(&off)
+                .iter()
+                .any(|v| v.contains("--admission-degraded-bound-secs")),
+            "a degraded window without a gate is still a setting that reads as enforced"
+        );
+    }
+
+    /// The refusal states the REASON, and the reason is not "zero is not a policy".
+    ///
+    /// P is a floor on the degraded window, never the whole of it — the PEP serves an
+    /// unreachable authority for `P + --max-clock-skew` seconds. An operator told only
+    /// that zero is disallowed would reasonably set P=1 and believe they had a one-second
+    /// window. Pinned against the profile-layer test that measures the real width.
+    #[test]
+    fn the_degraded_window_refusal_names_the_clock_skew_term() {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.admission_allow_degraded = true;
+        config.admission_degraded_bound_secs = 0;
+        let refusal = unsafe_config_violations(&config)
+            .into_iter()
+            .find(|v| v.contains("--admission-degraded-bound-secs"))
+            .expect("refused");
+        assert!(
+            refusal.contains("--max-clock-skew"),
+            "the operator has to be told the skew term widens the window, got: {refusal}"
+        );
+    }
+
+    /// An authority key that cannot decode is a property of the CONFIGURATION, so the
+    /// boundary owns it. It used to be caught only where the verifier was built, which
+    /// left a programmatic config reaching materialization with an unusable issuer.
+    #[test]
+    fn a_programmatic_config_cannot_carry_an_undecodable_admission_authority_key() {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.admission = super::AdmissionKind::Required;
+        config.admission_authority_kid = Some("admission-root-1".to_string());
+        config.admission_authority_pubkey_b64url = Some("not-a-key".to_string());
+        config.admission_redis_url = Some("redis://127.0.0.1:6379".to_string());
+        let violations = unsafe_config_violations(&config);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("--admission-authority-pubkey")),
+            "an undecodable authority key must be refused at the boundary, got {violations:?}"
+        );
+    }
+
+    /// A complete admission configuration must NOT be refused — otherwise the checks
+    /// above would pass against a predicate that simply refuses everything.
+    #[test]
+    fn a_complete_admission_configuration_raises_no_violation() {
+        let mut a = minimal_durable();
+        a.splice(0..0, admission_args("required"));
+        let config = parse_args(&a).expect("a complete admission config parses");
+        assert!(
+            unsafe_config_violations(&config).is_empty(),
+            "a complete admission configuration must be admissible: {:?}",
+            unsafe_config_violations(&config)
+        );
     }
 
     #[test]
