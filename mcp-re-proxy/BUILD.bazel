@@ -110,6 +110,13 @@ _PROXY_LIB_SRCS = [
     # the fleet (serving path / replay tier / transport binding), extracted from main.
     "src/http_profile_serve.rs",
     "src/app.rs",
+    # ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime —
+    # lifecycle state cannot advance beyond the ownership it describes. Crate-internal.
+    "src/materializing_runtime.rs",
+    # ADR-MCPRE-057 §3: the global runtime lifecycle as a value, with one closed
+    # transition relation. Represents which transitions are LEGAL; it is not
+    # synchronization (§5.4). Crate-internal.
+    "src/runtime_state.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
     "src/startup_plan.rs",

@@ -329,9 +329,37 @@ fn run_validated(
     // not enroll it as a request signer, and signing mints under it. Two derivations
     // could disagree about which key that is.
     let response_kid = crate::startup_plan::response_issuer_kid(config);
-    let trust =
-        crate::trust_plane::TrustPlane::materialize(config, &response_kid, Arc::clone(&shutdown))?;
-    let resolver = trust.resolver();
+
+    // ADR-MCPRE-057 §3 — the lifecycle becomes a value here.
+    //
+    // `PlanBuilt` is applied at THIS line because everything above it is pure and the
+    // next statement is the first effect this process performs. That boundary is real but
+    // not yet tidy: some pure planning (`ReplayPlan::from_config`, the inner-plane
+    // ceiling) still runs below, INSIDE `Materializing`. The state machine tolerates it —
+    // planning during materialization is untidy, not illegal — and ADR-MCPRE-058 §17A
+    // step 5 is where the two stop interleaving. Instrumenting what is here, rather than
+    // reordering to make the model look clean, is deliberate: a state machine that
+    // required its own preconditions to be manufactured would be describing an
+    // architecture that does not exist.
+    let mut lifecycle = crate::runtime_state::RuntimeLifecycle::new();
+    // Holding a `ValidatedConfig` IS the proof: there is no route to this function that
+    // skips the boundary.
+    lifecycle.apply(crate::runtime_state::RuntimeEvent::ValidationSucceeded)?;
+    lifecycle.apply(crate::runtime_state::RuntimeEvent::PlanBuilt)?;
+
+    // ADR-MCPRE-057 §9 — from here every teardown-bearing resource is owned the moment it
+    // is acquired. `begin` applies `MaterializationStarted`, so entering the state and
+    // entering the owner are one act; a failure at any `?` below drops the builder, which
+    // reclaims what was installed in the documented order instead of unwinding locals in
+    // reverse declaration order (F3).
+    let mut building = crate::materializing_runtime::MaterializingRuntime::begin(lifecycle)?;
+
+    building.install_trust(crate::trust_plane::TrustPlane::materialize(
+        config,
+        &response_kid,
+        Arc::clone(&shutdown),
+    )?);
+    let resolver = building.trust().resolver();
     // Response-slot signing custody (ADR-MCPRE-052, MCPRE-122): delegated-signing is
     // the ONLY response mode. The ROOT key is the credential ISSUER only; the resolver
     // resolves the ROOT public key (by its issuer kid) for the Response slot, and NO
@@ -349,7 +377,7 @@ fn run_validated(
         keyid: response_kid.clone(),
     };
     let resolve_actor = build_actor_resolver(
-        trust.signers(),
+        building.trust().signers(),
         Arc::clone(&resolver),
         config.trust_domain.clone(),
         response_kid.clone(),
@@ -403,17 +431,17 @@ fn run_validated(
     // Transport custody (ADR-MCPRE-056 §8). The plane owns the serving TLS config, the
     // per-request revocation index and the CRL reload worker; `tls_material` is MOVED in
     // so no second copy of the key material can drift from the one a reload rebuilds.
-    let tls = crate::tls_plane::TlsPlane::materialize(
+    building.install_tls(crate::tls_plane::TlsPlane::materialize(
         config,
         tls_material,
         server_chain,
         client_ca,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?;
-    let is_delegated_tls = tls.is_delegated();
-    let client_revocation = tls.revocation();
-    let config_snapshot = tls.snapshot();
+    )?);
+    let is_delegated_tls = building.tls().is_delegated();
+    let client_revocation = building.tls().revocation();
+    let config_snapshot = building.tls().snapshot();
 
     // ADR-MCPS-023 §A1 (MCPS-58): operator-visible revocation POSTURE DIAGNOSTIC.
     // This is a posture diagnostic, NOT a structured per-request audit guarantee —
@@ -445,13 +473,13 @@ fn run_validated(
             // this a revoked peer serves every later request on the connection it
             // already holds and the reload cadence below describes new connections
             // alone.
-            if tls.crls().is_empty() {
+            if building.tls().crls().is_empty() {
                 "not_configured"
             } else {
                 "enforced"
             }
         );
-        if tls.crls().is_empty() {
+        if building.tls().crls().is_empty() {
             let max_lifetime = match config.max_client_cert_lifetime {
                 Some(d) => format!("{}s", d.as_secs()),
                 None => "none".to_string(),
@@ -462,7 +490,7 @@ fn run_validated(
             );
         } else {
             // Facts parsed once by the plane that loaded the CRLs, rendered here.
-            for (i, posture) in tls.crls().postures.iter().enumerate() {
+            for (i, posture) in building.tls().crls().postures.iter().enumerate() {
                 let next_update = posture
                     .next_update_unix
                     .map(|n| n.to_string())
@@ -489,7 +517,7 @@ fn run_validated(
             config.trust_reload_secs,
         );
         let crl_bound = crate::tls_plane::fleet_crl_bound(
-            !tls.crls().is_empty(),
+            !building.tls().crls().is_empty(),
             config.max_client_cert_lifetime,
             config.client_crl_reload_secs,
         );
@@ -635,13 +663,13 @@ fn run_validated(
     //
     // The plane must outlive the proxy that signs with it, and it does: both are locals
     // of this function, and `serve_fleet` returns before either is dropped.
-    let signing = crate::signing_plane::SigningPlane::materialize(
+    building.install_signing(crate::signing_plane::SigningPlane::materialize(
         config,
         key_source,
         &response_kid,
         startup_now_unix,
         Arc::clone(&shutdown),
-    )?;
+    )?);
     // ADR-MCPRE-050 + §5: assemble the RFC 9421 serving PEP with the async inner plane,
     // the authoritative replay tier, and the optional Mode-A channel binding.
     // Response-signature validity window: 300s.
@@ -652,7 +680,7 @@ fn run_validated(
         dispatch_cfg,
         Box::new(pool),
         300,
-        signing.signer(),
+        building.signing().signer(),
     );
     // §5.1/§13.1: attach the verifier-local acceptance policy so the operator's
     // `--max-clock-skew` governs the FRESHNESS GATE, not only replay retention.
@@ -952,13 +980,24 @@ fn run_validated(
     // the three planes, the proxy, and the control runtime the proxy's networked clients
     // are bound to. The order they come apart in is stated and enforced there, rather
     // than being whatever order these locals happen to be declared in.
-    crate::materialized_runtime::MaterializedRuntime::new(trust, signing, tls, proxy, control_rt)
-        .serve(
-            Arc::clone(&config_snapshot),
-            Arc::new(serve_options),
-            config,
-            shutdown,
-        )
+    // The last two teardown-bearing resources join the owner, and `finish` assembles.
+    //
+    // `MaterializationSucceeded` is applied INSIDE `finish`, after every required
+    // resource has been taken — so a `Materialized` lifecycle cannot exist over an
+    // incomplete graph. That is the equivalence ADR-MCPRE-057 §9 asks for: the lifecycle
+    // state and the ownership state are the same fact, not two facts kept in step by
+    // convention.
+    building.install_proxy(proxy);
+    building.install_control(control_rt);
+    let (runtime, lifecycle) = building.finish()?;
+
+    runtime.serve(
+        Arc::clone(&config_snapshot),
+        Arc::new(serve_options),
+        config,
+        shutdown,
+        lifecycle,
+    )
 }
 
 /// ADR-MCPRE-051 §1/§3 — serve on the per-core async fleet forwarding over the

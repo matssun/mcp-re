@@ -79,6 +79,9 @@ use std::sync::Arc;
 use crate::cli;
 use crate::config_snapshot;
 use crate::control_runtime::ControlRuntime;
+use crate::runtime_state::RuntimeEvent;
+use crate::runtime_state::RuntimeLifecycle;
+use crate::runtime_state::RuntimeState;
 use crate::signing_plane::SigningPlane;
 use crate::tls_plane::TlsPlane;
 use crate::trust_plane::TrustPlane;
@@ -140,13 +143,22 @@ impl MaterializedRuntime {
     ///
     /// Consumes `self`: the ordering guarantee is only worth having if the runtime cannot
     /// be used again afterwards.
+    ///
+    /// `lifecycle` must have legally reached [`RuntimeState::Materialized`]
+    /// (ADR-MCPRE-057 §3). Taking it BY VALUE is what makes that a real precondition
+    /// rather than a comment: the only way to hold one in that state is to have applied
+    /// every preceding transition, so a caller cannot serve a runtime whose lifecycle
+    /// skipped validation or planning.
     pub(crate) fn serve(
         mut self,
         config_snapshot: Arc<config_snapshot::ServerConfigSnapshot>,
         serve_options: Arc<ServerOptions>,
         config: &cli::Config,
         shutdown: Arc<AtomicBool>,
+        mut lifecycle: RuntimeLifecycle,
     ) -> Result<(), String> {
+        lifecycle.apply(RuntimeEvent::ServingStarted)?;
+
         // PHASE 1 — drain. Returns only once every per-core worker has stopped, so no
         // request can be using anything below when phase 2 begins.
         let proxy = Arc::clone(
@@ -156,17 +168,50 @@ impl MaterializedRuntime {
         );
         let served =
             crate::app::serve_fleet(proxy, config_snapshot, serve_options, config, shutdown);
+
+        // `serve_fleet` returning IS the drain (ADR-MCPRE-057 §8.1): its contract is that
+        // no request is running when it returns, which is precisely the predicate
+        // `Draining -> Transitioning` requires. The proof is the join, not a counter —
+        // no request-path accounting was added to represent it.
+        lifecycle.apply(RuntimeEvent::ShutdownRequested)?;
+        lifecycle.apply(RuntimeEvent::FleetDrained)?;
+
         // Phases 2 and 3 run whether serving succeeded or failed: a fleet that could not
         // bind still leaves every plane's workers running, and a failure path that skipped
         // teardown would be the §I leak this ADR exists to close.
-        self.shutdown();
+        self.transition_and_reclaim(&mut lifecycle)?;
+
         served
     }
 
-    /// Phases 2 and 3. Idempotent — a second call finds every `Option` already taken.
+    /// Phases 2 and 3, each event applied only once the phase that establishes it has
+    /// returned.
     ///
-    /// Separate from `serve` so the same sequence runs on the `Drop` path, and so a test
-    /// can drive teardown without standing up a listener.
+    /// The interleaving is the content: `SecurityTransitionCompleted` between them says
+    /// the planes made their post-owner transitions and the substrate was still there
+    /// while they did (§I.5). Applying both events at the end would record the same final
+    /// state over a sequence that never held.
+    ///
+    /// Returns `Stopped`. Fallible only in the sense that an illegal transition means the
+    /// relation changed underneath this method; the caller propagates rather than
+    /// continuing, because a lifecycle that did not reach `Stopped` must not be reported
+    /// as if it had.
+    fn transition_and_reclaim(
+        &mut self,
+        lifecycle: &mut RuntimeLifecycle,
+    ) -> Result<(), crate::runtime_state::InvalidTransition> {
+        self.transition();
+        lifecycle.apply(RuntimeEvent::SecurityTransitionCompleted)?;
+        self.reclaim();
+        lifecycle.apply(RuntimeEvent::ResourceReclaimCompleted)?;
+        debug_assert_eq!(lifecycle.state(), RuntimeState::Stopped);
+        Ok(())
+    }
+
+    /// The same two phases, for a runtime coming apart without a lifecycle to record
+    /// against — `Drop`, and the teardown tests that do not stand up a listener.
+    ///
+    /// Idempotent: a second call finds every `Option` already taken.
     pub(crate) fn shutdown(&mut self) {
         self.transition();
         self.reclaim();
@@ -330,6 +375,98 @@ mod tests {
             runtime.control.is_none(),
             "phase 3 must reclaim the substrate"
         );
+    }
+
+    /// ADR-MCPRE-057 §17.2 — the illegal parent/child COMBINATIONS are unreachable.
+    ///
+    /// The test above proves the planes reach their terminal states; the transition-table
+    /// tests prove the lifecycle reaches `Stopped`. Neither says the two happen together,
+    /// and that pairing is the invariant: `Runtime = Stopped AND Trust = Fresh` and
+    /// `Runtime = Stopped AND Signing = Active` are the combinations §8.3 forbids.
+    ///
+    /// So this drives the exact method `serve` uses for the post-drain half, rather than a
+    /// copy of its two phases — a teardown that reached `Stopped` by a different route
+    /// than production takes would prove nothing about production.
+    ///
+    /// The broken implementation this catches: applying `SecurityTransitionCompleted` and
+    /// `ResourceReclaimCompleted` up front and running the phases afterwards. Every
+    /// assertion about the final states still passes; the lifecycle would claim `Stopped`
+    /// while the planes were still live, which is the same class of untruth
+    /// `MaterializingRuntime::finish` exists to prevent on the way up.
+    #[test]
+    fn a_runtime_that_reaches_stopped_leaves_no_plane_holding_authority() {
+        let mut runtime = populated(cooperative, cooperative, cooperative);
+        let resolver = runtime.trust.as_ref().expect("trust").resolver();
+        let signer = runtime.signing.as_ref().expect("signing").signer();
+
+        // A lifecycle that legally reached the drain, the way `serve` gets there.
+        let mut lifecycle = RuntimeLifecycle::new();
+        for event in [
+            RuntimeEvent::ValidationSucceeded,
+            RuntimeEvent::PlanBuilt,
+            RuntimeEvent::MaterializationStarted,
+            RuntimeEvent::MaterializationSucceeded,
+            RuntimeEvent::ServingStarted,
+            RuntimeEvent::ShutdownRequested,
+            RuntimeEvent::FleetDrained,
+        ] {
+            lifecycle.apply(event).expect("the serving path is legal");
+        }
+        assert_eq!(lifecycle.state(), RuntimeState::Transitioning);
+        // The child states the combinations below must exclude are live right now, so
+        // reaching them terminal cannot be an artifact of a fixture that started empty.
+        assert!(
+            signer.current(crate::app::now_unix()).is_some(),
+            "the signing plane must still be active before the transition"
+        );
+
+        runtime
+            .transition_and_reclaim(&mut lifecycle)
+            .expect("the post-drain sequence is legal from Transitioning");
+
+        assert_eq!(lifecycle.state(), RuntimeState::Stopped);
+        assert!(
+            matches!(
+                resolver.resolve(TRUST_SIGNER, TRUST_KID),
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+            ),
+            "Runtime = Stopped AND Trust = Fresh: the process reports itself shut down \
+             while a resolver still answers from a snapshot nothing is re-reading"
+        );
+        assert!(
+            signer.current(crate::app::now_unix()).is_none(),
+            "Runtime = Stopped AND Signing = Active: the process reports itself shut down \
+             while a signer still mints responses off a key no epoch advance can revoke"
+        );
+    }
+
+    /// The other direction of §8.3: reaching `Stopped` is not something teardown can do
+    /// from wherever it happens to be. `transition_and_reclaim` is legal only after the
+    /// drain has been proven, so a caller cannot start retiring signing authority while
+    /// requests may still be in flight.
+    ///
+    /// The broken implementation this catches: `serve` applying `FleetDrained` before
+    /// `serve_fleet` returns — a "tidier" grouping of the two events around the call that
+    /// would let the security transition begin against a fleet that had not joined.
+    #[test]
+    fn the_post_drain_sequence_is_refused_before_the_drain_is_proven() {
+        let mut runtime = populated(cooperative, cooperative, cooperative);
+        let mut lifecycle = RuntimeLifecycle::new();
+        for event in [
+            RuntimeEvent::ValidationSucceeded,
+            RuntimeEvent::PlanBuilt,
+            RuntimeEvent::MaterializationStarted,
+            RuntimeEvent::MaterializationSucceeded,
+            RuntimeEvent::ServingStarted,
+        ] {
+            lifecycle.apply(event).expect("the serving path is legal");
+        }
+        // Serving, not yet drained.
+        let err = runtime
+            .transition_and_reclaim(&mut lifecycle)
+            .expect_err("the security transition must not precede a proven drain");
+        assert_eq!(err.state, RuntimeState::Serving);
+        assert_eq!(err.event, RuntimeEvent::SecurityTransitionCompleted);
     }
 
     /// One worker that never stops must not cost the OTHER planes their transitions.

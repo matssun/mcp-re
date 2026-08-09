@@ -180,6 +180,16 @@ pub mod app;
 // crate: it is the composition root's own decomposition, not a surface anything outside
 // builds against.
 pub mod async_fleet;
+// ADR-MCPRE-057 §3: the global runtime lifecycle as a value, with one closed transition
+// relation. Represents which lifecycle transitions are LEGAL; it is not synchronization,
+// and does not replace the terminal latches that enforce those rules against in-flight
+// work on other threads (§5.4).
+pub(crate) mod runtime_state;
+// ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime. Holds the
+// lifecycle and every resource acquired so far, so `Materialized` cannot be asserted over
+// an incomplete graph, and a failed materialization reclaims in the documented order
+// rather than by reverse-declaration unwinding (F3).
+pub(crate) mod materializing_runtime;
 pub(crate) mod startup_plan;
 // ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary. Every seam states
 // whether it is ON or OFF, because silence cannot distinguish "not configured here"
