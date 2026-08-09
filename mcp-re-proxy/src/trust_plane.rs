@@ -92,13 +92,27 @@ impl TrustPlane {
     pub(crate) fn for_teardown_test(
         body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
     ) -> Self {
+        Self::over_freshness(Arc::new(TrustStoreFreshness::default()), body)
+    }
+
+    /// The same plane, over a freshness flag the caller already holds.
+    ///
+    /// Only the terminal-race test needs this: to stage a reload landing after `Drop` it
+    /// must hand the worker the very flag the plane will stale, and observe that flag
+    /// after the plane is gone. `TrustPlane` deliberately has no accessor for it —
+    /// authority over trust freshness belongs to the reload worker and to `Drop`, and an
+    /// accessor would hand it to anyone (ADR-MCPRE-057 §6).
+    #[cfg(test)]
+    fn over_freshness(
+        freshness: Arc<TrustStoreFreshness>,
+        body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
+    ) -> Self {
         let mut signers = HashMap::new();
         signers.insert(TEST_KID.to_string(), TEST_SIGNER.to_string());
         let store = Arc::new(crate::reloading_trust::ReloadingTrustStore::new(
             mcp_re_core::InMemoryTrustResolver::new(),
             signers,
         ));
-        let freshness = Arc::new(TrustStoreFreshness::default());
         let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
         let halt = workers.halt();
         workers.spawn("test trust reload", move || body(halt));
@@ -133,7 +147,11 @@ impl Drop for TrustPlane {
         // 1. Stale BEFORE the workers stop, so no resolver that outlives this plane can
         //    answer from a snapshot nothing is re-reading. A clean stop leaves the store
         //    in exactly the condition `StaleFailsClosed` describes.
-        self.freshness.mark_stale();
+        //
+        //    PERMANENTLY, because step 2 does not stop the reload worker instantly: it
+        //    observes its halt only between cycles, so a read already under way could
+        //    otherwise complete after this line and report the store fresh again.
+        self.freshness.mark_stale_permanently();
         // 2. Halt and reclaim. There is no cross-worker shutdown dependency inside this
         //    plane today, so `WorkerSet`'s own termination semantics are the whole
         //    guarantee; if one is introduced it must become an explicit drain here
@@ -364,18 +382,39 @@ const TRUST_RELOAD_FAILURE_BUDGET: u32 = 5;
 #[derive(Debug, Default)]
 struct TrustStoreFreshness {
     stale: std::sync::atomic::AtomicBool,
+    /// Set by [`mark_stale_permanently`](Self::mark_stale_permanently). Separate from
+    /// `stale` because the two stalenesses differ in whether a later reload may undo
+    /// them: exhausting the failure budget is recoverable, and
+    /// [`mark_fresh`](Self::mark_fresh) is the recovery it exists to allow, while the
+    /// owner going away or the reload thread dying is not. Held in one flag, the
+    /// difference is not representable and the next successful read reverses either.
+    terminal: std::sync::atomic::AtomicBool,
 }
 impl TrustStoreFreshness {
     fn mark_stale(&self) {
         self.stale.store(true, Ordering::SeqCst);
     }
 
+    /// Stale, permanently: no later reload can report this store fresh again.
+    ///
+    /// For the two cases the store is not meant to recover from — the owning
+    /// [`TrustPlane`] being dropped, and the reload thread dying — both of which say so,
+    /// and neither of which could enforce it while the flag they set was one a live
+    /// reload could overwrite.
+    fn mark_stale_permanently(&self) {
+        self.terminal.store(true, Ordering::SeqCst);
+        self.mark_stale();
+    }
+
     fn mark_fresh(&self) {
+        if self.terminal.load(Ordering::SeqCst) {
+            return;
+        }
         self.stale.store(false, Ordering::SeqCst);
     }
 
     fn is_stale(&self) -> bool {
-        self.stale.load(Ordering::Relaxed)
+        self.terminal.load(Ordering::Relaxed) || self.stale.load(Ordering::Relaxed)
     }
 }
 /// The request-trust resolver, refusing to answer at all once the store behind it has
@@ -442,7 +481,7 @@ fn spawn_trust_reload_task(
             );
         }));
         if outcome.is_err() {
-            freshness.mark_stale();
+            freshness.mark_stale_permanently();
             eprintln!(
                 "mcp-re-proxy: FATAL: the trust store reload thread PANICKED. --trust is no \
                  longer being re-read, so a key revoked in it would keep resolving from the \
@@ -759,6 +798,141 @@ mod store_cadence_tests {
             resolver.resolve("signer-a", "kid-a").is_ok(),
             "a recovered reload serves again"
         );
+    }
+}
+
+/// The trust child machine's terminal transition (ADR-MCPRE-057 §5.1).
+///
+/// `Stale(terminal) -> Fresh` is illegal; `RecoverableStale -> Fresh` is not. These assert
+/// the difference, because collapsing the two in either direction is a real failure: one
+/// way revives a resolver that must refuse, the other turns a transient bad read into a
+/// permanent outage.
+#[cfg(test)]
+mod freshness_transition_tests {
+    use super::StaleFailsClosed;
+    use super::TrustPlane;
+    use super::TrustStoreFreshness;
+    use super::TEST_KID;
+    use super::TEST_SIGNER;
+    use mcp_re_core::TrustResolver;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// The transition this guards: `Stale(terminal) -> Fresh` must not exist.
+    ///
+    /// `TrustPlane::drop` marks the store stale and THEN halts the reload worker, which
+    /// observes its halt only between cycles. A read already under way therefore
+    /// completes after the plane is gone, and reported the store fresh — reviving a
+    /// resolver whose whole purpose past that point is to refuse. The two steps are on
+    /// different threads, so no ordering at the drop site can close it; only making the
+    /// state unrevivable can.
+    #[test]
+    fn a_reload_landing_after_the_owner_is_gone_cannot_report_the_store_fresh() {
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        freshness.mark_fresh();
+        assert!(!freshness.is_stale(), "a healthy store starts fresh");
+
+        // The owner goes away while a reload is mid-read.
+        freshness.mark_stale_permanently();
+        // The straggler finishes that read and reports success.
+        freshness.mark_fresh();
+
+        assert!(
+            freshness.is_stale(),
+            "a reload that outlived its plane reported the store fresh; the resolver the \
+             plane left behind would answer from a snapshot nothing is re-reading"
+        );
+    }
+
+    /// The consequence, at the surface that enforces it: the resolver stays closed.
+    ///
+    /// Separate from the flag test because `StaleFailsClosed` is what a request meets,
+    /// and a latch nothing consults would satisfy the assertion above while changing
+    /// nothing about what gets served.
+    #[test]
+    fn the_resolver_stays_closed_even_after_a_straggler_reports_fresh() {
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        let inner = Arc::new(mcp_re_core::InMemoryTrustResolver::new());
+        let resolver = StaleFailsClosed {
+            inner,
+            freshness: Arc::clone(&freshness),
+        };
+        freshness.mark_stale_permanently();
+        freshness.mark_fresh();
+        match resolver.resolve(TEST_SIGNER, TEST_KID) {
+            Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {}
+            other => panic!("must stay unavailable, got {other:?}"),
+        }
+    }
+
+    /// Negative control: the RECOVERABLE staleness is still recoverable.
+    ///
+    /// Without this, a latch applied to both would pass the test above while turning
+    /// every exhausted-failure-budget episode into a permanent outage — a replica that
+    /// never serves again after five bad reads of a file that has since been fixed.
+    #[test]
+    fn exhausting_the_failure_budget_is_still_undone_by_a_successful_reload() {
+        let freshness = TrustStoreFreshness::default();
+        freshness.mark_stale();
+        assert!(freshness.is_stale());
+        freshness.mark_fresh();
+        assert!(
+            !freshness.is_stale(),
+            "a recovered reload must serve again; only the owner's retirement is terminal"
+        );
+    }
+
+    /// The same race, staged through the REAL `TrustPlane::drop`.
+    ///
+    /// The tests above drive the flag directly, which proves the latch works but not that
+    /// teardown uses it. Here the reload worker is still running when the plane is
+    /// dropped, and finishes its read — successfully — during the join window `Drop`
+    /// itself opens between marking the store stale and halting the workers. The
+    /// interleaving is forced rather than hoped for: the worker reports fresh only after
+    /// observing the halt, which `Drop` raises strictly after it has staled the store.
+    ///
+    /// The broken implementation this catches: `Drop` calling `mark_stale` instead of
+    /// `mark_stale_permanently` — which is what it did, and which leaves the store fresh
+    /// at the end of this test with every direct-flag assertion above still passing.
+    #[test]
+    fn a_reload_completing_inside_the_drop_join_window_cannot_revive_the_resolver() {
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        freshness.mark_fresh();
+        let straggler = Arc::clone(&freshness);
+
+        let plane = TrustPlane::over_freshness(Arc::clone(&freshness), move |halt| {
+            // Mid-read when the owner goes away: the worker learns of the halt only
+            // between cycles, so it necessarily lands after `Drop` staled the store.
+            while !halt.requested() {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            straggler.mark_fresh();
+        });
+        // The resolver a request would meet, taken while the plane was live. It answers
+        // on its own terms — `NotFound` for a signer with no enrolled material is a
+        // definitive answer, and definitively not the `Unavailable` asserted below.
+        let resolver = plane.resolver();
+        assert!(
+            !matches!(
+                resolver.resolve(TEST_SIGNER, TEST_KID),
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+            ),
+            "a live plane must not report its trust store as unavailable"
+        );
+
+        drop(plane);
+
+        assert!(
+            freshness.is_stale(),
+            "the reload that completed during teardown reported the store fresh again"
+        );
+        match resolver.resolve(TEST_SIGNER, TEST_KID) {
+            Err(mcp_re_core::TrustResolverError::Unavailable { .. }) => {}
+            other => panic!(
+                "a resolver outliving its plane answered from a snapshot nothing is \
+                 re-reading, got {other:?}"
+            ),
+        }
     }
 }
 

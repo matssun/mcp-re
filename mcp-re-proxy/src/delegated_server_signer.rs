@@ -147,6 +147,13 @@ pub fn rotation_backoff(
 #[derive(Default)]
 pub struct DelegatedServerSigner {
     active: RwLock<Option<Arc<ActiveDelegatedKey>>>,
+    /// Set by [`retire_permanently`](Self::retire_permanently). Separate from an empty
+    /// `active` because the two retirements differ in whether they may be undone:
+    /// [`retire`](Self::retire) is the rotor's own fail-closed step and a later
+    /// [`publish`](Self::publish) is the recovery it exists to allow, while this one says
+    /// the authority to mint is gone. Without the distinction the difference is not
+    /// representable — both are `active = None`, and the next publish reverses either.
+    terminal: std::sync::atomic::AtomicBool,
     metrics: DelegatedRotationMetrics,
 }
 
@@ -156,6 +163,7 @@ impl DelegatedServerSigner {
     pub fn new() -> Self {
         DelegatedServerSigner {
             active: RwLock::new(None),
+            terminal: std::sync::atomic::AtomicBool::new(false),
             metrics: DelegatedRotationMetrics::default(),
         }
     }
@@ -174,7 +182,15 @@ impl DelegatedServerSigner {
     }
 
     /// Publish a freshly-issued/rotated delegated key snapshot for the hot path.
+    ///
+    /// Refused once retirement is terminal. The rotor and the owner run on different
+    /// threads and the rotor checks its halt only between cycles, so a mint already in
+    /// flight when the owner retired would otherwise land afterwards and restore signing
+    /// authority the owner had withdrawn.
     pub fn publish(&self, active: ActiveDelegatedKey) {
+        if self.is_terminal() {
+            return;
+        }
         *self.active.write().expect("delegated signer lock (write)") = Some(Arc::new(active));
     }
 
@@ -184,11 +200,30 @@ impl DelegatedServerSigner {
         *self.active.write().expect("delegated signer lock (write)") = None;
     }
 
+    /// Retire, permanently: no later [`publish`](Self::publish) can restore signing.
+    ///
+    /// For the two cases from which this signer is not meant to recover — the owning
+    /// [`SigningPlane`](crate::signing_plane::SigningPlane) being dropped, and the
+    /// rotation thread dying — both of which state exactly that, and neither of which
+    /// could enforce it while the flag they set was one a live rotor could overwrite.
+    pub fn retire_permanently(&self) {
+        self.terminal
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.retire();
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.terminal.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// The current delegated key snapshot IFF it is still valid at `now`. Returns
     /// `None` before the first issuance, after retirement, or once `now >= exp` —
     /// the fail-closed expiry bound (the credential is never honored past its
     /// window, matching the verifier, ADR-MCPRE-052 §6).
     pub fn current(&self, now: i64) -> Option<Arc<ActiveDelegatedKey>> {
+        if self.is_terminal() {
+            return None;
+        }
         let guard = self.active.read().expect("delegated signer lock (read)");
         match guard.as_ref() {
             Some(a) if now < a.exp => Some(Arc::clone(a)),
@@ -646,5 +681,79 @@ mod tests {
         // zero — the ceiling governs so issuance keeps retrying at a steady cadence.
         assert_in_band(50, Some(-120), 30_000);
         assert_in_band(50, None, 30_000);
+    }
+}
+
+#[cfg(test)]
+mod terminal_retirement_tests {
+    use super::DelegatedServerSigner;
+    use mcp_re_core::SigningKey;
+    use mcp_re_http_profile::ActiveDelegatedKey;
+    use mcp_re_http_profile::ActorIdentity;
+    use std::sync::Arc;
+
+    const NOW: i64 = 1_700_000_100;
+
+    fn key(exp: i64) -> ActiveDelegatedKey {
+        ActiveDelegatedKey {
+            key: Arc::new(SigningKey::from_seed_bytes(&[9u8; 32])),
+            delegated_kid: "delegated-1".into(),
+            server_signer: ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: "delegated-1".into(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp,
+        }
+    }
+
+    /// The transition this guards: `Retired(terminal) -> Active` must not exist.
+    ///
+    /// `SigningPlane::drop` retires the signer and THEN halts the rotor, which observes
+    /// its halt only between cycles. A mint already in flight therefore publishes after
+    /// the plane is gone, handing a signer that outlives it a fresh key and a fresh
+    /// `exp` — response signing continuing on authority the owner had withdrawn. The two
+    /// steps run on different threads, so only unrevivable state closes it.
+    #[test]
+    fn a_mint_landing_after_the_owner_is_gone_cannot_restore_signing() {
+        let signer = DelegatedServerSigner::new();
+        signer.publish(key(NOW + 300));
+        assert!(signer.current(NOW).is_some(), "a live signer signs");
+
+        // The owner goes away while a rotation is in flight.
+        signer.retire_permanently();
+        // The straggler finishes minting and publishes.
+        signer.publish(key(NOW + 300));
+
+        assert!(
+            signer.current(NOW).is_none(),
+            "a rotation that outlived its plane restored the delegated key; responses \
+             would keep being signed off a key nothing rotates and no trust-epoch \
+             advance can revoke"
+        );
+    }
+
+    /// Negative control: the ROTOR's own fail-closed retirement is still recoverable.
+    ///
+    /// Without this, a latch applied to both would pass the test above while turning
+    /// every declined issuance into a permanent outage — the rotor retires on a root
+    /// that briefly refused, and could never publish again.
+    #[test]
+    fn a_rotor_retirement_is_still_undone_by_the_next_successful_mint() {
+        let signer = DelegatedServerSigner::new();
+        signer.publish(key(NOW + 300));
+        signer.retire();
+        assert!(
+            signer.current(NOW).is_none(),
+            "retired means failing closed"
+        );
+        signer.publish(key(NOW + 300));
+        assert!(
+            signer.current(NOW).is_some(),
+            "a recovered rotor must sign again; only the owner's retirement is terminal"
+        );
     }
 }

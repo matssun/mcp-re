@@ -108,7 +108,11 @@ impl Drop for SigningPlane {
         // 1. Retire BEFORE the worker stops, so no signer that outlives this plane can
         //    keep signing off a key nothing is rotating and no trust-epoch advance can
         //    revoke. The hot path then fails closed immediately.
-        self.signer.retire();
+        //
+        //    PERMANENTLY, because step 2 does not stop the rotor instantly: it observes
+        //    its halt only between cycles, so an in-flight mint could otherwise publish
+        //    after this line and hand a signer that outlives this plane a fresh key.
+        self.signer.retire_permanently();
         // 2. Halt and reclaim. One worker, no cross-worker shutdown dependency, so
         //    `WorkerSet`'s termination semantics are the whole guarantee.
         self.workers.halt_and_reclaim();
@@ -231,7 +235,7 @@ fn spawn_delegated_rotation_task(
             rotation_loop(&mut rotor, &signer, overlap, epoch_watch.as_ref(), &halt)
         }));
         if outcome.is_err() {
-            signer.retire();
+            signer.retire_permanently();
             signer.metrics().record_failure();
             eprintln!(
                 "mcp-re-proxy: FATAL: the delegated rotation thread PANICKED. Delegated key \
@@ -924,6 +928,56 @@ mod handle_lifetime_tests {
             nbf: 0,
             exp,
         }
+    }
+
+    /// The signing child machine's terminal transition, staged through the REAL
+    /// `SigningPlane::drop` (ADR-MCPRE-057 §5.2).
+    ///
+    /// `delegated_server_signer`'s own tests drive `retire_permanently` directly, which
+    /// proves the latch works but not that teardown uses it. Here the rotor is still
+    /// running when the plane is dropped, and its in-flight mint publishes during the join
+    /// window `Drop` itself opens between retiring the signer and halting the worker. The
+    /// interleaving is forced rather than hoped for: the rotor publishes only after
+    /// observing the halt, which `Drop` raises strictly after it has retired the signer.
+    ///
+    /// The broken implementation this catches: `Drop` calling `retire` instead of
+    /// `retire_permanently` — which is what it did, and which leaves this plane's signer
+    /// holding a fresh key and a fresh `exp` that nothing rotates and no trust-epoch
+    /// advance can revoke.
+    #[test]
+    fn a_mint_completing_inside_the_drop_join_window_cannot_restore_signing() {
+        // The rotor cannot be handed the signer at construction — the plane that owns it
+        // does not exist yet — so the test passes it in once the plane is built. The
+        // rotor blocks on that handover, which is also what keeps it from publishing
+        // before the plane is dropped.
+        let (handover, awaiting) = std::sync::mpsc::channel::<Arc<DelegatedServerSigner>>();
+        let plane = SigningPlane::for_teardown_test(move |halt| {
+            let signer = awaiting
+                .recv()
+                .expect("the test hands the rotor its signer");
+            while !halt.requested() {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            // The mint that was already in flight when the owner went away now lands.
+            signer.publish(active_key(now_unix() + 3600));
+        });
+        let signer = plane.signer();
+        handover
+            .send(plane.signer())
+            .expect("the rotor is waiting for it");
+        assert!(
+            signer.current(now_unix()).is_some(),
+            "a live plane must publish a usable delegated key"
+        );
+
+        drop(plane);
+
+        assert!(
+            signer.current(now_unix()).is_none(),
+            "a rotation that completed during teardown republished a delegated key; \
+             responses would keep being signed off a key nothing rotates and no \
+             trust-epoch advance can revoke"
+        );
     }
 
     /// A plane holding a published key and one worker that only waits to be halted — the
