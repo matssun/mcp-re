@@ -68,7 +68,7 @@ use std::time::Instant;
 /// Every loop in the crate polls its halt in 50ms increments, so a healthy worker exits
 /// well inside this. The deadline exists for the one that cannot: a worker parked in a
 /// blocking KMS or network call it did not choose the timeout for.
-const JOIN_DEADLINE: Duration = Duration::from_secs(5);
+pub(crate) const JOIN_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Poll interval while waiting for a worker to finish.
 const JOIN_POLL: Duration = Duration::from_millis(10);

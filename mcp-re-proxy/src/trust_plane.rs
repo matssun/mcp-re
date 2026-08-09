@@ -79,7 +79,50 @@ impl TrustPlane {
     pub fn worker_count(&self) -> usize {
         self.workers.len()
     }
+
+    /// A plane over an in-memory store whose single worker runs `body`, for the ownership
+    /// and teardown tests.
+    ///
+    /// `body` receives the worker's [`Halt`](crate::managed_worker::Halt) rather than
+    /// polling it itself, so a test picks which of the three shapes teardown must survive
+    /// it is: a worker that stops when asked, one that ignores the halt, or one that
+    /// panics. Nothing else about this plane is contrived — the store, the freshness flag
+    /// and the fail-closed resolver wrapper are the production ones.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test(
+        body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
+    ) -> Self {
+        let mut signers = HashMap::new();
+        signers.insert(TEST_KID.to_string(), TEST_SIGNER.to_string());
+        let store = Arc::new(crate::reloading_trust::ReloadingTrustStore::new(
+            mcp_re_core::InMemoryTrustResolver::new(),
+            signers,
+        ));
+        let freshness = Arc::new(TrustStoreFreshness::default());
+        let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
+        let halt = workers.halt();
+        workers.spawn("test trust reload", move || body(halt));
+        let inner: Arc<dyn mcp_re_core::TrustResolver + Send + Sync> =
+            Arc::new(crate::reloading_trust::SharedTrustStore(Arc::clone(&store)));
+        TrustPlane {
+            resolver: Arc::new(StaleFailsClosed {
+                inner,
+                freshness: Arc::clone(&freshness),
+            }),
+            signers: store.signer_directory(),
+            freshness,
+            workers,
+        }
+    }
 }
+
+/// The one enrolled coordinate [`TrustPlane::for_teardown_test`] carries. Shared so a test
+/// in another module can ask the resolver about a signer the plane actually knows.
+#[cfg(test)]
+pub(crate) const TEST_KID: &str = "kid-1";
+/// The signer identity [`TEST_KID`] resolves to.
+#[cfg(test)]
+pub(crate) const TEST_SIGNER: &str = "did:example:client";
 
 impl Drop for TrustPlane {
     fn drop(&mut self) {
@@ -727,41 +770,18 @@ mod store_cadence_tests {
 #[cfg(test)]
 mod handle_lifetime_tests {
     use super::*;
-    use crate::reloading_trust::ReloadingTrustStore;
-    use crate::reloading_trust::SharedTrustStore;
-    use mcp_re_core::TrustResolver;
 
-    const KID: &str = "kid-1";
-    const SIGNER: &str = "did:example:client";
+    const KID: &str = TEST_KID;
+    const SIGNER: &str = TEST_SIGNER;
 
-    /// A plane over an in-memory store, with one worker that only waits to be halted —
-    /// enough to assert the ownership relationship without standing up a trust file.
+    /// A plane whose one worker only waits to be halted — the cooperative shape, enough to
+    /// assert the ownership relationship without standing up a trust file.
     fn plane() -> TrustPlane {
-        let mut signers = HashMap::new();
-        signers.insert(KID.to_string(), SIGNER.to_string());
-        let store = Arc::new(ReloadingTrustStore::new(
-            mcp_re_core::InMemoryTrustResolver::new(),
-            signers,
-        ));
-        let freshness = Arc::new(TrustStoreFreshness::default());
-        let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
-        let halt = workers.halt();
-        workers.spawn("test trust reload", move || {
+        TrustPlane::for_teardown_test(|halt| {
             while !halt.requested() {
                 std::thread::sleep(Duration::from_millis(5));
             }
-        });
-        let inner: Arc<dyn TrustResolver + Send + Sync> =
-            Arc::new(SharedTrustStore(Arc::clone(&store)));
-        TrustPlane {
-            resolver: Arc::new(StaleFailsClosed {
-                inner,
-                freshness: Arc::clone(&freshness),
-            }),
-            signers: store.signer_directory(),
-            freshness,
-            workers,
-        }
+        })
     }
 
     /// A resolver that outlives its plane must NOT become an indefinitely-valid frozen

@@ -63,7 +63,42 @@ impl SigningPlane {
     pub fn worker_count(&self) -> usize {
         self.workers.len()
     }
+
+    /// A plane holding a published delegated key whose single worker runs `body`, for the
+    /// ownership and teardown tests.
+    ///
+    /// The key is valid for an hour — far outside any overlap window — so nothing below
+    /// can stop signing by ordinary expiry rather than by the retirement under test.
+    /// `body` receives the worker's [`Halt`](crate::managed_worker::Halt), so a test picks
+    /// a worker that stops when asked, one that ignores the halt, or one that panics.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test(
+        body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
+    ) -> Self {
+        let signer = Arc::new(DelegatedServerSigner::new());
+        signer.publish(mcp_re_http_profile::ActiveDelegatedKey {
+            key: Arc::new(mcp_re_core::SigningKey::from_seed_bytes(&[3u8; 32])),
+            delegated_kid: TEST_KID.to_string(),
+            server_signer: mcp_re_http_profile::ActorIdentity {
+                role: "server".into(),
+                trust_domain: "example.com".into(),
+                subject: "did:example:server".into(),
+                keyid: TEST_KID.to_string(),
+            },
+            credential: "cred".into(),
+            nbf: 0,
+            exp: now_unix() + 3600,
+        });
+        let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let halt = workers.halt();
+        workers.spawn("test delegated rotation", move || body(halt));
+        SigningPlane { signer, workers }
+    }
 }
+
+/// The delegated kid [`SigningPlane::for_teardown_test`] publishes.
+#[cfg(test)]
+pub(crate) const TEST_KID: &str = "delegated-1";
 
 impl Drop for SigningPlane {
     fn drop(&mut self) {
@@ -873,7 +908,7 @@ mod handle_lifetime_tests {
     use mcp_re_http_profile::ActorIdentity;
     use std::sync::atomic::AtomicBool;
 
-    const KID: &str = "delegated-1";
+    const KID: &str = TEST_KID;
 
     fn active_key(exp: i64) -> ActiveDelegatedKey {
         ActiveDelegatedKey {
@@ -891,21 +926,15 @@ mod handle_lifetime_tests {
         }
     }
 
-    /// A plane holding a published key and one worker that only waits to be halted —
-    /// enough to assert the ownership relationship without a root issuer or a KMS.
+    /// A plane holding a published key and one worker that only waits to be halted — the
+    /// cooperative shape, enough to assert the ownership relationship without a root
+    /// issuer or a KMS.
     fn plane() -> SigningPlane {
-        let signer = Arc::new(DelegatedServerSigner::new());
-        // Valid for an hour: far outside any overlap window, so nothing below can pass
-        // by ordinary expiry rather than by the retirement under test.
-        signer.publish(active_key(now_unix() + 3600));
-        let mut workers = WorkerSet::new(Arc::new(AtomicBool::new(false)));
-        let halt = workers.halt();
-        workers.spawn("test delegated rotation", move || {
+        SigningPlane::for_teardown_test(|halt| {
             while !halt.requested() {
                 std::thread::sleep(Duration::from_millis(5));
             }
-        });
-        SigningPlane { signer, workers }
+        })
     }
 
     /// A signer that outlives its plane must STOP signing.

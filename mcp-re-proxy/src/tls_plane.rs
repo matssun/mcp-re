@@ -115,8 +115,50 @@ impl TlsPlane {
     pub fn worker_count(&self) -> usize {
         self.workers.len()
     }
-}
 
+    /// A plane over a self-signed, server-only TLS configuration whose single worker runs
+    /// `body`, for the ownership and teardown tests.
+    ///
+    /// No CRLs and no revocation index: this plane's teardown obligation is halting its
+    /// worker, and neither of those bears on it. `body` receives the worker's
+    /// [`Halt`](crate::managed_worker::Halt), so a test picks a worker that stops when
+    /// asked, one that ignores the halt, or one that panics.
+    #[cfg(test)]
+    pub(crate) fn for_teardown_test(
+        body: impl FnOnce(crate::managed_worker::Halt) + Send + 'static,
+    ) -> Self {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+
+        let key = rcgen::KeyPair::generate().expect("key");
+        let params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).expect("params");
+        let cert = params.self_signed(&key).expect("self-signed");
+        let server = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+        )
+        .expect("server config");
+
+        let mut workers = WorkerSet::new(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let halt = workers.halt();
+        workers.spawn("test crl reload", move || body(halt));
+        TlsPlane {
+            snapshot: Arc::new(config_snapshot::ServerConfigSnapshot::new(Arc::new(server))),
+            revocation: None,
+            crls: ClientCrlEvidence {
+                postures: Vec::new(),
+            },
+            is_delegated: false,
+            workers,
+        }
+    }
+}
 
 impl Drop for TlsPlane {
     fn drop(&mut self) {

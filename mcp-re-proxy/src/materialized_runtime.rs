@@ -33,6 +33,26 @@
 //! not assumed — an assumed dependency here would have been encoded as a field order and
 //! then quietly relied upon.
 //!
+//! # Phases 2 and 3 are IN-PROCESS ONLY
+//!
+//! Every plane's post-owner work is a local state change and a thread join: `mark_stale`,
+//! `retire`, `halt_and_reclaim`. No lease is released, no audit is flushed, no replica
+//! deregisters. Two things rest on that.
+//!
+//! Each plane's reclamation is bounded by its own [`JOIN_DEADLINE`], so the worst case is
+//! that budget times the number of planes, spent AFTER the drain the deployment's grace
+//! period was sized around. The chart's drain invariant
+//! (`deploy/helm/mcp-re-proxy/templates/_helpers.tpl`) does not include it, and is right
+//! not to — only because nothing here needs to reach the outside world before the process
+//! dies. A `SIGKILL` landing mid-teardown loses no observable state.
+//!
+//! Adding externally-visible work to a plane's `Drop` therefore breaks a contract that is
+//! enforced nowhere: it would silently shorten the effective grace period and start losing
+//! whatever that work was for. Such work belongs in the drain, before phase 2, where the
+//! grace period accounts for it.
+//!
+//! [`JOIN_DEADLINE`]: crate::managed_worker::JOIN_DEADLINE
+//!
 //! # Why `Option` fields and an explicit `shutdown`
 //!
 //! A struct that implements `Drop` cannot be destructured, so "drop these in this order"
@@ -191,6 +211,209 @@ impl Drop for MaterializedRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::managed_worker::Halt;
+    use crate::managed_worker::JOIN_DEADLINE;
+    use crate::trust_plane::TEST_KID as TRUST_KID;
+    use crate::trust_plane::TEST_SIGNER as TRUST_SIGNER;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    /// A worker that notices its halt and stops. The shape every production worker has.
+    fn cooperative(halt: Halt) {
+        while !halt.requested() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A worker that never notices its halt — the one `JOIN_DEADLINE` exists for. Bounded
+    /// well above the deadline so the test proves the deadline terminated the wait, and
+    /// still finite so the process does not carry it for the rest of the run.
+    fn ignores_the_halt(_halt: Halt) {
+        std::thread::sleep(JOIN_DEADLINE * 3);
+    }
+
+    /// A worker that dies. The panic message it prints is expected output, not a failure.
+    fn panics(_halt: Halt) {
+        panic!("the test worker died on purpose");
+    }
+
+    /// A control runtime, the substrate phase 3 reclaims.
+    fn substrate() -> ControlRuntime {
+        ControlRuntime::start(crate::control_runtime::ControlRuntimeRequirement::Required)
+            .expect("a control runtime builds")
+            .expect("Required yields one")
+    }
+
+    /// A fully populated runtime whose three planes are real, each running `body`.
+    ///
+    /// `proxy` stays `None`: it needs a resolver, an audience, a replay tier and an inner
+    /// pool, and none of those bear on which phase takes which field or on what a plane
+    /// does to its own artifact on the way out.
+    fn populated(
+        trust_body: fn(Halt),
+        signing_body: fn(Halt),
+        tls_body: fn(Halt),
+    ) -> MaterializedRuntime {
+        MaterializedRuntime {
+            trust: Some(TrustPlane::for_teardown_test(trust_body)),
+            signing: Some(SigningPlane::for_teardown_test(signing_body)),
+            tls: Some(TlsPlane::for_teardown_test(tls_body)),
+            proxy: None,
+            control: Some(substrate()),
+        }
+    }
+
+    /// The whole teardown, with REAL planes — the case every other test in this module
+    /// approximates with `None`.
+    ///
+    /// Three claims at once, because they are one sequence and asserting them apart would
+    /// not show that they hold together:
+    ///
+    /// 1. each plane performs its OWN post-owner transition (§I.5) — the resolver fails
+    ///    closed, the signer is retired, and those are DIFFERENT outcomes reached by one
+    ///    call;
+    /// 2. phase 2 leaves the substrate alone, so no security transition waits on a
+    ///    networked dependency;
+    /// 3. cooperative workers are JOINED, not waited out — a teardown that silently
+    ///    burned the deadline on every plane would still pass 1 and 2.
+    #[test]
+    fn a_populated_runtime_transitions_every_plane_and_then_reclaims_the_substrate() {
+        let mut runtime = populated(cooperative, cooperative, cooperative);
+        let resolver = runtime.trust.as_ref().expect("trust").resolver();
+        let signer = runtime.signing.as_ref().expect("signing").signer();
+
+        // Alive: the resolver answers on its own terms (an unenrolled kid is NotFound, not
+        // an outage) and the signer holds a key an hour from expiry.
+        assert!(
+            matches!(
+                resolver.resolve(TRUST_SIGNER, TRUST_KID),
+                Ok(_) | Err(mcp_re_core::TrustResolverError::NotFound)
+            ),
+            "a live plane's resolver must answer rather than report an outage"
+        );
+        assert!(
+            signer.current(crate::app::now_unix()).is_some(),
+            "a live plane must publish a usable delegated key"
+        );
+
+        let started = Instant::now();
+        runtime.transition();
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(
+                resolver.resolve(TRUST_SIGNER, TRUST_KID),
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+            ),
+            "a resolver that outlived its plane must fail CLOSED, not answer from a \
+             snapshot nothing is re-reading"
+        );
+        assert!(
+            signer.current(crate::app::now_unix()).is_none(),
+            "a signer that outlived its plane must stop signing: nothing is rotating that \
+             key and no trust-epoch advance can revoke it"
+        );
+        assert!(
+            runtime.control.is_some(),
+            "phase 2 took the substrate: a security transition must not depend on a \
+             networked dependency that can be slow or wedged"
+        );
+        assert!(
+            elapsed < JOIN_DEADLINE,
+            "three cooperative workers took {elapsed:?}, at or past the {JOIN_DEADLINE:?} \
+             straggler deadline — they were waited out rather than joined"
+        );
+
+        runtime.reclaim();
+        assert!(
+            runtime.control.is_none(),
+            "phase 3 must reclaim the substrate"
+        );
+    }
+
+    /// One worker that never stops must not cost the OTHER planes their transitions.
+    ///
+    /// This is the case the whole `WorkerSet` deadline exists for, raised to the system
+    /// level: `halt_and_reclaim` is bounded per plane, but nothing until now asserted that
+    /// a plane which spends its whole budget still lets the ones after it run. A
+    /// `transition` that joined without a deadline, or that abandoned the sequence on the
+    /// first straggler, would leave a live signer behind on a process that believes it has
+    /// shut down.
+    ///
+    /// The budget is per plane and therefore ADDITIVE across them; the upper bound below
+    /// states that, and would catch a change that made every plane wait for every other.
+    #[test]
+    fn a_worker_that_never_stops_bounds_teardown_without_skipping_the_other_planes() {
+        let mut runtime = populated(ignores_the_halt, cooperative, cooperative);
+        let signer = runtime.signing.as_ref().expect("signing").signer();
+
+        let started = Instant::now();
+        runtime.transition();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed >= JOIN_DEADLINE,
+            "teardown returned in {elapsed:?}, before the {JOIN_DEADLINE:?} deadline — the \
+             straggler was abandoned without being given its budget"
+        );
+        assert!(
+            elapsed < JOIN_DEADLINE * 3,
+            "teardown took {elapsed:?}: one straggler must cost ONE budget, not one per \
+             plane"
+        );
+        assert!(
+            signer.current(crate::app::now_unix()).is_none(),
+            "the signing plane's retirement was skipped because an earlier plane stalled"
+        );
+        assert!(
+            runtime.control.is_some(),
+            "phase 2 took the substrate while waiting out a straggler"
+        );
+
+        runtime.reclaim();
+        assert!(
+            runtime.control.is_none(),
+            "a stalled transition must not prevent the substrate being reclaimed"
+        );
+    }
+
+    /// A worker that PANICKED must not take the teardown with it.
+    ///
+    /// What this can catch: `halt_and_reclaim` discarding the `join` result. A
+    /// `join().unwrap()` — the reflexive spelling — would re-raise the worker's panic
+    /// inside `transition`, unwinding through a partially torn-down runtime and never
+    /// reaching phase 3, so the substrate would be reclaimed by `Drop` in whatever order
+    /// unwinding produced rather than by the documented sequence.
+    ///
+    /// What it does NOT catch, stated because the assertion looks like it does: the
+    /// stale-before-halt ORDER inside `TrustPlane::drop`. Both statements run either way,
+    /// so the resolver ends up failing closed under either order. That order matters
+    /// against a live request during a graceful drain, not here; it is
+    /// `trust_plane`'s own tests that hold it. The resolver assertion here says only that
+    /// the plane was transitioned at all on a path where a worker died.
+    #[test]
+    fn a_panicked_worker_still_leaves_its_plane_transitioned_and_the_substrate_reclaimable() {
+        let mut runtime = populated(panics, cooperative, cooperative);
+        let resolver = runtime.trust.as_ref().expect("trust").resolver();
+
+        runtime.transition();
+
+        assert!(
+            matches!(
+                resolver.resolve(TRUST_SIGNER, TRUST_KID),
+                Err(mcp_re_core::TrustResolverError::Unavailable { .. })
+            ),
+            "a plane whose worker panicked must still fail its resolver closed"
+        );
+        assert!(runtime.control.is_some(), "phase 2 took the substrate");
+
+        runtime.reclaim();
+        assert!(
+            runtime.control.is_none(),
+            "a panicked worker must not prevent the substrate being reclaimed"
+        );
+    }
 
     /// `shutdown` must be safe to call twice: `serve` calls it, and then `Drop` calls it
     /// again on the way out. A second pass that re-entered teardown would double-drop.
