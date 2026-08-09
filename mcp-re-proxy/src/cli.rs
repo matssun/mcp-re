@@ -4175,11 +4175,8 @@ mod tests {
 
     #[test]
     fn mode_c_is_refused_by_the_unsafe_configuration_guard_itself() {
-        // This test previously asserted the opposite — that Mode C raised NO strict
-        // violation — because the only thing refusing the mode lived in the composition
-        // root. The refusal moved to the validation boundary once Mode C was ruled
-        // deliberately non-deployable, so the guard is now where it is enforced and this is
-        // the assertion that holds it there.
+        // Mode C is refused at the validation boundary, so the guard — not the composition
+        // root — is what has to hold the refusal.
         //
         // Reached by mutating a parsed config rather than through `parse_args`, because
         // `parse_args` now ends at this same guard: going through it would prove only that
@@ -4192,6 +4189,106 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("attested-ingress is not a supported deployment mode")),
             "the unsafe-configuration guard must be what refuses Mode C, got {violations:?}"
+        );
+    }
+
+    /// A complete Mode-C [`Config`], assembled by mutating a parsed base rather than
+    /// through `parse_args` — the boundary refuses the mode, so no parsed path can
+    /// produce one. The `did:` audience and ingress identity match
+    /// [`attested_ingress_flags`].
+    fn mode_c_config() -> super::Config {
+        let mut config = parse_args(&minimal_durable()).expect("the base config parses");
+        config.binding = BindingKind::AttestedIngress;
+        config.identity_source = IdentityPolicy::UriSan;
+        config.ingress_attestor_keys = vec![("attestor-1".to_string(), attestor_pub_b64())];
+        config.ingress_identities = vec!["spiffe://example.org/ingress-1".to_string()];
+        config.ingress_audience = Some("did:example:server-1".to_string());
+        config.ingress_pinned_mtls = true;
+        config
+    }
+
+    #[test]
+    fn the_retained_mode_c_verifier_still_admits_an_assertion_from_its_configured_attestor() {
+        // Mode C is refused for deployment but RETAINED as a capability, so its verifier
+        // has to stay correct rather than merely compile. Minting a real assertion and
+        // verifying it through the built binding is what proves the builder actually
+        // transferred all three configured facts: an implementation that skipped
+        // `add_key`, skipped `permit_ingress_identity`, or passed the wrong audience
+        // would fail this with `UnknownKeyId`, `UntrustedIngressIdentity`, or
+        // `AudienceMismatch` respectively.
+        let binding = build_attested_ingress_binding(&mode_c_config())
+            .expect("a complete Mode-C config builds its verifier")
+            .expect("the verifier is present for the attested-ingress binding");
+
+        let request_hash = mcp_re_core::sha256_hash_id(b"an in-hand request body");
+        let now = 1_800_000_000_i64;
+        let assertion = crate::transport::LbAssertionV2 {
+            key_id: "attestor-1".to_string(),
+            ingress_identity: "spiffe://example.org/ingress-1".to_string(),
+            asserted_client_identity: "spiffe://example.org/agent-1".to_string(),
+            request_hash: request_hash.clone(),
+            audience: "did:example:server-1".to_string(),
+            cert_verification_result: crate::transport::AttestedCertVerification::Verified,
+            revocation_result: crate::transport::AttestedRevocation::Good,
+            validation_time: now,
+            crl_next_update: now + 86_400,
+            expires_at: None,
+        };
+        let attestor = SigningKey::from_seed_bytes(&[9u8; 32]);
+        let wire = assertion.to_wire(&attestor.sign(&assertion.signing_preimage()));
+
+        let verified = binding
+            .verify(&wire, &request_hash, now)
+            .expect("the configured attestor's assertion must verify");
+        assert_eq!(
+            verified.client_identity.value,
+            "spiffe://example.org/agent-1"
+        );
+        assert_eq!(
+            verified.client_identity.source,
+            crate::transport::IdentitySource::UriSan,
+            "the configured identity source must be the one stamped on the yielded identity"
+        );
+    }
+
+    #[test]
+    fn the_mode_c_verifier_is_built_only_for_the_attested_ingress_binding() {
+        let config = parse_args(&minimal_durable()).expect("the base config parses");
+        assert!(
+            build_attested_ingress_binding(&config)
+                .expect("a non-Mode-C config is not an error")
+                .is_none(),
+            "no verifier may be built for a binding other than attested-ingress"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_missing_its_audience_fails_closed_rather_than_defaulting() {
+        // The audience is what scopes an assertion to THIS node. Building a verifier
+        // with an empty or defaulted audience would admit assertions minted for another
+        // route, so the absent case must be an error and not a fallback.
+        let mut config = mode_c_config();
+        config.ingress_audience = None;
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("a Mode-C verifier without an audience must not be built");
+        assert!(
+            err.contains("--ingress-audience"),
+            "the failure must name the missing audience, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_mode_c_verifier_rejects_an_unusable_attestor_key_rather_than_dropping_it() {
+        // Silently skipping a key that will not decode would build a verifier that
+        // trusts fewer attestors than configured and fails closed later at request
+        // time, where the cause is far from the configuration that caused it.
+        let mut config = mode_c_config();
+        config.ingress_attestor_keys = vec![("attestor-1".to_string(), "not-a-key".to_string())];
+        let err = build_attested_ingress_binding(&config)
+            .expect_err("an undecodable attestor key must not be silently dropped");
+        assert!(
+            err.contains("attestor-1"),
+            "the failure must name the offending key id, got: {err}"
         );
     }
 
