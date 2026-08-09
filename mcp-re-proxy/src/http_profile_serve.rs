@@ -8,30 +8,18 @@
 //! RFC 9530 HTTP evidence carrier** — the signature rides in the RFC 9421 HTTP
 //! headers, not a JSON-RPC `_meta` block, on the served path.
 //!
-//! Per request:
-//!   1. reconstruct the [`HttpRequest`] (method, `@target-uri`, headers, body);
-//!   2. `verify_request_full` — RFC 9421 signature + RFC 9530 Content-Digest + the
-//!      request evidence block (audience / artifact bindings), fail-closed;
-//!   3. Mode-A transport binding — bind the verified request actor to the mTLS peer
-//!      identity (when a binding policy is configured);
-//!   4. recover the MRTR continuation bases for an answer leg — a non-destructive
-//!      read, keyed by the RESOLVED ACTOR and the presented `requestState`;
-//!   5. `dispatch_request_with_async_tier` — the authoritative async §4 replay
-//!      admission + continuation binding, awaited (fail-closed on replay / store
-//!      outage / binding mismatch);
-//!   6. take the delegated key snapshot — can this request be answered at all?
-//!   7. retire the continuation (one-shot), strip the proxy-owned top-level `_meta`,
-//!      and forward the clean JSON-RPC to the stateless Streamable-HTTP inner backend
-//!      via the async inner pool;
-//!   8. `sign_delegated_response_full` — sign the reply with that snapshot, bound to
-//!      THIS request (ADR-MCPRE-052).
+//! The per-request stage sequence, its one irreversible effect, and the reversibility of
+//! every step around it are stated once, in [`crate::request_stages`]. This module does
+//! not restate them as a numbered list: the list that used to be here had drifted out of
+//! execution order, which is what a hand-maintained sequence does, and two copies of an
+//! ordering is how the second one stops being true.
 //!
 //! **Nothing irreversible happens on a request's behalf until it is both admitted and
-//! answerable.** Steps 4 and 6 are ordered the way they are for that reason: a
-//! destructive continuation read at step 4 let an about-to-be-rejected request destroy
-//! a live approval leg, and discovering a missing delegated key only at step 8 meant
-//! the backend had already run — and 503 is a status clients retry, so the action ran
-//! twice.
+//! answerable.** The continuation read and the delegated-key snapshot are ordered the way
+//! they are for that reason: a destructive continuation read before admission let an
+//! about-to-be-rejected request destroy a live approval leg, and discovering a missing
+//! delegated key only at signing time meant the backend had already run — and 503 is a
+//! status clients retry, so the action ran twice.
 //!
 //! Any fail-closed step emits a delegated-signed rejection receipt instead. A
 //! one-way notification (a `method` with no `id`) is answered with a delegated
@@ -87,7 +75,7 @@ use crate::transport::TransportBindingPolicy;
 /// [`HttpProfileProxy::with_continuation_store`].
 pub const DEFAULT_CONTINUATION_TTL_SECS: i64 = 300;
 
-/// How many times the Step-8 open-leg record is attempted before the leg is failed.
+/// How many times the CONTINUATION-RECORDED open-leg record is attempted before the leg is failed.
 ///
 /// Bounded and small: the shared tier answered the replay admission moments earlier,
 /// so the only failure this can absorb is a transient one, and retrying past that
@@ -528,7 +516,7 @@ impl HttpProfileProxy {
             body: req.body,
         };
 
-        // Step 2 — verify (RFC 9421 + RFC 9530 + evidence block). DPoP artifact
+        // VERIFIED — verify (RFC 9421 + RFC 9530 + evidence block). DPoP artifact
         // bindings derive their credential from the covered Authorization header, so
         // no external material is supplied here; any binding lacking a credential
         // still fails closed.
@@ -557,7 +545,7 @@ impl HttpProfileProxy {
         // that is dropping the attribution the surface exists for.
         let actor_id = verified.resolved_actor.actor_id();
 
-        // Step 3 — Mode-A transport binding: the verified request actor must match
+        // TRANSPORT-BOUND — Mode-A transport binding: the verified request actor must match
         // the mTLS peer identity. Fail closed on mismatch.
         if let Some(binding) = &self.transport_binding {
             if binding.check(&actor_id, req.identity.as_ref()).is_err() {
@@ -574,7 +562,7 @@ impl HttpProfileProxy {
             }
         }
 
-        // Step 3b — §7 admission currency (ADR-MCPRE-053). Before replay admission
+        // ADMISSION-CHECKED — §7 admission currency (ADR-MCPRE-053). Before replay admission
         // and the inner round trip, both of which are irreversible.
         if let Some(rejection) = self
             .admission_gate(&http_req, &verified, &actor_id, now)
@@ -583,7 +571,7 @@ impl HttpProfileProxy {
             return rejection;
         }
 
-        // Step 4 — MRTR continuation prep (ADR-MCPS-047): if the verified request
+        // CONTINUATION-PREPARED — MRTR continuation prep (ADR-MCPS-047): if the verified request
         // carries a continuation, this is an ANSWER leg. Recover the retained open-leg
         // bases from the fleet-shared correlation store (keyed by the requestState the
         // client re-presents) so the pure dispatcher can bind the answer to the exact
@@ -629,7 +617,7 @@ impl HttpProfileProxy {
             _ => None,
         };
 
-        // Step 5 — authoritative async §4 replay admission + continuation binding
+        // REPLAY-ADMITTED — authoritative async §4 replay admission + continuation binding
         // (awaited). When a continuation is present it is verified against the retained
         // bases (digest equality under the client's signature); the nonce is burned
         // strictly last.
@@ -652,7 +640,7 @@ impl HttpProfileProxy {
             );
         }
 
-        // Step 5a — can this request be ANSWERED at all? The delegated key is what makes
+        // ANSWERABLE — can this request be ANSWERED at all? The delegated key is what makes
         // a reply signable, and no reply can be produced without one (ADR-MCPRE-052 §6:
         // fail-closed issuance past expiry). Asked here, before anything is done on the
         // request's behalf, because the two steps below are irreversible: retiring the
@@ -684,7 +672,7 @@ impl HttpProfileProxy {
         // here — the response states the window it can actually be verified in.
         let expires = (now + self.sig_ttl_secs).min(a.exp);
 
-        // Step 5b — the answer leg is admitted, so NOW retire its continuation. This is
+        // CONTINUATION-RETIRED — the answer leg is admitted, so NOW retire its continuation. This is
         // where one-shot is enforced: `consume` reports whether this call removed the
         // live entry, so of two concurrent answer legs that both bound successfully,
         // exactly one proceeds and the other is refused as already-answered. A store
@@ -725,7 +713,7 @@ impl HttpProfileProxy {
             now,
         );
 
-        // Step 6 — strip the proxy-owned top-level `_meta` (the request evidence
+        // FORWARDED — strip the proxy-owned top-level `_meta` (the request evidence
         // block) so the backend sees clean MCP, then forward through the async inner.
         let forwarded =
             match forwarded_body(&http_req.body, &verified, self.verified_context_policy, now) {
@@ -761,7 +749,7 @@ impl HttpProfileProxy {
                     )
                 }
             };
-        // Step 6a — take durable retention responsibility BEFORE the side effects run.
+        // RETENTION-RESERVED — take durable retention responsibility BEFORE the side effects run.
         //
         // This is the only point at which refusing is still free. Past the dispatch
         // below, a retention failure can no longer be answered with "nothing happened",
@@ -811,14 +799,14 @@ impl HttpProfileProxy {
         let inner_bytes = self.inner_async.dispatch(ready.forwarded()).await;
         let (inner_bytes, a, expires, retention) = ready.dispatched(inner_bytes).into_parts();
 
-        // Step 7 — sign the backend reply, bound to THIS request, with the delegated key
-        // + inline credential taken at step 5a (ADR-MCPRE-052).
+        // RESPONSE-BUILT — the backend has acted; build the reply, bound to THIS request, with the delegated key
+        // + inline credential taken at ANSWERABLE (ADR-MCPRE-052).
         let mut response = HttpResponse {
             status: 200,
             headers: vec![("content-type".into(), "application/json".into())],
             body: inner_bytes,
         };
-        // Step 7a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
+        // NOTIFICATION — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
         // signed bodyless 202, not a bodied reply (#424 / #418). The backend already
         // received it above (its side effects run); the 202 states only that the
         // enforcement boundary authenticated and accepted the message — NOT that any
@@ -873,7 +861,7 @@ impl HttpProfileProxy {
             };
         }
 
-        // Step 6b — the backend's reply must be classifiable before the enforcement
+        // RESULT-CLASSIFIED — the backend's reply must be classifiable before the enforcement
         // boundary puts its signature on it (MCPRE-495). MCP 2026-07-28 closes the
         // `resultType` set: unrecognized MUST be considered invalid. Signing one
         // anyway would produce a perfectly verifiable message whose continuation
@@ -923,7 +911,7 @@ impl HttpProfileProxy {
             }
         };
 
-        // Step 8 — MRTR open-leg record (ADR-MCPS-047): if the signed reply is an
+        // CONTINUATION-RECORDED — MRTR open-leg record (ADR-MCPS-047): if the signed reply is an
         // `InputRequiredResult` carrying a requestState, record the retained bases so a
         // later answer leg on ANY replica can bind to this exchange. The previous-
         // request base is THIS request's verified signature base; the input-required-
@@ -956,8 +944,8 @@ impl HttpProfileProxy {
                 );
                 // Retried, briefly, before failing the leg. Reaching here means the
                 // backend has ALREADY run: the shared tier answered the replay
-                // admission at Step 5 microseconds ago, so a failure now is a
-                // transient blip rather than the outage Step 5 already fails closed
+                // admission at REPLAY-ADMITTED microseconds ago, so a failure now is a
+                // transient blip rather than the outage REPLAY-ADMITTED already fails closed
                 // on, and absorbing it is what keeps a retryable 503 — which
                 // re-executes the tool call — off a path that has side effects.
                 let mut recorded = false;
