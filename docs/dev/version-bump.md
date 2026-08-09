@@ -25,10 +25,18 @@ licensing, claim wording, conformance evidence, security review — is
 | Helm **appVersion** | `deploy/helm/mcp-re-proxy/Chart.yaml` | **yes** — it names the image |
 | Helm **chart version** | `deploy/helm/mcp-re-proxy/Chart.yaml` | **only if the chart changed** |
 | changelog | `CHANGELOG.md` | **yes** |
+| Bazel lock | `MODULE.bazel.lock` | **yes** — it hashes every `Cargo.toml` |
 | Python SDK | `sdk/python/pyproject.toml` | **no** — independent cadence |
 | TypeScript SDK | `sdk/typescript/package.json` | **no** — independent cadence |
 
-Two of these are routinely got wrong:
+Three of these are routinely got wrong:
+
+* **`MODULE.bazel.lock` records a content hash of every `Cargo.toml`**, so a bump
+  invalidates all twelve of them. Nothing fails when it is left stale: Bazel's default
+  lockfile mode is `update`, so the next `bazel` invocation silently rewrites the file and
+  leaves the tree dirty, and whoever notices it days later reads it as unrelated noise.
+  v0.15.0 shipped this way — the lock in git predated its own version bump. Stage 3 of
+  `local_gate.sh` regenerates it; commit what it produces.
 
 * **Chart version vs appVersion.** `appVersion` names the image and tracks `VERSION`. The
   chart's own `version` is the chart's semver and moves only when the templates change. A
@@ -54,7 +62,10 @@ Two of these are routinely got wrong:
 5. **`scripts/local_gate.sh --with-kind`** — the full battery. Stage 1 runs the image-tag
    gate; stage 5 deploys the chart against freshly built images, which is what proves the
    tag actually resolves.
-6. **Commit, PR, merge.** Tag the release commit on `main`.
+6. **Commit the regenerated `MODULE.bazel.lock`.** Stage 3 rewrites it because the crate
+   `Cargo.toml` hashes it records all moved. Leaving it out is invisible until someone
+   diffs the tree in an unrelated branch.
+7. **Commit, PR, merge.** Tag the release commit on `main`.
 
 ## Choosing the number
 
