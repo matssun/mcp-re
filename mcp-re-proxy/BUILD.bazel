@@ -117,6 +117,10 @@ _PROXY_LIB_SRCS = [
     # transition relation. Represents which transitions are LEGAL; it is not
     # synchronization (§5.4). Crate-internal.
     "src/runtime_state.rs",
+    # ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
+    # operation producing what to attach and the posture line describing it.
+    # Crate-internal.
+    "src/serving_capabilities.rs",
     # ADR-MCPRE-056 §5.2: what startup INTENDS to build, decided from validated
     # configuration alone — no I/O, no environment, no clock. Crate-internal.
     "src/startup_plan.rs",

@@ -496,6 +496,77 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
     }
 }
 
+/// ADR-MCPS-023 §A1 (MCPS-58) — the operator-visible revocation posture, as lines.
+///
+/// A posture DIAGNOSTIC, not a structured per-request audit guarantee: the structured
+/// evidence vocabulary (including `delegated_attestor_crl`, which does not exist yet)
+/// lands with Mode C attested ingress (MCPS-62). The canonical ADR field names are used
+/// deliberately so that future audit surface can reuse them verbatim. OCSP posture is
+/// per-request — no-AIA is a per-cert fact, not a config-load one — and likewise belongs
+/// to the MCPS-62 surface rather than to a startup line.
+///
+/// Returns lines instead of printing them, which is the whole reason it is here: these
+/// were ~50 lines of `eprintln!` inside the composition root, where the only way to check
+/// what an operator is told was to read a transcript. Rendering the facts the plane
+/// already parsed makes the posture assertable (`posture_tests` below) and takes
+/// domain-specific posture construction off the root (ADR-MCPRE-058 §7.1).
+pub(crate) fn revocation_posture_lines(
+    config: &crate::cli::Config,
+    crls: &ClientCrlEvidence,
+) -> Vec<String> {
+    let exposure_window = match config.max_client_cert_lifetime {
+        Some(d) => format!("{}s", d.as_secs()),
+        None => "unbounded".to_string(),
+    };
+    // The exposure window above is only true because these two bounds hold: the
+    // certificate is re-checked against the clock on EVERY request (not just at the
+    // handshake), and a connection is closed at a bounded age so the peer must
+    // re-handshake through the current CRL. Stated alongside the window it makes honest.
+    let mut lines = vec![format!(
+        "mcp-re.revocation.posture connection_max_age={} per_request_cert_validity=enforced \
+         per_request_crl_check={} tls_session_resumption=epoch-bound",
+        match config.limits.max_connection_age {
+            Some(d) => format!("{}s", d.as_secs()),
+            None => "unbounded".to_string(),
+        },
+        // The claim the CRL lines below rest on. rustls consults the CRLs during client
+        // authentication, which runs on a full handshake only, so without this a revoked
+        // peer serves every later request on the connection it already holds and the
+        // reload cadence below describes new connections alone.
+        if crls.is_empty() {
+            "not_configured"
+        } else {
+            "enforced"
+        }
+    )];
+    if crls.is_empty() {
+        let max_lifetime = match config.max_client_cert_lifetime {
+            Some(d) => format!("{}s", d.as_secs()),
+            None => "none".to_string(),
+        };
+        lines.push(format!(
+            "mcp-re.revocation.posture revocation_mode=short_lived_cert dynamic_revocation=false \
+             exposure_window={exposure_window} max_client_cert_lifetime={max_lifetime}"
+        ));
+    } else {
+        // Facts parsed once by the plane that loaded the CRLs, rendered here.
+        for (i, posture) in crls.postures.iter().enumerate() {
+            let next_update = posture
+                .next_update_unix
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            lines.push(format!(
+                "mcp-re.revocation.posture revocation_mode=static_crl_snapshot \
+                 dynamic_revocation=false stale_crl_policy=fail_closed crl_index={i} \
+                 crl_digest={} crl_this_update={} crl_next_update={} \
+                 exposure_window={exposure_window}",
+                posture.crl_digest, posture.this_update_unix, next_update
+            ));
+        }
+    }
+    lines
+}
+
 /// The client-certificate half of the fleet's cross-replica revocation-lag bound
 /// (ADR-MCPS-049 clause 3): how long a revoked client certificate can still be accepted
 /// somewhere in the fleet.
@@ -616,6 +687,156 @@ mod handle_lifetime_tests {
 /// The fleet's client-cert revocation-lag claim, tested as a derived security fact rather
 /// than as rendering. Separate from `handle_lifetime_tests`, which is about what a handle
 /// means after its plane is gone — a different question entirely.
+/// What the revocation posture actually tells an operator.
+///
+/// These lines were `eprintln!`s in the composition root, which meant the only way to
+/// check them was to start a proxy and read stderr — so nothing checked them. The
+/// extraction is what makes the assertions below possible, and each one pins a claim that
+/// would be materially misleading if it drifted.
+#[cfg(test)]
+mod revocation_posture_tests {
+    use super::revocation_posture_lines;
+    use super::ClientCrlEvidence;
+    use crate::tls::CrlPosture;
+
+    /// A config with no CRLs and the given client-cert lifetime.
+    fn config(max_client_cert_lifetime: Option<std::time::Duration>) -> crate::cli::Config {
+        let argv: Vec<String> = [
+            "--bind",
+            "127.0.0.1:8443",
+            "--audience",
+            "did:example:server-1",
+            "--server-signer",
+            "did:example:server-1",
+            "--server-key-id",
+            "server-key-1",
+            "--tls-cert",
+            "/cert",
+            "--tls-key",
+            "/key",
+            "--client-ca",
+            "/ca",
+            "--trust",
+            "/trust.json",
+            "--key-source",
+            "file",
+            "--signing-key-seed",
+            "/seed",
+            "--inner-http-url",
+            "http://127.0.0.1:8080/mcp",
+            "--target-uri",
+            "https://mcp.example.com/mcp",
+            "--delegated-trust-epoch",
+            "epoch-min",
+            "--replay-cache",
+            "file",
+            "--replay-path",
+            "/replay",
+            "--trust-domain",
+            "mcp.example.com",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let mut config = crate::cli::parse_args(&argv).expect("the minimal config must parse");
+        config.max_client_cert_lifetime = max_client_cert_lifetime;
+        config
+    }
+
+    fn no_crls() -> ClientCrlEvidence {
+        ClientCrlEvidence { postures: vec![] }
+    }
+
+    /// Without a CRL the posture must say `per_request_crl_check=not_configured`.
+    ///
+    /// The broken implementation this catches: reporting `enforced` whenever the field is
+    /// emitted at all. `enforced` is the claim the exposure-window line rests on — that a
+    /// peer holding an open connection is still re-checked — and asserting it with no CRL
+    /// loaded would describe a mechanism that is not running.
+    #[test]
+    fn with_no_crl_the_per_request_check_is_reported_as_not_configured() {
+        let lines = revocation_posture_lines(&config(None), &no_crls());
+        assert!(
+            lines[0].contains("per_request_crl_check=not_configured"),
+            "got: {}",
+            lines[0]
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("revocation_mode=short_lived_cert")),
+            "with no CRL the only mechanism is the certificate lifetime: {lines:?}"
+        );
+    }
+
+    /// A disabled client-cert lifetime must render as `unbounded`, never as a number and
+    /// never omitted.
+    ///
+    /// It is the posture `unsafe_config_violations` refuses, so if it ever reaches a
+    /// transcript it has to name the thing that should have been impossible. A default
+    /// substituted here would hide exactly that.
+    #[test]
+    fn a_disabled_certificate_lifetime_renders_as_unbounded() {
+        let lines = revocation_posture_lines(&config(None), &no_crls());
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("exposure_window=unbounded")),
+            "got: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("max_client_cert_lifetime=none")),
+            "got: {lines:?}"
+        );
+    }
+
+    /// One line per loaded CRL, each carrying that CRL's own digest and validity window.
+    ///
+    /// The broken implementation this catches: rendering only the first CRL, or reusing
+    /// one digest across all of them. An operator reading the transcript is checking that
+    /// the index they published is the index this replica loaded, and a collapsed list
+    /// answers that question wrongly rather than not at all.
+    #[test]
+    fn every_loaded_crl_reports_its_own_digest_and_window() {
+        let crls = ClientCrlEvidence {
+            postures: vec![
+                CrlPosture {
+                    crl_digest: "sha256:AAAA".to_string(),
+                    this_update_unix: 1_700_000_000,
+                    next_update_unix: Some(1_700_086_400),
+                },
+                CrlPosture {
+                    crl_digest: "sha256:BBBB".to_string(),
+                    this_update_unix: 1_700_000_001,
+                    // RFC 5280 permits omission, and the line must not invent one.
+                    next_update_unix: None,
+                },
+            ],
+        };
+        let lines =
+            revocation_posture_lines(&config(Some(std::time::Duration::from_secs(3600))), &crls);
+        assert!(
+            lines[0].contains("per_request_crl_check=enforced"),
+            "got: {}",
+            lines[0]
+        );
+        let crl_lines: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("revocation_mode=static_crl_snapshot"))
+            .collect();
+        assert_eq!(crl_lines.len(), 2, "one line per CRL: {lines:?}");
+        assert!(crl_lines[0].contains("crl_index=0") && crl_lines[0].contains("sha256:AAAA"));
+        assert!(crl_lines[1].contains("crl_index=1") && crl_lines[1].contains("sha256:BBBB"));
+        assert!(
+            crl_lines[1].contains("crl_next_update=none"),
+            "an absent nextUpdate must say so, not be invented: {}",
+            crl_lines[1]
+        );
+    }
+}
+
 #[cfg(test)]
 mod fleet_crl_bound_tests {
     /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
