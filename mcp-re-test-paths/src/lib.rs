@@ -73,6 +73,10 @@ fn cargo_fallback(env_key: &str) -> PathBuf {
             workspace_root.join("mcp-re-proxy/src/http_profile_dispatch.rs")
         }
         "MCP_RE_PHASE5" => workspace_root.join("mcp-re-policy/tests/vectors/phase5_vectors.json"),
+        // The operator-facing guide whose worked example is fed to the real `parse_args`
+        // + `ValidatedConfig::try_from`, so a command line the docs teach cannot drift
+        // into one the proxy refuses to start with.
+        "MCP_RE_SIDECAR_GUIDE" => workspace_root.join("docs/sidecar-deployment-guide.md"),
         // Per-crate BUILD.bazel (read by drift / traceability guards)
         "MCP_RE_BUILD_CONFORMANCE" => workspace_root.join("mcp-re-conformance/BUILD.bazel"),
         "MCP_RE_BUILD_CORE" => workspace_root.join("mcp-re-core/BUILD.bazel"),

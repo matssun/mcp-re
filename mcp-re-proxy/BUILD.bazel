@@ -580,6 +580,28 @@ nt_rust_test(
 # No `async_serve`: unlike its siblings this file carries no `#![cfg(feature = ...)]`,
 # so cargo builds it under DEFAULT features and Bazel must match — the resolver seam it
 # drives is in the default build.
+# The command line the sidecar guide teaches, fed to the REAL `parse_args` +
+# `ValidatedConfig::try_from`. `scripts/proxy_flag_doc_gate.py` catches a flag that no
+# longer exists, cheaply and across every document; it cannot see a flag whose VALUE is
+# refused or a REQUIRED flag that is absent, and checking those syntactically would mean
+# restating `unsafe_config_violations` in a second language. Running the parser is the
+# rule itself. The guide is delivered as data (runfiles), with the mcp-re-test-paths
+# cargo fallback — the same scheme as the conformance drift guards.
+nt_rust_test(
+    name = "documented_cli_test",
+    srcs = ["tests/documented_cli_test.rs"],
+    auto_cargo_toml = False,
+    bazel_build_cfg = False,
+    data = ["//docs:sidecar-deployment-guide.md"],
+    edition = "2021",
+    env = {
+        "MCP_RE_SIDECAR_GUIDE": "$(rlocationpath //docs:sidecar-deployment-guide.md)",
+    },
+    deps = [
+        ":mcp_re_proxy",  # keep
+        "//mcp-re-test-paths:mcp_re_test_paths",
+    ],
+)
 nt_rust_test(
     name = "revocation_serving_wiring_test",
     srcs = ["tests/revocation_serving_wiring_test.rs"],

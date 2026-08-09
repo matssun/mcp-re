@@ -6,7 +6,11 @@
 
 package(default_visibility = ["//visibility:public"])
 
+# The sidecar guide is exported for a different reason: `documented_cli_test` feeds its
+# worked example to the REAL `parse_args` + `ValidatedConfig::try_from`, so a command line
+# the guide teaches cannot drift into one the proxy refuses to start with.
 exports_files([
+    "sidecar-deployment-guide.md",
     "SECURITY_BOUNDARY.md",
     "spec/security-boundary.md",
     "spec/v0.5-claim-matrix.md",

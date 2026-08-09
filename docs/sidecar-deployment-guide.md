@@ -65,9 +65,20 @@ shown are the real defaults from that parser.
 | `--delegated-trust-epoch <epoch>` | **Required.** Delegated signing is the only response-signing mode (ADR-MCPRE-052): the root key is the credential ISSUER and is never on the request path, and the proxy signs with a short-lived delegated key it mints and rotates. The epoch is minted into every credential and is the cross-fleet revocation switch, so it must be coordinated with verifiers — an advance invalidates every credential issued under the previous one. Startup refuses without it. |
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
 | `--trust` | Path to the JSON trust file (request signers + authorization issuers). |
+| `--target-uri <uri>` | **Required.** The URI a signed request must name. With `--audience` and `--route` it forms the audience TUPLE the verifier compares against, so it must equal what the client signs as `@target-uri` — not merely resemble it. |
+| `--trust-domain <domain>` | **Required.** The trust domain the server actor identity is scoped to. It must agree with what clients sign; a mismatch is an actor-resolution failure, not a warning. |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
 
 `--max-clock-skew` defaults to `300` seconds.
+
+The worked example below is fed to the real parser by
+`mcp-re-proxy/tests/documented_cli_test.rs`, so it cannot drift into a command line the
+proxy refuses to start with.
+
+Its identity values are **placeholders**: `did:example:server-1`, `example.com` and
+`epoch-1` are refused by name at Helm render time precisely so a real deployment cannot
+ship them. The CLI accepts them — nothing about them is malformed — which is why the
+chart, not the parser, is where that guard lives.
 
 ### Inner plane (`http_inner.rs`)
 
@@ -224,6 +235,8 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --tls-key /etc/mcp-re/server-key.pem \
   --client-ca /etc/mcp-re/client-ca.pem \
   --trust /etc/mcp-re/trust.json \
+  --target-uri https://mcp.example.com/mcp \
+  --trust-domain example.com \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
