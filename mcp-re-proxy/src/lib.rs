@@ -193,6 +193,7 @@ pub(crate) mod materializing_runtime;
 // ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
 // operation producing what to attach and the posture line describing it. The composition
 // root states the order they are established in; what each one MEANS lives here.
+pub(crate) mod request_stages;
 pub(crate) mod serving_capabilities;
 pub(crate) mod startup_plan;
 // ADR-MCPRE-056 §5.4: the optional-capability posture vocabulary. Every seam states

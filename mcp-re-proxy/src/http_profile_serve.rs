@@ -77,7 +77,8 @@ use crate::continuation_store::RetainedBases;
 use crate::delegated_server_signer::DelegatedServerSigner;
 use crate::http_profile_dispatch::dispatch_request_with_async_tier;
 use crate::http_profile_dispatch::ProxyDispatchConfig;
-use crate::transparency::RetentionReservation;
+use crate::request_stages::ReadyForDispatch;
+use crate::request_stages::RetentionDisposition;
 use crate::transport::TransportBindingPolicy;
 
 /// Default lifetime of a recorded MRTR continuation in the shared correlation store
@@ -777,27 +778,38 @@ impl HttpProfileProxy {
         // its acknowledgement, so the core's runtime keeps serving while the fsync is in
         // progress. Awaiting is not optional: dispatching before the marker is durable
         // would make the reservation a hint rather than a record.
-        let reserved = match self.retention.as_ref() {
-            Some(retention) => Some(retention.reserve(&http_req).await),
-            None => None,
-        };
-        let reservation = match reserved {
-            None => None,
-            Some(Ok(reservation)) => Some(reservation),
-            Some(Err(e)) => {
-                eprintln!("evidence retention could not accept the exchange, refusing before dispatch: {e}");
-                return self.response_rejection(
-                    &http_req,
-                    McpReError::EvidenceRetentionUnavailable.wire_code(),
-                    503,
-                    now,
-                    Some(&verified.evidence),
-                    Some(actor_id),
-                );
-            }
+        //
+        // The outcome is a `RetentionDisposition` rather than an `Option<Reservation>`:
+        // "this deployment retains nothing" and "a reservation is missing" are different
+        // facts, and collapsing them is what used to require a guard on the completion
+        // path to tell them apart (ADR-MCPRE-058 §9.6).
+        let retention = match self.retention.as_ref() {
+            None => RetentionDisposition::NotConfigured,
+            Some(retention) => match retention.reserve(&http_req).await {
+                Ok(reservation) => RetentionDisposition::Reserved(reservation),
+                Err(e) => {
+                    eprintln!("evidence retention could not accept the exchange, refusing before dispatch: {e}");
+                    return self.response_rejection(
+                        &http_req,
+                        McpReError::EvidenceRetentionUnavailable.wire_code(),
+                        503,
+                        now,
+                        Some(&verified.evidence),
+                        Some(actor_id),
+                    );
+                }
+            },
         };
 
-        let inner_bytes = self.inner_async.dispatch(&forwarded).await;
+        // ===================== IRREVERSIBLE INNER DISPATCH =====================
+        //
+        // Every pre-dispatch prerequisite is now in hand, and `ReadyForDispatch` is what
+        // says so: it cannot be built without them, and the dispatch below consumes it.
+        // Past this line no exit can claim nothing happened — which is why every one of
+        // them is a `response_rejection` rather than a `rejection`.
+        let ready = ReadyForDispatch::new(forwarded, a, expires, retention);
+        let inner_bytes = self.inner_async.dispatch(ready.forwarded()).await;
+        let (inner_bytes, a, expires, retention) = ready.dispatched(inner_bytes).into_parts();
 
         // Step 7 — sign the backend reply, bound to THIS request, with the delegated key
         // + inline credential taken at step 5a (ADR-MCPRE-052).
@@ -833,7 +845,7 @@ impl HttpProfileProxy {
                             now,
                             Some(&verified.evidence),
                             actor_id.clone(),
-                            reservation.as_ref(),
+                            &retention,
                         )
                         .await
                     {
@@ -978,7 +990,7 @@ impl HttpProfileProxy {
                 now,
                 Some(&verified.evidence),
                 actor_id.clone(),
-                reservation.as_ref(),
+                &retention,
             )
             .await
         {
@@ -1015,6 +1027,13 @@ impl HttpProfileProxy {
     /// received would put a record in the store that no receipt should be issued about.
     /// A deployment with retention on asserts it can account for what it served, and
     /// refusing when the evidence cannot be kept is the only thing that keeps that true.
+    ///
+    /// The obligation arrives as a [`RetentionDisposition`], so this discharges it by
+    /// EXHAUSTIVE MATCH rather than by checking whether an earlier step ran. There used
+    /// to be a guard here for "retention is configured but no reservation arrived", which
+    /// existed only because `Option<RetentionReservation>` could not distinguish that from
+    /// "this deployment retains nothing". With the two cases separate there is no third to
+    /// detect (ADR-MCPRE-058 §9.5, §9.6).
     async fn retain_accepted(
         &self,
         request: &HttpRequest,
@@ -1022,27 +1041,15 @@ impl HttpProfileProxy {
         now: i64,
         bound: Option<&RequestEvidence>,
         actor_id: String,
-        reservation: Option<&RetentionReservation>,
+        retention_owed: &RetentionDisposition,
     ) -> Option<ServedHttpResponse> {
-        let retention = self.retention.as_ref()?;
-        let Some(reservation) = reservation else {
-            // Retention is configured but this exit reached completion without a
-            // reservation, which means a path bypassed step 6a. Refuse rather than
-            // retain: serving here would be serving a call whose execution threshold
-            // was never recorded, which is the property the reservation exists for.
-            eprintln!(
-                "evidence retention: an accepted exchange reached completion with no \
-                 reservation; refusing rather than serving an unrecorded execution"
-            );
-            return Some(self.response_rejection(
-                request,
-                McpReError::EvidenceRetentionIndeterminate.wire_code(),
-                500,
-                now,
-                bound,
-                Some(actor_id),
-            ));
+        let reservation = match retention_owed {
+            RetentionDisposition::NotConfigured => return None,
+            RetentionDisposition::Reserved(reservation) => reservation,
         };
+        // A disposition can only be `Reserved` if `self.retention` was present when it was
+        // built, and the store is owned for the proxy's whole life.
+        let retention = self.retention.as_ref()?;
         match retention.complete(reservation, request, response).await {
             Ok(_) => None,
             Err(e) => {

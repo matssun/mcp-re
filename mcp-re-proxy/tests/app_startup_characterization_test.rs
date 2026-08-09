@@ -595,3 +595,102 @@ fn app_run_refuses_unbuildable_key_sources_and_replay_tiers() {
     ]))
     .contains("cpstore_etcd"));
 }
+
+/// ADR-MCPRE-058 §8.3 / §16.3 — the delegated-custody knobs, audited as a family.
+///
+/// # Why these, and why together
+///
+/// `parse_args` refuses four delegated-custody configurations: a missing trust epoch, a
+/// non-positive TTL, a non-positive overlap, and an overlap that meets or exceeds the
+/// TTL. None of the four is restated by `unsafe_config_violations`, which makes them
+/// candidates for the family of bypasses this file already records — an invariant living
+/// only on the parsed path, reachable by anything that builds a `Config` in code.
+///
+/// They turn out not to be bypasses: `build_delegated_signing` re-checks all four, and
+/// it is the only route to a delegated signer, so `SigningPlane::materialize` and
+/// therefore startup fail closed there. The §8.3 classification is *downstream
+/// fail-closed duplicate*, not *parser-only*. But that classification is a claim about
+/// code somebody could delete as redundant — the comment there says "enforced at parse
+/// time, re-checked here", which reads exactly like something to tidy away — so it is
+/// pinned here rather than left as a reading of the source.
+///
+/// # Why this drives the builder rather than `app::run`
+///
+/// The other tests in this family assert through `run`, which is stronger. It is not
+/// available here: signing is materialized after the replay tier, so in a build without
+/// `redis_replay` the shared-tier fixture these tests share refuses first, for an
+/// environmental reason that has nothing to do with custody. A test asserting through
+/// `run` would then pass while proving nothing about the delegated check — the vacuous
+/// shape ADR-MCPRE-057 §17.6 warns about. Driving the owner of the invariant directly
+/// keeps the assertion about the invariant.
+///
+/// The four are asserted together because the failure they prevent is one failure. A
+/// delegated key minted without a trust epoch carries the bare label instead of
+/// `<base>#<counter>`, so a restarted replica appears unrevoked to verifiers pinned past
+/// an operator `INCR` — the cross-fleet kill switch stops working. A TTL or overlap
+/// outside `0 < overlap < ttl` breaks the rotor's successor-before-expiry rule, so
+/// signing stops or never starts. Either way the deployment would be serving on custody
+/// nobody can revoke or rotate.
+///
+/// The broken implementation this catches: removing the re-check in
+/// `delegated_wiring::build_delegated_signing` because the parser already does it.
+#[test]
+fn a_programmatic_config_cannot_carry_delegated_custody_the_rotor_cannot_honour() {
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+    let root = || mcp_re_core::SigningKey::from_seed_bytes(&[7u8; 32]);
+
+    // Each case is a mutation the parser would have refused, applied afterwards — the
+    // only shape an in-code caller has — with the substring the refusal must name.
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, Box<dyn Fn(&mut mcp_re_proxy::cli::Config)>, &str)> = vec![
+        (
+            "no trust epoch",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_trust_epoch = None),
+            "trust epoch",
+        ),
+        (
+            "zero ttl",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_ttl_secs = 0),
+            "ttl",
+        ),
+        (
+            "negative overlap",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| c.delegated_overlap_secs = -1),
+            "overlap",
+        ),
+        (
+            "overlap at the ttl",
+            Box::new(|c: &mut mcp_re_proxy::cli::Config| {
+                c.delegated_overlap_secs = c.delegated_ttl_secs
+            }),
+            "overlap",
+        ),
+    ];
+
+    for (name, mutate, expected) in cases {
+        let mut config = parsed.clone();
+        mutate(&mut config);
+        let err = mcp_re_proxy::build_delegated_signing(&config, root())
+            .err()
+            .unwrap_or_else(|| {
+                panic!("{name}: delegated custody the rotor cannot honour must be refused")
+            });
+        assert!(
+            err.to_lowercase().contains(expected),
+            "{name}: the refusal must name what is wrong; expected {expected:?}, got: {err}"
+        );
+    }
+
+    // The negative control. Without it every assertion above would also pass against a
+    // builder that refused unconditionally — and one that refuses every delegated
+    // configuration is not a stricter proxy, it is a broken one.
+    let mut valid = parsed;
+    valid.delegated_overlap_secs = valid.delegated_ttl_secs / 2;
+    assert!(
+        valid.delegated_overlap_secs > 0,
+        "the control needs a genuinely valid overlap to be worth anything"
+    );
+    mcp_re_proxy::build_delegated_signing(&valid, root())
+        .expect("a valid delegated custody policy must build");
+}

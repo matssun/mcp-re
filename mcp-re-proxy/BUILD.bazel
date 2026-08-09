@@ -117,6 +117,10 @@ _PROXY_LIB_SRCS = [
     # transition relation. Represents which transitions are LEGAL; it is not
     # synchronization (§5.4). Crate-internal.
     "src/runtime_state.rs",
+    # ADR-MCPRE-057 §7 / ADR-MCPRE-058 §9: the request lifecycle around its one
+    # irreversible effect — the typed pre-dispatch boundary and the retention
+    # obligation carried across it. Crate-internal.
+    "src/request_stages.rs",
     # ADR-MCPRE-058 §7.2: the seven optional serving capabilities, each as one domain
     # operation producing what to attach and the posture line describing it.
     # Crate-internal.
