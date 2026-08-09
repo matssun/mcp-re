@@ -1995,6 +1995,31 @@ impl std::ops::Deref for ValidatedConfig {
 /// Pure and black-box-testable (no `Config`, no IO). The backend issues (#59–#61)
 /// drive `has_delegated_tls` from their CLI flag; #58 wires the call with the
 /// current values so the seam is exercised, not dead code.
+/// The same rule, read off a [`Config`] — so it holds however the config was built.
+///
+/// ADR-MCPRE-058 §8.3: [`validate_tls_signing_exclusivity`] was reachable ONLY from
+/// `parse_args`, which made it the fifth member of this file's parser-only family. The
+/// state it refuses is not a CLI mistake. A config asserting both custodies means the TLS
+/// handshake key is delegated to a non-exporting device AND a file copy of it exists on
+/// disk, which is exactly the belief the delegated custody modes are chosen to make true
+/// being false. Nothing downstream refuses it: `build_key_source` dispatches on
+/// `key_source` and simply ignores a selector belonging to another source.
+///
+/// This is an adapter, not a second copy of the rule. The decision stays in
+/// `validate_tls_signing_exclusivity`; what is here is how a `Config` answers its two
+/// questions, so the two call sites cannot drift into disagreeing about the rule itself.
+///
+/// `tls_key` is a `String` rather than an `Option`, and empty means "not exported" — the
+/// parser leaves it empty in precisely the delegated case, which is why emptiness rather
+/// than the custody mode is the right test here too.
+pub(crate) fn tls_signing_exclusivity_refusal(config: &Config) -> Option<String> {
+    let has_delegated_tls = config.pkcs11_tls_key_label.is_some()
+        || config.aws_kms_tls_key_id.is_some()
+        || config.gcp_kms_tls_key_version.is_some();
+    let has_exported_tls_key = !config.tls_key.is_empty();
+    validate_tls_signing_exclusivity(has_delegated_tls, has_exported_tls_key).err()
+}
+
 pub fn validate_tls_signing_exclusivity(
     has_delegated_tls: bool,
     has_exported_tls_key: bool,
@@ -2289,6 +2314,9 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
     // Mode-C: the refusal used to live in the composition root and nowhere else, so it was
     // a policy decision at the wrong altitude (ADR-MCPRE-056 §12). Deliberately refused for
     // v0.16 — see `undeployable_transport_binding_refusal`.
+    if let Some(refusal) = tls_signing_exclusivity_refusal(config) {
+        violations.push(refusal);
+    }
     if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
         violations.push(refusal);
     }
