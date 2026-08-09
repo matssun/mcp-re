@@ -117,6 +117,7 @@ impl TlsPlane {
     }
 }
 
+
 impl Drop for TlsPlane {
     fn drop(&mut self) {
         // No security transition, unlike `trust_plane` and `signing_plane`. See the
@@ -453,6 +454,45 @@ fn crl_reload_loop(task: CrlReloadTask, halt: &crate::managed_worker::Halt) {
     }
 }
 
+/// The client-certificate half of the fleet's cross-replica revocation-lag bound
+/// (ADR-MCPS-049 clause 3): how long a revoked client certificate can still be accepted
+/// somewhere in the fleet.
+///
+/// The sibling of `trust_plane::fleet_trust_bound`, and pure for the same reason — this is
+/// a derived SECURITY CLAIM, not a rendering detail. It was computed inline in the
+/// composition root while its sibling was already a named, tested function, so one half of
+/// one operator-facing statement had a home and the other did not.
+///
+/// Zero-window revocation is never claimed on either half. Each arm names what actually
+/// bounds the exposure:
+///
+/// - no CRL at all: only the client-cert lifetime bounds it;
+/// - a CRL with a reload cadence: the cadence IS the bound, and it applies per request on
+///   established connections as well as at the handshake, so a peer holding a connection
+///   open does not escape a republished index;
+/// - a CRL without a cadence: the CRL's own `nextUpdate`, or a restart.
+pub fn fleet_crl_bound(
+    has_crls: bool,
+    max_client_cert_lifetime: Option<std::time::Duration>,
+    client_crl_reload_secs: Option<u64>,
+) -> String {
+    if !has_crls {
+        let window = max_client_cert_lifetime
+            .map(|d| format!("{}s", d.as_secs()))
+            .unwrap_or_else(|| "unbounded".to_string());
+        return format!("short-lived-cert only (exposure_window {window}); no client CRL");
+    }
+    match client_crl_reload_secs {
+        Some(secs) => format!(
+            "bounded {secs}s (the --client-crl-reload-secs cadence), enforced per request \
+             on established connections as well as at the handshake"
+        ),
+        None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
+                 CRL-rollout window"
+            .to_string(),
+    }
+}
+
 #[cfg(test)]
 mod handle_lifetime_tests {
     use super::*;
@@ -528,5 +568,55 @@ mod handle_lifetime_tests {
                 .with_single_cert(vec![cert.der().clone()], key_der)
                 .expect("server config"),
         )
+    }
+}
+
+/// The fleet's client-cert revocation-lag claim, tested as a derived security fact rather
+/// than as rendering. Separate from `handle_lifetime_tests`, which is about what a handle
+/// means after its plane is gone — a different question entirely.
+#[cfg(test)]
+mod fleet_crl_bound_tests {
+    /// With no CRL the ONLY bound is the certificate lifetime, and the line has to say so
+    /// rather than imply a revocation mechanism exists.
+    #[test]
+    fn without_a_crl_the_bound_is_the_certificate_lifetime() {
+        let bound = super::fleet_crl_bound(false, Some(std::time::Duration::from_secs(3600)), None);
+        assert!(bound.contains("exposure_window 3600s"), "got: {bound}");
+        assert!(bound.contains("no client CRL"), "got: {bound}");
+    }
+
+    /// A disabled lifetime must not silently render as a number. `unbounded` is the honest
+    /// word, and it is the posture `unsafe_config_violations` refuses — so if it ever
+    /// appears in a transcript, it names the thing that should have been impossible.
+    #[test]
+    fn a_disabled_lifetime_renders_as_unbounded_not_as_a_number() {
+        let bound = super::fleet_crl_bound(false, None, None);
+        assert!(bound.contains("exposure_window unbounded"), "got: {bound}");
+    }
+
+    /// The reload cadence IS the bound, and the claim must say it reaches ESTABLISHED
+    /// connections. A CRL consulted only at the handshake would leave a peer holding one
+    /// connection open unaffected by a republished index — a materially weaker guarantee
+    /// than the number alone suggests.
+    #[test]
+    fn a_reload_cadence_bounds_established_connections_not_only_handshakes() {
+        let bound = super::fleet_crl_bound(true, None, Some(300));
+        assert!(bound.contains("bounded 300s"), "got: {bound}");
+        assert!(
+            bound.contains("established connections"),
+            "the cadence claim must state that it reaches open connections, got: {bound}"
+        );
+    }
+
+    /// Without a cadence the bound is the CRL's own expiry or a restart — never zero, and
+    /// never the cert lifetime, which does not apply once a CRL is present.
+    #[test]
+    fn without_a_cadence_the_bound_is_the_crls_own_expiry() {
+        let bound = super::fleet_crl_bound(true, Some(std::time::Duration::from_secs(60)), None);
+        assert!(bound.contains("nextUpdate"), "got: {bound}");
+        assert!(
+            !bound.contains("exposure_window"),
+            "the cert-lifetime window is not the bound once a CRL is present, got: {bound}"
+        );
     }
 }

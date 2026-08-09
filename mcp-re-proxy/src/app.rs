@@ -1,8 +1,11 @@
 //! Serve orchestration for the `mcp-re-proxy` binary, in the LIBRARY so it is
-//! testable in-process (the binary is a thin shim over [`run`]). Builds the key
-//! source, TLS config, replay tier, actor resolver and per-core async fleet from a
-//! parsed [`crate::cli::Config`], then serves until the caller flips `shutdown`.
-#![allow(clippy::too_many_lines)]
+//! testable in-process (the binary is a thin shim over [`run`]).
+//!
+//! The composition root. It establishes the planes that own the runtime's resources
+//! (ADR-MCPRE-056 §8), assembles the RFC 9421 serving PEP over them, hands the whole graph
+//! to [`crate::materialized_runtime::MaterializedRuntime`], and serves until the caller
+//! flips `shutdown`. It decides as little as possible: what it branches on is either a
+//! named rule in [`crate::startup_plan`] or a plane's own answer.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -37,14 +40,6 @@ pub(crate) fn now_unix() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
-
-/// A wall-clock reading below this Unix-seconds threshold at startup is treated as a
-/// host-clock fault (audit #94 F5). `now_unix()` clamps a pre-epoch SystemTime error
-/// to 0, and a host whose clock is unset typically reads at/near the epoch; either
-/// way every freshness check will fail closed. The threshold is 2000-01-01 UTC — far
-/// below any plausible real deployment time, so a legitimate clock never trips it,
-/// but a 0/epoch clock always does.
-const EPOCH_CLOCK_FAULT_THRESHOLD_SECS: i64 = 946_684_800;
 
 /// Build the serving [`crate::ActorResolver`] — the trust seam the RFC 9421 PEP
 /// consults for every signature it verifies (slot discipline, MCPRE-100).
@@ -217,6 +212,11 @@ pub fn run(
 
 /// The serving path proper. Reachable only with a [`crate::cli::ValidatedConfig`], which
 /// is the whole point: there is no route into it that skips the guards.
+// The composition root is long ON PURPOSE (§12): its length is the assembly it performs,
+// and shortening it by moving statements into helpers would hide ordering and ownership
+// where a reader cannot see them. The allowance is on this function alone rather than on
+// the module, so anything else here that grows past the threshold is still reported.
+#[allow(clippy::too_many_lines)]
 fn run_validated(
     config: &crate::cli::ValidatedConfig,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -229,17 +229,19 @@ fn run_validated(
     // clock is diagnosed at the source instead of masked. We do not refuse to start
     // (the fail-closed posture is already safe), but the operator is told why every
     // request will be denied.
-    // Read the clock ONCE so the comparison and the reported value are consistent
-    // (a second now_unix() call could read a different instant).
+    //
+    // Read the clock ONCE so the comparison, the reported value and every plane handed
+    // `startup_now_unix` below agree on one instant. Whether that reading is a FAULT is
+    // the plan's rule; reading the clock and telling the operator is this function's.
     let startup_now_unix = now_unix();
-    if startup_now_unix < EPOCH_CLOCK_FAULT_THRESHOLD_SECS {
+    if crate::startup_plan::host_clock_is_faulted(startup_now_unix) {
         eprintln!(
             "mcp-re-proxy: WARNING: the system clock reads at/near the Unix epoch ({} < {}s); this \
              almost certainly means the host clock is unset or broken. Freshness checks will \
              FAIL CLOSED (every request denied) until the clock is corrected — fix the host clock \
              (NTP/RTC) rather than treating the resulting denials as a load problem.",
             startup_now_unix,
-            EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
+            crate::startup_plan::EPOCH_CLOCK_FAULT_THRESHOLD_SECS,
         );
     }
 
@@ -486,26 +488,11 @@ fn run_validated(
             config.trust_epoch_redis_url.is_some(),
             config.trust_reload_secs,
         );
-        let crl_bound = if tls.crls().is_empty() {
-            let window = config
-                .max_client_cert_lifetime
-                .map(|d| format!("{}s", d.as_secs()))
-                .unwrap_or_else(|| "unbounded".to_string());
-            format!("short-lived-cert only (exposure_window {window}); no client CRL")
-        } else {
-            match config.client_crl_reload_secs {
-                // The reload cadence IS the bound, on open and new connections alike:
-                // a republished index is consulted by the next request on a connection
-                // the peer is already holding.
-                Some(secs) => format!(
-                    "bounded {secs}s (the --client-crl-reload-secs cadence), enforced per request \
-                     on established connections as well as at the handshake"
-                ),
-                None => "the CRL nextUpdate / a restart (no --client-crl-reload-secs) — a fleet's \
-                         CRL-rollout window"
-                    .to_string(),
-            }
-        };
+        let crl_bound = crate::tls_plane::fleet_crl_bound(
+            !tls.crls().is_empty(),
+            config.max_client_cert_lifetime,
+            config.client_crl_reload_secs,
+        );
         eprintln!(
             "mcp-re-proxy: FLEET cross-replica revocation-lag bounds (ADR-MCPS-049 clause 3): \
              trust-key-status={trust_bound}; client-cert-crl={crl_bound}; zero-window revocation \
@@ -555,8 +542,8 @@ fn run_validated(
         }
     };
     // ADR-MCPRE-056 §5.4: from here on, every optional capability states its posture in
-    // BOTH directions through `posture`. `assert_complete` below fails a debug build
-    // that leaves one silent.
+    // BOTH directions through `posture`. `assert_complete` below refuses to start — in
+    // every build profile — if any seam is left silent.
     let mut posture = PostureLog::new();
 
     // #4030 ONLINE OCSP client-cert revocation. Built only under the
