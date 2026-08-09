@@ -234,9 +234,10 @@ retainedEvidence:
 #
 # `exact` binds each signed request to the verified client-cert identity. There is
 # no "none": the proxy rejects it at argument parse. "lb-assertion" and
-# "attested-ingress" parse but are refused at boot on the RFC 9421 serving path
-# (rebinding an owner-signed ingress assertion to the request-evidence digest is
-# pending owner authorization), so setting either CrashLoops the pods. The
+# "attested-ingress" are likewise refused by configuration validation, each naming
+# its own mode, so setting either CrashLoops the pods. Neither is deployable in
+# v0.16: the RFC 9421 serving path does not consult an ingress assertion, so the
+# identity a request is bound to would not be the one the assertion carries. The
 # render-time guard rejects all three rather than letting the chart produce them.
 transportBinding: ""
 

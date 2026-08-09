@@ -36,7 +36,21 @@ option. It is not.
    today's code, or copy design from it. The full JCS-era snapshot is also
    recoverable from the git tag `pre-adr-mcpre-050-jcs`.
 
-9. **Run the local gate before anything else, and never fake a green.** One command:
+9. **Some capabilities are REFUSED, NOT REMOVED — do not "fix" either half.**
+   Configuration validation refuses several things that are nonetheless still
+   compiled: `--transport-binding attested-ingress` (Mode C) and `lb-assertion`
+   (Mode B), `--authz reference`, `--revocation-list`, `--client-ocsp require`, and
+   `--replay-cache memory` / `file`. Two opposite mistakes to avoid. Do **not** delete
+   the code behind a refusal as "dead" — Mode C is retained deliberately, and its
+   verifier is exercised by tests so it stays correct while unreachable. Do **not**
+   wire one up to make it work; each is gated on a decision, not on effort (Mode C
+   needs a specification saying what an attestor may assert before attestation becomes
+   authority by implication). If a refusal seems wrong, raise it — do not relocate,
+   weaken, or route around it. A refusal belongs at the lowest boundary the state it
+   constrains can enter through, which for configuration is `ValidatedConfig`, never
+   the composition root.
+
+10. **Run the local gate before anything else, and never fake a green.** One command:
    `scripts/local_gate.sh` (see [`docs/dev/local-gate-order.md`](dev/local-gate-order.md)).
    It is free and it is the precondition for every PR and every cloud run — no
    `gcloud builds submit`, no GKE cluster, no baseline declaration ahead of it. Two

@@ -146,10 +146,10 @@ that did not override it, so refuse the placeholders outright.
 {{/*
 transportBinding: only "" (omit the flag, proxy default `exact`) or "exact" produce a
 pod that starts. `none` is rejected at argument parse; lb-assertion/attested-ingress
-are refused at boot on the RFC 9421 carrier. Fail at render rather than CrashLoop.
+are refused by configuration validation. Fail at render rather than CrashLoop.
 */}}
 {{- if not (or (eq .Values.transportBinding "") (eq .Values.transportBinding "exact")) -}}
-{{- fail (printf "transportBinding=%q cannot start on the RFC 9421 serving path. Use \"\" (omit the flag; the proxy defaults to exact) or \"exact\". `none` is rejected at argument parse; `lb-assertion` and `attested-ingress` parse but are refused at boot (owner-signed ingress rebinding pending)." .Values.transportBinding) -}}
+{{- fail (printf "transportBinding=%q cannot start on the RFC 9421 serving path. Use \"\" (omit the flag; the proxy defaults to exact) or \"exact\". `none` is rejected at argument parse; `lb-assertion` and `attested-ingress` are refused by configuration validation because the serving path does not consult an ingress assertion." .Values.transportBinding) -}}
 {{- end -}}
 {{/*
 Admission ceilings (MCPRE-114). Two render-time refusals, because both bad inputs

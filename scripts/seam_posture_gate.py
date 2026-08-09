@@ -13,8 +13,9 @@ wired. Two of those are already covered elsewhere and better:
   - `PostureLog::declare` takes a `SeamState` BY VALUE, so a decision written as an `if`
     must produce one on both arms. The OFF branch is a type obligation, not a convention,
     and no gate is needed for it.
-  - `PostureLog::assert_complete` panics in a debug build when a seam went unstated. That
-    is the runtime backstop, and it is strictly stronger than this gate where it runs.
+  - `PostureLog::assert_complete` refuses startup — in every build profile — when a seam
+    went unstated. That is the runtime backstop, and it is strictly stronger than this
+    gate where it runs.
 
 WHY THIS GATE EXISTS ANYWAY: `assert_complete` only fires on a startup that actually
 reaches the posture phase, and no HERMETIC configuration does — the phase sits after the

@@ -95,6 +95,8 @@ stage_static() {
     && python3 scripts/owned_worker_gate.py \
     && python3 scripts/seam_posture_gate.py --selftest \
     && python3 scripts/seam_posture_gate.py \
+    && python3 scripts/proxy_flag_doc_gate.py --selftest \
+    && python3 scripts/proxy_flag_doc_gate.py \
     && python3 tools/scitt_fetch_service_key.py --selftest \
     && python3 scripts/slo_gate.py --selftest \
     && fmt_check \

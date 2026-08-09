@@ -424,11 +424,19 @@ as post-0.5 work.
 ## 11. Strict-mode ingress postures (ADR-MCPS-023 §C amendment, v0.10)
 
 > **Delivery status.** Only posture **(A)** is reachable on the shipped RFC 9421
-> serving path. `--transport-binding attested-ingress` (and `lb-assertion`) parse, and
-> are then **refused at startup** — rebinding an owner-signed ingress assertion to the
-> request-evidence digest is pending owner authorization. The Mode-C verification code
-> (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
-> `AttestedIngressVerified`) exists and is unit-tested, and has **no non-test caller**.
+> serving path. As of v0.16 `--transport-binding attested-ingress` and
+> `--transport-binding lb-assertion` are **refused by configuration validation**, each
+> naming its own mode — no path into the runtime, command line or programmatic, can
+> carry either. The serving path does not consult an ingress assertion, so the identity
+> a request would be bound to is not the one the assertion carries.
+>
+> Mode C is **retained** as a future capability rather than removed. Its verification
+> code (`build_attested_ingress_binding`, `LbAssertionV2Binding::verify`,
+> `AttestedIngressVerified`) has no non-test caller but is exercised end to end by
+> tests that mint a signed assertion and verify it through a built verifier, so the
+> capability stays correct while it is unreachable. Admitting it requires first stating
+> what an attestor is permitted to assert and where the node's own authority begins.
+>
 > The rest of this section is therefore the specified design, not a delivered posture:
 > no deployment can run Mode C today, and the three §C2 audit trust facts below are
 > emitted by nothing. Fail-closed — a chart or command line that selects it does not

@@ -181,6 +181,14 @@ jobs:
           python3 scripts/seam_posture_gate.py --selftest
           python3 scripts/seam_posture_gate.py
 
+      # A guide that teaches a flag the CLI no longer parses sends an operator to debug
+      # their own environment. Only command lines that LAUNCH the proxy are scanned, so
+      # prose may still name a removed flag in order to say it was removed.
+      - name: Proxy-flag documentation gate
+        run: |
+          python3 scripts/proxy_flag_doc_gate.py --selftest
+          python3 scripts/proxy_flag_doc_gate.py
+
       # The SCITT service-key fetcher refuses a plaintext redirect hop. `build_opener`
       # installs the permissive default redirect handler unless it is passed a
       # subclass, so a guard class that exists but is never consulted leaves the

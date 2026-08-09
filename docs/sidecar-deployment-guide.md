@@ -62,6 +62,7 @@ shown are the real defaults from that parser.
 | `--bind` | Listen address, e.g. `127.0.0.1:8600` (the `mcp_re_proxy` port in `config/ports.toml`, the repo's reserved 8600-8699 band). |
 | `--audience` | This server's identity (expected request audience). |
 | `--server-signer` / `--server-key-id` | Response-signing identity + key id. |
+| `--delegated-trust-epoch <epoch>` | **Required.** Delegated signing is the only response-signing mode (ADR-MCPRE-052): the root key is the credential ISSUER and is never on the request path, and the proxy signs with a short-lived delegated key it mints and rotates. The epoch is minted into every credential and is the cross-fleet revocation switch, so it must be coordinated with verifiers — an advance invalidates every credential issued under the previous one. Startup refuses without it. |
 | `--signing-key-seed`, `--tls-cert`, `--tls-key`, `--client-ca` | Key-material locations (paths for `file`, env-var names for `env`). |
 | `--trust` | Path to the JSON trust file (request signers + authorization issuers). |
 | `--inner-http-url <url>` | The Streamable-HTTP inner MCP backend the PEP forwards to. **Required.** Repeat or comma-separate for a backend fleet (round-robin). |
@@ -86,12 +87,12 @@ stdio↔HTTP adapter (below).
 | Flag | Meaning |
 | --- | --- |
 | `--key-source file` (default) | Read material from files on disk. |
-| `--key-source env` | Read from environment variables. **Dev/CI only.** |
-| `--allow-env-keysource` | Required to use `env`; without it `env` is refused. |
+| `--key-source env` | Read from environment variables. **Dev/CI only**, and it exists only in a build with the non-default `dev_env_key_source` cargo feature. A production build rejects `env` as an unknown `--key-source` value. |
 
 Environment variables are visible to the whole process tree and can leak via
-crash dumps, `ps e`, and `/proc/<pid>/environ` — so `env` is gated behind an
-explicit opt-in and loudly warned. Use `file` with `0600` permissions in
+crash dumps, `ps e`, and `/proc/<pid>/environ` — so the option is a build-time
+decision rather than a runtime knob, and the build that has it warns loudly at
+startup. Use `file` with `0600` permissions in
 production (the CLI warns if a key file is group/world-readable). A Cloud-KMS /
 PKCS#11-backed source keeps the signing key off-host — see the Transport
 Hardening Guide and the Helm chart's `keySource: gcpKms` path.
@@ -106,8 +107,8 @@ authorization-issuer keys. A bad key fails startup closed.
 
 | Flag | Meaning |
 | --- | --- |
-| `--authz off` (default) | No authorization policy. |
-| `--authz reference` | Enable the Reference Signed Authorization Profile (ADR-MCPS-013). |
+| `--authz off` (default) | No authorization policy. The only value that starts. |
+| `--authz reference` | **Refused.** The Reference Signed Authorization Profile (ADR-MCPS-013) is never the production authority, and authorization is not wired on the RFC 9421 serving path at all. |
 
 ### Transport binding (Phase 6)
 
@@ -121,10 +122,10 @@ authorization-issuer keys. A bad key fails startup closed.
 
 | Flag | Meaning |
 | --- | --- |
-| `--replay-cache memory` (default) | In-memory; lost on restart; single-replica only. |
-| `--replay-cache file` | Durable, single-node, file-backed. Requires `--replay-path`. |
-| `--replay-cache shared` | The authoritative shared tier (Redis/etcd); **required under `--fleet`.** See the Fleet Deployment Guide. |
-| `--replay-path <path>` | State-file path for the `file` cache. |
+| `--replay-cache memory` (the value when the flag is omitted) | **Refused.** In-memory and lost on restart, which re-opens a replay window for any captured envelope still inside `expires_at + skew`. Because it is also the default, a command line that passes no replay flag at all does not start. |
+| `--replay-cache file` | **Refused.** A single file-backed cache does not fit the per-core share-nothing data plane (ADR-MCPRE-051 §1). |
+| `--replay-cache shared` | The authoritative shared tier (Redis/etcd), and the only replay configuration that starts. **Required under `--fleet`.** See the Fleet Deployment Guide. |
+| `--replay-path <path>` | State-file path for the refused `file` cache. |
 | `--replay-redis-url` / `--replay-durability-tier` | Shared-tier endpoint + durability class (e.g. `redis-wait-quorum:2:2000`). |
 
 ### Evidence retention / transparency (ADR-MCPRE-054)
@@ -216,20 +217,34 @@ bazel run //mcp-re-proxy:mcp_re_proxy_cli -- \
   --audience did:example:server-1 \
   --server-signer did:example:server-1 \
   --server-key-id server-key-1 \
+  --delegated-trust-epoch epoch-1 \
   --key-source file \
   --signing-key-seed /etc/mcp-re/signing.seed \
   --tls-cert /etc/mcp-re/server-chain.pem \
   --tls-key /etc/mcp-re/server-key.pem \
   --client-ca /etc/mcp-re/client-ca.pem \
   --trust /etc/mcp-re/trust.json \
-  --authz reference \
-  --revocation-list /etc/mcp-re/revoked.txt \
   --transport-binding exact \
   --transport-identity-source uri_san \
   --max-client-cert-lifetime 1h \
-  --replay-cache file --replay-path /var/lib/mcp-re/replay.json \
+  --replay-cache shared \
+  --replay-redis-url redis://127.0.0.1:8630 \
+  --replay-durability-tier redis-wait-quorum:2:2000 \
   --inner-http-url http://127.0.0.1:8080/mcp
 ```
+
+Three flags earlier versions of this guide passed are refused by configuration
+validation and will keep the proxy from starting:
+
+* `--authz reference` — the reference profile is never the production authority, and
+  authorization is not wired on the RFC 9421 serving path at all;
+* `--revocation-list` — its deny-list is read only by an authorization profile, and no
+  production profile has landed, so the list would revoke nothing;
+* `--replay-cache file` — a single file-backed cache does not fit the per-core
+  share-nothing data plane. `shared` with a durability tier is the only replay
+  configuration that starts (`memory` is refused for non-durability).
+
+Port 8630 is `mcp_re_redis` in `config/ports.toml`, not Redis' own 6379.
 
 Repeat `--inner-http-url` to round-robin across a backend fleet. On startup the PEP
 emits its async-fleet listen line with the worker count and the configured HTTP

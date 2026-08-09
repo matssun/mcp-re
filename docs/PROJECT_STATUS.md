@@ -107,9 +107,15 @@ The current demonstration and live-validation package proves:
 - **Mode A (`end_to_end_mtls`, default)** — the node terminates client mTLS and
   binds the verified peer to the request signer, with a certificate-revocation
   honesty pass: a strict short-lived-cert lifetime ceiling and static-CRL
-  fail-closed-on-stale (ADR-MCPS-023 §A1). OCSP, when enabled, is always fail-closed
-  as of v0.12.0 (the fail-open relaxation was removed).
-- **Mode C (`attested_ingress`, explicit opt-in)** — a controlled ingress attestor
+  fail-closed-on-stale (ADR-MCPS-023 §A1). Online OCSP is refused in every build as
+  of v0.16: it is implemented only against the blocking serve loop, and the
+  production data plane is the per-core async fleet, which performs no responder
+  round trip. Client-certificate revocation is CRL-only.
+- **Mode C (`attested_ingress`) — NOT DEPLOYABLE as of v0.16.** Configuration
+  validation refuses `--transport-binding attested-ingress`; the mode is retained as
+  a future capability, not removed, and admitting it requires first stating what an
+  attestor may assert and where the node's own authority begins. The design below
+  stands as a record of that shape. A controlled ingress attestor
   signs a request-bound `mcp-re/lb-ingress-assertion/v2` assertion the node verifies
   over a pinned attestor→node channel. This is **attested delegation**, NOT
   end-to-end mTLS (the load balancer witnesses proof-of-possession and stays in the

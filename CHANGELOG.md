@@ -12,6 +12,44 @@ or wire-format compatibility while the design lines from
 
 ## [Unreleased]
 
+### Changed — `--authz reference` states its refusal once, at the validation boundary
+
+The refusal of the reference authorization profile was stated in two places with two
+different diagnostics — one at parse time, one about 180 lines into startup. Both were
+true and both fired, so nothing could slip past either; but one prohibition enforced at
+two arbitrary altitudes is ambiguous about which layer owns it, and the two messages had
+already drifted apart. They are now one predicate carrying both facts (the reference
+profile is never the production authority, and authorization is not wired on the RFC 9421
+serving path at all), consulted by parse-time validation and by the programmatic boundary.
+
+A programmatically built configuration now refuses before any resource is materialized
+rather than partway through startup. Command-line users see no change.
+
+### Changed — the two undeployable transport bindings are refused at the validation boundary
+
+`--transport-binding lb-assertion` (Mode B) and `--transport-binding attested-ingress`
+(Mode C) are refused by configuration validation rather than by the composition root. No
+mode became deployable and none was removed; both were already refused before any request
+was served.
+
+The two halves were different problems. `lb-assertion` was refused by configuration
+validation *and* again in the composition root — one rule at two altitudes, which is not
+redundant defence but a duplicated invariant waiting to drift; the second copy is gone.
+`attested-ingress` was refused in the composition root and nowhere else, so a caller
+assembling a `Config` in code — an embedder, a harness, a bespoke launcher — reached the
+serving path carrying a binding whose verifier the async fleet does not consult, with
+identity coming from wherever the fallback strategy took it. That refusal moved to the
+boundary, where no construction path skips it.
+
+They also now refuse separately, naming the mode. One shared message read as a single
+unsupported feature when they are two decisions with different futures.
+
+Mode C is **retained** as a future capability rather than deleted; its verifier keeps its
+tests. Admitting it will require stating, in the specification, what an attestor is
+permitted to assert and where the node's own authority begins.
+
+Operators passing either flag see the refusal earlier in startup, naming the specific mode.
+
 ### Fixed — `--revocation-list` could bypass its refusal off the parsed path
 
 Fixed programmatic configuration validation so `--revocation-list` cannot bypass the

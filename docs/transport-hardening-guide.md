@@ -101,9 +101,11 @@ trait:
   in production with `0600` permissions; the CLI warns about group/world-readable
   key files.
 - **`EnvKeySource`** (`--key-source env`) — reads from environment variables.
-  **Dev/CI only**, and refused unless `--allow-env-keysource` is passed, because
-  env vars are visible to the process tree and leak via crash dumps, `ps e`, and
-  `/proc/<pid>/environ`. `KeyError` values carry only the var NAME and the parse
+  **Dev/CI only**, and compiled in only under the non-default `dev_env_key_source`
+  cargo feature: a production build has no `env` option at all and rejects the value
+  as unknown. Env vars are visible to the process tree and leak via crash dumps,
+  `ps e`, and `/proc/<pid>/environ`, so this is a build-time decision rather than a
+  runtime one. `KeyError` values carry only the var NAME and the parse
   failure, never the secret bytes, so they are safe to log.
 
 **HSM/KMS-backed sources** now implement the `KeySource` trait — PKCS#11, AWS
@@ -148,9 +150,11 @@ Source: `ServerOptions::max_client_cert_lifetime` in [`tls.rs`](../mcp-re-proxy/
 Revocation lives on three separate planes; do not conflate them:
 
 1. **TLS/mTLS certificate revocation** — a transport-hardening concern. For
-   deployments that use mTLS identity, the proxy supports **online OCSP/CRL**
-   (fail-closed by default since v0.12.0), alongside the short-lived-cert ceiling
-   below.
+   deployments that use mTLS identity, the proxy enforces **static CRLs**, which
+   fail closed on staleness, alongside the short-lived-cert ceiling below. Online
+   OCSP is refused in every v0.16 build: it is implemented only against the blocking
+   serve loop, and the production data plane is the per-core async fleet, which
+   performs no responder round trip.
 2. **MCP-RE signer/key revocation** — the runtime-evidence plane. MCP-RE Core / the
    HTTP profile does **not** use OCSP; it verifies RFC 9421 signatures, the RFC 9530
    `Content-Digest`, actor trust resolution, artifact bindings, replay, response
