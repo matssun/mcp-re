@@ -25,6 +25,27 @@
 //! mid-write must not empty the trust map: that would reject every request, turning an
 //! editor's save into a fleet-wide outage. The previous snapshot stays live and the
 //! failure is named on the diagnostic channel.
+//!
+//! # What one read of `--trust` produces is one value (M9)
+//!
+//! The verification keys and the kid -> signer coordinate are two views of the SAME read
+//! of the trust file, and they are published as one [`TrustSnapshot`]. They used to be
+//! two `RwLock`s swapped in sequence, under a comment saying they "must move in the same
+//! swap" — which the implementation did not do. Between the two writes the store itself
+//! held a resolver from read N and a signer map from read N-1.
+//!
+//! That happened to fail closed, because resolution consumes the composite
+//! `(signer, key_id)` and a torn pair does not resolve. But safe-by-consequence is not
+//! the mechanism the code claimed, and it made the guarantee depend on a downstream
+//! property in another crate rather than on the publication itself. One lock over one
+//! value removes the window instead of arguing about it.
+//!
+//! What remains, and is not a defect: the request path calls [`SignerDirectory::signer_for`]
+//! and [`TrustResolver::resolve`] at two different moments, so a reload landing between
+//! them is observable. That is ordinary — the same as a reload landing just before the
+//! request — and it fails closed in both directions, because each call answers from a
+//! snapshot that was internally coherent and neither answer admits anything alone
+//! (see [`SignerDirectory`]).
 
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -34,14 +55,21 @@ use mcp_re_core::TrustResolver;
 use mcp_re_core::TrustResolverError;
 use mcp_re_core::VerificationKey;
 
+/// One read of the trust file, as one value.
+///
+/// Both fields describe the same enrollment set: a key removed from the file stops
+/// resolving and disappears from the request-signer set at the same instant, because
+/// there is no instant between them. Adding a field here is how a future view of the
+/// same read stays in step; adding a second lock beside `current` is how it stops.
+struct TrustSnapshot {
+    resolver: InMemoryTrustResolver,
+    /// The key ids this snapshot knows, for the actor resolver's slot map.
+    signers: std::collections::HashMap<String, String>,
+}
+
 /// The atomically-swappable trust store the revocation tiers resolve against.
 pub struct ReloadingTrustStore {
-    current: RwLock<Arc<InMemoryTrustResolver>>,
-    /// The key ids the CURRENT store knows, for the actor resolver's slot map.
-    /// Carried alongside the resolver because both must move in the same swap: a
-    /// key removed from the file has to disappear from the request-signer set at
-    /// the same instant it stops resolving, or the two disagree for a window.
-    signers: RwLock<Arc<std::collections::HashMap<String, String>>>,
+    current: RwLock<Arc<TrustSnapshot>>,
 }
 
 impl ReloadingTrustStore {
@@ -51,26 +79,20 @@ impl ReloadingTrustStore {
         signers: std::collections::HashMap<String, String>,
     ) -> Self {
         ReloadingTrustStore {
-            current: RwLock::new(Arc::new(resolver)),
-            signers: RwLock::new(Arc::new(signers)),
+            current: RwLock::new(Arc::new(TrustSnapshot { resolver, signers })),
         }
     }
 
-    /// Swap in a freshly-read store. Subsequent resolves observe it.
+    /// Swap in a freshly-read store. Subsequent resolves observe it, whole.
     pub fn store(
         &self,
         resolver: InMemoryTrustResolver,
         signers: std::collections::HashMap<String, String>,
     ) {
-        // Order matters only in that both are swapped before either is read again;
-        // each swap is individually atomic and neither blocks the other's readers.
+        let next = Arc::new(TrustSnapshot { resolver, signers });
         match self.current.write() {
-            Ok(mut guard) => *guard = Arc::new(resolver),
-            Err(poisoned) => *poisoned.into_inner() = Arc::new(resolver),
-        }
-        match self.signers.write() {
-            Ok(mut guard) => *guard = Arc::new(signers),
-            Err(poisoned) => *poisoned.into_inner() = Arc::new(signers),
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
         }
     }
 
@@ -83,14 +105,12 @@ impl ReloadingTrustStore {
     /// The signer identity enrolled for `key_id`, or `None` when this store does not
     /// know it. `None` is a refusal at the actor seam: a kid never introduces trust.
     pub fn signer_for(&self, key_id: &str) -> Option<String> {
-        let map = match self.signers.read() {
-            Ok(guard) => Arc::clone(&guard),
-            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
-        };
-        map.get(key_id).cloned()
+        self.snapshot().signers.get(key_id).cloned()
     }
 
-    fn resolver(&self) -> Arc<InMemoryTrustResolver> {
+    /// The current snapshot. The `Arc` is cloned under a short read lock and read
+    /// outside it, so a verification never blocks on the reload worker.
+    fn snapshot(&self) -> Arc<TrustSnapshot> {
         match self.current.read() {
             Ok(guard) => Arc::clone(&guard),
             // A poisoned lock still yields the last value: the request path must not
@@ -103,7 +123,7 @@ impl ReloadingTrustStore {
 
 impl TrustResolver for ReloadingTrustStore {
     fn resolve(&self, signer: &str, key_id: &str) -> Result<VerificationKey, TrustResolverError> {
-        self.resolver().resolve(signer, key_id)
+        self.snapshot().resolver.resolve(signer, key_id)
     }
 }
 
@@ -212,5 +232,114 @@ mod tests {
         handle.resolve("signer-a", "kid-2").expect("enrolled");
         store.store(InMemoryTrustResolver::default(), HashMap::new());
         assert!(handle.resolve("signer-a", "kid-2").is_err());
+    }
+
+    /// M9 — a swap moves BOTH views, in both directions, for every kind of edit an
+    /// operator makes: removal, addition, and reassignment to a different kid.
+    ///
+    /// The broken implementation this catches: a `store` that publishes one half of the
+    /// snapshot and leaves the other — the shape the two-lock version could reach
+    /// transiently, and the shape a future edit reintroduces permanently by adding a
+    /// field beside `current` instead of inside `TrustSnapshot`. Each direction is
+    /// asserted separately because a half-swap is visible in only one of them: dropping
+    /// the resolver write alone leaves a revoked key resolving, and dropping the signers
+    /// write alone leaves it in the request-signer set.
+    #[test]
+    fn every_edit_moves_the_resolver_and_the_signer_set_together() {
+        let (resolver, signers) = store_with("kid-old");
+        let store = ReloadingTrustStore::new(resolver, signers);
+        let resolves = |s: &ReloadingTrustStore, kid: &str| s.resolve("signer-a", kid).is_ok();
+
+        assert!(resolves(&store, "kid-old") && store.signer_for("kid-old").is_some());
+
+        // Reassignment: the same signer under a different kid.
+        let (resolver, signers) = store_with("kid-new");
+        store.store(resolver, signers);
+        assert!(
+            !resolves(&store, "kid-old"),
+            "the retired kid still resolves: the resolver half did not move"
+        );
+        assert_eq!(
+            store.signer_for("kid-old"),
+            None,
+            "the retired kid is still a request signer: the signers half did not move"
+        );
+        assert!(resolves(&store, "kid-new") && store.signer_for("kid-new").is_some());
+
+        // Removal: the file is emptied.
+        store.store(InMemoryTrustResolver::default(), HashMap::new());
+        assert!(!resolves(&store, "kid-new"));
+        assert_eq!(store.signer_for("kid-new"), None);
+
+        // Addition: back to a populated file.
+        let (resolver, signers) = store_with("kid-added");
+        store.store(resolver, signers);
+        assert!(resolves(&store, "kid-added") && store.signer_for("kid-added").is_some());
+    }
+
+    /// A snapshot is a value, so a reader holding one keeps BOTH of its halves across
+    /// any number of swaps.
+    ///
+    /// This is what "one publication unit" buys, stated where it is checkable: the
+    /// reload worker cannot reach inside a snapshot a reader is using and move one half
+    /// of it. The broken implementation this catches is the mirror of the test above —
+    /// publishing by mutating shared maps in place rather than by replacing the value.
+    #[test]
+    fn a_snapshot_a_reader_already_holds_is_unaffected_by_later_swaps() {
+        let (resolver, signers) = store_with("kid-held");
+        let store = ReloadingTrustStore::new(resolver, signers);
+        let held = store.snapshot();
+
+        store.store(InMemoryTrustResolver::default(), HashMap::new());
+
+        assert!(
+            held.resolver.resolve("signer-a", "kid-held").is_ok(),
+            "the held snapshot's resolver was mutated by a later swap"
+        );
+        assert_eq!(
+            held.signers.get("kid-held").map(String::as_str),
+            Some("signer-a"),
+            "the held snapshot's signer set was mutated by a later swap"
+        );
+        // And the store itself did move on, so the assertions above are not describing
+        // a swap that never happened.
+        assert!(store.resolve("signer-a", "kid-held").is_err());
+    }
+
+    /// ADR-MCPRE-057 §17.3 — under a concurrent reload, a snapshot is never torn.
+    ///
+    /// The writer alternates between two DISJOINT enrollments, so a snapshot built from
+    /// two different reads is detectable: it would resolve one kid while listing the
+    /// other. The reader takes one snapshot per iteration and checks that its two halves
+    /// agree about both kids.
+    ///
+    /// Bounded by iteration count rather than by wall clock, so it cannot hang; a
+    /// failure names the snapshot that disagreed rather than only that one did.
+    #[test]
+    fn a_reader_never_observes_a_snapshot_built_from_two_different_reads() {
+        let (resolver, signers) = store_with("kid-a");
+        let store = Arc::new(ReloadingTrustStore::new(resolver, signers));
+
+        let writer_store = Arc::clone(&store);
+        let writer = std::thread::spawn(move || {
+            for i in 0..2_000 {
+                let (resolver, signers) = store_with(if i % 2 == 0 { "kid-b" } else { "kid-a" });
+                writer_store.store(resolver, signers);
+            }
+        });
+
+        for _ in 0..20_000 {
+            let snapshot = store.snapshot();
+            for kid in ["kid-a", "kid-b"] {
+                let resolves = snapshot.resolver.resolve("signer-a", kid).is_ok();
+                let enrolled = snapshot.signers.contains_key(kid);
+                assert_eq!(
+                    resolves, enrolled,
+                    "torn snapshot: {kid} resolves={resolves} but enrolled={enrolled} — the \
+                     two halves came from different reads of the trust file"
+                );
+            }
+        }
+        writer.join().expect("the reload thread must not panic");
     }
 }
