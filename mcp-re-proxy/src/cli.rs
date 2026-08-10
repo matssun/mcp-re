@@ -616,6 +616,366 @@ fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String
     Ok(())
 }
 
+/// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
+/// flag sets, as one rule.
+///
+/// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged, and CALLED FROM THE POSITION
+/// IT OCCUPIED. Every clause keeps its order and its wording, because the order is the
+/// refusal precedence an operator meets and the wording is the diagnostic (§8.5). A rule
+/// that reads better but reports a different first failure is a behaviour change wearing a
+/// refactor's clothes.
+///
+/// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
+/// without building a `Config` or a command line.
+#[allow(clippy::too_many_arguments)]
+/// Key-source custody coherence: every selector belongs to the source that was chosen.
+///
+/// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged and called from the position
+/// it occupied, so the clause order (which is the refusal precedence) and every message
+/// (which is the diagnostic) are the same (§8.5).
+///
+/// The clauses are all one shape: a selector that belongs to another source would SILENTLY
+/// do nothing, leaving an operator believing the key is token- or KMS-resident while it is
+/// not. Refusing is the only way that belief can be kept true. The contradictory-custody
+/// case — a delegated TLS selector alongside an exported `--tls-key` — is deliberately NOT
+/// here: it is enforced at the validation boundary by `tls_signing_exclusivity_refusal`,
+/// because it is a security state a programmatic config can reach without a parser.
+#[allow(clippy::too_many_arguments)]
+fn key_source_custody_refusal(
+    key_source: KeySourceKind,
+    pkcs11_module: Option<&str>,
+    pkcs11_pin_file: Option<&str>,
+    pkcs11_token_label: Option<&str>,
+    pkcs11_key_label: Option<&str>,
+    pkcs11_tls_key_label: Option<&str>,
+    aws_kms_region: Option<&str>,
+    aws_kms_key_id: Option<&str>,
+    aws_kms_tls_key_id: Option<&str>,
+    aws_kms_use_web_identity: bool,
+    aws_sts_endpoint: Option<&str>,
+    gcp_kms_key_version: Option<&str>,
+    gcp_kms_tls_key_version: Option<&str>,
+    gcp_kms_use_metadata: bool,
+) -> Option<String> {
+    // EnvKeySource is a dev/CI-only downgrade and is compiled in ONLY under the
+    // `dev_env_key_source` feature; a production build cannot even parse
+    // `--key-source env` (the match arm does not exist), so no runtime ack is needed
+    // — the build feature IS the acknowledgement.
+    // #4034 PKCS#11 key source: the module path, User PIN, token label, and
+    // signing-key object label are all required when this source is selected.
+    // Each is checked here (not in build_key_source) so a missing flag is a clear
+    // parse error regardless of which feature the binary was built with.
+    if key_source == KeySourceKind::Pkcs11 {
+        if pkcs11_module.is_none() {
+            return Some("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
+        }
+        if pkcs11_pin_file.is_none() {
+            return Some(
+                "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
+                 never accepted on argv, which is world-readable via ps and \
+                 /proc/<pid>/cmdline"
+                    .to_string(),
+            );
+        }
+        if pkcs11_token_label.is_none() {
+            return Some("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
+        }
+        if pkcs11_key_label.is_none() {
+            return Some("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
+        }
+    }
+    // #59: the TLS-key label selects the SEPARATE token object that custodies the
+    // TLS key. It only has meaning for the PKCS#11 source; a dangling label on any
+    // other source would silently do nothing (a false belief that the TLS key is
+    // token-resident), so reject it (fail closed).
+    if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
+        return Some(
+            "--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string(),
+        );
+    }
+    // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
+    // selected (credentials come from AWS_* env vars; the endpoint is optional).
+    // Checked here so a missing flag is a clear parse error regardless of feature.
+    if key_source == KeySourceKind::AwsKms {
+        if aws_kms_region.is_none() {
+            return Some("--key-source aws-kms requires --aws-kms-region <region>".to_string());
+        }
+        if aws_kms_key_id.is_none() {
+            return Some(
+                "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>".to_string(),
+            );
+        }
+    }
+    // #60: the TLS-key id selects the SEPARATE KMS key that custodies the TLS key.
+    // It only has meaning for the AWS KMS source; a dangling id on any other source
+    // would silently do nothing (a false belief that the TLS key is KMS-resident),
+    // so reject it (fail closed) — mirrors the `--pkcs11-tls-key-label` guard.
+    if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
+        return Some("--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string());
+    }
+    // The custody path an operator believes they selected must be the one they get.
+    // On any other key source these two would silently do nothing, leaving a
+    // deployment that thinks it holds no static IAM key material while holding it.
+    if aws_kms_use_web_identity && key_source != KeySourceKind::AwsKms {
+        return Some(
+            "--aws-kms-use-web-identity has no effect without --key-source aws-kms".to_string(),
+        );
+    }
+    if aws_sts_endpoint.is_some() && !aws_kms_use_web_identity {
+        return Some(
+            "--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string(),
+        );
+    }
+    // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
+    if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
+        return Some(
+            "--key-source gcp-kms requires --gcp-kms-key-version \
+             <projects/.../cryptoKeyVersions/N>"
+                .to_string(),
+        );
+    }
+    // #61: the TLS-key-version selects the SEPARATE Cloud KMS key version that
+    // custodies the TLS key. It only has meaning for the GCP KMS source; a dangling
+    // version on any other source would silently do nothing (a false belief that the
+    // TLS key is KMS-resident), so reject it (fail closed) — mirrors the
+    // `--aws-kms-tls-key-id` / `--pkcs11-tls-key-label` guards.
+    if gcp_kms_tls_key_version.is_some() && key_source != KeySourceKind::GcpKms {
+        return Some(
+            "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms".to_string(),
+        );
+    }
+    // The metadata-server flag only has meaning for the GCP KMS source; a dangling
+    // `--gcp-kms-use-metadata` would silently do nothing, so reject it.
+    if gcp_kms_use_metadata && key_source != KeySourceKind::GcpKms {
+        return Some(
+            "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
+        );
+    }
+    None
+}
+
+/// Shared-replay coherence: the declared durability tier, and the backend it requires.
+///
+/// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged and called from the position
+/// it occupied, so clause order and wording are preserved (§8.5).
+///
+/// These clauses are a DOWNSTREAM-FAIL-CLOSED duplicate, not the only enforcement:
+/// `startup_plan::ReplayPlan::from_config` independently refuses a shared tier with no
+/// tier, a linearizable tier with no CPStore endpoint, and a Redis tier with no URL, on
+/// every route into serving. They stay here because the parser is where an operator meets
+/// the clearer message first.
+fn shared_replay_refusal(
+    replay: ReplayKind,
+    replay_durability_tier: Option<&crate::replay_tier::ReplayDurabilityTier>,
+    replay_redis_url: Option<&str>,
+    cpstore_etcd_endpoint: Option<&str>,
+) -> Option<String> {
+    // ADR-MCPS-020: the durability tier is an explicit deployment assertion that
+    // determines the horizontal replay-safety claim, so a shared store MUST
+    // declare it (fail closed rather than assume a tier). Checked BEFORE the
+    // backend-endpoint requirement, because the declared tier decides WHICH
+    // backend endpoint is required.
+    if replay == ReplayKind::Shared && replay_durability_tier.is_none() {
+        return Some(
+            "--replay-cache shared requires --replay-durability-tier \
+                    (redis-async | redis-wait-quorum:<quorum>:<timeout_ms> | linearizable | \
+                    single-store-fail-closed)"
+                .to_string(),
+        );
+    }
+    // #69 (epic #68 v0.4 Axis 1): the declared tier selects the backend, which
+    // selects the required endpoint. The LINEARIZABLE tier needs a CP / linearizable
+    // store (etcd), so it requires `--cpstore-etcd-endpoint`; every other (Redis)
+    // tier requires `--replay-redis-url`. Selecting LINEARIZABLE WITHOUT the etcd
+    // endpoint is a HARD config-construction error here — NEVER a silent downgrade
+    // to Redis / in-memory (ADR-MCPS-020 fail-closed).
+    let tier_is_linearizable = matches!(
+        replay_durability_tier,
+        Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
+    );
+    if replay == ReplayKind::Shared {
+        if tier_is_linearizable {
+            if cpstore_etcd_endpoint.is_none() {
+                return Some(
+                    "--replay-durability-tier linearizable requires a CP/linearizable store \
+                     endpoint: --cpstore-etcd-endpoint <http://host:2379> (the LINEARIZABLE \
+                     claim is forbidden without a configured CPStore; it is NEVER silently \
+                     downgraded to Redis or in-memory)"
+                        .to_string(),
+                );
+            }
+        } else if replay_redis_url.is_none() {
+            return Some("--replay-cache shared requires --replay-redis-url".to_string());
+        }
+    }
+    // A `--cpstore-etcd-endpoint` set for any non-LINEARIZABLE configuration would
+    // silently do nothing (a false belief that a CP store is in force), so reject it
+    // (fail closed) — mirrors the dangling `--ocsp-responder-url` / KMS-TLS guards.
+    if cpstore_etcd_endpoint.is_some() && !(replay == ReplayKind::Shared && tier_is_linearizable) {
+        return Some(
+            "--cpstore-etcd-endpoint has no effect without \
+             --replay-cache shared --replay-durability-tier linearizable"
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn ingress_assertion_refusal(
+    binding: BindingKind,
+    ingress_lb_keys: &[(String, String)],
+    ingress_attestor_keys: &[(String, String)],
+    ingress_identities: &[String],
+    ingress_audience: Option<&str>,
+    ingress_pinned_mtls: bool,
+    reverse_proxy_identity_header: Option<&str>,
+) -> Option<String> {
+    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound ingress assertion.
+    // Fail CLOSED at the CLI trust boundary so the operator can never believe a
+    // request-binding control is in force when it is not.
+    //
+    // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
+    //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
+    //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
+    if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
+        return Some(
+            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
+        );
+    }
+    // (b) `lb-assertion` binding with NO trusted LB key can never verify any
+    //     assertion — it would reject every request. Require at least one key.
+    if binding == BindingKind::LbAssertion && ingress_lb_keys.is_empty() {
+        return Some(
+            "--transport-binding lb-assertion requires at least one --ingress-lb-key \
+             <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
+                .to_string(),
+        );
+    }
+    // (c) Each configured LB key must be a valid base64url 32-byte Ed25519 public
+    //     key, and key ids must be unique — a malformed key or duplicate id is a
+    //     misconfiguration, rejected at parse time rather than at first request.
+    {
+        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (key_id, key_b64) in ingress_lb_keys {
+            if !seen_ids.insert(key_id.as_str()) {
+                return Some(format!(
+                    "duplicate --ingress-lb-key id '{key_id}' (each LB key id must be unique)"
+                ));
+            }
+            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
+                return Some(format!(
+                    "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
+                     32-byte Ed25519 public key"
+                ));
+            }
+        }
+    }
+
+    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
+    // boundary so an operator can never believe an attested-ingress control is in
+    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
+    // fully configured: attestor keys, trusted ingress identities, the expected
+    // audience, and the explicit pinned-mTLS acknowledgement.
+    //
+    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
+    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
+    if binding != BindingKind::AttestedIngress {
+        if !ingress_attestor_keys.is_empty() {
+            return Some(
+                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if !ingress_identities.is_empty() {
+            return Some(
+                "--ingress-identity has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_audience.is_some() {
+            return Some(
+                "--ingress-audience has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+        if ingress_pinned_mtls {
+            return Some(
+                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
+                    .to_string(),
+            );
+        }
+    } else {
+        // (b) attested-ingress with NO trusted attestor key can never verify any
+        //     assertion — it would reject every request. Require at least one.
+        if ingress_attestor_keys.is_empty() {
+            return Some(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
+                 ingress-attestor verification key)"
+                    .to_string(),
+            );
+        }
+        // (c) attested-ingress with NO trusted ingress identity would reject every
+        //     assertion — require at least one.
+        if ingress_identities.is_empty() {
+            return Some(
+                "--transport-binding attested-ingress requires at least one \
+                 --ingress-identity <id> (a trusted ingress identity)"
+                    .to_string(),
+            );
+        }
+        // (d) attested-ingress binds the assertion's audience to the node's own — it
+        //     must be configured.
+        if ingress_audience.is_none() {
+            return Some(
+                "--transport-binding attested-ingress requires --ingress-audience <aud> \
+                 (the node's expected assertion audience/route)"
+                    .to_string(),
+            );
+        }
+        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
+        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
+        //     refuses to start (fail closed) — an attested-ingress posture must never
+        //     run without the pinned backend channel it depends on.
+        if !ingress_pinned_mtls {
+            return Some(
+                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
+                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
+                 acknowledge it explicitly or do not enable attested ingress"
+                    .to_string(),
+            );
+        }
+        // (f) Mode C resolves identity from the signed v2 assertion, so a trusted
+        //     reverse-proxy identity header would be a second, silently-ignored
+        //     identity source — reject the combination.
+        if reverse_proxy_identity_header.is_some() {
+            return Some(
+                "--transport-binding attested-ingress resolves identity from the signed v2 \
+                 assertion and is mutually exclusive with --reverse-proxy-identity-header"
+                    .to_string(),
+            );
+        }
+        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
+        //     and key ids must be unique.
+        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (key_id, key_b64) in ingress_attestor_keys {
+            if !seen_ids.insert(key_id.as_str()) {
+                return Some(format!(
+                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
+                     must be unique)"
+                ));
+            }
+            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
+                return Some(format!(
+                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
+                     base64url-no-pad 32-byte Ed25519 public key"
+                ));
+            }
+        }
+    }
+    None
+}
+
 pub fn parse_args(args: &[String]) -> Result<Config, String> {
     let mut bind = None;
     let mut audience = None;
@@ -1344,139 +1704,36 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
     ) {
         return Err(refusal);
     }
-    // ADR-MCPS-020: the durability tier is an explicit deployment assertion that
-    // determines the horizontal replay-safety claim, so a shared store MUST
-    // declare it (fail closed rather than assume a tier). Checked BEFORE the
-    // backend-endpoint requirement, because the declared tier decides WHICH
-    // backend endpoint is required.
-    if replay == ReplayKind::Shared && replay_durability_tier.is_none() {
-        return Err("--replay-cache shared requires --replay-durability-tier \
-                    (redis-async | redis-wait-quorum:<quorum>:<timeout_ms> | linearizable | \
-                    single-store-fail-closed)"
-            .to_string());
+    // Shared-replay coherence; the clauses live in `shared_replay_refusal` and the call
+    // stays where they were (ADR-MCPRE-058 §8.5).
+    if let Some(refusal) = shared_replay_refusal(
+        replay,
+        replay_durability_tier.as_ref(),
+        replay_redis_url.as_deref(),
+        cpstore_etcd_endpoint.as_deref(),
+    ) {
+        return Err(refusal);
     }
-    // #69 (epic #68 v0.4 Axis 1): the declared tier selects the backend, which
-    // selects the required endpoint. The LINEARIZABLE tier needs a CP / linearizable
-    // store (etcd), so it requires `--cpstore-etcd-endpoint`; every other (Redis)
-    // tier requires `--replay-redis-url`. Selecting LINEARIZABLE WITHOUT the etcd
-    // endpoint is a HARD config-construction error here — NEVER a silent downgrade
-    // to Redis / in-memory (ADR-MCPS-020 fail-closed).
-    let tier_is_linearizable = matches!(
-        replay_durability_tier,
-        Some(crate::replay_tier::ReplayDurabilityTier::Linearizable)
-    );
-    if replay == ReplayKind::Shared {
-        if tier_is_linearizable {
-            if cpstore_etcd_endpoint.is_none() {
-                return Err(
-                    "--replay-durability-tier linearizable requires a CP/linearizable store \
-                     endpoint: --cpstore-etcd-endpoint <http://host:2379> (the LINEARIZABLE \
-                     claim is forbidden without a configured CPStore; it is NEVER silently \
-                     downgraded to Redis or in-memory)"
-                        .to_string(),
-                );
-            }
-        } else if replay_redis_url.is_none() {
-            return Err("--replay-cache shared requires --replay-redis-url".to_string());
-        }
-    }
-    // A `--cpstore-etcd-endpoint` set for any non-LINEARIZABLE configuration would
-    // silently do nothing (a false belief that a CP store is in force), so reject it
-    // (fail closed) — mirrors the dangling `--ocsp-responder-url` / KMS-TLS guards.
-    if cpstore_etcd_endpoint.is_some() && !(replay == ReplayKind::Shared && tier_is_linearizable) {
-        return Err("--cpstore-etcd-endpoint has no effect without \
-             --replay-cache shared --replay-durability-tier linearizable"
-            .to_string());
-    }
-    // EnvKeySource is a dev/CI-only downgrade and is compiled in ONLY under the
-    // `dev_env_key_source` feature; a production build cannot even parse
-    // `--key-source env` (the match arm does not exist), so no runtime ack is needed
-    // — the build feature IS the acknowledgement.
-    // #4034 PKCS#11 key source: the module path, User PIN, token label, and
-    // signing-key object label are all required when this source is selected.
-    // Each is checked here (not in build_key_source) so a missing flag is a clear
-    // parse error regardless of which feature the binary was built with.
-    if key_source == KeySourceKind::Pkcs11 {
-        if pkcs11_module.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-module <path>".to_string());
-        }
-        if pkcs11_pin_file.is_none() {
-            return Err(
-                "--key-source pkcs11 requires --pkcs11-pin-file <path>; the User PIN is \
-                 never accepted on argv, which is world-readable via ps and \
-                 /proc/<pid>/cmdline"
-                    .to_string(),
-            );
-        }
-        if pkcs11_token_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-token-label <label>".to_string());
-        }
-        if pkcs11_key_label.is_none() {
-            return Err("--key-source pkcs11 requires --pkcs11-key-label <label>".to_string());
-        }
-    }
-    // #59: the TLS-key label selects the SEPARATE token object that custodies the
-    // TLS key. It only has meaning for the PKCS#11 source; a dangling label on any
-    // other source would silently do nothing (a false belief that the TLS key is
-    // token-resident), so reject it (fail closed).
-    if pkcs11_tls_key_label.is_some() && key_source != KeySourceKind::Pkcs11 {
-        return Err("--pkcs11-tls-key-label has no effect without --key-source pkcs11".to_string());
-    }
-    // ADR-MCPS-028 §B AWS KMS: region + key id are required when this source is
-    // selected (credentials come from AWS_* env vars; the endpoint is optional).
-    // Checked here so a missing flag is a clear parse error regardless of feature.
-    if key_source == KeySourceKind::AwsKms {
-        if aws_kms_region.is_none() {
-            return Err("--key-source aws-kms requires --aws-kms-region <region>".to_string());
-        }
-        if aws_kms_key_id.is_none() {
-            return Err(
-                "--key-source aws-kms requires --aws-kms-key-id <key-id|arn|alias>".to_string(),
-            );
-        }
-    }
-    // #60: the TLS-key id selects the SEPARATE KMS key that custodies the TLS key.
-    // It only has meaning for the AWS KMS source; a dangling id on any other source
-    // would silently do nothing (a false belief that the TLS key is KMS-resident),
-    // so reject it (fail closed) — mirrors the `--pkcs11-tls-key-label` guard.
-    if aws_kms_tls_key_id.is_some() && key_source != KeySourceKind::AwsKms {
-        return Err("--aws-kms-tls-key-id has no effect without --key-source aws-kms".to_string());
-    }
-    // The custody path an operator believes they selected must be the one they get.
-    // On any other key source these two would silently do nothing, leaving a
-    // deployment that thinks it holds no static IAM key material while holding it.
-    if aws_kms_use_web_identity && key_source != KeySourceKind::AwsKms {
-        return Err(
-            "--aws-kms-use-web-identity has no effect without --key-source aws-kms".to_string(),
-        );
-    }
-    if aws_sts_endpoint.is_some() && !aws_kms_use_web_identity {
-        return Err(
-            "--aws-sts-endpoint has no effect without --aws-kms-use-web-identity".to_string(),
-        );
-    }
-    // ADR-MCPS-028 §C GCP Cloud KMS: the key-version resource path is required.
-    if key_source == KeySourceKind::GcpKms && gcp_kms_key_version.is_none() {
-        return Err("--key-source gcp-kms requires --gcp-kms-key-version \
-             <projects/.../cryptoKeyVersions/N>"
-            .to_string());
-    }
-    // #61: the TLS-key-version selects the SEPARATE Cloud KMS key version that
-    // custodies the TLS key. It only has meaning for the GCP KMS source; a dangling
-    // version on any other source would silently do nothing (a false belief that the
-    // TLS key is KMS-resident), so reject it (fail closed) — mirrors the
-    // `--aws-kms-tls-key-id` / `--pkcs11-tls-key-label` guards.
-    if gcp_kms_tls_key_version.is_some() && key_source != KeySourceKind::GcpKms {
-        return Err(
-            "--gcp-kms-tls-key-version has no effect without --key-source gcp-kms".to_string(),
-        );
-    }
-    // The metadata-server flag only has meaning for the GCP KMS source; a dangling
-    // `--gcp-kms-use-metadata` would silently do nothing, so reject it.
-    if gcp_kms_use_metadata && key_source != KeySourceKind::GcpKms {
-        return Err(
-            "--gcp-kms-use-metadata has no effect without --key-source gcp-kms".to_string(),
-        );
+    // Key-source custody coherence. The clauses live in `key_source_custody_refusal`; the
+    // CALL stays here, where they were, so the first refusal an operator meets is
+    // unchanged (ADR-MCPRE-058 §8.5).
+    if let Some(refusal) = key_source_custody_refusal(
+        key_source,
+        pkcs11_module.as_deref(),
+        pkcs11_pin_file.as_deref(),
+        pkcs11_token_label.as_deref(),
+        pkcs11_key_label.as_deref(),
+        pkcs11_tls_key_label.as_deref(),
+        aws_kms_region.as_deref(),
+        aws_kms_key_id.as_deref(),
+        aws_kms_tls_key_id.as_deref(),
+        aws_kms_use_web_identity,
+        aws_sts_endpoint.as_deref(),
+        gcp_kms_key_version.as_deref(),
+        gcp_kms_tls_key_version.as_deref(),
+        gcp_kms_use_metadata,
+    ) {
+        return Err(refusal);
     }
     // ADR-MCPRE-051 §3: the async serving path forwards verified requests over the
     // pooled HttpInnerPool to one or more stateless HTTP inner backends, so at least
@@ -1508,148 +1765,19 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         );
     }
 
-    // ADR-MCPS-023 Tier 3 (issue #71): LB-signed request-bound ingress assertion.
-    // Fail CLOSED at the CLI trust boundary so the operator can never believe a
-    // request-binding control is in force when it is not.
-    //
-    // (a) Dangling `--ingress-lb-key` without `--transport-binding lb-assertion`
-    //     would SILENTLY do nothing (an illusion of request-bound ingress). Reject
-    //     it — mirrors the OCSP/reverse-proxy dangling-flag guards.
-    if !ingress_lb_keys.is_empty() && binding != BindingKind::LbAssertion {
-        return Err(
-            "--ingress-lb-key has no effect without --transport-binding lb-assertion".to_string(),
-        );
-    }
-    // (b) `lb-assertion` binding with NO trusted LB key can never verify any
-    //     assertion — it would reject every request. Require at least one key.
-    if binding == BindingKind::LbAssertion && ingress_lb_keys.is_empty() {
-        return Err(
-            "--transport-binding lb-assertion requires at least one --ingress-lb-key \
-             <keyid>:<base64url-ed25519-pub> (the trusted LB verification key)"
-                .to_string(),
-        );
-    }
-    // (c) Each configured LB key must be a valid base64url 32-byte Ed25519 public
-    //     key, and key ids must be unique — a malformed key or duplicate id is a
-    //     misconfiguration, rejected at parse time rather than at first request.
-    {
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in &ingress_lb_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Err(format!(
-                    "duplicate --ingress-lb-key id '{key_id}' (each LB key id must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Err(format!(
-                    "invalid --ingress-lb-key '{key_id}': the body must be a base64url-no-pad \
-                     32-byte Ed25519 public key"
-                ));
-            }
-        }
-    }
-
-    // ADR-MCPS-023 §C (v0.10) Mode C attested ingress — fail CLOSED at the CLI trust
-    // boundary so an operator can never believe an attested-ingress control is in
-    // force when a piece of it is missing. Mode C is strict-ADMITTED but ONLY when
-    // fully configured: attestor keys, trusted ingress identities, the expected
-    // audience, and the explicit pinned-mTLS acknowledgement.
-    //
-    // (a) The Mode-C flags SILENTLY do nothing outside `attested-ingress` — reject
-    //     dangling ones (mirrors the `--ingress-lb-key` dangling guard).
-    if binding != BindingKind::AttestedIngress {
-        if !ingress_attestor_keys.is_empty() {
-            return Err(
-                "--ingress-attestor-key has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if !ingress_identities.is_empty() {
-            return Err(
-                "--ingress-identity has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_audience.is_some() {
-            return Err(
-                "--ingress-audience has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-        if ingress_pinned_mtls {
-            return Err(
-                "--ingress-pinned-mtls has no effect without --transport-binding attested-ingress"
-                    .to_string(),
-            );
-        }
-    } else {
-        // (b) attested-ingress with NO trusted attestor key can never verify any
-        //     assertion — it would reject every request. Require at least one.
-        if ingress_attestor_keys.is_empty() {
-            return Err(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-attestor-key <keyid>:<base64url-ed25519-pub> (the trusted \
-                 ingress-attestor verification key)"
-                    .to_string(),
-            );
-        }
-        // (c) attested-ingress with NO trusted ingress identity would reject every
-        //     assertion — require at least one.
-        if ingress_identities.is_empty() {
-            return Err(
-                "--transport-binding attested-ingress requires at least one \
-                 --ingress-identity <id> (a trusted ingress identity)"
-                    .to_string(),
-            );
-        }
-        // (d) attested-ingress binds the assertion's audience to the node's own — it
-        //     must be configured.
-        if ingress_audience.is_none() {
-            return Err(
-                "--transport-binding attested-ingress requires --ingress-audience <aud> \
-                 (the node's expected assertion audience/route)"
-                    .to_string(),
-            );
-        }
-        // (e) The pinned attestor→node channel (§C2) is load-bearing: without the
-        //     explicit `--ingress-pinned-mtls` acknowledgement, attested ingress
-        //     refuses to start (fail closed) — an attested-ingress posture must never
-        //     run without the pinned backend channel it depends on.
-        if !ingress_pinned_mtls {
-            return Err(
-                "--transport-binding attested-ingress requires --ingress-pinned-mtls: the \
-                 attestor→node hop MUST be a pinned mTLS channel (ADR-MCPS-023 §C2); \
-                 acknowledge it explicitly or do not enable attested ingress"
-                    .to_string(),
-            );
-        }
-        // (f) Mode C resolves identity from the signed v2 assertion, so a trusted
-        //     reverse-proxy identity header would be a second, silently-ignored
-        //     identity source — reject the combination.
-        if reverse_proxy_identity_header.is_some() {
-            return Err(
-                "--transport-binding attested-ingress resolves identity from the signed v2 \
-                 assertion and is mutually exclusive with --reverse-proxy-identity-header"
-                    .to_string(),
-            );
-        }
-        // (g) Each attestor key must be a valid base64url 32-byte Ed25519 public key,
-        //     and key ids must be unique.
-        let mut seen_ids: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        for (key_id, key_b64) in &ingress_attestor_keys {
-            if !seen_ids.insert(key_id.as_str()) {
-                return Err(format!(
-                    "duplicate --ingress-attestor-key id '{key_id}' (each attestor key id \
-                     must be unique)"
-                ));
-            }
-            if mcp_re_core::VerificationKey::from_b64url(key_b64).is_err() {
-                return Err(format!(
-                    "invalid --ingress-attestor-key '{key_id}': the body must be a \
-                     base64url-no-pad 32-byte Ed25519 public key"
-                ));
-            }
-        }
+    // Ingress-assertion coherence (ADR-MCPS-023 Tier 3 + §C Mode C). The clauses live in
+    // `ingress_assertion_refusal`; the CALL stays here, at the position they occupied, so
+    // the refusal an operator meets first is unchanged (ADR-MCPRE-058 §8.5).
+    if let Some(refusal) = ingress_assertion_refusal(
+        binding,
+        &ingress_lb_keys,
+        &ingress_attestor_keys,
+        &ingress_identities,
+        ingress_audience.as_deref(),
+        ingress_pinned_mtls,
+        reverse_proxy_identity_header.as_deref(),
+    ) {
+        return Err(refusal);
     }
 
     // #4063 (MCPS-088) online-OCSP gating — fail CLOSED at the CLI trust boundary.
@@ -3690,6 +3818,77 @@ mod tests {
         let mut a = minimal();
         a.splice(0..0, durable_replay());
         a
+    }
+
+    /// ADR-MCPRE-058 §8.5 — the refusal PRECEDENCE, pinned.
+    ///
+    /// Three semantic clause groups were lifted out of `parse_args` into
+    /// `shared_replay_refusal`, `key_source_custody_refusal` and
+    /// `ingress_assertion_refusal`. Each call sits where its clauses sat, and the reason
+    /// that matters is here: when a command line violates several rules at once, the
+    /// operator meets exactly one message, and which one is a property of the order.
+    ///
+    /// A refactor that reads better while reporting a different first failure is a
+    /// behaviour change wearing a refactor's clothes — and it is invisible to every test
+    /// that supplies one violation at a time. This supplies three.
+    ///
+    /// The expected order is the source order: shared-replay coherence, then key-source
+    /// custody, then ingress assertion.
+    #[test]
+    fn the_refusal_precedence_across_the_extracted_rule_groups_is_unchanged() {
+        // Violates all three: shared replay with no tier, a PKCS#11 TLS label on a source
+        // that is not PKCS#11, and an LB key with no lb-assertion binding.
+        let mut a = minimal();
+        a.splice(
+            0..0,
+            args(&[
+                "--replay-cache",
+                "shared",
+                "--replay-redis-url",
+                "redis://127.0.0.1:6379",
+                "--pkcs11-tls-key-label",
+                "tls-on-token",
+                "--ingress-lb-key",
+                "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            ]),
+        );
+        let err = parse_args(&a).unwrap_err();
+        assert!(
+            err.contains("--replay-durability-tier"),
+            "shared-replay coherence is refused FIRST; got: {err}"
+        );
+
+        // Drop the first violation: the next group must now be what answers.
+        let mut b = minimal_durable();
+        b.splice(
+            0..0,
+            args(&[
+                "--pkcs11-tls-key-label",
+                "tls-on-token",
+                "--ingress-lb-key",
+                "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            ]),
+        );
+        let err = parse_args(&b).unwrap_err();
+        assert!(
+            err.contains("--pkcs11-tls-key-label"),
+            "key-source custody is refused SECOND; got: {err}"
+        );
+
+        // Drop that one too, and ingress answers last.
+        let mut c = minimal_durable();
+        c.splice(
+            0..0,
+            args(&[
+                "--ingress-lb-key",
+                "lb-1:1i8Bah79Hk_feT60LNhEceG6nwzwTRKHtcxx9hYofLg",
+            ]),
+        );
+        let err = parse_args(&c).unwrap_err();
+        assert!(
+            err.contains("--ingress-lb-key"),
+            "ingress assertion is refused THIRD; got: {err}"
+        );
     }
 
     // --- MCPRE-493 admission currency ----------------------------------------
