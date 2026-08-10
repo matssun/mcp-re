@@ -646,3 +646,115 @@ fn ordinary_header_values_still_reach_the_handler() {
     assert_eq!(status, 200);
     assert_eq!(reached.load(Ordering::SeqCst), 1);
 }
+
+// --- what "drained" means to the lifecycle (ADR-MCPRE-057 §8.1) ----------------
+
+/// A request abandoned by the grace never reaches the handler, and cannot reach it
+/// afterwards.
+///
+/// `serve_fleet` returning is what `MaterializedRuntime::serve` applies `FleetDrained`
+/// on, and phase 2 — dropping the trust, signing and TLS planes — runs immediately
+/// after. So the lifecycle's claim is not merely "the accept loop stopped": it is that
+/// no request can still be inside the handler, because the handler is the only thing
+/// that consults those planes.
+///
+/// `stuck_request_cannot_delay_exit_past_grace` proves exit is BOUNDED when a request is
+/// still in flight, and says in its own words that such a request is abandoned. What it
+/// does not say is what the abandoned request is doing afterwards. If it could still
+/// enter the handler once the join returned, the planes would be dropped underneath a
+/// live verification — and the drain would have bounded exit while breaking the property
+/// the bound exists to protect.
+///
+/// The request here stalls in the ASYNC body-read phase (promises 100 bytes, sends 1),
+/// which is a genuine await point rather than a blocked thread. That distinction is the
+/// test's validity: a handler blocking a worker thread would still be running after a
+/// runtime drop and would measure the harness instead of the serving path, whose
+/// handlers are async.
+#[test]
+fn a_request_abandoned_by_the_grace_never_reaches_the_handler() {
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let entered = Arc::new(AtomicUsize::new(0));
+    let entered_h = Arc::clone(&entered);
+
+    let grace = Duration::from_millis(400);
+    let server = spawn_server(
+        config,
+        options_with_drain(grace, Duration::from_secs(30)),
+        move |req, _id, _a| {
+            entered_h.fetch_add(1, Ordering::SeqCst);
+            req.to_vec()
+        },
+    );
+
+    let stalled =
+        open_stalled_body(server.addr, &client_config(&client_ca), 100, 1).expect("stalled open");
+    // Let the server reach the body-read await for this request, so it is genuinely
+    // in flight when the grace starts.
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        entered.load(Ordering::SeqCst),
+        0,
+        "a request still reading its body has not reached the handler yet"
+    );
+
+    server.trigger_shutdown();
+    let join_time = server.join();
+    assert!(
+        join_time < grace + Duration::from_secs(3),
+        "exit must stay bounded by the grace, took {join_time:?}"
+    );
+
+    // The join is the whole proof: once it returns, the per-core runtime has been
+    // dropped and the abandoned task with it. Nothing can enter the handler, so phase 2
+    // may drop the trust and signing planes.
+    assert_eq!(
+        entered.load(Ordering::SeqCst),
+        0,
+        "an abandoned request must never reach the handler"
+    );
+    // Hold the connection open past the join and re-check. A task that survived the
+    // runtime drop would have had every opportunity to finish its body read here, and
+    // the count would move after the lifecycle already recorded FleetDrained.
+    std::thread::sleep(Duration::from_millis(300));
+    drop(stalled);
+    assert_eq!(
+        entered.load(Ordering::SeqCst),
+        0,
+        "nothing may enter the handler after the fleet has joined"
+    );
+}
+
+/// The control that makes the assertion above non-vacuous.
+///
+/// The counter must be able to move. Without this, a handler that was never wired, a
+/// client that never connected, or a TLS failure would satisfy every assertion in
+/// `a_request_abandoned_by_the_grace_never_reaches_the_handler` by never running
+/// anything at all (ADR-MCPRE-057 §17.6).
+#[test]
+fn the_handler_entry_counter_moves_for_a_request_that_is_not_abandoned() {
+    let client_ca = make_ca();
+    let config = server_config_for(&client_ca);
+    let entered = Arc::new(AtomicUsize::new(0));
+    let entered_h = Arc::clone(&entered);
+
+    let server = spawn_server(
+        config,
+        options_with_drain(Duration::from_secs(5), Duration::from_secs(30)),
+        move |req, _id, _a| {
+            entered_h.fetch_add(1, Ordering::SeqCst);
+            req.to_vec()
+        },
+    );
+
+    let status = request_status(server.addr, &client_config(&client_ca), b"{}").expect("request");
+    assert_eq!(status, 200, "the ordinary request must be served");
+    assert_eq!(
+        entered.load(Ordering::SeqCst),
+        1,
+        "a completed request reaches the handler, so the counter is load-bearing"
+    );
+
+    server.trigger_shutdown();
+    server.join();
+}
