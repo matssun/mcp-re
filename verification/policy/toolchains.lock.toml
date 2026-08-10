@@ -92,12 +92,18 @@ state = "unresolved"
 image = ""
 digest = ""
 platform = "linux/arm64"
+definition = "verification/extraction/Dockerfile"
 note = """
 Pinned by DIGEST, never by tag: a tag is a mutable pointer, so a lane pinned to one could
 produce two different models from the same declared toolchain.
 
-Unresolved until the image is built and its digest recorded. Until then the Lean lane
-cannot produce evidence, which is the correct state — not a TODO.
+The image has been built and the full Charon -> LLBC -> Aeneas -> Lean pipeline exercised
+end to end from this Dockerfile, so the definition is known good. It is still unresolved
+because the digest that belongs here is the digest of an image the RUNNER can obtain, and
+this image exists only in a local daemon. Resolving it requires deciding where the image
+is published, which is a deployment decision rather than a fact to be discovered.
+
+Until then the Lean lane cannot produce evidence, which is the correct state — not a TODO.
 """
 
 [charon]
@@ -137,13 +143,32 @@ state stays "unresolved" until the container digest is pinned, for the same reas
 
 [lean]
 state = "unresolved"
-toolchain = ""
-source = "verification/lean/lean-toolchain once it exists"
+toolchain = "leanprover/lean4:v4.31.0"
+source = "verification/lean/lean-toolchain"
+note = """
+NOT a free choice: this is the toolchain the pinned Aeneas Lean backend declares in its own
+`backends/lean/lean-toolchain`. A generated model is proved against the Aeneas Lean
+library, so a repository Lean that differs from the backend's does not type-check the
+model — it type-checks nothing.
+
+The extraction image installs elan, whose default stable Lean is NEWER than this. The
+default is therefore not the pin, and `verification/lean/lean-toolchain` is what makes the
+correct one selected rather than the convenient one.
+
+state stays "unresolved" until [extraction_container] resolves, for the same reason as
+[charon].
+"""
 
 [aeneas_lean_backend]
 state = "unresolved"
-package_revision = ""
-note = "The Aeneas Lean backend/package revision, which moves independently of Aeneas itself."
+package_revision = "daa85d7e89400fa978be83fedbc7e475a83f0889"
+mathlib_revision = "fabf563a7c95a166b8d7b6efca11c8b4dc9d911f"
+note = """
+The Aeneas Lean backend/package revision, which moves independently of Aeneas itself. At
+the pinned Aeneas commit the backend ships in-tree, so its revision is that commit; the
+mathlib revision comes from the backend's own lake-manifest.json and is recorded because a
+theorem proved with a different mathlib is a theorem proved in a different environment.
+"""
 
 # ---------------------------------------------------------------------------
 # The verification schema itself

@@ -95,6 +95,7 @@ def main() -> int:
 
     if not hits:
         print("check-assumptions: PASS — no proof escape hatch in verification/")
+        print("VERDICT: PASS")
         print(f"  registered assumptions: {len(registered)}")
         return 0
 
@@ -115,6 +116,7 @@ def main() -> int:
         return 1
 
     print("\ncheck-assumptions: PASS — every mechanism is registered")
+    print("VERDICT: PASS")
     return 0
 
 

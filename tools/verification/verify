@@ -16,15 +16,33 @@ without blocking unrelated code, because a verification lane that can fail the b
 before it has ever produced a proof is a lane that will be disabled. `--gate` makes it
 authoritative — that is the flag CI flips once the pilots land.
 
-The verdict distinguishes three things that must never be conflated:
+Each lane DECLARES its outcome on a single line, one of five:
 
-    PASS      a check ran and was satisfied
-    SKIPPED   a check could not run, and says why
-    FAIL      a check ran and was not satisfied
+    VERDICT: NOT_REQUIRED | PASS | FAIL | UNAVAILABLE | SKIPPED
 
-A SKIPPED lane is never counted toward a PASS. The repository has been bitten by a lane
-that exited 0 having selected zero tests, and the rule that came out of it applies here
-with more force: a command that exits 0 having measured nothing is worse than a red one.
+Five rather than three, because three collapsed two pairs of genuinely different
+situations, and both collapses are places a false PASS gets in:
+
+    NOT_REQUIRED  the manifest asks nothing of this lane. Legitimate; does not hold the
+                  aggregate back, and is never counted as evidence either.
+    UNAVAILABLE   required, but could not execute — tools unpinned, lane absent on this
+                  host, container unreachable.
+    SKIPPED       required, could have executed, deliberately not executed.
+
+`UNAVAILABLE` and `SKIPPED` both force INCOMPLETE; they stay apart because one is an
+environment to fix and the other a decision to justify. Neither may read as success.
+
+A lane that exits 0 without declaring a verdict is FAIL, as is one declaring two different
+verdicts: both mean the lane cannot say what it did, and unknown is dirty (§2). The
+declaration is what separates "ran and was satisfied" from "ran nothing and returned 0" —
+a distinction no amount of reading the lane's prose can reliably recover.
+
+The aggregate is `aggregate_verdict`, and it distinguishes lanes that produce EVIDENCE
+(Verus, Lean, generated-model) from lanes that are PRECONDITIONS for trusting evidence
+(manifest validation, the assumption/TCB gate). A hygiene lane can withhold a pass by
+failing; its passing proves nothing about the code. So a repository with green hygiene
+gates and no proofs reports INCOMPLETE, not PASS — otherwise an empty manifest would read
+as a verified repository, which is "exits 0 having measured nothing" one level up again.
 """
 
 from __future__ import annotations
@@ -37,7 +55,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _manifest import (  # noqa: E402
+    LANE_VERDICTS,
     ManifestError,
+    aggregate_verdict,
     load_assumptions,
     load_toolchains,
     load_trust_boundaries,
@@ -47,11 +67,35 @@ from _manifest import (  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 
+def _declared_verdict(output: str) -> str | None:
+    """The verdict a lane declared, or None if it declared none.
+
+    Exactly one VERDICT: line is expected. Two contradicting lines are not a tie to be
+    broken here — they mean the lane does not know what it did, which is unknown, which
+    is dirty.
+    """
+    found = {
+        line.split(":", 1)[1].strip()
+        for line in output.splitlines()
+        if line.strip().startswith("VERDICT:")
+    }
+    if len(found) != 1:
+        return None
+    verdict = found.pop()
+    return verdict if verdict in LANE_VERDICTS else None
+
+
+#: (display name, script, is_formal).
+#:
+#: `is_formal` is what separates a lane that produces EVIDENCE from a lane that is a
+#: PRECONDITION for trusting evidence. The assumption/TCB gate can withhold a pass by
+#: failing, but its passing says nothing about the code — so it must never be able to
+#: carry the aggregate to PASS on its own.
 LANES = [
-    ("assumptions", "check-assumptions"),
-    ("generated-model", "check-generated"),
-    ("verus", "verify-verus"),
-    ("lean", "verify-lean"),
+    ("assumptions", "check-assumptions", False),
+    ("generated-model", "check-generated", True),
+    ("verus", "verify-verus", True),
+    ("lean", "verify-lean", True),
 ]
 
 
@@ -100,9 +144,8 @@ def main() -> int:
     if args.manifests:
         return 0
 
-    failures: list[str] = []
-    skipped: list[str] = []
-    for name, script in LANES:
+    verdicts: dict[str, str] = {}
+    for name, script, _is_formal in LANES:
         completed = subprocess.run(
             [sys.executable, str(HERE / script)],
             capture_output=True,
@@ -112,29 +155,61 @@ def main() -> int:
         output = (completed.stdout + completed.stderr).strip()
         if completed.returncode != 0:
             verdict = "FAIL"
-            failures.append(name)
-        elif "SKIPPED" in output or "nothing to drift" in output:
-            verdict = "SKIPPED"
-            skipped.append(name)
         else:
-            verdict = "PASS"
+            # The lane states its own verdict on a VERDICT: line. Inferring it from the
+            # prose instead would mean a lane that exits 0 having done nothing reads as
+            # PASS purely because it did not happen to print the word SKIPPED — the
+            # "exits 0 having measured nothing" failure, one level up.
+            declared = _declared_verdict(output)
+            if declared is None:
+                verdict = "FAIL"
+                output = (
+                    f"{output}\n\nFAIL: lane exited 0 without declaring a verdict. "
+                    "A lane that does not say what it did has unknown provenance, and "
+                    "unknown is dirty."
+                ).strip()
+            else:
+                verdict = declared
+        verdicts[name] = verdict
         print(f"\n[{name}] {verdict}")
         for line in output.splitlines():
             print(f"    {line}")
 
+    formal = {name for name, _script, is_formal in LANES if is_formal}
+    aggregate = aggregate_verdict(
+        [verdict for name, verdict in verdicts.items() if name in formal],
+        [verdict for name, verdict in verdicts.items() if name not in formal],
+    )
+    required_missing = [
+        name
+        for name, verdict in verdicts.items()
+        if verdict in {"UNAVAILABLE", "SKIPPED"}
+    ]
+    failed = [name for name, verdict in verdicts.items() if verdict == "FAIL"]
+    not_required = [
+        name for name, verdict in verdicts.items() if verdict == "NOT_REQUIRED"
+    ]
+
     print("\n" + "=" * 70)
-    if failures:
-        print(f"VERIFICATION: FAIL — {', '.join(failures)}")
-    elif skipped:
-        print(f"VERIFICATION: INCOMPLETE — skipped: {', '.join(skipped)}")
-        print("No lane produced formal evidence. This is not a pass.")
+    if aggregate == "FAIL":
+        print(f"VERIFICATION: FAIL — {', '.join(failed)}")
+    elif aggregate == "INCOMPLETE":
+        if required_missing:
+            print(f"VERIFICATION: INCOMPLETE — required and missing: {', '.join(required_missing)}")
+        else:
+            print("VERIFICATION: INCOMPLETE — the manifest requires no formal evidence")
+        print("No required lane produced formal evidence. This is not a pass.")
     else:
         print("VERIFICATION: PASS")
+    if not_required:
+        # Reported, never counted. "The manifest asked nothing of Lean" and "Lean proved
+        # something" are different claims, and only the second is evidence.
+        print(f"(not required by this manifest: {', '.join(not_required)})")
     if not args.gate:
         print("(report-only — pass --gate to make this authoritative)")
     print("=" * 70)
 
-    if failures and args.gate:
+    if aggregate == "FAIL" and args.gate:
         return 1
     return 0
 

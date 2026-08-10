@@ -78,19 +78,117 @@ This is a real constraint, not a staging preference: Charon does not build here 
 Nix, and installing Nix on this machine is out of scope. So the extracted-model pipeline
 runs only on the runner.
 
-Three consequences worth stating, because each is a way to get a false green:
+### Extraction identity is a tuple, not a pair
 
-1. **The container digest is a pin.** What identifies an extraction is the pair *(tool
-   commit, image digest)*, not the commit alone. Two runners on the same Aeneas commit
-   and different images are two different extractions, and the evidence engine must be
-   able to tell them apart.
-2. **A lane that cannot run is not a lane that passed.** The Lean lane is absent locally,
-   so `verify` reports it `SKIPPED` and the umbrella reports `INCOMPLETE`. A local run is
-   never evidence about V2 units, and the split must not become a way for Lean evidence to
-   be quietly assumed because the machine that could check it was elsewhere.
-3. **Local Verus is still not authoritative on its own.** `cargo verus focus` is a
-   productivity tool; the merge gate runs full verification. The lane split changes where
-   tools run, not what counts as evidence.
+An earlier draft of this file said the identity was *(tool commit, image digest)*. That is
+directionally right and too narrow. Charon and Aeneas are version-coupled — Aeneas
+maintains a Charon pin and expects the compatible revision — and the Lean backend needs
+its matching Lean toolchain and Aeneas Lean package. The identity of an extraction is:
+
+```text
+ExtractionIdentity =
+      repository source digest
+    + relevant Cargo features / configuration
+    + Rust toolchain
+    + Charon commit
+    + Charon preset / options
+    + Aeneas commit
+    + extraction-container digest
+    + Lean toolchain
+    + Aeneas Lean backend / package revision
+    + verification schema + formal-model revision
+```
+
+The strongest arrangement, and the one to build toward: the container *contains* exactly
+the pinned Rust, Charon, Aeneas, Lean and Aeneas Lean libraries, and CI additionally
+checks that the tools inside the image report the identities `toolchains.lock.toml`
+expects. That gives two independent checks —
+
+```text
+expected identity in repository  ==  actual identity inside pinned image
+```
+
+— rather than trusting the image tag to mean what it meant last week.
+
+### Reproducibility and CI trust are different concerns
+
+Two things the container is easy to conflate:
+
+- **Formal-environment reproducibility** = source + config + exact toolchains + container
+  digest. The container solves this. Ubuntu upgrades on the runner cannot silently change
+  extraction or proof semantics.
+- **CI trust boundary** = the runner infrastructure capable of executing that container. A
+  container does not make a compromised host trustworthy; a hostile runner can falsify
+  outputs before GitHub ever sees them.
+
+The operating assumption, recorded so it is a deliberate decision rather than an
+Actions default inherited by accident:
+
+> The self-hosted formal-verification runner is trusted CI infrastructure. Untrusted
+> contributions do not acquire merge authority by executing there: the repository owner is
+> the sole merge authority and performs security review before accepting external changes.
+> Untrusted code is untrusted wherever it runs — hosted execution changes the containment
+> boundary and blast radius, not the nature of the code.
+
+Containment hygiene follows from that rather than from fear: no secrets the job does not
+need, no repository write credentials in the verification job, container pinned by digest,
+unprivileged, no Docker socket inside the job, clean workspace, controlled cache reuse.
+
+### Two further consequences
+
+1. **A lane that cannot run is not a lane that passed.** The Lean lane is absent locally,
+   so it reports `NOT_REQUIRED` while no V2 unit is declared and `UNAVAILABLE` once one
+   is. Both keep the aggregate below PASS. The split must never become a way for Lean
+   evidence to be assumed because the machine that could check it was elsewhere.
+2. **Local Verus is still not authoritative on its own.** `cargo verus focus` skips
+   dependency re-verification and stores partial artifacts; full `cargo verus verify` runs
+   before commit and in the gate. The lane split changes where tools run, not what counts
+   as evidence.
+
+### Three meanings of "authoritative"
+
+Worth separating, because they are routinely conflated:
+
+| Claim | Requires |
+|---|---|
+| local iteration | `cargo verus focus` — convenience only, never evidence |
+| authoritative **Verus evidence** | full `cargo verus verify` under the pinned environment — may run locally or in CI |
+| authoritative **repository verdict** | every required lane for the manifest fingerprint has completed |
+
+So a Mac reporting *full Verus PASS, Lean unavailable* has produced valid Verus evidence
+and an `INCOMPLETE` repository verdict. There is nothing contradictory about that, and the
+docs should not let anyone read the first as the second.
+
+### The verdict algebra
+
+Five lane verdicts, because three collapsed two pairs of genuinely different situations:
+
+```text
+NOT_REQUIRED   the manifest asks nothing of this lane          legitimate
+PASS           executed and satisfied
+FAIL           executed and not satisfied
+UNAVAILABLE    required, but could not execute
+SKIPPED        required, could have run, deliberately did not
+```
+
+Aggregated:
+
+```text
+every required formal lane PASSed            -> PASS
+any required lane FAILed                     -> FAIL
+any required formal lane absent/unavailable  -> INCOMPLETE
+no formal lane required at all               -> INCOMPLETE
+```
+
+The last line matters most. Lanes are **formal** (Verus, Lean, generated-model — they
+produce evidence) or **hygiene** (manifest validation, the assumption/TCB gate — they are
+preconditions for trusting evidence). A hygiene lane can withhold a pass by failing, but
+its passing proves nothing about the code, so it can never carry the aggregate. A
+repository with green hygiene gates and no proofs is `INCOMPLETE`.
+
+The algebra is `_manifest.aggregate_verdict`, and `test_verdict_algebra.py` pins it —
+including the two directions of `NOT_REQUIRED`, which is the subtle one: it must not hold
+a V1-only scope back, and it must not itself count as evidence.
 
 ## Verification classes
 

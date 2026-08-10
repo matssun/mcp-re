@@ -12,6 +12,15 @@ nothing else wrote to it.
 Refuses while the pipeline is unpinned. Extraction by an unpinned Charon or Aeneas
 produces a model whose relationship to the Rust is unknown, and a theorem proved against
 an unknown model constrains nothing.
+
+The pipeline runs inside the pinned Linux container (ADR-MCPRE-059 §19); Charon does not
+build on macOS. The container digest is therefore one of the required pins, because the
+pair (tool commit, image digest) is what identifies the extraction, not the commit alone.
+
+When this is implemented, it MUST check the exit status of each tool directly. A shell
+pipeline reports its last stage, so a failed extraction can exit 0 — and a regeneration
+that silently did nothing leaves the previous model in place, which `check-generated`
+would then read as fresh.
 """
 
 from __future__ import annotations
@@ -23,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _manifest import ManifestError, load_toolchains, unresolved_pins  # noqa: E402
 
-REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend"}
+REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
 
 
 def main() -> int:

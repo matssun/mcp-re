@@ -64,6 +64,7 @@ def main() -> int:
 
     if not present:
         print("check-generated: no generated model — nothing to drift")
+        print("VERDICT: NOT_REQUIRED")
         return 0
 
     print(

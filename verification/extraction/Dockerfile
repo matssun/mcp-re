@@ -76,11 +76,20 @@ RUN cd /opt/aeneas/charon && eval "$(opam env)" \
 #
 # Status is checked directly rather than through a pipeline: a pipeline reports its last
 # stage, so a failed build can exit 0 and be baked into the image as a successful one.
+#
+# The cargo target directory for a rustc driver is many gigabytes and is dead weight once
+# the binaries are in bin/. It is removed in the SAME layer as the build: deleting it in a
+# later layer would leave the bytes in this one, and every layer is extracted on pull.
 RUN cd /opt/aeneas/charon && eval "$(opam env)" && make build \
-    && test -x /opt/aeneas/charon/bin/charon
+    && test -x /opt/aeneas/charon/bin/charon \
+    && test -x /opt/aeneas/charon/bin/charon-driver \
+    && rm -rf /opt/aeneas/charon/charon/target \
+    && rm -rf "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
 
 RUN cd /opt/aeneas && eval "$(opam env)" && make \
-    && test -x /opt/aeneas/bin/aeneas
+    && test -x /opt/aeneas/bin/aeneas \
+    && rm -rf /opt/aeneas/src/_build /opt/aeneas/tests/test_runner/_build \
+    && opam clean -a -c -r --logs
 
 # Lean, via elan. Step 6 of the authoritative loop (the Lean build/proofs) runs in this
 # image too, so the toolchain must live here rather than on the host. elan resolves the

@@ -26,7 +26,7 @@ from _manifest import (  # noqa: E402
     unresolved_pins,
 )
 
-REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend"}
+REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend", "extraction_container"}
 LEAN_DIR = REPO_ROOT / "verification" / "lean"
 
 
@@ -47,8 +47,14 @@ def main() -> int:
     lean_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V2", "V3"}]
 
     if not lean_units:
+        # NOT_REQUIRED, not SKIPPED or UNAVAILABLE: the manifest declares no V2/V3 unit,
+        # so this lane is not being asked for evidence at all. Once a V2 unit exists and
+        # the pipeline is absent on this host, the branch below reports UNAVAILABLE, which
+        # DOES hold the aggregate at INCOMPLETE — a lane that cannot run is never a lane
+        # that passed.
         state = "not pinned" if (missing or absent) else "pinned, lane not implemented"
-        print(f"verify-lean: SKIPPED — no V2/V3 unit declared ({state})")
+        print(f"verify-lean: NOT_REQUIRED — no V2/V3 unit declared ({state})")
+        print("VERDICT: NOT_REQUIRED")
         if missing:
             print(f"  unresolved pins: {', '.join(missing)}")
         if absent:

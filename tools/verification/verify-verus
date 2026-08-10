@@ -46,8 +46,12 @@ def main() -> int:
     verus_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V1", "V3"}]
 
     if not verus_units:
+        # NOT_REQUIRED, not SKIPPED: the manifest asks nothing of this lane, which is a
+        # legitimate state and must not hold the aggregate back. SKIPPED would mean the
+        # lane was required and deliberately not run.
         state = "unpinned" if missing else "pinned, lane not implemented"
-        print(f"verify-verus: SKIPPED — no V1/V3 unit declared ({state})")
+        print(f"verify-verus: NOT_REQUIRED — no V1/V3 unit declared ({state})")
+        print("VERDICT: NOT_REQUIRED")
         if missing:
             print(f"  unresolved: {', '.join(missing)}")
             print(
