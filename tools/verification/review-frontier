@@ -1,57 +1,124 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""The deterministic review frontier — ADR-MCPRE-059 §14, Phase 4/5.
+"""The deterministic review frontier — ADR-MCPRE-059 §14.
 
-Computes the minimum review obligation for a change: the dirty review units, the reason
-each is dirty, the context closure a reviewer needs to read, and the still-fresh evidence
-that should be supplied as context rather than redone.
+The minimum review obligation for a change: which review units are dirty, WHY each one is,
+which units a reviewer should read for context without re-reviewing, and which evidence is
+still good and should be supplied as context rather than redone.
 
-Not implemented, and refusing is the correct behaviour rather than a limitation.
+Two closures, kept apart (§3):
 
-The frontier's only value is that it is *sound*: the Security Review Funnel may safely
-narrow its scope to it. A partial implementation would emit a smaller set than the truth
-and there would be no signal distinguishing "nothing was invalidated" from "invalidation
-is not implemented". That is under-invalidation, the one failure mode this design treats
-as unacceptable — the engine must prefer over-invalidation until measurements justify
-otherwise (§5).
+    review closure    evidence actually invalidated. This is the work.
+    context closure   useful to read. Carries no invalidation.
 
-Until Phase 4 lands, the funnel's scope is what it has always been: the full declared unit
-list. That is over-invalidation, which is safe and expensive, and it is what the Phase 5
-comparison will be measured against.
+Conflating them produces one of two opposite failures — invalidating the repository for
+every local change, or showing a reviewer only the lines that moved while an unchanged
+consumer's assumptions have quietly stopped holding.
+
+The frontier is the MINIMUM obligation, not a prohibition: the funnel may always widen its
+own scope when a candidate needs more context.
+
+**Not yet authoritative.** Phase 5 runs this alongside the existing full-scope review and
+compares them; it may not be used to skip work until the discrepancies are understood and
+the owner ratifies. Printing a frontier is not permission to review only the frontier.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _manifest import ManifestError, load_verification  # noqa: E402
+from _graph import Attestation, evaluate, load_attestations  # noqa: E402
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_verification,
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _fingerprint import fingerprint_unit  # noqa: E402
+
+DEFAULT_STORE = REPO_ROOT / ".verification" / "attestations"
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--attestations",
+        type=Path,
+        default=DEFAULT_STORE,
+        help=f"attestation store (default {DEFAULT_STORE.relative_to(REPO_ROOT)})",
+    )
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args()
+
     try:
         doc = load_verification()
+        toolchains = load_toolchains()
+        assumptions = load_assumptions()
     except ManifestError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
     units = doc.get("unit", [])
-    print("review-frontier: NOT IMPLEMENTED — Phase 4")
+    edges = doc.get("edge", [])
+    current = {
+        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+    }
+    attestations: dict[str, Attestation] = load_attestations(args.attestations)
+    result = evaluate(units, edges, current, attestations)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "review_closure": result["review_closure"],
+                    "context_closure": result["context_closure"],
+                    "fresh": result["fresh"],
+                    "states": {k: v[0] for k, v in result["states"].items()},
+                    "reasons": {k: v[1] for k, v in result["states"].items()},
+                    "authoritative": False,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    width = max((len(unit["id"]) for unit in units), default=1)
+    print("Security Review Funnel scope (deterministic frontier)")
+    print(f"  attestation store: {args.attestations}")
+    if not attestations:
+        print("  (empty — no unit has ever been established fresh, so everything is dirty)")
     print()
-    print("Conservative fallback, which is what the funnel uses today:")
+    print("Dirty review units:")
+    for unit_id in result["review_closure"]:
+        state, reason = result["states"][unit_id]
+        print(f"  {unit_id:<{width}}  {state:<18}  {reason}")
+    if not result["review_closure"]:
+        print("  (none)")
     print()
-    print("Dirty review units (all declared units — nothing can be proved fresh yet):")
-    for unit in units:
-        print(f"  {unit['id']:<32} UNKNOWN   no attestation exists")
+    print("Context-only (read, do not re-review):")
+    for unit_id in result["context_closure"]:
+        print(f"  {unit_id}")
+    if not result["context_closure"]:
+        print("  (none)")
     print()
-    print("Still fresh:")
-    print("  (none — freshness requires an attestation to compare against)")
+    print("Still fresh (supply as context, not as work):")
+    for unit_id in result["fresh"]:
+        print(f"  {unit_id:<{width}}  {result['states'][unit_id][1]}")
+    if not result["fresh"]:
+        print("  (none)")
     print()
     print(
-        "Marking any unit fresh before the graph can derive it would be asserting the\n"
-        "conclusion this system exists to compute. Unknown is dirty."
+        "NOT AUTHORITATIVE — Phase 5 compares this against the full-scope review before it\n"
+        "may narrow any work. Printing a frontier is not permission to review only it."
     )
     return 0
 

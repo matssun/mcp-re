@@ -7,13 +7,9 @@ package depends on which"; this answers "which security guarantee does the consu
 on, is it proven or only reviewed, which test is evidence for it, which assumption makes
 the proof possible, and did the producer's contract change while its source did".
 
-Phase 4 implements state derivation and invalidation. Today this reports the declared
-graph only — which units and typed edges exist — and explicitly does NOT compute freshness.
-
-That distinction is the whole point. A partial implementation that emitted FRESH for
-anything would be asserting the one thing this system exists to derive, and it would be
-asserting it from a graph with no attestations to derive it from. Reporting the declared
-structure is useful; reporting a state is a lie until Phase 4 lands.
+Phase 4 derives state. Freshness is computed from the attestation store by `_graph`, never
+asserted: a unit with no attestation is UNKNOWN, which is dirty, and there is no path
+through this command from "could not establish" to FRESH.
 """
 
 from __future__ import annotations
@@ -25,7 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from _fingerprint import fingerprint_unit  # noqa: E402
+from _graph import evaluate, load_attestations  # noqa: E402
 from _manifest import (  # noqa: E402
+    REPO_ROOT,
     ManifestError,
     load_assumptions,
     load_toolchains,
@@ -38,6 +37,12 @@ from _manifest import (  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.add_argument(
+        "--attestations",
+        type=Path,
+        default=REPO_ROOT / ".verification" / "attestations",
+        help="attestation store to derive freshness against",
+    )
     args = parser.parse_args()
 
     try:
@@ -52,6 +57,10 @@ def main() -> int:
     units = doc.get("unit", [])
     edges = doc.get("edge", [])
     unresolved = unresolved_pins(toolchains)
+    current = {
+        unit["id"]: fingerprint_unit(unit, doc, toolchains, assumptions) for unit in units
+    }
+    derived = evaluate(units, edges, current, load_attestations(args.attestations))
 
     graph = {
         "policy_revision": doc["policy_revision"],
@@ -63,8 +72,8 @@ def main() -> int:
                 "paths": unit["paths"],
                 "exported_contracts": unit.get("exported_contracts", []),
                 "evidence": unit.get("evidence", []),
-                # Deliberately absent: "state". Phase 4 derives it. Emitting a placeholder
-                # would invite a consumer to read it.
+                "state": derived["states"][unit["id"]][0],
+                "reason": derived["states"][unit["id"]][1],
             }
             for unit in units
         ],
@@ -80,7 +89,8 @@ def main() -> int:
         "assumptions": len(assumptions.get("assumption", [])),
         "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],
         "unresolved_toolchain_pins": unresolved,
-        "freshness": "not-computed (Phase 4)",
+        "review_closure": derived["review_closure"],
+        "context_closure": derived["context_closure"],
     }
 
     if args.json:
@@ -91,8 +101,9 @@ def main() -> int:
     print(f"  units              {len(units)}")
     for unit in units:
         contracts = len(unit.get("exported_contracts", []))
+        state = derived["states"][unit["id"]][0]
         print(
-            f"    {unit['id']:<32} {unit['class']}  "
+            f"    {unit['id']:<32} {unit['class']}  {state:<14} "
             f"contracts={contracts}  evidence={len(unit.get('evidence', []))}"
         )
     print(f"  typed edges        {len(edges)}")
@@ -102,7 +113,8 @@ def main() -> int:
     print(f"  trust boundaries   {len(graph['trust_boundaries'])}")
     if unresolved:
         print(f"  unresolved pins    {', '.join(unresolved)}")
-    print("  freshness          not computed — Phase 4")
+    print(f"  review closure     {len(derived['review_closure'])} unit(s)")
+    print(f"  context closure    {len(derived['context_closure'])} unit(s)")
     return 0
 
 
