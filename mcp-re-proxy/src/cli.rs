@@ -1759,29 +1759,12 @@ pub fn parse_args(args: &[String]) -> Result<Config, String> {
         // verifier. Refused here rather than served as a binding that binds nothing.
         target_uri: {
             let uri = require(target_uri, "--target-uri")?;
-            if uri.trim().is_empty() {
-                return Err(
-                    "--target-uri must not be empty: an empty target makes the audience/target \
-                     binding a tautology (both sides compare equal) instead of binding this \
-                     deployment's dispatch boundary"
-                        .to_string(),
-                );
-            }
-            // ABSOLUTE form is required, and this is the check `async_serve`'s
-            // `origin_form_of` says already exists. It did not: a relative or
-            // scheme-less target (`/mcp`, `host/mcp`) yields no origin form, which
-            // makes the received-vs-configured path comparison return "consistent"
-            // for every request and disables the reconstruction check silently. The
-            // verifier's own audience comparison cannot catch it either — both sides
-            // are the same configured string.
-            if !uri.contains("://") {
-                return Err(format!(
-                    "--target-uri {uri:?} is not an absolute URI: it must be \
-                     <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
-                     A scheme-less target disables the request-target reconstruction check \
-                     entirely, so an ingress fanning several paths into one process would \
-                     verify signatures over a @target-uri the request never arrived at"
-                ));
+            // The rule is [`target_uri_violation`], which `unsafe_config_violations` also
+            // consults, so the shape the reconstruction check depends on holds however the
+            // config was built. Kept HERE, at the position it always occupied, so the
+            // diagnostic a CLI user meets first does not change (ADR-MCPRE-058 §8.5).
+            if let Some(refusal) = target_uri_violation(&uri) {
+                return Err(refusal);
             }
             uri
         },
@@ -2033,6 +2016,50 @@ pub fn validate_tls_signing_exclusivity(
         );
     }
     Ok(())
+}
+
+/// The `--target-uri` shape the request-target reconstruction check depends on, as a pure
+/// rule over the configured value.
+///
+/// ADR-MCPRE-058 §8.3, sixth member of this file's parser-only family, and the one with
+/// the most direct effect on a served request.
+///
+/// `async_serve` compares the origin-form of the configured target against the one the
+/// request arrived at, and refuses to serve where they differ. That comparison is
+/// answerable only for an ABSOLUTE target: `origin_form_of` finds `://` or returns `None`,
+/// and `target_uri_mismatch` propagates that `None` as "no mismatch". A blank target
+/// short-circuits to `None` one line earlier. So a configured target that is empty or
+/// scheme-less does not weaken the check — it disables it, silently, for every request,
+/// and the deployment goes on reporting that the binding is in force.
+///
+/// Both functions say in their own docs that the parser guarantees the shape. It did, and
+/// only for argv: `target_uri` is a public `Config` field, so a programmatically built
+/// config reaches the serving path having met no parser. An ingress fanning several paths
+/// into one process would then verify signatures over a `@target-uri` the request never
+/// arrived at, which is the exact scenario the parse-time diagnostic describes.
+///
+/// The decision lives here so the parser and the validation boundary cannot drift into
+/// disagreeing about it, and both messages are the parser's own — ADR-MCPRE-058 §8.5
+/// preserves the diagnostic an operator meets.
+pub(crate) fn target_uri_violation(uri: &str) -> Option<String> {
+    if uri.trim().is_empty() {
+        return Some(
+            "--target-uri must not be empty: an empty target makes the audience/target \
+             binding a tautology (both sides compare equal) instead of binding this \
+             deployment's dispatch boundary"
+                .to_string(),
+        );
+    }
+    if !uri.contains("://") {
+        return Some(format!(
+            "--target-uri {uri:?} is not an absolute URI: it must be \
+             <scheme>://<authority><path> (e.g. https://proxy.internal:8600/mcp). \
+             A scheme-less target disables the request-target reconstruction check \
+             entirely, so an ingress fanning several paths into one process would \
+             verify signatures over a @target-uri the request never arrived at"
+        ));
+    }
+    None
 }
 
 /// The ceiling on `--max-client-cert-lifetime` (ADR-MCPS-023 §A1, MCPS-57). A
@@ -2318,6 +2345,13 @@ pub fn unsafe_config_violations(config: &Config) -> Vec<String> {
         violations.push(refusal);
     }
     if let Some(refusal) = undeployable_transport_binding_refusal(config.binding) {
+        violations.push(refusal);
+    }
+    // Sixth instance, and the one that reaches furthest into a served request: an empty or
+    // scheme-less `--target-uri` does not weaken the request-target reconstruction check,
+    // it disables it for every request, while `async_serve` documents the shape as
+    // something the parser already guaranteed.
+    if let Some(refusal) = target_uri_violation(&config.target_uri) {
         violations.push(refusal);
     }
     // The admission gate. Its four clauses were the LAST parse-only invariants of this
@@ -6284,6 +6318,63 @@ mod tests {
         assert!(
             unsafe_config_violations(&config).is_empty(),
             "a safe config must have no strict violations"
+        );
+    }
+
+    /// ADR-MCPRE-058 §8.3: the rule the request-target reconstruction check depends on,
+    /// asserted directly on the pure predicate.
+    ///
+    /// The shapes that matter are the ones `origin_form_of` cannot answer for. A
+    /// scheme-less or empty target makes `target_uri_mismatch` return `None` for every
+    /// request, which reads as "consistent" — so the check does not weaken, it disappears.
+    #[test]
+    fn a_target_uri_that_would_disable_the_reconstruction_check_is_refused() {
+        for absolute in [
+            "https://proxy.internal:8600/mcp",
+            "http://127.0.0.1:8600/",
+            "https://proxy.internal",
+        ] {
+            assert!(
+                super::target_uri_violation(absolute).is_none(),
+                "an absolute target is the supported shape: {absolute}"
+            );
+        }
+        for unusable in [
+            "",
+            "   ",
+            "/mcp",
+            "proxy.internal:8600/mcp",
+            "proxy.internal",
+        ] {
+            let refusal = super::target_uri_violation(unusable)
+                .unwrap_or_else(|| panic!("{unusable:?} leaves the check unanswerable"));
+            assert!(
+                refusal.contains("--target-uri"),
+                "the refusal must name the flag, got: {refusal}"
+            );
+        }
+    }
+
+    /// The boundary consults that rule, so the refusal holds however the config was built.
+    ///
+    /// `parse_args` cannot produce this config — that is the point. The state is only
+    /// reachable by setting the public field, which is what a programmatic caller does.
+    #[test]
+    fn the_validation_boundary_refuses_a_target_uri_that_binds_nothing() {
+        let mut config = parse_args(&minimal_durable()).expect("the durable fixture parses");
+        assert!(
+            !unsafe_config_violations(&config)
+                .iter()
+                .any(|violation| violation.contains("--target-uri")),
+            "the parsed fixture's absolute target must not be a violation"
+        );
+
+        config.target_uri = "/mcp".to_string();
+        assert!(
+            unsafe_config_violations(&config)
+                .iter()
+                .any(|violation| violation.contains("--target-uri")),
+            "a scheme-less target must be refused at the boundary, not only by the parser"
         );
     }
 

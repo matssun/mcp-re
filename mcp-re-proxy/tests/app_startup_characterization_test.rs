@@ -750,3 +750,59 @@ fn a_programmatic_config_cannot_assert_both_delegated_and_exported_tls_custody()
         "an exported TLS key alone is a supported custody and must not be refused, got: {err}"
     );
 }
+
+/// ADR-MCPRE-058 §8.3 — the request-target reconstruction check cannot be disabled by
+/// building the config in code.
+///
+/// `async_serve` refuses to serve when the origin-form of the configured `--target-uri`
+/// differs from the one the request arrived at. That comparison is answerable only for an
+/// absolute target: `origin_form_of` returns `None` without a `://`, and
+/// `target_uri_mismatch` reads that `None` as "no mismatch". A scheme-less target therefore
+/// does not weaken the check, it turns it off for every request — and both of those
+/// functions documented the shape as something the parser had already guaranteed.
+///
+/// It had, and only for argv. `target_uri` is a public `Config` field, so this was the
+/// sixth member of the parser-only family: an ingress fanning several paths into one
+/// process would verify signatures over a `@target-uri` no request arrived at, while the
+/// deployment reported the binding as in force.
+///
+/// Driven through `app::run` rather than the serving path because the boundary is where
+/// the refusal belongs — a config this shape must never reach a listener at all.
+#[test]
+fn a_programmatic_config_cannot_disable_the_request_target_reconstruction_check() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let m = serving_fixtures::write_material();
+    let parsed = mcp_re_proxy::cli::parse_args(&base_args(&m)).expect("the base config parses");
+
+    for (label, target) in [
+        ("scheme-less", "proxy.internal:8600/mcp"),
+        ("path-only", "/mcp"),
+        ("empty", ""),
+    ] {
+        let mut config = parsed.clone();
+        config.target_uri = target.to_string();
+
+        let err = mcp_re_proxy::app::run(config, Arc::new(AtomicBool::new(true)))
+            .expect_err("a target of this shape must be refused however the config was built");
+        assert!(
+            err.contains("refuses unsafe configuration"),
+            "a {label} target must be refused at the validation boundary, got: {err}"
+        );
+        assert!(
+            err.contains("--target-uri"),
+            "the refusal must name the flag, got: {err}"
+        );
+    }
+
+    // Negative control: the same fixture with its absolute target must NOT be refused for
+    // this reason. Without it, a boundary that refused every config would satisfy the
+    // assertions above.
+    let err = mcp_re_proxy::app::run(parsed, Arc::new(AtomicBool::new(true)))
+        .expect_err("this fixture stops at an environmental step, not a target-uri one");
+    assert!(
+        !err.contains("refuses unsafe configuration"),
+        "an absolute target is the supported shape and must not be refused, got: {err}"
+    );
+}

@@ -441,8 +441,9 @@ pub async fn serve<H: AsyncRequestHandler>(
 /// routes on and what this process CAN see, so it is the part whose assertion is
 /// checkable.
 ///
-/// An empty configured target is not checked here — `--target-uri` is already required
-/// and non-empty at parse, and the verifier fails closed on a blank covered value.
+/// An empty configured target is not checked here — `cli::target_uri_violation` refuses it
+/// at the validation boundary every config passes through, and the verifier fails closed on
+/// a blank covered value.
 fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String> {
     if configured.is_empty() {
         return None;
@@ -457,8 +458,11 @@ fn target_uri_mismatch(configured: &str, received: &hyper::Uri) -> Option<String
 
 /// The origin-form (`/path`) of an ABSOLUTE `--target-uri`.
 ///
-/// `None` only for a target with no `://`, which `cli::parse_args` refuses — so on
-/// the served path this is always `Some`, and the mismatch check is always live.
+/// `None` only for a target with no `://`, which `cli::target_uri_violation` refuses at the
+/// validation boundary — so on the served path this is always `Some`, and the mismatch
+/// check is always live. The refusal is at the boundary rather than only in the parser
+/// because a `None` here reads as "no mismatch", which would disable this check silently
+/// for a config that never met a parser.
 fn origin_form_of(absolute: &str) -> Option<String> {
     let authority_start = absolute.find("://")? + 3;
     let authority = &absolute[authority_start..];
