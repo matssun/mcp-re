@@ -247,15 +247,38 @@ crate must be verified or explicitly marked external. `runtime_state.rs` lives i
 crate in would mean marking essentially all of it external, which inflates the trusted
 computing base to the point where the proof's meaning is questionable.
 
-Two resolutions exist, and choosing between them is Phase 2's decision, not Phase 0's:
+Choosing the resolution is Phase 2's decision, not Phase 0's, and it must be **written
+down before any code moves**. Three options, one of which is ruled out here:
 
-1. accept the external-marking cost and scope it explicitly in the assumption registry; or
-2. extract the lifecycle relation into a small pure crate, which is architecturally
-   defensible on its own terms (it is already a pure value, and the repository already
-   has the pure-crate pattern) but is a production change and therefore out of Phase 0.
+**A — extract the lifecycle relation into a small pure production crate.** Permitted only
+if it passes the *architecture-without-the-verifier* test:
 
-Resolution 2 must not be adopted *merely* to make the tool happy — ADR-MCPRE-059 §18. It
-qualifies only if it is a good change without the proof.
+> Would we still want this crate if Verus disappeared tomorrow?
+
+There is a plausible case: the relation is pure, central, security-significant, free of
+tokio/rustls/FFI, and is already consumed as a production contract rather than as a
+diagram. But that case has to stand on ownership, purity, reuse, and testability on its
+own. "Verus wants a small crate" is not a reason, and a boundary introduced for the
+verifier's convenience is exactly the distortion ADR-MCPRE-059 §18 forbids.
+
+**B — pick a different first pilot**, from a small production boundary already inside a
+suitably pure crate. ADR-MCPRE-059 cares about proving a meaningful executable security
+property; it does not care about `runtime_state.rs` specifically. If the crate split would
+be artificial, this is the right answer and not a retreat.
+
+**C — mark ~49 000 lines external and call the pilot successful. Ruled out.** It produces
+
+```text
+tiny verified state relation  +  enormous trusted external surface  =  green verifier
+```
+
+and the green would mean far less than it appears to. It also teaches the wrong lesson
+about what a pilot is for.
+
+The general form, which outlives this pilot: **verification granularity is part of
+trusted-computing-base design.** A formally attractive unit embedded in a huge
+verification crate is not thereby a good verification unit — the unit and the crate are
+chosen together.
 
 ### 6.2 Aeneas/Lean pilot candidate — the keyid canonical form
 
@@ -263,20 +286,38 @@ qualifies only if it is a good change without the proof.
 
 Why this one: 75 lines, pure, safe, sequential, no interior mutability, no async, no
 Mutex — inside the subset Aeneas documents. And the interesting theorem needs no crypto
-model at all:
+model at all.
 
-> `canonical_ed25519_jwk` is injective on its input. Two distinct base64url-no-pad key
-> encodings never produce the same JWK byte string.
+The layering must be stated in three parts rather than one, so nobody later reads the
+pilot as having proved something about SHA-256:
 
-That is a real security property. The function builds RFC 7638's canonical form by direct
-string formatting rather than through a serializer, precisely so no reordering or
-whitespace can change a derived keyid; injectivity is the statement that the format admits
-no delimiter ambiguity. Format-string ambiguity in a canonicalization step is a classic
-and quiet vulnerability class, and a keyid is a selector on the trust path.
+```text
+Theorem A   (proved)      distinct Ed25519 public key encodings
+                              -> distinct canonical JWK byte strings
 
-SHA-256 collision resistance stays outside the proof, as a registered assumption with a
-named external model. That separation — proving what is provable, declaring what is
-assumed — is itself the demonstration Phase 3 is meant to produce.
+Assumption  (registered)  SHA-256 does not collide over those canonical encodings
+
+Conclusion  (conditional) distinct keys -> distinct derived keyids
+```
+
+Theorem A is the real security property and the one Lean establishes. The function builds
+RFC 7638's canonical form by direct string formatting rather than through a serializer,
+precisely so no reordering or whitespace can change a derived keyid; injectivity is the
+statement that the format admits no delimiter ambiguity. Format-string ambiguity in a
+canonicalization step is a classic and quiet vulnerability class, and a keyid is a
+selector on the trust path.
+
+The assumption is registered, named, and visible; the conclusion is explicitly
+conditional on it. Proving what is provable and declaring what is assumed — with the
+boundary between them written down — is the demonstration Phase 3 exists to produce, and
+it puts the assumption registry to work on the first pilot instead of leaving it
+ceremonial.
+
+**Lane.** This pilot runs on the self-hosted CI runner inside the pinned container:
+Charon does not build on this machine without Nix, which is out of scope, so the whole
+Charon → LLBC → Aeneas → Lean pipeline is CI-only while the Verus pilot stays local.
+Recorded here because a local `verify` reporting no Lean failure says nothing about V2
+units — it says the lane was not present.
 
 Alternates if extraction of the above proves unsupported: `mcp-re-core/src/encoding.rs`
 (base64url canonicality) and `mcp-re-core/src/time.rs::parse_rfc3339_utc` (freshness

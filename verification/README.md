@@ -65,6 +65,33 @@ zero tests.
 running against whatever is on `PATH`, because a proof checked by a prover of unknown
 identity is not evidence.
 
+## Two lanes, because the toolchains do not live in the same place
+
+The platform is one manifest and one verdict, but two execution lanes:
+
+| Lane | Tools | Where | Feedback |
+|---|---|---|---|
+| **local** | Verus, vstd, Z3 | this machine, pinned in `policy/toolchains.lock.toml` | immediate — edit, `verify-verus`, repeat |
+| **CI** | Charon, Aeneas, Lean, the Aeneas Lean backend | self-hosted Actions runner, inside the pinned container | per push |
+
+This is a real constraint, not a staging preference: Charon does not build here without
+Nix, and installing Nix on this machine is out of scope. So the extracted-model pipeline
+runs only on the runner.
+
+Three consequences worth stating, because each is a way to get a false green:
+
+1. **The container digest is a pin.** What identifies an extraction is the pair *(tool
+   commit, image digest)*, not the commit alone. Two runners on the same Aeneas commit
+   and different images are two different extractions, and the evidence engine must be
+   able to tell them apart.
+2. **A lane that cannot run is not a lane that passed.** The Lean lane is absent locally,
+   so `verify` reports it `SKIPPED` and the umbrella reports `INCOMPLETE`. A local run is
+   never evidence about V2 units, and the split must not become a way for Lean evidence to
+   be quietly assumed because the machine that could check it was elsewhere.
+3. **Local Verus is still not authoritative on its own.** `cargo verus focus` is a
+   productivity tool; the merge gate runs full verification. The lane split changes where
+   tools run, not what counts as evidence.
+
 ## Verification classes
 
 | Class | Meaning | Evidence |
@@ -101,6 +128,17 @@ one" is not a reason.
    test must never make its claim look fresher.
 10. **Do not formalize unstable thousand-line legacy functions.** Formalize the stable
     seams the ADR-MCPRE-057/058 refactor created.
+11. **Verification-boundary extraction must pass an architecture-without-the-verifier
+    test.** A production boundary may be introduced to enable formal verification only
+    when it is independently justified by ownership, authority, state, purity, reuse, or
+    testability. If the boundary would not be wanted with the verifier gone, choose a
+    different verification target rather than distort production architecture. This is
+    ADR-MCPRE-059 §18 made operational, and the first pilot is already testing it.
+12. **Verification granularity is part of trusted-computing-base design.** A formally
+    attractive unit sitting inside a huge verification crate is not thereby a good
+    verification unit. Proving a small relation while marking a large surface external
+    produces a green verifier over an inflated TCB, and the green means less than it
+    appears to. Choose the unit and the crate together.
 
 ## Running it
 

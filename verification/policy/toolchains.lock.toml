@@ -81,12 +81,31 @@ note = "As packaged or required by the pinned Verus release, not whatever Z3 is 
 # Aeneas / Lean lane — required before any V2 unit exists
 # ---------------------------------------------------------------------------
 
+# ADR-MCPRE-059 §19. Everything in this lane resolves INSIDE the extraction container, not
+# on the macOS host. Charon is a rustc driver: on aarch64-apple-darwin the `rustc-dev`
+# component ships the compiler crates as .rmeta only (no .rlib for the crates Charon names),
+# so Charon cannot link there. On aarch64-unknown-linux-gnu the same component ships the
+# .rlib files and Charon builds unmodified. The host is changed rather than the tool.
+
+[extraction_container]
+state = "unresolved"
+image = ""
+digest = ""
+platform = "linux/arm64"
+note = """
+Pinned by DIGEST, never by tag: a tag is a mutable pointer, so a lane pinned to one could
+produce two different models from the same declared toolchain.
+
+Unresolved until the image is built and its digest recorded. Until then the Lean lane
+cannot produce evidence, which is the correct state — not a TODO.
+"""
+
 [charon]
-state = "resolved"
+state = "unresolved"
 commit = "340b1af4df92608d0911fc2ba26eef3fd3a30ab4"
 source_url = "https://github.com/AeneasVerif/charon"
-install_root = "/opt/verification/aeneas/charon"
-rust_toolchain = "nightly-2026-06-01-aarch64-apple-darwin"
+rust_toolchain = "nightly-2026-06-01"
+rust_target = "aarch64-unknown-linux-gnu"
 rust_components = ["rustc-dev", "llvm-tools-preview", "rust-src", "miri"]
 note = """
 The commit is not chosen independently: it is the one named in the pinned Aeneas
@@ -94,24 +113,26 @@ checkout's `charon-pin`. Charon and Aeneas move as a pair, and pinning them sepa
 would let an extraction run against a Charon whose LLBC output the pinned Aeneas does not
 claim to accept.
 
-Charon is a rustc driver, so it links the private compiler crates and requires its own
-nightly toolchain — a THIRD Rust toolchain, distinct from both the [rust] channel and the
-one Verus requires. This is the divergence the [rust] note anticipates, recorded rather
-than resolved: it is confined to the extraction step and never compiles production code.
+The nightly is a THIRD Rust toolchain, distinct from both the [rust] channel and the one
+Verus requires. This is the divergence the [rust] note anticipates, recorded rather than
+resolved: it is confined to the extraction step and never compiles production code.
+
+state stays "unresolved" while [extraction_container] is unresolved. The commit is known,
+but a commit alone does not identify what a build of it produces; the pair (commit, image
+digest) does.
 """
 
 [aeneas]
-state = "resolved"
+state = "unresolved"
 commit = "daa85d7e89400fa978be83fedbc7e475a83f0889"
 source_url = "https://github.com/AeneasVerif/aeneas"
-install_root = "/opt/verification/aeneas"
-ocaml_switch = "aeneas"
 ocaml_compiler = "5.3.0"
-opam_root = "/opt/verification/opam"
 note = """
-opam_root is deliberately not the default ~/.opam. The extraction toolchain is repository
-infrastructure, not user state, and the wrappers must set OPAMROOT explicitly rather than
-inherit whichever switch a developer's shell happens to have active.
+Built inside the extraction container. Aeneas' Makefile requires GNU Make; Apple's
+bundled Make 3.81 is rejected outright, which the container makes moot.
+
+state stays "unresolved" until the container digest is pinned, for the same reason as
+[charon].
 """
 
 [lean]

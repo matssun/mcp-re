@@ -34,6 +34,19 @@ propagated into four documented places before anyone noticed. Use
 `scripts/local_slo_lane.sh`; `scripts/slo_invocation_gate.py` fails the build if the
 bad form comes back.
 
+The general rule that instance is one case of:
+
+> **A test property includes the build/feature lane the test actually exists in.** A
+> passing lane that compiles the relevant test to zero tests is not evidence for that
+> property.
+
+Second known instance: `mcp-re-proxy/tests/async_drain_test.rs` is
+`#![cfg(feature = "async_serve")]`. A plain `cargo test --workspace` compiles it to
+**zero** tests and reports green, so cargo says nothing whatsoever about bounded drain
+or teardown ordering. Only `bazel test //...` runs it — the target sets
+`crate_features = ["async_serve"]` and `RUST_TEST_THREADS=1`. Before citing a drain or
+lifecycle result, confirm it came from the Bazel lane.
+
 ## Measure on a quiet box
 
 The local SLO lane co-locates the load generator with the proxy, so an unrelated build
