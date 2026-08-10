@@ -616,18 +616,6 @@ fn non_empty_authority(flag: &str, value: &str, rest: &str) -> Result<(), String
     Ok(())
 }
 
-/// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
-/// flag sets, as one rule.
-///
-/// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged, and CALLED FROM THE POSITION
-/// IT OCCUPIED. Every clause keeps its order and its wording, because the order is the
-/// refusal precedence an operator meets and the wording is the diagnostic (§8.5). A rule
-/// that reads better but reports a different first failure is a behaviour change wearing a
-/// refactor's clothes.
-///
-/// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
-/// without building a `Config` or a command line.
-#[allow(clippy::too_many_arguments)]
 /// Key-source custody coherence: every selector belongs to the source that was chosen.
 ///
 /// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged and called from the position
@@ -821,6 +809,18 @@ fn shared_replay_refusal(
     None
 }
 
+/// Ingress-assertion coherence: the LB-assertion (Tier 3) and attested-ingress (Mode C)
+/// flag sets, as one rule.
+///
+/// ADR-MCPRE-058 §9.2 — lifted out of `parse_args` unchanged, and CALLED FROM THE POSITION
+/// IT OCCUPIED. Every clause keeps its order and its wording, because the order is the
+/// refusal precedence an operator meets and the wording is the diagnostic (§8.5). A rule
+/// that reads better but reports a different first failure is a behaviour change wearing a
+/// refactor's clothes.
+///
+/// Pure: it takes what it decides on and returns the refusal, so the clauses can be tested
+/// without building a `Config` or a command line.
+#[allow(clippy::too_many_arguments)]
 fn ingress_assertion_refusal(
     binding: BindingKind,
     ingress_lb_keys: &[(String, String)],
