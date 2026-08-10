@@ -5,12 +5,39 @@
 **Question:** ADR-MCPRE-059 §18, made checkable — *would we want `runtime_state` in a small
 pure crate if Verus disappeared tomorrow?*
 
-**Answer: no.** Recommend **Option B** — extract nothing, and pick a different first Verus
-pilot. The purity the extraction was reaching for is worth having and is obtainable without
-a crate.
+**Answer: no.** **Option B**, owner-approved:
+
+> **ADR-059 Phase 2 pilot decision.** Do not extract the runtime lifecycle solely to obtain
+> a smaller Verus verification unit. Select a security-significant unit in `mcp-re-core`
+> whose actual production dependency boundary already coincides with the trusted
+> `boundary.crypto_primitives` surface. Defer formal verification of `RuntimeLifecycle`
+> until its production crate boundary becomes naturally appropriate, or verifier
+> granularity improves.
+
+That is not rejecting lifecycle verification. It is protecting the production architecture
+from the proof tool. `runtime_state.rs` is architecturally pure; Verus's crate-level
+verification boundary simply does not coincide with that architectural boundary.
 
 Written before any code moves, as required. Read-only investigation; nothing here changes
 production.
+
+## What the Option B target must establish before implementation begins
+
+Five conditions, all of which the Phase 2 write-up must satisfy:
+
+1. **Meaningful security property.** Not "this helper returns what it computes", but an
+   invariant whose violation would matter to MCP-RE security.
+2. **Existing production boundary.** No new abstraction created primarily for Verus.
+3. **Small, explicit TCB.** Anything treated as external must coincide with an
+   already-declared trusted boundary such as `boundary.crypto_primitives` — not a
+   convenient collection of unrelated code.
+4. **Negative proof control.** Name the violating implementation *before* writing the
+   proof, and demonstrate Verus rejects it.
+5. **Refactor survival.** Change the implementation without changing the contract, and
+   show the proof survives or needs only understandable repair.
+
+Candidate assessment against these is in §"Consequence for the first Verus pilot" below;
+conditions 4 and 5 are discharged during Phase 2 itself, not here.
 
 ---
 
@@ -30,17 +57,29 @@ Nothing outside `mcp-re-proxy` references it — not another crate, not an integ
 
 ### 2. What does `runtime_state.rs` itself require?
 
-**Nothing from outside itself.** No external crate, no `std` import, no `crate::` or
-`super::` path. 436 lines: ~212 of production code and ~223 of test.
+**No production module.** No workspace crate, no third-party crate, no `crate::` or
+`super::` path. 436 lines: ~212 of production code and ~223 of test. Its entire external
+dependency set is `std::fmt`, for rendering `InvalidTransition` in an error message.
 
-The two `use` lines it does contain are `use RuntimeEvent as E;` and `use RuntimeState as
-S;`, inside `transition`, shortening the module's *own* type names so the 110-pair match
-fits on a screen. They name nothing outside and are not dependencies.
+The two `use` lines it contains are `use RuntimeEvent as E;` and `use RuntimeState as S;`,
+inside `transition`, shortening the module's *own* type names so the 110-pair match fits on
+a screen. They name nothing outside and are not dependencies.
 
-(An earlier draft of this document said "zero `use` statements". That was wrong — it came
-from a line-anchored grep that missed two indented lines inside a function body. The
-purity gate written alongside this decision caught it on its first run, which is a small
-argument for the gate.)
+> **Two corrections, both found by tooling rather than by re-reading.**
+>
+> The first draft said "zero `use` statements", from a line-anchored grep that missed two
+> indented lines inside a function body. The purity gate caught it on its first run.
+>
+> The second draft said "no `std` import" — also wrong. `impl std::fmt::Display for
+> InvalidTransition` reaches the standard library with no `use` at all, so a `use`-based
+> check could not see it. Rewriting the gate to compute the dependency *set* rather than
+> count `use` lines found it immediately.
+>
+> Both errors came from measuring a syntactic correlate instead of the proposition, which
+> is the same mistake that made a `pgrep` liveness check report on watcher shells rather
+> than the process being watched. Recorded rather than edited away, because the pattern is
+> the point: the property is "depends on no production module", and every cheap proxy for
+> it has been wrong so far.
 
 It is a pure leaf. That is the strongest fact in this investigation, and it cuts both ways
 — see §7.
@@ -141,15 +180,21 @@ That is the difference between a proof whose trusted basis is understood and one
 trusted basis is "everything else".
 
 **Primary candidate — `mcp-re-core/src/time.rs`** (329 lines, one internal import, no
-external dependencies at all). The property is canonical-model theorem 4: *after a
-freshness boundary, no future decision admits an action on the stale basis*. Real
-security content — it is the clock-skew and expiry rule the whole replay tier stands on.
+external dependencies at all), against the five conditions:
+
+| | |
+|---|---|
+| 1 — meaningful property | Canonical-model theorem 4: *after a freshness boundary, no future decision admits an action on the stale basis*. It is the clock-skew and expiry rule the whole replay tier stands on; violating it re-opens a replay window. |
+| 2 — existing boundary | `parse_rfc3339_utc` / `unix_to_rfc3339_utc` are the production freshness seam already. Nothing new is introduced. |
+| 3 — small explicit TCB | Zero external dependencies, so the module contributes nothing to the TCB. The crate's six deps coincide with `boundary.crypto_primitives`, already declared trusted. |
+| 4 — negative control | To name in Phase 2. The obvious one: accept a timestamp at exactly `expires_at + skew + 1` and show the proof fails. |
+| 5 — refactor survival | To demonstrate in Phase 2: re-implement the parse without changing the admissibility contract; source digest moves, contract digest does not, proof re-runs. |
 
 **Stretch candidate — the `mcp-re-core/src/replay.rs` decision rule**: *a nonce admitted
-once is never admitted again within its window*. A stronger property, but
-`InMemoryReplayCache` holds a `Mutex`, so it depends on how the pinned Verus release
-handles interior mutability. Decide at Phase 2 entry against the tool as pinned, not
-against the tool as assumed.
+once is never admitted again within its window*. A stronger property against condition 1,
+but `InMemoryReplayCache` holds a `Mutex`, so condition 3 depends on how the pinned Verus
+release handles interior mutability. Decide at Phase 2 entry against the tool as pinned,
+not the tool as assumed.
 
 ## What this does not close
 
