@@ -508,6 +508,77 @@ impl HttpProfileProxy {
     /// [`ServedHttpResponse`] — a signed reply on success, a signed rejection receipt
     /// on any fail-closed step. Only the replay admission and the inner round-trip
     /// are awaited; the RFC 9421 verify/sign are inline CPU (ADR-MCPRE-051 §2).
+    /// The NOTIFICATION arm: a signed bodyless 202 for a message with no JSON-RPC `id`.
+    ///
+    /// ADR-MCPRE-058 §9.2 — lifted out of `handle` whole, and it is a whole arm: every path
+    /// through it returns, so extracting it removes a terminal branch rather than a slice of
+    /// the pipeline. The stage's position in `handle` is unchanged.
+    ///
+    /// This runs AFTER the backend has acted. The 202 states that the enforcement boundary
+    /// authenticated and accepted the message — never that any action completed (#418).
+    ///
+    /// Retention covers this exit on the same terms as a bodied reply. Leaving it out let a
+    /// client decide whether a call it had already executed was accountable, by the single
+    /// act of omitting the `id`.
+    #[allow(clippy::too_many_arguments)]
+    async fn answer_notification(
+        &self,
+        http_req: &HttpRequest,
+        a: &mcp_re_http_profile::ActiveDelegatedKey,
+        now: i64,
+        expires: i64,
+        verified: &mcp_re_http_profile::VerifiedHttpRequestEvidence,
+        actor_id: String,
+        retention: &RetentionDisposition,
+    ) -> ServedHttpResponse {
+        match sign_delegated_accepted_202(
+            http_req,
+            &a.credential,
+            a.key.as_ref(),
+            &a.delegated_kid,
+            now,
+            expires,
+        ) {
+            Ok(ack) => {
+                // Retention covers this exit on the SAME terms as the bodied reply.
+                // The backend has already run by here, so leaving it out let a
+                // client decide whether a call it had executed was accountable, by
+                // the single act of omitting the JSON-RPC `id`.
+                if let Some(rejection) = self
+                    .retain_accepted(
+                        http_req,
+                        &ack,
+                        now,
+                        Some(&verified.evidence),
+                        actor_id.clone(),
+                        retention,
+                    )
+                    .await
+                {
+                    return rejection;
+                }
+                // The signed bodyless 202 IS the signed response for a notification,
+                // and it is returned on this line — so the record describes bytes the
+                // client actually receives.
+                self.audit(
+                    mcp_re_core::audit::AuditEvent::response_signed(),
+                    Some(actor_id),
+                    202,
+                    now,
+                );
+                served(ack)
+            }
+            Err(e) => self.response_rejection(
+                http_req,
+                e.wire_code(),
+                500,
+                now,
+                Some(&verified.evidence),
+                Some(actor_id),
+            ),
+        }
+    }
+
     pub async fn handle(&self, req: ServedHttpRequest, now: i64) -> ServedHttpResponse {
         let http_req = HttpRequest {
             method: req.method,
@@ -806,59 +877,22 @@ impl HttpProfileProxy {
             headers: vec![("content-type".into(), "application/json".into())],
             body: inner_bytes,
         };
-        // NOTIFICATION — a one-way NOTIFICATION (a JSON-RPC message with no `id`) gets a
-        // signed bodyless 202, not a bodied reply (#424 / #418). The backend already
-        // received it above (its side effects run); the 202 states only that the
-        // enforcement boundary authenticated and accepted the message — NOT that any
-        // action completed. The credential rides in the covered `mcp-re-delegation`
-        // header, since a bodyless 202 has no body to carry it.
+        // NOTIFICATION — a one-way message with no JSON-RPC `id` gets a signed bodyless
+        // 202, not a bodied reply (#424 / #418). The arm is `answer_notification`; the
+        // BRANCH stays here, at the position it occupied, because everything below it
+        // assumes a bodied reply.
         if is_notification(&http_req.body) {
-            return match sign_delegated_accepted_202(
-                &http_req,
-                &a.credential,
-                a.key.as_ref(),
-                &a.delegated_kid,
-                now,
-                expires,
-            ) {
-                Ok(ack) => {
-                    // Retention covers this exit on the SAME terms as the bodied reply.
-                    // The backend has already run by here, so leaving it out let a
-                    // client decide whether a call it had executed was accountable, by
-                    // the single act of omitting the JSON-RPC `id`.
-                    if let Some(rejection) = self
-                        .retain_accepted(
-                            &http_req,
-                            &ack,
-                            now,
-                            Some(&verified.evidence),
-                            actor_id.clone(),
-                            &retention,
-                        )
-                        .await
-                    {
-                        return rejection;
-                    }
-                    // The signed bodyless 202 IS the signed response for a notification,
-                    // and it is returned on this line — so the record describes bytes the
-                    // client actually receives.
-                    self.audit(
-                        mcp_re_core::audit::AuditEvent::response_signed(),
-                        Some(actor_id),
-                        202,
-                        now,
-                    );
-                    served(ack)
-                }
-                Err(e) => self.response_rejection(
+            return self
+                .answer_notification(
                     &http_req,
-                    e.wire_code(),
-                    500,
+                    a.as_ref(),
                     now,
-                    Some(&verified.evidence),
-                    Some(actor_id),
-                ),
-            };
+                    expires,
+                    &verified,
+                    actor_id,
+                    &retention,
+                )
+                .await;
         }
 
         // RESULT-CLASSIFIED — the backend's reply must be classifiable before the enforcement
