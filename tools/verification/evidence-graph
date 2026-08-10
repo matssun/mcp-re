@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The security evidence graph — ADR-MCPRE-059 §4, §5, Phase 4.
+
+A semantic overlay on the Cargo graph, not a replacement for it. Cargo answers "which
+package depends on which"; this answers "which security guarantee does the consumer rely
+on, is it proven or only reviewed, which test is evidence for it, which assumption makes
+the proof possible, and did the producer's contract change while its source did".
+
+Phase 4 implements state derivation and invalidation. Today this reports the declared
+graph only — which units and typed edges exist — and explicitly does NOT compute freshness.
+
+That distinction is the whole point. A partial implementation that emitted FRESH for
+anything would be asserting the one thing this system exists to derive, and it would be
+asserting it from a graph with no attestations to derive it from. Reporting the declared
+structure is useful; reporting a state is a lie until Phase 4 lands.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_trust_boundaries,
+    load_verification,
+    unresolved_pins,
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args()
+
+    try:
+        doc = load_verification()
+        assumptions = load_assumptions()
+        boundaries = load_trust_boundaries()
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    units = doc.get("unit", [])
+    edges = doc.get("edge", [])
+    unresolved = unresolved_pins(toolchains)
+
+    graph = {
+        "policy_revision": doc["policy_revision"],
+        "unknown_is_dirty": doc["unknown_is_dirty"],
+        "units": [
+            {
+                "id": unit["id"],
+                "class": unit["class"],
+                "paths": unit["paths"],
+                "exported_contracts": unit.get("exported_contracts", []),
+                "evidence": unit.get("evidence", []),
+                # Deliberately absent: "state". Phase 4 derives it. Emitting a placeholder
+                # would invite a consumer to read it.
+            }
+            for unit in units
+        ],
+        "edges": [
+            {
+                "kind": edge["kind"],
+                "from": edge["from"],
+                "to": edge["to"],
+                "sealed": bool(edge.get("sealed")),
+            }
+            for edge in edges
+        ],
+        "assumptions": len(assumptions.get("assumption", [])),
+        "trust_boundaries": [entry["id"] for entry in boundaries.get("boundary", [])],
+        "unresolved_toolchain_pins": unresolved,
+        "freshness": "not-computed (Phase 4)",
+    }
+
+    if args.json:
+        print(json.dumps(graph, indent=2, sort_keys=True))
+        return 0
+
+    print(f"evidence graph @ policy {doc['policy_revision']}")
+    print(f"  units              {len(units)}")
+    for unit in units:
+        contracts = len(unit.get("exported_contracts", []))
+        print(
+            f"    {unit['id']:<32} {unit['class']}  "
+            f"contracts={contracts}  evidence={len(unit.get('evidence', []))}"
+        )
+    print(f"  typed edges        {len(edges)}")
+    sealed = sum(1 for edge in edges if edge.get("sealed"))
+    print(f"    sealed           {sealed}")
+    print(f"  assumptions        {graph['assumptions']}")
+    print(f"  trust boundaries   {len(graph['trust_boundaries'])}")
+    if unresolved:
+        print(f"  unresolved pins    {', '.join(unresolved)}")
+    print("  freshness          not computed — Phase 4")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The verification umbrella — ADR-MCPRE-059 "Authoritative CI loop".
+
+Runs the platform's checks in the ADR's order and reports a single verdict:
+
+    1. validate verification manifests
+    2. validate toolchain pins
+    3. detect assumption / TCB escape hatches
+    4. check generated-model freshness
+    5. full Verus verification
+    6. Lean build and proofs
+
+Report-only by default (Phase 1 deliverable 7): the platform reports its own health
+without blocking unrelated code, because a verification lane that can fail the build
+before it has ever produced a proof is a lane that will be disabled. `--gate` makes it
+authoritative — that is the flag CI flips once the pilots land.
+
+The verdict distinguishes three things that must never be conflated:
+
+    PASS      a check ran and was satisfied
+    SKIPPED   a check could not run, and says why
+    FAIL      a check ran and was not satisfied
+
+A SKIPPED lane is never counted toward a PASS. The repository has been bitten by a lane
+that exited 0 having selected zero tests, and the rule that came out of it applies here
+with more force: a command that exits 0 having measured nothing is worse than a red one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    ManifestError,
+    load_assumptions,
+    load_toolchains,
+    load_trust_boundaries,
+    load_verification,
+    unresolved_pins,
+)
+
+HERE = Path(__file__).resolve().parent
+
+LANES = [
+    ("assumptions", "check-assumptions"),
+    ("generated-model", "check-generated"),
+    ("verus", "verify-verus"),
+    ("lean", "verify-lean"),
+]
+
+
+def validate_manifests() -> tuple[bool, list[str]]:
+    notes: list[str] = []
+    try:
+        doc = load_verification()
+        load_assumptions()
+        load_trust_boundaries()
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        return False, [str(exc)]
+    notes.append(f"policy revision {doc['policy_revision']}")
+    notes.append(f"{len(doc.get('unit', []))} unit(s), {len(doc.get('edge', []))} edge(s)")
+    unresolved = unresolved_pins(toolchains)
+    if unresolved:
+        notes.append(f"unresolved toolchain pins: {', '.join(unresolved)}")
+    return True, notes
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="authoritative mode: a failing lane fails the build",
+    )
+    parser.add_argument(
+        "--manifests",
+        action="store_true",
+        help="validate the manifests only, then stop",
+    )
+    args = parser.parse_args()
+
+    print("=" * 70)
+    print("ADR-MCPRE-059 verification platform")
+    print("=" * 70)
+
+    ok, notes = validate_manifests()
+    status = "PASS" if ok else "FAIL"
+    print(f"\n[manifests] {status}")
+    for note in notes:
+        print(f"    {note}")
+    if not ok:
+        return 1
+    if args.manifests:
+        return 0
+
+    failures: list[str] = []
+    skipped: list[str] = []
+    for name, script in LANES:
+        completed = subprocess.run(
+            [sys.executable, str(HERE / script)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = (completed.stdout + completed.stderr).strip()
+        if completed.returncode != 0:
+            verdict = "FAIL"
+            failures.append(name)
+        elif "SKIPPED" in output or "nothing to drift" in output:
+            verdict = "SKIPPED"
+            skipped.append(name)
+        else:
+            verdict = "PASS"
+        print(f"\n[{name}] {verdict}")
+        for line in output.splitlines():
+            print(f"    {line}")
+
+    print("\n" + "=" * 70)
+    if failures:
+        print(f"VERIFICATION: FAIL — {', '.join(failures)}")
+    elif skipped:
+        print(f"VERIFICATION: INCOMPLETE — skipped: {', '.join(skipped)}")
+        print("No lane produced formal evidence. This is not a pass.")
+    else:
+        print("VERIFICATION: PASS")
+    if not args.gate:
+        print("(report-only — pass --gate to make this authoritative)")
+    print("=" * 70)
+
+    if failures and args.gate:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

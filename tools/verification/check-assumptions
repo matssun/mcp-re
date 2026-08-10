@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The proof-escape-hatch gate — ADR-MCPRE-059 §13, Case D.
+
+A proof that is green because of an unregistered `assume`, `admit`, `axiom`,
+`external_body`, `external`, or `assume_specification` is not valid MCP-RE evidence. This
+gate finds those mechanisms in the verification tree and fails the merge unless the
+registry accounts for them.
+
+Two things it is honest about:
+
+  * A token scan is an INITIAL detector, not the final control. Specification weakening
+    happens without adding any of these tokens — a postcondition can simply be made
+    weaker. The ADR says so explicitly, and the mature control compares parsed
+    specification semantics. Until that exists, every specification diff is treated as
+    security-sensitive by the review policy, not by this script.
+
+  * It scans `verification/` only. Production Rust is not a proof surface, and scanning it
+    for the word `external` would produce noise that trains people to ignore this gate.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_assumptions,
+)
+
+VERIFICATION_DIR = REPO_ROOT / "verification"
+
+#: Mechanisms that move a proof obligation out of the proof and into the trusted computing
+#: base. Word-bounded so `assumed_state` or `external_id` do not trip the gate.
+MECHANISMS = {
+    "assume": r"\bassume\b",
+    "assume_specification": r"\bassume_specification\b",
+    "admit": r"\badmit\b",
+    "axiom": r"\baxiom\b",
+    "external_body": r"\bexternal_body\b",
+    "external": r"\bexternal\b",
+    "sorry": r"\bsorry\b",
+}
+
+SCANNED_SUFFIXES = {".rs", ".lean", ".v"}
+
+#: Generated Lean is machine-owned and may legitimately contain extraction artifacts. It is
+#: excluded from the token scan and covered instead by the generated-drift gate: a
+#: hand-edit there is caught by regeneration mismatch, which is the stronger control.
+EXCLUDED = ("verification/lean/generated/",)
+
+
+def registered_mechanisms() -> set[str]:
+    """Mechanisms the registry accounts for, e.g. `verus:external_body`."""
+    doc = load_assumptions()
+    return {
+        entry["tool_specific_mechanism"].split(":", 1)[-1]
+        for entry in doc.get("assumption", [])
+    }
+
+
+def scan() -> list[tuple[Path, int, str, str]]:
+    hits: list[tuple[Path, int, str, str]] = []
+    if not VERIFICATION_DIR.exists():
+        return hits
+    for path in sorted(VERIFICATION_DIR.rglob("*")):
+        if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
+            continue
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if any(rel.startswith(prefix) for prefix in EXCLUDED):
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            for name, pattern in MECHANISMS.items():
+                if re.search(pattern, line):
+                    hits.append((path.relative_to(REPO_ROOT), lineno, name, line.strip()))
+    return hits
+
+
+def main() -> int:
+    try:
+        registered = registered_mechanisms()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    hits = scan()
+    unregistered = [hit for hit in hits if hit[2] not in registered]
+
+    if not hits:
+        print("check-assumptions: PASS — no proof escape hatch in verification/")
+        print(f"  registered assumptions: {len(registered)}")
+        return 0
+
+    print(f"check-assumptions: {len(hits)} escape-hatch site(s) found")
+    for path, lineno, name, text in hits:
+        status = "registered" if name in registered else "UNREGISTERED"
+        print(f"  [{status}] {path}:{lineno}  {name}  |  {text}")
+
+    if unregistered:
+        print(
+            "\nFAIL: unregistered proof escape hatch. Every one of these moves an "
+            "obligation\nout of the proof and into the trusted computing base. Register it "
+            "in\nverification/policy/assumptions.toml with a justification and an owner, or "
+            "discharge\nit. A green proof created by an unregistered assumption is not "
+            "MCP-RE evidence.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("\ncheck-assumptions: PASS — every mechanism is registered")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

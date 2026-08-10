@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 — the authoritative manifest for MCP-RE verification coverage and
+# security-graph declarations.
+#
+# This file is source. The freshness attestations derived from it are not; they are
+# CI/cache artifacts and must never be committed to make a gate pass.
+#
+# Validated by `tools/verification/verify --manifests`. Unknown keys are a validation
+# FAILURE, not a silently ignored field: a typo in a security declaration must not read
+# as an absent declaration.
+
+schema_version = 1
+policy_revision = "adr-mcpre-059-r1"
+
+# ADR-MCPRE-059 §2. Missing input, unparsable metadata, an unrecognized edge, or a cache
+# whose provenance cannot be established is DIRTY. Setting this false is a policy change
+# and is itself security-sensitive.
+unknown_is_dirty = true
+
+# The revisions that participate in every ReviewFingerprint. Bumping one invalidates every
+# unit scoped to it — that is the point, and it is why they are declared rather than
+# implied.
+formal_model_revision = "mcpre-model-r0"
+threat_model_revision = "mcpre-threat-r0"
+
+# ---------------------------------------------------------------------------
+# Review units
+# ---------------------------------------------------------------------------
+#
+# A review unit is the smallest architectural unit for which MCP-RE can make a stable
+# statement about its source, contracts, evidence, and assumptions (§1). It is NOT a file
+# and NOT necessarily a crate.
+#
+# Classes (§9):
+#   V0  ordinary code                      tests/conformance + Security Review Funnel
+#   V1  executable security boundary       Verus contract/proof + existing controls
+#   V2  semantic/algorithmic security core Aeneas/Lean theorem + existing controls
+#   V3  exceptional high-assurance         complementary independent evidence, with a
+#                                          stated reason naming the different failure
+#                                          classes each approach closes
+#
+# The two units below are the Phase 0 pilot candidates named in
+# baseline/phase0-assurance-baseline.md §6. They are declared at their CURRENT class
+# (V0 — no formal evidence exists yet) and carry no `evidence` entries, because declaring
+# evidence that has not been produced would be the exact falsehood this manifest exists to
+# prevent. Phase 2 and Phase 3 promote them.
+
+[[unit]]
+id = "proxy.runtime_lifecycle"
+class = "V0"
+description = "The runtime lifecycle relation: 11 states, 10 events, one closed transition relation."
+paths = ["mcp-re-proxy/src/runtime_state.rs"]
+exported_contracts = []
+evidence = ["test://proxy/runtime_lifecycle/transition_relation"]
+pilot = "verus-candidate"
+
+[[unit]]
+id = "http_profile.keyid"
+class = "V0"
+description = "RFC 7638 JWK thumbprint keyids: the canonical JWK form and the derived selector."
+paths = ["mcp-re-http-profile/src/keyid.rs"]
+exported_contracts = []
+evidence = ["test://http_profile/keyid/rfc8037_a3_known_answer"]
+pilot = "lean-candidate"
+
+# ---------------------------------------------------------------------------
+# Contract-consumption edges
+# ---------------------------------------------------------------------------
+#
+# `sealed = true` is an assurance obligation, not an optimization switch (§6, §"Contract
+# sealing"). Before an edge may be sealed, a review must establish that the consumer's
+# security reasoning about the dependency is FULLY represented by the named exported
+# contract. If that sentence is not defensible, the edge is unsealed.
+#
+# The engine must never infer sealing after the fact. An edge is sealed by an explicit,
+# reviewed commit to this file, before the change whose propagation it stops.
+#
+# No edges are declared yet: no unit exports a contract yet.

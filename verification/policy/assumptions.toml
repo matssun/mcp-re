@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 §12 — the trusted-assumption registry.
+#
+# Every intentional trusted assumption introduced by the MCP-RE verification layer is
+# recorded here, with a stable identifier. There is no second ledger and no hidden one.
+#
+# A proof that is green because of an unregistered `assume`, `admit`, `axiom`,
+# `external_body`, `external`, `assume_specification`, or trusted wrapper is NOT valid
+# MCP-RE evidence, and `tools/verification/check-assumptions` fails the merge gate when it
+# finds one (§13, Case D).
+#
+# A temporary assumption used while developing a proof MUST NOT reach the merge or release
+# gate unless it has been deliberately registered here and owner-ratified as part of the
+# trusted computing base. "I will remove it later" is not a registration.
+
+schema_version = 1
+
+# Required fields on every entry:
+#
+#   id                       stable, never reused: ASM-NNNN
+#   description              what is being trusted
+#   justification            why trusting it is acceptable, and what would change that
+#   scope                    unit:// identifiers this assumption is trusted within
+#   owner                    who ratified it
+#   introduced_by            commit or issue
+#   review_requirement       who must review a change to it
+#   affected_contracts       contract:// identifiers whose meaning depends on it
+#   tool_specific_mechanism  e.g. verus:external_body, lean:external-model
+#
+# The registry is intentionally EMPTY.
+#
+# ADR-MCPRE-059's illustrative ASM-0001 is an example in the ADR text, not a starter row:
+# "No real assumption should be introduced merely to populate the file." An empty registry
+# is the honest state before any proof exists, and it is the state the first pilot must
+# either preserve or deliberately depart from with a real entry.
+#
+# The Phase 3 pilot is expected to need exactly one — SHA-256 collision resistance, as an
+# external model — and producing that single, justified, visible entry is part of what the
+# pilot is demonstrating.

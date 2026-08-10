@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The authoritative Aeneas/Lean lane — ADR-MCPRE-059 §8, §16.
+
+Builds the Lean package and checks the handwritten theorems against the model extracted
+from real MCP-RE Rust through the pinned Charon → LLBC → Aeneas pipeline.
+
+The lane refuses while any of Charon, Aeneas, Lean, or the Aeneas Lean backend is
+unpinned, and it refuses while `verification/lean/lean-toolchain` is absent. Those files
+are deliberately missing rather than empty: an empty `lean-toolchain` reads as "pinned" to
+a tool that will then resolve whatever it finds, which is worse than no pin at all.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import (  # noqa: E402
+    REPO_ROOT,
+    ManifestError,
+    load_toolchains,
+    load_verification,
+    unresolved_pins,
+)
+
+REQUIRED = {"charon", "aeneas", "lean", "aeneas_lean_backend"}
+LEAN_DIR = REPO_ROOT / "verification" / "lean"
+
+
+def main() -> int:
+    try:
+        toolchains = load_toolchains()
+        doc = load_verification()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    missing = sorted(REQUIRED & set(unresolved_pins(toolchains)))
+    absent = [
+        name
+        for name in ("lean-toolchain", "lakefile.toml")
+        if not (LEAN_DIR / name).exists()
+    ]
+    lean_units = [unit for unit in doc.get("unit", []) if unit["class"] in {"V2", "V3"}]
+
+    if not lean_units:
+        state = "not pinned" if (missing or absent) else "pinned, lane not implemented"
+        print(f"verify-lean: SKIPPED — no V2/V3 unit declared ({state})")
+        if missing:
+            print(f"  unresolved pins: {', '.join(missing)}")
+        if absent:
+            print(f"  absent files:    {', '.join(absent)} (created by toolchain setup)")
+        return 0
+
+    if missing or absent:
+        print(
+            "FAIL: units are declared V2/V3 but the Lean pipeline is not pinned.\n"
+            f"  unresolved pins: {', '.join(missing) or 'none'}\n"
+            f"  absent files:    {', '.join(absent) or 'none'}\n"
+            "A unit cannot claim an extracted-model theorem that no pinned pipeline "
+            "produced.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        "FAIL: units are declared V2/V3 but this lane has no implementation yet.\n"
+        "Implement the lake build and theorem check here before declaring any V2 unit.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

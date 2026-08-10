@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""The deterministic review frontier — ADR-MCPRE-059 §14, Phase 4/5.
+
+Computes the minimum review obligation for a change: the dirty review units, the reason
+each is dirty, the context closure a reviewer needs to read, and the still-fresh evidence
+that should be supplied as context rather than redone.
+
+Not implemented, and refusing is the correct behaviour rather than a limitation.
+
+The frontier's only value is that it is *sound*: the Security Review Funnel may safely
+narrow its scope to it. A partial implementation would emit a smaller set than the truth
+and there would be no signal distinguishing "nothing was invalidated" from "invalidation
+is not implemented". That is under-invalidation, the one failure mode this design treats
+as unacceptable — the engine must prefer over-invalidation until measurements justify
+otherwise (§5).
+
+Until Phase 4 lands, the funnel's scope is what it has always been: the full declared unit
+list. That is over-invalidation, which is safe and expensive, and it is what the Phase 5
+comparison will be measured against.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import ManifestError, load_verification  # noqa: E402
+
+
+def main() -> int:
+    try:
+        doc = load_verification()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    units = doc.get("unit", [])
+    print("review-frontier: NOT IMPLEMENTED — Phase 4")
+    print()
+    print("Conservative fallback, which is what the funnel uses today:")
+    print()
+    print("Dirty review units (all declared units — nothing can be proved fresh yet):")
+    for unit in units:
+        print(f"  {unit['id']:<32} UNKNOWN   no attestation exists")
+    print()
+    print("Still fresh:")
+    print("  (none — freshness requires an attestation to compare against)")
+    print()
+    print(
+        "Marking any unit fresh before the graph can derive it would be asserting the\n"
+        "conclusion this system exists to compute. Unknown is dirty."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

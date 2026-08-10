@@ -1,0 +1,134 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ADR-MCPRE-059 — the one machine-readable place from which the evidence engine derives
+# toolchain identity.
+#
+# A toolchain version bump is a security-relevant evidence change and MUST produce
+# deterministic invalidation (Case F): affected formal evidence is dropped, the relevant
+# proof suite reruns, and the bump itself is security-reviewed. That only works if every
+# tool that can change a proof's outcome is named here.
+#
+# ---------------------------------------------------------------------------
+# Unresolved pins fail closed
+# ---------------------------------------------------------------------------
+#
+# `state = "unresolved"` means the tool is not installed and its identity is unknown.
+# Unknown is dirty (§2), so while any required pin is unresolved:
+#
+#   * `tools/verification/verify` refuses to report a verification PASS;
+#   * the corresponding proof lane refuses to run rather than running against whatever
+#     happens to be on PATH;
+#   * no unit may be promoted above V0.
+#
+# This is the intended state before the toolchain-installation work lands. It is not a
+# TODO marker — it is the mechanism. Replacing a placeholder with a real identity is the
+# act of pinning, and it must be a separate commit from any production-semantics change
+# (§"Threat: toolchain instability").
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------
+# Already pinned by the repository
+# ---------------------------------------------------------------------------
+
+[rust]
+state = "resolved"
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+source = "rust-toolchain.toml, mirrored in MODULE.bazel rust.toolchain versions"
+note = """
+Verus requires its own rustc build and will not necessarily accept this channel. If the
+pinned Verus release demands a different rustc, that divergence is itself a finding to
+record here rather than to resolve silently by letting two Rust toolchains float.
+"""
+
+# ---------------------------------------------------------------------------
+# Verus lane — required before any V1 unit exists
+# ---------------------------------------------------------------------------
+
+[verus]
+state = "resolved"
+release = "0.2026.08.09.92f466f"
+commit = "92f466f247f45128c630d1c843fd6e27d2115587"
+source_url = "https://github.com/verus-lang/verus/releases/download/release/0.2026.08.09.92f466f/verus-0.2026.08.09.92f466f-arm64-macos.zip"
+sha256 = "3c8d2c8fad99e850d0195ff4bbbd642fae063d15f53c278de07c6153c15fd8eb"
+platform = "macos_aarch64"
+install_root = "/opt/verification/verus/0.2026.08.09.92f466f"
+rust_toolchain = "1.97.1-aarch64-apple-darwin"
+note = """
+The release's own rustc requirement equals the [rust] channel pinned above, so the
+divergence anticipated in that section does not currently exist. A Verus bump that moves
+this off 1.97.1 reintroduces it and must be recorded rather than resolved by letting two
+Rust toolchains float.
+
+install_root is platform-specific and is the only host-dependent value here; a Linux CI
+runner resolves a different source_url/sha256 for the same release, and that lane's
+identity must be recorded separately before it may report a PASS.
+"""
+
+[verus.vstd]
+state = "resolved"
+identity = "sha256:0970f728e2f537def9a465410df665ea7071c7de0f66d86022390d2876c6df22"
+note = "sha256 of vstd.vir as shipped in the pinned release; libvstd.rlib is 0221751f5a0d2fa91a31a580eea35282b59bff970a6be0eeb19836c716aab3a0."
+
+[verus.z3]
+state = "resolved"
+version = "4.16.0"
+identity = "bundled in the pinned Verus release archive"
+note = "As packaged or required by the pinned Verus release, not whatever Z3 is on PATH."
+
+# ---------------------------------------------------------------------------
+# Aeneas / Lean lane — required before any V2 unit exists
+# ---------------------------------------------------------------------------
+
+[charon]
+state = "resolved"
+commit = "340b1af4df92608d0911fc2ba26eef3fd3a30ab4"
+source_url = "https://github.com/AeneasVerif/charon"
+install_root = "/opt/verification/aeneas/charon"
+rust_toolchain = "nightly-2026-06-01-aarch64-apple-darwin"
+rust_components = ["rustc-dev", "llvm-tools-preview", "rust-src", "miri"]
+note = """
+The commit is not chosen independently: it is the one named in the pinned Aeneas
+checkout's `charon-pin`. Charon and Aeneas move as a pair, and pinning them separately
+would let an extraction run against a Charon whose LLBC output the pinned Aeneas does not
+claim to accept.
+
+Charon is a rustc driver, so it links the private compiler crates and requires its own
+nightly toolchain — a THIRD Rust toolchain, distinct from both the [rust] channel and the
+one Verus requires. This is the divergence the [rust] note anticipates, recorded rather
+than resolved: it is confined to the extraction step and never compiles production code.
+"""
+
+[aeneas]
+state = "resolved"
+commit = "daa85d7e89400fa978be83fedbc7e475a83f0889"
+source_url = "https://github.com/AeneasVerif/aeneas"
+install_root = "/opt/verification/aeneas"
+ocaml_switch = "aeneas"
+ocaml_compiler = "5.3.0"
+opam_root = "/opt/verification/opam"
+note = """
+opam_root is deliberately not the default ~/.opam. The extraction toolchain is repository
+infrastructure, not user state, and the wrappers must set OPAMROOT explicitly rather than
+inherit whichever switch a developer's shell happens to have active.
+"""
+
+[lean]
+state = "unresolved"
+toolchain = ""
+source = "verification/lean/lean-toolchain once it exists"
+
+[aeneas_lean_backend]
+state = "unresolved"
+package_revision = ""
+note = "The Aeneas Lean backend/package revision, which moves independently of Aeneas itself."
+
+# ---------------------------------------------------------------------------
+# The verification schema itself
+# ---------------------------------------------------------------------------
+
+[verification_schema]
+state = "resolved"
+revision = 1
+note = "Bumping this invalidates every attestation, because the meaning of a fingerprint changed."
