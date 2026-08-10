@@ -30,11 +30,20 @@ Nothing outside `mcp-re-proxy` references it — not another crate, not an integ
 
 ### 2. What does `runtime_state.rs` itself require?
 
-**Nothing.** The file has *zero* `use` statements. No external crate, no `std` import, no
-`crate::` path. 436 lines: ~212 of production code and ~223 of test.
+**Nothing from outside itself.** No external crate, no `std` import, no `crate::` or
+`super::` path. 436 lines: ~212 of production code and ~223 of test.
 
-It is already a pure leaf. That is the strongest fact in this investigation, and it cuts
-both ways — see §7.
+The two `use` lines it does contain are `use RuntimeEvent as E;` and `use RuntimeState as
+S;`, inside `transition`, shortening the module's *own* type names so the 110-pair match
+fits on a screen. They name nothing outside and are not dependencies.
+
+(An earlier draft of this document said "zero `use` statements". That was wrong — it came
+from a line-anchored grep that missed two indented lines inside a function body. The
+purity gate written alongside this decision caught it on its first run, which is a small
+argument for the gate.)
+
+It is a pure leaf. That is the strongest fact in this investigation, and it cuts both ways
+— see §7.
 
 ### 3. Would moving it create a natural layering direction?
 
