@@ -206,3 +206,56 @@ target at that point, and the 110-pair test will still be there to be complement
 
 Recording it as deferred rather than rejected, so a future decomposition has a reason
 waiting for it instead of having to rediscover one.
+
+---
+
+## Phase 2 entry findings (measured, not predicted)
+
+Recorded on first contact with the pinned toolchain rather than reasoned about in advance.
+
+### The toolchain works, and so does the negative control
+
+`verus 0.2026.08.09.92f466f` at `/opt/verification/verus/...`, not on `PATH`. Against a
+standalone file carrying the target's shape — a freshness window with a skew bound, plus
+the boundary theorem — it reports:
+
+```text
+verification results:: 2 verified, 0 errors
+```
+
+And with the violation named in advance (admit one second past the boundary):
+
+```text
+error: postcondition not satisfied
+verification results:: 1 verified, 1 errors
+```
+
+So conditions 4 and 5 are reachable. The theorem shape is not hypothetical.
+
+### `cargo verus verify` exits 0 having verified nothing
+
+`cargo verus verify -p mcp-re-core` compiles the crate, prints **no**
+`verification results::` line at all, and **exits 0**. It discharged zero proof
+obligations, because the crate contains no `verus!{}` block yet.
+
+A lane trusting that exit code would report PASS for a repository containing no proofs.
+This is the "exits 0 having measured nothing" failure in the one place it would be
+load-bearing, and it is the third instance of that family found in this work.
+
+`verify-verus` therefore gates on `verified_something`, which requires a results line with
+`verified > 0` and `errors == 0`. The exit code alone is not evidence. Cases covered:
+compiled-only, `0 verified`, non-zero errors, and a genuine pass — plus the real
+`mcp-re-core` output, which the guard rejects.
+
+Related: Verus itself exits 1 on a failed proof, but piping through `tail` masks it to 0.
+The lane must check the tool's own status, never a pipeline's.
+
+### The open question, narrowed
+
+Not "can Verus run here" — it can. It is: **adding a `verus!{}` block to `mcp-re-core`
+introduces a `vstd`/`builtin` dependency into a crate whose purity is enforced by its Cargo
+manifest** (ADR-MCPS-011/012: no networking, async, or filesystem) and whose BUILD file is
+generated. Whether that dependency belongs there, is confined to a `cfg`, or means the spec
+lives beside rather than inside the crate, is the next decision — and it is the same class
+of question as the one this document already answered for the lifecycle: do not let the
+verifier reshape production to suit itself.

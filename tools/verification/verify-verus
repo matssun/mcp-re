@@ -19,6 +19,7 @@ them is a legitimately empty lane rather than a failure.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +31,42 @@ from _manifest import (  # noqa: E402
     load_verification,
     unresolved_pins,
 )
+
+#: Verus prints a summary line like `verification results:: 12 verified, 0 errors`.
+#: Its ABSENCE is the failure mode this lane exists to refuse.
+VERIFICATION_RESULTS = re.compile(
+    r"verification results::\s*(?P<verified>\d+) verified,\s*(?P<errors>\d+) errors"
+)
+
+
+def verified_something(output: str) -> tuple[bool, str]:
+    """Did this invocation actually discharge proof obligations?
+
+    MEASURED, not inferred from the exit code. `cargo verus verify -p mcp-re-core` on a
+    crate with no `verus!{}` block compiles it, prints no verification-results line at all,
+    and exits 0. A lane that trusted that status would report PASS for a repository
+    containing no proofs — the "exits 0 having measured nothing" failure, in the one place
+    where it would be load-bearing.
+
+    Two ways to fail here, and both must:
+      * no results line  -> nothing was verified, and the tool did not say so;
+      * `0 verified`     -> the invocation ran and discharged nothing.
+    """
+    match = VERIFICATION_RESULTS.search(output)
+    if match is None:
+        return False, (
+            "no `verification results::` line: this invocation discharged no proof "
+            "obligations and exited 0 anyway. A crate with no verus!{} block does exactly "
+            "this."
+        )
+    verified = int(match.group("verified"))
+    errors = int(match.group("errors"))
+    if errors:
+        return False, f"{errors} verification error(s)"
+    if verified == 0:
+        return False, "0 verified: the invocation ran and proved nothing"
+    return True, f"{verified} verified, 0 errors"
+
 
 REQUIRED = {"verus", "verus.vstd", "verus.z3", "rust"}
 
@@ -70,7 +107,8 @@ def main() -> int:
 
     print(
         "FAIL: units are declared V1/V3 but this lane has no implementation yet.\n"
-        "Implement `cargo verus verify` invocation here before declaring any V1 unit.\n"
+        "Implement `cargo verus verify` invocation here before declaring any V1 unit, and\n"
+        "gate its result on `verified_something` — the exit code alone is not evidence.\n"
         "Refusing rather than reporting a pass: an unimplemented lane that exits 0 is a\n"
         "green that measured nothing.",
         file=sys.stderr,

@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Build, tag, and publish the ADR-MCPRE-059 extraction container.
+
+The image's identity is a function of the TOOLCHAIN IT CONTAINS, never of the product
+release in VERSION. Both directions of that choice matter:
+
+  * tagging it from VERSION would rebuild it on every release, mint a new digest with an
+    unchanged prover, and invalidate every piece of formal evidence in the repository for
+    no reason (Case F churn);
+  * a toolchain bump between releases would leave the tag unmoved, which is a mutable tag
+    pointing at a DIFFERENT prover — the failure the digest pin exists to prevent.
+
+So the tag is derived from the pinned inputs, and the lock file pins the digest. Two
+checkouts with the same pins compute the same tag; changing any pin changes it.
+
+  tools/verification/extraction-image tag      # print the content tag
+  tools/verification/extraction-image build    # build locally (arm64)
+  tools/verification/extraction-image push     # build + push + print the digest
+
+The platform is linux/arm64 because the consumer is a self-hosted Apple Silicon runner.
+An amd64 build of the same pins is a DIFFERENT image with a different digest, and the lock
+file records one platform for that reason.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _manifest import ManifestError, load_toolchains  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent.parent
+DOCKERFILE = REPO / "verification" / "extraction" / "Dockerfile"
+PLATFORM = "linux/arm64"
+
+# Not `mcp-re-<something>:<semver>`: scripts/deploy_image_tag_gate.py requires any literal
+# semver tag on an mcp-re-* image to equal VERSION, and this image must NOT track VERSION.
+# The content tag keeps it outside that rule by construction rather than by exemption.
+DEFAULT_IMAGE = "ghcr.io/matssun/mcp-re-verification-extraction"
+
+
+def content_tag(toolchains: dict) -> str:
+    """A tag that changes exactly when the pinned extraction toolchain changes."""
+    charon = toolchains.get("charon", {})
+    aeneas = toolchains.get("aeneas", {})
+    lean = toolchains.get("lean", {})
+    backend = toolchains.get("aeneas_lean_backend", {})
+
+    # The Dockerfile is an input: the same commits assembled differently are a different
+    # instrument. Omitting it would let a build-step change slip in under an unchanged tag.
+    parts = [
+        f"charon={charon.get('commit', '')}",
+        f"charon_rustc={charon.get('rust_toolchain', '')}",
+        f"aeneas={aeneas.get('commit', '')}",
+        f"ocaml={aeneas.get('ocaml_compiler', '')}",
+        f"lean={lean.get('toolchain', '')}",
+        f"mathlib={backend.get('mathlib_revision', '')}",
+        f"dockerfile={hashlib.sha256(DOCKERFILE.read_bytes()).hexdigest()}",
+        f"platform={PLATFORM}",
+    ]
+    digest = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    return f"tc-{digest[:16]}"
+
+
+def _run(cmd: list[str]) -> str:
+    """Run a command, failing loudly on non-zero.
+
+    Status is taken from the process itself, never from a shell pipeline: a pipeline
+    reports its last stage, so a failed build can exit 0 and be published as a good one.
+    """
+    completed = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    sys.stderr.write(completed.stderr)
+    if completed.returncode != 0:
+        raise SystemExit(f"FAIL: {' '.join(cmd[:3])}… exited {completed.returncode}")
+    return completed.stdout.strip()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["tag", "build", "push"])
+    parser.add_argument("--image", default=DEFAULT_IMAGE)
+    args = parser.parse_args()
+
+    try:
+        toolchains = load_toolchains()
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    ref = f"{args.image}:{content_tag(toolchains)}"
+
+    if args.action == "tag":
+        print(ref)
+        return 0
+
+    build = [
+        "docker", "buildx", "build",
+        "--platform", PLATFORM,
+        "-t", ref,
+        str(DOCKERFILE.parent),
+    ]
+    if args.action == "push":
+        # --push makes the registry manifest — and therefore the digest — exist. A local
+        # `docker build` digest is not the digest the runner would pull.
+        build.append("--push")
+    else:
+        build.append("--load")
+
+    _run(build)
+    print(f"\nbuilt: {ref}")
+
+    if args.action == "push":
+        digest = _run(
+            ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{.Manifest.Digest}}"]
+        )
+        print(f"digest: {digest}")
+        print("\nRecord in verification/policy/toolchains.lock.toml:")
+        print("\n  [extraction_container]")
+        print('  state = "resolved"')
+        print(f'  image = "{args.image}"')
+        print(f'  digest = "{digest}"')
+        print(f'  platform = "{PLATFORM}"')
+        print("\nThen flip charon/aeneas/lean/aeneas_lean_backend to resolved: their")
+        print("commits are only meaningful once the image that built them is identified.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
