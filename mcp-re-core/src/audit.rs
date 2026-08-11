@@ -140,6 +140,12 @@ pub fn reason_label(error: &McpReError) -> &'static str {
         McpReError::DelegationKeyMismatch => "Delegation key mismatch",
         McpReError::DelegationRevoked => "Delegation revoked",
         McpReError::DelegatedSigningUnavailable => "Delegated signing unavailable",
+        // Response region (ADR-MCPRE-058 §10).
+        McpReError::UpstreamResponseInvalid => "Upstream response is not a legal MCP response",
+        McpReError::InnerDispatchIndeterminate => {
+            "Inner transport failed after the request was transmitted; execution unknown"
+        }
+        McpReError::InnerPlaneUnavailable => "Inner plane could not begin a dispatch",
     }
 }
 

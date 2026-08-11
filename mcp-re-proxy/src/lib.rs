@@ -185,6 +185,12 @@ pub mod async_fleet;
 // and does not replace the terminal latches that enforce those rules against in-flight
 // work on other threads (§5.4).
 pub(crate) mod runtime_state;
+// ADR-MCPRE-057 §4: the per-request lifecycle as a value, alongside the continuation and
+// backend machines it interacts with. Holds them as a tuple with invariants over
+// projections rather than as one combined enum, so that a refusal can state whether the
+// action was executed and whether the approval authorizing it was spent — facts no single
+// machine holds on its own.
+pub(crate) mod exchange_state;
 // ADR-MCPRE-057 §9 / ADR-MCPRE-058 §14: the owner of a partly-built runtime. Holds the
 // lifecycle and every resource acquired so far, so `Materialized` cannot be asserted over
 // an incomplete graph, and a failed materialization reclaims in the documented order

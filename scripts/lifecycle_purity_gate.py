@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Lifecycle-purity gate — the runtime lifecycle relation depends on no production module.
+"""Lifecycle-purity gate — the state machines that are values depend on no production module.
 
-WHAT THIS PROVES, exactly: in the production half of `mcp-re-proxy/src/runtime_state.rs`
+WHAT THIS PROVES, exactly: in the production half of each module named in `TARGETS`
 (everything above its `#[cfg(test)]` module), every path root and every `use` target
 resolves either inside the module itself or to an explicitly allowed standard-library
 path. It computes the module's external dependency set and asserts it is empty of
@@ -63,7 +63,12 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TARGET = REPO_ROOT / "mcp-re-proxy" / "src" / "runtime_state.rs"
+#: The state machines that are values. Each depends on no production module, so "is this
+#: transition legal?" cannot answer differently on two calls with the same arguments.
+TARGETS = (
+    REPO_ROOT / "mcp-re-proxy" / "src" / "runtime_state.rs",
+    REPO_ROOT / "mcp-re-proxy" / "src" / "exchange_state.rs",
+)
 
 #: Where the production half ends. Tests legitimately `use super::*`.
 TEST_MARKER = "#[cfg(test)]"
@@ -259,34 +264,35 @@ def selftest() -> int:
 def main(argv: list[str]) -> int:
     if "--selftest" in argv:
         return selftest()
-    if not TARGET.exists():
+    failed = False
+    for target in TARGETS:
+        rel = target.relative_to(REPO_ROOT)
+        if not target.exists():
+            print(
+                f"FAIL: {rel} is missing. If the machine moved, move this gate with it — "
+                f"a gate whose target vanished silently stops proving anything.",
+                file=sys.stderr,
+            )
+            failed = True
+            continue
+        found = external_dependencies(target.read_text(encoding="utf-8"))
+        if found:
+            print(f"FAIL: {rel} has acquired external dependencies:", file=sys.stderr)
+            for entry in found:
+                print(f"  {entry}", file=sys.stderr)
+            failed = True
+            continue
+        print(f"lifecycle_purity_gate: PASS — {rel} depends on no production module")
+    if failed:
         print(
-            f"FAIL: {TARGET.relative_to(REPO_ROOT)} is missing. If the lifecycle moved, "
-            f"move this gate with it — a gate whose target vanished silently stops "
-            f"proving anything.",
-            file=sys.stderr,
-        )
-        return 1
-    found = external_dependencies(TARGET.read_text(encoding="utf-8"))
-    rel = TARGET.relative_to(REPO_ROOT)
-    if found:
-        print(f"FAIL: {rel} has acquired external dependencies:", file=sys.stderr)
-        for entry in found:
-            print(f"  {entry}", file=sys.stderr)
-        print(
-            "\nThe lifecycle relation is a value: it depends on no production module, so "
-            "it\ncannot acquire behaviour, and 'is this transition legal?' cannot answer\n"
-            "differently on two calls with the same arguments. If the module genuinely "
-            "needs\na dependency, that is an architecture change — see\n"
-            "verification/baseline/phase2-pilot-boundary-decision.md.",
+            "\nA state machine here is a value: it depends on no production module, so it "
+            "cannot\nacquire behaviour. If one genuinely needs a dependency, that is an "
+            "architecture\nchange — see verification/baseline/phase2-pilot-boundary-decision.md.",
             file=sys.stderr,
         )
         return 1
     allowed = ", ".join(sorted(ALLOWED_STD_PATHS))
-    print(
-        f"lifecycle_purity_gate: PASS — {rel} depends on no production module "
-        f"(allowed std: {allowed})"
-    )
+    print(f"lifecycle_purity_gate: PASS — {len(TARGETS)} machines (allowed std: {allowed})")
     return 0
 
 

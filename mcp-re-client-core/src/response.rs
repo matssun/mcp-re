@@ -1169,10 +1169,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1213,10 +1210,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1254,10 +1248,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.request_signature_invalid",
-            message: "bad request".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "bad request");
         let resp = build_delegated_rejection_preflight(
             Some(signed.request()),
             &reason,
@@ -1362,10 +1353,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.request_signature_invalid",
-            message: "x".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.request_signature_invalid", "x");
         // Build an UNBOUND signature but stamp a success status onto it.
         let mut resp = build_delegated_rejection_preflight(
             Some(signed.request()),
@@ -1524,10 +1512,7 @@ mod delegated_tests {
         let mut custody = custody();
         custody.ensure_active(NOW).expect("issue");
         let snap = custody.active_snapshot().unwrap();
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),
@@ -1598,10 +1583,7 @@ mod delegated_tests {
         );
 
         // The receipt is signed AT `late`, so its RFC 9421 freshness window is current.
-        let reason = RejectionReason {
-            wire_code: "mcp-re.replay_detected",
-            message: "replayed".into(),
-        };
+        let reason = RejectionReason::new("mcp-re.replay_detected", "replayed");
         let resp = build_delegated_rejection(
             signed.request(),
             signed.evidence(),

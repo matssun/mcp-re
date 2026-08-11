@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! ADR-MCPRE-057 §7 / ADR-MCPRE-058 §9 — the request lifecycle, around its one
+//! ADR-MCPRE-057 §7 / ADR-MCPRE-058 §9 — the exchange lifecycle, around its one
 //! irreversible effect.
+//!
+//! The states themselves live in [`crate::exchange_state`]; what is here is the ONE boundary
+//! the compiler can hold — the pre-dispatch prerequisites, and the fact that crossing is
+//! one-way.
 //!
 //! # The inventory this was frozen from
 //!
@@ -30,14 +34,17 @@
 //! ContinuationRetired       continuation_store.consume       409              NO: entry consumed
 //! Forwarded                 forwarded_body                   500              yes
 //! RetentionReserved         retention.reserve (awaited)      503              NO: durable marker
+//! InnerPlaneAccepted        inner_async.admit                503              yes
 //! ==================== IRREVERSIBLE INNER DISPATCH ====================
-//! ResponseBuilt             inner_async.dispatch             --               the backend has acted
+//! ResponseObserved          inner_async.dispatch             503 / 504 / 502  the backend has acted
 //! (notification)            sign_delegated_accepted_202      500
-//! ResultClassified          classify_result_type             502
+//! ResponseValidated         validate_response_envelope       502
+//! ResponseClassified        classify_result_type             502
 //! ResponseSigned            sign_delegated_response_full     500
-//! ContinuationRecorded      input_required_state + store     502 / 503
-//! RetentionCompleted        retain_accepted                  500 (x2)
-//! Completed                 audit + served                   --
+//! ContinuationSettled       input_required_state + store     502 / 503
+//! Retained                  retain_accepted                  500 (x2)
+//! CompletedTerminal /       audit + served                   --
+//!   CompletedContinuationOpen
 //! ```
 //!
 //! Three stages before the dispatch are already irreversible on their own — the replay
@@ -59,6 +66,7 @@
 
 use std::sync::Arc;
 
+use crate::async_inner::InnerOutcome;
 use crate::transparency::RetentionReservation;
 use mcp_re_http_profile::ActiveDelegatedKey;
 
@@ -142,9 +150,9 @@ impl ReadyForDispatch {
     /// Consuming, and the only way out. A caller cannot hold a `ReadyForDispatch` and a
     /// [`DispatchedExchange`] at once, which is what keeps "the backend has not acted" and
     /// "the backend may have acted" from being the same value in two places.
-    pub(crate) fn dispatched(self, inner_bytes: Vec<u8>) -> DispatchedExchange {
+    pub(crate) fn dispatched(self, outcome: InnerOutcome) -> DispatchedExchange {
         DispatchedExchange {
-            inner_bytes,
+            outcome,
             signing_key: self.signing_key,
             expires: self.expires,
             retention: self.retention,
@@ -158,23 +166,23 @@ impl ReadyForDispatch {
 /// every exit from here is a `response_rejection`, never a `request.rejected`, and none
 /// of them can claim nothing happened.
 pub(crate) struct DispatchedExchange {
-    inner_bytes: Vec<u8>,
+    outcome: InnerOutcome,
     signing_key: Arc<ActiveDelegatedKey>,
     expires: i64,
     retention: RetentionDisposition,
 }
 
 impl DispatchedExchange {
-    /// The backend's reply bytes, taken out to become the response body.
+    /// What the inner plane managed to do, taken out with the obligations that outlive it.
     pub(crate) fn into_parts(
         self,
-    ) -> (Vec<u8>, Arc<ActiveDelegatedKey>, i64, RetentionDisposition) {
-        (
-            self.inner_bytes,
-            self.signing_key,
-            self.expires,
-            self.retention,
-        )
+    ) -> (
+        InnerOutcome,
+        Arc<ActiveDelegatedKey>,
+        i64,
+        RetentionDisposition,
+    ) {
+        (self.outcome, self.signing_key, self.expires, self.retention)
     }
 }
 
@@ -237,10 +245,10 @@ mod tests {
         );
         assert_eq!(ready.forwarded(), b"{}");
 
-        let exchange = ready.dispatched(b"{\"result\":{}}".to_vec());
+        let exchange = ready.dispatched(InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
         // `ready` is gone here — the compiler enforces it, which is the assertion.
-        let (bytes, _key, expires, retention) = exchange.into_parts();
-        assert_eq!(bytes, b"{\"result\":{}}");
+        let (outcome, _key, expires, retention) = exchange.into_parts();
+        assert_eq!(outcome, InnerOutcome::Replied(b"{\"result\":{}}".to_vec()));
         assert_eq!(expires, 1_700_000_000);
         assert!(matches!(retention, RetentionDisposition::NotConfigured));
     }

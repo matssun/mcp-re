@@ -325,7 +325,13 @@ async fn handle(
     // inner-unavailable response, which we STILL sign (fail-closed, never a silent
     // allow).
     let forwarded = strip_top_level_meta(&http_req.body);
-    let inner_bytes = state.inner.dispatch(&forwarded).await;
+    // The example wires an in-process closure inner, which has no transport to fail and so
+    // only ever reports `Replied`. The production path classifies all four outcomes; here
+    // anything else would be a bug in the seam, not a case this demo can exercise.
+    let inner_bytes = match state.inner.dispatch(&forwarded).await {
+        mcp_re_proxy::async_inner::InnerOutcome::Replied(bytes) => bytes,
+        other => panic!("the example's in-process inner cannot report {other:?}"),
+    };
 
     // Step 4a — a one-way NOTIFICATION (a JSON-RPC message with no `id`) earns a signed
     // bodyless 202, not a bodied reply (#424 / #418), exactly as the production serving
@@ -442,10 +448,10 @@ fn rejection(
     status: u16,
 ) -> HttpResponse {
     let now = hpp_common::now_unix();
-    let reason = RejectionReason {
+    let reason = RejectionReason::new(
         wire_code,
-        message: format!("mcp-re http-profile proxy rejected: {wire_code}"),
-    };
+        format!("mcp-re http-profile proxy rejected: {wire_code}"),
+    );
     let credential = hpp_common::delegation_credential(now);
     match (request, evidence) {
         (Some(req), Some(ev)) => build_delegated_rejection(

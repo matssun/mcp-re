@@ -55,15 +55,28 @@
 //!
 //! ## Fail-closed
 //!
-//! `dispatch` NEVER errors (the [`AsyncInnerServer`] contract): a connect/transport
-//! failure, a per-request timeout, a non-2xx status, an unreadable body, every
-//! backend being ejected (circuit open), OR the pool being saturated at its
-//! in-flight bound all yield the synthesized [`inner_unavailable_response`] — a
-//! JSON-RPC error the proxy still SIGNS. When all backends are Open the request
-//! fails closed WITHOUT dispatching; when the in-flight bound
+//! `dispatch` NEVER errors (the [`AsyncInnerServer`] contract): every failure becomes an
+//! [`InnerOutcome`] the proxy still SIGNS a reply about. When all backends are Open the
+//! request fails closed WITHOUT dispatching; when the in-flight bound
 //! ([`DEFAULT_MAX_IN_FLIGHT`]) is reached, a further request fails closed WITHOUT
 //! queuing — bounded backpressure, never an unbounded backlog. A dead, hostile, or
 //! overloaded inner fleet can never suppress the signature or cause a silent allow.
+//!
+//! What it no longer does is report all of those as the same thing (ADR-MCPRE-058 §10,
+//! ruling D4). The pool is the only component that KNOWS whether bytes left the process,
+//! so it is the only one that can classify:
+//!
+//! ```text
+//! no permit / all backends ejected / unbuildable request  -> NotDispatched
+//! timeout, connect or transport error                     -> Indeterminate
+//! non-2xx, non-JSON media type, unreadable or over-cap    -> InvalidUpstream
+//! 2xx with a JSON body                                    -> Replied
+//! ```
+//!
+//! A connect error is classified `Indeterminate` rather than `NotDispatched`, deliberately.
+//! hyper does not reliably distinguish "the connection was refused" from "the request was
+//! written and the peer went away", and `NotDispatched` is a claim that the action did not
+//! run. Only outcomes this pool can PROVE never reached a backend earn it.
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
@@ -87,9 +100,10 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use tokio::sync::Semaphore;
 
-use crate::async_inner::inner_unavailable_response;
 use crate::async_inner::AsyncInnerServer;
+use crate::async_inner::InnerOutcome;
 use crate::async_inner::InnerResponseFuture;
+use crate::async_inner::NotAdmitted;
 
 /// A cap on the inner response body read into memory, so a hostile/broken backend
 /// streaming an unbounded body cannot exhaust the proxy. A response exceeding it
@@ -367,16 +381,18 @@ impl HttpInnerPool {
         }
     }
 
-    /// Issue the HTTP round-trip to `uri`, returning `Ok(bytes)` on a 2xx with a
-    /// readable (capped) body, or `Err(())` on any transport error, timeout, non-2xx
-    /// status, or over-cap/unreadable body. The caller maps `Err` to the fail-closed
-    /// synthesized response and folds the outcome into the breaker.
+    /// Issue the HTTP round-trip to `uri`.
+    ///
+    /// Returns the classified [`InnerOutcome`] rather than `Result<Vec<u8>, ()>`: this
+    /// function is the only place that can tell a timeout from a refused connection from a
+    /// backend that answered with HTML, and flattening them to one `Err(())` here is what
+    /// made the distinction unrecoverable everywhere else.
     async fn round_trip(
         client: &Client<HttpConnector, Full<Bytes>>,
         uri: Uri,
         body: Bytes,
         timeout: Duration,
-    ) -> Result<Vec<u8>, ()> {
+    ) -> InnerOutcome {
         let req = Request::builder()
             .method(Method::POST)
             .uri(uri)
@@ -394,20 +410,31 @@ impl HttpInnerPool {
             // what the transport requires and accept only what we can evidence.
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/json, text/event-stream")
-            .body(Full::new(body))
-            .map_err(|_| ())?;
+            .body(Full::new(body));
+        let req = match req {
+            Ok(req) => req,
+            // The request could not even be constructed, so nothing was transmitted.
+            Err(_) => return InnerOutcome::NotDispatched("inner request could not be built"),
+        };
 
         // Bound the whole round-trip. Timeout OR transport error ⇒ failure.
         let _t_inner = crate::stage_timers::Timed::start(crate::stage_timers::Stage::InnerDispatch);
         let resp = match tokio::time::timeout(timeout, client.request(req)).await {
             Ok(Ok(resp)) => resp,
-            _ => return Err(()),
+            // Both arms are INDETERMINATE, and the timeout is the reason this classification
+            // exists: the request went out, the backend may well have executed the tool, and
+            // the answer simply never came back. Reporting that as a clean error response is
+            // the strongest available signal that nothing happened, which is precisely what
+            // is not known.
+            Ok(Err(_)) => return InnerOutcome::Indeterminate("inner transport error"),
+            Err(_) => return InnerOutcome::Indeterminate("inner request timed out"),
         };
 
-        // A non-2xx inner status is not a valid JSON-RPC response; treat as failure
-        // (the proxy signs the synthesized error) rather than sign backend HTML.
+        // A non-2xx inner status is not a valid JSON-RPC response. The backend DID answer,
+        // so this is not indeterminate — it is an unusable answer, and signing backend HTML
+        // as an MCP result is not an option either.
         if !resp.status().is_success() {
-            return Err(());
+            return InnerOutcome::InvalidUpstream("inner backend returned a non-2xx status");
         }
 
         // JSON mode (#415 rev 2 §3.4): if the backend answered with a stream, refuse
@@ -429,14 +456,18 @@ impl HttpInnerPool {
             })
             .unwrap_or(false);
         if !is_json {
-            return Err(());
+            return InnerOutcome::InvalidUpstream("inner backend did not answer application/json");
         }
 
         // Read the body, capped. `Limited` fails the collect if the cap is exceeded.
         let limited = http_body_util::Limited::new(resp.into_body(), MAX_INNER_RESPONSE_BYTES);
         match limited.collect().await {
-            Ok(collected) => Ok(collected.to_bytes().to_vec()),
-            Err(_) => Err(()),
+            Ok(collected) => InnerOutcome::Replied(collected.to_bytes().to_vec()),
+            // The backend answered and the answer is unusable — over the cap, or the body
+            // stream broke partway. It acted either way.
+            Err(_) => {
+                InnerOutcome::InvalidUpstream("inner response body was unreadable or over cap")
+            }
         }
     }
 }
@@ -459,6 +490,27 @@ impl Drop for ProbeGuard<'_> {
 }
 
 impl AsyncInnerServer for HttpInnerPool {
+    /// The pre-dispatch capacity and health question, answered without transmitting.
+    ///
+    /// Both conditions are facts about THIS process: how many round trips are already in
+    /// flight, and whether the breaker has ejected every backend. Asking them before the
+    /// execution threshold is what lets a saturated or fully-ejected fleet be refused as
+    /// genuinely retry-safe instead of as an exchange that may have executed.
+    ///
+    /// Deliberately does NOT reserve the permit it checks for. A reservation would have to
+    /// be held across the caller's own stages and released on every refusal path, and the
+    /// benefit — closing a race whose losing side is resolved pessimistically anyway — does
+    /// not pay for that.
+    fn admit(&self) -> Result<(), NotAdmitted> {
+        if self.in_flight.available_permits() == 0 {
+            return Err(NotAdmitted("inner plane is at its in-flight bound"));
+        }
+        if self.select_backend(self.now_nanos()).is_none() {
+            return Err(NotAdmitted("every inner backend is ejected"));
+        }
+        Ok(())
+    }
+
     fn dispatch<'a>(&'a self, request: &'a [u8]) -> InnerResponseFuture<'a> {
         // Own the request bytes + a cheap client clone into the future.
         let body = Bytes::copy_from_slice(request);
@@ -473,13 +525,15 @@ impl AsyncInnerServer for HttpInnerPool {
             // held for the whole round-trip and released on completion.
             let _permit = match in_flight.try_acquire_owned() {
                 Ok(permit) => permit,
-                Err(_) => return inner_unavailable_response(&body),
+                Err(_) => {
+                    return InnerOutcome::NotDispatched("inner plane is at its in-flight bound")
+                }
             };
             let now = self.now_nanos();
             // Health-aware selection. All backends ejected ⇒ fail closed WITHOUT
             // dispatching and WITHOUT queuing (bounded fail-closed, ADR-MCPRE-051 §3).
             let Some((idx, is_probe)) = self.select_backend(now) else {
-                return inner_unavailable_response(&body);
+                return InnerOutcome::NotDispatched("every inner backend is ejected");
             };
             let uri = self.backends[idx].uri.clone();
 
@@ -496,16 +550,12 @@ impl AsyncInnerServer for HttpInnerPool {
 
             let outcome = Self::round_trip(&client, uri, body.clone(), timeout).await;
             let done = self.now_nanos();
-            match outcome {
-                Ok(bytes) => {
-                    self.record_outcome(idx, is_probe, true, done);
-                    bytes
-                }
-                Err(()) => {
-                    self.record_outcome(idx, is_probe, false, done);
-                    inner_unavailable_response(&body)
-                }
-            }
+            // The breaker counts "did this backend serve a usable answer", so every
+            // non-`Replied` outcome is a failure for its purposes even though the three
+            // differ sharply in what they mean for the exchange.
+            let healthy = matches!(outcome, InnerOutcome::Replied(_));
+            self.record_outcome(idx, is_probe, healthy, done);
+            outcome
         })
     }
 }

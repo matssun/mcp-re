@@ -49,6 +49,42 @@ use crate::verify::verify_response_unbound;
 /// specification itself. Mirrors [`mcp_re_core::wire::MCP_RE_JSON_RPC_ERROR_CODE`].
 pub const JSON_RPC_ERROR_CODE: i64 = -31000;
 
+/// What the enforcement boundary knows about the refused exchange's effects.
+///
+/// The wire code alone cannot answer this. `evidence_retention_unavailable` at the
+/// pre-dispatch reservation is retry-safe when the exchange carries no continuation, and is
+/// NOT retry-safe when it already retired one — same code, same status, opposite advice.
+/// The difference lives in the request machine's cross-machine state
+/// (ADR-MCPRE-057 §4), so it is supplied here rather than guessed from the token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionDisposition {
+    /// Nothing is asserted beyond what the wire code itself implies. The historical
+    /// behaviour, and what every caller that has no request machine to consult supplies.
+    #[default]
+    Unstated,
+    /// The backend never acted and no approval was spent. An ordinary retry is correct.
+    NothingExecuted,
+    /// The backend never acted, but the approval authorizing it was already consumed.
+    /// A retry passes replay admission on a fresh nonce and then fails as
+    /// already-answered — the action needs a new human elicitation, not a retry.
+    ApprovalSpentNothingExecuted,
+    /// The exchange crossed the execution threshold: the backend may have acted, and
+    /// whatever failed afterwards cannot unmake that (ADR-MCPRE-058 §10, ruling D1).
+    ///
+    /// The GENERIC post-dispatch statement, and it is generic on purpose. Before it, only
+    /// two post-dispatch failures said anything at all: `evidence_retention_indeterminate`,
+    /// which `retry_semantics` special-cased by name, and the approval case above, which is
+    /// a PRE-dispatch fact. Everything else — an illegal upstream response, a signing
+    /// failure, a continuation-record failure at **HTTP 503**, a 202 that could not be
+    /// signed — returned a bare status after the tool had already run, and 503 is the status
+    /// clients retry.
+    ///
+    /// Not a reuse of [`ApprovalSpentNothingExecuted`](Self::ApprovalSpentNothingExecuted):
+    /// that token means an approval was destroyed and a NEW elicitation is required, which
+    /// is a different remedy and, in the ordinary case, simply false here.
+    PossiblyExecuted,
+}
+
 /// A rejection reason: the stable frozen wire code plus a human-readable,
 /// NON-authoritative message.
 #[derive(Debug, Clone)]
@@ -58,6 +94,25 @@ pub struct RejectionReason {
     pub wire_code: &'static str,
     /// Human-readable diagnostic. NEVER trusted or parsed by clients.
     pub message: String,
+    /// What is known about the exchange's effects, from the request machine.
+    pub execution: ExecutionDisposition,
+}
+
+impl RejectionReason {
+    /// A reason stating nothing beyond its wire code.
+    pub fn new(wire_code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            wire_code,
+            message: message.into(),
+            execution: ExecutionDisposition::Unstated,
+        }
+    }
+
+    /// The same reason, carrying what the request machine established about effects.
+    pub fn with_execution(mut self, execution: ExecutionDisposition) -> Self {
+        self.execution = execution;
+        self
+    }
 }
 
 /// The trusted result of verifying a signed rejection: the authoritative wire
@@ -72,10 +127,11 @@ pub struct SignedRejection {
 /// rejected request's id when known (else JSON `null`).
 fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
     let mut mcp_re_error = json!({ "wire_code": reason.wire_code });
-    // The retry contract is DERIVED from the frozen token, never passed beside it. Two
-    // independently-set values can disagree, and the disagreement that matters here is
-    // an indeterminate outcome labelled retry-safe.
-    if let Some(extra) = retry_semantics(reason.wire_code) {
+    // The retry contract is DERIVED — from the frozen token and the request machine's own
+    // disposition — never assembled field by field at a call site. Independently-set
+    // values can disagree, and the disagreement that matters here is an outcome the
+    // client cannot recover from labelled retry-safe.
+    if let Some(extra) = retry_semantics(reason.wire_code, reason.execution) {
         if let (Some(target), Some(extra)) = (mcp_re_error.as_object_mut(), extra.as_object()) {
             for (k, v) in extra {
                 target.insert(k.clone(), v.clone());
@@ -94,21 +150,52 @@ fn rejection_body(id: Value, reason: &RejectionReason) -> Vec<u8> {
     serde_json::to_vec(&body).expect("rejection body serializes")
 }
 
-/// Explicit machine-readable execution/retry state, for the codes where the safe
-/// action is not inferable from the HTTP status.
+/// Explicit machine-readable execution/retry state, for the cases where the safe action is
+/// not inferable from the HTTP status.
 ///
-/// Only `evidence_retention_indeterminate` carries it today, deliberately: every other
-/// frozen code either precedes execution or is already unambiguous, and adding fields
-/// to their bodies would change bytes that frozen conformance vectors pin.
-fn retry_semantics(wire_code: &str) -> Option<Value> {
+/// Two sources, and both are needed. The wire code carries the post-execution case, where
+/// the code alone is decisive. The disposition carries the pre-execution case, where it is
+/// not: the SAME code at the SAME status is retry-safe or not depending on whether the
+/// exchange had already spent a continuation, and only the request machine knows that.
+///
+/// A disposition of [`ExecutionDisposition::Unstated`] adds nothing, so every caller
+/// without a request machine — and every frozen conformance vector — produces exactly the
+/// bytes it produced before.
+fn retry_semantics(wire_code: &str, execution: ExecutionDisposition) -> Option<Value> {
+    if execution == ExecutionDisposition::ApprovalSpentNothingExecuted {
+        // The action did NOT run, so this is not the indeterminate case — but the human
+        // approval that authorized it is gone, and an ordinary retry cannot recover it.
+        // Saying only "503, try again" sends the client into a retry that passes replay
+        // admission on a fresh nonce and then fails as already-answered, with the approval
+        // already destroyed.
+        return Some(json!({
+            "execution_status": "not_executed",
+            "continuation_status": "consumed",
+            "retry_safety": "unsafe_without_new_elicitation",
+        }));
+    }
     if wire_code == mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code() {
         // The backend ran; only the evidence write failed. A client that treats this
         // as an ordinary outage and retries re-executes the action, and the retry's
         // fresh nonce passes replay admission — so the state is stated rather than
         // left to be guessed from a status code.
+        //
+        // Kept ahead of the generic arm because it says one thing more: WHICH obligation
+        // failed. The extra field is the difference between "reconcile" and "reconcile,
+        // and know the evidence store has no record of this call".
         return Some(json!({
             "execution_status": "possibly_executed",
             "retention_status": "failed",
+            "retry_safety": "unsafe_without_reconciliation",
+        }));
+    }
+    if execution == ExecutionDisposition::PossiblyExecuted {
+        // Every other failure below the execution threshold. Derived from the exchange
+        // machine, not from an allowlist of wire codes: an allowlist is a thing a NEW
+        // post-dispatch exit silently fails to be on, which is exactly how the
+        // continuation-record failure ended up returning a bare 503 after the tool ran.
+        return Some(json!({
+            "execution_status": "possibly_executed",
             "retry_safety": "unsafe_without_reconciliation",
         }));
     }
@@ -292,10 +379,10 @@ mod tests {
     /// retry's fresh nonce passes replay admission.
     #[test]
     fn the_indeterminate_rejection_states_that_a_retry_is_unsafe() {
-        let reason = RejectionReason {
-            wire_code: mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
-            message: "retention failed after execution".to_owned(),
-        };
+        let reason = RejectionReason::new(
+            mcp_re_core::McpReError::EvidenceRetentionIndeterminate.wire_code(),
+            "retention failed after execution".to_owned(),
+        );
         let body = rejection_body(serde_json::json!(1), &reason);
         let v: Value = serde_json::from_slice(&body).expect("body parses");
         let e = &v["error"]["data"]["mcp_re_error"];
@@ -308,10 +395,7 @@ mod tests {
     /// Every OTHER code keeps the exact body shape frozen vectors pin.
     #[test]
     fn an_ordinary_rejection_body_gains_no_new_fields() {
-        let reason = RejectionReason {
-            wire_code: "mcp-re.invalid_audience",
-            message: "no".to_owned(),
-        };
+        let reason = RejectionReason::new("mcp-re.invalid_audience", "no".to_owned());
         let body = rejection_body(serde_json::json!(1), &reason);
         let v: Value = serde_json::from_slice(&body).expect("body parses");
         let e = v["error"]["data"]["mcp_re_error"]
@@ -375,10 +459,10 @@ mod tests {
     }
 
     fn reason() -> RejectionReason {
-        RejectionReason {
-            wire_code: "mcp-re.invalid_audience",
-            message: "audience did not match this verifier (do not trust this text)".into(),
-        }
+        RejectionReason::new(
+            "mcp-re.invalid_audience",
+            "audience did not match this verifier (do not trust this text)",
+        )
     }
 
     #[test]
