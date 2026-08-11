@@ -11,6 +11,22 @@
 //! line and the validation boundary CONSUME this decision; so do the AWS KMS, AWS STS
 //! and GCP KMS key sources, which an embedder can reach without meeting a parser at
 //! all. None of them depends on another to obtain it.
+//!
+//! # The invariant
+//!
+//! > An endpoint authority is accepted only when its literal human-readable
+//! > representation and the machine interpretation used by the client agree. Alternate
+//! > host and port spellings that change the effective authority are refused.
+//!
+//! One rule, several subordinate predicates. `127.1` (an alternate IP representation a
+//! parser rewrites to `127.0.0.1`) and `:0443` (a port canonicalisation that reaches
+//! 443) are the same threat: text that names one endpoint to a reader and another to
+//! the client. They are enforced by [`check_host`] and [`check_port`] respectively,
+//! because they are different predicates — not because they are different concerns.
+//!
+//! The reasoning lives here rather than being restated in each check, so that reviewing
+//! the rule means reading one argument and then confirming each predicate enforces its
+//! share of it.
 
 use std::str::FromStr;
 
@@ -118,10 +134,54 @@ fn names_this_machine(host: &str) -> bool {
 
 /// Split a `host[:port]` authority, refusing anything that is not a literal host.
 ///
+/// The three steps below are the module invariant applied to the three places an
+/// authority can diverge: where the host ends, what the host is, and what the port is.
+fn split_host_port<'a>(
+    authority: &'a str,
+    value: &str,
+) -> Result<(&'a str, Option<&'a str>), String> {
+    let (host, port) = split_authority(authority, value)?;
+    check_host(host, value)?;
+    if let Some(port) = port {
+        check_port(port, value)?;
+    }
+    Ok((host, port))
+}
+
+/// Where the host ends and the port begins.
+///
 /// An IPv6 literal keeps its brackets, because that is the form both the request line and
-/// a `Host` header carry, and its contents must parse as an address — `[foo-bar]` and
-/// `[gggg::1]` are bracket-shaped but are not IPv6 literals, and `url::Url::parse` refuses
-/// both. Admitting them here would only move the failure to the first request.
+/// a `Host` header carry. Splitting on the bracket rather than on the first `:` is what
+/// makes `[::1]:4566` divide where a parser divides it.
+fn split_authority<'a>(
+    authority: &'a str,
+    value: &str,
+) -> Result<(&'a str, Option<&'a str>), String> {
+    if !authority.starts_with('[') {
+        return Ok(match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        });
+    }
+    let end = authority
+        .find(']')
+        .ok_or_else(|| format!("has an unterminated IPv6 literal: {value:?}"))?;
+    match &authority[end + 1..] {
+        "" => Ok((&authority[..=end], None)),
+        after => Ok((
+            &authority[..=end],
+            Some(after.strip_prefix(':').ok_or_else(|| {
+                format!("has junk after its IPv6 literal ({after:?}): {value:?}")
+            })?),
+        )),
+    }
+}
+
+/// Whether the host names the machine a reader thinks it names.
+///
+/// A bracketed host's contents must parse as an address — `[foo-bar]` and `[gggg::1]` are
+/// bracket-shaped but are not IPv6 literals, and `url::Url::parse` refuses both. Admitting
+/// them here would only move the failure to the first request.
 ///
 /// The unbracketed host is held to letters, digits, `.`, `-` and `_`. That is every
 /// character a URL parser reads back as the text itself AND that a resolver can answer
@@ -131,29 +191,7 @@ fn names_this_machine(host: &str) -> bool {
 /// `getaddrinfo` will resolve, so refusing it costs no reachable endpoint. Everything else
 /// is refused because a parser does NOT read it as written: `# / ? @ \` move the host,
 /// and `% : < > [ ] ^ |` make `url` fail outright.
-fn split_host_port<'a>(
-    authority: &'a str,
-    value: &str,
-) -> Result<(&'a str, Option<&'a str>), String> {
-    let (host, port) = if authority.starts_with('[') {
-        let end = authority
-            .find(']')
-            .ok_or_else(|| format!("has an unterminated IPv6 literal: {value:?}"))?;
-        match &authority[end + 1..] {
-            "" => (&authority[..=end], None),
-            after => (
-                &authority[..=end],
-                Some(after.strip_prefix(':').ok_or_else(|| {
-                    format!("has junk after its IPv6 literal ({after:?}): {value:?}")
-                })?),
-            ),
-        }
-    } else {
-        match authority.split_once(':') {
-            Some((host, port)) => (host, Some(port)),
-            None => (authority, None),
-        }
-    };
+fn check_host(host: &str, value: &str) -> Result<(), String> {
     if let Some(literal) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
         if std::net::Ipv6Addr::from_str(literal).is_err() {
             return Err(format!(
@@ -161,69 +199,73 @@ fn split_host_port<'a>(
                  refuses outright: {value:?}"
             ));
         }
-    } else {
-        if host.is_empty() {
-            return Err(format!("has no host: {value:?}"));
-        }
-        if let Some(bad) = host
-            .chars()
-            .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
-        {
-            return Err(format!(
-                "host {host:?} is not a literal name or IP address ({bad:?} is percent-, IDNA- \
-                 or separator-encoding, which a URL parser resolves to a DIFFERENT host than \
-                 the text reads, or a character no resolver can answer for): {value:?}"
-            ));
-        }
-        // A URL parser reads a host whose LAST label is a NUMBER as an IPv4 address rather
-        // than a name, and then rewrites it: `0x7f.1`, `127.1` and `2130706433` all resolve
-        // to 127.0.0.1, and `1.1` to 1.0.0.1. Character-legal, but the address reached is
-        // not the text. So a host of that shape is admitted only when it already IS a plain
-        // dotted quad, where the two agree. No DNS name is affected — a top-level label
-        // cannot be all-numeric, and `url` errors on one that is.
-        let last_label = host
-            .rsplit('.')
-            .find(|label| !label.is_empty())
-            .unwrap_or("");
-        let read_as_an_address = last_label.chars().all(|c| c.is_ascii_digit())
-            || last_label.starts_with("0x")
-            || last_label.starts_with("0X");
-        if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
-            return Err(format!(
-                "host {host:?} ends in a number, so a URL parser reads it as an IPv4 ADDRESS \
-                 and rewrites it (0x7f.1 and 127.1 both become 127.0.0.1); write the dotted \
-                 quad the request will actually reach: {value:?}"
-            ));
-        }
+        return Ok(());
     }
-    if let Some(port) = port {
-        // A TCP port is a u16. "all digits" is not the same rule: `:65536` and `:99999999`
-        // are all digits, and `url::Url::parse` refuses both — so admitting them would be a
-        // genuine disagreement about whether the endpoint is usable at all. A leading zero
-        // is refused for the narrower reason that `:0443` parses to 443, making the text
-        // and the port reached differ.
-        // Digits ONLY, checked before parsing: `u16::from_str` accepts a leading `+`, so
-        // `:+443` would parse to 443 while `url::Url::parse` refuses it outright.
-        if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
-            return Err(format!(
-                "port {port:?} is not a number, and a URL parser refuses it outright: \
-                 {value:?}"
-            ));
-        }
-        if port.len() > 1 && port.starts_with('0') {
-            return Err(format!(
-                "port {port:?} has a leading zero, so the text and the port a URL parser \
-                 reads differ: {value:?}"
-            ));
-        }
-        if port.parse::<u16>().is_err() {
-            return Err(format!(
-                "port {port:?} is not a TCP port number (0-65535), and a URL parser refuses \
-                 it outright: {value:?}"
-            ));
-        }
+    if host.is_empty() {
+        return Err(format!("has no host: {value:?}"));
     }
-    Ok((host, port))
+    if let Some(bad) = host
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
+    {
+        return Err(format!(
+            "host {host:?} is not a literal name or IP address ({bad:?} is percent-, IDNA- \
+             or separator-encoding, which a URL parser resolves to a DIFFERENT host than \
+             the text reads, or a character no resolver can answer for): {value:?}"
+        ));
+    }
+    // A URL parser reads a host whose LAST label is a NUMBER as an IPv4 address rather
+    // than a name, and then rewrites it: `0x7f.1`, `127.1` and `2130706433` all resolve
+    // to 127.0.0.1, and `1.1` to 1.0.0.1. Character-legal, but the address reached is
+    // not the text. So a host of that shape is admitted only when it already IS a plain
+    // dotted quad, where the two agree. No DNS name is affected — a top-level label
+    // cannot be all-numeric, and `url` errors on one that is.
+    let last_label = host
+        .rsplit('.')
+        .find(|label| !label.is_empty())
+        .unwrap_or("");
+    let read_as_an_address = last_label.chars().all(|c| c.is_ascii_digit())
+        || last_label.starts_with("0x")
+        || last_label.starts_with("0X");
+    if read_as_an_address && std::net::Ipv4Addr::from_str(host).is_err() {
+        return Err(format!(
+            "host {host:?} ends in a number, so a URL parser reads it as an IPv4 ADDRESS \
+             and rewrites it (0x7f.1 and 127.1 both become 127.0.0.1); write the dotted \
+             quad the request will actually reach: {value:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the port reached is the port written.
+///
+/// A TCP port is a u16. "all digits" is not the same rule: `:65536` and `:99999999` are
+/// all digits, and `url::Url::parse` refuses both — so admitting them would be a genuine
+/// disagreement about whether the endpoint is usable at all. A leading zero is refused for
+/// the narrower reason that `:0443` parses to 443, making the text and the port reached
+/// differ.
+fn check_port(port: &str, value: &str) -> Result<(), String> {
+    // Digits ONLY, checked before parsing: `u16::from_str` accepts a leading `+`, so
+    // `:+443` would parse to 443 while `url::Url::parse` refuses it outright.
+    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            "port {port:?} is not a number, and a URL parser refuses it outright: \
+             {value:?}"
+        ));
+    }
+    if port.len() > 1 && port.starts_with('0') {
+        return Err(format!(
+            "port {port:?} has a leading zero, so the text and the port a URL parser \
+             reads differ: {value:?}"
+        ));
+    }
+    if port.parse::<u16>().is_err() {
+        return Err(format!(
+            "port {port:?} is not a TCP port number (0-65535), and a URL parser refuses \
+             it outright: {value:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -451,5 +493,72 @@ mod tests {
                 authority
             );
         }
+    }
+
+    // --- the subordinate predicates, exercised directly -------------------------------
+    //
+    // The cases above reach these through `kms_endpoint_authority`, which is the contract
+    // callers depend on. These reach each predicate on its own, so a refusal that stops
+    // firing is attributed to the check that owns it rather than surfacing as one opaque
+    // failure of the whole rule. Each carries its negative control: the admitted case
+    // sitting beside the refused one, so a predicate that started refusing everything
+    // would fail here rather than look like a stricter policy.
+
+    #[test]
+    fn split_authority_divides_on_the_bracket_not_the_first_colon() {
+        // The whole reason this is a separate step: `[::1]:4566` contains four colons and
+        // only the last one is the port separator.
+        assert_eq!(
+            super::split_authority("[::1]:4566", "v").expect("admissible"),
+            ("[::1]", Some("4566"))
+        );
+        assert_eq!(
+            super::split_authority("[::1]", "v").expect("admissible"),
+            ("[::1]", None)
+        );
+        assert_eq!(
+            super::split_authority("host:443", "v").expect("admissible"),
+            ("host", Some("443"))
+        );
+        assert_eq!(
+            super::split_authority("host", "v").expect("admissible"),
+            ("host", None)
+        );
+    }
+
+    #[test]
+    fn split_authority_refuses_a_bracket_that_does_not_close_or_is_followed_by_junk() {
+        assert!(super::split_authority("[::1", "v").is_err());
+        assert!(super::split_authority("[::1]x443", "v").is_err());
+    }
+
+    #[test]
+    fn check_host_refuses_a_bracket_shaped_host_that_is_not_an_address() {
+        assert!(super::check_host("[::1]", "v").is_ok());
+        assert!(super::check_host("[foo-bar]", "v").is_err());
+        assert!(super::check_host("[gggg::1]", "v").is_err());
+    }
+
+    #[test]
+    fn check_host_refuses_a_host_a_parser_would_rewrite_to_a_different_address() {
+        // The `127.1` half of the module invariant: character-legal, but the address
+        // reached is not the text. A plain dotted quad is admitted because there the two
+        // agree, and a name is admitted because a parser does not rewrite it.
+        assert!(super::check_host("127.0.0.1", "v").is_ok());
+        assert!(super::check_host("kms.example.internal", "v").is_ok());
+        assert!(super::check_host("127.1", "v").is_err());
+        assert!(super::check_host("0x7f.1", "v").is_err());
+        assert!(super::check_host("2130706433", "v").is_err());
+    }
+
+    #[test]
+    fn check_port_refuses_a_port_whose_text_and_value_differ() {
+        // The `:0443` half of the same invariant.
+        assert!(super::check_port("443", "v").is_ok());
+        assert!(super::check_port("0", "v").is_ok());
+        assert!(super::check_port("0443", "v").is_err());
+        assert!(super::check_port("+443", "v").is_err());
+        assert!(super::check_port("65536", "v").is_err());
+        assert!(super::check_port("", "v").is_err());
     }
 }
